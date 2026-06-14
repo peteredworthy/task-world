@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import shutil
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,7 @@ from orchestrator.runners.mcp_scope import (
     scope_mcp_servers_to_available_tools,
 )
 from orchestrator.workflow import GateBlockedError
+from orchestrator.git import WorktreeCommitError
 from orchestrator.runners.runtime.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
 from orchestrator.runners.environment import build_agent_subprocess_env
 from orchestrator.runners.types import (
@@ -169,6 +171,8 @@ class CLIAgent:
         runner_monitor: AgentRunnerMonitor | None = None,
         run_id: str | None = None,
         bare: bool = False,
+        subprocess_factory: Callable[..., Awaitable[asyncio.subprocess.Process]] | None = None,
+        max_commit_fix_attempts: int = 2,
     ) -> None:
         self._command = command
         base_args = args or []
@@ -187,6 +191,12 @@ class CLIAgent:
         self._runner_monitor = runner_monitor
         self._run_id = run_id
         self._bare = bare
+        # Injectable so execute() is testable without a real subprocess (no mocks).
+        self._subprocess_factory = subprocess_factory or asyncio.create_subprocess_exec
+        # Bounded re-prompt attempts when the post-exit submit hits the pre-commit
+        # gate (ruff/pyright/tests). One-shot runners cannot feed back in-session
+        # like the codex app-server (8f62b04c), so we re-spawn with the hook output.
+        self._max_commit_fix_attempts = max_commit_fix_attempts
 
     @property
     def info(self) -> AgentRunnerInfo:
@@ -640,7 +650,7 @@ class CLIAgent:
 
             cmd = [path, *self._args_with_mcp_config(mcp_json_path, context.available_tools)]
 
-            self._process = await asyncio.create_subprocess_exec(
+            self._process = await self._subprocess_factory(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
@@ -823,9 +833,44 @@ class CLIAgent:
                 )
 
             # If process completed successfully, submit for verification
-            # This triggers the workflow to move from BUILDING to VERIFYING
+            # This triggers the workflow to move from BUILDING to VERIFYING.
+            #
+            # The post-exit submit runs the pre-commit gate (ruff/pyright/tests).
+            # A one-shot runner cannot bounce that failure back into a live session
+            # the way the codex app-server does (8f62b04c), so on a WorktreeCommitError
+            # we re-spawn the agent with the hook output as a fix prompt and retry the
+            # submit, bounded by max_commit_fix_attempts. The worktree persists between
+            # spawns, so the agent fixes its own changes in place. Only the
+            # currently-fatal commit-gate path is affected; the success path is unchanged.
             if success:
-                await on_submit()
+                commit_fix_attempts = 0
+                while True:
+                    try:
+                        await on_submit()
+                        break
+                    except WorktreeCommitError as commit_exc:
+                        if commit_fix_attempts >= self._max_commit_fix_attempts:
+                            raise
+                        commit_fix_attempts += 1
+                        logger.warning(
+                            "cli_subprocess: submit rejected by pre-commit checks; "
+                            "re-prompting agent to fix (attempt %d/%d)",
+                            commit_fix_attempts,
+                            self._max_commit_fix_attempts,
+                        )
+                        fix_prompt = (
+                            "Your previous changes were rejected by the project's "
+                            "pre-commit checks. Do NOT run `git commit` — the "
+                            "orchestrator commits on submit. Fix ALL of the issues "
+                            "below in the existing files, then stop:\n\n" + str(commit_exc)
+                        )
+                        fix_lines = await self._run_commit_fix_pass(
+                            cmd, child_env, context.working_dir, fix_prompt, on_output
+                        )
+                        final_output_lines = [*final_output_lines, *fix_lines]
+                        # Re-finalize so the fix pass's token usage is included.
+                        if self._parser is not None:
+                            action_log = self._parser.finalize()
 
             # Build a meaningful error message when the process failed.
             # Prefer the structured exit_subtype from the result event over the
@@ -891,6 +936,82 @@ class CLIAgent:
                 except Exception:
                     pass
             self._process = None
+
+    async def _run_commit_fix_pass(
+        self,
+        cmd: list[str],
+        child_env: dict[str, str],
+        working_dir: str,
+        fix_prompt: str,
+        on_output: LogLineCallback | None,
+    ) -> list[str]:
+        """Re-spawn the agent to fix pre-commit gate failures (bounded, best-effort).
+
+        Mirrors the main read loop but is intentionally simpler: it drains stdout
+        with the same per-read poll timeout and stuck-detection so it cannot hang,
+        and feeds lines through ``self._parser`` so token usage accumulates across
+        passes. Returns the readable lines produced by the fix pass.
+        """
+        proc = await self._subprocess_factory(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=working_dir,
+            env=child_env,
+            limit=8 * 1024 * 1024,
+        )
+        self._process = proc
+
+        if proc.stdin is not None:
+            try:
+                proc.stdin.write(fix_prompt.encode())
+                proc.stdin.write(b"\n")
+                await proc.stdin.drain()
+            except (BrokenPipeError, ConnectionResetError, ConnectionError, RuntimeError):
+                pass
+            if self._stdin_mode == "close":
+                proc.stdin.close()
+
+        nudger = Nudger(self._nudger_config, self._time_provider)
+        lines: list[str] = []
+        raw_buf: bytes = b""
+        while True:
+            if self._cancelled:
+                proc.terminate()
+                raise AgentCancelledError("cli_subprocess")
+            if proc.stdout is None:
+                break
+            try:
+                chunk: bytes = await asyncio.wait_for(
+                    proc.stdout.read(64 * 1024), timeout=self._poll_interval
+                )
+            except TimeoutError:
+                if nudger.check() == NudgeAction.KILL:
+                    proc.terminate()
+                    break
+                continue
+            if not chunk:
+                if raw_buf:
+                    line = raw_buf.decode(errors="replace").rstrip()
+                    if line:
+                        lines.append(line)
+                        if self._parser is not None:
+                            self._parser.parse_line(line)
+                break
+            raw_buf += chunk
+            nudger.record_output()
+            while b"\n" in raw_buf:
+                line_bytes, raw_buf = raw_buf.split(b"\n", 1)
+                line = line_bytes.decode(errors="replace").rstrip()
+                lines.append(line)
+                if self._parser is not None:
+                    self._parser.parse_line(line)
+
+        if on_output and lines:
+            await on_output(lines)
+        await proc.wait()
+        return lines
 
     async def cancel(self) -> None:
         """Cancel execution."""
