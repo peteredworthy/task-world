@@ -28,6 +28,7 @@ from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     EscalationCallback,
     ExecutionContext,
+    ExecutionMetrics,
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
@@ -477,3 +478,68 @@ def _tree_paths(repo: Path, commit_sha: str) -> set[str]:
             text=True,
         ).stdout.splitlines()
     )
+
+
+class _UsageFixtureAgent:
+    """Fixture agent that submits cleanly and reports token usage."""
+
+    @property
+    def info(self) -> AgentRunnerInfo:
+        return AgentRunnerInfo(
+            agent_runner_type=AgentRunnerType.CLI_SUBPROCESS, name="usage-fixture"
+        )
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        await on_submit()
+        return ExecutionResult(
+            success=True,
+            metrics=ExecutionMetrics(
+                tokens_read=11, tokens_write=22, tokens_cache=33, num_actions=4
+            ),
+        )
+
+    async def cancel(self) -> None:
+        return None
+
+
+@pytest.mark.asyncio
+async def test_graph_dispatch_surfaces_agent_usage(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """The graph executor invokes the injected on_agent_usage callback with the
+    execution result, so token/cost accounting can flow through the SAME shared
+    sink the legacy path uses (regression for graph runs recording 0 tokens)."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-usage"
+    _init_repo(repo)
+    run_id = "graph-usage"
+    controller = await _seed_active_run(session_factory, run_id)
+
+    captured: list[ExecutionResult] = []
+
+    async def on_agent_usage(_ctx: GraphDispatchContext, result: ExecutionResult) -> None:
+        captured.append(result)
+
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory(_UsageFixtureAgent()),
+        worktree_path=repo,
+        on_agent_usage=on_agent_usage,
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
+    await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
+
+    assert len(captured) == 1
+    assert captured[0].metrics.tokens_write == 22
+    assert captured[0].metrics.num_actions == 4

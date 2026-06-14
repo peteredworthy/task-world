@@ -115,6 +115,7 @@ class GraphRunDriver:
         ]
         | None = None,
         on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
+        on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._create_service = create_service
@@ -123,6 +124,7 @@ class GraphRunDriver:
         self._runtime_builder = runtime_builder or build_graph_runtime
         self._dispatcher_factory = dispatcher_factory or OutboxDispatcher
         self._on_agent_output = on_agent_output
+        self._on_agent_usage = on_agent_usage
 
     async def run(self, run_id: str) -> GraphRunOutcome:
         run = await self._get_run(run_id)
@@ -197,6 +199,8 @@ class GraphRunDriver:
         }
         if self._on_agent_output is not None:
             runtime_kwargs["on_agent_output"] = self._on_agent_output
+        if self._on_agent_usage is not None:
+            runtime_kwargs["on_agent_usage"] = self._on_agent_usage
         controller, executor = self._runtime_builder(
             self._session_factory,
             self._clock,

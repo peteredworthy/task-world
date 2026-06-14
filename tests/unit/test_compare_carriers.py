@@ -27,6 +27,8 @@ def _row(**kw: object) -> dict[str, object]:
         "tokens_read": 0,
         "tokens_write": 0,
         "tokens_cache": 0,
+        "tool_calls": 0,
+        "cost_usd": 0.0,
     }
     base.update(kw)
     return base
@@ -44,16 +46,37 @@ def test_aggregate_counts_completion_and_grades() -> None:
     assert agg["all_a"] == 1
 
 
-def test_aggregate_sums_turns_retries_and_tokens() -> None:
+def test_aggregate_averages_tokens_tools_and_cost() -> None:
     rows = [
-        _row(agent_dispatches=1, attempts=2, retries=1, tokens_write=1000, tokens_read=50),
-        _row(agent_dispatches=2, attempts=1, retries=0, tokens_write=1500, tokens_read=70),
+        _row(
+            agent_dispatches=1,
+            attempts=2,
+            retries=1,
+            tokens_write=1000,
+            tokens_read=50,
+            tokens_cache=400,
+            tool_calls=10,
+            cost_usd=0.10,
+        ),
+        _row(
+            agent_dispatches=2,
+            attempts=1,
+            retries=0,
+            tokens_write=1500,
+            tokens_read=70,
+            tokens_cache=600,
+            tool_calls=20,
+            cost_usd=0.30,
+        ),
     ]
     agg = compare_carriers.aggregate_bucket(rows)
-    assert agg["agent_turns"] == 6  # (1+2) + (2+1)
+    assert agg["agent_turns"] == 6  # (1+2) + (2+1) — total, not averaged
     assert agg["retries"] == 1
-    assert agg["tokens_write"] == 2500
-    assert agg["tokens_read"] == 120
+    assert agg["avg_tokens_write"] == 1250  # (1000+1500)/2
+    assert agg["avg_tokens_read"] == 60
+    assert agg["avg_tokens_cache"] == 500
+    assert agg["avg_tool_calls"] == 15
+    assert abs(agg["avg_cost_usd"] - 0.20) < 1e-9
 
 
 def test_aggregate_empty_bucket() -> None:
@@ -64,7 +87,9 @@ def test_aggregate_empty_bucket() -> None:
         "all_a": 0,
         "agent_turns": 0,
         "retries": 0,
-        "tokens_read": 0,
-        "tokens_write": 0,
-        "tokens_cache": 0,
+        "avg_tokens_read": 0,
+        "avg_tokens_write": 0,
+        "avg_tokens_cache": 0,
+        "avg_tool_calls": 0,
+        "avg_cost_usd": 0,
     }

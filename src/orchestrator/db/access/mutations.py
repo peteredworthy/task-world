@@ -7,7 +7,7 @@ should use events_v2 command handlers and projectors instead.
 
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,64 @@ async def delete_run(session: AsyncSession, run_id: str) -> None:
         raise RunNotFoundError(run_id)
     await session.delete(model)
     await session.flush()
+
+
+def merge_token_usage_into_run(
+    run_model: Any,
+    *,
+    tokens_read: int | None = None,
+    tokens_write: int | None = None,
+    tokens_cache: int | None = None,
+    duration_ms: int | None = None,
+    num_actions: int | None = None,
+    token_usage_by_model: Any = None,
+) -> None:
+    """Accumulate one agent execution's usage into a run's running totals.
+
+    Carrier-agnostic and the single home for run-level token accounting: the
+    legacy attempt path (``update_latest_attempt``) and the graph dispatch path
+    (via an injected usage callback) both call this, so token/cost numbers are
+    computed identically regardless of which carrier ran the agent. No-op when
+    ``run_model`` is None.
+    """
+    if run_model is None:
+        return
+    if tokens_read is not None:
+        run_model.total_tokens_read = (run_model.total_tokens_read or 0) + tokens_read
+    if tokens_write is not None:
+        run_model.total_tokens_write = (run_model.total_tokens_write or 0) + tokens_write
+    if tokens_cache is not None:
+        run_model.total_tokens_cache = (run_model.total_tokens_cache or 0) + tokens_cache
+    if duration_ms is not None:
+        run_model.total_duration_ms = (run_model.total_duration_ms or 0) + duration_ms
+    if num_actions is not None:
+        run_model.total_num_actions = (run_model.total_num_actions or 0) + num_actions
+
+    if token_usage_by_model is not None and len(token_usage_by_model) > 0:
+        existing = cast("list[dict[str, Any]]", run_model.token_usage_by_model or [])
+        merged: list[dict[str, Any]] = [dict(e) for e in existing]
+        idx_by_model = {entry["model"]: i for i, entry in enumerate(merged)}
+        for usage in token_usage_by_model:
+            usage_dict = (
+                usage.model_dump(mode="json") if hasattr(usage, "model_dump") else dict(usage)
+            )
+            model_name = usage_dict["model"]
+            if model_name in idx_by_model:
+                prev = merged[idx_by_model[model_name]]
+                merged[idx_by_model[model_name]] = {
+                    **prev,
+                    "input_tokens": prev.get("input_tokens", 0) + usage_dict.get("input_tokens", 0),
+                    "output_tokens": prev.get("output_tokens", 0)
+                    + usage_dict.get("output_tokens", 0),
+                    "cache_read_tokens": prev.get("cache_read_tokens", 0)
+                    + usage_dict.get("cache_read_tokens", 0),
+                    "cache_creation_tokens": prev.get("cache_creation_tokens", 0)
+                    + usage_dict.get("cache_creation_tokens", 0),
+                }
+            else:
+                merged.append(usage_dict)
+                idx_by_model[model_name] = len(merged) - 1
+        run_model.token_usage_by_model = merged
 
 
 async def update_latest_attempt(
@@ -137,48 +195,15 @@ async def update_latest_attempt(
         attempt.num_actions = (attempt.num_actions or 0) + effective_num_actions
 
     run_model = attempt.task.step.run if attempt.task and attempt.task.step else None
-
-    if run_model is not None:
-        if effective_tokens_read is not None:
-            run_model.total_tokens_read = (run_model.total_tokens_read or 0) + effective_tokens_read
-        if effective_tokens_write is not None:
-            run_model.total_tokens_write = (
-                run_model.total_tokens_write or 0
-            ) + effective_tokens_write
-        if effective_tokens_cache is not None:
-            run_model.total_tokens_cache = (
-                run_model.total_tokens_cache or 0
-            ) + effective_tokens_cache
-        if effective_duration_ms is not None:
-            run_model.total_duration_ms = (run_model.total_duration_ms or 0) + effective_duration_ms
-        if effective_num_actions is not None:
-            run_model.total_num_actions = (run_model.total_num_actions or 0) + effective_num_actions
-
-        if token_usage_by_model is not None and len(token_usage_by_model) > 0:
-            merged: list[dict[str, Any]] = [dict(e) for e in (run_model.token_usage_by_model or [])]
-            idx_by_model = {entry["model"]: i for i, entry in enumerate(merged)}
-            for usage in token_usage_by_model:
-                usage_dict = (
-                    usage.model_dump(mode="json") if hasattr(usage, "model_dump") else dict(usage)
-                )
-                model_name = usage_dict["model"]
-                if model_name in idx_by_model:
-                    prev = merged[idx_by_model[model_name]]
-                    merged[idx_by_model[model_name]] = {
-                        **prev,
-                        "input_tokens": prev.get("input_tokens", 0)
-                        + usage_dict.get("input_tokens", 0),
-                        "output_tokens": prev.get("output_tokens", 0)
-                        + usage_dict.get("output_tokens", 0),
-                        "cache_read_tokens": prev.get("cache_read_tokens", 0)
-                        + usage_dict.get("cache_read_tokens", 0),
-                        "cache_creation_tokens": prev.get("cache_creation_tokens", 0)
-                        + usage_dict.get("cache_creation_tokens", 0),
-                    }
-                else:
-                    merged.append(usage_dict)
-                    idx_by_model[model_name] = len(merged) - 1
-            run_model.token_usage_by_model = merged
+    merge_token_usage_into_run(
+        run_model,
+        tokens_read=effective_tokens_read,
+        tokens_write=effective_tokens_write,
+        tokens_cache=effective_tokens_cache,
+        duration_ms=effective_duration_ms,
+        num_actions=effective_num_actions,
+        token_usage_by_model=token_usage_by_model,
+    )
 
     if resolved_status is not None:
         await session.execute(

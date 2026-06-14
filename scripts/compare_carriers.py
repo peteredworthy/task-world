@@ -69,21 +69,30 @@ def run_metrics(run_id: str) -> dict[str, Any]:
         "tokens_read": run.get("total_tokens_read") or 0,
         "tokens_write": run.get("total_tokens_write") or 0,
         "tokens_cache": run.get("total_tokens_cache") or 0,
+        "tool_calls": run.get("total_num_actions") or 0,
+        "cost_usd": run.get("estimated_cost_usd") or 0.0,
     }
 
 
 def aggregate_bucket(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Pure aggregation of one approach bucket's run metrics (unit-tested)."""
+    """Pure aggregation of one approach bucket's run metrics (unit-tested).
+
+    Token/tool/cost figures are per-run AVERAGES (so buckets with different run
+    counts stay comparable); completion/grade figures are totals.
+    """
     n = len(rows)
+    div = n or 1
     return {
         "runs": n,
         "completed": sum(1 for r in rows if r["status"] == "completed"),
         "all_a": sum(1 for r in rows if r["grades"] and all(g == "A" for g in r["grades"])),
         "agent_turns": sum(r["agent_dispatches"] + r["attempts"] for r in rows),
         "retries": sum(r["retries"] for r in rows),
-        "tokens_read": sum(r["tokens_read"] for r in rows),
-        "tokens_write": sum(r["tokens_write"] for r in rows),
-        "tokens_cache": sum(r["tokens_cache"] for r in rows),
+        "avg_tokens_read": sum(r["tokens_read"] for r in rows) / div,
+        "avg_tokens_write": sum(r["tokens_write"] for r in rows) / div,
+        "avg_tokens_cache": sum(r["tokens_cache"] for r in rows) / div,
+        "avg_tool_calls": sum(r["tool_calls"] for r in rows) / div,
+        "avg_cost_usd": sum(r["cost_usd"] for r in rows) / div,
     }
 
 
@@ -100,17 +109,18 @@ def main(argv: list[str]) -> int:
         buckets[label].append(rid)
 
     hdr = (
-        f"{'approach':22} {'runs':4} {'compl':5} {'all-A':5} "
-        f"{'turns':6} {'retries':7} {'tok_read':9} {'tok_write':10} {'tok_cache':10}"
+        f"{'approach':24} {'runs':4} {'compl':5} {'all-A':5} {'avg_in':7} {'avg_out':8} "
+        f"{'avg_cache':10} {'avg_tools':10} {'avg_cost$':10}"
     )
     print(hdr)
     print("-" * len(hdr))
     for label, rids in buckets.items():
         agg = aggregate_bucket([run_metrics(r) for r in rids])
         print(
-            f"{label:22} {agg['runs']:<4} {agg['completed']:<5} {agg['all_a']:<5} "
-            f"{agg['agent_turns']:<6} {agg['retries']:<7} {agg['tokens_read']:<9} "
-            f"{agg['tokens_write']:<10} {agg['tokens_cache']:<10}"
+            f"{label:24} {agg['runs']:<4} {agg['completed']:<5} {agg['all_a']:<5} "
+            f"{agg['avg_tokens_read']:<7.0f} {agg['avg_tokens_write']:<8.0f} "
+            f"{agg['avg_tokens_cache']:<10.0f} {agg['avg_tool_calls']:<10.1f} "
+            f"{agg['avg_cost_usd']:<10.4f}"
         )
     return 0
 

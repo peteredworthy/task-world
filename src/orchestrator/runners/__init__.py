@@ -108,6 +108,7 @@ from orchestrator.runners.execution import (
     EventBroadcaster,
     OutputBatcher as OutputBatcher,
     PhaseHandler,
+    extract_metrics_and_usage,
 )
 from orchestrator.runners.health_check import (
     DEFAULT_HEALTH_CHECK_COMMAND,
@@ -300,6 +301,7 @@ __all__ = [
     "HealthCheckCommandResult",
     "OutputBatcher",
     "PhaseHandler",
+    "extract_metrics_and_usage",
     "format_health_check_failure",
     "format_health_check_timeout",
     "parse_health_check_command",

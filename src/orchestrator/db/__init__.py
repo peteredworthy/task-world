@@ -82,6 +82,7 @@ if TYPE_CHECKING:
     from orchestrator.db.access.mutations import (
         create_clarification_request,
         delete_run,
+        merge_token_usage_into_run,
         persist_clarification_response,
     )
 
@@ -96,6 +97,10 @@ def __getattr__(name: str):
         from orchestrator.db.access.mutations import delete_run
 
         return delete_run
+    elif name == "merge_token_usage_into_run":
+        from orchestrator.db.access.mutations import merge_token_usage_into_run
+
+        return merge_token_usage_into_run
     elif name == "create_clarification_request":
         from orchestrator.db.access.mutations import create_clarification_request
 
@@ -168,6 +173,7 @@ __all__ = [
     "RunRepository",
     "create_clarification_request",
     "delete_run",
+    "merge_token_usage_into_run",
     "persist_clarification_response",
     "SqliteEventStore",
     "StoredEvent",

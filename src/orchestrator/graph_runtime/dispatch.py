@@ -103,6 +103,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         residue_classifier: ResidueClassifier | None = None,
         max_gatekeeper_items_per_boundary: int = 20,
         on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
+        on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._controller = controller
@@ -113,6 +114,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self._residue_classifier = residue_classifier
         self._max_gatekeeper_items_per_boundary = max_gatekeeper_items_per_boundary
         self._on_agent_output = on_agent_output
+        self._on_agent_usage = on_agent_usage
 
     async def dispatch(self, item: OutboxItem) -> None:
         if item.kind == "snapshot_cleanup":
@@ -170,13 +172,18 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 if self._on_agent_output is not None:
                     await self._on_agent_output(context, lines)
 
-            await runner.execute(
+            result = await runner.execute(
                 self._execution_context(context),
                 on_checklist_update,
                 on_submit,
                 on_output=on_output,
                 on_grade=on_grade if context.node_kind == "verifier" else None,
             )
+            # Record this execution's token usage against the run via the shared,
+            # carrier-agnostic sink (same path the legacy attempt flow uses). The
+            # emitter lives above the import boundary and is injected.
+            if self._on_agent_usage is not None:
+                await self._on_agent_usage(context, result)
         except Exception as exc:
             await self._agent_died(context, str(exc))
 
@@ -481,6 +488,7 @@ def build_graph_runtime(
     runner_type: AgentRunnerType,
     runner_config: dict[str, Any] | None = None,
     on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
+    on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
 ) -> tuple[GraphController, GraphDispatchExecutor]:
     """Assemble graph controller and dispatch executor without API imports."""
 
@@ -491,6 +499,7 @@ def build_graph_runtime(
         StaticGraphAgentFactory(runner_type, runner_config),
         worktree_path=worktree_path,
         on_agent_output=on_agent_output,
+        on_agent_usage=on_agent_usage,
     )
     return controller, executor
 
