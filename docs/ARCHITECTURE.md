@@ -184,10 +184,8 @@ task-world/
 │       ├── completion.py      # Run completion logic
 │       ├── dry_run.py         # Dry run execution
 │       ├── locks.py           # Task-level pessimistic locking
-│       ├── parent_oversight.py # Parent/child coordination, evidence collection, persistence
-│       ├── oversight.py       # Pure parent oversight reducer and projection snapshot models
-│       ├── oversight_facts.py # Canonical durable/coordination oversight fact keys and patch extraction
-│       ├── oversight_projection.py # Hydrates projections and maps snapshots to parent decisions
+│       ├── graph_driver.py    # Production driver for graph-mode runs
+│       ├── graph_recovery.py  # Startup recovery selection for graph-mode runs
 │       ├── agent/             # Agent interaction layer
 │       │   ├── prompts.py     # Builder/verifier prompt generation
 │       │   ├── templates.py   # Prompt template rendering
@@ -322,13 +320,23 @@ Each task goes through:
 3. **Verifier Phase** - Agent grades each requirement (fresh LLM context)
 4. **Pass/Fail** - Either proceed to next task or retry with revision
 
-### Parent Oversight and Delegation
+### Graph Planning and Legacy Delegation
 
-Parent/child coordination is owned by `ParentOversightService`. The pure oversight reducer projects durable parent facts, child run state, evidence, terminal guards, attention queues, merge queues, and the next parent action. `oversight_projection.py` maps that projected snapshot to a single delegation decision surface used by terminal guards.
+Graph-mode runs are the default execution carrier. `GraphRunDriver` seeds a
+routine into graph events, drives scheduler ticks, dispatches leased executable
+nodes, records file-state boundaries, and bridges terminal graph state back onto
+the run read model. Planner-chain support replaces the retired parent/child
+oversight carrier: delegated child-style work is represented as graph planner
+generations and horizon regions inside one run, not as separate child runs.
 
-Durable oversight fact keys and delegation coordination keys live in `workflow/oversight_facts.py`. Callers sanitize parent oversight patches before persistence, and boundary checks load their coordination-key vocabulary from the same source. Oversight persistence applies locked JSON merge mechanics, including append-only lists, set-union lists, and delegated-work map merging.
+The old live parent/child oversight API and UI have been removed. Historical
+fields such as `parent_run_id` and `oversight_state` remain read-only so archived
+runs and event logs can still be replayed.
 
-Delegation command fencing, idempotency records, result records, and review blockers are recorded through `DelegationRecorder`, which wraps the immutable `DelegationState` value object. `WorkflowService` keeps fan-out-specific behavior such as command keys and task-to-work translation, but shared delegation-state writes go through the recorder.
+The remaining `workflow/delegation/` code is generic fan-out task bookkeeping,
+not the super-parent carrier. Delegation command fencing, idempotency records,
+result records, and review blockers are recorded through `DelegationRecorder`,
+which wraps the immutable `DelegationState` value object.
 
 ---
 
@@ -607,15 +615,16 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | POST | `/api/runs/{id}/pause` | Pause run |
 | POST | `/api/runs/{id}/resume` | Resume run |
 | POST | `/api/runs/{id}/cancel` | Cancel run |
-| POST | `/api/runs/{id}/children` | Create an oversight child run and enqueue start |
-| GET | `/api/runs/{id}/children` | List oversight child runs |
-| POST | `/api/runs/{id}/children/{child_id}/resolve` | Reject or abandon an oversight child run |
 | GET | `/api/runs/{id}/evidence` | Return structured `run.evidence.v1` bundles from the run worktree |
 | GET | `/api/runs/{id}/trace` | Run trace data with attempts, phases, action logs, and token usage |
 | GET | `/api/runs/{id}/activity` | Activity log (paginated) |
 | GET | `/api/runs/{id}/activity/stream` | Activity SSE stream |
 | GET | `/api/runs/{id}/guidance` | Aggregate guidance for agents |
+| GET | `/api/runs/{id}/graph/events` | Graph event log for a run |
+| GET | `/api/runs/{id}/graph/scheduler` | Graph scheduler buckets and leases |
 | GET | `/api/runs/{id}/graph/decisions` | Graph human decisions, appeals, and review readiness |
+| GET | `/api/runs/{id}/graph/file-state` | Graph file-state boundary and residue report |
+| GET | `/api/runs/{id}/graph/nodes/{node_id}` | Graph node detail with inputs, outputs, callbacks, and file-state facts |
 | GET | `/api/runs/{id}/branch-status` | Branch ahead/behind status |
 | POST | `/api/runs/{id}/back-merge` | Pull source branch into run |
 | POST | `/api/runs/{id}/merge-back` | Merge run branch into source |

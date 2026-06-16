@@ -2,7 +2,7 @@
 
 import re
 from datetime import timedelta
-from typing import Literal
+from typing import Any, Literal
 
 from orchestrator.config.models import NudgerConfig
 from orchestrator.config import AgentRunnerType
@@ -15,6 +15,7 @@ def _make_context(
     prompt: str = "Do the thing",
     auth_token: str | None = None,
     work_mode: Literal["implementation", "oversight"] = "implementation",
+    graph_patch_callback: Any | None = None,
 ) -> ExecutionContext:
     return ExecutionContext(
         run_id="run-1",
@@ -25,6 +26,7 @@ def _make_context(
         api_base_url=api_base_url,
         auth_token=auth_token,
         work_mode=work_mode,
+        graph_patch_callback=graph_patch_callback,
     )
 
 
@@ -150,6 +152,32 @@ def test_build_prompt_with_api_url() -> None:
     assert "GET" in result
     assert "/checklist/" in result
     assert "/submit" in result
+
+
+async def _noop_graph_patch(_payload: dict[str, Any]) -> str:
+    return "graph patch accepted"
+
+
+def test_build_prompt_graph_callback_includes_cli_sentinel_bridge() -> None:
+    ctx = _make_context(
+        api_base_url="http://localhost:8000",
+        graph_patch_callback=_noop_graph_patch,
+    )
+
+    result = CLIAgent.build_prompt("Plan the graph", ctx)
+
+    assert "Graph Planner Patch Submission" in result
+    assert "ORCHESTRATOR_GRAPH_PATCH:" in result
+    assert "base_graph_position" in result
+
+
+def test_build_prompt_graph_callback_without_api_url_includes_cli_sentinel_bridge() -> None:
+    ctx = _make_context(api_base_url=None, graph_patch_callback=_noop_graph_patch)
+
+    result = CLIAgent.build_prompt("Plan the graph", ctx)
+
+    assert "Graph Planner Patch Submission" in result
+    assert "ORCHESTRATOR_GRAPH_PATCH:" in result
 
 
 def test_build_prompt_with_api_url_oversight_mode_limits_workflow() -> None:

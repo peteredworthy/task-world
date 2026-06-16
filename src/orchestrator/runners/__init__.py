@@ -73,6 +73,7 @@ from orchestrator.runners.agents.codex.common import (
     is_allowed_tool,
     normalize_codex_metrics,
     normalize_codex_output_lines,
+    route_tool_call,
     select_preferred_codex_model,
     validate_codex_model_selection,
 )
@@ -273,6 +274,7 @@ __all__ = [
     "is_allowed_tool",
     "normalize_codex_metrics",
     "normalize_codex_output_lines",
+    "route_tool_call",
     "select_preferred_codex_model",
     "validate_codex_model_selection",
     # Scaffolding

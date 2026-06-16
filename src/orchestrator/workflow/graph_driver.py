@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -71,6 +71,10 @@ class GraphRunOutcome:
     blocked_reason: str | None = None
 
 
+def _empty_str_dict() -> dict[str, str]:
+    return {}
+
+
 @dataclass(frozen=True)
 class GraphProjectionSnapshot:
     run_state: str | None
@@ -78,6 +82,59 @@ class GraphProjectionSnapshot:
     active_leases: dict[str, dict[str, Any]]
     schedulable_nodes: list[str]
     task_states: dict[str, str]
+    node_states: dict[str, str] = field(default_factory=_empty_str_dict)
+    failed_node_reasons: dict[str, str] = field(default_factory=_empty_str_dict)
+
+
+async def _graph_seed_run_config(
+    run_config: dict[str, Any],
+    worktree_path: Path,
+) -> dict[str, Any]:
+    seed_config = dict(run_config)
+    if not _should_read_dynamic_feature_spec(seed_config):
+        return seed_config
+
+    feature_spec_path = str(seed_config["feature_spec_path"])
+    content = await asyncio.to_thread(_read_relative_text, worktree_path, feature_spec_path)
+    if content is not None:
+        seed_config["feature_spec_content"] = content
+        seed_config["feature_spec_content_source"] = "worktree"
+        return seed_config
+
+    main_worktree = await asyncio.to_thread(resolve_main_worktree, worktree_path)
+    if main_worktree is None:
+        return seed_config
+    content = await asyncio.to_thread(_read_relative_text, main_worktree, feature_spec_path)
+    if content is not None:
+        seed_config["feature_spec_content"] = content
+        seed_config["feature_spec_content_source"] = "main_worktree_fallback"
+    return seed_config
+
+
+def _should_read_dynamic_feature_spec(run_config: dict[str, Any]) -> bool:
+    feature_spec_path = run_config.get("feature_spec_path")
+    if not isinstance(feature_spec_path, str) or not feature_spec_path.strip():
+        return False
+    feature_spec_content = run_config.get("feature_spec_content")
+    return not isinstance(feature_spec_content, str) or not feature_spec_content.strip()
+
+
+def _read_relative_text(root: Path, relative_path: str) -> str | None:
+    requested = Path(relative_path)
+    if requested.is_absolute() or ".." in requested.parts:
+        return None
+    root_resolved = root.resolve()
+    candidate = (root_resolved / requested).resolve()
+    try:
+        candidate.relative_to(root_resolved)
+    except ValueError:
+        return None
+    if not candidate.is_file():
+        return None
+    try:
+        return candidate.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return None
 
 
 class GraphLoopController(Protocol):
@@ -183,6 +240,10 @@ class GraphRunDriver:
                     blocked_reason="Graph run has no embedded routine",
                 )
             routine = RoutineConfig.model_validate(run.routine_embedded)
+            seed_run_config = await _graph_seed_run_config(
+                run.config,
+                Path(run.worktree_path),
+            )
             await seed_run(
                 self._session_factory,
                 routine,
@@ -191,6 +252,7 @@ class GraphRunDriver:
                 id_gen=self._id_gen,
                 source_path=run.routine_path,
                 source_ref=run.routine_commit,
+                run_config=seed_run_config,
             )
             await self._bootstrap_graph_lifecycle(run_id)
 
@@ -431,7 +493,28 @@ def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapsho
             if state in {"planned", "blocked", "ready"}
         ],
         task_states=project_task_states(events),
+        node_states=node_states,
+        failed_node_reasons=_failed_node_reasons(events),
     )
+
+
+def _failed_node_reasons(events: list[EventEnvelope]) -> dict[str, str]:
+    reasons: dict[str, str] = {}
+    for event in events:
+        node_id = event.payload.get("node_id")
+        if not isinstance(node_id, str):
+            continue
+        if event.event_type == "agent_died":
+            reason = event.payload.get("reason")
+            if isinstance(reason, str):
+                reasons[node_id] = reason
+        elif event.event_type == "node_state_changed":
+            if event.payload.get("new_state") != "failed":
+                continue
+            reason = event.payload.get("reason")
+            if isinstance(reason, str):
+                reasons[node_id] = reason
+    return reasons
 
 
 def _should_complete_graph(projection: GraphProjectionSnapshot) -> bool:
@@ -463,4 +546,24 @@ def _blocked_reason(projection: GraphProjectionSnapshot) -> str:
         return f"graph {projection.run_state}"
     if projection.run_state is None:
         return "graph has not started"
+    if projection.ready_nodes:
+        return f"graph has ready node(s) not dispatched: {', '.join(sorted(projection.ready_nodes)[:3])}"
+    if projection.active_leases:
+        leased_nodes = sorted(
+            str(lease.get("node_id"))
+            for lease in projection.active_leases.values()
+            if lease.get("node_id") is not None
+        )
+        if leased_nodes:
+            return f"graph has active lease(s) without callback: {', '.join(leased_nodes[:3])}"
+    failed_nodes = sorted(
+        node_id for node_id, state in projection.node_states.items() if state == "failed"
+    )
+    if failed_nodes:
+        details: list[str] = []
+        for node_id in failed_nodes[:3]:
+            reason = projection.failed_node_reasons.get(node_id)
+            details.append(f"{node_id}: {reason}" if reason else node_id)
+        suffix = "" if len(failed_nodes) <= 3 else f" (+{len(failed_nodes) - 3} more)"
+        return f"graph has failed node(s): {', '.join(details)}{suffix}"
     return "graph quiescent without completion"

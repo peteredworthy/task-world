@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -28,6 +29,7 @@ async def seed_run(
     expected_position: int = 0,
     source_path: str | None = None,
     source_ref: str | None = None,
+    run_config: dict[str, Any] | None = None,
 ) -> SeedRunResult:
     """Compile and transactionally append a run's initial graph.
 
@@ -43,6 +45,7 @@ async def seed_run(
         run_id=run_id,
         source_path=source_path,
         source_ref=source_ref,
+        run_config=run_config,
     )
     result = await GraphController(
         session_factory,

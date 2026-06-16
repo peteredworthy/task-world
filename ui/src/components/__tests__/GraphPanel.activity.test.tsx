@@ -109,6 +109,92 @@ function makeActivityEvent(): ActivityEvent {
   };
 }
 
+function makeGraphActivityEvents(): ActivityEvent[] {
+  return [
+    {
+      id: 2,
+      event_type: 'graph_patch_accepted',
+      timestamp: '2026-01-01T00:00:02Z',
+      payload: {
+        decision: 'accepted',
+        patch_id: 'patch-accepted',
+        proposed_by_node_id: 'planner-1',
+        actor_role: 'planner',
+        successor_planner_node_ids: ['planner-2'],
+      },
+      task_title: null,
+      step_title: null,
+    },
+    {
+      id: 3,
+      event_type: 'graph_patch_rejected',
+      timestamp: '2026-01-01T00:00:03Z',
+      payload: {
+        decision: 'rejected',
+        patch_id: 'patch-rejected',
+        proposed_by_node_id: 'planner-1',
+        actor_role: 'planner',
+        reason: 'read_set_changed',
+      },
+      task_title: null,
+      step_title: null,
+    },
+    {
+      id: 4,
+      event_type: 'verification_failed',
+      timestamp: '2026-01-01T00:00:04Z',
+      payload: {
+        verdict: 'failed',
+        candidate_id: 'candidate-1',
+        task_region_id: 'step-1/task-1',
+        evidence: 'raw verifier evidence must not render',
+        grades: [
+          { requirement_id: 'R-01', grade: 'A' },
+          { requirement_id: 'R-02', grade: 'C', reason: 'missing coverage' },
+        ],
+      },
+      task_title: null,
+      step_title: null,
+    },
+    {
+      id: 5,
+      event_type: 'command_rejected',
+      timestamp: '2026-01-01T00:00:05Z',
+      payload: {
+        command_type: 'submit_patch',
+        reason: 'malformed patch: missing patch_id',
+      },
+      task_title: null,
+      step_title: null,
+    },
+    {
+      id: 6,
+      event_type: 'node_created',
+      timestamp: '2026-01-01T00:00:06Z',
+      payload: {
+        summary: 'Graph final invariant blocked: node=review-final; reason=unresolved gap evidence',
+        node_id: 'review-final',
+        kind: 'review',
+        reason: 'unresolved gap evidence',
+      },
+      task_title: null,
+      step_title: null,
+    },
+    {
+      id: 7,
+      event_type: 'node_created',
+      timestamp: '2026-01-01T00:00:07Z',
+      payload: {
+        node_id: 'worker-raw',
+        kind: 'worker',
+        prompt: 'raw prompt transcript must not render',
+      },
+      task_title: null,
+      step_title: null,
+    },
+  ];
+}
+
 function renderGraphPanel(run: RunResponse, activityEvents: ActivityEvent[]) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -146,10 +232,10 @@ function renderGraphPanel(run: RunResponse, activityEvents: ActivityEvent[]) {
     run_id: run.id,
     event_count: 2,
     scheduler: {
-      ready: [],
-      blocked: [],
-      waiting_resources: [],
-      waiting_gates: [],
+      ready: ['planner-ready'],
+      blocked: [{ node_id: 'verifier-blocked', reason: 'missing_required_input:candidate' }],
+      waiting_resources: [{ node_id: 'worker-resource', reason: 'resource_conflict:write:write' }],
+      waiting_gates: [{ node_id: 'gate-wait', reason: 'gate_not_approved:gate-1' }],
     },
     leases: {
       active: [
@@ -162,7 +248,16 @@ function renderGraphPanel(run: RunResponse, activityEvents: ActivityEvent[]) {
           expires_at: '2026-01-01T00:10:00Z',
         },
       ],
-      suspended: [],
+      suspended: [
+        {
+          lease_id: 'lease-suspended',
+          node_id: 'worker-paused',
+          generation: 2,
+          state: 'suspended',
+          execution_id: 'exec-suspended',
+          expires_at: '2026-01-01T00:15:00Z',
+        },
+      ],
     },
   };
   const decisionView: DecisionViewResponse = {
@@ -339,6 +434,41 @@ function makeFileStateReport(runId: string): FileStateReportResponse {
 }
 
 describe('GraphPanel activity', () => {
+  it('renders graph operator summary and compact DG activity rows', () => {
+    const run = makeRun();
+    renderGraphPanel(run, [makeActivityEvent(), ...makeGraphActivityEvents()]);
+
+    expect(screen.getByText('Operator summary')).toBeInTheDocument();
+    expect(screen.getByText('Graph state')).toBeInTheDocument();
+    expect(screen.getByText('Active leases')).toBeInTheDocument();
+    expect(screen.getByText('Suspended leases')).toBeInTheDocument();
+    expect(screen.getByText('Patches accepted')).toBeInTheDocument();
+    expect(screen.getByText('Patches rejected')).toBeInTheDocument();
+    expect(screen.getByText('Verifier pass/fail')).toBeInTheDocument();
+    expect(screen.getByText('Activity blockers')).toBeInTheDocument();
+    expect(screen.getByText('0/1')).toBeInTheDocument();
+
+    expect(screen.getByText('Patch decisions')).toBeInTheDocument();
+    expect(screen.getByText('patch-accepted')).toBeInTheDocument();
+    expect(screen.getByText('patch-rejected')).toBeInTheDocument();
+    expect(screen.getByText('successors: planner-2')).toBeInTheDocument();
+    expect(screen.getByText('reason: read_set_changed')).toBeInTheDocument();
+
+    expect(screen.getByText('Verifier results')).toBeInTheDocument();
+    expect(screen.getByText('candidate-1')).toBeInTheDocument();
+    expect(screen.getByText('requirements: R-02=C')).toBeInTheDocument();
+
+    expect(screen.getByText('Commands and blockers')).toBeInTheDocument();
+    expect(screen.getByText('submit_patch')).toBeInTheDocument();
+    expect(screen.getByText('malformed patch: missing patch_id')).toBeInTheDocument();
+    expect(screen.getByText('review-final')).toBeInTheDocument();
+    expect(screen.getByText('unresolved gap evidence')).toBeInTheDocument();
+
+    expect(screen.queryByText('raw verifier evidence must not render')).not.toBeInTheDocument();
+    expect(screen.queryByText('raw prompt transcript must not render')).not.toBeInTheDocument();
+    expect(screen.queryByText('worker-raw')).not.toBeInTheDocument();
+  });
+
   it('renders live node activity and activity feed agent output lines', () => {
     const run = makeRun();
     const outputEvent = makeActivityEvent();

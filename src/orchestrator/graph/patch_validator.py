@@ -40,6 +40,7 @@ KNOWN_OPS = {
 PLANNER_OPS = KNOWN_OPS - {"create_gate"}
 ALLOWED_BY_ROLE = {
     "planner": PLANNER_OPS,
+    "gap_planner": PLANNER_OPS,
     "oversight": KNOWN_OPS,
     "human": KNOWN_OPS,
     "controller": KNOWN_OPS,
@@ -105,6 +106,11 @@ def validate_patch(
     if stale_result is not None:
         return stale_result
 
+    if actor_role == "gap_planner" and not ops:
+        gap_no_op_error = _validate_gap_planner_no_op(patch.proposed_by_node_id, projection)
+        if gap_no_op_error is not None:
+            return PatchValidationResult(accepted=False, rejection_reason=gap_no_op_error)
+
     allowed_ops = ALLOWED_BY_ROLE.get(actor_role, set())
     for op in ops:
         op_name = op.get("op")
@@ -128,6 +134,15 @@ def validate_patch(
         elif op_name == "retire_node":
             node_id = op.get("node_id")
             if (
+                actor_role == "gap_planner"
+                and isinstance(node_id, str)
+                and projection["node_kinds"].get(node_id) in {"worker", "verifier", "check"}
+            ):
+                return PatchValidationResult(
+                    accepted=False,
+                    rejection_reason=f"gap planner cannot retire executable node: {node_id}",
+                )
+            if (
                 isinstance(node_id, str)
                 and projection["node_states"].get(node_id) in RUNNING_STATES
             ):
@@ -141,17 +156,69 @@ def validate_patch(
                 typed_node = cast(dict[str, Any], node)
                 kind = typed_node.get("kind")
                 role = typed_node.get("role")
+                if actor_role == "gap_planner":
+                    gap_planner_error = _validate_gap_planner_node(typed_node)
+                    if gap_planner_error is not None:
+                        return PatchValidationResult(
+                            accepted=False,
+                            rejection_reason=gap_planner_error,
+                        )
                 if kind in EXECUTABLE_NODE_KINDS and not isinstance(role, str):
                     return PatchValidationResult(
                         accepted=False,
                         rejection_reason=f"executable node requires role: {kind}",
                     )
+                if kind == "check":
+                    check_command_error = _validate_check_command(typed_node)
+                    if check_command_error is not None:
+                        return PatchValidationResult(
+                            accepted=False,
+                            rejection_reason=check_command_error,
+                        )
 
     planner_successor_error = _validate_planner_successor_bindings(ops)
     if planner_successor_error is not None:
         return PatchValidationResult(accepted=False, rejection_reason=planner_successor_error)
 
+    dynamic_region_error = _validate_dynamic_region_dependencies(ops, actor_role)
+    if dynamic_region_error is not None:
+        return PatchValidationResult(accepted=False, rejection_reason=dynamic_region_error)
+
     return PatchValidationResult(accepted=True)
+
+
+def _validate_gap_planner_node(node: dict[str, Any]) -> str | None:
+    kind = node.get("kind")
+    if kind == "planner":
+        return "gap planner cannot create planner successor"
+    if (
+        kind in {"worker", "verifier", "check"}
+        and node.get("task_region_id") != "corrective_work_region"
+    ):
+        return "gap planner executable nodes must target corrective_work_region"
+    return None
+
+
+def _validate_check_command(node: dict[str, Any]) -> str | None:
+    command_definition = node.get("command_definition")
+    if isinstance(command_definition, dict):
+        return None
+
+    hidden_oracle_command = node.get("hidden_oracle_command")
+    if isinstance(hidden_oracle_command, str) and hidden_oracle_command.strip():
+        return None
+
+    command_binding = node.get("command_binding")
+    if command_binding == "dynamic_feature_hidden_oracle":
+        return None
+
+    node_id = node.get("node_id")
+    if isinstance(node_id, str):
+        return (
+            "check node requires command_definition, hidden_oracle_command, "
+            f"or command_binding: {node_id}"
+        )
+    return "check node requires command_definition, hidden_oracle_command, or command_binding"
 
 
 def _validate_planner_successor_bindings(ops: list[dict[str, Any]]) -> str | None:
@@ -198,6 +265,100 @@ def _validate_planner_successor_bindings(ops: list[dict[str, Any]]) -> str | Non
         if missing:
             return f"planner successor missing selector-bound inputs: {', '.join(missing)}"
     return None
+
+
+def _validate_gap_planner_no_op(
+    proposed_by_node_id: str,
+    projection: GraphProjection,
+) -> str | None:
+    for edge in projection["edges"].values():
+        if edge.get("from_node_id") != proposed_by_node_id:
+            continue
+        if edge.get("required") is False:
+            continue
+        if edge.get("to_port") == "classified_gap" or edge.get("from_port") in {
+            "classified_gap",
+            "gap_classification",
+        }:
+            return "gap planner no-op leaves required classified_gap successor unsatisfied"
+    return None
+
+
+def _validate_dynamic_region_dependencies(
+    ops: list[dict[str, Any]],
+    actor_role: str,
+) -> str | None:
+    created_nodes: dict[str, dict[str, Any]] = {}
+    for op in ops:
+        if op.get("op") != "create_node":
+            continue
+        node = op.get("node")
+        if not isinstance(node, dict):
+            continue
+        typed_node = cast(dict[str, Any], node)
+        node_id = typed_node.get("node_id")
+        if isinstance(node_id, str):
+            created_nodes[node_id] = typed_node
+
+    if not created_nodes:
+        return None
+
+    incoming_ports = _required_incoming_ports_by_node(ops, set(created_nodes))
+    for node_id, node in created_nodes.items():
+        kind = node.get("kind")
+        role = node.get("role")
+        ports = incoming_ports.get(node_id, set())
+        if (
+            kind == "planner"
+            and role == "gap_planner"
+            and ports.isdisjoint({"verification_evidence", "verification_report"})
+        ):
+            return "gap planner requires verification input edge"
+        if (
+            actor_role != "gap_planner"
+            and _is_corrective_worker(node_id, node)
+            and "classified_gap" not in ports
+        ):
+            return "corrective worker requires classified_gap input edge"
+        if (
+            kind == "check"
+            and role == "invariant_gate"
+            and ports.isdisjoint({"verification_evidence", "verification_report"})
+        ):
+            return "invariant check requires verification input edge"
+    return None
+
+
+def _required_incoming_ports_by_node(
+    ops: list[dict[str, Any]],
+    created_node_ids: set[str],
+) -> dict[str, set[str]]:
+    ports: dict[str, set[str]] = {node_id: set() for node_id in created_node_ids}
+    for op in ops:
+        if op.get("op") != "create_edge":
+            continue
+        to_node_id = op.get("to_node_id")
+        to_port = op.get("to_port")
+        if not isinstance(to_node_id, str) or to_node_id not in created_node_ids:
+            continue
+        if not isinstance(to_port, str) or op.get("required") is False:
+            continue
+        if not isinstance(op.get("accepted_record_selector"), dict):
+            continue
+        ports[to_node_id].add(to_port)
+    return ports
+
+
+def _is_corrective_worker(node_id: str, node: dict[str, Any]) -> bool:
+    if node.get("kind") != "worker":
+        return False
+    role = node.get("role")
+    task_region_id = node.get("task_region_id")
+    return (
+        role == "fixer"
+        or "corrective" in node_id
+        or (isinstance(task_region_id, str) and "corrective" in task_region_id)
+    )
 
 
 def _has_selector_for_port(op: dict[str, Any], port: str) -> bool:

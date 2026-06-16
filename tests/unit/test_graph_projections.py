@@ -10,17 +10,24 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     FakeClock,
+    FinalInvariantBlocker,
     GraphProjection,
     InMemoryEventStore,
     SequentialIdGenerator,
     initial_projection,
+    project_final_invariant_blockers,
     project_leases,
     project_node_states,
+    project_planner_freshness_packet,
     project_ready_nodes,
+    project_requirement_freshness_facts,
+    project_requirement_revisions,
     project_run_state,
     project_task_states,
+    project_support_evidence_freshness,
     run_scenario,
     reduce_event,
+    support_evidence_freshness_from_projection,
 )
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "graph"
@@ -69,12 +76,16 @@ def test_empty_projection() -> None:
         "file_state_records": {},
         "planner_generation_budget": 8,
         "planner_successors": {},
+        "accepted_graph_patches_by_node": {},
         "planner_generations": {},
         "planner_sessions": {},
         "planner_session_states": {},
         "planner_session_current_nodes": {},
         "planner_session_carryovers": {},
         "planner_region_labels": {},
+        "requirement_revisions": {},
+        "active_requirement_versions": {},
+        "support_evidence": {},
     }
 
 
@@ -102,6 +113,249 @@ def test_replay_determinism() -> None:
             "kind": "worker",
             "state": "active",
         }
+    }
+
+
+def test_requirement_revisions_replay_active_versions() -> None:
+    events = [
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-1",
+                "version_id": "R-1.v1",
+                "revision_index": 1,
+                "classification": "initial",
+            },
+        ).model_copy(update={"position": 1}),
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-1",
+                "version_id": "R-1.v2",
+                "previous_version_id": "R-1.v1",
+                "revision_index": 2,
+                "classification": "validation_strengthening",
+            },
+        ).model_copy(update={"position": 2}),
+    ]
+
+    revisions = project_requirement_revisions(events)
+
+    assert revisions["R-1.v1"]["requirement_id"] == "R-1"
+    assert revisions["R-1.v2"] == {
+        "requirement_id": "R-1",
+        "version_id": "R-1.v2",
+        "change_classification": "validation_strengthening",
+        "requires_authority": False,
+        "position": 2,
+        "previous_version_id": "R-1.v1",
+        "revision_index": 2,
+        "validation_strengthening": True,
+    }
+    assert project_requirement_freshness_facts(events) == [
+        {
+            "requirement_id": "R-1",
+            "active_version_id": "R-1.v2",
+            "revision_classification": "validation_strengthening",
+            "requires_authority": False,
+            "authority_required_reason": None,
+            "fresh_support_ids": [],
+            "stale_support_ids": [],
+            "unsupported": True,
+        }
+    ]
+
+
+def test_support_evidence_freshness_can_be_queried_from_projection() -> None:
+    state = initial_projection()
+    events = [
+        _event(
+            "requirement_revision_recorded",
+            {"requirement_id": "R-1", "version_id": "R-1.v1"},
+        ).model_copy(update={"position": 1}),
+        _event(
+            "support_evidence_recorded",
+            {
+                "support_id": "S-1",
+                "evidence_id": "E-1",
+                "requirement_id": "R-1",
+                "requirement_version_id": "R-1.v1",
+            },
+        ).model_copy(update={"position": 2}),
+    ]
+    for event in events:
+        state = reduce_event(state, event)
+
+    assert support_evidence_freshness_from_projection(state) == {
+        "S-1": {
+            "support_id": "S-1",
+            "evidence_id": "E-1",
+            "requirement_id": "R-1",
+            "requirement_version_id": "R-1.v1",
+            "status": "active",
+            "freshness": "fresh",
+            "stale_reason": None,
+        }
+    }
+
+
+def test_validation_strengthening_revision_invalidates_older_support_evidence() -> None:
+    events = [
+        _event(
+            "requirement_revision_recorded",
+            {"requirement_id": "R-1", "version_id": "R-1.v1"},
+        ).model_copy(update={"position": 1}),
+        _event(
+            "support_evidence_recorded",
+            {
+                "support_id": "S-old",
+                "evidence_id": "E-old",
+                "requirement_id": "R-1",
+                "requirement_version_id": "R-1.v1",
+            },
+        ).model_copy(update={"position": 2}),
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-1",
+                "version_id": "R-1.v2",
+                "previous_version_id": "R-1.v1",
+                "classification": "validation_strengthening",
+            },
+        ).model_copy(update={"position": 3}),
+        _event(
+            "support_evidence_recorded",
+            {
+                "support_id": "S-new",
+                "evidence_id": "E-new",
+                "requirement_id": "R-1",
+                "requirement_version_id": "R-1.v2",
+            },
+        ).model_copy(update={"position": 4}),
+    ]
+
+    assert project_support_evidence_freshness(events) == {
+        "S-new": {
+            "support_id": "S-new",
+            "evidence_id": "E-new",
+            "requirement_id": "R-1",
+            "requirement_version_id": "R-1.v2",
+            "status": "active",
+            "freshness": "fresh",
+            "stale_reason": None,
+        },
+        "S-old": {
+            "support_id": "S-old",
+            "evidence_id": "E-old",
+            "requirement_id": "R-1",
+            "requirement_version_id": "R-1.v1",
+            "status": "stale",
+            "freshness": "stale",
+            "stale_reason": (
+                "Evidence was produced for an older requirement version and does not "
+                "prove the strengthened validation definition."
+            ),
+        },
+    }
+
+
+def test_semantic_and_new_behavior_revisions_require_explicit_authority() -> None:
+    events = [
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-1",
+                "version_id": "R-1.v1",
+                "classification": "semantic",
+            },
+        ).model_copy(update={"position": 1}),
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-2",
+                "version_id": "R-2.v1",
+                "new_behavior": True,
+            },
+        ).model_copy(update={"position": 2}),
+    ]
+
+    facts = project_requirement_freshness_facts(events)
+
+    assert facts == [
+        {
+            "requirement_id": "R-1",
+            "active_version_id": "R-1.v1",
+            "revision_classification": "semantic",
+            "requires_authority": True,
+            "authority_required_reason": "semantic",
+            "fresh_support_ids": [],
+            "stale_support_ids": [],
+            "unsupported": True,
+        },
+        {
+            "requirement_id": "R-2",
+            "active_version_id": "R-2.v1",
+            "revision_classification": "new_behavior",
+            "requires_authority": True,
+            "authority_required_reason": "new_behavior",
+            "fresh_support_ids": [],
+            "stale_support_ids": [],
+            "unsupported": True,
+        },
+    ]
+
+
+def test_planner_freshness_packet_is_compact_gap_planner_input() -> None:
+    events = [
+        _event(
+            "requirement_revision_recorded",
+            {"requirement_id": "R-1", "version_id": "R-1.v1"},
+        ).model_copy(update={"position": 1}),
+        _event(
+            "support_evidence_recorded",
+            {
+                "support_id": "S-1",
+                "evidence_id": "E-1",
+                "requirement_id": "R-1",
+                "requirement_version_id": "R-1.v1",
+            },
+        ).model_copy(update={"position": 2}),
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-2",
+                "version_id": "R-2.v1",
+                "classification": "semantic",
+            },
+        ).model_copy(update={"position": 3}),
+    ]
+
+    assert project_planner_freshness_packet(events) == {
+        "requirement_freshness": [
+            {
+                "requirement_id": "R-1",
+                "active_version_id": "R-1.v1",
+                "revision_classification": "initial",
+                "requires_authority": False,
+                "authority_required_reason": None,
+                "fresh_support_ids": ["S-1"],
+                "stale_support_ids": [],
+                "unsupported": False,
+            },
+            {
+                "requirement_id": "R-2",
+                "active_version_id": "R-2.v1",
+                "revision_classification": "semantic",
+                "requires_authority": True,
+                "authority_required_reason": "semantic",
+                "fresh_support_ids": [],
+                "stale_support_ids": [],
+                "unsupported": True,
+            },
+        ],
+        "unsupported_requirement_ids": ["R-2"],
+        "stale_support_ids": [],
+        "authority_required_requirement_ids": ["R-2"],
     }
 
 
@@ -190,6 +444,345 @@ def test_run_state_transitions() -> None:
     ]
 
     assert project_run_state(events) == "completed"
+
+
+def test_final_invariant_blockers_are_projected_from_graph_events() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-1",
+                "kind": "planner",
+                "role": "planner",
+                "state": "ready",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "gate-planner-budget-planner-1",
+                "kind": "gate",
+                "role": "planner_generation_budget_gate",
+                "state": "planned",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "task-1",
+            },
+        ),
+    ]
+
+    blockers: list[FinalInvariantBlocker] = project_final_invariant_blockers(events)
+    assert blockers == [
+        {
+            "kind": "pending_planner_generation_budget_gate",
+            "reason": "planner generation budget gate is unresolved",
+            "node_id": "gate-planner-budget-planner-1",
+            "state": "planned",
+        },
+        {
+            "kind": "pending_planner",
+            "reason": "planner node has not completed",
+            "node_id": "planner-1",
+            "state": "ready",
+        },
+        {
+            "kind": "task_not_accepted",
+            "reason": "task region has not reached accepted",
+            "task_region_id": "task-1",
+            "state": "pending",
+        },
+    ]
+
+
+def test_completed_lifecycle_projects_active_while_final_blockers_remain() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    assert project_final_invariant_blockers(events) == [
+        {
+            "kind": "task_not_accepted",
+            "reason": "task region has not reached accepted",
+            "task_region_id": "task-1",
+            "state": "pending",
+        }
+    ]
+    assert project_run_state(events) == "active"
+
+
+def test_pending_gap_planner_blocks_projected_completion() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "gap-planner-1",
+                "kind": "gap_planner",
+                "role": "gap_planner",
+                "state": "leased",
+            },
+        ),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    assert project_final_invariant_blockers(events) == [
+        {
+            "kind": "pending_gap_planner",
+            "reason": "planner node has not completed",
+            "node_id": "gap-planner-1",
+            "state": "leased",
+        }
+    ]
+    assert project_run_state(events) == "active"
+
+
+def test_pending_check_blocks_projected_completion_after_task_acceptance() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-1",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-1",
+                "kind": "check",
+                "state": "planned",
+            },
+        ),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    assert project_task_states(events) == {"task-1": "accepted"}
+    assert project_final_invariant_blockers(events) == [
+        {
+            "kind": "pending_check",
+            "reason": "check node has not completed",
+            "node_id": "check-final-1",
+            "state": "planned",
+        }
+    ]
+    assert project_run_state(events) == "active"
+
+
+def test_open_proposal_blocks_projected_completion_until_resolved() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event("proposal_opened", {"proposal_id": "proposal-1"}),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    assert project_final_invariant_blockers(events) == [
+        {
+            "kind": "open_planner_proposal",
+            "reason": "planner proposal has not been accepted or rejected",
+            "proposal_id": "proposal-1",
+        }
+    ]
+    assert project_run_state(events) == "active"
+
+    resolved = [
+        *events[:2],
+        _event("proposal_accepted", {"proposal_id": "proposal-1"}),
+        events[2],
+    ]
+    assert project_final_invariant_blockers(resolved) == []
+    assert project_run_state(resolved) == "completed"
+
+
+def test_accepted_graph_patch_does_not_leave_open_proposal_blocker() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event("graph_patch_proposed", {"patch_id": "patch-1"}),
+        _event("graph_patch_accepted", {"patch_id": "patch-1"}),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    assert project_final_invariant_blockers(events) == []
+    assert project_run_state(events) == "completed"
+
+
+def test_freshness_and_authority_facts_block_projected_completion() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "requirement_revision_recorded",
+            {"requirement_id": "R-01", "version_id": "R-01.v1"},
+        ).model_copy(update={"position": 1}),
+        _event(
+            "support_evidence_recorded",
+            {
+                "support_id": "S-old",
+                "evidence_id": "E-old",
+                "requirement_id": "R-01",
+                "requirement_version_id": "R-01.v1",
+            },
+        ).model_copy(update={"position": 2}),
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-01",
+                "version_id": "R-01.v2",
+                "classification": "validation_strengthening",
+            },
+        ).model_copy(update={"position": 3}),
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-02",
+                "version_id": "R-02.v1",
+                "classification": "semantic",
+            },
+        ).model_copy(update={"position": 4}),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    assert project_final_invariant_blockers(events) == [
+        {
+            "kind": "stale_support_evidence",
+            "reason": "active requirement is supported only by stale evidence",
+            "requirement_id": "R-01",
+            "support_ids": ["S-old"],
+        },
+        {
+            "kind": "unsupported_active_requirement",
+            "reason": "active requirement has no current supporting evidence",
+            "requirement_id": "R-01",
+            "support_ids": ["S-old"],
+        },
+        {
+            "kind": "unsupported_active_requirement",
+            "reason": "active requirement has no current supporting evidence",
+            "requirement_id": "R-02",
+            "support_ids": [],
+        },
+        {
+            "kind": "unresolved_authority_required_revision",
+            "reason": "semantic or new-behavior requirement revision lacks authority resolution",
+            "revision_id": "R-02.v1",
+            "requirement_id": "R-02",
+        },
+    ]
+    assert project_run_state(events) == "active"
+
+
+def test_later_fresh_support_clears_requirement_freshness_blocker() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "requirement_revision_recorded",
+            {"requirement_id": "R-01", "version_id": "R-01.v1"},
+        ).model_copy(update={"position": 1}),
+        _event(
+            "support_evidence_recorded",
+            {
+                "support_id": "S-old",
+                "evidence_id": "E-old",
+                "requirement_id": "R-01",
+                "requirement_version_id": "R-01.v1",
+            },
+        ).model_copy(update={"position": 2}),
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-01",
+                "version_id": "R-01.v2",
+                "classification": "validation_strengthening",
+            },
+        ).model_copy(update={"position": 3}),
+        _event(
+            "support_evidence_recorded",
+            {
+                "support_id": "S-fresh",
+                "evidence_id": "E-fresh",
+                "requirement_id": "R-01",
+                "requirement_version_id": "R-01.v2",
+            },
+        ).model_copy(update={"position": 4}),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    assert project_final_invariant_blockers(events) == []
+    assert project_run_state(events) == "completed"
+
+
+def test_suspect_and_blocked_requirement_facts_block_projected_completion() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "ready"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "requirement-1",
+                "kind": "requirement",
+                "state": "blocked",
+                "requirement": {"id": "R-01", "priority": "expected"},
+            },
+        ),
+        _event(
+            "plan_region_marked_suspect",
+            {"region_node_ids": ["worker-1"], "reason": "requirement_changed"},
+        ),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    assert project_final_invariant_blockers(events) == [
+        {
+            "kind": "suspect_active_node",
+            "reason": "requirement_changed",
+            "node_id": "worker-1",
+            "state": "ready",
+        },
+        {
+            "kind": "blocked_requirement",
+            "reason": "must or expected requirement is blocked without accepted blocker",
+            "node_id": "requirement-1",
+            "requirement_id": "R-01",
+            "state": "blocked",
+        },
+    ]
+    assert project_run_state(events) == "active"
 
 
 def test_run_unknown_event_ignored() -> None:

@@ -268,7 +268,6 @@ async def _run_graph_startup_recovery(app: FastAPI) -> None:
     only selects the runs to re-arm.
     """
     import asyncio as _asyncio
-
     from orchestrator.db import RunRepository
     from orchestrator.workflow.graph_recovery import select_graph_runs_to_recover
 
@@ -495,7 +494,11 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         session_factory=session_factory,
         create_service=service_factory,
         workflow_runner=make_workflow_runner(getattr(app.state, "runner_executor", None)),
-        graph_runner=make_graph_runner(session_factory, service_factory),
+        graph_runner=make_graph_runner(
+            session_factory,
+            service_factory,
+            connection_manager=app.state.connection_manager,
+        ),
         workflow_preparer=make_workflow_preparer(getattr(app.state, "runner_executor", None)),
     )
     app.state.signal_consumer = signal_consumer

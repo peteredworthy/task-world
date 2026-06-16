@@ -1,0 +1,91 @@
+routine:
+  id: feature-vts
+  name: "Versioning, Trash & Search (carrier comparison)"
+  description: >
+    Implement the Versioning + Trash + Search feature for the desktop-test file
+    manager. Used by the big-task carrier comparison (graph arm). Same spec as the
+    idea-to-plan and mind-the-gap arms.
+  inputs: []
+  steps:
+    - id: S-01
+      title: Implement the feature
+      step_context: >
+        Extend the existing FastAPI file-manager app (main.py, storage under
+        desktop_fs/) with version history, a trash bin, and recursive search.
+        All existing endpoints must keep working unchanged. New metadata lives
+        under desktop_fs/.meta/ and must never appear in listings or search.
+      tasks:
+        - id: T-01
+          title: Versioning, Trash & Search
+          task_context: |
+            Implement three capabilities in the existing FastAPI app. Keep all
+            existing endpoints (GET/POST /api/files*, DELETE /api/files, rename, /)
+            working. safe_path() path-escape protection (403) applies to every new
+            endpoint. New metadata persists on disk under desktop_fs/.meta/ and must
+            never appear in GET /api/files listings or in search results.
+
+            CAPABILITY 1 — VERSION HISTORY
+            - On POST /api/files/write to a path that already exists as a file,
+              snapshot the prior content as an immutable, 1-indexed, per-path version
+              BEFORE overwriting. New-file writes produce no version.
+            - GET /api/files/versions?path -> {path, versions:[{version,size,
+              created_at(iso8601),hash:"sha256:<hex>"}]} newest-last; 404 if no file
+              and no history.
+            - GET /api/files/versions/read?path&version -> {path,version,content}; 404 unknown version.
+            - POST /api/files/versions/restore {path,version} -> restores that version
+              as current (which itself snapshots pre-restore content); returns
+              {path,restored_version,current_version}.
+            - GET /api/files/versions/diff?path&from&to -> {path,from,to,diff} unified
+              text diff; `to` may be literal "current"; 404 if a version is missing;
+              400 {"detail":"binary content"} for binary.
+            - Retention: keep at most 20 newest versions per path; version numbers are
+              monotonic and never reused.
+
+            CAPABILITY 2 — TRASH BIN
+            - DELETE /api/files moves files AND directories to trash instead of hard
+              delete. Entries retain original_path, name, deletion time, stable trash_id.
+            - GET /api/trash -> {items:[{trash_id,original_path,name,is_dir,size,
+              deleted_at}]} newest-first.
+            - POST /api/trash/restore {trash_id} -> restore to original path; on
+              collision restore to "name (restored)" / " (restored 2)"...; returns
+              {trash_id,restored_to}; recreate missing parents; 404 unknown id.
+            - DELETE /api/trash?trash_id -> purge one (404 unknown).
+            - DELETE /api/trash/all -> empty trash, returns {purged:int}.
+            - Two deletes of the same path are independently restorable (distinct ids).
+
+            CAPABILITY 3 — SEARCH
+            - GET /api/search with optional params name (substring, case-insensitive,
+              matches name), content (substring, case-insensitive, file text only),
+              path_prefix (subtree), type (file|dir), min_size, max_size (files).
+            - Returns {query:{...echoed...}, results:[{path,name,is_dir,size,
+              match:"name"|"content"|"both"}]} sorted by path; recursive from root or
+              path_prefix; content matching skips binary/undecodable files; never
+              return .meta/ or trashed items.
+
+            Timestamps are ISO-8601 UTC. Metadata must survive process restart. Write
+            your own tests and keep them green. Use `uv run` for python/pytest.
+          requirements:
+            - id: R-01
+              desc: "Version history: overwrite snapshots prior content; list/read/restore/diff endpoints; 20-version retention; monotonic numbers"
+              priority: critical
+            - id: R-02
+              desc: "Trash bin: DELETE moves to trash; list/restore/purge/empty endpoints; collision-rename on restore; dirs supported; distinct trash_ids"
+              priority: critical
+            - id: R-03
+              desc: "Search: name/content/path_prefix/type/size filters; sorted results; excludes .meta and trash; skips binary for content"
+              priority: critical
+            - id: R-04
+              desc: "Existing endpoints unchanged; safe_path 403 on every new endpoint; metadata under desktop_fs/.meta never listed/searched"
+              priority: expected
+            - id: R-05
+              desc: "Metadata persists across process restart; app imports and starts cleanly"
+              priority: expected
+          auto_verify:
+            items:
+              - id: imports_ok
+                cmd: uv run python -c "import main; print('import ok')"
+              - id: app_has_routes
+                cmd: uv run python -c "import main; ps=[r.path for r in main.app.routes]; assert any('versions' in p for p in ps) and any('trash' in p for p in ps) and any('search' in p for p in ps); print('routes ok')"
+            tail_lines: 20
+          retry:
+            max_attempts: 4

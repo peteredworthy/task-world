@@ -30,6 +30,11 @@ from orchestrator.graph_runtime.gatekeeper import (
     metadata_from_file_state_record,
     policy_with_pattern_library,
 )
+from orchestrator.graph_runtime.horizon_templates import (
+    HORIZON_REGION_PURPOSES,
+    horizon_region_templates,
+    instantiate_horizon_template,
+)
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, SideEffectExecutor
 from orchestrator.graph_runtime.recovery import RecoveryReport, recover
 from orchestrator.graph_runtime.seeding import SeedRunResult, seed_run
@@ -43,6 +48,7 @@ __all__ = [
     "GraphDispatchExecutor",
     "GraphEventStore",
     "GraphRuntimeError",
+    "HORIZON_REGION_PURPOSES",
     "CompromisedFileStateError",
     "CleanupApplication",
     "FileStateBoundaryResult",
@@ -62,6 +68,8 @@ __all__ = [
     "apply_cleanup_requested",
     "capture_file_state_boundary",
     "collect_worktree_status",
+    "horizon_region_templates",
+    "instantiate_horizon_template",
     "metadata_from_file_state_record",
     "policy_with_pattern_library",
     "recover",

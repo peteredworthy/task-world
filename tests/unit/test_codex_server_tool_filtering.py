@@ -45,6 +45,22 @@ class TestCodexPhaseFiltering:
 
         assert names == {"grade", "submit", "complete_recovery"}
 
+    def test_planner_context_includes_submit_graph_patch(self):
+        specs = build_dynamic_tool_specs(
+            is_verifier=False,
+            context=_make_context(node_kind="planner", node_role="planner"),
+        )
+        names = {s["name"] for s in specs}
+        assert "submit_graph_patch" in names
+
+    def test_non_planner_context_excludes_submit_graph_patch(self):
+        specs = build_dynamic_tool_specs(
+            is_verifier=False,
+            context=_make_context(node_kind="worker", node_role="builder"),
+        )
+        names = {s["name"] for s in specs}
+        assert "submit_graph_patch" not in names
+
 
 class TestCodexStepTools:
     def test_unknown_tool_warning(self, caplog):

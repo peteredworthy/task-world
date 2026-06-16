@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -22,7 +22,7 @@ from orchestrator.graph import (
     project_scheduler_view,
     project_task_states,
 )
-from orchestrator.graph_runtime.store import GraphEventStore
+from orchestrator.graph_runtime.store import GraphEventStore, GraphEventSummary
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
 
@@ -168,15 +168,89 @@ class FileStateReportResponse(ApiModel):
     gatekeeper: dict[str, Any] | None = None
 
 
-def _event_to_response(event: EventEnvelope) -> GraphEventResponse:
+def _event_to_response(
+    event: EventEnvelope,
+    *,
+    payload_mode: Literal["full", "summary"] = "full",
+) -> GraphEventResponse:
     return GraphEventResponse(
         event_id=event.event_id,
         event_type=event.event_type,
         run_id=event.run_id,
         position=event.position,
         timestamp=event.timestamp.isoformat(),
-        payload=dict(event.payload),
+        payload=_event_payload(event, payload_mode=payload_mode),
     )
+
+
+def _summary_to_response(event: GraphEventSummary) -> GraphEventResponse:
+    return GraphEventResponse(
+        event_id=event.event_id,
+        event_type=event.event_type,
+        run_id=event.run_id,
+        position=event.position,
+        timestamp=event.timestamp,
+        payload=_summary_payload(event.payload),
+    )
+
+
+def _event_payload(
+    event: EventEnvelope,
+    *,
+    payload_mode: Literal["full", "summary"],
+) -> dict[str, Any]:
+    payload = dict(event.payload)
+    if payload_mode == "full":
+        return payload
+    return _summary_payload(payload)
+
+
+def _summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    keys = {
+        "accepted_patches",
+        "actor_role",
+        "blocker",
+        "blockers",
+        "command_type",
+        "execution_id",
+        "generation",
+        "grade",
+        "graph_verifier_grades",
+        "kind",
+        "lease_generation",
+        "lease_id",
+        "new_state",
+        "node_id",
+        "node_kind",
+        "patch_id",
+        "patch_ops",
+        "patch_rejection_reasons",
+        "producer_node_id",
+        "proposed_by_node_id",
+        "reason",
+        "rejected_patches",
+        "rejection_reason",
+        "role",
+        "state",
+        "task_region_id",
+        "tokens",
+        "tokens_by_node",
+        "tokens_by_node_kind",
+    }
+    summarized = {key: value for key, value in payload.items() if key in keys}
+    ops = payload.get("ops") or payload.get("operations")
+    if isinstance(ops, list):
+        summarized["patch_ops"] = len(cast(list[Any], ops))
+    value = payload.get("value")
+    if isinstance(value, dict):
+        typed_value = cast(dict[str, Any], value)
+        grades = typed_value.get("grades")
+        if grades is not None:
+            summarized["value"] = {"grades": grades}
+    grades = payload.get("grades")
+    if grades is not None:
+        summarized["grades"] = grades
+    return summarized
 
 
 def build_graph_projection_response(
@@ -648,8 +722,12 @@ async def get_graph_projection(
 async def get_graph_events(
     run_id: str,
     from_position: int = Query(default=0, ge=0),
+    payload_mode: Literal["full", "summary"] = Query(default="full"),
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> list[GraphEventResponse]:
+    if payload_mode == "summary":
+        summaries = await graph_store.read_run_summaries(run_id, from_position=from_position)
+        return [_summary_to_response(event) for event in summaries]
     events = await graph_store.read_run(run_id, from_position=from_position)
     return [_event_to_response(event) for event in events]
 

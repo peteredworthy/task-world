@@ -26,6 +26,7 @@ from typing_extensions import Protocol
 from orchestrator.state.models import ActionLog
 from orchestrator.runners.types import (
     ChecklistUpdateCallback,
+    GraphPatchCallback,
     CompleteRecoveryCallback,
     ExecutionContext,
     ExecutionMetrics,
@@ -260,6 +261,48 @@ def build_dynamic_tool_specs(
             },
         },
     }
+    submit_graph_patch_spec: dict[str, Any] = {
+        "name": "submit_graph_patch",
+        "description": (
+            "Submit a graph patch envelope. Graph planners must use this to "
+            "propose graph mutations or an explicit no-op decision."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "patch": {
+                    "type": "object",
+                    "required": ["patch_id", "base_graph_position", "ops"],
+                    "properties": {
+                        "patch_id": {"type": "string"},
+                        "base_graph_position": {"type": "integer", "minimum": 0},
+                        "ops": {
+                            "type": "array",
+                            "items": {"type": "object", "additionalProperties": True},
+                            "minItems": 0,
+                            "maxItems": 200,
+                        },
+                        "rationale_record_id": {"type": "string"},
+                    },
+                    "additionalProperties": False,
+                },
+                "patch_id": {"type": "string"},
+                "base_graph_position": {"type": "integer", "minimum": 0},
+                "ops": {
+                    "type": "array",
+                    "items": {"type": "object", "additionalProperties": True},
+                    "minItems": 0,
+                    "maxItems": 200,
+                },
+                "rationale_record_id": {"type": "string"},
+            },
+            "oneOf": [
+                {"required": ["patch"]},
+                {"required": ["patch_id", "base_graph_position", "ops"]},
+            ],
+            "additionalProperties": False,
+        },
+    }
     grade_spec: dict[str, Any] = {
         "name": "grade",
         "description": "Set a grade on a requirement (verifier phase only).",
@@ -290,6 +333,14 @@ def build_dynamic_tool_specs(
             request_clarification_spec,
         ]
     )
+
+    if (
+        not is_verifier
+        and context is not None
+        and context.node_kind == "planner"
+        and context.node_role in {"planner", "gap_planner"}
+    ):
+        specs.append(submit_graph_patch_spec)
 
     # Add step-level tools from context.available_tools
     if context and context.available_tools:
@@ -612,6 +663,7 @@ CODEX_SERVER_TOOL_ALLOWLIST: frozenset[str] = frozenset(
         "update_checklist",
         "grade",
         "submit",
+        "submit_graph_patch",
         "request_clarification",
         "complete_recovery",
     }
@@ -714,6 +766,20 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
             "  Finalize recovery for a failed task only when this verifier phase is handling recovery."
         )
     else:
+        planner_tool_section = ""
+        if context.node_kind == "planner" and context.node_role in {"planner", "gap_planner"}:
+            planner_tool_section = (
+                "\n### Planner Graph-Mutation Tool\n"
+                "- **submit_graph_patch**(patch) or **submit_graph_patch**(patch_id, base_graph_position, ops, rationale_record_id?)\n"
+                "  Submit a graph patch envelope. Use this for every graph mutation.\n"
+                "  - patch_id: Stable id for this attempt.\n"
+                "  - base_graph_position: Use current_graph_position from the planner packet.\n"
+                "  - ops: List using only allowed_patch_operations from the planner packet; gap planners may use [] for an explicit no-op decision.\n"
+                "  - rationale_record_id: Optional accepted evidence record supporting the patch.\n"
+                "  The tool returns accepted or rejected feedback. If feedback says stale, malformed, or rejected, submit a corrected patch instead of editing graph events directly.\n"
+                "  Plain submit is only for finishing after at least one submit_graph_patch attempt."
+            )
+
         tool_section = (
             "## Orchestrator Integration\n"
             "You are connected to an orchestrator that tracks your progress. "
@@ -738,6 +804,7 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
             "  Submission will fail if any CRITICAL requirement is not 'done'.\n\n"
             "- **request_clarification**(question)\n"
             "  Request clarification on ambiguous requirements.\n\n"
+            f"{planner_tool_section}\n"
             f"{git_section}\n"
             "## Sandbox Constraints\n"
             "- You run in a workspace-write sandbox with network access disabled.\n"
@@ -855,11 +922,12 @@ async def route_tool_call(
     args: dict[str, Any],
     on_checklist_update: ChecklistUpdateCallback,
     on_submit: SubmitCallback,
+    on_submit_graph_patch: GraphPatchCallback | None = None,
     on_grade: GradeCallback | None = None,
     on_complete_recovery: CompleteRecoveryCallback | None = None,
     *,
     agent_label: str = "CodexServer",
-) -> None:
+) -> str:
     """Route an allow-listed callback tool call to the appropriate callback.
 
     Enforces the v1 allow-list (``CODEX_SERVER_TOOL_ALLOWLIST``) before
@@ -869,6 +937,7 @@ async def route_tool_call(
     Tool routing:
     - ``update_checklist`` → ``on_checklist_update(req_id, status, note)``
     - ``submit``           → ``on_submit()``
+    - ``submit_graph_patch`` → ``on_submit_graph_patch(payload)``
     - ``grade``            → ``on_grade(req_id, grade, grade_reason)`` (verifier only)
     - ``request_clarification`` → logged; no callback in v1
 
@@ -877,6 +946,7 @@ async def route_tool_call(
         args: Tool argument dict from the Codex server event payload.
         on_checklist_update: Bound checklist-update callback.
         on_submit: Bound submit callback.
+        on_submit_graph_patch: Bound graph patch callback.
         on_grade: Bound grade callback (``None`` in builder phase).
         agent_label: Label used in log messages (e.g. ``"CodexServerAgent"``).
 
@@ -896,6 +966,12 @@ async def route_tool_call(
 
     elif tool_name == "submit":
         await on_submit()
+
+    elif tool_name == "submit_graph_patch":
+        if on_submit_graph_patch is None:
+            raise ValueError("submit_graph_patch is not registered for this session")
+        payload = _normalize_patch_payload(args)
+        return await on_submit_graph_patch(payload)
 
     elif tool_name == "grade":
         if on_grade is not None:
@@ -925,6 +1001,43 @@ async def route_tool_call(
                 agent_label,
                 outcome,
             )
+    return ""
+
+
+def _normalize_patch_payload(args: dict[str, Any]) -> dict[str, Any]:
+    """Normalize planner patch arguments into a top-level PatchEnvelope payload."""
+    if "patch" in args:
+        if len(args) != 1:
+            raise ValueError("submit_graph_patch accepts either `patch` or patch fields, not both")
+        raw_patch = args.get("patch")
+        if not isinstance(raw_patch, dict):
+            raise ValueError("submit_graph_patch requires `patch` to be an object")
+        patch = cast(dict[str, Any], raw_patch)
+        patch_id = patch.get("patch_id")
+        base_graph_position = patch.get("base_graph_position")
+        ops = patch.get("ops")
+        rationale_record_id = patch.get("rationale_record_id")
+    else:
+        patch_id = args.get("patch_id")
+        base_graph_position = args.get("base_graph_position")
+        ops = args.get("ops")
+        rationale_record_id = args.get("rationale_record_id")
+
+    if not isinstance(patch_id, str) or not patch_id.strip():
+        raise ValueError("submit_graph_patch requires a non-empty patch_id")
+    if not isinstance(base_graph_position, int):
+        raise ValueError("submit_graph_patch requires integer base_graph_position")
+    if not isinstance(ops, list):
+        raise ValueError("submit_graph_patch requires an ops list")
+
+    payload: dict[str, Any] = {
+        "patch_id": patch_id,
+        "base_graph_position": base_graph_position,
+        "ops": ops,
+    }
+    if isinstance(rationale_record_id, str):
+        payload["rationale_record_id"] = rationale_record_id
+    return payload
 
 
 # ---------------------------------------------------------------------------

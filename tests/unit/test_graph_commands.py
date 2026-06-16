@@ -11,6 +11,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     apply_command,
     initial_projection,
+    project_requirement_freshness_facts,
     project_task_states,
     reduce_event,
 )
@@ -121,6 +122,117 @@ def test_lifecycle_illegal_transition_rejected() -> None:
 
     assert output[0].event_type == "command_rejected"
     assert output[0].payload["command_type"] == "complete"
+
+
+def test_lifecycle_complete_rejected_with_final_blocker_evidence() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "task-1",
+            },
+            1,
+        ),
+    ]
+
+    output = _apply(events, "complete")
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload == {
+        "command_type": "complete",
+        "reason": "final invariant blockers remain",
+        "blockers": [
+            {
+                "kind": "task_not_accepted",
+                "reason": "task region has not reached accepted",
+                "task_region_id": "task-1",
+                "state": "pending",
+            }
+        ],
+    }
+
+
+def test_lifecycle_complete_accepts_clean_graph_without_blockers() -> None:
+    output = _apply([_event("run_lifecycle_changed", {"to_state": "active"}, 0)], "complete")
+
+    assert [event.event_type for event in output] == ["run_lifecycle_changed"]
+    assert output[0].payload["to_state"] == "completed"
+
+
+def test_record_requirement_revision_command_emits_replayable_policy_event() -> None:
+    output = _apply(
+        [],
+        "record_requirement_revision",
+        {
+            "run_id": "run-1",
+            "requirement_id": "R-1",
+            "version_id": "R-1.v1",
+            "classification": "semantic",
+        },
+    )
+
+    assert [event.event_type for event in output] == ["requirement_revision_recorded"]
+    assert project_requirement_freshness_facts(output) == [
+        {
+            "requirement_id": "R-1",
+            "active_version_id": "R-1.v1",
+            "revision_classification": "semantic",
+            "requires_authority": True,
+            "authority_required_reason": "semantic",
+            "fresh_support_ids": [],
+            "stale_support_ids": [],
+            "unsupported": True,
+        }
+    ]
+
+
+def test_record_support_evidence_command_uses_active_requirement_version() -> None:
+    events = _apply(
+        [],
+        "record_requirement_revision",
+        {
+            "run_id": "run-1",
+            "requirement_id": "R-1",
+            "version_id": "R-1.v1",
+            "classification": "initial",
+        },
+    )
+
+    output = _apply(
+        events,
+        "record_support_evidence",
+        {
+            "run_id": "run-1",
+            "support_id": "S-1",
+            "evidence_id": "E-1",
+            "requirement_id": "R-1",
+        },
+    )
+
+    assert [event.event_type for event in output] == ["support_evidence_recorded"]
+    assert output[0].payload["requirement_version_id"] == "R-1.v1"
+    assert project_requirement_freshness_facts([*events, *output])[0]["unsupported"] is False
+
+
+def test_record_support_evidence_rejects_unknown_active_requirement_version() -> None:
+    output = _apply(
+        [],
+        "record_support_evidence",
+        {
+            "run_id": "run-1",
+            "support_id": "S-1",
+            "evidence_id": "E-1",
+            "requirement_id": "R-1",
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload["command_type"] == "record_support_evidence"
+    assert output[0].payload["reason"] == "unknown active requirement version: R-1"
 
 
 def test_callback_accept_emits_boundary_events() -> None:
@@ -273,6 +385,196 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
     )
 
 
+def test_callback_accepts_gap_analysis_output_and_binds_classified_gap() -> None:
+    events = [
+        *_active_lease_events(),
+        _event(
+            "node_created",
+            {"node_id": "worker-2", "kind": "worker", "role": "fixer", "state": "planned"},
+            3,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-gap-classification",
+                "from_node_id": "worker-1",
+                "from_port": "gap_classification",
+                "to_node_id": "worker-2",
+                "to_port": "classified_gap",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["gap_analysis"]},
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-gap",
+                "output_records": [
+                    {
+                        "record_id": "gap-classification-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "gap_classification",
+                        "schema": "GapClassification",
+                        "value": {
+                            "milestone_kind": "gap_analysis",
+                            "classification": "corrective_work_required",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "input_bound",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert output[2].payload == {
+        "edge_id": "edge-gap-classification",
+        "to_node_id": "worker-2",
+        "to_port": "classified_gap",
+        "record_ids": ["gap-classification-1"],
+        "bound_at_position": 0,
+    }
+
+
+def test_callback_accepts_classified_gap_port_and_binds_classified_gap() -> None:
+    events = [
+        *_active_lease_events(),
+        _event(
+            "node_created",
+            {"node_id": "worker-2", "kind": "worker", "role": "fixer", "state": "planned"},
+            3,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-classified-gap",
+                "from_node_id": "worker-1",
+                "from_port": "classified_gap",
+                "to_node_id": "worker-2",
+                "to_port": "classified_gap",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["gap_analysis"]},
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-gap",
+                "output_records": [
+                    {
+                        "record_id": "classified-gap-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "classified_gap",
+                        "schema": "GapClassification",
+                        "value": {
+                            "milestone_kind": "gap_analysis",
+                            "classification": "corrective_work_required",
+                        },
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "input_bound",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert output[2].payload == {
+        "edge_id": "edge-classified-gap",
+        "to_node_id": "worker-2",
+        "to_port": "classified_gap",
+        "record_ids": ["classified-gap-1"],
+        "bound_at_position": 0,
+    }
+
+
+def test_patch_create_edge_backfills_existing_verification_record() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-gap",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "running",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-1",
+                "record_kind": "verification",
+                "producer_node_id": "verifier-1",
+                "port": "verification_report",
+                "candidate_id": "candidate-1",
+                "verdict": "passed",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-late-edge",
+            "proposed_by_node_id": "planner-gap",
+            "actor_role": "gap_planner",
+            "base_graph_position": 2,
+            "ops": [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-final",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-final",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "graph_patch_accepted",
+        "edge_created",
+        "input_bound",
+    ]
+    assert output[2].payload == {
+        "edge_id": "edge-verifier-final",
+        "to_node_id": "check-final",
+        "to_port": "verification_evidence",
+        "record_ids": ["verification-1"],
+        "bound_at_position": 0,
+        "trigger": "edge_backfill",
+    }
+
+
 def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -315,13 +617,37 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
             3,
         ),
         _event(
+            "node_created",
+            {
+                "node_id": "planner-gap",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "planned",
+                "task_region_id": "task-1",
+            },
+            4,
+        ),
+        _event(
             "input_bound",
             {
                 "to_node_id": "verifier-1",
                 "to_port": "candidate_under_test",
                 "record_ids": ["candidate-1"],
             },
-            4,
+            5,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-verifier-gap",
+                "from_node_id": "verifier-1",
+                "from_port": "verification_report",
+                "to_node_id": "planner-gap",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["verification"]},
+            },
+            6,
         ),
         _event(
             "lease_granted",
@@ -332,7 +658,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
             },
-            5,
+            7,
         ),
     ]
 
@@ -366,10 +692,32 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         "callback_accepted",
         "output_record_accepted",
         "verification_passed",
+        "input_bound",
         "node_state_changed",
         "lease_released",
     ]
     assert output[2].payload["candidate_id"] == "candidate-1"
+    assert output[3].payload == {
+        "edge_id": "edge-verifier-gap",
+        "to_node_id": "planner-gap",
+        "to_port": "verification_evidence",
+        "record_ids": ["verification-1"],
+        "bound_at_position": 0,
+    }
+
+    projected = _project([*events, *output])
+    schedule_output = apply_command(
+        projected,
+        [*events, *output],
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+    assert any(
+        event.event_type == "lease_granted" and event.payload["node_id"] == "planner-gap"
+        for event in schedule_output
+    )
 
 
 def test_verifier_callback_rejects_unbound_verification_candidate() -> None:
@@ -804,6 +1152,57 @@ def test_patch_accept_emits_graph_events() -> None:
     )
 
     assert [event.event_type for event in output] == ["graph_patch_accepted", "node_created"]
+    assert output[0].payload["patch_id"] == "patch-1"
+    assert output[0].payload["proposed_by_node_id"] == "planner-1"
+    assert output[0].payload["actor_role"] == "planner"
+    assert output[0].payload["base_graph_position"] == -1
+
+
+def test_gap_planner_no_op_patch_accepts_through_submit_patch() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "gap-no-op",
+            "proposed_by_node_id": "gap-planner-1",
+            "actor_role": "gap_planner",
+            "base_graph_position": -1,
+            "ops": [],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_accepted"]
+    assert output[0].payload["actor_role"] == "gap_planner"
+
+
+def test_gap_planner_corrective_work_patch_accepts_through_submit_patch() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "gap-corrective",
+            "proposed_by_node_id": "gap-planner-1",
+            "actor_role": "gap_planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "corrective-worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "task_region_id": "corrective_work_region",
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_accepted", "node_created"]
+    assert output[1].payload["task_region_id"] == "corrective_work_region"
 
 
 def test_patch_accept_emits_events_for_all_v1_ops() -> None:
@@ -907,6 +1306,32 @@ def test_patch_reject_emits_rejection() -> None:
 
     assert output[0].event_type == "graph_patch_rejected"
     assert "cannot perform create_gate" in output[0].payload["reason"]
+    assert output[0].payload["patch_id"] == "patch-1"
+    assert output[0].payload["proposed_by_node_id"] == "planner-1"
+    assert output[0].payload["actor_role"] == "planner"
+    assert output[0].payload["base_graph_position"] == -1
+
+
+def test_malformed_patch_rejection_preserves_submitter_evidence() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-bad",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": "not-an-int",
+            "ops": [],
+        },
+    )
+
+    assert output[0].event_type == "command_rejected"
+    assert output[0].payload["command_type"] == "submit_patch"
+    assert output[0].payload["patch_id"] == "patch-bad"
+    assert output[0].payload["proposed_by_node_id"] == "planner-1"
+    assert output[0].payload["actor_role"] == "planner"
+    assert output[0].payload["base_graph_position"] == "not-an-int"
 
 
 def test_seed_compiled_events_accepts_topology_only_for_empty_run() -> None:
@@ -1315,6 +1740,158 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
     }
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["worker-1"] == "ready"
+
+
+def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "planner-1", "kind": "planner", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "planner-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+    reason = "Agent runner 'cli_subprocess' hit rate limit (resets at 14:30)"
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "run_id": "run-1",
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": reason,
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "node_state_changed",
+    ]
+    assert output[2].payload == {
+        "node_id": "planner-1",
+        "new_state": "failed",
+        "trigger": "agent_rate_limited",
+        "reason": reason,
+    }
+    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["node_states"]["planner-1"] == "failed"
+
+
+def test_agent_died_completes_non_gap_planner_after_accepted_patch() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "planner-1", "kind": "planner", "role": "planner", "state": "running"},
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "planner-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-1",
+                "proposed_by_node_id": "planner-1",
+                "successor_planner_node_ids": ["planner-gap"],
+            },
+            3,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "run_id": "run-1",
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "node_state_changed",
+    ]
+    assert output[2].payload == {
+        "node_id": "planner-1",
+        "new_state": "completed",
+        "trigger": "accepted_graph_patch_before_agent_death",
+    }
+    assert projection["node_states"]["planner-1"] == "completed"
+
+
+def test_agent_died_requeues_gap_planner_after_accepted_patch() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-gap",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "running",
+            },
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "planner-gap",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-1",
+                "proposed_by_node_id": "planner-gap",
+                "successor_planner_node_ids": [],
+            },
+            3,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "run_id": "run-1",
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "runtime_retry_scheduled",
+        "node_state_changed",
+    ]
+    assert output[3].payload["new_state"] == "ready"
 
 
 def test_agent_died_rejects_unknown_or_inactive_lease() -> None:

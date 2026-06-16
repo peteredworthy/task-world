@@ -13,6 +13,9 @@ These tests use hand-written fake subprocess objects injected via the
 
 from __future__ import annotations
 
+import json
+from typing import Any
+
 import pytest
 
 from orchestrator.git import WorktreeCommitError
@@ -65,13 +68,14 @@ async def _noop_checklist(_req_id: str, _status: object, _note: str | None) -> N
     return None
 
 
-def _ctx(tmp_path: object) -> ExecutionContext:
+def _ctx(tmp_path: object, graph_patch_callback: Any | None = None) -> ExecutionContext:
     return ExecutionContext(
         run_id="r1",
         task_id="t1",
         working_dir=str(tmp_path),
         prompt="implement the thing",
         requirements=[],
+        graph_patch_callback=graph_patch_callback,
     )
 
 
@@ -150,3 +154,86 @@ async def test_success_path_submits_once_without_extra_spawn(tmp_path: object) -
     assert result.success is True
     assert len(submit_calls) == 1
     assert len(spawned) == 1  # no fix pass when the gate passes
+
+
+async def test_graph_patch_sentinel_routes_to_callback_before_submit(tmp_path: object) -> None:
+    spawned: list[_FakeProcess] = []
+    submitted_patches: list[dict[str, Any]] = []
+    submit_calls: list[int] = []
+    sentinel = 'ORCHESTRATOR_GRAPH_PATCH:{"patch_id":"patch-1","base_graph_position":14,"ops":[]}\n'
+
+    async def graph_patch_callback(payload: dict[str, Any]) -> str:
+        submitted_patches.append(payload)
+        return "graph patch patch-1 accepted"
+
+    async def on_submit() -> None:
+        submit_calls.append(1)
+        assert submitted_patches
+
+    async def factory(*_args: object, **_kwargs: object) -> _FakeProcess:
+        proc = _FakeProcess([sentinel.encode()], returncode=0)
+        spawned.append(proc)
+        return proc
+
+    agent = CLIAgent(
+        command="sh",
+        parser=None,
+        subprocess_factory=factory,
+        max_commit_fix_attempts=2,
+    )
+
+    result = await agent.execute(
+        _ctx(tmp_path, graph_patch_callback=graph_patch_callback),
+        _noop_checklist,
+        on_submit,
+        on_output=None,
+    )
+
+    assert result.success is True
+    assert submitted_patches == [{"patch_id": "patch-1", "base_graph_position": 14, "ops": []}]
+    assert submit_calls == [1]
+    assert len(spawned) == 1
+
+
+async def test_graph_patch_sentinel_routes_from_claude_stream_json(tmp_path: object) -> None:
+    submitted_patches: list[dict[str, Any]] = []
+    sentinel = (
+        'ORCHESTRATOR_GRAPH_PATCH:{"patch":{"patch_id":"patch-json",'
+        '"base_graph_position":18,"ops":[]}}'
+    )
+    stream_line = (
+        json.dumps(
+            {
+                "type": "user",
+                "message": {"content": [{"type": "tool_result", "content": sentinel}]},
+            }
+        )
+        + "\n"
+    )
+
+    async def graph_patch_callback(payload: dict[str, Any]) -> str:
+        submitted_patches.append(payload)
+        return "graph patch patch-json accepted"
+
+    async def on_submit() -> None:
+        assert submitted_patches
+
+    async def factory(*_args: object, **_kwargs: object) -> _FakeProcess:
+        return _FakeProcess([stream_line.encode()], returncode=0)
+
+    agent = CLIAgent(
+        command="sh",
+        parser=None,
+        subprocess_factory=factory,
+        max_commit_fix_attempts=2,
+    )
+
+    result = await agent.execute(
+        _ctx(tmp_path, graph_patch_callback=graph_patch_callback),
+        _noop_checklist,
+        on_submit,
+        on_output=None,
+    )
+
+    assert result.success is True
+    assert submitted_patches == [{"patch_id": "patch-json", "base_graph_position": 18, "ops": []}]

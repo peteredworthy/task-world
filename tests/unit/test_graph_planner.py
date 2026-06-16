@@ -49,6 +49,323 @@ def test_horizon_patch_creates_region_and_successor() -> None:
     )
 
 
+def test_planner_patch_canonicalizes_verification_result_edge_port() -> None:
+    events = _planner_events()
+    accepted = _append(
+        events,
+        _submit_patch(
+            events,
+            "patch-verification-port-alias",
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                        "candidate_id": "candidate-1",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "planner-gap",
+                        "kind": "planner",
+                        "role": "gap_planner",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-to-gap",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_result",
+                    "to_node_id": "planner-gap",
+                    "to_port": "verification_evidence",
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                },
+            ],
+        ),
+    )
+
+    edge = next(event for event in accepted if event.event_type == "edge_created")
+    assert edge.payload["from_port"] == "verification_report"
+
+
+def test_planner_patch_canonicalizes_hidden_oracle_check_command() -> None:
+    events = _planner_events()
+    accepted = _append(
+        events,
+        _submit_patch(
+            events,
+            "patch-check-command",
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-final",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                        "candidate_id": "candidate-1",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-final",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                        "hidden_oracle_command": "uv run pytest tests/oracle -q",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-to-check-final",
+                    "from_node_id": "verifier-final",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-final",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                },
+            ],
+        ),
+    )
+
+    check = next(event for event in accepted if event.payload.get("node_id") == "check-final")
+    assert check.payload["command_definition"] == {
+        "id": "check-final",
+        "cmd": "uv run pytest tests/oracle -q",
+        "must": True,
+        "source": "planner_patch_hidden_oracle",
+    }
+
+
+def test_planner_patch_binds_dynamic_feature_hidden_oracle_command() -> None:
+    events = [
+        *_planner_events(),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "state": "completed",
+                "snapshot": {
+                    "dynamic_feature": {"hidden_oracle_command": "uv run pytest tests/oracle -q"}
+                },
+            },
+        ),
+    ]
+    accepted = _append(
+        events,
+        _submit_patch(
+            events,
+            "patch-bound-check-command",
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-final",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                        "candidate_id": "candidate-1",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-final",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                        "command_binding": "dynamic_feature_hidden_oracle",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-to-check-final",
+                    "from_node_id": "verifier-final",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-final",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                },
+            ],
+        ),
+    )
+
+    check = next(event for event in accepted if event.payload.get("node_id") == "check-final")
+    assert check.payload["command_definition"] == {
+        "id": "check-final",
+        "cmd": "uv run pytest tests/oracle -q",
+        "must": True,
+        "source": "dynamic_feature_hidden_oracle_binding",
+    }
+
+
+def test_planner_patch_rejects_dynamic_nodes_without_required_input_edges() -> None:
+    events = _planner_events()
+    rejected = _submit_patch(
+        events,
+        "patch-unbound-dynamic-nodes",
+        [
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "planner-gap",
+                    "kind": "planner",
+                    "role": "gap_planner",
+                    "state": "planned",
+                    "task_region_id": "gap-region",
+                },
+            },
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "worker-corrective",
+                    "kind": "worker",
+                    "role": "fixer",
+                    "state": "planned",
+                    "task_region_id": "corrective-region",
+                },
+            },
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "check-final",
+                    "kind": "check",
+                    "role": "invariant_gate",
+                    "state": "planned",
+                    "task_region_id": "final-region",
+                    "hidden_oracle_command": "uv run pytest tests/oracle -q",
+                },
+            },
+        ],
+    )
+
+    assert [event.event_type for event in rejected] == ["graph_patch_rejected"]
+    assert rejected[0].payload["reason"] == "gap planner requires verification input edge"
+
+
+def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None:
+    events = _planner_events()
+    accepted = _append(
+        events,
+        _submit_patch(
+            events,
+            "patch-bound-dynamic-nodes",
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-local",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                        "task_region_id": "validation-region",
+                        "candidate_id": "candidate-1",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "planner-gap",
+                        "kind": "planner",
+                        "role": "gap_planner",
+                        "state": "planned",
+                        "task_region_id": "gap-region",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-corrective",
+                        "kind": "worker",
+                        "role": "fixer",
+                        "state": "planned",
+                        "task_region_id": "corrective-region",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-corrective",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                        "task_region_id": "corrective-validation-region",
+                        "candidate_id": "candidate-corrective",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-final",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "task_region_id": "final-region",
+                        "hidden_oracle_command": "uv run pytest tests/oracle -q",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-to-gap",
+                    "from_node_id": "verifier-local",
+                    "from_port": "verification_report",
+                    "to_node_id": "planner-gap",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-gap-to-corrective",
+                    "from_node_id": "planner-gap",
+                    "from_port": "classified_gap",
+                    "to_node_id": "worker-corrective",
+                    "to_port": "classified_gap",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["gap_plan"]},
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-corrective-to-verifier",
+                    "from_node_id": "worker-corrective",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-corrective",
+                    "to_port": "candidate_under_test",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["candidate"]},
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-corrective-verifier-to-check",
+                    "from_node_id": "verifier-corrective",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-final",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                },
+            ],
+        ),
+    )
+
+    assert accepted[0].event_type == "graph_patch_accepted"
+
+
 def test_successor_readiness_via_milestone_records() -> None:
     events = _planner_events()
     events = [*events, *_append(events, _submit_patch(events, "patch-1", _region_ops("planner-1")))]

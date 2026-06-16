@@ -395,3 +395,41 @@ async def test_broadcast_receives_flushed_agent_output(clock: FakeClock) -> None
     assert len(manager.broadcasted) == 2
     assert manager.broadcasted[1].lines == ["line c", "line d"]
     assert manager.broadcasted[1].line_offset == 2
+
+
+async def test_node_id_carried_in_flushed_event(clock: FakeClock) -> None:
+    """node_id passed to add_line appears in the flushed AgentOutputEvent (graph node attribution)."""
+    store = FakeEventStore()
+    manager = FakeConnectionManager()
+    batcher = OutputBatcher(
+        event_store=store,  # type: ignore[arg-type]
+        max_lines=2,
+        flush_interval_ms=1000,
+        clock=clock,
+        connection_manager=manager,
+    )
+
+    await batcher.add_line("run-1", "task-1", 1, "line a", node_id="worker-node-abc")
+    await batcher.add_line("run-1", "task-1", 1, "line b", node_id="worker-node-abc")
+
+    assert len(store.appended) == 1
+    event = store.appended[0]
+    assert event.node_id == "worker-node-abc"
+    assert manager.broadcasted[0].node_id == "worker-node-abc"
+
+
+async def test_node_id_defaults_to_none_for_legacy_carrier(clock: FakeClock) -> None:
+    """add_line without node_id produces events with node_id=None (legacy carrier path)."""
+    store = FakeEventStore()
+    batcher = OutputBatcher(
+        event_store=store,  # type: ignore[arg-type]
+        max_lines=2,
+        flush_interval_ms=1000,
+        clock=clock,
+    )
+
+    await batcher.add_line("run-1", "task-1", 1, "line a")
+    await batcher.add_line("run-1", "task-1", 1, "line b")
+
+    assert len(store.appended) == 1
+    assert store.appended[0].node_id is None

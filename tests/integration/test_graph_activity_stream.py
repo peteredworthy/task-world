@@ -31,8 +31,19 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 from orchestrator.state.factory import create_run_from_routine
-from orchestrator.workflow import WorkflowService
+from orchestrator.workflow import AgentOutputEvent, WorkflowService
 from orchestrator.workflow.graph_driver import GraphRunDriver
+
+
+class FakeConnectionManager:
+    """Records broadcast events without a real WebSocket server."""
+
+    def __init__(self) -> None:
+        self.events: list[AgentOutputEvent] = []
+
+    async def broadcast_event(self, event: object) -> None:
+        if isinstance(event, AgentOutputEvent):
+            self.events.append(event)
 
 
 class FixedClock:
@@ -310,3 +321,119 @@ async def test_legacy_runs_activity_unchanged(
     assert events[0]["event_type"] == "agent_output"
     assert events[0]["payload"]["task_id"] == "task-1"
     assert events[0]["payload"]["lines"] == ["legacy line"]
+
+
+@pytest.mark.asyncio
+async def test_graph_run_broadcasts_output_via_connection_manager(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """Graph-carrier agent output is broadcast live via connection_manager, not only after the node ends."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-graph-broadcast"
+    _init_repo(repo)
+    run_id = "graph-broadcast"
+    await _create_run(session_factory, _routine(), run_id=run_id, repo=repo)
+
+    mgr = FakeConnectionManager()
+    batcher = OutputBatcher(session_factory=session_factory, connection_manager=mgr)
+
+    async def on_agent_output(context: GraphDispatchContext, lines: list[str]) -> None:
+        task_id = str(
+            context.node_payload.get("task_id")
+            or context.node_payload.get("task_region_id")
+            or context.node_id
+        )
+        attempt_num = int(context.node_payload.get("attempt_number") or 1)
+        for line in lines:
+            await batcher.add_line(
+                context.run_id, task_id, attempt_num, line, node_id=context.node_id
+            )
+
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={
+            "worker": OutputAgent(["worker live line"]),
+            "verifier": OutputAgent(["verifier live line"], grade="A"),
+        },
+        on_agent_output=on_agent_output,
+    )
+
+    await driver.run(run_id)
+    await batcher.flush_immediate()
+
+    # Both worker and verifier output must have been broadcast via the connection_manager
+    assert len(mgr.events) == 2
+    broadcasted_lines = [e.lines for e in mgr.events]
+    assert ["worker live line"] in broadcasted_lines
+    assert ["verifier live line"] in broadcasted_lines
+
+
+@pytest.mark.asyncio
+async def test_graph_broadcast_events_carry_node_id(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """Broadcast agent_output events include node_id so output is attributed to the producing graph node."""
+    _, session_factory = file_db
+    repo = tmp_path / "repo-graph-node-id"
+    _init_repo(repo)
+    run_id = "graph-node-id"
+    await _create_run(session_factory, _routine(), run_id=run_id, repo=repo)
+
+    mgr = FakeConnectionManager()
+    batcher = OutputBatcher(session_factory=session_factory, connection_manager=mgr)
+
+    async def on_agent_output(context: GraphDispatchContext, lines: list[str]) -> None:
+        task_id = str(
+            context.node_payload.get("task_id")
+            or context.node_payload.get("task_region_id")
+            or context.node_id
+        )
+        attempt_num = int(context.node_payload.get("attempt_number") or 1)
+        for line in lines:
+            await batcher.add_line(
+                context.run_id, task_id, attempt_num, line, node_id=context.node_id
+            )
+
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={
+            "worker": OutputAgent(["output"]),
+            "verifier": OutputAgent(["verify output"], grade="A"),
+        },
+        on_agent_output=on_agent_output,
+    )
+
+    await driver.run(run_id)
+    await batcher.flush_immediate()
+
+    # Every broadcast event must carry a non-None node_id for frontend attribution
+    assert all(e.node_id is not None for e in mgr.events), (
+        "Each broadcast agent_output event must carry node_id for graph node attribution"
+    )
+    # The persisted activity events must also carry node_id
+    events = await _activity_events(session_factory, run_id)
+    assert all(event["payload"].get("node_id") is not None for event in events), (
+        "Persisted agent_output events must include node_id for graph node attribution"
+    )
+
+
+@pytest.mark.asyncio
+async def test_legacy_carrier_still_broadcasts_via_connection_manager(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """Legacy carrier's OutputBatcher still broadcasts via connection_manager (no regression)."""
+    _, session_factory = file_db
+    mgr = FakeConnectionManager()
+    batcher = OutputBatcher(session_factory=session_factory, connection_manager=mgr)
+
+    await batcher.add_line("run-legacy", "task-1", 1, "legacy broadcast line")
+    await batcher.flush_immediate()
+
+    assert len(mgr.events) == 1
+    assert mgr.events[0].lines == ["legacy broadcast line"]
+    assert mgr.events[0].node_id is None  # Legacy carrier does not set node_id

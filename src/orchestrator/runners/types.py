@@ -44,6 +44,17 @@ AgentMetadataCallback = Callable[[dict[str, Any]], Awaitable[None]]
 EscalationCallback = Callable[[str, str], Awaitable[None]]
 """(requirement_id, reason) -> None. Called when agent flags a requirement as unfulfillable."""
 
+GraphPatchCallback = Callable[[dict[str, Any]], Awaitable[str]]
+"""Called when a graph planner submits a patch through the callback tool.
+
+Args:
+    patch_payload: A JSON-compatible payload matching PatchEnvelope plus caller
+        identity fields.
+
+Returns:
+    A status message to expose to the model.
+"""
+
 
 class ExecutionMetrics(BaseModel):
     """Metrics collected during agent execution."""
@@ -78,7 +89,11 @@ class ExecutionContext(BaseModel):
     auth_token: str | None = None
     end_commit: str | None = None  # For verifier: commit to checkout before verification
     step_id: str | None = None
+    node_id: str | None = None
+    node_kind: str | None = None
+    node_role: str | None = None
     expected_git_branch: str | None = None
+    graph_patch_callback: GraphPatchCallback | None = None
     available_tools: list[str] | None = None
     mcp_servers: list[MCPServerConfig] | None = None
     work_mode: Literal["implementation", "oversight"] = "implementation"

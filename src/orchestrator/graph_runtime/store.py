@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 
+from dataclasses import dataclass
+from typing import Any
+
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +16,41 @@ from orchestrator.graph import EventEnvelope
 from orchestrator.graph_runtime.errors import StaleProjectionError
 
 GRAPH_AGGREGATE_PREFIX = "graph:"
+HEAVY_GRAPH_EVENT_TYPES = frozenset(
+    {
+        "callback_accepted",
+        "callback_rejected_conflict",
+        "callback_rejected_stale",
+        "file_state_accepted",
+        "file_state_rejected",
+        "output_record_accepted",
+    }
+)
+SUMMARY_PAYLOAD_FIELDS = (
+    "accepted_patches",
+    "actor_role",
+    "blocker",
+    "command_type",
+    "execution_id",
+    "generation",
+    "grade",
+    "kind",
+    "lease_generation",
+    "lease_id",
+    "new_state",
+    "node_id",
+    "node_kind",
+    "patch_id",
+    "producer_node_id",
+    "proposed_by_node_id",
+    "reason",
+    "rejected_patches",
+    "rejection_reason",
+    "role",
+    "state",
+    "task_region_id",
+    "tokens",
+)
 
 
 def graph_aggregate_id(run_id: str) -> str:
@@ -23,6 +61,16 @@ def graph_aggregate_id(run_id: str) -> str:
     (aggregate_id, version) sequence and never appear in each other's reads.
     """
     return f"{GRAPH_AGGREGATE_PREFIX}{run_id}"
+
+
+@dataclass(frozen=True)
+class GraphEventSummary:
+    event_id: str
+    event_type: str
+    run_id: str
+    position: int
+    timestamp: str
+    payload: dict[str, Any]
 
 
 class GraphEventStore:
@@ -97,6 +145,59 @@ class GraphEventStore:
             events.append(EventEnvelope.model_validate(payload))
         return events
 
+    async def read_run_summaries(
+        self,
+        run_id: str,
+        from_position: int = 0,
+    ) -> list[GraphEventSummary]:
+        """Read compact graph event rows without materializing large payloads."""
+        aggregate_id = graph_aggregate_id(run_id)
+        normal_result = await self._session.execute(
+            select(EventV2Model)
+            .where(EventV2Model.aggregate_id == aggregate_id)
+            .where(EventV2Model.version >= from_position)
+            .where(EventV2Model.event_type.not_in(HEAVY_GRAPH_EVENT_TYPES))
+            .order_by(EventV2Model.version)
+        )
+        summaries = [
+            _summary_from_event(EventEnvelope.model_validate(json.loads(row.payload)))
+            for row in normal_result.scalars()
+        ]
+
+        heavy_selects = [
+            func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(field)
+            for field in SUMMARY_PAYLOAD_FIELDS
+        ]
+        heavy_result = await self._session.execute(
+            select(
+                EventV2Model.event_type,
+                EventV2Model.version,
+                EventV2Model.timestamp,
+                func.json_extract(EventV2Model.payload, "$.event_id").label("event_id"),
+                *heavy_selects,
+            )
+            .where(EventV2Model.aggregate_id == aggregate_id)
+            .where(EventV2Model.version >= from_position)
+            .where(EventV2Model.event_type.in_(HEAVY_GRAPH_EVENT_TYPES))
+            .order_by(EventV2Model.version)
+        )
+        for row in heavy_result.mappings():
+            payload = {
+                field: row[field] for field in SUMMARY_PAYLOAD_FIELDS if row.get(field) is not None
+            }
+            event_id = row.get("event_id")
+            summaries.append(
+                GraphEventSummary(
+                    event_id=str(event_id or f"graph-event-{row['version']}"),
+                    event_type=str(row["event_type"]),
+                    run_id=run_id,
+                    position=int(row["version"]),
+                    timestamp=str(row["timestamp"]),
+                    payload=payload,
+                )
+            )
+        return sorted(summaries, key=lambda event: event.position)
+
     async def current_position(self, run_id: str) -> int:
         result = await self._session.execute(
             select(func.max(EventV2Model.version)).where(
@@ -104,3 +205,32 @@ class GraphEventStore:
             )
         )
         return int(result.scalar_one_or_none() or 0)
+
+
+def _summary_from_event(event: EventEnvelope) -> GraphEventSummary:
+    payload = {
+        key: value
+        for key, value in event.payload.items()
+        if key in SUMMARY_PAYLOAD_FIELDS
+        or key
+        in {
+            "blockers",
+            "graph_verifier_grades",
+            "ops",
+            "operations",
+            "patch_ops",
+            "patch_rejection_reasons",
+            "tokens_by_node",
+            "tokens_by_node_kind",
+            "value",
+            "grades",
+        }
+    }
+    return GraphEventSummary(
+        event_id=event.event_id,
+        event_type=event.event_type,
+        run_id=event.run_id,
+        position=event.position,
+        timestamp=event.timestamp.isoformat(),
+        payload=payload,
+    )

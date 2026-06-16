@@ -27,7 +27,7 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Any
+from typing import Any, cast
 
 from orchestrator.runners.errors import (
     AgentCancelledError,
@@ -47,6 +47,7 @@ from orchestrator.runners.types import (
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
+    GraphPatchCallback,
     GradeCallback,
     LogLineCallback,
     SubmitCallback,
@@ -178,6 +179,7 @@ def build_orchestrator_mcp_server(
     on_checklist_update: ChecklistUpdateCallback,
     on_submit: SubmitCallback,
     on_grade: GradeCallback | None,
+    on_submit_graph_patch: GraphPatchCallback | None = None,
 ) -> Any:
     """Build an in-process MCP server with orchestrator callback tools."""
     from claude_agent_sdk import tool, create_sdk_mcp_server
@@ -215,6 +217,32 @@ def build_orchestrator_mcp_server(
         return {"content": [{"type": "text", "text": f"Clarification requested: {question}"}]}
 
     tools_list = [submit]
+
+    if on_submit_graph_patch is not None:
+
+        @tool(
+            "submit_graph_patch",
+            "Submit a graph patch envelope for planner-driven graph mutations.",
+            {"patch": dict},
+        )
+        async def submit_graph_patch(args: dict[str, Any]) -> dict[str, Any]:
+            raw_patch = args.get("patch")
+            if isinstance(raw_patch, str):
+                try:
+                    decoded_patch = json.loads(raw_patch)
+                except json.JSONDecodeError:
+                    decoded_patch = None
+                patch_payload = (
+                    cast(dict[str, Any], decoded_patch) if isinstance(decoded_patch, dict) else args
+                )
+            else:
+                patch_payload = (
+                    cast(dict[str, Any], raw_patch) if isinstance(raw_patch, dict) else args
+                )
+            feedback = await on_submit_graph_patch(dict(patch_payload))
+            return {"content": [{"type": "text", "text": feedback}]}
+
+        tools_list.append(submit_graph_patch)
 
     if on_grade is None:
         tools_list.extend([update_checklist, request_clarification])
@@ -321,6 +349,17 @@ def build_claude_sdk_prompt(context: ExecutionContext, is_verifier: bool = False
         The fully assembled prompt string.
     """
     requirements_text = "\n".join(f"- {req}" for req in context.requirements)
+    graph_node_submit_section = ""
+    if context.node_id is not None:
+        graph_node_submit_section = (
+            "\n## Graph Node Completion\n"
+            "- This is a graph-runtime node. When this node's work is complete, you must "
+            "call the MCP tool **submit** (shown by Claude as `mcp__orchestrator__submit`).\n"
+            "- If the requirements list is empty, still call **submit** after completing the "
+            "node objective.\n"
+            "- Text such as 'submitted' or 'I will submit' is not a submission; the graph "
+            "only advances after the **submit** tool call reaches the orchestrator.\n"
+        )
     workflow_action = (
         "Perform only oversight/documentation/API operations. Do not implement source or test changes."
         if context.work_mode == "oversight"
@@ -389,7 +428,17 @@ def build_claude_sdk_prompt(context: ExecutionContext, is_verifier: bool = False
             "- Collect and integrate sub-agent results before marking requirements done.\n"
         )
 
-    return f"{context.prompt}\n\n## Requirements\n{requirements_text}\n\n{phase_section}"
+        if context.graph_patch_callback is not None:
+            phase_section += (
+                "\n## Graph Planner Tools\n"
+                "- **submit_graph_patch**(patch) — Submit a graph patch envelope for "
+                "planner-driven graph mutations.\n"
+                "- Use `base_graph_position` from the planner packet as the patch base.\n"
+                "- Call **submit_graph_patch** before **submit**; if the patch is rejected, "
+                "submit a corrected patch instead of editing graph events directly.\n"
+            )
+
+    return f"{context.prompt}\n\n## Requirements\n{requirements_text}\n\n{phase_section}{graph_node_submit_section}"
 
 
 # ---------------------------------------------------------------------------
@@ -536,7 +585,10 @@ class ClaudeSDKAgent:
 
             # Build orchestrator MCP server with callback tools
             orchestrator_server = build_orchestrator_mcp_server(
-                on_checklist_update, on_submit, on_grade
+                on_checklist_update,
+                on_submit,
+                on_grade,
+                context.graph_patch_callback,
             )
             mcp_servers = build_mcp_servers(
                 orchestrator_server,

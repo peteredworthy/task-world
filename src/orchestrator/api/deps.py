@@ -368,11 +368,15 @@ def make_workflow_preparer(
 def make_graph_runner(
     session_factory: async_sessionmaker[AsyncSession],
     service_factory: Callable[[AsyncSession], Awaitable[WorkflowService]],
+    connection_manager: ConnectionManager | None = None,
 ) -> Callable[[str], Awaitable[None]]:
     """Return a graph run driver callback for ``SignalConsumer``."""
     from orchestrator.runners import OutputBatcher
 
-    output_batcher = OutputBatcher(session_factory=session_factory)
+    output_batcher = OutputBatcher(
+        session_factory=session_factory,
+        connection_manager=connection_manager,
+    )
 
     async def on_agent_output(context: "GraphDispatchContext", lines: list[str]) -> None:
         task_id = str(
@@ -382,7 +386,9 @@ def make_graph_runner(
         )
         attempt_num = int(context.node_payload.get("attempt_number") or 1)
         for line in lines:
-            await output_batcher.add_line(context.run_id, task_id, attempt_num, line)
+            await output_batcher.add_line(
+                context.run_id, task_id, attempt_num, line, node_id=context.node_id
+            )
 
     async def on_agent_usage(context: "GraphDispatchContext", result: Any) -> None:
         # Record graph-node agent usage against the run through the SAME shared

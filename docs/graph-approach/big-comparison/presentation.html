@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Big-task carrier comparison — graph vs idea-to-plan vs mind-the-gap</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#171c24; --panel2:#1d242e; --ink:#e6edf3; --muted:#9aa7b4;
+    --line:#2a313c; --graph:#4f9cff; --plan:#39c08a; --gap:#e0a32e; --base:#8b95a4; --bad:#e5534b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  header{padding:48px 7vw 28px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#11161d,#0e1116)}
+  h1{font-size:30px;margin:0 0 8px;letter-spacing:-.3px}
+  h2{font-size:22px;margin:0 0 14px;letter-spacing:-.2px}
+  .sub{color:var(--muted);max-width:900px}
+  main{padding:8px 7vw 80px}
+  section{padding:34px 0;border-bottom:1px solid var(--line)}
+  .grid{display:grid;gap:20px}
+  .g2{grid-template-columns:1fr 1fr}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  @media(max-width:880px){.g2,.g3{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
+  .card h3{margin:0 0 10px;font-size:15px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+  canvas{max-height:340px}
+  table{width:100%;border-collapse:collapse;font-size:14.5px}
+  th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line)}
+  th{color:var(--muted);font-weight:600;font-size:12.5px;text-transform:uppercase;letter-spacing:.05em}
+  td.n{font-variant-numeric:tabular-nums;text-align:right}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .best{background:rgba(57,192,138,.16);color:#5fe0a8}
+  .warn{background:rgba(224,163,46,.16);color:#f0c36b}
+  .bad{background:rgba(229,83,75,.16);color:#ff8a82}
+  .key{font-weight:700}
+  .lead{font-size:18px;max-width:920px}
+  .muted{color:var(--muted)}
+  ul{margin:6px 0 0;padding-left:20px} li{margin:6px 0}
+  .tag{font-size:12px;padding:2px 8px;border-radius:6px;background:var(--panel2);color:var(--muted);border:1px solid var(--line)}
+  .spectrum{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-top:8px}
+  .step{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:14px;position:relative}
+  .step .lbl{font-weight:700;margin-bottom:4px}
+  .step .meta{font-size:12.5px;color:var(--muted)}
+  .bar{height:6px;border-radius:4px;margin-top:10px}
+  .foot{color:var(--muted);font-size:13px;margin-top:28px}
+  code{background:#0b0e13;border:1px solid var(--line);border-radius:5px;padding:1px 6px;font-size:13px}
+  .callout{border-left:3px solid var(--graph);background:var(--panel2);padding:12px 16px;border-radius:0 10px 10px 0;margin:10px 0}
+  .callout.warn{border-color:var(--gap)} .callout.bad{border-color:var(--bad)}
+</style>
+</head>
+<body>
+<header>
+  <div class="tag">task-world · execution-graph evaluation · 2026-06-14</div>
+  <h1>How effective, efficient & expensive is the graph approach?</h1>
+  <p class="sub lead">A controlled, big-task comparison of three orchestration strategies — <b style="color:var(--graph)">graph (adaptive horizon planning)</b>, <b style="color:var(--plan)">idea-to-plan (front-loaded)</b>, and <b style="color:var(--gap)">mind-the-gap (one chunk at a time)</b> — building the <i>same</i> non-trivial feature with the <i>same</i> worker model, graded by the <i>same</i> hidden 56-test oracle. Follow-on to <code>carrier-comparison.md</code>, which compared carriers on a one-function task and could not separate them.</p>
+</header>
+
+<main>
+
+<section>
+  <h2>The result in one chart</h2>
+  <p class="sub">Correctness (hidden acceptance tests passed, out of 56) against full cost (USD, codex tokens). Bubble area ∝ number of agent invocations. Up-and-left is better.</p>
+  <div class="card"><canvas id="scatter"></canvas></div>
+  <p class="callout"><b>Only adaptive horizon planning (graph) reached 100%.</b> It closed the last 5 cross-feature interaction bugs a single shot missed — at ~4.5× the one-shot cost. Spending <i>more</i> than that (mind-the-gap, finest granularity) scored <i>below</i> one-shot: more cycles ≠ more correct.</p>
+</section>
+
+<section>
+  <h2>What was built (the target feature)</h2>
+  <div class="grid g2">
+    <div class="card">
+      <h3>Versioned File Workspace</h3>
+      <p class="muted" style="margin-top:0">Extension of a small FastAPI file-manager (<code>desktop-test</code>). Deliberately beyond one-shot: eight capabilities whose <b>interactions</b> are the hard part.</p>
+      <ul>
+        <li><b>Version history</b> — snapshot on overwrite, list/read/restore/diff, 20-version retention</li>
+        <li><b>Trash bin</b> — soft delete, restore w/ collision-rename, purge, dirs</li>
+        <li><b>Search</b> — name/content/tag/type/size/prefix filters</li>
+        <li><b>Move & copy</b> — move carries history+tags; copy duplicates content+tags, not history</li>
+        <li><b>Tagging</b> — follows rename/move; copy duplicates; purge drops</li>
+        <li><b>Quota</b> — live-bytes cap → 413 with no partial write; versions/trash excluded</li>
+        <li><b>Activity log</b> — bounded ring of mutations</li>
+        <li><b>Interactions</b> — trash carries history+tags; restore respects quota; rename carries history…</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Calibration — making it hard enough</h3>
+      <p class="muted" style="margin-top:0">A naive one-shot is the difficulty gate. Hardened until a single agent could no longer ace it.</p>
+      <table>
+        <tr><th>Spec</th><th>Oracle</th><th>One-shot</th></tr>
+        <tr><td>v1 · 3 capabilities</td><td>30 tests</td><td><span class="pill bad">30/30 — too easy</span></td></tr>
+        <tr><td>v2 · 8 capabilities + interactions</td><td>56 tests</td><td><span class="pill warn">51/56 — 5 interaction bugs</span></td></tr>
+      </table>
+      <p class="muted">The 5 misses a one-shot leaves are exactly the cross-feature edges the verified strategies get to close. <b>The oracle is hidden from every arm</b> — they receive only the prose spec.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>The experiment: one axis, three strategies</h2>
+  <p class="sub">The strategies differ on a single dimension — <b>plan granularity</b> — the very dimension the graph approach was designed around (adaptive plan granularity). Held constant: target feature, worker model <code>gpt-5.3-codex-spark</code>, orchestrator (Claude Opus), fresh code copy per arm, and the 56-test grading oracle.</p>
+  <div class="spectrum">
+    <div class="step"><div class="lbl" style="color:var(--base)">One-shot</div><div class="meta">1 agent, no plan. The baseline.</div><div class="bar" style="background:var(--base);width:18%"></div></div>
+    <div class="step"><div class="lbl" style="color:var(--plan)">Idea-to-plan</div><div class="meta">Plan everything up front → build all → verify once.</div><div class="bar" style="background:var(--plan);width:40%"></div></div>
+    <div class="step"><div class="lbl" style="color:var(--graph)">Graph (horizon)</div><div class="meta">Plan a multi-step region → build+verify → replan next region. Adaptive batches.</div><div class="bar" style="background:var(--graph);width:72%"></div></div>
+    <div class="step"><div class="lbl" style="color:var(--gap)">Mind-the-gap</div><div class="meta">Plan one small chunk → build → validate → repeat. Finest grain.</div><div class="bar" style="background:var(--gap);width:100%"></div></div>
+  </div>
+  <p class="muted foot">Arrow of increasing planning granularity → more, smaller planning turns. A fifth run (<b>A′</b>) exercised task-world's <i>real</i> graph carrier on the same feature as a grounding datapoint.</p>
+</section>
+
+<section>
+  <h2>Correctness & cost, side by side</h2>
+  <div class="grid g2">
+    <div class="card"><h3>Correctness — acceptance tests passed /56</h3><canvas id="correct"></canvas></div>
+    <div class="card"><h3>Full cost — USD (codex tokens)</h3><canvas id="cost"></canvas></div>
+  </div>
+  <div class="grid g2" style="margin-top:20px">
+    <div class="card"><h3>Effort — agent invocations & tool calls</h3><canvas id="effort"></canvas></div>
+    <div class="card"><h3>Cost efficiency — USD per test passed</h3><canvas id="perTest"></canvas></div>
+  </div>
+</section>
+
+<section>
+  <h2>The numbers</h2>
+  <div class="card">
+  <table id="bigtable">
+    <thead><tr>
+      <th>Arm</th><th>Strategy</th><th class="n">Correct /56</th><th class="n">Agents</th><th class="n">Tool calls</th><th class="n">Wall (s)</th><th class="n">Input tok</th><th class="n">Output tok</th><th class="n">~USD</th><th class="n">$/test</th>
+    </tr></thead>
+    <tbody></tbody>
+  </table>
+  </div>
+  <p class="muted foot">Codex on a subscription quota is billed by usage limits, not per-token — USD uses GPT-5-class estimate rates and is indicative; token volume and agent count are the hard signals. Cost is dominated by cache-read input tokens (turns), consistent with the earlier small-task study.</p>
+</section>
+
+<section>
+  <h2>What each strategy actually did</h2>
+  <div class="grid g2">
+    <div class="card"><h3 style="color:var(--graph)">A — Graph (horizon) · 56/56 · best</h3>
+      <p>17 agents across 5 planned regions, an independent verifier node per region. The horizon planner staged all eight capabilities; the verifier caught and bounced incomplete regions.</p>
+      <div class="callout"><b>Honesty note:</b> first graded 45/56 because a verdict-parse bug in <i>our driver</i> aborted the loop after the final region was <i>planned</i> but before it was <i>built</i>. Running that planned region (verifier passed first try) closed to 56/56. The 45 is a harness artifact; strategy correctness is 56/56.</div>
+    </div>
+    <div class="card"><h3 style="color:var(--plan)">B — Idea-to-plan · 52/56</h3>
+      <p>3 agents: plan → implement → verify. Cheapest of the verified arms ($2.23). Its single up-front plan + one verify pass left 4 trash/directory interaction bugs — its own tests passed, so the front-loaded verifier never saw them.</p>
+      <p class="muted">Front-loading bought almost nothing over one-shot here (+1 test), at +60% cost.</p>
+    </div>
+    <div class="card"><h3 style="color:var(--gap)">C — Mind-the-gap · 48/56 · most cost</h3>
+      <p>29 agents over 9 chunk cycles (fresh builder+validator each). The most expensive arm — yet scored <b>below one-shot</b>.</p>
+      <div class="callout warn">Finest granularity backfired: narrow per-chunk validators rubber-stamped chunks carrying latent interaction bugs (activity-log shape, quota no-partial, copy-history). <b>Verification scope matters more than cycle count.</b></div>
+    </div>
+    <div class="card"><h3 style="color:var(--base)">A′ — Real graph carrier · 33/56</h3>
+      <p>task-world's actual graph carrier (native codex worker) <i>completed</i> the run — 11 graph nodes, verifier passed. But a single-task routine compiles to a <b>minimal</b> graph (one worker + one verifier, no planner nodes), so it behaved like a one-shot worker on the routine's condensed context and the verifier passed coarse requirements, missing quota/activity/interactions.</p>
+      <div class="callout bad">Two caveats: it needed manual <code>resume</code> through transient "graph quiescent" stalls, and it received thinner input (routine <code>task_context</code>) than the other arms (full spec) — so 33/56 partly reflects input asymmetry, not just the carrier.</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Findings</h2>
+  <div class="grid g2">
+    <div class="card"><h3>1 · Cost tracks planning granularity, not correctness</h3>
+      <p>$1.4 → $2.2 → $6.3 → $6.4; agents 1 → 3 → 17 → 29. Finer planning = more agents = more turns = more cost, monotonically. Correctness does <b>not</b> follow the same curve.</p></div>
+    <div class="card"><h3>2 · Adaptive horizon planning is the only arm at 100%</h3>
+      <p>The graph strategy bought the last five cross-feature interaction bugs a one-shot leaves — the exact "large/ambiguous task" payoff the earlier study predicted but couldn't show on a toy.</p></div>
+    <div class="card"><h3>3 · More iteration is not more correctness</h3>
+      <p>Mind-the-gap spent the most and scored the lowest of the loops. Independent verification only helps if each verifier's <b>scope</b> spans the interactions; per-chunk validators are too narrow.</p></div>
+    <div class="card"><h3>4 · The carrier's value needs real planner + verifier nodes</h3>
+      <p>On a thin single-task routine the real graph degenerates to one-shot-plus-a-coarse-verifier (33/56) and adds operational overhead. The graph <i>approach's</i> benefit (Arm A, 56/56) comes from horizon planner nodes and detailed staged verification — which that routine never compiled to.</p></div>
+  </div>
+  <p class="callout" style="margin-top:18px"><b>Decision-relevant takeaway.</b> The graph approach earns its premium specifically on <i>maximum correctness for interaction-heavy work</i>, and only when compiled with planner nodes + adequately-scoped verifiers. For cheap "good enough" output, idea-to-plan or even one-shot dominate on $/test. The lever that decides the outcome is <b>verification scope</b>, not iteration count.</p>
+</section>
+
+<section>
+  <h2>Caveats — how far to trust this</h2>
+  <div class="card">
+  <ul>
+    <li><b>n = 1 per arm.</b> Codex is non-deterministic; treat deltas as directional, not significant — same posture as the prior small-task study.</li>
+    <li><b>Level mismatch.</b> Arms A/B/C are orchestrator-driven strategies on a common harness; A′ alone is task-world's productionized carrier. The clean controlled comparison is A vs B vs C; A′ grounds the strategy in the real system.</li>
+    <li><b>Input asymmetry for A′.</b> A′ got the routine's condensed <code>task_context</code>; the others got the full spec — depressing A′'s score independent of the carrier.</li>
+    <li><b>Token capture.</b> <code>codex_server</code> (A′) does not persist token usage — a known measurement gap; A′ cost is by node/agent proxy only.</li>
+    <li><b>Harness artifact, corrected.</b> Arm A's first 45/56 was our verdict-parser aborting before the planner's final region built; reported transparently and corrected to 56/56.</li>
+  </ul>
+  </div>
+  <p class="foot">Reproducibility: design, spec, hidden oracle, per-arm transcripts & metrics, and this deck live in <code>docs/graph-approach/big-comparison/</code>. Worker model <code>gpt-5.3-codex-spark</code>; orchestrator Claude Opus; 2026-06-14.</p>
+</section>
+
+</main>
+
+<script>
+const DATA = [
+  {arm:"One-shot",     key:"base",  color:"#8b95a4", correct:51, agents:1,  tools:32,  wall:166,  inTok:3.06, outTok:57,  usd:1.39},
+  {arm:"Idea-to-plan", key:"plan",  color:"#39c08a", correct:52, agents:3,  tools:56,  wall:633,  inTok:3.86, outTok:103, usd:2.23},
+  {arm:"Graph horizon",key:"graph", color:"#4f9cff", correct:56, agents:17, tools:292, wall:1447, inTok:14.8, outTok:220, usd:6.28},
+  {arm:"Mind-the-gap", key:"gap",   color:"#e0a32e", correct:48, agents:29, tools:301, wall:1554, inTok:13.4, outTok:228, usd:6.42},
+  {arm:"A′ real graph",key:"real",  color:"#b07cff", correct:33, agents:2,  tools:null, wall:1201, inTok:null, outTok:null, usd:null},
+];
+const labels = DATA.map(d=>d.arm), colors = DATA.map(d=>d.color);
+const gridc = "#2a313c", tick="#9aa7b4";
+const baseOpts = (yTitle)=>({responsive:true, plugins:{legend:{display:false}},
+  scales:{x:{ticks:{color:tick},grid:{color:gridc}}, y:{title:{display:true,text:yTitle,color:tick},ticks:{color:tick},grid:{color:gridc},beginAtZero:true}}});
+
+new Chart(correct,{type:"bar",data:{labels,datasets:[{data:DATA.map(d=>d.correct),backgroundColor:colors,borderRadius:6}]},
+  options:{...baseOpts("tests passed / 56"),plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.raw+" / 56"}}},scales:{...baseOpts().scales,y:{...baseOpts("tests passed / 56").scales.y,max:56}}}});
+
+const costArms = DATA.filter(d=>d.usd!=null);
+new Chart(cost,{type:"bar",data:{labels:costArms.map(d=>d.arm),datasets:[{data:costArms.map(d=>d.usd),backgroundColor:costArms.map(d=>d.color),borderRadius:6}]},
+  options:{...baseOpts("USD (est.)"),plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>"$"+c.raw.toFixed(2)}}}}});
+
+new Chart(effort,{type:"bar",data:{labels:costArms.map(d=>d.arm),datasets:[
+  {label:"Agents",data:costArms.map(d=>d.agents),backgroundColor:"#4f9cff",borderRadius:5},
+  {label:"Tool calls",data:costArms.map(d=>d.tools),backgroundColor:"#39c08a",borderRadius:5}]},
+  options:{responsive:true,plugins:{legend:{labels:{color:tick}}},scales:{x:{ticks:{color:tick},grid:{color:gridc}},y:{type:"logarithmic",ticks:{color:tick},grid:{color:gridc},title:{display:true,text:"count (log)",color:tick}}}}});
+
+new Chart(perTest,{type:"bar",data:{labels:costArms.map(d=>d.arm),datasets:[{data:costArms.map(d=>+(d.usd/d.correct).toFixed(3)),backgroundColor:costArms.map(d=>d.color),borderRadius:6}]},
+  options:{...baseOpts("USD per passing test"),plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>"$"+c.raw.toFixed(3)+" / test"}}}}});
+
+new Chart(scatter,{type:"bubble",data:{datasets:costArms.map(d=>({label:d.arm,
+  data:[{x:d.usd,y:d.correct,r:Math.max(7,Math.sqrt(d.agents)*5)}],backgroundColor:d.color+"cc",borderColor:d.color}))},
+  options:{responsive:true,plugins:{legend:{labels:{color:tick}},tooltip:{callbacks:{label:c=>{const d=costArms[c.datasetIndex];return `${d.arm}: ${d.correct}/56, $${d.usd.toFixed(2)}, ${d.agents} agents`;}}}},
+  scales:{x:{title:{display:true,text:"full cost — USD (est.)",color:tick},ticks:{color:tick},grid:{color:gridc},min:0,max:7.5},
+          y:{title:{display:true,text:"correctness — tests / 56",color:tick},ticks:{color:tick},grid:{color:gridc},min:30,max:58}}}});
+
+const tb=document.querySelector("#bigtable tbody");
+const strat={base:"one agent, no plan",plan:"all-up-front",graph:"adaptive horizon batches",gap:"one chunk at a time",real:"real carrier · minimal graph"};
+DATA.forEach(d=>{
+  const pill = d.correct>=56?'<span class="pill best">best</span>':d.correct<=33?'<span class="pill bad">low</span>':'';
+  const dt=(v,suf="")=>v==null?'<span class="muted">n/a</span>':v+suf;
+  tb.insertAdjacentHTML("beforeend",
+   `<tr><td class="key" style="color:${d.color}">${d.arm} ${pill}</td><td class="muted">${strat[d.key]}</td>
+    <td class="n">${d.correct}</td><td class="n">${dt(d.agents)}</td><td class="n">${dt(d.tools)}</td>
+    <td class="n">${dt(d.wall)}</td><td class="n">${dt(d.inTok,"M")}</td><td class="n">${dt(d.outTok,"k")}</td>
+    <td class="n">${d.usd==null?'<span class="muted">n/a</span>':"$"+d.usd.toFixed(2)}</td>
+    <td class="n">${d.usd==null?'<span class="muted">n/a</span>':"$"+(d.usd/d.correct).toFixed(3)}</td></tr>`);
+});
+</script>
+</body>
+</html>

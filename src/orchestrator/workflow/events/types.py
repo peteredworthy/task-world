@@ -177,6 +177,7 @@ class AgentOutputEvent(WorkflowEvent):
     attempt_num: int = 0
     lines: list[str] = Field(default_factory=list)
     line_offset: int = 0  # Starting line number of this batch
+    node_id: str | None = None  # Graph node that produced this output (graph carrier only)
 
 
 class AgentErrorEvent(WorkflowEvent):

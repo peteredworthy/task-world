@@ -96,6 +96,8 @@ omit = []
 
 [tool.ruff]
 line-length = 100
+# docs/ holds ad-hoc experiment scripts, not production code (mirrors pyright exclude).
+extend-exclude = ["docs"]
 
 [tool.pyright]
 pythonVersion = "3.12"

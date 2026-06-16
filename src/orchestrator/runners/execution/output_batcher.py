@@ -26,6 +26,7 @@ class _BufferEntry:
     lines: list[str]
     start_time: float
     next_line_offset: int
+    node_id: str | None = None
     timer_task: asyncio.Task[None] | None = None
 
 
@@ -60,7 +61,15 @@ class OutputBatcher:
         self._lock = asyncio.Lock()
         self._closed = False
 
-    async def add_line(self, run_id: str, task_id: str, attempt_id: int, text: str) -> None:
+    async def add_line(
+        self,
+        run_id: str,
+        task_id: str,
+        attempt_id: int,
+        text: str,
+        *,
+        node_id: str | None = None,
+    ) -> None:
         """Accumulate a line; auto-flush when count or time threshold is reached."""
         async with self._lock:
             if self._closed:
@@ -71,6 +80,7 @@ class OutputBatcher:
                     lines=[],
                     start_time=self._clock(),
                     next_line_offset=0,
+                    node_id=node_id,
                 )
             entry = self._buffer[key]
             if not entry.lines:
@@ -170,6 +180,7 @@ class OutputBatcher:
             attempt_num=attempt_id,
             lines=lines_to_flush,
             line_offset=entry.next_line_offset,
+            node_id=entry.node_id,
         )
         if self._fixed_store is not None:
             await self._fixed_store.append(event)

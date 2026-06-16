@@ -12,6 +12,8 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import SqliteEventStore, init_db
+from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.workflow import AgentOutputEvent, InMemorySignalTransport
 from tests.integration.conftest import cleanup_runs_for_repo
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
@@ -40,6 +42,22 @@ async def client(client_and_drain: tuple[AsyncClient, DrainFn]) -> AsyncClient:
     return client_and_drain[0]
 
 
+@pytest.fixture
+async def client_app_and_drain() -> AsyncGenerator[tuple[AsyncClient, Any, DrainFn], None]:
+    app = create_app(
+        db_path=":memory:",
+        routine_dirs=[(FIXTURES, RoutineSource.LOCAL)],
+    )
+    await init_db(app.state.engine)
+    transport_obj = InMemorySignalTransport()
+    app.state.signal_transport = transport_obj
+    drain = make_drain_fn(app, transport_obj)
+    transport = ASGITransport(app=app)  # type: ignore[arg-type]
+    async with AsyncClient(transport=transport, base_url="http://test") as c:
+        yield c, app, drain
+    await app.state.engine.dispose()
+
+
 async def _setup_active_run(client: AsyncClient, drain: DrainFn) -> tuple[str, str]:
     """Create a run and start it, returning (run_id, task_id)."""
     resp = await client.post(
@@ -53,6 +71,37 @@ async def _setup_active_run(client: AsyncClient, drain: DrainFn) -> tuple[str, s
     assert start_resp.status_code == 202
     await drain(run_id)
     return run_id, task_id
+
+
+def _graph_event(
+    run_id: str,
+    event_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=event_id,
+        run_id=run_id,
+        position=-1,
+        event_type=event_type,
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        causation_id="test",
+        correlation_id=None,
+        timestamp=datetime(2025, 1, 15, 10, 30, tzinfo=timezone.utc),
+        payload=payload,
+    )
+
+
+async def _append_graph_events(
+    app: Any,
+    run_id: str,
+    events: list[EventEnvelope],
+) -> list[int]:
+    async with app.state.session_factory() as session:
+        stored = await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+    return [event.position for event in stored]
 
 
 async def test_activity_for_new_run_includes_run_created_event(client: AsyncClient) -> None:
@@ -231,6 +280,250 @@ async def test_activity_enrichment(
     event = task_events[0]
     assert event["task_title"] is not None
     assert event["step_title"] is not None
+
+
+async def test_activity_includes_compact_graph_patch_decision_summaries(
+    client_app_and_drain: tuple[AsyncClient, Any, DrainFn],
+) -> None:
+    client, app, _drain = client_app_and_drain
+    resp = await client.post(
+        "/api/runs",
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+    )
+    run_id = resp.json()["id"]
+
+    await _append_graph_events(
+        app,
+        run_id,
+        [
+            _graph_event(
+                run_id,
+                "event-patch-accepted",
+                "graph_patch_accepted",
+                {
+                    "patch_id": "patch-1",
+                    "base_graph_position": 4,
+                    "actor_role": "planner",
+                    "proposed_by_node_id": "planner-1",
+                    "successor_planner_node_ids": ["planner-2"],
+                },
+            ),
+            _graph_event(
+                run_id,
+                "event-patch-rejected",
+                "graph_patch_rejected",
+                {
+                    "patch_id": "patch-2",
+                    "actor_role": "planner",
+                    "proposed_by_node_id": "planner-1",
+                    "reason": "read_set_changed",
+                    "read_set_diff": {"changed": ["node-a"]},
+                },
+            ),
+        ],
+    )
+
+    activity = (await client.get(f"/api/runs/{run_id}/activity")).json()["events"]
+    accepted = next(event for event in activity if event["event_type"] == "graph_patch_accepted")
+    rejected = next(event for event in activity if event["event_type"] == "graph_patch_rejected")
+
+    assert accepted["payload"] == {
+        "summary": (
+            "Graph patch accepted: patch=patch-1; proposer=planner-1; "
+            "actor=planner; successor_planners=planner-2"
+        ),
+        "decision": "accepted",
+        "patch_id": "patch-1",
+        "proposed_by_node_id": "planner-1",
+        "actor_role": "planner",
+        "base_graph_position": 4,
+        "successor_planner_node_ids": ["planner-2"],
+    }
+    assert rejected["payload"]["summary"] == (
+        "Graph patch rejected: patch=patch-2; proposer=planner-1; "
+        "actor=planner; reason=read_set_changed"
+    )
+    assert rejected["payload"]["reason"] == "read_set_changed"
+    assert rejected["payload"]["read_set_diff"] == {"changed": ["node-a"]}
+
+
+async def test_activity_includes_graph_rejected_command_verifier_and_blocker_facts(
+    client_app_and_drain: tuple[AsyncClient, Any, DrainFn],
+) -> None:
+    client, app, _drain = client_app_and_drain
+    resp = await client.post(
+        "/api/runs",
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+    )
+    run_id = resp.json()["id"]
+
+    await _append_graph_events(
+        app,
+        run_id,
+        [
+            _graph_event(
+                run_id,
+                "event-malformed-patch",
+                "command_rejected",
+                {
+                    "command_type": "submit_patch",
+                    "reason": "malformed patch: missing patch_id",
+                },
+            ),
+            _graph_event(
+                run_id,
+                "event-verification-failed",
+                "verification_failed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "candidate-1",
+                    "task_region_id": "step-1/task-1",
+                    "record_id": "verification-1",
+                    "evidence": "raw verifier narrative is not copied",
+                    "value": {
+                        "grades": [
+                            {
+                                "requirement_id": "req-1",
+                                "grade": "C",
+                                "reason": "missing regression coverage",
+                            }
+                        ]
+                    },
+                },
+            ),
+            _graph_event(
+                run_id,
+                "event-node-deferred",
+                "node_deferred",
+                {"node_id": "verifier-2", "reason": "missing_required_input:candidate"},
+            ),
+            _graph_event(
+                run_id,
+                "event-review-blocker",
+                "node_created",
+                {
+                    "node_id": "review-final",
+                    "kind": "review",
+                    "state": "blocked",
+                    "blocker": "unresolved gap evidence",
+                },
+            ),
+            _graph_event(
+                run_id,
+                "event-worker-node",
+                "node_created",
+                {
+                    "node_id": "worker-raw",
+                    "kind": "worker",
+                    "state": "planned",
+                    "prompt": "raw prompt transcript must not appear",
+                },
+            ),
+        ],
+    )
+
+    activity = (await client.get(f"/api/runs/{run_id}/activity")).json()["events"]
+    command = next(event for event in activity if event["event_type"] == "command_rejected")
+    verification = next(event for event in activity if event["event_type"] == "verification_failed")
+    blocker = next(event for event in activity if event["event_type"] == "node_deferred")
+    invariant = next(
+        event
+        for event in activity
+        if event["event_type"] == "node_created" and event["payload"]["node_id"] == "review-final"
+    )
+
+    assert command["payload"] == {
+        "summary": (
+            "Graph command rejected: command=submit_patch; reason=malformed patch: missing patch_id"
+        ),
+        "decision": "rejected",
+        "command_type": "submit_patch",
+        "reason": "malformed patch: missing patch_id",
+    }
+    assert verification["payload"]["summary"] == (
+        "Graph verifier failed: verifier=verifier-1; candidate=candidate-1; "
+        "task=step-1/task-1; grades=req-1=C"
+    )
+    assert verification["payload"]["grades"] == [
+        {
+            "requirement_id": "req-1",
+            "grade": "C",
+            "reason": "missing regression coverage",
+        }
+    ]
+    assert "evidence" not in verification["payload"]
+    assert blocker["payload"] == {
+        "summary": "Graph node blocked: node=verifier-2; reason=missing_required_input:candidate",
+        "node_id": "verifier-2",
+        "reason": "missing_required_input:candidate",
+    }
+    assert invariant["payload"] == {
+        "summary": "Graph final invariant blocked: node=review-final; reason=unresolved gap evidence",
+        "node_id": "review-final",
+        "kind": "review",
+        "state": "blocked",
+        "reason": "unresolved gap evidence",
+    }
+    assert all(event["payload"].get("node_id") != "worker-raw" for event in activity)
+
+
+async def test_graph_activity_summaries_preserve_filtering_and_pagination(
+    client_app_and_drain: tuple[AsyncClient, Any, DrainFn],
+) -> None:
+    client, app, _drain = client_app_and_drain
+    resp = await client.post(
+        "/api/runs",
+        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+    )
+    run_id = resp.json()["id"]
+
+    await _append_graph_events(
+        app,
+        run_id,
+        [
+            _graph_event(
+                run_id,
+                "event-patch-accepted",
+                "graph_patch_accepted",
+                {
+                    "patch_id": "patch-1",
+                    "actor_role": "planner",
+                    "proposed_by_node_id": "planner-1",
+                    "successor_planner_node_ids": [],
+                },
+            ),
+            _graph_event(
+                run_id,
+                "event-verification-passed",
+                "verification_passed",
+                {
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "candidate-1",
+                    "task_region_id": "step-1/task-1",
+                    "value": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
+                },
+            ),
+        ],
+    )
+
+    filtered = (
+        await client.get(f"/api/runs/{run_id}/activity?event_type=verification_passed")
+    ).json()
+    assert [event["event_type"] for event in filtered["events"]] == ["verification_passed"]
+    assert filtered["events"][0]["payload"]["verdict"] == "passed"
+
+    page_1 = (await client.get(f"/api/runs/{run_id}/activity?limit=1")).json()
+    page_2 = (
+        await client.get(f"/api/runs/{run_id}/activity?after={page_1['events'][0]['id']}&limit=100")
+    ).json()
+
+    assert page_1["has_more"] is True
+    assert {event["id"] for event in page_1["events"]}.isdisjoint(
+        {event["id"] for event in page_2["events"]}
+    )
+    assert any(event["event_type"] == "graph_patch_accepted" for event in page_2["events"])
+    assert any(event["event_type"] == "verification_passed" for event in page_2["events"])
 
 
 async def test_activity_run_not_found(client: AsyncClient) -> None:

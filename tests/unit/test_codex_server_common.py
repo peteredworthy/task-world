@@ -22,8 +22,10 @@ from orchestrator.runners import (
     is_allowed_tool,
     normalize_codex_metrics,
     normalize_codex_output_lines,
+    route_tool_call,
     select_preferred_codex_model,
 )
+from orchestrator.config.enums import ChecklistStatus
 from orchestrator.runners.types import ExecutionContext
 
 
@@ -36,6 +38,8 @@ def _ctx(
     prompt: str = "Do the work.",
     requirements: list[str] | None = None,
     api_base_url: str | None = None,
+    node_kind: str | None = None,
+    node_role: str | None = None,
 ) -> ExecutionContext:
     return ExecutionContext(
         run_id="run-1",
@@ -44,6 +48,8 @@ def _ctx(
         prompt=prompt,
         requirements=requirements or ["Req A", "Req B"],
         api_base_url=api_base_url,
+        node_kind=node_kind,
+        node_role=node_role,
     )
 
 
@@ -55,7 +61,14 @@ def _ctx(
 def test_tool_allowlist_contains_expected_tools() -> None:
     """v1 allow-list contains the expected callback tools."""
     assert CODEX_SERVER_TOOL_ALLOWLIST == frozenset(
-        {"update_checklist", "grade", "submit", "request_clarification", "complete_recovery"}
+        {
+            "update_checklist",
+            "grade",
+            "submit",
+            "submit_graph_patch",
+            "request_clarification",
+            "complete_recovery",
+        }
     )
 
 
@@ -64,7 +77,10 @@ def test_tool_allowlist_contains_expected_tools() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("tool", ["update_checklist", "grade", "submit", "request_clarification"])
+@pytest.mark.parametrize(
+    "tool",
+    ["update_checklist", "grade", "submit", "submit_graph_patch", "request_clarification"],
+)
 def test_is_allowed_tool_true_for_allowed(tool: str) -> None:
     assert is_allowed_tool(tool) is True
 
@@ -166,6 +182,45 @@ def test_builder_prompt_does_not_contain_grade_tool_section() -> None:
     # The verifier-only "grade" tool instructions should not appear in builder
     assert "Grade EVERY requirement" not in result
     assert "grade_reason" not in result
+
+
+def test_builder_planner_prompt_contains_submit_graph_patch_instructions() -> None:
+    result = build_codex_server_prompt(
+        _ctx(node_kind="planner", node_role="planner"), is_verifier=False
+    )
+    assert "Planner Graph-Mutation Tool" in result
+    assert "submit_graph_patch" in result
+    assert "base_graph_position: Use current_graph_position from the planner packet." in result
+    assert "ops: List using only allowed_patch_operations from the planner packet" in result
+    assert "gap planners may use [] for an explicit no-op decision" in result
+    assert "If feedback says stale, malformed, or rejected, submit a corrected patch" in result
+    assert (
+        "Plain submit is only for finishing after at least one submit_graph_patch attempt."
+        in result
+    )
+
+
+def test_builder_gap_planner_prompt_contains_submit_graph_patch_instructions() -> None:
+    result = build_codex_server_prompt(
+        _ctx(node_kind="planner", node_role="gap_planner"),
+        is_verifier=False,
+    )
+    assert "Planner Graph-Mutation Tool" in result
+    assert "submit_graph_patch" in result
+
+
+def test_builder_worker_and_verifier_prompts_do_not_include_submit_graph_patch() -> None:
+    worker_prompt = build_codex_server_prompt(
+        _ctx(node_kind="worker", node_role="builder"), is_verifier=False
+    )
+    assert "Planner Graph-Mutation Tool" not in worker_prompt
+    assert "submit_graph_patch" not in worker_prompt
+
+    verifier_prompt = build_codex_server_prompt(
+        _ctx(node_kind="verifier", node_role="verifier"), is_verifier=True
+    )
+    assert "Planner Graph-Mutation Tool" not in verifier_prompt
+    assert "submit_graph_patch" not in verifier_prompt
 
 
 # ---------------------------------------------------------------------------
@@ -479,6 +534,71 @@ def test_verifier_tools_are_present() -> None:
     assert "complete_recovery" in names
     assert "update_checklist" not in names
     assert "request_clarification" not in names
+
+
+def test_submit_graph_patch_exposed_only_to_graph_planner() -> None:
+    ordinary = {s["name"] for s in build_dynamic_tool_specs(is_verifier=False, context=_ctx())}
+    planner_specs = build_dynamic_tool_specs(
+        is_verifier=False,
+        context=_ctx(node_kind="planner", node_role="planner"),
+    )
+    gap_planner_specs = build_dynamic_tool_specs(
+        is_verifier=False,
+        context=_ctx(node_kind="planner", node_role="gap_planner"),
+    )
+    planner = {s["name"] for s in planner_specs}
+    gap_planner = {s["name"] for s in gap_planner_specs}
+    verifier = {
+        s["name"]
+        for s in build_dynamic_tool_specs(
+            is_verifier=True,
+            context=_ctx(node_kind="planner", node_role="planner"),
+        )
+    }
+
+    assert "submit_graph_patch" not in ordinary
+    assert "submit_graph_patch" in planner
+    assert "submit_graph_patch" in gap_planner
+    assert "submit_graph_patch" not in verifier
+    spec = next(s for s in planner_specs if s["name"] == "submit_graph_patch")
+    schema = spec["inputSchema"]
+    assert schema["additionalProperties"] is False
+    assert schema["oneOf"] == [
+        {"required": ["patch"]},
+        {"required": ["patch_id", "base_graph_position", "ops"]},
+    ]
+    assert schema["properties"]["patch"]["properties"]["ops"]["minItems"] == 0
+    assert schema["properties"]["ops"]["minItems"] == 0
+
+
+@pytest.mark.asyncio
+async def test_submit_graph_patch_routes_empty_ops_no_op_patch() -> None:
+    received: list[dict[str, object]] = []
+
+    async def on_checklist_update(
+        _req_id: str,
+        _status: ChecklistStatus,
+        _note: str | None,
+    ) -> None:
+        return None
+
+    async def on_submit() -> None:
+        return None
+
+    async def on_submit_graph_patch(payload: dict[str, object]) -> str:
+        received.append(payload)
+        return "accepted no-op"
+
+    result = await route_tool_call(
+        "submit_graph_patch",
+        {"patch_id": "gap-no-op", "base_graph_position": 42, "ops": []},
+        on_checklist_update,
+        on_submit,
+        on_submit_graph_patch=on_submit_graph_patch,
+    )
+
+    assert result == "accepted no-op"
+    assert received == [{"patch_id": "gap-no-op", "base_graph_position": 42, "ops": []}]
 
 
 # ---------------------------------------------------------------------------

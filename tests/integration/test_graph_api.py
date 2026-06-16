@@ -288,6 +288,18 @@ async def test_graph_projection_reflects_seeded_events(
     assert len(filtered_events) <= len(all_events)
     assert all(event["position"] >= 2 for event in filtered_events)
 
+    summary_resp = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=summary")
+    assert summary_resp.status_code == 200
+    summary_events = summary_resp.json()
+    assert len(summary_events) == len(all_events)
+    root_summary = next(
+        event for event in summary_events if event["payload"].get("node_id") == "root"
+    )
+    assert "routine" not in root_summary["payload"]
+
+    invalid_summary_resp = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=compact")
+    assert invalid_summary_resp.status_code == 422
+
     detail_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{worker_node}")
     assert detail_resp.status_code == 200
     detail = detail_resp.json()

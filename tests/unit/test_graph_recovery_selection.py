@@ -18,7 +18,7 @@ def _recoverable(reason: str | None) -> bool:
     return reason in ("server_shutdown", "executor_not_started")
 
 
-def test_selects_active_and_recoverable_paused_graph_runs() -> None:
+def test_selects_recoverable_paused_graph_runs_but_not_active_rows() -> None:
     runs = [
         _Run("active-graph", "graph", RunStatus.ACTIVE),
         _Run("paused-recoverable-graph", "graph", RunStatus.PAUSED, "server_shutdown"),
@@ -31,7 +31,7 @@ def test_selects_active_and_recoverable_paused_graph_runs() -> None:
 
     selected = {r.id for r in select_graph_runs_to_recover(runs, is_recoverable_pause=_recoverable)}
 
-    assert selected == {"active-graph", "paused-recoverable-graph"}
+    assert selected == {"paused-recoverable-graph"}
 
 
 def test_excludes_legacy_runs_entirely() -> None:

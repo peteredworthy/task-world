@@ -38,6 +38,7 @@ def compile_routine(
     run_id: str,
     source_path: str | None = None,
     source_ref: str | None = None,
+    run_config: dict[str, Any] | None = None,
 ) -> list[EventEnvelope]:
     """Compile a validated routine config into ordered initial graph events.
 
@@ -45,7 +46,7 @@ def compile_routine(
     positions. The effectful store assigns durable run-local positions when the
     events are seeded.
     """
-    builder = _Compiler(routine, clock, id_gen, run_id, source_path, source_ref)
+    builder = _Compiler(routine, clock, id_gen, run_id, source_path, source_ref, run_config)
     return builder.compile()
 
 
@@ -58,6 +59,7 @@ class _Compiler:
         run_id: str,
         source_path: str | None,
         source_ref: str | None,
+        run_config: dict[str, Any] | None,
     ) -> None:
         self._routine = routine
         self._clock = clock
@@ -65,9 +67,11 @@ class _Compiler:
         self._run_id = run_id
         self._source_path = source_path
         self._source_ref = source_ref
+        self._run_config = dict(run_config or {})
         self._events: list[EventEnvelope] = []
         self._stem_counts = _task_stem_counts(routine)
         self._has_planner_step = any(step.kind == "planner" for step in routine.steps)
+        self._dynamic_feature_inputs = _dynamic_feature_inputs(routine, self._run_config)
 
     def compile(self) -> list[EventEnvelope]:
         self._create_root()
@@ -166,6 +170,7 @@ class _Compiler:
                     "task_count": sum(len(step.tasks) for step in self._routine.steps),
                     "builder_agent": self._routine.builder_agent,
                     "verifier_agent": self._routine.verifier_agent,
+                    "dynamic_feature": self._dynamic_feature_inputs,
                 },
             }
         )
@@ -233,6 +238,7 @@ class _Compiler:
             "step_index": step_index,
             "title": step.title,
             "step_context": step.step_context,
+            "task_context": _planner_task_context(step, self._dynamic_feature_inputs),
             "authority": {
                 "allowed_actions": ["submit_patch", "request_clarification"],
                 "resource_claims": [{"mode": "graph_write", "scope": "graph"}],
@@ -260,6 +266,8 @@ class _Compiler:
                 },
             ],
         }
+        if self._dynamic_feature_inputs is not None:
+            payload["dynamic_feature"] = self._dynamic_feature_inputs
         if step.child_routines:
             payload["planner_chain"] = {
                 "source": "legacy_parent_child",
@@ -877,6 +885,72 @@ def _task_stem_counts(routine: RoutineConfig) -> dict[str, int]:
             stem = _task_stem(step, task)
             counts[stem] = counts.get(stem, 0) + 1
     return counts
+
+
+def _dynamic_feature_inputs(
+    routine: RoutineConfig,
+    run_config: dict[str, Any],
+) -> dict[str, Any] | None:
+    if routine.id != "dynamic-graph-feature":
+        return None
+
+    selected: dict[str, Any] = {}
+    for key in (
+        "feature_spec_path",
+        "feature_spec_content",
+        "feature_spec_content_source",
+        "acceptance_command",
+        "hidden_oracle_command",
+        "patch_budget",
+        "gap_policy_profile",
+    ):
+        value = run_config.get(key)
+        if key == "feature_spec_content" and isinstance(value, str):
+            selected[key] = _compact_text(value, max_chars=8000)
+        elif value is not None:
+            selected[key] = _json_safe(value)
+
+    selected.setdefault("hidden_oracle_command", "")
+    selected.setdefault("patch_budget", 8)
+    selected.setdefault("gap_policy_profile", "standard")
+    return selected
+
+
+def _json_safe(value: Any) -> Any:
+    return json.loads(json.dumps(value, sort_keys=True, default=str))
+
+
+def _compact_text(value: str, *, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return f"{value[:max_chars]}\n\n[truncated at {max_chars} characters]"
+
+
+def _planner_task_context(
+    step: StepConfig,
+    dynamic_feature_inputs: dict[str, Any] | None,
+) -> str:
+    pieces = [step.step_context or ""]
+    if dynamic_feature_inputs is not None:
+        pieces.append(
+            "\n".join(
+                [
+                    "Dynamic feature inputs:",
+                    f"- feature_spec_path: {dynamic_feature_inputs.get('feature_spec_path', '')}",
+                    "- feature_spec_content: "
+                    f"{dynamic_feature_inputs.get('feature_spec_content', '')}",
+                    f"- acceptance_command: {dynamic_feature_inputs.get('acceptance_command', '')}",
+                    "- hidden_oracle_binding: dynamic_feature_hidden_oracle"
+                    if dynamic_feature_inputs.get("hidden_oracle_command")
+                    else "- hidden_oracle_binding: none",
+                    f"- patch_budget: {dynamic_feature_inputs.get('patch_budget', '')}",
+                    f"- gap_policy_profile: {dynamic_feature_inputs.get('gap_policy_profile', '')}",
+                    "Plan worker, verifier, gap-analysis, corrective-work, and final "
+                    "invariant regions that are grounded in these inputs.",
+                ]
+            )
+        )
+    return "\n\n".join(piece.strip() for piece in pieces if piece.strip())
 
 
 def _routine_content_hash(routine: RoutineConfig) -> str:

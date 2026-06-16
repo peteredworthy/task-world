@@ -34,12 +34,16 @@ class GraphProjection(TypedDict):
     file_state_records: dict[str, dict[str, Any]]
     planner_generation_budget: int
     planner_successors: dict[str, str]
+    accepted_graph_patches_by_node: dict[str, list[str]]
     planner_generations: dict[str, int]
     planner_sessions: dict[str, str]
     planner_session_states: dict[str, str]
     planner_session_current_nodes: dict[str, str]
     planner_session_carryovers: dict[str, str | None]
     planner_region_labels: dict[str, str]
+    requirement_revisions: dict[str, dict[str, Any]]
+    active_requirement_versions: dict[str, str]
+    support_evidence: dict[str, dict[str, Any]]
 
 
 class SchedulerBlockedNode(TypedDict):
@@ -91,6 +95,39 @@ class DecisionView(TypedDict):
     review: ReviewReadiness
 
 
+class SupportEvidenceFreshness(TypedDict):
+    support_id: str
+    evidence_id: str
+    requirement_id: str
+    requirement_version_id: str
+    status: str
+    freshness: Literal["fresh", "stale"]
+    stale_reason: str | None
+
+
+class RequirementFreshnessFact(TypedDict):
+    requirement_id: str
+    active_version_id: str
+    revision_classification: str
+    requires_authority: bool
+    authority_required_reason: str | None
+    fresh_support_ids: list[str]
+    stale_support_ids: list[str]
+    unsupported: bool
+
+
+class FinalInvariantBlocker(TypedDict, total=False):
+    kind: str
+    reason: str
+    node_id: str
+    proposal_id: str
+    requirement_id: str
+    revision_id: str
+    task_region_id: str
+    state: str
+    support_ids: list[str]
+
+
 def initial_projection() -> GraphProjection:
     return {
         "run_state": None,
@@ -121,12 +158,16 @@ def initial_projection() -> GraphProjection:
         "file_state_records": {},
         "planner_generation_budget": 8,
         "planner_successors": {},
+        "accepted_graph_patches_by_node": {},
         "planner_generations": {},
         "planner_sessions": {},
         "planner_session_states": {},
         "planner_session_current_nodes": {},
         "planner_session_carryovers": {},
         "planner_region_labels": {},
+        "requirement_revisions": {},
+        "active_requirement_versions": {},
+        "support_evidence": {},
     }
 
 
@@ -192,12 +233,25 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         },
         "planner_generation_budget": state.get("planner_generation_budget", 8),
         "planner_successors": dict(state.get("planner_successors", {})),
+        "accepted_graph_patches_by_node": {
+            node_id: list(patch_ids)
+            for node_id, patch_ids in state.get("accepted_graph_patches_by_node", {}).items()
+        },
         "planner_generations": dict(state.get("planner_generations", {})),
         "planner_sessions": dict(state.get("planner_sessions", {})),
         "planner_session_states": dict(state.get("planner_session_states", {})),
         "planner_session_current_nodes": dict(state.get("planner_session_current_nodes", {})),
         "planner_session_carryovers": dict(state.get("planner_session_carryovers", {})),
         "planner_region_labels": dict(state.get("planner_region_labels", {})),
+        "requirement_revisions": {
+            version_id: dict(revision)
+            for version_id, revision in state.get("requirement_revisions", {}).items()
+        },
+        "active_requirement_versions": dict(state.get("active_requirement_versions", {})),
+        "support_evidence": {
+            support_id: dict(support)
+            for support_id, support in state.get("support_evidence", {}).items()
+        },
     }
 
     if event.event_type == "run_lifecycle_changed":
@@ -358,6 +412,11 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_file_state(next_state, event)
     elif event.event_type == "graph_patch_accepted":
         planner_node_id = event.payload.get("proposed_by_node_id")
+        patch_id = event.payload.get("patch_id")
+        if isinstance(planner_node_id, str) and isinstance(patch_id, str):
+            accepted = list(next_state["accepted_graph_patches_by_node"].get(planner_node_id, []))
+            accepted.append(patch_id)
+            next_state["accepted_graph_patches_by_node"][planner_node_id] = accepted
         successor_node_ids = event.payload.get("successor_planner_node_ids")
         if isinstance(planner_node_id, str) and isinstance(successor_node_ids, list):
             for successor_node_id in cast(list[Any], successor_node_ids):
@@ -370,6 +429,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_cleanup_requested(next_state, event)
     elif event.event_type == "cleanup_applied":
         _record_cleanup_applied(next_state, event)
+    elif event.event_type in {"requirement_revision_recorded", "requirement_amended"}:
+        _record_requirement_revision(next_state, event)
+    elif event.event_type in {"support_evidence_recorded", "support_edge_recorded"}:
+        _record_support_evidence(next_state, event)
     # node_ready/node_deferred and agent_died/runtime_retry_scheduled are
     # audit/policy facts. Projection facts are updated only by lease_* and
     # node_state_changed events so replay has a single state authority.
@@ -382,24 +445,383 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
 def project_run_state(events: list[EventEnvelope]) -> str | None:
     projection = _project(events)
     run_state = projection["run_state"]
+    blockers = final_invariant_blockers_for_events(events, projection)
     if run_state == "completed":
-        if _has_pending_planner(projection):
-            return "active"
-        if _has_pending_planner_budget_gate(projection):
-            return "active"
-        if any(state != "accepted" for state in projection["task_states"].values()):
+        if blockers:
             return "active"
         return run_state
     if run_state != "active":
         return run_state
-    if _has_pending_planner(projection):
-        return run_state
-    if _has_pending_planner_budget_gate(projection):
+    if blockers:
         return run_state
     task_states = projection["task_states"]
     if task_states and all(state == "accepted" for state in task_states.values()):
         return "completed"
     return run_state
+
+
+def project_final_invariant_blockers(events: list[EventEnvelope]) -> list[FinalInvariantBlocker]:
+    return final_invariant_blockers_for_events(events, _project(events))
+
+
+def final_invariant_blockers_for_events(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+) -> list[FinalInvariantBlocker]:
+    blockers: list[FinalInvariantBlocker] = []
+    pending_states = {"planned", "ready", "leased", "running"}
+    for node_id, node_state in sorted(projection["node_states"].items()):
+        kind = projection["node_kinds"].get(node_id)
+        role = projection["node_roles"].get(node_id)
+        is_planner = kind == "planner" and role == "planner"
+        is_gap_planner = kind == "gap_planner" or role == "gap_planner"
+        if (is_planner or is_gap_planner) and node_state in pending_states:
+            blockers.append(
+                {
+                    "kind": "pending_gap_planner" if is_gap_planner else "pending_planner",
+                    "reason": "planner node has not completed",
+                    "node_id": node_id,
+                    "state": node_state,
+                }
+            )
+            continue
+        if (
+            kind == "gate"
+            and role == "planner_generation_budget_gate"
+            and node_state in pending_states
+        ):
+            blockers.append(
+                {
+                    "kind": "pending_planner_generation_budget_gate",
+                    "reason": "planner generation budget gate is unresolved",
+                    "node_id": node_id,
+                    "state": node_state,
+                }
+            )
+            continue
+        if kind == "check" and node_state in pending_states:
+            blockers.append(
+                {
+                    "kind": "pending_check",
+                    "reason": "check node has not completed",
+                    "node_id": node_id,
+                    "state": node_state,
+                }
+            )
+    blockers.extend(_open_proposal_blockers(events))
+    blockers.extend(_suspect_node_blockers(events, projection))
+    blockers.extend(_requirement_evidence_blockers(events, projection))
+    blockers.extend(_authority_revision_blockers(events))
+    blockers.extend(_blocked_requirement_node_blockers(events, projection))
+    for task_region_id, task_state in sorted(projection["task_states"].items()):
+        if task_state == "accepted":
+            continue
+        blockers.append(
+            {
+                "kind": "task_not_accepted",
+                "reason": "task region has not reached accepted",
+                "task_region_id": task_region_id,
+                "state": task_state,
+            }
+        )
+    return blockers
+
+
+def _open_proposal_blockers(events: list[EventEnvelope]) -> list[FinalInvariantBlocker]:
+    open_proposals: dict[str, FinalInvariantBlocker] = {}
+    for event in events:
+        proposal_id = _proposal_id(event.payload)
+        if proposal_id is None:
+            continue
+        if event.event_type in {
+            "graph_patch_proposed",
+            "planner_proposal_opened",
+            "proposal_opened",
+            "proposal_recorded",
+        }:
+            status = event.payload.get("status")
+            if status in {"accepted", "rejected", "resolved", "closed"}:
+                open_proposals.pop(proposal_id, None)
+                continue
+            open_proposals[proposal_id] = {
+                "kind": "open_planner_proposal",
+                "reason": "planner proposal has not been accepted or rejected",
+                "proposal_id": proposal_id,
+            }
+        elif event.event_type in {
+            "graph_patch_accepted",
+            "graph_patch_rejected",
+            "proposal_accepted",
+            "proposal_rejected",
+            "proposal_resolved",
+            "proposal_closed",
+        }:
+            open_proposals.pop(proposal_id, None)
+    return [open_proposals[key] for key in sorted(open_proposals)]
+
+
+def _suspect_node_blockers(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+) -> list[FinalInvariantBlocker]:
+    suspect_nodes: dict[str, str] = {}
+    for event in events:
+        if event.event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
+            reason = _payload_reason(event.payload, "suspect graph fact remains unresolved")
+            for node_id in _payload_node_ids(event.payload):
+                suspect_nodes[node_id] = reason
+        elif event.event_type in {
+            "plan_region_suspect_resolved",
+            "node_suspect_resolved",
+            "plan_region_suspect_cleared",
+            "node_suspect_cleared",
+        }:
+            for node_id in _payload_node_ids(event.payload):
+                suspect_nodes.pop(node_id, None)
+
+    blockers: list[FinalInvariantBlocker] = []
+    inactive_states = {"completed", "failed", "cancelled", "retired"}
+    for node_id in sorted(suspect_nodes):
+        node_state = projection["node_states"].get(node_id)
+        if node_state in inactive_states:
+            continue
+        blocker: FinalInvariantBlocker = {
+            "kind": "suspect_active_node",
+            "reason": suspect_nodes[node_id],
+            "node_id": node_id,
+        }
+        if node_state is not None:
+            blocker["state"] = node_state
+        blockers.append(blocker)
+    return blockers
+
+
+def _requirement_evidence_blockers(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+) -> list[FinalInvariantBlocker]:
+    blockers: list[FinalInvariantBlocker] = []
+    for fact in requirement_freshness_facts_from_projection(projection):
+        if fact["unsupported"]:
+            stale_support_ids = list(fact["stale_support_ids"])
+            if stale_support_ids:
+                blockers.append(
+                    {
+                        "kind": "stale_support_evidence",
+                        "reason": "active requirement is supported only by stale evidence",
+                        "requirement_id": fact["requirement_id"],
+                        "support_ids": stale_support_ids,
+                    }
+                )
+            blockers.append(
+                {
+                    "kind": "unsupported_active_requirement",
+                    "reason": "active requirement has no current supporting evidence",
+                    "requirement_id": fact["requirement_id"],
+                    "support_ids": stale_support_ids,
+                }
+            )
+
+    if blockers:
+        return blockers
+    return _legacy_requirement_evidence_blockers(events)
+
+
+def _legacy_requirement_evidence_blockers(
+    events: list[EventEnvelope],
+) -> list[FinalInvariantBlocker]:
+    blockers_by_requirement: dict[tuple[str, str], FinalInvariantBlocker] = {}
+    freshness_events = {
+        "requirement_support_evaluated",
+        "requirement_freshness_evaluated",
+        "requirement_evidence_freshness_recorded",
+    }
+    for event in events:
+        if event.event_type not in freshness_events:
+            continue
+        requirement_id = _requirement_id(event.payload)
+        if requirement_id is None:
+            continue
+        support_ids = _payload_string_list(event.payload, "support_ids")
+        if event.payload.get("supported") is True or event.payload.get("freshness") == "fresh":
+            blockers_by_requirement.pop(("unsupported_active_requirement", requirement_id), None)
+            blockers_by_requirement.pop(("stale_support_evidence", requirement_id), None)
+            continue
+        if _payload_truthy(event.payload, "unsupported") or event.payload.get("supported") is False:
+            blockers_by_requirement[("unsupported_active_requirement", requirement_id)] = {
+                "kind": "unsupported_active_requirement",
+                "reason": "active requirement has no current supporting evidence",
+                "requirement_id": requirement_id,
+                "support_ids": support_ids,
+            }
+        if _is_stale_only_evidence(event.payload):
+            blockers_by_requirement[("stale_support_evidence", requirement_id)] = {
+                "kind": "stale_support_evidence",
+                "reason": "active requirement is supported only by stale evidence",
+                "requirement_id": requirement_id,
+                "support_ids": support_ids,
+            }
+    return [
+        blockers_by_requirement[key]
+        for key in sorted(blockers_by_requirement, key=lambda item: (item[0], item[1]))
+    ]
+
+
+def _authority_revision_blockers(events: list[EventEnvelope]) -> list[FinalInvariantBlocker]:
+    unresolved: dict[str, FinalInvariantBlocker] = {}
+    for event in events:
+        revision_id = _revision_id(event.payload)
+        if revision_id is None:
+            continue
+        if event.event_type in {
+            "requirement_revision_recorded",
+            "requirement_amended",
+            "requirement_revision_proposed",
+        }:
+            if not _requires_authority_resolution(event.payload):
+                continue
+            blocker: FinalInvariantBlocker = {
+                "kind": "unresolved_authority_required_revision",
+                "reason": "semantic or new-behavior requirement revision lacks authority resolution",
+                "revision_id": revision_id,
+            }
+            requirement_id = _requirement_id(event.payload)
+            if requirement_id is not None:
+                blocker["requirement_id"] = requirement_id
+            unresolved[revision_id] = blocker
+        elif event.event_type in {
+            "authority_resolution_recorded",
+            "authority_resolved",
+            "requirement_revision_authorized",
+        }:
+            unresolved.pop(revision_id, None)
+    return [unresolved[key] for key in sorted(unresolved)]
+
+
+def _blocked_requirement_node_blockers(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+) -> list[FinalInvariantBlocker]:
+    payloads = _latest_node_creation_payloads(events)
+    blockers: list[FinalInvariantBlocker] = []
+    for node_id, node_state in sorted(projection["node_states"].items()):
+        if projection["node_kinds"].get(node_id) != "requirement" or node_state != "blocked":
+            continue
+        payload = payloads.get(node_id, {})
+        priority = _requirement_priority(payload)
+        if priority not in {"must", "expected", "critical"}:
+            continue
+        requirement_id = _requirement_id(payload) or node_id
+        blockers.append(
+            {
+                "kind": "blocked_requirement",
+                "reason": "must or expected requirement is blocked without accepted blocker",
+                "node_id": node_id,
+                "requirement_id": requirement_id,
+                "state": node_state,
+            }
+        )
+    return blockers
+
+
+def _proposal_id(payload: dict[str, Any]) -> str | None:
+    for key in ("proposal_id", "patch_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
+def _revision_id(payload: dict[str, Any]) -> str | None:
+    for key in ("revision_id", "version_id", "requirement_version_id", "proposal_id", "patch_id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return _requirement_id(payload)
+
+
+def _requirement_id(payload: dict[str, Any]) -> str | None:
+    for key in ("requirement_id", "id"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    requirement = payload.get("requirement")
+    if isinstance(requirement, dict):
+        value = cast(dict[str, Any], requirement).get("id")
+        if isinstance(value, str) and value:
+            return value
+    node_id = payload.get("node_id")
+    if isinstance(node_id, str) and node_id:
+        return node_id
+    return None
+
+
+def _payload_string_list(payload: dict[str, Any], key: str) -> list[str]:
+    value = payload.get(key)
+    if not isinstance(value, list):
+        return []
+    return [item for item in cast(list[Any], value) if isinstance(item, str)]
+
+
+def _payload_node_ids(payload: dict[str, Any]) -> list[str]:
+    node_ids = _payload_string_list(payload, "node_ids")
+    node_ids.extend(_payload_string_list(payload, "region_node_ids"))
+    node_id = payload.get("node_id")
+    if isinstance(node_id, str):
+        node_ids.append(node_id)
+    region_id = payload.get("region_id")
+    if isinstance(region_id, str):
+        node_ids.append(region_id)
+    return sorted(set(node_ids))
+
+
+def _payload_reason(payload: dict[str, Any], fallback: str) -> str:
+    reason = payload.get("reason")
+    return reason if isinstance(reason, str) and reason else fallback
+
+
+def _payload_truthy(payload: dict[str, Any], key: str) -> bool:
+    return payload.get(key) is True
+
+
+def _is_stale_only_evidence(payload: dict[str, Any]) -> bool:
+    if payload.get("stale_only") is True:
+        return True
+    for key in ("freshness", "status", "evidence_freshness"):
+        value = payload.get(key)
+        if value in {"stale_only", "stale"}:
+            return True
+    return False
+
+
+def _requires_authority_resolution(payload: dict[str, Any]) -> bool:
+    if payload.get("requires_authority") is True:
+        return True
+    if payload.get("semantic_change") is True:
+        return True
+    revision_type = payload.get("revision_type")
+    if not isinstance(revision_type, str):
+        revision_type = payload.get("classification")
+    return revision_type in {
+        "semantic",
+        "new_behavior",
+        "new-behavior",
+        "scope_expansion",
+        "scope_reduction",
+        "priority_change",
+    }
+
+
+def _requirement_priority(payload: dict[str, Any]) -> str | None:
+    priority = payload.get("priority")
+    if isinstance(priority, str):
+        return priority.lower()
+    requirement = payload.get("requirement")
+    if isinstance(requirement, dict):
+        value = cast(dict[str, Any], requirement).get("priority")
+        if isinstance(value, str):
+            return value.lower()
+    return None
 
 
 def project_planner_chain(events: list[EventEnvelope]) -> list[dict[str, Any]]:
@@ -495,6 +917,105 @@ def project_node_metadata(events: list[EventEnvelope]) -> dict[str, dict[str, An
 
 def project_task_states(events: list[EventEnvelope]) -> dict[str, str]:
     return _project(events)["task_states"]
+
+
+def project_requirement_revisions(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
+    return _project(events)["requirement_revisions"]
+
+
+def support_evidence_freshness_from_projection(
+    projection: GraphProjection,
+) -> dict[str, SupportEvidenceFreshness]:
+    freshness: dict[str, SupportEvidenceFreshness] = {}
+    for support_id, support in sorted(projection.get("support_evidence", {}).items()):
+        evidence_id = support.get("evidence_id")
+        requirement_id = support.get("requirement_id")
+        requirement_version_id = support.get("requirement_version_id")
+        if not isinstance(evidence_id, str):
+            continue
+        if not isinstance(requirement_id, str):
+            continue
+        if not isinstance(requirement_version_id, str):
+            continue
+        stale_reason = _support_stale_reason(projection, support)
+        is_fresh = stale_reason is None and support.get("status", "active") == "active"
+        freshness[support_id] = {
+            "support_id": support_id,
+            "evidence_id": evidence_id,
+            "requirement_id": requirement_id,
+            "requirement_version_id": requirement_version_id,
+            "status": str(support.get("status", "active")),
+            "freshness": "fresh" if is_fresh else "stale",
+            "stale_reason": stale_reason,
+        }
+    return freshness
+
+
+def project_support_evidence_freshness(
+    events: list[EventEnvelope],
+) -> dict[str, SupportEvidenceFreshness]:
+    return support_evidence_freshness_from_projection(_project(events))
+
+
+def requirement_freshness_facts_from_projection(
+    projection: GraphProjection,
+) -> list[RequirementFreshnessFact]:
+    support_freshness = support_evidence_freshness_from_projection(projection)
+    facts: list[RequirementFreshnessFact] = []
+    for requirement_id, active_version_id in sorted(
+        projection.get("active_requirement_versions", {}).items()
+    ):
+        revision = projection.get("requirement_revisions", {}).get(active_version_id, {})
+        fresh_support_ids: list[str] = []
+        stale_support_ids: list[str] = []
+        for support_id, support in sorted(projection.get("support_evidence", {}).items()):
+            if support.get("requirement_id") != requirement_id:
+                continue
+            support_fact = support_freshness.get(support_id)
+            if support_fact is None:
+                continue
+            if support_fact["freshness"] == "fresh":
+                fresh_support_ids.append(support_id)
+            else:
+                stale_support_ids.append(support_id)
+        facts.append(
+            {
+                "requirement_id": requirement_id,
+                "active_version_id": active_version_id,
+                "revision_classification": str(revision.get("change_classification", "initial")),
+                "requires_authority": revision.get("requires_authority") is True,
+                "authority_required_reason": _optional_str(
+                    revision.get("authority_required_reason")
+                ),
+                "fresh_support_ids": fresh_support_ids,
+                "stale_support_ids": stale_support_ids,
+                "unsupported": not fresh_support_ids,
+            }
+        )
+    return facts
+
+
+def project_requirement_freshness_facts(
+    events: list[EventEnvelope],
+) -> list[RequirementFreshnessFact]:
+    return requirement_freshness_facts_from_projection(_project(events))
+
+
+def project_planner_freshness_packet(events: list[EventEnvelope]) -> dict[str, Any]:
+    """Expose compact requirement/evidence freshness facts for gap planners."""
+    facts = project_requirement_freshness_facts(events)
+    return {
+        "requirement_freshness": facts,
+        "unsupported_requirement_ids": [
+            fact["requirement_id"] for fact in facts if fact["unsupported"]
+        ],
+        "stale_support_ids": [
+            support_id for fact in facts for support_id in fact["stale_support_ids"]
+        ],
+        "authority_required_requirement_ids": [
+            fact["requirement_id"] for fact in facts if fact["requires_authority"]
+        ],
+    }
 
 
 def project_leases(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
@@ -904,26 +1425,6 @@ def _optional_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _has_pending_planner(projection: GraphProjection) -> bool:
-    pending_states = {"planned", "ready", "leased", "running"}
-    return any(
-        projection["node_kinds"].get(node_id) == "planner"
-        and node_state in pending_states
-        and projection["node_roles"].get(node_id) == "planner"
-        for node_id, node_state in projection["node_states"].items()
-    )
-
-
-def _has_pending_planner_budget_gate(projection: GraphProjection) -> bool:
-    pending_states = {"planned", "ready", "leased", "running"}
-    return any(
-        projection["node_kinds"].get(node_id) == "gate"
-        and projection["node_roles"].get(node_id) == "planner_generation_budget_gate"
-        and node_state in pending_states
-        for node_id, node_state in projection["node_states"].items()
-    )
-
-
 def _node_creation_position(events: list[EventEnvelope], node_id: str) -> int:
     for event in events:
         if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
@@ -1150,6 +1651,175 @@ def _record_edge(state: GraphProjection, event: EventEnvelope) -> None:
     selector = event.payload.get("accepted_record_selector")
     if isinstance(selector, dict):
         state["edges"][edge_id]["accepted_record_selector"] = dict(cast(dict[str, Any], selector))
+
+
+def _record_requirement_revision(state: GraphProjection, event: EventEnvelope) -> None:
+    requirement_id = event.payload.get("requirement_id")
+    if not isinstance(requirement_id, str):
+        return
+
+    version_id = event.payload.get("version_id")
+    if not isinstance(version_id, str):
+        version_id = event.payload.get("requirement_version_id")
+    if not isinstance(version_id, str):
+        version_id = f"{requirement_id}.v{event.position}"
+
+    classification = _requirement_revision_classification(event.payload)
+    requires_authority = _requires_explicit_requirement_authority(event.payload, classification)
+    revision: dict[str, Any] = {
+        "requirement_id": requirement_id,
+        "version_id": version_id,
+        "change_classification": classification,
+        "requires_authority": requires_authority,
+        "position": event.position,
+    }
+    previous_version_id = event.payload.get("previous_version_id")
+    if isinstance(previous_version_id, str):
+        revision["previous_version_id"] = previous_version_id
+    revision_index = event.payload.get("revision_index")
+    if isinstance(revision_index, int) and not isinstance(revision_index, bool):
+        revision["revision_index"] = revision_index
+    authority_reason = _authority_required_reason(event.payload, classification)
+    if authority_reason is not None:
+        revision["authority_required_reason"] = authority_reason
+    validation_strengthening = (
+        event.payload.get("validation_strengthening") is True
+        or classification == "validation_strengthening"
+    )
+    revision["validation_strengthening"] = validation_strengthening
+
+    state["requirement_revisions"][version_id] = revision
+    if event.payload.get("active") is not False:
+        state["active_requirement_versions"][requirement_id] = version_id
+    if validation_strengthening:
+        _mark_superseded_support_stale(state, requirement_id, version_id)
+
+
+def _record_support_evidence(state: GraphProjection, event: EventEnvelope) -> None:
+    support_id = event.payload.get("support_id")
+    if not isinstance(support_id, str):
+        support_id = event.payload.get("edge_id")
+    if not isinstance(support_id, str):
+        return
+
+    evidence_id = event.payload.get("evidence_id")
+    requirement_id = event.payload.get("requirement_id")
+    if not isinstance(evidence_id, str) or not isinstance(requirement_id, str):
+        return
+
+    requirement_version_id = event.payload.get("requirement_version_id")
+    if not isinstance(requirement_version_id, str):
+        requirement_version_id = event.payload.get("version_id")
+    if not isinstance(requirement_version_id, str):
+        requirement_version_id = state["active_requirement_versions"].get(requirement_id)
+    if not isinstance(requirement_version_id, str):
+        return
+
+    status = event.payload.get("status", "active")
+    if not isinstance(status, str):
+        status = "active"
+    support: dict[str, Any] = {
+        "support_id": support_id,
+        "evidence_id": evidence_id,
+        "requirement_id": requirement_id,
+        "requirement_version_id": requirement_version_id,
+        "status": status,
+        "position": event.position,
+    }
+    stale_reason = event.payload.get("stale_reason")
+    if isinstance(stale_reason, str):
+        support["stale_reason"] = stale_reason
+    confidence = event.payload.get("confidence")
+    if isinstance(confidence, str):
+        support["confidence"] = confidence
+    state["support_evidence"][support_id] = support
+
+
+def _mark_superseded_support_stale(
+    state: GraphProjection,
+    requirement_id: str,
+    active_version_id: str,
+) -> None:
+    for support in state["support_evidence"].values():
+        if support.get("requirement_id") != requirement_id:
+            continue
+        if support.get("requirement_version_id") == active_version_id:
+            continue
+        support["status"] = "stale"
+        support.setdefault(
+            "stale_reason",
+            (
+                "Evidence was produced for an older requirement version and does not "
+                "prove the strengthened validation definition."
+            ),
+        )
+
+
+def _support_stale_reason(
+    projection: GraphProjection,
+    support: dict[str, Any],
+) -> str | None:
+    status = support.get("status", "active")
+    if status != "active":
+        reason = support.get("stale_reason")
+        return reason if isinstance(reason, str) else f"support edge status is {status}"
+
+    requirement_id = support.get("requirement_id")
+    requirement_version_id = support.get("requirement_version_id")
+    if not isinstance(requirement_id, str) or not isinstance(requirement_version_id, str):
+        return "support edge is missing requirement identity"
+    active_version_id = projection.get("active_requirement_versions", {}).get(requirement_id)
+    if active_version_id is None:
+        return "requirement has no active version"
+    if requirement_version_id != active_version_id:
+        return "support edge targets a superseded requirement version"
+    return None
+
+
+def _requirement_revision_classification(payload: dict[str, Any]) -> str:
+    for key in ("change_classification", "classification", "revision_type"):
+        value = payload.get(key)
+        if isinstance(value, str) and value:
+            return value
+    if payload.get("validation_strengthening") is True:
+        return "validation_strengthening"
+    if payload.get("new_behavior") is True:
+        return "new_behavior"
+    if payload.get("semantic_change") is True:
+        return "semantic"
+    return "initial"
+
+
+def _requires_explicit_requirement_authority(
+    payload: dict[str, Any],
+    classification: str,
+) -> bool:
+    if payload.get("requires_authority") is True:
+        return True
+    if payload.get("explicit_authority_required") is True:
+        return True
+    if payload.get("new_behavior") is True or payload.get("behavior_change") is True:
+        return True
+    return classification in {
+        "semantic",
+        "new_behavior",
+        "scope_expansion",
+        "scope_reduction",
+        "priority_change",
+    }
+
+
+def _authority_required_reason(payload: dict[str, Any], classification: str) -> str | None:
+    reason = payload.get("authority_required_reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    if not _requires_explicit_requirement_authority(payload, classification):
+        return None
+    if payload.get("new_behavior") is True or classification in {"new_behavior", "scope_expansion"}:
+        return "new_behavior"
+    if payload.get("behavior_change") is True:
+        return "behavior_change"
+    return classification
 
 
 def _record_input_binding(state: GraphProjection, event: EventEnvelope) -> None:

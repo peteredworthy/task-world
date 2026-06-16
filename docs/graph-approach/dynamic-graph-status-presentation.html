@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Dynamic Graph — Status &amp; What's Left</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --panel2:#1c2330; --line:#2b3340;
+    --ink:#e6edf3; --mut:#9aa7b4; --dim:#6b7785;
+    --green:#3fb950; --amber:#d29922; --red:#f85149; --blue:#58a6ff; --purple:#bc8cff;
+    --accent:#58a6ff;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  code,.mono{font-family:"SF Mono",ui-monospace,Menlo,Consolas,monospace}
+  .wrap{max-width:1180px;margin:0 auto;padding:0 22px}
+  section{padding:54px 0;border-bottom:1px solid var(--line)}
+  section:last-child{border-bottom:0}
+  h1{font-size:34px;line-height:1.15;margin:0 0 6px;letter-spacing:-.5px}
+  h2{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);margin:0 0 18px;font-weight:700}
+  h3{font-size:18px;margin:0 0 8px}
+  p{margin:0 0 12px;color:var(--mut)}
+  .lede{font-size:18px;color:var(--ink);max-width:880px}
+  .kicker{color:var(--dim);font-size:13px;letter-spacing:.16em;text-transform:uppercase;margin:0 0 14px}
+  .nav{position:sticky;top:0;z-index:10;background:rgba(13,17,23,.85);backdrop-filter:blur(8px);border-bottom:1px solid var(--line)}
+  .nav .wrap{display:flex;gap:18px;align-items:center;height:48px;font-size:13px;overflow-x:auto}
+  .nav a{color:var(--mut);text-decoration:none;white-space:nowrap}
+  .nav a:hover{color:var(--ink)}
+  .nav .brand{color:var(--ink);font-weight:700;letter-spacing:-.2px}
+
+  /* hero */
+  .hero{background:linear-gradient(180deg,#10202e 0%,var(--bg) 100%)}
+  .banner{display:inline-flex;align-items:center;gap:9px;background:rgba(210,153,34,.12);border:1px solid rgba(210,153,34,.4);
+    color:var(--amber);padding:6px 13px;border-radius:999px;font-size:13px;font-weight:600;margin-bottom:22px}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--amber);box-shadow:0 0 0 4px rgba(210,153,34,.18)}
+
+  .grid{display:grid;gap:16px}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .g3{grid-template-columns:repeat(3,1fr)}
+  .g2{grid-template-columns:repeat(2,1fr)}
+  @media(max-width:880px){.g4,.g3,.g2{grid-template-columns:1fr 1fr}}
+  @media(max-width:560px){.g4,.g3,.g2{grid-template-columns:1fr}.nav .wrap{gap:13px}}
+
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px}
+  .stat{font-size:30px;font-weight:750;letter-spacing:-.5px;line-height:1}
+  .stat small{font-size:14px;font-weight:600;color:var(--dim)}
+  .stat-l{font-size:12.5px;color:var(--dim);margin-top:8px;text-transform:uppercase;letter-spacing:.08em}
+  .c-green{color:var(--green)} .c-amber{color:var(--amber)} .c-red{color:var(--red)}
+  .c-blue{color:var(--blue)} .c-purple{color:var(--purple)} .c-mut{color:var(--mut)}
+
+  /* phase rail */
+  .rail{display:flex;flex-direction:column;gap:10px}
+  .phase{display:grid;grid-template-columns:128px 1fr auto;gap:16px;align-items:center;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 16px}
+  .phase .pid{font-weight:700;font-size:14px}
+  .phase .pdesc{color:var(--mut);font-size:13.5px}
+  .pill{font-size:11.5px;font-weight:700;padding:4px 10px;border-radius:999px;white-space:nowrap;letter-spacing:.03em}
+  .pill.done{background:rgba(63,185,80,.13);color:var(--green);border:1px solid rgba(63,185,80,.35)}
+  .pill.partial{background:rgba(210,153,34,.13);color:var(--amber);border:1px solid rgba(210,153,34,.35)}
+  .pill.blocked{background:rgba(248,81,73,.13);color:var(--red);border:1px solid rgba(248,81,73,.35)}
+  .pill.todo{background:rgba(139,148,158,.12);color:var(--dim);border:1px solid rgba(139,148,158,.3)}
+
+  ul.clean{margin:0;padding:0;list-style:none}
+  ul.clean li{position:relative;padding:7px 0 7px 24px;color:var(--mut);border-bottom:1px solid rgba(43,51,64,.6)}
+  ul.clean li:last-child{border-bottom:0}
+  ul.clean li::before{content:"";position:absolute;left:4px;top:14px;width:7px;height:7px;border-radius:50%;background:var(--dim)}
+  ul.clean li.r::before{background:var(--red)} ul.clean li.a::before{background:var(--amber)}
+  ul.clean li.g::before{background:var(--green)} ul.clean li.b::before{background:var(--blue)}
+  ul.clean li strong{color:var(--ink);font-weight:650}
+  ul.clean li .sub{display:block;color:var(--dim);font-size:13px;margin-top:2px}
+
+  .saga{display:flex;flex-wrap:wrap;gap:7px;margin-top:6px}
+  .chip{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:11.5px;padding:4px 8px;border-radius:6px;
+    background:var(--panel2);border:1px solid var(--line);color:var(--mut)}
+  .chip b{color:var(--ink)}
+  .chip.bug{border-color:rgba(248,81,73,.3)}
+
+  .callout{background:linear-gradient(180deg,rgba(188,140,255,.09),rgba(188,140,255,.02));
+    border:1px solid rgba(188,140,255,.35);border-left:3px solid var(--purple);border-radius:10px;padding:18px 20px}
+  .callout.warn{background:linear-gradient(180deg,rgba(248,81,73,.08),rgba(248,81,73,.02));border-color:rgba(248,81,73,.35);border-left-color:var(--red)}
+  .callout.ok{background:linear-gradient(180deg,rgba(63,185,80,.08),rgba(63,185,80,.02));border-color:rgba(63,185,80,.35);border-left-color:var(--green)}
+
+  .steps{counter-reset:step;display:flex;flex-direction:column;gap:14px}
+  .step{display:grid;grid-template-columns:38px 1fr;gap:16px;align-items:start;
+    background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px}
+  .step .num{counter-increment:step;width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;
+    font-weight:750;background:rgba(88,166,255,.13);color:var(--blue);border:1px solid rgba(88,166,255,.35)}
+  .step .num::before{content:counter(step)}
+  .step h3{font-size:16px}
+  .tag{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.04em;padding:2px 8px;border-radius:5px;margin-left:8px;vertical-align:middle}
+  .tag.cheap{background:rgba(63,185,80,.14);color:var(--green)}
+  .tag.gate{background:rgba(210,153,34,.14);color:var(--amber)}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line)}
+  th{color:var(--dim);font-size:12px;text-transform:uppercase;letter-spacing:.07em;font-weight:700}
+  td.mono{font-family:"SF Mono",ui-monospace,Menlo,monospace;font-size:12.5px}
+  .vs{font-size:12px;color:var(--dim)}
+
+  .foot{padding:30px 0;color:var(--dim);font-size:12.5px}
+  .arrow{color:var(--dim)}
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <span class="brand">Dynamic Graph</span>
+    <a href="#summary">Summary</a>
+    <a href="#progress">Progress</a>
+    <a href="#saga">The Saga</a>
+    <a href="#remaining">What's Left</a>
+    <a href="#method">Methodical Fix</a>
+    <a href="#cost">Cost</a>
+  </div>
+</nav>
+
+<!-- HERO -->
+<section class="hero">
+  <div class="wrap">
+    <span class="banner"><span class="dot"></span>STATUS: 90% built &middot; stuck in live-debug loop &middot; real comparison never run</span>
+    <h1>Dynamic Execution Graph<br/>Operational Status &amp; Remaining Work</h1>
+    <p class="lede">The kernel, planner, gap analysis, invariant gate, observability and metrics are all <strong style="color:var(--ink)">built and accepted</strong>. The system has driven one full happy-path smoke run end&#8209;to&#8209;end. But the final proof — the real comparison — has not run, and the last 25 slices were single&#8209;bug&#8209;per&#8209;run whack&#8209;a&#8209;mole that burned real LLM tokens to do trivial fake work.</p>
+    <div class="grid g4" style="margin-top:26px">
+      <div class="card"><div class="stat c-green">DG&#8209;0&rarr;4</div><div class="stat-l">Phases fully accepted</div></div>
+      <div class="card"><div class="stat c-amber">~25</div><div class="stat-l">Bug-fix sub-slices in DG&#8209;5.1&rarr;5.2d</div></div>
+      <div class="card"><div class="stat c-red">0<small> / 5</small></div><div class="stat-l">Comparison arms actually run</div></div>
+      <div class="card"><div class="stat c-blue">1</div><div class="stat-l">Full happy-path run completed</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- SUMMARY -->
+<section id="summary">
+  <div class="wrap">
+    <h2>Executive Summary</h2>
+    <div class="grid g2">
+      <div>
+        <h3 class="c-green">What works</h3>
+        <ul class="clean">
+          <li class="g"><strong>Phases DG-0 &rarr; DG-4 are done.</strong><span class="sub">Baseline, dynamic metrics, planner packet + fenced patch tool + prompt contract, dynamic-feature routine, horizon templates, gap planner, revision policy, final invariant gate, activity events, UI panels, comparison export.</span></li>
+          <li class="g"><strong>The happy path ran once.</strong><span class="sub">Run <span class="mono">0c053df6</span> (DG-5.1u/v): planner&rarr;worker&rarr;verifier&rarr;gap&rarr;corrective&rarr;invariant completed; compare_carriers reported it. Proof the architecture <em>can</em> close.</span></li>
+          <li class="g"><strong>Compact event readback fixed</strong><span class="sub">DG-5.1v added <span class="mono">payload_mode=summary</span> so completed runs are scorable without the 60s <span class="mono">/graph</span> timeout.</span></li>
+        </ul>
+      </div>
+      <div>
+        <h3 class="c-red">What's stuck</h3>
+        <ul class="clean">
+          <li class="r"><strong>The real comparison was never run.</strong><span class="sub">DG-5.2 wants 5 arms (single agent, fixed 3-agent, Mind-the-Gap, static graph, dynamic graph). Only Arm E smoke evidence exists. Arms A&ndash;D pending. This is the actual definition-of-done.</span></li>
+          <li class="a"><strong>Oracle-isolated path not yet closed.</strong><span class="sub">DG-5.2b reintroduced breakage; 5.2c/5.2d chased it; last retry <span class="mono">abba86e4</span> paused on Claude CLI quota, not a logic bug. Full isolated run never completed.</span></li>
+          <li class="a"><strong>Each bug cost a live run to find.</strong><span class="sub">~25 serial slices, each: run &rarr; surface one contract bug &rarr; fix &rarr; reload &rarr; rerun &rarr; next bug. No deterministic harness catches them in bulk.</span></li>
+        </ul>
+      </div>
+    </div>
+    <div class="callout" style="margin-top:22px">
+      <strong style="color:var(--ink)">Bottom line.</strong> The remaining engineering is small. The remaining <em>method</em> is the problem. A deterministic, in-process, fake-runner end-to-end harness would have caught nearly every one of the last 25 bugs at unit-test speed and near-zero cost — and it is the single highest-value thing left to build <em>before</em> spending another token on live runs.
+    </div>
+  </div>
+</section>
+
+<!-- PROGRESS -->
+<section id="progress">
+  <div class="wrap">
+    <h2>Phase Progress Map</h2>
+    <div class="rail">
+      <div class="phase"><span class="pid c-green">DG-0</span><span class="pdesc">Baseline &amp; instrumentation — baseline matrix + dynamic metrics schema</span><span class="pill done">DONE</span></div>
+      <div class="phase"><span class="pid c-green">DG-1</span><span class="pdesc">Planner patch submission — graph packet, fenced patch tool, prompt contract</span><span class="pill done">DONE</span></div>
+      <div class="phase"><span class="pid c-green">DG-2</span><span class="pdesc">Dynamic feature routine — skeleton + horizon region templates</span><span class="pill done">DONE</span></div>
+      <div class="phase"><span class="pid c-green">DG-3</span><span class="pdesc">Gap planner &amp; invariant gate — node semantics, revision policy, final gate</span><span class="pill done">DONE</span></div>
+      <div class="phase"><span class="pid c-green">DG-4</span><span class="pdesc">Observability — activity events, UI panels, comparison metric export</span><span class="pill done">DONE</span></div>
+      <div class="phase"><span class="pid c-amber">DG-5.1</span><span class="pdesc">Dynamic smoke run — happy path proven once (<span class="mono">0c053df6</span>) through 22 bug-fix sub-slices a&rarr;v</span><span class="pill partial">1 RUN GREEN</span></div>
+      <div class="phase"><span class="pid c-red">DG-5.2</span><span class="pdesc">True 5-arm comparison — <strong style="color:var(--ink)">the acceptance gate</strong>; harness exists, Arms A&ndash;D never executed</span><span class="pill blocked">NOT RUN</span></div>
+      <div class="phase"><span class="pid c-amber">DG-5.2b&ndash;d</span><span class="pdesc">Hidden-oracle isolation + gap safety fixes — last retry paused on runner quota</span><span class="pill blocked">QUOTA-BLOCKED</span></div>
+    </div>
+    <p style="margin-top:16px;font-size:13px">Against the plan's own 10-point "Full Operational Status" definition: points 1&ndash;9 have code-level evidence; <strong style="color:var(--ink)">point 10 — "a true comparison run can execute Arm E end-to-end without manual graph mutation" — is the only thing that converts this from <span class="c-amber">built</span> to <span class="c-green">operational</span>, and it is unproven for the current (post-isolation) code.</strong></p>
+  </div>
+</section>
+
+<!-- SAGA -->
+<section id="saga">
+  <div class="wrap">
+    <h2>The DG-5.1 Saga &mdash; One Bug Per Run</h2>
+    <p class="lede" style="margin-bottom:20px">The "fake work" is trivial: write <span class="mono">dynamic-smoke-output.txt</span> containing two strings. Every cent spent went into <strong style="color:var(--ink)">orchestration plumbing bugs</strong>, each found by a separate live run, fixed, then the next run revealed the next one. This is the shape of the problem.</p>
+    <div class="saga">
+      <span class="chip bug"><b>a</b> spec not wired to planner</span>
+      <span class="chip bug"><b>b</b> verifier edge port alias</span>
+      <span class="chip bug"><b>c</b> verification record not bound</span>
+      <span class="chip bug"><b>d</b> no-submit lease leak</span>
+      <span class="chip bug"><b>e</b> oracle check command</span>
+      <span class="chip bug"><b>f</b> gap planner submit discipline</span>
+      <span class="chip bug"><b>g</b> packet bloat (.venv dump)</span>
+      <span class="chip bug"><b>h</b> gap planner missing tool</span>
+      <span class="chip bug"><b>i</b> region dependency edges</span>
+      <span class="chip bug"><b>j</b> gap classification binding</span>
+      <span class="chip bug"><b>k</b> gap output port mismatch</span>
+      <span class="chip bug"><b>l</b> claude SDK fallback</span>
+      <span class="chip bug"><b>m</b> duplicate root patch</span>
+      <span class="chip bug"><b>n</b> CLI patch bridge</span>
+      <span class="chip bug"><b>o</b> rate-limit misclassified</span>
+      <span class="chip bug"><b>p</b> rejected-patch submit guard</span>
+      <span class="chip bug"><b>q</b> startup re-arm storm</span>
+      <span class="chip bug"><b>r</b> template evidence edges</span>
+      <span class="chip bug"><b>s</b> worker prompt grounding</span>
+      <span class="chip bug"><b>t</b> premature completion</span>
+      <span class="chip bug"><b>u</b> check command validation</span>
+      <span class="chip bug"><b>v</b> readback timeout</span>
+      <span class="chip bug">5.2b oracle isolation</span>
+      <span class="chip bug">5.2c late-edge backfill</span>
+      <span class="chip bug">5.2d retry obligation</span>
+    </div>
+    <div class="grid g3" style="margin-top:24px">
+      <div class="card"><div class="stat c-amber">~24</div><div class="stat-l">Distinct live runs in the saga</div></div>
+      <div class="card"><div class="stat c-amber">~1 bug</div><div class="stat-l">Discovered per expensive run</div></div>
+      <div class="card"><div class="stat c-mut">~0</div><div class="stat-l">Slices verified by the graph's own verifier — nearly all "accepted by independent validation"</div></div>
+    </div>
+    <div class="callout warn" style="margin-top:22px">
+      <strong style="color:var(--ink)">Two tells that the method, not the code, is the bottleneck.</strong>
+      <span style="display:block;margin-top:8px;color:var(--mut)">
+      (1) Almost every bug was a <strong style="color:var(--ink)">cross-boundary contract mismatch</strong> — port names (<span class="mono">verification_result</span> vs <span class="mono">verification_report</span>), required edges, per-role tool exposure, lease recovery. These are exactly what a scripted end-to-end test catches for free.
+      (2) The graph verifier itself was never trusted to grade its own slices — the plan repeatedly says "accepted by independent validation, not by a completed graph verifier grade." The thing being built was not used to verify the thing being built.
+      </span>
+    </div>
+  </div>
+</section>
+
+<!-- REMAINING -->
+<section id="remaining">
+  <div class="wrap">
+    <h2>What Still Needs To Be Done</h2>
+    <table>
+      <thead><tr><th style="width:30%">Item</th><th>Detail</th><th style="width:120px">State</th></tr></thead>
+      <tbody>
+        <tr>
+          <td><strong>Close the oracle-isolated path</strong></td>
+          <td>DG-5.2d retry <span class="mono">abba86e4</span> paused on Claude CLI quota at the corrective verifier — environmental, not a logic bug. The full isolated planner&rarr;&hellip;&rarr;invariant path has not completed end-to-end since DG-5.2b.</td>
+          <td><span class="pill blocked">BLOCKED&nbsp;(quota)</span></td>
+        </tr>
+        <tr>
+          <td><strong>DG-5.2 full comparison</strong></td>
+          <td>Run all five arms (A single-agent, B fixed 3-agent, C Mind-the-Gap, D static graph, E dynamic graph) per <span class="mono">true-comparison-plan.md</span>. Only E smoke evidence exists; A&ndash;D never executed. <strong>This is the acceptance gate.</strong></td>
+          <td><span class="pill blocked">NOT RUN</span></td>
+        </tr>
+        <tr>
+          <td><strong>Completed-run graph read health</strong></td>
+          <td>Summary mode (DG-5.1v) is fast, but full <span class="mono">/graph</span> and <span class="mono">/graph/scheduler</span> still time out (~30&ndash;60s) on completed runs. Fine for metrics; bad for operator inspection — a DG-4.2 goal.</td>
+          <td><span class="pill partial">PARTIAL</span></td>
+        </tr>
+        <tr>
+          <td><strong>Runner reliability after rejected patches</strong></td>
+          <td>DG-5.1l residual: Claude SDK sessions need a retry before accepting a root patch; runner quota repeatedly derails runs. No deterministic runner used for proof.</td>
+          <td><span class="pill partial">RISK</span></td>
+        </tr>
+        <tr>
+          <td><strong>Self-verification credibility</strong></td>
+          <td>The graph verifier path has rarely completed in-graph. Operational status implicitly assumes it works; that assumption is untested at scale.</td>
+          <td><span class="pill todo">UNPROVEN</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- METHOD -->
+<section id="method">
+  <div class="wrap">
+    <h2>Yes &mdash; A More Methodical Approach Is Needed</h2>
+    <p class="lede" style="margin-bottom:24px">The current loop is <strong style="color:var(--ink)">O(n) expensive live runs for n contract bugs</strong>: each run dies after surfacing one defect. Invert it. Find the bugs in bulk, deterministically, for free; spend real tokens only on the final, intended acceptance run.</p>
+    <div class="steps">
+      <div class="step"><div class="num"></div><div>
+        <h3>Build a deterministic scripted-runner E2E harness<span class="tag cheap">ZERO LLM COST</span></h3>
+        <p>An in-process fake graph runner that plays the full happy path <em>and</em> the known sad paths (rejected-patch retry, gap no-op rejection, executable-retire guard, late-edge backfill, oracle isolation). No model, no quota, no network. Runs in CI in seconds. This is the regression net that should have existed before DG-5.1a — it would have caught a&ndash;v as a batch.</p>
+      </div></div>
+      <div class="step"><div class="num"></div><div>
+        <h3>Freeze the dynamic-graph contract in one doc + test it</h3>
+        <p>Canonical port names, required edges per region template, per-role tool exposure (planner vs gap_planner), lease-recovery rules, and the completion invariants. Most of the 25 bugs were this contract being <em>discovered run-by-run</em> instead of <em>specified and asserted once</em>. Encode it as table-driven unit tests on the kernel.</p>
+      </div></div>
+      <div class="step"><div class="num"></div><div>
+        <h3>Decouple proof from runner quota</h3>
+        <p>Operational correctness is proven by the deterministic harness. Real LLM runners are reserved for the comparison's measurement, not for finding plumbing bugs. Rate-limit pauses (DG-5.1o, 5.2d) should never again block <em>logic</em> progress.</p>
+      </div></div>
+      <div class="step"><div class="num"></div><div>
+        <h3>One rule: every live bug becomes a harness case before the rerun</h3>
+        <p>When a live run does surface something the fake harness missed, add the failing case to the harness <em>first</em>, then fix. The next live run can't regress, and latent bugs surface together instead of one-per-run.</p>
+      </div></div>
+      <div class="step"><div class="num"></div><div>
+        <h3>Only then spend tokens on DG-5.2<span class="tag gate">GATED</span></h3>
+        <p>Gate the five-arm comparison behind a green harness. Run each arm once, deliberately, with a real runner, as measurement — not as a debugging tool. Record results or remaining blockers with evidence and call operational status.</p>
+      </div></div>
+    </div>
+    <div class="callout ok" style="margin-top:24px">
+      <strong style="color:var(--ink)">Net effect.</strong> Steps 1&ndash;2 are a few days of deterministic test work that retires most of the live-run spend. The architecture is already proven capable (run <span class="mono">0c053df6</span> closed the loop). The job now is to make "it works" <em>repeatable and cheap to verify</em>, then run the comparison once.
+    </div>
+  </div>
+</section>
+
+<!-- COST -->
+<section id="cost">
+  <div class="wrap">
+    <h2>Why The Current Loop Is Expensive</h2>
+    <div class="grid g2">
+      <div>
+        <table>
+          <thead><tr><th>Sample live run</th><th>Cost</th><th>Tools</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">0c053df6</td><td class="mono">$0.7653</td><td class="mono">47</td></tr>
+            <tr><td class="mono">89d5347a</td><td class="mono">$0.4179</td><td class="mono">20</td></tr>
+            <tr><td class="mono">4a147a09</td><td class="mono">$0.3497</td><td class="mono">14</td></tr>
+            <tr><td class="mono">abba86e4</td><td class="mono">$0.3276</td><td class="mono">12</td></tr>
+          </tbody>
+        </table>
+        <p style="margin-top:12px;font-size:13px">Plus the many runs cancelled, paused or re-armed at startup — uncounted spend. ~24 runs in the saga at this scale, each to find <strong style="color:var(--ink)">one</strong> contract bug.</p>
+      </div>
+      <div class="card">
+        <h3 style="margin-bottom:14px">Cost shape</h3>
+        <p style="margin-bottom:6px"><span class="c-red">&#9632;</span> Live-debug loop &mdash; <span class="mono">~24 runs &times; ~$0.5 + cancellations</span></p>
+        <div style="height:10px;background:linear-gradient(90deg,var(--red),rgba(248,81,73,.25));border-radius:5px;margin:0 0 18px"></div>
+        <p style="margin-bottom:6px"><span class="c-green">&#9632;</span> Deterministic harness &mdash; <span class="mono">~$0, runs in CI</span></p>
+        <div style="height:10px;width:4%;background:var(--green);border-radius:5px;margin:0 0 18px"></div>
+        <p style="font-size:13px;color:var(--mut)">The work being verified (write a file with two strings) costs nothing. <strong style="color:var(--ink)">All</strong> spend is the orchestration paying an LLM to walk plumbing that a fake runner walks for free.</p>
+      </div>
+    </div>
+    <div class="callout warn" style="margin-top:22px">
+      <strong style="color:var(--ink)">The one-line recommendation:</strong> stop using paid live runs as a bug finder. Build the deterministic full-path harness, port the 25 known failures into it, get it green, <em>then</em> run DG-5.2 once for real to call operational status.
+    </div>
+  </div>
+</section>
+
+<div class="wrap foot">
+  Generated from <span class="mono">docs/graph-approach/dynamic-graph-operational-plan.md</span> &middot; status as of 2026-06-15 &middot; single-file static HTML, no dependencies.
+</div>
+
+</body>
+</html>

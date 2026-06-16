@@ -50,11 +50,14 @@ def _event(
 def _projection(
     *,
     node_states: dict[str, str] | None = None,
+    node_kinds: dict[str, str] | None = None,
     resource_claims: dict[str, list[dict[str, Any]]] | None = None,
 ) -> GraphProjection:
     projection = initial_projection()
     if node_states is not None:
         projection["node_states"] = node_states
+    if node_kinds is not None:
+        projection["node_kinds"] = node_kinds
     if resource_claims is not None:
         cast(dict[str, Any], projection)["resource_claims"] = resource_claims
     return projection
@@ -150,6 +153,123 @@ def test_planner_can_create_node() -> None:
     assert result.accepted
 
 
+def test_planner_cannot_create_check_without_command_definition() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                    },
+                }
+            ]
+        )
+    )
+
+    assert not result.accepted
+    assert (
+        result.rejection_reason
+        == "check node requires command_definition, hidden_oracle_command, or command_binding: check-1"
+    )
+
+
+def test_planner_can_create_check_with_hidden_oracle_command() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "hidden_oracle_command": "uv run pytest tests/oracle -q",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-check",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-1",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+                },
+            ]
+        )
+    )
+
+    assert result.accepted
+
+
+def test_planner_can_create_check_with_command_definition() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "command_definition": {"cmd": "uv run pytest tests/oracle -q"},
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-check",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-1",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+                },
+            ]
+        )
+    )
+
+    assert result.accepted
+
+
+def test_planner_can_create_check_with_dynamic_feature_oracle_binding() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "command_binding": "dynamic_feature_hidden_oracle",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-check",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-1",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+                },
+            ]
+        )
+    )
+
+    assert result.accepted
+
+
 def test_planner_cannot_create_gate() -> None:
     result = _validate(_patch([{"op": "create_gate", "predecessor_node_ids": ["worker-1"]}]))
 
@@ -165,6 +285,134 @@ def test_oversight_can_create_gate() -> None:
     )
 
     assert result.accepted
+
+
+def test_gap_planner_can_submit_no_op_patch() -> None:
+    result = _validate(_patch([]), actor_role="gap_planner")
+
+    assert result.accepted
+
+
+def test_gap_planner_no_op_rejected_when_classified_gap_successor_waits() -> None:
+    projection = initial_projection()
+    projection["edges"]["edge-gap-to-corrective"] = {
+        "edge_id": "edge-gap-to-corrective",
+        "from_node_id": "planner-1",
+        "from_port": "gap_classification",
+        "to_node_id": "worker-corrective",
+        "to_port": "classified_gap",
+        "required": True,
+        "dependency_type": "input_binding",
+    }
+
+    result = _validate(_patch([]), projection=projection, actor_role="gap_planner")
+
+    assert not result.accepted
+    assert (
+        result.rejection_reason
+        == "gap planner no-op leaves required classified_gap successor unsatisfied"
+    )
+
+
+def test_gap_planner_can_append_corrective_work_region() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "corrective-worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "task_region_id": "corrective_work_region",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "corrective-verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                        "task_region_id": "corrective_work_region",
+                    },
+                },
+            ]
+        ),
+        actor_role="gap_planner",
+    )
+
+    assert result.accepted
+
+
+def test_gap_planner_cannot_create_generic_planner_successor() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "planner-successor-1",
+                        "kind": "planner",
+                        "role": "planner",
+                        "state": "planned",
+                    },
+                }
+            ]
+        ),
+        actor_role="gap_planner",
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "gap planner cannot create planner successor"
+
+
+def test_gap_planner_cannot_create_gap_planner_successor() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "gap-planner-successor-1",
+                        "kind": "planner",
+                        "role": "gap_planner",
+                        "state": "planned",
+                    },
+                }
+            ]
+        ),
+        actor_role="gap_planner",
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "gap planner cannot create planner successor"
+
+
+def test_gap_planner_executable_work_must_be_corrective() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "extra-worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "task_region_id": "optional_expansion_region",
+                    },
+                }
+            ]
+        ),
+        actor_role="gap_planner",
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == (
+        "gap planner executable nodes must target corrective_work_region"
+    )
 
 
 def test_unknown_op_rejected() -> None:
@@ -237,6 +485,20 @@ def test_retire_planned_node_accepted() -> None:
     )
 
     assert result.accepted
+
+
+def test_gap_planner_cannot_retire_executable_node() -> None:
+    result = _validate(
+        _patch([{"op": "retire_node", "node_id": "worker-1"}]),
+        projection=_projection(
+            node_states={"worker-1": "planned"},
+            node_kinds={"worker-1": "worker"},
+        ),
+        actor_role="gap_planner",
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "gap planner cannot retire executable node: worker-1"
 
 
 def test_create_worker_without_role_rejected() -> None:

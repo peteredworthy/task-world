@@ -336,6 +336,58 @@ def test_compile_planner_step_seeds_chain_head() -> None:
     ]
 
 
+def test_dynamic_graph_feature_run_inputs_seed_planner_context() -> None:
+    routine = RoutineConfig(
+        id="dynamic-graph-feature",
+        name="Dynamic Feature",
+        steps=[
+            StepConfig(
+                id="S-01",
+                kind="planner",
+                title="Plan dynamic feature execution graph",
+                step_context="Use submit_graph_patch only.",
+            )
+        ],
+    )
+
+    events = compile_routine(
+        routine,
+        FakeClock(),
+        SequentialIdGenerator(),
+        run_id="run-1",
+        run_config={
+            "feature_spec_path": "docs/graph-approach/dynamic-smoke-feature-spec.md",
+            "feature_spec_content": "Build the dynamic-smoke artifact.",
+            "feature_spec_content_source": "worktree",
+            "acceptance_command": "uv run pytest tests/smoke -q",
+            "hidden_oracle_command": "uv run pytest tests/oracle -q",
+            "patch_budget": 4,
+            "gap_policy_profile": "standard",
+            "ignored": "not exposed",
+        },
+    )
+
+    planner = _node_event(events, "planner-s-01").payload
+    dynamic_feature = planner["dynamic_feature"]
+    assert dynamic_feature == {
+        "feature_spec_path": "docs/graph-approach/dynamic-smoke-feature-spec.md",
+        "feature_spec_content": "Build the dynamic-smoke artifact.",
+        "feature_spec_content_source": "worktree",
+        "acceptance_command": "uv run pytest tests/smoke -q",
+        "hidden_oracle_command": "uv run pytest tests/oracle -q",
+        "patch_budget": 4,
+        "gap_policy_profile": "standard",
+    }
+    assert "Dynamic feature inputs:" in planner["task_context"]
+    assert "docs/graph-approach/dynamic-smoke-feature-spec.md" in planner["task_context"]
+    assert "Build the dynamic-smoke artifact." in planner["task_context"]
+    assert "uv run pytest tests/oracle -q" not in planner["task_context"]
+    assert "hidden_oracle_binding: dynamic_feature_hidden_oracle" in planner["task_context"]
+
+    snapshot = _node_event(events, "routine-snapshot").payload["snapshot"]
+    assert snapshot["dynamic_feature"] == dynamic_feature
+
+
 def test_compile_without_planner_unchanged() -> None:
     events = _compile(_minimal_routine())
 

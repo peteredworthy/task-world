@@ -100,7 +100,13 @@ class _ChunkedFakeProcess:
 # ---------------------------------------------------------------------------
 
 
-def _ctx(mcp_servers: list[MCPServerConfig] | None = None) -> ExecutionContext:
+def _ctx(
+    mcp_servers: list[MCPServerConfig] | None = None,
+    *,
+    graph_patch_callback: Any | None = None,
+    node_kind: str | None = None,
+    node_role: str | None = None,
+) -> ExecutionContext:
     return ExecutionContext(
         run_id="run-transport-test",
         task_id="task-transport-test",
@@ -108,6 +114,9 @@ def _ctx(mcp_servers: list[MCPServerConfig] | None = None) -> ExecutionContext:
         prompt="Test the transport.",
         requirements=["R-01: implement polling", "R-02: route events"],
         mcp_servers=mcp_servers,
+        graph_patch_callback=graph_patch_callback,
+        node_kind=node_kind,
+        node_role=node_role,
     )
 
 
@@ -212,6 +221,18 @@ def _tool_call_request(
         "id": req_id,
         "method": "item/tool/call",
         "params": {"tool": tool_name, "arguments": args},
+    }
+
+
+def _tool_call_started_notification(
+    tool_name: str,
+    args: dict[str, Any],
+) -> dict[str, Any]:
+    """item/started notification in v2 notification-style format."""
+    return {
+        "jsonrpc": "2.0",
+        "method": "item/started",
+        "params": {"item": {"type": "mcpToolCall", "tool": tool_name, "arguments": args}},
     }
 
 
@@ -329,6 +350,88 @@ async def test_execute_routes_tool_call_submit_to_callback() -> None:
     )
 
     assert submitted == [True]
+
+
+async def test_execute_routes_submit_graph_patch_to_callback_with_feedback() -> None:
+    notifications = [
+        _tool_call_request(
+            "submit_graph_patch",
+            {
+                "patch_id": "patch-1",
+                "base_graph_position": 4,
+                "ops": [{"op": "create_node", "node": {"node_id": "worker-2"}}],
+            },
+            req_id=12,
+        ),
+        _turn_completed(),
+    ]
+    agent, transport = _make_agent(notifications)
+    received: list[dict[str, Any]] = []
+
+    async def capture_patch(payload: dict[str, Any]) -> str:
+        received.append(payload)
+        return "graph patch patch-1 accepted"
+
+    await agent.execute(
+        context=_ctx(
+            graph_patch_callback=capture_patch,
+            node_kind="planner",
+            node_role="planner",
+        ),
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    assert received == [
+        {
+            "patch_id": "patch-1",
+            "base_graph_position": 4,
+            "ops": [{"op": "create_node", "node": {"node_id": "worker-2"}}],
+        }
+    ]
+    responses = [m for m in transport.sent if m.get("id") == 12 and "result" in m]
+    assert responses[-1]["result"]["contentItems"] == [
+        {"type": "inputText", "text": "graph patch patch-1 accepted"}
+    ]
+
+
+async def test_execute_routes_item_started_submit_graph_patch_to_callback() -> None:
+    """Legacy item/started notifications also route submit_graph_patch to callback."""
+    notifications = [
+        _tool_call_started_notification(
+            "submit_graph_patch",
+            {
+                "patch_id": "patch-legacy",
+                "base_graph_position": 6,
+                "ops": [{"op": "create_node", "node": {"node_id": "worker-legacy"}}],
+            },
+        ),
+        _turn_completed(),
+    ]
+    agent, _ = _make_agent(notifications)
+    received: list[dict[str, Any]] = []
+
+    async def capture_patch(payload: dict[str, Any]) -> str:
+        received.append(payload)
+        return "legacy patch patch-legacy accepted"
+
+    await agent.execute(
+        context=_ctx(
+            graph_patch_callback=capture_patch,
+            node_kind="planner",
+            node_role="planner",
+        ),
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+    )
+
+    assert received == [
+        {
+            "patch_id": "patch-legacy",
+            "base_graph_position": 6,
+            "ops": [{"op": "create_node", "node": {"node_id": "worker-legacy"}}],
+        }
+    ]
 
 
 async def test_execute_routes_tool_call_grade_to_callback_in_verifier_phase() -> None:

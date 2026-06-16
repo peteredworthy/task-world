@@ -245,6 +245,54 @@ async def test_route_tool_call_submit_invokes_callback() -> None:
     assert submitted == [True]
 
 
+async def test_route_tool_call_submit_graph_patch_invokes_callback() -> None:
+    agent = CodexServerAgent()
+    received: list[dict[str, Any]] = []
+
+    async def capture_patch(payload: dict[str, Any]) -> str:
+        received.append(payload)
+        return "accepted patch-1"
+
+    result = await agent._route_tool_call(
+        tool_name="submit_graph_patch",
+        args={
+            "patch": {
+                "patch_id": "patch-1",
+                "base_graph_position": 3,
+                "ops": [{"op": "create_node", "node": {"node_id": "worker-1"}}],
+            }
+        },
+        on_checklist_update=_noop_checklist,
+        on_submit=_noop_submit,
+        on_submit_graph_patch=capture_patch,
+    )
+
+    assert result == "accepted patch-1"
+    assert received == [
+        {
+            "patch_id": "patch-1",
+            "base_graph_position": 3,
+            "ops": [{"op": "create_node", "node": {"node_id": "worker-1"}}],
+        }
+    ]
+
+
+async def test_route_tool_call_submit_graph_patch_requires_callback() -> None:
+    agent = CodexServerAgent()
+
+    with pytest.raises(ValueError, match="not registered"):
+        await agent._route_tool_call(
+            tool_name="submit_graph_patch",
+            args={
+                "patch_id": "patch-1",
+                "base_graph_position": 3,
+                "ops": [{"op": "create_node"}],
+            },
+            on_checklist_update=_noop_checklist,
+            on_submit=_noop_submit,
+        )
+
+
 async def test_route_tool_call_grade_invokes_on_grade_callback() -> None:
     agent = CodexServerAgent()
     grades: list[tuple[str, str, str | None]] = []

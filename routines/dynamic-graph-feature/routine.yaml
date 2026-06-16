@@ -1,0 +1,38 @@
+routine:
+  id: "dynamic-graph-feature"
+  name: "Dynamic Feature Graph Routine"
+  description: "Graph-mode starter for feature work driven by a dynamic planner and graph patches only."
+  execution_mode: "graph"
+  planner_generation_budget: 10
+  inputs:
+    - name: feature_spec_path
+      required: true
+      description: "Repo-relative path to the feature specification document"
+    - name: feature_spec_content
+      required: false
+      default: ""
+      description: "Optional embedded feature specification text for worktrees that cannot read the spec path"
+    - name: acceptance_command
+      required: true
+      description: "Verification command that determines final acceptance"
+    - name: hidden_oracle_command
+      required: false
+      default: ""
+      description: "Optional hidden-oracle validation command to run during planning"
+    - name: patch_budget
+      required: false
+      default: 8
+      description: "Patch budget for dynamic planner horizons"
+    - name: gap_policy_profile
+      required: false
+      default: "standard"
+      description: "Gap policy profile identifier for generated gap-planner nodes"
+
+  steps:
+    - id: "S-01"
+      kind: "planner"
+      title: "Plan dynamic feature execution graph"
+      step_context: |
+        Build the feature execution plan by creating planner-driven runtime regions only.
+        Use `submit_graph_patch`, DG-1.3 packet fields, and `horizon_region_templates`
+        for worker, verifier, gap-planner, corrective-work, and invariant regions.

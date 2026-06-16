@@ -33,6 +33,7 @@ from claude_agent_sdk.types import TextBlock, ToolUseBlock
 def _ctx(
     prompt: str = "Do the task.",
     requirements: list[str] | None = None,
+    graph_patch_callback: Any | None = None,
 ) -> ExecutionContext:
     return ExecutionContext(
         run_id="run-abc",
@@ -40,6 +41,7 @@ def _ctx(
         working_dir="/tmp/work",
         prompt=prompt,
         requirements=requirements or ["R-01: implement feature", "R-02: write tests"],
+        graph_patch_callback=graph_patch_callback,
     )
 
 
@@ -53,6 +55,10 @@ async def _noop_submit() -> None:
 
 async def _noop_grade(req_id: str, grade: str, reason: str | None) -> None:
     pass
+
+
+async def _noop_graph_patch(patch_payload: dict[str, Any]) -> str:
+    return f"accepted {patch_payload.get('patch_id', 'patch')}"
 
 
 def _result_msg(
@@ -188,6 +194,28 @@ def test_agent_class_name_attribute() -> None:
 def test_build_prompt_builder_contains_update_checklist() -> None:
     prompt = build_claude_sdk_prompt(_ctx(), is_verifier=False)
     assert "update_checklist" in prompt
+
+
+def test_build_prompt_graph_planner_contains_submit_graph_patch() -> None:
+    prompt = build_claude_sdk_prompt(
+        _ctx(graph_patch_callback=_noop_graph_patch),
+        is_verifier=False,
+    )
+    assert "submit_graph_patch" in prompt
+    assert "base_graph_position" in prompt
+    assert "before **submit**" in prompt
+
+
+def test_build_prompt_graph_node_requires_submit_tool_even_without_requirements() -> None:
+    context = _ctx(requirements=[])
+    context.node_id = "worker-node"
+
+    prompt = build_claude_sdk_prompt(context, is_verifier=False)
+
+    assert "Graph Node Completion" in prompt
+    assert "mcp__orchestrator__submit" in prompt
+    assert "requirements list is empty" in prompt
+    assert "Text such as 'submitted'" in prompt
 
 
 def test_build_prompt_builder_contains_task_prompt() -> None:
@@ -613,6 +641,16 @@ class TestBuildOrchestratorMcpServer:
         """Builder phase (on_grade=None) creates update_checklist, submit, request_clarification."""
         server = build_orchestrator_mcp_server(_noop_checklist, _noop_submit, on_grade=None)
         # The server is returned from create_sdk_mcp_server; it should exist.
+        assert server is not None
+
+    async def test_graph_builder_phase_accepts_submit_graph_patch_callback(self) -> None:
+        """Graph builder phase can include submit_graph_patch."""
+        server = build_orchestrator_mcp_server(
+            _noop_checklist,
+            _noop_submit,
+            on_grade=None,
+            on_submit_graph_patch=_noop_graph_patch,
+        )
         assert server is not None
 
     async def test_verifier_phase_creates_four_tools(self) -> None:

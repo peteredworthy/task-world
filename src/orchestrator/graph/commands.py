@@ -21,7 +21,7 @@ from orchestrator.graph.models import (
 )
 from orchestrator.graph.file_state import GATEKEEPER_TAXONOMY
 from orchestrator.graph.patch_validator import validate_patch
-from orchestrator.graph.projections import GraphProjection
+from orchestrator.graph.projections import GraphProjection, final_invariant_blockers_for_events
 from orchestrator.graph.scheduler import (
     InputEdgeInfo,
     NodeScheduleInfo,
@@ -73,7 +73,7 @@ def apply_command(
     make_event = _event_factory(run_id, command_type, clock, id_gen)
 
     if command_type in RUN_LIFECYCLE_TRANSITIONS or command_type == "fail":
-        return _apply_lifecycle_command(projection, command_type, payload, make_event)
+        return _apply_lifecycle_command(projection, events, command_type, payload, make_event)
     if command_type == "seed_compiled_events":
         return _apply_seed_compiled_events(projection, payload, make_event)
     if command_type == "submit_callback":
@@ -92,6 +92,10 @@ def apply_command(
         return _apply_record_decision(projection, payload, make_event)
     if command_type == "record_gatekeeper_verdicts":
         return _apply_record_gatekeeper_verdicts(projection, payload, make_event)
+    if command_type == "record_requirement_revision":
+        return _apply_record_requirement_revision(payload, make_event)
+    if command_type == "record_support_evidence":
+        return _apply_record_support_evidence(projection, payload, make_event)
     if command_type == "record_cleanup_applied":
         return _apply_record_cleanup_applied(projection, events, payload, make_event)
 
@@ -108,6 +112,7 @@ def apply_command(
 
 def _apply_lifecycle_command(
     projection: GraphProjection,
+    events: list[EventEnvelope],
     command_type: str,
     payload: dict[str, Any],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
@@ -134,6 +139,19 @@ def _apply_lifecycle_command(
             else f"illegal transition from {current_state}"
         )
         return [_command_rejected(make_event, command_type, reason)]
+    if command_type == "complete":
+        blockers = final_invariant_blockers_for_events(events, projection)
+        if blockers:
+            return [
+                make_event(
+                    "command_rejected",
+                    {
+                        "command_type": command_type,
+                        "reason": "final invariant blockers remain",
+                        "blockers": blockers,
+                    },
+                )
+            ]
     return [
         _lifecycle_event(
             make_event,
@@ -570,10 +588,25 @@ def _accepted_verification_record_events(
     }
     if task_region_id is not None:
         event_payload["task_region_id"] = task_region_id
-    return [
+    output = [
         make_event("output_record_accepted", record_payload),
         make_event(event_type, event_payload),
     ]
+    record_id = record_payload.get("record_id")
+    port = record_payload.get("port")
+    if isinstance(record_id, str) and isinstance(port, str):
+        output.extend(
+            _input_bound_events_for_record(
+                projection,
+                expected_producer_node_id,
+                port,
+                record_id,
+                record_payload,
+                make_event,
+                aliases={"verification_result"},
+            )
+        )
+    return output
 
 
 def _candidate_is_bound_to_verifier(
@@ -684,6 +717,7 @@ def _apply_patch_command(
     payload: dict[str, Any],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
+    actor_role = str(payload.get("actor_role", "planner"))
     try:
         patch = PatchEnvelope(
             patch_id=str(payload["patch_id"]),
@@ -693,21 +727,33 @@ def _apply_patch_command(
             rationale_record_id=cast(str | None, payload.get("rationale_record_id")),
         )
     except (KeyError, TypeError, ValueError) as exc:
-        return [_command_rejected(make_event, "submit_patch", f"malformed patch: {exc}")]
+        return [
+            make_event(
+                "command_rejected",
+                {
+                    "command_type": "submit_patch",
+                    "reason": f"malformed patch: {exc}",
+                    "patch_id": payload.get("patch_id"),
+                    "base_graph_position": payload.get("base_graph_position"),
+                    "actor_role": actor_role,
+                    "proposed_by_node_id": payload.get("proposed_by_node_id"),
+                },
+            )
+        ]
 
     current_position = _current_position(events)
     events_since_base = [event for event in events if event.position > patch.base_graph_position]
-    actor_role = str(payload.get("actor_role", "planner"))
     result = validate_patch(patch, current_position, events_since_base, projection, actor_role)
     if not result.accepted:
         return [
             make_event(
                 "graph_patch_rejected",
-                {
-                    "patch_id": patch.patch_id,
-                    "reason": result.rejection_reason,
-                    "read_set_diff": result.read_set_diff,
-                },
+                _patch_rejected_payload(
+                    patch,
+                    actor_role,
+                    reason=result.rejection_reason,
+                    read_set_diff=result.read_set_diff,
+                ),
             )
         ]
 
@@ -716,11 +762,12 @@ def _apply_patch_command(
         return [
             make_event(
                 "graph_patch_rejected",
-                {
-                    "patch_id": patch.patch_id,
-                    "reason": "multiple_successor_planners_not_allowed",
-                    "read_set_diff": None,
-                },
+                _patch_rejected_payload(
+                    patch,
+                    actor_role,
+                    reason="multiple_successor_planners_not_allowed",
+                    read_set_diff=None,
+                ),
             )
         ]
     if actor_role == "planner" and successor_planner_node_ids:
@@ -736,11 +783,14 @@ def _apply_patch_command(
                 make_event(
                     "graph_patch_rejected",
                     {
-                        "patch_id": patch.patch_id,
-                        "reason": "planner_generation_budget_exhausted",
+                        **_patch_rejected_payload(
+                            patch,
+                            actor_role,
+                            reason="planner_generation_budget_exhausted",
+                            read_set_diff=None,
+                        ),
                         "budget": budget_rejection["budget"],
                         "count": budget_rejection["count"],
-                        "read_set_diff": None,
                     },
                 ),
                 make_event(
@@ -785,6 +835,7 @@ def _apply_patch_command(
         output.extend(
             _patch_op_events(
                 op,
+                events,
                 make_event,
                 inherited_session_id=parent_session_id,
                 carryover_record_id=carryover_record_id,
@@ -804,6 +855,23 @@ def _apply_patch_command(
             )
         )
     return output
+
+
+def _patch_rejected_payload(
+    patch: PatchEnvelope,
+    actor_role: str,
+    *,
+    reason: str | None,
+    read_set_diff: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
+        "patch_id": patch.patch_id,
+        "base_graph_position": patch.base_graph_position,
+        "actor_role": actor_role,
+        "proposed_by_node_id": patch.proposed_by_node_id,
+        "reason": reason,
+        "read_set_diff": read_set_diff,
+    }
 
 
 def _successor_planner_node_ids(patch: PatchEnvelope) -> list[str]:
@@ -1147,6 +1215,51 @@ def _apply_agent_died(
         "reason": reason,
     }
 
+    if _non_gap_planner_has_accepted_patch(projection, node_id):
+        return [
+            make_event("agent_died", event_payload),
+            make_event(
+                "lease_revoked",
+                {
+                    "lease_id": lease_id,
+                    "node_id": node_id,
+                    "generation": generation,
+                    "reason": reason,
+                },
+            ),
+            make_event(
+                "node_state_changed",
+                {
+                    "node_id": node_id,
+                    "new_state": "completed",
+                    "trigger": "accepted_graph_patch_before_agent_death",
+                },
+            ),
+        ]
+
+    if _is_rate_limit_death(reason):
+        return [
+            make_event("agent_died", event_payload),
+            make_event(
+                "lease_revoked",
+                {
+                    "lease_id": lease_id,
+                    "node_id": node_id,
+                    "generation": generation,
+                    "reason": reason,
+                },
+            ),
+            make_event(
+                "node_state_changed",
+                {
+                    "node_id": node_id,
+                    "new_state": "failed",
+                    "trigger": "agent_rate_limited",
+                    "reason": reason,
+                },
+            ),
+        ]
+
     # V1 retry policy: runtime death before an accepted boundary requeues the
     # same executable node. No new retry node is created until output/file-state
     # acceptance semantics exist in the graph runtime slice.
@@ -1180,6 +1293,19 @@ def _apply_agent_died(
             },
         ),
     ]
+
+
+def _non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: str) -> bool:
+    return (
+        projection["node_kinds"].get(node_id) == "planner"
+        and projection["node_roles"].get(node_id) != "gap_planner"
+        and bool(projection.get("accepted_graph_patches_by_node", {}).get(node_id))
+    )
+
+
+def _is_rate_limit_death(reason: str) -> bool:
+    normalized = reason.lower()
+    return "rate limit" in normalized or "hit rate limit" in normalized
 
 
 def _apply_raise_appeal(
@@ -1550,6 +1676,83 @@ def _apply_record_cleanup_applied(
     ]
 
 
+def _apply_record_requirement_revision(
+    payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    requirement_id = payload.get("requirement_id")
+    if not isinstance(requirement_id, str) or not requirement_id:
+        return [
+            _command_rejected(
+                make_event,
+                "record_requirement_revision",
+                "missing requirement_id",
+            )
+        ]
+
+    version_id = payload.get("version_id")
+    if not isinstance(version_id, str) or not version_id:
+        version_id = payload.get("requirement_version_id")
+    if not isinstance(version_id, str) or not version_id:
+        return [
+            _command_rejected(
+                make_event,
+                "record_requirement_revision",
+                "missing version_id",
+            )
+        ]
+
+    event_payload = dict(payload)
+    event_payload["requirement_id"] = requirement_id
+    event_payload["version_id"] = version_id
+    return [make_event("requirement_revision_recorded", event_payload)]
+
+
+def _apply_record_support_evidence(
+    projection: GraphProjection,
+    payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    support_id = payload.get("support_id")
+    if not isinstance(support_id, str) or not support_id:
+        return [_command_rejected(make_event, "record_support_evidence", "missing support_id")]
+
+    evidence_id = payload.get("evidence_id")
+    if not isinstance(evidence_id, str) or not evidence_id:
+        return [_command_rejected(make_event, "record_support_evidence", "missing evidence_id")]
+
+    requirement_id = payload.get("requirement_id")
+    if not isinstance(requirement_id, str) or not requirement_id:
+        return [
+            _command_rejected(
+                make_event,
+                "record_support_evidence",
+                "missing requirement_id",
+            )
+        ]
+
+    requirement_version_id = payload.get("requirement_version_id")
+    if not isinstance(requirement_version_id, str) or not requirement_version_id:
+        requirement_version_id = payload.get("version_id")
+    if not isinstance(requirement_version_id, str) or not requirement_version_id:
+        requirement_version_id = projection["active_requirement_versions"].get(requirement_id)
+    if not isinstance(requirement_version_id, str) or not requirement_version_id:
+        return [
+            _command_rejected(
+                make_event,
+                "record_support_evidence",
+                f"unknown active requirement version: {requirement_id}",
+            )
+        ]
+
+    event_payload = dict(payload)
+    event_payload["support_id"] = support_id
+    event_payload["evidence_id"] = evidence_id
+    event_payload["requirement_id"] = requirement_id
+    event_payload["requirement_version_id"] = requirement_version_id
+    return [make_event("support_evidence_recorded", event_payload)]
+
+
 def _cleanup_requested_event(
     events: list[EventEnvelope],
     cleanup_id: str,
@@ -1678,6 +1881,7 @@ def _nonnegative_float(value: Any) -> float:
 
 def _patch_op_events(
     op: PatchOp,
+    events: list[EventEnvelope],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     *,
     inherited_session_id: str | None = None,
@@ -1686,6 +1890,7 @@ def _patch_op_events(
     op_payload = _op_payload(op)
     if op.op == "create_node" and isinstance(op.node, dict):
         node_payload = dict(op.node)
+        _canonicalize_check_command_definition(node_payload, events)
         if node_payload.get("kind") == "planner" and node_payload.get("role") == "planner":
             if inherited_session_id is not None:
                 node_payload.setdefault("session_id", inherited_session_id)
@@ -1699,7 +1904,7 @@ def _patch_op_events(
         edge_payload = {
             "edge_id": edge_id,
             "from_node_id": op.from_node_id,
-            "from_port": op.from_port,
+            "from_port": _canonical_patch_edge_from_port(op.from_port),
             "to_node_id": op.to_node_id,
             "to_port": op.to_port,
             "required": required if isinstance(required, bool) else True,
@@ -1708,12 +1913,9 @@ def _patch_op_events(
         selector = op_payload.get("accepted_record_selector")
         if isinstance(selector, dict):
             edge_payload["accepted_record_selector"] = selector
-        return [
-            make_event(
-                "edge_created",
-                edge_payload,
-            )
-        ]
+        output = [make_event("edge_created", edge_payload)]
+        output.extend(_input_bound_events_for_edge(events, edge_payload, make_event))
+        return output
     if op.op == "retire_node" and isinstance(op.node_id, str):
         return [
             make_event("node_retired", {"node_id": op.node_id}),
@@ -1980,6 +2182,12 @@ def _op_payload(op: PatchOp) -> dict[str, Any]:
     return op.model_dump(exclude_none=True)
 
 
+def _canonical_patch_edge_from_port(from_port: str | None) -> str | None:
+    if from_port == "verification_result":
+        return "verification_report"
+    return from_port
+
+
 def _node_payload_for_op(op_payload: dict[str, Any], *, default_kind: str) -> dict[str, Any]:
     raw_node = op_payload.get("node")
     node_payload = dict(cast(dict[str, Any], raw_node)) if isinstance(raw_node, dict) else {}
@@ -2004,6 +2212,109 @@ def _node_payload_for_op(op_payload: dict[str, Any], *, default_kind: str) -> di
         if key in op_payload and key not in node_payload:
             node_payload[key] = op_payload[key]
     return node_payload
+
+
+def _canonicalize_check_command_definition(
+    node_payload: dict[str, Any],
+    events: list[EventEnvelope],
+) -> None:
+    if node_payload.get("kind") != "check" or "command_definition" in node_payload:
+        return
+    command = node_payload.get("hidden_oracle_command")
+    source = "planner_patch_hidden_oracle"
+    if not isinstance(command, str) or not command.strip():
+        if node_payload.get("command_binding") != "dynamic_feature_hidden_oracle":
+            return
+        command = _dynamic_feature_hidden_oracle_command(events)
+        source = "dynamic_feature_hidden_oracle_binding"
+    if not isinstance(command, str) or not command.strip():
+        return
+    node_payload["command_definition"] = {
+        "id": str(node_payload.get("node_id", "planner_patch_check")),
+        "cmd": command,
+        "must": True,
+        "source": source,
+    }
+
+
+def _dynamic_feature_hidden_oracle_command(events: list[EventEnvelope]) -> str | None:
+    for event in reversed(events):
+        snapshot = event.payload.get("snapshot")
+        if isinstance(snapshot, dict):
+            typed_snapshot = cast(dict[str, Any], snapshot)
+            dynamic_feature = typed_snapshot.get("dynamic_feature")
+            if isinstance(dynamic_feature, dict):
+                typed_feature = cast(dict[str, Any], dynamic_feature)
+                command = typed_feature.get("hidden_oracle_command")
+                if isinstance(command, str) and command.strip():
+                    return command
+        dynamic_feature = event.payload.get("dynamic_feature")
+        if isinstance(dynamic_feature, dict):
+            typed_feature = cast(dict[str, Any], dynamic_feature)
+            command = typed_feature.get("hidden_oracle_command")
+            if isinstance(command, str) and command.strip():
+                return command
+    return None
+
+
+def _input_bound_events_for_edge(
+    events: list[EventEnvelope],
+    edge_payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    if edge_payload.get("dependency_type", "input_binding") != "input_binding":
+        return []
+    edge_id = edge_payload.get("edge_id")
+    from_node_id = edge_payload.get("from_node_id")
+    from_port = edge_payload.get("from_port")
+    to_node_id = edge_payload.get("to_node_id")
+    to_port = edge_payload.get("to_port")
+    if not all(
+        isinstance(value, str) for value in (edge_id, from_node_id, from_port, to_node_id, to_port)
+    ):
+        return []
+
+    output: list[EventEnvelope] = []
+    for event in events:
+        if event.event_type != "output_record_accepted":
+            continue
+        record_payload = dict(event.payload)
+        if record_payload.get("producer_node_id") != from_node_id:
+            continue
+        if record_payload.get("port") != from_port:
+            continue
+        record_id = record_payload.get("record_id")
+        if not isinstance(record_id, str):
+            continue
+        if not _record_matches_selector(
+            edge_payload.get("accepted_record_selector"),
+            record_payload,
+            _record_selector_aliases(record_payload),
+        ):
+            continue
+        output.append(
+            make_event(
+                "input_bound",
+                {
+                    "edge_id": edge_id,
+                    "to_node_id": to_node_id,
+                    "to_port": to_port,
+                    "record_ids": [record_id],
+                    "bound_at_position": 0,
+                    "trigger": "edge_backfill",
+                },
+            )
+        )
+    return output
+
+
+def _record_selector_aliases(record_payload: dict[str, Any]) -> set[str]:
+    record_kind = record_payload.get("record_kind")
+    if record_kind == "verification":
+        return {"verification_result"}
+    if record_kind == "file_state":
+        return {"accepted_file_state", "file_state"}
+    return set()
 
 
 def _event_factory(

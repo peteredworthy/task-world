@@ -362,14 +362,15 @@ oversight UI.
 **Phase 4 complete (Converge).** Graph is the default carrier (4.1); the legacy
 parent/child oversight layer is deleted (4.2, ~8.9k lines, history preserved
 read-only); the carrier experiment is concluded with data
-(`carrier-comparison.md` + `scripts/compare_carriers.py`): graph delivers the
-3-sub-agent pattern's independent-reviewer correctness structurally at comparable
-agent-token cost (the auditor adds ~62% output tokens over a single agent), so it
-becomes the carrier with legacy kept as a one-line-reversible opt-out. Follow-up
-observability gaps recorded in the comparison doc (codex + graph token capture;
-graph verifier grades in /activity).
+(`carrier-comparison.md` + `scripts/compare_carriers.py`). That comparison proves
+the graph is a viable **static carrier** for fixed work at comparable cost, with
+the 3-sub-agent pattern's independent-reviewer correctness made structural and
+replayable.
 
-Execution order for the remaining work: dogfood gate (D) → 3.5 → 3.6 → 3.7 →
-3.8 → 4.1 → 4.2 → 4.3. 4.1 must not flip the default until gate D is green; 4.2
-must not delete the legacy oversight code until 3.8 (planner-chain) and 3.6
-(decisions UI) provide the replacement capability.
+The comparison does **not** yet prove the dynamic-graph claim. The first attempt
+did not make a real planner agent emit graph patches, append future work, run a
+gap planner after discovery, or block final completion on graph-wide invariants.
+The remaining work is tracked in
+`docs/graph-approach/true-comparison-plan.md`. Current follow-up observability
+gap: graph verifier grades should appear as `/activity` grade events so dynamic
+and static graph runs can be scored consistently.

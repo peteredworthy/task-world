@@ -33,6 +33,8 @@ ROUTINE_PATHS = [
     *sorted(Path("examples/routines").glob("*.yaml")),
 ]
 
+DYNAMIC_FEATURE_ROUTINE_PATH = Path("routines/dynamic-graph-feature/routine.yaml")
+
 
 @pytest.mark.parametrize("routine_path", ROUTINE_PATHS, ids=lambda path: str(path))
 def test_routine_corpus_loads_and_compiles_cleanly(routine_path: Path) -> None:
@@ -47,6 +49,35 @@ def test_routine_corpus_loads_and_compiles_cleanly(routine_path: Path) -> None:
     assert _count_nodes(projection, "check") == _check_count(routine)
     assert _count_nodes(projection, "gate") == _gate_count(routine)
     assert len(projection["node_kinds"]) >= 3
+
+
+def test_dynamic_graph_feature_routine_loads_with_graph_head_config() -> None:
+    routine = load_routine_from_path(DYNAMIC_FEATURE_ROUTINE_PATH)
+
+    assert routine.id == "dynamic-graph-feature"
+    assert routine.execution_mode == "graph"
+    assert routine.planner_generation_budget == 10
+    assert routine.steps
+    first_step = routine.steps[0]
+    assert first_step.kind == "planner"
+    assert first_step.tasks == []
+    assert first_step.step_context is not None
+    assert "submit_graph_patch" in first_step.step_context
+    assert "horizon_region_templates" in first_step.step_context
+    inputs = {input_def.name: input_def for input_def in routine.inputs}
+    assert "feature_spec_path" in inputs
+    assert "feature_spec_content" in inputs
+    assert "acceptance_command" in inputs
+    assert inputs["feature_spec_path"].required is True
+    assert inputs["feature_spec_content"].required is False
+    assert inputs["feature_spec_content"].default == ""
+    assert inputs["acceptance_command"].required is True
+    assert inputs["hidden_oracle_command"].required is False
+    assert inputs["hidden_oracle_command"].default == ""
+    assert inputs["patch_budget"].required is False
+    assert inputs["patch_budget"].default == 8
+    assert inputs["gap_policy_profile"].required is False
+    assert inputs["gap_policy_profile"].default == "standard"
 
 
 @pytest.mark.asyncio
@@ -92,6 +123,81 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
         assert snapshot["source_path"] == "routines/demo-task.yaml"
         assert snapshot["source_ref"] == "test-ref"
         assert outbox_count == 0
+    finally:
+        await engine.dispose()
+
+
+def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None:
+    routine = load_routine_from_path(DYNAMIC_FEATURE_ROUTINE_PATH)
+    events = compile_routine(
+        routine,
+        FakeClock(),
+        SequentialIdGenerator(),
+        run_id="dynamic-feature",
+        source_path=str(DYNAMIC_FEATURE_ROUTINE_PATH),
+    )
+    projection = _project(events)
+
+    assert projection["node_kinds"]["root"] == "root"
+    assert projection["node_kinds"]["routine-snapshot"] == "artifact"
+    planner_ids = [
+        node_id for node_id, node_kind in projection["node_kinds"].items() if node_kind == "planner"
+    ]
+    assert planner_ids == ["planner-s-01"]
+    assert len(planner_ids) == 1
+    assert _count_nodes(projection, "worker") == 0
+    assert _count_nodes(projection, "verifier") == 0
+
+    planner = _node_event(events, planner_ids[0])
+    assert planner.payload["generation_index"] == 0
+    authority = planner.payload["authority"]
+    assert authority["resource_claims"] == [{"mode": "graph_write", "scope": "graph"}]
+    output_ports = {output["port"] for output in planner.payload["outputs"]}
+    assert output_ports == {"graph_patch", "completion"}
+    assert planner.payload["state"] == "planned"
+
+    planner_input_binding = projection["input_bindings"][planner_ids[0]]["routine_snapshot"]
+    assert planner_input_binding["record_ids"] == ["routine-snapshot"]
+
+    root_node = _node_event(events, "root")
+    assert root_node.payload["planner_generation_budget"] == 10
+
+
+@pytest.mark.asyncio
+async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) -> None:
+    routine = load_routine_from_path(DYNAMIC_FEATURE_ROUTINE_PATH)
+    engine = create_engine(tmp_path / "seed-dynamic-feature.db")
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+    run_config = {
+        "feature_spec_path": "docs/graph-approach/dynamic-smoke-feature-spec.md",
+        "feature_spec_content": "Build the dynamic-smoke artifact.",
+        "acceptance_command": "uv run python -c 'print(\"dynamic-smoke\")'",
+        "hidden_oracle_command": "uv run python -c 'print(\"validation-strengthened\")'",
+        "patch_budget": 4,
+        "gap_policy_profile": "standard",
+    }
+
+    try:
+        await seed_run(
+            session_factory,
+            routine,
+            run_id="seed-dynamic-feature",
+            clock=FakeClock(),
+            id_gen=SequentialIdGenerator(),
+            source_path=str(DYNAMIC_FEATURE_ROUTINE_PATH),
+            run_config=run_config,
+        )
+        async with session_factory() as session:
+            stored_events = await GraphEventStore(session).read_run("seed-dynamic-feature")
+
+        planner = _node_event(stored_events, "planner-s-01").payload
+        assert planner["dynamic_feature"] == run_config
+        assert "docs/graph-approach/dynamic-smoke-feature-spec.md" in planner["task_context"]
+        assert "validation-strengthened" not in planner["task_context"]
+        assert "hidden_oracle_binding: dynamic_feature_hidden_oracle" in planner["task_context"]
+        snapshot = _node_event(stored_events, "routine-snapshot").payload["snapshot"]
+        assert snapshot["dynamic_feature"] == run_config
     finally:
         await engine.dispose()
 

@@ -6,6 +6,30 @@ cache tokens, tool calls, estimated USD). Reproduce with
 `uv run python scripts/compare_carriers.py <label=run_id> …` (metric maths is
 unit-tested in `tests/unit/test_compare_carriers.py`).
 
+## Current interpretation
+
+This document is **not yet a true comparison of the dynamic-graph approach**.
+The first comparison was useful because it exposed real observability gaps
+(graph token accounting, codex usage capture, graph verifier grade visibility),
+but the exercised graph path was essentially a **static carrier**:
+
+- compile a routine into graph nodes;
+- run worker + verifier nodes through `GraphRunDriver`;
+- record/replay controller-owned events and file-state boundaries.
+
+That proves the graph can replace the legacy workflow carrier for fixed work.
+It does **not** prove the larger claim that a graph can dynamically plan and
+repair a feature implementation by adding, invalidating, or rerouting future
+work while the run is in progress.
+
+For the comparison to answer the original design question, the graph arm must
+exercise live dynamic graph behavior: a planner node emits graph patches, those
+patches create future worker/verifier/check regions, gap analysis can add
+corrective work after local verification passes, and final acceptance is driven
+by graph invariants rather than by reaching the end of the originally compiled
+routine. The comparison plan for that is in
+`docs/graph-approach/true-comparison-plan.md`.
+
 ## The three carriers
 
 | Carrier | What runs | Correctness mechanism |
@@ -14,7 +38,7 @@ unit-tested in `tests/unit/test_compare_carriers.py`).
 | **3-sub-agent (builder → auditor → fixer)** | builder agent + **verifier agent**, retry-with-feedback (the `graph-kernel-slice` routine) on the legacy engine | an independent LLM auditor grades against the spec; up to 3 retries |
 | **Execution graph** | structural worker + verifier **nodes** driven by `GraphRunDriver`; event-sourced | the verifier is a graph node; correctness is replayable from the event log; the controller is the sole mutation path (§28) |
 
-## Controlled experiment — full cost (identical task, `cli_subprocess` / Sonnet)
+## Controlled experiment — full cost (identical fixed task, `cli_subprocess` / Sonnet)
 
 Same small task under each carrier ("create a one-function file"), **2 runs each**,
 reported as per-run averages. Output tokens alone badly undercount cost — the
@@ -27,7 +51,7 @@ scale with the number of model turns / tool calls).
 | 3-agent | 2 | 2/2 | ✅ | 78 | 2 540 | 165 150 | 13.5 | **$0.29** |
 | graph | 2 | 2/2 | ✅ | 146 | 3 072 | 715 818 | 39.0 | **$0.26** |
 
-What the full picture shows (and what a single output-token number hid):
+What this fixed-task picture shows (and what a single output-token number hid):
 
 - **All three are equally complete and correct** on a well-specified task — each
   produced the identical, working implementation.
@@ -43,6 +67,16 @@ What the full picture shows (and what a single output-token number hid):
   an inherent carrier cost.
 - The auditor's extra **output** tokens (3-agent vs legacy: 2 540 vs 2 032) are
   real but a tiny share of the bill.
+
+What this fixed-task picture does **not** show:
+
+- whether a planner can discover missing work after the run starts;
+- whether graph patches are produced by a real planner agent rather than by test
+  commands;
+- whether a graph run can append corrective implementation work after local
+  verifier success but global intent insufficiency;
+- whether the graph's final invariant checks catch stale evidence, suspect
+  plan regions, and open proposals better than a sequence-based carrier.
 
 Runs: legacy `aeebd6b1`,`131bf95e`; 3-agent `c8ae2eff`,`3684d00c`; graph
 `841d8911`,`0fa83688`.
@@ -98,17 +132,23 @@ into two carrier-agnostic functions both paths call:
 After this, graph runs report full read/write/cache/tool-call/cost (the `graph`
 rows above were measured through it).
 
-## Remaining measurement gaps (follow-ups)
+## Measurement gaps and status
 
-1. **`codex_server` still does not persist token usage** — its session usage isn't
-   threaded into an ExecutionResult action-log, so codex-built runs show 0 tokens.
-   (All runner-agnostic numbers above use `cli_subprocess`.)
-2. **Graph verifier grades aren't emitted as `/activity` grade events**, so graph
+1. **`codex_server` token usage capture is now implemented after this comparison.**
+   The original comparison used `cli_subprocess` because codex-built runs showed
+   zero tokens at the time. Slice 4.4 added parsing for
+   `thread/tokenUsage/updated` notifications and threads usage through the shared
+   run-level sink. Re-run any future comparison after confirming codex token
+   rows are nonzero for the selected runner/model.
+2. **Graph verifier grades still are not emitted as `/activity` grade events**, so graph
    runs show `all-A = 0` here despite the verifier node grading + accepting the
    worker (confirmed via `callback_accepted`). A UI/observability gap, not a
    correctness one.
+3. **Dynamic graph events are not measured by this script.** A true comparison
+   must count planner patches, accepted/rejected patch ops, appended work,
+   suspect/superseded regions, proposal decisions, and final invariant failures.
 
-## Decision (ADR): converge on the execution graph
+## Decision (ADR): converge on the graph carrier, not yet the dynamic-graph claim
 
 - **Graph is the default carrier** (slice 4.1, `default_execution_mode = "graph"`).
   The decision rests on **structural correctness**, not cost: graph gives the
@@ -122,8 +162,14 @@ rows above were measured through it).
   one-line reversible (`default_execution_mode = "legacy"`).
 - **Rollback**: set `default_execution_mode = "legacy"`; no code change.
 
-Net: on cost the three carriers are comparable for small tasks (cache-dominated,
-noisy); the auditor/verifier's value is *correctness on real work*, shown by the
-all-A slice record. The execution graph makes that correctness mechanism
-structural and replayable at no cost premium, so it becomes the carrier — with
-legacy kept as a cheap, reversible escape hatch.
+Net: on cost the three carriers are comparable for small fixed tasks
+(cache-dominated, noisy); the auditor/verifier's value is *correctness on real
+work*, shown by the all-A slice record. The execution graph makes that
+correctness mechanism structural and replayable at no cost premium, so it becomes
+the carrier — with legacy kept as a cheap, reversible escape hatch.
+
+The unresolved question is separate: whether the graph's **dynamic planning
+capability** beats a fixed routine or a 3-agent fixed plan on feature work where
+requirements change, discovery alters validation, and new work must be appended
+after local verification. That still needs the dynamic comparison described in
+`true-comparison-plan.md`.

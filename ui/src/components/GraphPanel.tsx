@@ -3,7 +3,7 @@ import { useDecisionView, useFileStateReport, useGraphEvents, useGraphProjection
 import { FileStateViewer } from './FileStateViewer';
 import { NodeDetailPanel } from './NodeDetailPanel';
 import { SchedulerView } from './SchedulerView';
-import type { ActivityEvent, DecisionViewResponse, GraphEventResponse, GraphProjectionResponse, RunResponse } from '../types';
+import type { ActivityEvent, DecisionViewResponse, GraphEventResponse, GraphProjectionResponse, RunResponse, SchedulerViewResponse } from '../types';
 
 interface GraphPanelProps {
   runId: string;
@@ -25,6 +25,239 @@ function runStateChipClass(runState: string | null): string {
     return 'bg-status-completed/15 text-status-completed';
   }
   return 'bg-accent-cyan/15 text-accent-cyan';
+}
+
+function payloadText(payload: Record<string, unknown>, key: string): string | null {
+  const value = payload[key];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function payloadTextList(payload: Record<string, unknown>, key: string): string[] {
+  const value = payload[key];
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+}
+
+function payloadGrades(payload: Record<string, unknown>): Array<{ requirementId: string | null; grade: string | null }> {
+  const rawGrades = payload.grades;
+  if (!Array.isArray(rawGrades)) return [];
+  return rawGrades
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object' && !Array.isArray(entry))
+    .map((entry) => ({
+      requirementId: payloadText(entry, 'requirement_id'),
+      grade: payloadText(entry, 'grade'),
+    }));
+}
+
+function GraphSummaryMetric({ label, value }: { label: string; value: number | string }) {
+  return (
+    <div className="rounded border border-border bg-bg-card px-2 py-1.5">
+      <div className="text-[10px] uppercase tracking-normal text-text-muted">{label}</div>
+      <div className="mt-0.5 text-sm font-semibold text-text-primary">{value}</div>
+    </div>
+  );
+}
+
+function graphActivityKind(event: ActivityEvent): 'patch' | 'verifier' | 'blocker' | null {
+  if (event.event_type === 'graph_patch_accepted' || event.event_type === 'graph_patch_rejected') return 'patch';
+  if (event.event_type === 'verification_passed' || event.event_type === 'verification_failed') return 'verifier';
+  if (event.event_type === 'command_rejected' || event.event_type === 'node_deferred') return 'blocker';
+  if (event.event_type === 'node_created') {
+    const summary = payloadText(event.payload, 'summary');
+    const kind = payloadText(event.payload, 'kind');
+    return kind === 'review' || summary?.startsWith('Graph final invariant blocked') ? 'blocker' : null;
+  }
+  return null;
+}
+
+function OperatorSummary({
+  projection,
+  schedulerView,
+  decisionView,
+  activityEvents,
+}: {
+  projection: GraphProjectionResponse;
+  schedulerView?: SchedulerViewResponse;
+  decisionView?: DecisionViewResponse;
+  activityEvents: ActivityEvent[];
+}) {
+  const activityCounts = useMemo(() => {
+    let patchesAccepted = 0;
+    let patchesRejected = 0;
+    let verifierPassed = 0;
+    let verifierFailed = 0;
+    let blockers = 0;
+    for (const event of activityEvents) {
+      if (event.event_type === 'graph_patch_accepted') patchesAccepted += 1;
+      if (event.event_type === 'graph_patch_rejected') patchesRejected += 1;
+      if (event.event_type === 'verification_passed') verifierPassed += 1;
+      if (event.event_type === 'verification_failed') verifierFailed += 1;
+      if (graphActivityKind(event) === 'blocker') blockers += 1;
+    }
+    return { patchesAccepted, patchesRejected, verifierPassed, verifierFailed, blockers };
+  }, [activityEvents]);
+
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold text-text-primary">Operator summary</h3>
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <GraphSummaryMetric label="Graph state" value={projection.run_state ?? 'not started'} />
+        <GraphSummaryMetric label="Events" value={projection.event_count} />
+        <GraphSummaryMetric label="Ready" value={schedulerView?.scheduler.ready.length ?? 0} />
+        <GraphSummaryMetric label="Blocked" value={schedulerView?.scheduler.blocked.length ?? 0} />
+        <GraphSummaryMetric label="Waiting resources" value={schedulerView?.scheduler.waiting_resources.length ?? 0} />
+        <GraphSummaryMetric label="Waiting gates" value={schedulerView?.scheduler.waiting_gates.length ?? 0} />
+        <GraphSummaryMetric label="Active leases" value={schedulerView?.leases.active.length ?? 0} />
+        <GraphSummaryMetric label="Suspended leases" value={schedulerView?.leases.suspended.length ?? 0} />
+        <GraphSummaryMetric label="Human gates" value={decisionView?.pending_gates.length ?? 0} />
+        <GraphSummaryMetric label="Appeals" value={decisionView?.appeals.length ?? 0} />
+        <GraphSummaryMetric label="Review blockers" value={decisionView?.review.blockers.length ?? 0} />
+        <GraphSummaryMetric label="Patches accepted" value={activityCounts.patchesAccepted} />
+        <GraphSummaryMetric label="Patches rejected" value={activityCounts.patchesRejected} />
+        <GraphSummaryMetric label="Verifier pass/fail" value={`${activityCounts.verifierPassed}/${activityCounts.verifierFailed}`} />
+        <GraphSummaryMetric label="Activity blockers" value={activityCounts.blockers} />
+      </div>
+    </section>
+  );
+}
+
+function GraphActivitySection({ activityEvents }: { activityEvents: ActivityEvent[] }) {
+  const rows = useMemo(() => {
+    const patchRows: ActivityEvent[] = [];
+    const verifierRows: ActivityEvent[] = [];
+    const blockerRows: ActivityEvent[] = [];
+    for (const event of activityEvents) {
+      const kind = graphActivityKind(event);
+      if (kind === 'patch') patchRows.push(event);
+      if (kind === 'verifier') verifierRows.push(event);
+      if (kind === 'blocker') blockerRows.push(event);
+    }
+    return {
+      patchRows: patchRows.slice(-8).reverse(),
+      verifierRows: verifierRows.slice(-8).reverse(),
+      blockerRows: blockerRows.slice(-8).reverse(),
+    };
+  }, [activityEvents]);
+
+  return (
+    <section>
+      <h3 className="mb-2 text-sm font-semibold text-text-primary">Graph activity</h3>
+      <div className="space-y-3 text-xs">
+        <PatchActivityList events={rows.patchRows} />
+        <VerifierActivityList events={rows.verifierRows} />
+        <BlockerActivityList events={rows.blockerRows} />
+      </div>
+    </section>
+  );
+}
+
+function PatchActivityList({ events }: { events: ActivityEvent[] }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-medium text-text-primary">Patch decisions</span>
+        <span className="text-text-muted">{events.length}</span>
+      </div>
+      {events.length === 0 ? (
+        <p className="text-text-muted italic">No patch decisions yet</p>
+      ) : (
+        <ul className="space-y-1">
+          {events.map((event) => {
+            const payload = event.payload;
+            const accepted = event.event_type === 'graph_patch_accepted';
+            const successors = payloadTextList(payload, 'successor_planner_node_ids');
+            return (
+              <li key={event.id} className="rounded border border-border/80 bg-bg-card px-2 py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className={accepted ? 'font-medium text-status-completed' : 'font-medium text-status-failed'}>
+                    {accepted ? 'accepted' : 'rejected'}
+                  </span>
+                  <span className="font-mono text-[11px] text-text-muted">{payloadText(payload, 'patch_id') ?? `event-${event.id}`}</span>
+                </div>
+                <div className="mt-1 text-text-secondary">
+                  proposer {payloadText(payload, 'proposed_by_node_id') ?? '-'} · actor {payloadText(payload, 'actor_role') ?? '-'}
+                </div>
+                {payloadText(payload, 'reason') && <div className="mt-1 text-text-muted">reason: {payloadText(payload, 'reason')}</div>}
+                {successors.length > 0 && <div className="mt-1 text-text-muted">successors: {successors.join(', ')}</div>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function VerifierActivityList({ events }: { events: ActivityEvent[] }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-medium text-text-primary">Verifier results</span>
+        <span className="text-text-muted">{events.length}</span>
+      </div>
+      {events.length === 0 ? (
+        <p className="text-text-muted italic">No verifier results yet</p>
+      ) : (
+        <ul className="space-y-1">
+          {events.map((event) => {
+            const payload = event.payload;
+            const verdict = payloadText(payload, 'verdict') ?? (event.event_type === 'verification_passed' ? 'passed' : 'failed');
+            const grades = payloadGrades(payload);
+            const nonA = grades.filter((grade) => grade.grade && grade.grade !== 'A');
+            const requirementText = nonA.length > 0
+              ? nonA.map((grade) => `${grade.requirementId ?? 'requirement'}=${grade.grade}`).join(', ')
+              : grades.length > 0
+                ? 'all A'
+                : '-';
+            return (
+              <li key={event.id} className="rounded border border-border/80 bg-bg-card px-2 py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className={verdict === 'passed' ? 'font-medium text-status-completed' : 'font-medium text-status-failed'}>
+                    {verdict}
+                  </span>
+                  <span className="font-mono text-[11px] text-text-muted">{payloadText(payload, 'candidate_id') ?? `event-${event.id}`}</span>
+                </div>
+                <div className="mt-1 text-text-secondary">task {payloadText(payload, 'task_region_id') ?? '-'}</div>
+                <div className="mt-1 text-text-muted">requirements: {requirementText}</div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function BlockerActivityList({ events }: { events: ActivityEvent[] }) {
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between">
+        <span className="font-medium text-text-primary">Commands and blockers</span>
+        <span className="text-text-muted">{events.length}</span>
+      </div>
+      {events.length === 0 ? (
+        <p className="text-text-muted italic">No command rejections or blockers yet</p>
+      ) : (
+        <ul className="space-y-1">
+          {events.map((event) => {
+            const payload = event.payload;
+            const node = payloadText(payload, 'node_id') ?? payloadText(payload, 'command_type') ?? `event-${event.id}`;
+            return (
+              <li key={event.id} className="rounded border border-border/80 bg-bg-card px-2 py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-medium text-text-primary">{event.event_type}</span>
+                  <span className="font-mono text-[11px] text-text-muted">{node}</span>
+                </div>
+                <div className="mt-1 break-words text-text-muted">
+                  {payloadText(payload, 'reason') ?? payloadText(payload, 'summary') ?? 'no reason recorded'}
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
 }
 
 function NodeStatesTable({
@@ -341,6 +574,13 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
         </div>
 
         <div className="mt-4 space-y-4">
+          <OperatorSummary
+            projection={projection}
+            schedulerView={schedulerView}
+            decisionView={decisionView}
+            activityEvents={activityEvents}
+          />
+          <GraphActivitySection activityEvents={activityEvents} />
           {schedulerView && <SchedulerView view={schedulerView} />}
           {decisionView && <DecisionsSection view={decisionView} />}
           {fileStateReport && <FileStateViewer report={fileStateReport} />}

@@ -218,3 +218,59 @@ async def test_read_from_offset(session_factory: async_sessionmaker[AsyncSession
         events = await GraphEventStore(session).read_run(run_id, from_position=2)
 
     assert [event.event_id for event in events] == ["evt-offset-2", "evt-offset-3"]
+
+
+@pytest.mark.asyncio
+async def test_read_run_summaries_avoids_heavy_payload_materialization(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-summary"
+    large_payload = [{"path": f".venv/file-{index}.py"} for index in range(1000)]
+
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(
+                run_id,
+                0,
+                [
+                    _event(
+                        "evt-summary-1",
+                        run_id,
+                        "callback_accepted",
+                        {
+                            "node_id": "worker-1",
+                            "lease_id": "lease-1",
+                            "payload": {
+                                "output_records": [
+                                    {
+                                        "record_kind": "file_state",
+                                        "ignored": large_payload,
+                                    }
+                                ]
+                            },
+                        },
+                    ),
+                    _event(
+                        "evt-summary-2",
+                        run_id,
+                        "node_created",
+                        {
+                            "node_id": "worker-1",
+                            "kind": "worker",
+                            "state": "planned",
+                            "large_irrelevant_field": large_payload,
+                        },
+                    ),
+                ],
+            )
+
+    async with session_factory() as session:
+        summaries = await GraphEventStore(session).read_run_summaries(run_id)
+
+    assert [summary.event_id for summary in summaries] == ["evt-summary-1", "evt-summary-2"]
+    assert summaries[0].payload == {"lease_id": "lease-1", "node_id": "worker-1"}
+    assert summaries[1].payload == {
+        "kind": "worker",
+        "node_id": "worker-1",
+        "state": "planned",
+    }

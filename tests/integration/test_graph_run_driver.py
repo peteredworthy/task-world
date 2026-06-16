@@ -85,6 +85,29 @@ class SubmitAgent:
         return None
 
 
+class PlannerPatchAgent(SubmitAgent):
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        if context.graph_patch_callback is not None:
+            await context.graph_patch_callback(
+                {
+                    "patch_id": f"{context.node_id}-noop",
+                    "base_graph_position": 0,
+                    "ops": [],
+                }
+            )
+        await on_submit()
+        return ExecutionResult(success=True)
+
+
 class GradingAgent(SubmitAgent):
     def __init__(self, grade: str) -> None:
         self._grade = grade
@@ -402,7 +425,11 @@ async def test_driver_planner_run_completes_only_when_no_pending_planner(
     driver = _driver(
         session_factory,
         repo=repo,
-        agents={"planner": SubmitAgent(), "worker": SubmitAgent(), "verifier": GradingAgent("A")},
+        agents={
+            "planner": PlannerPatchAgent(),
+            "worker": SubmitAgent(),
+            "verifier": GradingAgent("A"),
+        },
         dispatch_order=dispatch_order,
     )
 

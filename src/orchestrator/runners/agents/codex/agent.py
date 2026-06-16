@@ -604,21 +604,34 @@ class CodexServerAgent:
                 num_actions += 1
                 parser.parse_jsonrpc_message(tool_msg)
                 try:
-                    await route_tool_call(
+                    feedback = await route_tool_call(
                         tool_name,
                         tool_args,
                         on_checklist_update,
                         on_submit,
+                        on_submit_graph_patch=context.graph_patch_callback,
                         on_grade=on_grade,
                         on_complete_recovery=on_complete_recovery,
                         agent_label="CodexServerAgent",
                     )
                     parser.record_dynamic_tool_result(str(req_id), success=True)
-                    await transport.send(build_dynamic_tool_call_response(req_id, success=True))
-                except ValueError:
+                    await transport.send(
+                        build_dynamic_tool_call_response(
+                            req_id,
+                            success=True,
+                            output=feedback or None,
+                        )
+                    )
+                except ValueError as exc:
                     # Disallowed tool — respond with failure to unblock the server.
                     parser.record_dynamic_tool_result(str(req_id), success=False)
-                    await transport.send(build_dynamic_tool_call_response(req_id, success=False))
+                    await transport.send(
+                        build_dynamic_tool_call_response(
+                            req_id,
+                            success=False,
+                            output=str(exc),
+                        )
+                    )
                 except InvalidTransitionError as cb_exc:
                     # Agent called a tool that is invalid in the current task state
                     # (e.g. update_checklist during the verifying phase).  Inform the
@@ -698,6 +711,7 @@ class CodexServerAgent:
                     on_checklist_update,
                     on_submit,
                     on_grade,
+                    context.graph_patch_callback,
                     on_complete_recovery,
                 )
                 # Accumulate usage: cumulative wins (last value overwrites), or sum per-turn.
@@ -864,14 +878,16 @@ class CodexServerAgent:
         args: dict[str, Any],
         on_checklist_update: ChecklistUpdateCallback,
         on_submit: SubmitCallback,
+        on_submit_graph_patch: Any | None = None,
         on_grade: GradeCallback | None = None,
-    ) -> None:
+    ) -> str:
         """Route an allow-listed callback tool call to the appropriate callback."""
-        await route_tool_call(
+        return await route_tool_call(
             tool_name,
             args,
             on_checklist_update,
             on_submit,
+            on_submit_graph_patch=on_submit_graph_patch,
             on_grade=on_grade,
             agent_label="CodexServerAgent",
         )
@@ -994,6 +1010,7 @@ class CodexServerAgent:
         on_checklist_update: ChecklistUpdateCallback,
         on_submit: SubmitCallback,
         on_grade: GradeCallback | None,
+        on_submit_graph_patch: Any | None = None,
         on_complete_recovery: CompleteRecoveryCallback | None = None,
     ) -> tuple[bool, dict[str, int]]:
         """Process one JSON-RPC notification.
@@ -1042,6 +1059,7 @@ class CodexServerAgent:
                     tool_args,
                     on_checklist_update,
                     on_submit,
+                    on_submit_graph_patch=on_submit_graph_patch,
                     on_grade=on_grade,
                     on_complete_recovery=on_complete_recovery,
                     agent_label="CodexServerAgent",

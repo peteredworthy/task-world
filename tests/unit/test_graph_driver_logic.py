@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import pytest
 
 from orchestrator.workflow.graph_driver import (
     GraphProjectionSnapshot,
     GraphRunDriver,
+    _graph_seed_run_config,
     classify_graph_outcome,
 )
 
@@ -56,6 +58,37 @@ class ScriptedProjectionReader:
         snapshot = self.snapshots[self.index]
         self.index += 1
         return snapshot
+
+
+@pytest.mark.asyncio
+async def test_graph_seed_run_config_embeds_dynamic_feature_spec(tmp_path: Path) -> None:
+    spec_path = tmp_path / "docs" / "graph-approach" / "dynamic-smoke-feature-spec.md"
+    spec_path.parent.mkdir(parents=True)
+    spec_path.write_text("Build the dynamic-smoke artifact.", encoding="utf-8")
+
+    seed_config = await _graph_seed_run_config(
+        {
+            "feature_spec_path": "docs/graph-approach/dynamic-smoke-feature-spec.md",
+            "acceptance_command": "uv run pytest tests/smoke -q",
+        },
+        tmp_path,
+    )
+
+    assert seed_config["feature_spec_content"] == "Build the dynamic-smoke artifact."
+    assert seed_config["feature_spec_content_source"] == "worktree"
+
+
+@pytest.mark.asyncio
+async def test_graph_seed_run_config_rejects_unsafe_spec_path(tmp_path: Path) -> None:
+    seed_config = await _graph_seed_run_config(
+        {
+            "feature_spec_path": "../outside.md",
+            "acceptance_command": "uv run pytest tests/smoke -q",
+        },
+        tmp_path,
+    )
+
+    assert "feature_spec_content" not in seed_config
 
 
 @pytest.mark.asyncio
@@ -142,6 +175,41 @@ def test_outcome_classification() -> None:
     assert blocked.blocked_reason == "graph quiescent without completion"
     assert failed.completed is False
     assert failed.blocked_reason == "graph failed"
+
+    rate_limited = classify_graph_outcome(
+        "run-4",
+        GraphProjectionSnapshot(
+            run_state="active",
+            ready_nodes=[],
+            active_leases={},
+            schedulable_nodes=[],
+            task_states={},
+            node_states={"planner-1": "failed"},
+            failed_node_reasons={
+                "planner-1": "Agent runner 'cli_subprocess' hit rate limit (resets at 14:30)"
+            },
+        ),
+    )
+
+    assert rate_limited.completed is False
+    assert rate_limited.blocked_reason == (
+        "graph has failed node(s): planner-1: "
+        "Agent runner 'cli_subprocess' hit rate limit (resets at 14:30)"
+    )
+
+    ready_blocked = classify_graph_outcome(
+        "run-5",
+        GraphProjectionSnapshot(
+            run_state="active",
+            ready_nodes=["planner-gap"],
+            active_leases={},
+            schedulable_nodes=["planner-gap"],
+            task_states={},
+        ),
+    )
+
+    assert ready_blocked.completed is False
+    assert ready_blocked.blocked_reason == "graph has ready node(s) not dispatched: planner-gap"
 
 
 @pytest.mark.asyncio
