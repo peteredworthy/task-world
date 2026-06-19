@@ -6,14 +6,26 @@ import json
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.db import EventV2Model
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.db import EventV2Model, GraphEventSummaryModel, GraphProjectionSnapshotModel
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    project_decision_view,
+    project_leases,
+    project_lease_view,
+    project_node_states,
+    project_ready_nodes,
+    project_run_state,
+    project_scheduler_view,
+    project_task_states,
+)
 from orchestrator.graph_runtime.errors import StaleProjectionError
 
 GRAPH_AGGREGATE_PREFIX = "graph:"
@@ -42,14 +54,18 @@ SUMMARY_PAYLOAD_FIELDS = (
     "node_id",
     "node_kind",
     "patch_id",
+    "port",
     "producer_node_id",
     "proposed_by_node_id",
     "reason",
+    "record_id",
+    "record_kind",
     "rejected_patches",
     "rejection_reason",
     "role",
     "state",
     "task_region_id",
+    "to_state",
     "tokens",
 )
 LIGHT_GRAPH_PAYLOAD_FIELDS = (
@@ -148,6 +164,24 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "verdict",
     "verdicts",
     "version_id",
+)
+SUMMARY_REBUILD_PAYLOAD_FIELDS = tuple(
+    dict.fromkeys(
+        [
+            *LIGHT_GRAPH_PAYLOAD_FIELDS,
+            *SUMMARY_PAYLOAD_FIELDS,
+            "blockers",
+            "graph_verifier_grades",
+            "grades",
+            "operations",
+            "ops",
+            "patch_ops",
+            "patch_rejection_reasons",
+            "tokens_by_node",
+            "tokens_by_node_kind",
+            "value",
+        ]
+    )
 )
 GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "attempt_number",
@@ -281,6 +315,8 @@ class GraphEventStore:
         except IntegrityError as exc:
             msg = f"stale graph projection for run {run_id}"
             raise StaleProjectionError(msg) from exc
+        await self.append_event_summaries(run_id, stored_events)
+        await self.invalidate_projection_snapshot(run_id)
         return stored_events
 
     async def read_run(self, run_id: str, from_position: int = 0) -> list[EventEnvelope]:
@@ -308,6 +344,18 @@ class GraphEventStore:
             run_id,
             from_position,
             LIGHT_GRAPH_PAYLOAD_FIELDS,
+        )
+
+    async def read_run_summary_rebuild(
+        self,
+        run_id: str,
+        from_position: int = 0,
+    ) -> list[EventEnvelope]:
+        """Read only fields needed to rebuild compact graph summaries and snapshots."""
+        return await self._read_run_extracting_fields(
+            run_id,
+            from_position,
+            SUMMARY_REBUILD_PAYLOAD_FIELDS,
         )
 
     async def read_run_projection(
@@ -392,8 +440,151 @@ class GraphEventStore:
         self,
         run_id: str,
         from_position: int = 0,
+        limit: int | None = None,
     ) -> list[GraphEventSummary]:
         """Read compact graph event rows without materializing large payloads."""
+        await self.ensure_event_summaries(run_id)
+        stmt = (
+            select(GraphEventSummaryModel)
+            .where(GraphEventSummaryModel.run_id == run_id)
+            .where(GraphEventSummaryModel.position >= from_position)
+            .order_by(GraphEventSummaryModel.position)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        result = await self._session.execute(stmt)
+        summaries = [
+            GraphEventSummary(
+                event_id=row.event_id,
+                event_type=row.event_type,
+                run_id=row.run_id,
+                position=row.position,
+                timestamp=row.timestamp,
+                payload=dict(row.payload),
+            )
+            for row in result.scalars()
+        ]
+        return summaries
+
+    async def read_projection_snapshot(
+        self,
+        run_id: str,
+    ) -> GraphProjectionSnapshotModel | None:
+        """Read the current materialized graph projection, rebuilding if stale."""
+        await self.ensure_projection_snapshot(run_id)
+        return await self._session.get(GraphProjectionSnapshotModel, run_id)
+
+    async def ensure_read_models(self, run_id: str) -> None:
+        """Rebuild disposable graph read models if missing or behind events_v2."""
+        await self.ensure_event_summaries(run_id)
+        await self.ensure_projection_snapshot(run_id)
+
+    async def ensure_event_summaries(self, run_id: str) -> None:
+        """Rebuild compact event summaries if missing or behind events_v2."""
+        current = await self.current_position(run_id)
+        count = await self._session.scalar(
+            select(func.count())
+            .select_from(GraphEventSummaryModel)
+            .where(GraphEventSummaryModel.run_id == run_id)
+        )
+        summary_count = int(count or 0)
+        if current == 0:
+            if summary_count:
+                await self.delete_read_models(run_id)
+            return
+        if summary_count != current:
+            await self.rebuild_read_models(run_id)
+
+    async def ensure_projection_snapshot(self, run_id: str) -> None:
+        """Rebuild current-state graph snapshot if missing or behind events_v2."""
+        current = await self.current_position(run_id)
+        snapshot = await self._session.get(GraphProjectionSnapshotModel, run_id)
+        if current == 0:
+            if snapshot is not None:
+                await self.delete_read_models(run_id)
+            return
+        if snapshot is None or snapshot.position != current:
+            await self.rebuild_read_models(run_id)
+
+    async def append_event_summaries(
+        self,
+        run_id: str,
+        events: list[EventEnvelope],
+    ) -> None:
+        """Append compact summary rows for newly stored graph events."""
+        if not events:
+            return
+        self._session.add_all(
+            [
+                GraphEventSummaryModel(
+                    run_id=summary.run_id,
+                    position=summary.position,
+                    event_id=summary.event_id,
+                    event_type=summary.event_type,
+                    timestamp=summary.timestamp,
+                    payload=summary.payload,
+                )
+                for summary in (summarize_graph_event(event) for event in events)
+            ]
+        )
+        await self._session.flush()
+
+    async def invalidate_projection_snapshot(self, run_id: str) -> None:
+        """Drop the disposable projection snapshot after appending new events."""
+        await self._session.execute(
+            delete(GraphProjectionSnapshotModel).where(
+                GraphProjectionSnapshotModel.run_id == run_id
+            )
+        )
+        await self._session.flush()
+
+    async def commit_read_model_changes(self) -> None:
+        """Persist disposable read-model rebuilds performed during API reads."""
+        await self._session.commit()
+
+    async def delete_read_models(self, run_id: str) -> None:
+        """Delete disposable graph read models for a run."""
+        await self._session.execute(
+            delete(GraphEventSummaryModel).where(GraphEventSummaryModel.run_id == run_id)
+        )
+        await self._session.execute(
+            delete(GraphProjectionSnapshotModel).where(
+                GraphProjectionSnapshotModel.run_id == run_id
+            )
+        )
+        await self._session.flush()
+
+    async def rebuild_read_models(self, run_id: str) -> GraphProjectionSnapshotModel | None:
+        """Rebuild disposable graph read models for a run from events_v2."""
+        await self.delete_read_models(run_id)
+        events = await self.read_run_summary_rebuild(run_id)
+        if not events:
+            return None
+
+        self._session.add_all(
+            [
+                GraphEventSummaryModel(
+                    run_id=summary.run_id,
+                    position=summary.position,
+                    event_id=summary.event_id,
+                    event_type=summary.event_type,
+                    timestamp=summary.timestamp,
+                    payload=summary.payload,
+                )
+                for summary in (summarize_graph_event(event) for event in events)
+            ]
+        )
+        snapshot = _projection_snapshot_from_events(run_id, events)
+        self._session.add(snapshot)
+        await self._session.flush()
+        return snapshot
+
+    async def read_run_summaries_from_events(
+        self,
+        run_id: str,
+        from_position: int = 0,
+    ) -> list[GraphEventSummary]:
+        """Legacy replay summary path retained for parity tests and fallback analysis."""
         aggregate_id = graph_aggregate_id(run_id)
         normal_result = await self._session.execute(
             select(EventV2Model)
@@ -450,7 +641,7 @@ class GraphEventStore:
         return int(result.scalar_one_or_none() or 0)
 
 
-def _summary_from_event(event: EventEnvelope) -> GraphEventSummary:
+def summarize_graph_event(event: EventEnvelope) -> GraphEventSummary:
     payload = {
         key: value
         for key, value in event.payload.items()
@@ -459,16 +650,24 @@ def _summary_from_event(event: EventEnvelope) -> GraphEventSummary:
         in {
             "blockers",
             "graph_verifier_grades",
-            "ops",
-            "operations",
             "patch_ops",
             "patch_rejection_reasons",
             "tokens_by_node",
             "tokens_by_node_kind",
-            "value",
-            "grades",
         }
     }
+    ops = event.payload.get("ops") or event.payload.get("operations")
+    if isinstance(ops, list):
+        payload["patch_ops"] = len(cast(list[Any], ops))
+    value = event.payload.get("value")
+    if isinstance(value, dict):
+        typed_value = cast(dict[str, Any], value)
+        grades = typed_value.get("grades")
+        if grades is not None:
+            payload["value"] = {"grades": grades}
+    grades = event.payload.get("grades")
+    if grades is not None:
+        payload["grades"] = grades
     return GraphEventSummary(
         event_id=event.event_id,
         event_type=event.event_type,
@@ -476,6 +675,28 @@ def _summary_from_event(event: EventEnvelope) -> GraphEventSummary:
         position=event.position,
         timestamp=event.timestamp.isoformat(),
         payload=payload,
+    )
+
+
+def _summary_from_event(event: EventEnvelope) -> GraphEventSummary:
+    return summarize_graph_event(event)
+
+
+def _projection_snapshot_from_events(
+    run_id: str,
+    events: list[EventEnvelope],
+) -> GraphProjectionSnapshotModel:
+    return GraphProjectionSnapshotModel(
+        run_id=run_id,
+        position=max(event.position for event in events),
+        run_state=project_run_state(events),
+        node_states=project_node_states(events),
+        task_states=project_task_states(events),
+        leases=project_leases(events),
+        ready_nodes=project_ready_nodes(events),
+        scheduler=project_scheduler_view(events),
+        lease_view=project_lease_view(events),
+        decisions=project_decision_view(events),
     )
 
 

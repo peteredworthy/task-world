@@ -225,14 +225,18 @@ def _summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "patch_id",
         "patch_ops",
         "patch_rejection_reasons",
+        "port",
         "producer_node_id",
         "proposed_by_node_id",
         "reason",
+        "record_id",
+        "record_kind",
         "rejected_patches",
         "rejection_reason",
         "role",
         "state",
         "task_region_id",
+        "to_state",
         "tokens",
         "tokens_by_node",
         "tokens_by_node_kind",
@@ -279,6 +283,31 @@ def build_graph_projection_response(
     )
 
 
+def build_graph_projection_response_from_snapshot(
+    run_id: str,
+    snapshot: Any | None,
+) -> GraphProjectionResponse:
+    if snapshot is None:
+        return GraphProjectionResponse(
+            run_id=run_id,
+            event_count=0,
+            run_state=None,
+            node_states={},
+            task_states={},
+            leases={},
+            ready_nodes=[],
+        )
+    return GraphProjectionResponse(
+        run_id=run_id,
+        event_count=int(snapshot.position),
+        run_state=cast(str | None, snapshot.run_state),
+        node_states=cast(dict[str, str], snapshot.node_states),
+        task_states=cast(dict[str, str], snapshot.task_states),
+        leases=cast(dict[str, dict[str, Any]], snapshot.leases),
+        ready_nodes=cast(list[str], snapshot.ready_nodes),
+    )
+
+
 def build_scheduler_view_response(
     run_id: str,
     events: list[EventEnvelope],
@@ -319,6 +348,58 @@ def build_scheduler_view_response(
     )
 
 
+def build_scheduler_view_response_from_snapshot(
+    run_id: str,
+    snapshot: Any | None,
+) -> SchedulerViewResponse:
+    if snapshot is None:
+        return SchedulerViewResponse(
+            run_id=run_id,
+            event_count=0,
+            scheduler=SchedulerViewResponseBody(
+                ready=[],
+                blocked=[],
+                waiting_resources=[],
+                waiting_gates=[],
+            ),
+            leases=LeaseViewResponse(active=[], suspended=[]),
+        )
+    scheduler_view = cast(dict[str, Any], snapshot.scheduler)
+    lease_view = cast(dict[str, Any], snapshot.lease_view)
+    return SchedulerViewResponse(
+        run_id=run_id,
+        event_count=int(snapshot.position),
+        scheduler=SchedulerViewResponseBody(
+            ready=cast(list[str], scheduler_view.get("ready", [])),
+            blocked=[
+                SchedulerBlockedNodeResponse(**entry)
+                for entry in cast(list[dict[str, Any]], scheduler_view.get("blocked", []))
+            ],
+            waiting_resources=[
+                SchedulerBlockedNodeResponse(**entry)
+                for entry in cast(
+                    list[dict[str, Any]],
+                    scheduler_view.get("waiting_resources", []),
+                )
+            ],
+            waiting_gates=[
+                SchedulerBlockedNodeResponse(**entry)
+                for entry in cast(list[dict[str, Any]], scheduler_view.get("waiting_gates", []))
+            ],
+        ),
+        leases=LeaseViewResponse(
+            active=[
+                LeaseViewEntryResponse(**entry)
+                for entry in cast(list[dict[str, Any]], lease_view.get("active", []))
+            ],
+            suspended=[
+                LeaseViewEntryResponse(**entry)
+                for entry in cast(list[dict[str, Any]], lease_view.get("suspended", []))
+            ],
+        ),
+    )
+
+
 def build_decision_view_response(
     run_id: str,
     events: list[EventEnvelope],
@@ -339,6 +420,36 @@ def build_decision_view_response(
         pending_gates=[PendingGateDecisionResponse(**entry) for entry in view["pending_gates"]],
         appeals=[AppealDecisionResponse(**entry) for entry in view["appeals"]],
         review=ReviewReadinessResponse(**view["review"]),
+    )
+
+
+def build_decision_view_response_from_snapshot(
+    run_id: str,
+    snapshot: Any | None,
+) -> DecisionViewResponse:
+    if snapshot is None:
+        return DecisionViewResponse(
+            run_id=run_id,
+            event_count=0,
+            pending_gates=[],
+            appeals=[],
+            review=ReviewReadinessResponse(ready=False, blockers=[]),
+        )
+    view = cast(dict[str, Any], snapshot.decisions)
+    return DecisionViewResponse(
+        run_id=run_id,
+        event_count=int(snapshot.position),
+        pending_gates=[
+            PendingGateDecisionResponse(**entry)
+            for entry in cast(list[dict[str, Any]], view.get("pending_gates", []))
+        ],
+        appeals=[
+            AppealDecisionResponse(**entry)
+            for entry in cast(list[dict[str, Any]], view.get("appeals", []))
+        ],
+        review=ReviewReadinessResponse(
+            **cast(dict[str, Any], view.get("review", {"ready": False, "blockers": []}))
+        ),
     )
 
 
@@ -708,29 +819,26 @@ async def get_graph_projection(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> GraphProjectionResponse:
-    events = await graph_store.read_run_projection(run_id)
-    if not events:
-        return GraphProjectionResponse(
-            run_id=run_id,
-            event_count=0,
-            run_state=None,
-            node_states={},
-            task_states={},
-            leases={},
-            ready_nodes=[],
-        )
-    return build_graph_projection_response(run_id, events)
+    snapshot = await graph_store.read_projection_snapshot(run_id)
+    await graph_store.commit_read_model_changes()
+    return build_graph_projection_response_from_snapshot(run_id, snapshot)
 
 
 @router.get("/{run_id}/graph/events", response_model=list[GraphEventResponse])
 async def get_graph_events(
     run_id: str,
     from_position: int = Query(default=0, ge=0),
+    limit: int | None = Query(default=None, ge=1, le=2000),
     payload_mode: Literal["summary", "full"] = Query(default="summary"),
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> list[GraphEventResponse]:
     if payload_mode == "summary":
-        summaries = await graph_store.read_run_summaries(run_id, from_position=from_position)
+        summaries = await graph_store.read_run_summaries(
+            run_id,
+            from_position=from_position,
+            limit=limit,
+        )
+        await graph_store.commit_read_model_changes()
         return [_summary_to_response(event) for event in summaries]
     events = await graph_store.read_run(run_id, from_position=from_position)
     return [_event_to_response(event) for event in events]
@@ -741,8 +849,9 @@ async def get_graph_scheduler_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> SchedulerViewResponse:
-    events = await graph_store.read_run_light(run_id)
-    return build_scheduler_view_response(run_id, events)
+    snapshot = await graph_store.read_projection_snapshot(run_id)
+    await graph_store.commit_read_model_changes()
+    return build_scheduler_view_response_from_snapshot(run_id, snapshot)
 
 
 @router.get("/{run_id}/graph/decisions", response_model=DecisionViewResponse)
@@ -750,8 +859,9 @@ async def get_graph_decision_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> DecisionViewResponse:
-    events = await graph_store.read_run_light(run_id)
-    return build_decision_view_response(run_id, events)
+    snapshot = await graph_store.read_projection_snapshot(run_id)
+    await graph_store.commit_read_model_changes()
+    return build_decision_view_response_from_snapshot(run_id, snapshot)
 
 
 @router.get("/{run_id}/graph/file-state", response_model=FileStateReportResponse)

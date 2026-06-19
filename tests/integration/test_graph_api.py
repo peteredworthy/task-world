@@ -4,10 +4,11 @@ from uuid import uuid4
 from typing import Any
 
 from httpx import AsyncClient
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db import EventV2Model
+from orchestrator.db import EventV2Model, GraphEventSummaryModel, GraphProjectionSnapshotModel
 from orchestrator.graph import FakeClock
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
@@ -308,6 +309,52 @@ async def test_graph_projection_reflects_seeded_events(
 
     not_found = await client.get(f"/api/runs/{run_id}/graph/nodes/nonexistent")
     assert not_found.status_code == 404
+
+
+async def test_graph_projection_routes_recreate_deleted_read_models(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = "graph-read-model-api-rebuild"
+    await _seed_graph_run(app, run_id)
+
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await session.execute(
+            delete(GraphEventSummaryModel).where(GraphEventSummaryModel.run_id == run_id)
+        )
+        await session.execute(
+            delete(GraphProjectionSnapshotModel).where(
+                GraphProjectionSnapshotModel.run_id == run_id
+            )
+        )
+        await session.commit()
+
+    projection_resp = await client.get(f"/api/runs/{run_id}/graph")
+    scheduler_resp = await client.get(f"/api/runs/{run_id}/graph/scheduler")
+    decisions_resp = await client.get(f"/api/runs/{run_id}/graph/decisions")
+
+    assert projection_resp.status_code == 200
+    assert scheduler_resp.status_code == 200
+    assert decisions_resp.status_code == 200
+    assert projection_resp.json()["event_count"] > 0
+    assert scheduler_resp.json()["event_count"] == projection_resp.json()["event_count"]
+    assert decisions_resp.json()["event_count"] == projection_resp.json()["event_count"]
+
+    async with session_factory() as session:
+        summary_count = await session.scalar(
+            select(func.count())
+            .select_from(GraphEventSummaryModel)
+            .where(GraphEventSummaryModel.run_id == run_id)
+        )
+        snapshot_count = await session.scalar(
+            select(func.count())
+            .select_from(GraphProjectionSnapshotModel)
+            .where(GraphProjectionSnapshotModel.run_id == run_id)
+        )
+
+    assert summary_count == projection_resp.json()["event_count"]
+    assert snapshot_count == 1
 
 
 async def test_node_detail_returns_inputs_outputs_filestate_callbacks(

@@ -351,6 +351,40 @@ class EventV2Model(Base):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class GraphEventSummaryModel(Base):
+    """Disposable compact graph event row derived from events_v2."""
+
+    __tablename__ = "graph_event_summaries"
+    __table_args__ = (
+        Index("idx_graph_event_summaries_run_position", "run_id", "position"),
+        Index("idx_graph_event_summaries_run_type", "run_id", "event_type", "position"),
+    )
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, primary_key=True)
+    event_id: Mapped[str] = mapped_column(String, nullable=False)
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    timestamp: Mapped[str] = mapped_column(String, nullable=False)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
+class GraphProjectionSnapshotModel(Base):
+    """Disposable latest graph projection snapshot derived from events_v2."""
+
+    __tablename__ = "graph_projection_snapshots"
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    run_state: Mapped[str | None] = mapped_column(String, nullable=True)
+    node_states: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    task_states: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    leases: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    ready_nodes: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    scheduler: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    lease_view: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    decisions: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+
+
 class GraphOutboxModel(Base):
     """Transactional side-effect intent emitted from accepted graph events."""
 
