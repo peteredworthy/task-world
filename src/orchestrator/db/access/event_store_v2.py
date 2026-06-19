@@ -17,7 +17,7 @@ from orchestrator.db.access.activity_summaries import (
 )
 from orchestrator.db.access.concurrency import ConcurrencyStrategy, RetryWithBackoff
 from orchestrator.db.access.event_outbox import EventOutboxObserver, queue_event_outbox
-from orchestrator.db.orm.models import EventV2Model, EventV2PayloadModel
+from orchestrator.db.orm.models import EventV2Model
 from orchestrator.time_utils import format_utc_datetime
 
 if TYPE_CHECKING:
@@ -93,7 +93,7 @@ class SqliteEventStore:
         else:
             _events = [events]  # type: ignore[list-item]
 
-        async def _do_append() -> list[tuple[EventV2Model, str]]:
+        async def _do_append() -> list[EventV2Model]:
             aggregate_ids = {e.run_id for e in _events}
             versions: dict[str, int] = {}
             for agg_id in aggregate_ids:
@@ -107,14 +107,13 @@ class SqliteEventStore:
                 versions[agg_id] = row or 0
 
             new_models: list[EventV2Model] = []
-            payloads: list[str] = []
             for event in _events:
                 versions[event.run_id] += 1
-                payloads.append(event.model_dump_json())
                 new_models.append(
                     EventV2Model(
                         aggregate_id=event.run_id,
                         event_type=event.event_type,
+                        payload=event.model_dump_json(),
                         timestamp=format_utc_datetime(event.timestamp),
                         version=versions[event.run_id],
                     )
@@ -128,18 +127,7 @@ class SqliteEventStore:
                 # across attempts and replay the same version conflict every time.
                 await self._session.rollback()
                 raise
-            self._session.add_all(
-                [
-                    EventV2PayloadModel(position=model.position, payload=payload)
-                    for model, payload in zip(new_models, payloads, strict=True)
-                ]
-            )
-            try:
-                await self._session.flush()
-            except Exception:
-                await self._session.rollback()
-                raise
-            return list(zip(new_models, payloads, strict=True))
+            return new_models
 
         models = await self._concurrency.execute_with_retry(_do_append)
 
@@ -148,11 +136,11 @@ class SqliteEventStore:
                 position=m.position,
                 aggregate_id=m.aggregate_id,
                 event_type=m.event_type,
-                payload=payload,
+                payload=m.payload,
                 timestamp=m.timestamp,
                 version=m.version,
             )
-            for m, payload in models
+            for m in models
         ]
         for listener in self._projection_listeners:
             await listener(stored, self._session, _events)
@@ -163,22 +151,20 @@ class SqliteEventStore:
     async def get_stream(self, aggregate_id: str) -> list[StoredEvent]:
         """Return all stored events for an aggregate in position order."""
         result = await self._session.execute(
-            select(EventV2Model, EventV2PayloadModel.payload)
-            .join(EventV2PayloadModel, EventV2PayloadModel.position == EventV2Model.position)
+            select(EventV2Model)
             .where(EventV2Model.aggregate_id == aggregate_id)
             .order_by(EventV2Model.position)
         )
-        return [_to_stored(m, payload) for m, payload in result.all()]
+        return [_to_stored(m) for m in result.scalars()]
 
     async def get_all(self, after_position: int = 0) -> list[StoredEvent]:
         """Return all events after a global position cursor."""
         result = await self._session.execute(
-            select(EventV2Model, EventV2PayloadModel.payload)
-            .join(EventV2PayloadModel, EventV2PayloadModel.position == EventV2Model.position)
+            select(EventV2Model)
             .where(EventV2Model.position > after_position)
             .order_by(EventV2Model.position)
         )
-        return [_to_stored(m, payload) for m, payload in result.all()]
+        return [_to_stored(m) for m in result.scalars()]
 
     async def get_events_paginated(
         self,
@@ -198,20 +184,16 @@ class SqliteEventStore:
             EventV2Model.event_type.in_(GRAPH_ACTIVITY_EVENT_TYPES),
             and_(
                 EventV2Model.event_type == "node_created",
-                func.json_extract(EventV2PayloadModel.payload, "$.payload.kind") == "review",
+                func.json_extract(EventV2Model.payload, "$.payload.kind") == "review",
             ),
         )
-        stmt = (
-            select(EventV2Model, EventV2PayloadModel.payload)
-            .join(EventV2PayloadModel, EventV2PayloadModel.position == EventV2Model.position)
-            .where(
-                or_(
-                    EventV2Model.aggregate_id == run_id,
-                    and_(
-                        EventV2Model.aggregate_id == graph_run_id,
-                        graph_activity_predicate,
-                    ),
-                )
+        stmt = select(EventV2Model).where(
+            or_(
+                EventV2Model.aggregate_id == run_id,
+                and_(
+                    EventV2Model.aggregate_id == graph_run_id,
+                    graph_activity_predicate,
+                ),
             )
         )
 
@@ -224,7 +206,7 @@ class SqliteEventStore:
         stmt = stmt.order_by(EventV2Model.position).limit(limit)
 
         result = await self._session.execute(stmt)
-        return [_to_activity_row(m, payload, run_id=run_id) for m, payload in result.all()]
+        return [_to_activity_row(m, run_id=run_id) for m in result.scalars()]
 
     async def append_batch(self, events: "Sequence[WorkflowEvent]") -> list[StoredEvent]:
         """Compatibility alias for append(); used by PersistentEventEmitter.emit_batch."""
@@ -261,24 +243,19 @@ def create_wired_event_store_v2(
     return store
 
 
-def _to_stored(m: EventV2Model, payload: str) -> StoredEvent:
+def _to_stored(m: EventV2Model) -> StoredEvent:
     return StoredEvent(
         position=m.position,
         aggregate_id=m.aggregate_id,
         event_type=m.event_type,
-        payload=payload,
+        payload=m.payload,
         timestamp=m.timestamp,
         version=m.version,
     )
 
 
-def _to_activity_row(
-    m: EventV2Model,
-    payload_json: str,
-    *,
-    run_id: str | None = None,
-) -> ActivityEventRow:
-    payload = json.loads(payload_json)
+def _to_activity_row(m: EventV2Model, *, run_id: str | None = None) -> ActivityEventRow:
+    payload = json.loads(m.payload)
     if not isinstance(payload, dict):
         payload = {}
     payload = cast(dict[str, Any], payload)

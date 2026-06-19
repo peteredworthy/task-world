@@ -166,19 +166,11 @@ async def test_reads_use_durable_position_not_version_or_timestamp(
     await async_session.execute(
         text(
             "INSERT INTO events_v2"
-            " (aggregate_id, event_type, timestamp, version)"
+            " (aggregate_id, event_type, payload, timestamp, version)"
             " VALUES"
-            " ('run-1', 'second_version_first', '2025-01-15T10:30:02Z', 2),"
-            " ('run-2', 'other_run_middle', '2025-01-15T10:30:01Z', 1),"
-            " ('run-1', 'first_version_last', '2025-01-15T10:30:00Z', 1)"
-        )
-    )
-    await async_session.execute(
-        text(
-            "INSERT INTO events_v2_payloads"
-            " (position, payload)"
-            " SELECT position, '{}'"
-            " FROM events_v2"
+            " ('run-1', 'second_version_first', '{}', '2025-01-15T10:30:02Z', 2),"
+            " ('run-2', 'other_run_middle', '{}', '2025-01-15T10:30:01Z', 1),"
+            " ('run-1', 'first_version_last', '{}', '2025-01-15T10:30:00Z', 1)"
         )
     )
     await async_session.flush()

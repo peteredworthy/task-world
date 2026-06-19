@@ -7,7 +7,7 @@ from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db import EventV2Model, EventV2PayloadModel
+from orchestrator.db import EventV2Model
 from orchestrator.graph import FakeClock
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
@@ -459,18 +459,13 @@ async def test_legacy_run_with_workflow_events_is_not_graph_backed(
     async with session_factory() as session:
         await save_run(session, run)
         # Simulate the legacy workflow event stream for this run.
-        event = EventV2Model(
-            aggregate_id=run_id,
-            version=1,
-            event_type="run_created",
-            timestamp="2026-06-12T00:00:00Z",
-        )
-        session.add(event)
-        await session.flush()
         session.add(
-            EventV2PayloadModel(
-                position=event.position,
+            EventV2Model(
+                aggregate_id=run_id,
+                version=1,
+                event_type="run_created",
                 payload='{"timestamp": "2026-06-12T00:00:00Z", "run_id": "%s"}' % run_id,
+                timestamp="2026-06-12T00:00:00Z",
             )
         )
         await session.commit()
