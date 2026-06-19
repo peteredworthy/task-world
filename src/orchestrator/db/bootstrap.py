@@ -173,17 +173,27 @@ async def bootstrap_from_jsonl(
         await session.execute(
             text(
                 "INSERT OR IGNORE INTO events_v2"
-                " (position, aggregate_id, event_type, payload, timestamp, version)"
+                " (position, aggregate_id, event_type, timestamp, version)"
                 " VALUES (:position, :aggregate_id, :event_type,"
-                " :payload, :timestamp, :version)"
+                " :timestamp, :version)"
             ),
             {
                 "position": position,
                 "aggregate_id": aggregate_id,
                 "event_type": event_type,
-                "payload": payload_json,
                 "timestamp": timestamp,
                 "version": version,
+            },
+        )
+        await session.execute(
+            text(
+                "INSERT OR IGNORE INTO events_v2_payloads"
+                " (position, payload)"
+                " VALUES (:position, :payload)"
+            ),
+            {
+                "position": position,
+                "payload": payload_json,
             },
         )
 

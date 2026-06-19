@@ -12,7 +12,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from orchestrator.db import EventV2Model
+from orchestrator.db import EventV2Model, EventV2PayloadModel
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime.errors import StaleProjectionError
 
@@ -261,16 +261,17 @@ class GraphEventStore:
 
         stored_events: list[EventEnvelope] = []
         rows: list[EventV2Model] = []
+        payloads: list[str] = []
         for offset, event in enumerate(events, start=1):
             position = expected_position + offset
             stored = event.model_copy(update={"run_id": run_id, "position": position})
             stored_events.append(stored)
+            payloads.append(stored.model_dump_json())
             rows.append(
                 EventV2Model(
                     aggregate_id=graph_aggregate_id(run_id),
                     version=position,
                     event_type=stored.event_type,
-                    payload=stored.model_dump_json(),
                     timestamp=stored.timestamp.isoformat(),
                 )
             )
@@ -281,19 +282,27 @@ class GraphEventStore:
         except IntegrityError as exc:
             msg = f"stale graph projection for run {run_id}"
             raise StaleProjectionError(msg) from exc
+        self._session.add_all(
+            [
+                EventV2PayloadModel(position=row.position, payload=payload)
+                for row, payload in zip(rows, payloads, strict=True)
+            ]
+        )
+        await self._session.flush()
         return stored_events
 
     async def read_run(self, run_id: str, from_position: int = 0) -> list[EventEnvelope]:
         """Read graph events for a run ordered by run-local position."""
         result = await self._session.execute(
-            select(EventV2Model)
+            select(EventV2PayloadModel.payload)
+            .join(EventV2Model, EventV2Model.position == EventV2PayloadModel.position)
             .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
             .where(EventV2Model.version >= from_position)
             .order_by(EventV2Model.version)
         )
         events: list[EventEnvelope] = []
-        for row in result.scalars():
-            payload = json.loads(row.payload)
+        for payload_json in result.scalars():
+            payload = json.loads(payload_json)
             events.append(EventEnvelope.model_validate(payload))
         return events
 
@@ -341,7 +350,7 @@ class GraphEventStore:
         fields: tuple[str, ...],
     ) -> list[EventEnvelope]:
         payload_selects = [
-            func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(field)
+            func.json_extract(EventV2PayloadModel.payload, f"$.payload.{field}").label(field)
             for field in fields
         ]
         result = await self._session.execute(
@@ -349,11 +358,16 @@ class GraphEventStore:
                 EventV2Model.event_type,
                 EventV2Model.version,
                 EventV2Model.timestamp,
-                func.json_extract(EventV2Model.payload, "$.event_id").label("event_id"),
-                func.json_extract(EventV2Model.payload, "$.causation_id").label("causation_id"),
-                func.json_extract(EventV2Model.payload, "$.correlation_id").label("correlation_id"),
+                func.json_extract(EventV2PayloadModel.payload, "$.event_id").label("event_id"),
+                func.json_extract(EventV2PayloadModel.payload, "$.causation_id").label(
+                    "causation_id"
+                ),
+                func.json_extract(EventV2PayloadModel.payload, "$.correlation_id").label(
+                    "correlation_id"
+                ),
                 *payload_selects,
             )
+            .join(EventV2PayloadModel, EventV2PayloadModel.position == EventV2Model.position)
             .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
             .where(EventV2Model.version >= from_position)
             .order_by(EventV2Model.version)
@@ -396,19 +410,20 @@ class GraphEventStore:
         """Read compact graph event rows without materializing large payloads."""
         aggregate_id = graph_aggregate_id(run_id)
         normal_result = await self._session.execute(
-            select(EventV2Model)
+            select(EventV2Model, EventV2PayloadModel.payload)
+            .join(EventV2PayloadModel, EventV2PayloadModel.position == EventV2Model.position)
             .where(EventV2Model.aggregate_id == aggregate_id)
             .where(EventV2Model.version >= from_position)
             .where(EventV2Model.event_type.not_in(HEAVY_GRAPH_EVENT_TYPES))
             .order_by(EventV2Model.version)
         )
         summaries = [
-            _summary_from_event(EventEnvelope.model_validate(json.loads(row.payload)))
-            for row in normal_result.scalars()
+            _summary_from_event(EventEnvelope.model_validate(json.loads(payload)))
+            for _, payload in normal_result.all()
         ]
 
         heavy_selects = [
-            func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(field)
+            func.json_extract(EventV2PayloadModel.payload, f"$.payload.{field}").label(field)
             for field in SUMMARY_PAYLOAD_FIELDS
         ]
         heavy_result = await self._session.execute(
@@ -416,9 +431,10 @@ class GraphEventStore:
                 EventV2Model.event_type,
                 EventV2Model.version,
                 EventV2Model.timestamp,
-                func.json_extract(EventV2Model.payload, "$.event_id").label("event_id"),
+                func.json_extract(EventV2PayloadModel.payload, "$.event_id").label("event_id"),
                 *heavy_selects,
             )
+            .join(EventV2PayloadModel, EventV2PayloadModel.position == EventV2Model.position)
             .where(EventV2Model.aggregate_id == aggregate_id)
             .where(EventV2Model.version >= from_position)
             .where(EventV2Model.event_type.in_(HEAVY_GRAPH_EVENT_TYPES))

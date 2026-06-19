@@ -308,9 +308,12 @@ async def test_bootstrap_noop_when_events_v2_populated(
     await session.execute(
         text(
             "INSERT INTO events_v2"
-            " (position, aggregate_id, event_type, payload, timestamp, version)"
-            " VALUES (99, 'existing-run', 'run_status_changed', '{}', '2025-01-01T00:00:00', 1)"
+            " (position, aggregate_id, event_type, timestamp, version)"
+            " VALUES (99, 'existing-run', 'run_status_changed', '2025-01-01T00:00:00', 1)"
         )
+    )
+    await session.execute(
+        text("INSERT INTO events_v2_payloads (position, payload) VALUES (99, '{}')")
     )
     await session.flush()
 

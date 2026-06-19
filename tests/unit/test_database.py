@@ -10,7 +10,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.db import AttemptModel, EventV2Model, RunModel, StepModel, TaskModel
+from orchestrator.db import (
+    AttemptModel,
+    EventV2Model,
+    EventV2PayloadModel,
+    RunModel,
+    StepModel,
+    TaskModel,
+)
 
 
 @pytest.fixture
@@ -71,25 +78,32 @@ async def test_cascade_delete(session: AsyncSession) -> None:
 
 async def test_event_v2_insert_and_query(session: AsyncSession) -> None:
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc).isoformat()
+    first_payload = json.dumps({"old_status": "draft", "new_status": "active"})
+    second_payload = json.dumps(
+        {"task_id": "t1", "old_status": "pending", "new_status": "building"}
+    )
     events = [
         EventV2Model(
             aggregate_id="run-1",
             event_type="run_status_changed",
             timestamp=now,
-            payload=json.dumps({"old_status": "draft", "new_status": "active"}),
             version=1,
         ),
         EventV2Model(
             aggregate_id="run-1",
             event_type="task_status_changed",
             timestamp=now,
-            payload=json.dumps(
-                {"task_id": "t1", "old_status": "pending", "new_status": "building"}
-            ),
             version=2,
         ),
     ]
     session.add_all(events)
+    await session.flush()
+    session.add_all(
+        [
+            EventV2PayloadModel(position=events[0].position, payload=first_payload),
+            EventV2PayloadModel(position=events[1].position, payload=second_payload),
+        ]
+    )
     await session.flush()
 
     result = await session.execute(

@@ -14,8 +14,9 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    select,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, column_property, mapped_column, relationship
 
 from orchestrator.db.orm.base import Base
 
@@ -327,6 +328,19 @@ class InteractionLogArtifactModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
 
 
+class EventV2PayloadModel(Base):
+    """Large JSON envelope for an events_v2 metadata row."""
+
+    __tablename__ = "events_v2_payloads"
+
+    position: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("events_v2.position", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    payload: Mapped[str] = mapped_column(Text, nullable=False)  # JSON string
+
+
 class EventV2Model(Base):
     """Authoritative append-only workflow event row.
 
@@ -346,9 +360,14 @@ class EventV2Model(Base):
     position: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     aggregate_id: Mapped[str] = mapped_column(String, nullable=False)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
-    payload: Mapped[str] = mapped_column(Text, nullable=False)  # JSON string
     timestamp: Mapped[str] = mapped_column(String, nullable=False)  # ISO 8601
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    payload: Mapped[str] = column_property(
+        select(EventV2PayloadModel.payload)
+        .where(EventV2PayloadModel.position == position)
+        .correlate_except(EventV2PayloadModel)
+        .scalar_subquery()
+    )
 
 
 class GraphOutboxModel(Base):

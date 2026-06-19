@@ -9,7 +9,13 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from orchestrator.db import EventV2Model, create_engine, create_session_factory, init_db
+from orchestrator.db import (
+    EventV2Model,
+    EventV2PayloadModel,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore, StaleProjectionError
 from orchestrator.graph_runtime.store import graph_aggregate_id
@@ -169,13 +175,18 @@ async def test_graph_stream_coexists_with_legacy_workflow_events(
     async with session_factory() as session:
         async with session.begin():
             # Legacy workflow event at version 1 for the same run.
+            event = EventV2Model(
+                aggregate_id=run_id,
+                version=1,
+                event_type="run_created",
+                timestamp="2026-01-01T00:00:00+00:00",
+            )
+            session.add(event)
+            await session.flush()
             session.add(
-                EventV2Model(
-                    aggregate_id=run_id,
-                    version=1,
-                    event_type="run_created",
+                EventV2PayloadModel(
+                    position=event.position,
                     payload='{"run_id": "store-coexist"}',
-                    timestamp="2026-01-01T00:00:00+00:00",
                 )
             )
 
