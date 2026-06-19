@@ -335,8 +335,19 @@ async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
     assert summary_worker_resp.status_code == 200
     summary_worker = summary_worker_resp.json()
     assert summary_worker["kind"] == "worker"
+    assert summary_worker["output_records"]
+    assert summary_worker["output_records"][0]["record_id"]
+    assert summary_worker["output_records"][0]["port"]
+    assert "value" not in summary_worker["output_records"][0]
     assert summary_worker["file_state_records"]
     assert summary_worker["file_state_records"][0]["classification_summary"]["total_paths"] == 0
+
+    summary_verifier_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{verifier_node}")
+    assert summary_verifier_resp.status_code == 200
+    summary_verifier = summary_verifier_resp.json()
+    assert summary_verifier["input_ports"]["candidate_under_test"] == [
+        summary_worker["output_records"][0]["record_id"]
+    ]
 
     worker_resp = await client.get(
         f"/api/runs/{run_id}/graph/nodes/{worker_node}?payload_mode=full"

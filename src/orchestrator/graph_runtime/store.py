@@ -172,6 +172,37 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "task_region_id",
     "to_state",
 )
+NODE_DETAIL_PAYLOAD_FIELDS = (
+    "accepted_record_selector",
+    "base_snapshot_id",
+    "candidate_id",
+    "edge_id",
+    "execution_id",
+    "expires_at",
+    "from_node_id",
+    "from_port",
+    "generation",
+    "input",
+    "kind",
+    "lease_generation",
+    "lease_id",
+    "new_state",
+    "node_id",
+    "port",
+    "producer_node_id",
+    "record_id",
+    "record_ids",
+    "record_kind",
+    "role",
+    "schema",
+    "session_id",
+    "state",
+    "task_region_id",
+    "to_node_id",
+    "to_port",
+    "trigger",
+    "verdict",
+)
 
 
 def graph_aggregate_id(run_id: str) -> str:
@@ -289,6 +320,18 @@ class GraphEventStore:
             run_id,
             from_position,
             GRAPH_PROJECTION_PAYLOAD_FIELDS,
+        )
+
+    async def read_run_node_detail(
+        self,
+        run_id: str,
+        from_position: int = 0,
+    ) -> list[EventEnvelope]:
+        """Read fields needed for summary node detail without large payload bodies."""
+        return await self._read_run_extracting_fields(
+            run_id,
+            from_position,
+            NODE_DETAIL_PAYLOAD_FIELDS,
         )
 
     async def _read_run_extracting_fields(

@@ -773,7 +773,7 @@ async def get_graph_node_detail(
     if payload_mode == "full":
         events = await graph_store.read_run(run_id)
     else:
-        events = await graph_store.read_run_light(run_id)
+        events = await graph_store.read_run_node_detail(run_id)
     if not events:
         raise HTTPException(status_code=404, detail="No graph projection found for run")
 

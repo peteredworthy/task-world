@@ -183,6 +183,13 @@ async def _read_projection(
         return await GraphEventStore(session).read_run_projection(RUN_ID)
 
 
+async def _read_node_detail(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> list[EventEnvelope]:
+    async with session_factory() as session:
+        return await GraphEventStore(session).read_run_node_detail(RUN_ID)
+
+
 async def _read_summary(session_factory: async_sessionmaker[AsyncSession]) -> str:
     async with session_factory() as session:
         summaries = await GraphEventStore(session).read_run_summaries(RUN_ID)
@@ -207,7 +214,7 @@ async def _projection_endpoint_full_payload_like(
 
 
 async def _node_detail_endpoint_like(session_factory: async_sessionmaker[AsyncSession]) -> str:
-    events = await _read_light(session_factory)
+    events = await _read_node_detail(session_factory)
     detail = build_node_detail_response(RUN_ID, PROFILE_NODE_ID, events, payload_mode="summary")
     if detail is None:
         msg = f"profile node not found: {PROFILE_NODE_ID}"
@@ -324,6 +331,11 @@ async def profile(args: argparse.Namespace) -> dict[str, Any]:
                 "store.read_run_projection.minimal_fields",
                 args.iterations,
                 lambda: _read_projection(session_factory),
+            ),
+            await _measure_async(
+                "store.read_run_node_detail.node_fields",
+                args.iterations,
+                lambda: _read_node_detail(session_factory),
             ),
             await _measure_async(
                 "store.read_run_summaries.compact",
