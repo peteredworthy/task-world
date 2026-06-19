@@ -917,16 +917,22 @@ def _apply_schedule_tick(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     output = _expired_lease_events(projection, clock.now(), make_event)
+    expired_lease_ids = _expired_active_lease_ids(projection, clock.now())
     active_claims = [
         _claim_from_dict(claim)
         for lease in projection["leases"].values()
         if lease.get("state") == "active"
+        and isinstance(lease.get("lease_id"), str)
+        and lease.get("lease_id") not in expired_lease_ids
         for claim in cast(list[dict[str, Any]], lease.get("resource_claims", []))
     ]
     active_lease_node_ids = [
         str(lease["node_id"])
         for lease in projection["leases"].values()
-        if lease.get("state") == "active" and isinstance(lease.get("node_id"), str)
+        if lease.get("state") == "active"
+        and isinstance(lease.get("lease_id"), str)
+        and lease.get("lease_id") not in expired_lease_ids
+        and isinstance(lease.get("node_id"), str)
     ]
     nodes: list[NodeScheduleInfo] = []
     readied_node_ids: set[str] = set()
@@ -2020,24 +2026,52 @@ def _expired_lease_events(
 ) -> list[EventEnvelope]:
     expired: list[EventEnvelope] = []
     for lease in projection["leases"].values():
-        if lease.get("state") != "active":
+        if not _lease_is_expired(lease, now):
             continue
-        expires_at = lease.get("expires_at")
-        if not isinstance(expires_at, str):
-            continue
-        if datetime.fromisoformat(expires_at) <= now:
+        node_id = lease.get("node_id")
+        expired.append(
+            make_event(
+                "lease_expired",
+                {
+                    "lease_id": lease.get("lease_id"),
+                    "node_id": node_id,
+                    "generation": lease.get("generation"),
+                    "execution_id": lease.get("execution_id"),
+                    "expires_at": lease.get("expires_at"),
+                    "reason": "lease_expired_without_callback",
+                },
+            )
+        )
+        if isinstance(node_id, str):
             expired.append(
                 make_event(
-                    "lease_expired",
+                    "node_state_changed",
                     {
-                        "lease_id": lease.get("lease_id"),
-                        "node_id": lease.get("node_id"),
-                        "generation": lease.get("generation"),
-                        "expires_at": expires_at,
+                        "node_id": node_id,
+                        "new_state": "failed",
+                        "trigger": "lease_expired_without_callback",
+                        "reason": "lease_expired_without_callback",
                     },
                 )
             )
     return expired
+
+
+def _expired_active_lease_ids(projection: GraphProjection, now: datetime) -> set[str]:
+    return {
+        lease_id
+        for lease in projection["leases"].values()
+        if isinstance((lease_id := lease.get("lease_id")), str) and _lease_is_expired(lease, now)
+    }
+
+
+def _lease_is_expired(lease: dict[str, Any], now: datetime) -> bool:
+    if lease.get("state") != "active":
+        return False
+    expires_at = lease.get("expires_at")
+    if not isinstance(expires_at, str):
+        return False
+    return datetime.fromisoformat(expires_at) <= now
 
 
 def _node_schedule_info(

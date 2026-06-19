@@ -37,6 +37,10 @@ from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner, create_agent_runner
 from orchestrator.runners.types import ExecutionContext
 
+MAX_GRAPH_PROMPT_CHARS = 60_000
+MAX_GRAPH_JSON_SECTION_CHARS = 36_000
+MAX_GRAPH_PROMPT_FIELD_CHARS = 8_000
+
 
 def _empty_event_list() -> list[EventEnvelope]:
     return []
@@ -716,48 +720,84 @@ def _rejected_cleanup_already_applied(
     )
 
 
+def _bounded_prompt(prompt: str) -> str:
+    if len(prompt) <= MAX_GRAPH_PROMPT_CHARS:
+        return prompt
+    omitted = len(prompt) - MAX_GRAPH_PROMPT_CHARS
+    suffix = f"\n[graph prompt truncated; omitted_chars={omitted}]"
+    return f"{prompt[: MAX_GRAPH_PROMPT_CHARS - len(suffix)]}{suffix}"
+
+
+def _bounded_json(value: object, *, max_chars: int = MAX_GRAPH_JSON_SECTION_CHARS) -> str:
+    encoded = json.dumps(value, sort_keys=True)
+    if len(encoded) <= max_chars:
+        return encoded
+    preview_chars = max(0, max_chars - 160)
+    return json.dumps(
+        {
+            "truncated": True,
+            "original_chars": len(encoded),
+            "preview": encoded[:preview_chars],
+        },
+        sort_keys=True,
+    )
+
+
+def _bounded_text(value: object, *, max_chars: int = MAX_GRAPH_PROMPT_FIELD_CHARS) -> str:
+    text = str(value)
+    if len(text) <= max_chars:
+        return text
+    omitted = len(text) - max_chars
+    suffix = f"\n[truncated; omitted_chars={omitted}]"
+    return f"{text[: max_chars - len(suffix)]}{suffix}"
+
+
 def _prompt_for_node(context: GraphDispatchContext) -> str:
     node = context.node_payload
     if context.node_kind == "verifier":
         rubric = node.get("rubric")
-        return "\n".join(
-            [
-                f"Verify task region {node.get('task_region_id', context.node_id)}.",
-                f"Candidate: {node.get('candidate_id', '')}",
-                f"Rubric: {json.dumps(rubric or [], sort_keys=True)}",
-            ]
+        return _bounded_prompt(
+            "\n".join(
+                [
+                    f"Verify task region {node.get('task_region_id', context.node_id)}.",
+                    f"Candidate: {node.get('candidate_id', '')}",
+                    f"Rubric: {_bounded_json(rubric or [])}",
+                ]
+            )
         )
     if context.node_kind == "planner":
         packet = _planner_packet(context)
-        return "\n".join(
-            [
-                "Planner context packet:",
-                json.dumps(packet, sort_keys=True),
-                "",
-                "Planner mutation contract:",
-                "- Your job is to propose future graph structure, not edit repository files.",
-                "- Mutate the graph only by calling submit_graph_patch with a patch envelope.",
-                "- Use current_graph_position from the packet as base_graph_position.",
-                "- Use node_id from the packet as planner identity; dispatch will bind proposer evidence.",
-                "- Choose ops only from allowed_patch_operations.",
-                "- Use horizon_region_templates for standard discovery, implementation, validation, gap-analysis, corrective-work, and final invariant regions.",
-                "- Read frontier, evidence, open_planner_proposals, accepted_planner_patches, and patch_rejections before proposing.",
-                "- If dynamic_feature is present, ground generated worker, verifier, gap-analysis, corrective-work, and final invariant regions in those feature inputs.",
-                "- Check nodes must include command_definition or command_binding; for dynamic_feature final invariant checks, use command_binding='dynamic_feature_hidden_oracle'.",
-                "- For gap planners, follow gap_analysis_contract and prefer corrective_work_region for corrective worker/verifier patches.",
-                "- For gap planners, gap_analysis_obligations are blocking; do not submit a no-op patch while any obligation is present.",
-                "- Gap planners must call submit_graph_patch even when no corrective mutation is safe; use a no-op patch with ops: [] for no-gap decisions.",
-                "- If feedback says the patch is stale, malformed, or rejected, submit a corrected patch.",
-                "- Call plain submit only after submit_graph_patch feedback says the patch was accepted.",
-                "- Do not append graph events directly and do not create source/test/doc edits from this planner node.",
-                "",
-                "Allowed patch operations:",
-                json.dumps(packet["allowed_patch_operations"], sort_keys=True),
-                "Standard horizon region templates:",
-                json.dumps(packet["horizon_region_templates"], sort_keys=True),
-                "Compact patch examples:",
-                json.dumps(packet["patch_examples"], sort_keys=True),
-            ]
+        return _bounded_prompt(
+            "\n".join(
+                [
+                    "Planner context packet:",
+                    _bounded_json(packet),
+                    "",
+                    "Planner mutation contract:",
+                    "- Your job is to propose future graph structure, not edit repository files.",
+                    "- Mutate the graph only by calling submit_graph_patch with a patch envelope.",
+                    "- Use current_graph_position from the packet as base_graph_position.",
+                    "- Use node_id from the packet as planner identity; dispatch will bind proposer evidence.",
+                    "- Choose ops only from allowed_patch_operations.",
+                    "- Use horizon_region_templates for standard discovery, implementation, validation, gap-analysis, corrective-work, and final invariant regions.",
+                    "- Read frontier, evidence, open_planner_proposals, accepted_planner_patches, and patch_rejections before proposing.",
+                    "- If dynamic_feature is present, ground generated worker, verifier, gap-analysis, corrective-work, and final invariant regions in those feature inputs.",
+                    "- Check nodes must include command_definition or command_binding; for dynamic_feature final invariant checks, use command_binding='dynamic_feature_hidden_oracle'.",
+                    "- For gap planners, follow gap_analysis_contract and prefer corrective_work_region for corrective worker/verifier patches.",
+                    "- For gap planners, gap_analysis_obligations are blocking; do not submit a no-op patch while any obligation is present.",
+                    "- Gap planners must call submit_graph_patch even when no corrective mutation is safe; use a no-op patch with ops: [] for no-gap decisions.",
+                    "- If feedback says the patch is stale, malformed, or rejected, submit a corrected patch.",
+                    "- Call plain submit only after submit_graph_patch feedback says the patch was accepted.",
+                    "- Do not append graph events directly and do not create source/test/doc edits from this planner node.",
+                    "",
+                    "Allowed patch operations:",
+                    _bounded_json(packet["allowed_patch_operations"]),
+                    "Standard horizon region templates:",
+                    _bounded_json(packet["horizon_region_templates"]),
+                    "Compact patch examples:",
+                    _bounded_json(packet["patch_examples"]),
+                ]
+            )
         )
     return _worker_like_prompt(context)
 
@@ -779,21 +819,23 @@ def _worker_like_prompt(context: GraphDispatchContext) -> str:
     ):
         value = node.get(key)
         if isinstance(value, str) and value:
-            context_lines.append(f"{key}: {value}")
+            context_lines.append(f"{key}: {_bounded_text(value)}")
 
     expected_outputs = node.get("expected_outputs")
     if isinstance(expected_outputs, list) and expected_outputs:
-        context_lines.append(f"expected_outputs: {json.dumps(expected_outputs, sort_keys=True)}")
+        context_lines.append(
+            f"expected_outputs: {_bounded_json(cast(list[Any], expected_outputs))}"
+        )
 
     invariants = node.get("invariants")
     if isinstance(invariants, list) and invariants:
-        context_lines.append(f"invariants: {json.dumps(invariants, sort_keys=True)}")
+        context_lines.append(f"invariants: {_bounded_json(cast(list[Any], invariants))}")
 
     dynamic_feature = _dynamic_feature_from_context(context)
     if dynamic_feature is not None:
         context_lines.extend(_dynamic_feature_prompt_lines(node, dynamic_feature))
 
-    return "\n".join([title, *context_lines]).strip()
+    return _bounded_prompt("\n".join([_bounded_text(title), *context_lines]).strip())
 
 
 def _dynamic_feature_from_context(context: GraphDispatchContext) -> dict[str, Any] | None:
@@ -830,7 +872,7 @@ def _dynamic_feature_prompt_lines(
             continue
         value = dynamic_feature.get(source_key)
         if isinstance(value, str) and value:
-            lines.append(f"{prompt_key}: {value}")
+            lines.append(f"{prompt_key}: {_bounded_text(value)}")
 
     if node.get("kind") != "worker":
         return lines

@@ -211,6 +211,24 @@ def test_outcome_classification() -> None:
     assert ready_blocked.completed is False
     assert ready_blocked.blocked_reason == "graph has ready node(s) not dispatched: planner-gap"
 
+    expired_lease_failed = classify_graph_outcome(
+        "run-6",
+        GraphProjectionSnapshot(
+            run_state="active",
+            ready_nodes=[],
+            active_leases={},
+            schedulable_nodes=[],
+            task_states={"step/task": "in_progress"},
+            node_states={"verifier-1": "failed"},
+            failed_node_reasons={"verifier-1": "lease_expired_without_callback"},
+        ),
+    )
+
+    assert expired_lease_failed.completed is False
+    assert expired_lease_failed.blocked_reason == (
+        "graph has failed node(s): verifier-1: lease_expired_without_callback"
+    )
+
 
 @pytest.mark.asyncio
 async def test_drive_stops_when_should_continue_false() -> None:

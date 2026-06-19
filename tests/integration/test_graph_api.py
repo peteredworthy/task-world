@@ -277,7 +277,7 @@ async def test_graph_projection_reflects_seeded_events(
         node_id for node_id in projection["node_states"] if node_id.startswith("worker-")
     )
 
-    events_resp = await client.get(f"/api/runs/{run_id}/graph/events")
+    events_resp = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
     assert events_resp.status_code == 200
     all_events = events_resp.json()
     assert len(all_events) == projection["event_count"]
@@ -331,7 +331,16 @@ async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
         if event["event_type"] == "node_created" and event["payload"].get("kind") == "verifier"
     )
 
-    worker_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{worker_node}")
+    summary_worker_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{worker_node}")
+    assert summary_worker_resp.status_code == 200
+    summary_worker = summary_worker_resp.json()
+    assert summary_worker["kind"] == "worker"
+    assert summary_worker["file_state_records"]
+    assert summary_worker["file_state_records"][0]["classification_summary"]["total_paths"] == 0
+
+    worker_resp = await client.get(
+        f"/api/runs/{run_id}/graph/nodes/{worker_node}?payload_mode=full"
+    )
     assert worker_resp.status_code == 200
     worker = worker_resp.json()
     assert worker["kind"] == "worker"
@@ -350,7 +359,9 @@ async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
         event["position"] for event in worker["callback_history"]
     )
 
-    verifier_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{verifier_node}")
+    verifier_resp = await client.get(
+        f"/api/runs/{run_id}/graph/nodes/{verifier_node}?payload_mode=full"
+    )
     assert verifier_resp.status_code == 200
     verifier = verifier_resp.json()
     assert verifier["kind"] == "verifier"

@@ -274,3 +274,80 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
         "node_id": "worker-1",
         "state": "planned",
     }
+
+
+@pytest.mark.asyncio
+async def test_read_run_light_preserves_projection_fields_without_heavy_payloads(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-light"
+    large_payload = [{"path": f".venv/file-{index}.py"} for index in range(1000)]
+
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(
+                run_id,
+                0,
+                [
+                    _event(
+                        "evt-light-1",
+                        run_id,
+                        "node_created",
+                        {
+                            "node_id": "worker-1",
+                            "kind": "worker",
+                            "state": "planned",
+                            "task_region_id": "step/task",
+                            "resource_claims": [{"mode": "write", "scope": "repo"}],
+                            "value": {"body": large_payload},
+                        },
+                    ),
+                    _event(
+                        "evt-light-2",
+                        run_id,
+                        "output_record_accepted",
+                        {
+                            "record_id": "candidate-1",
+                            "record_kind": "output",
+                            "producer_node_id": "worker-1",
+                            "port": "candidate",
+                            "candidate_id": "candidate-1",
+                            "task_region_id": "step/task",
+                            "value": {"body": large_payload},
+                        },
+                    ),
+                    _event(
+                        "evt-light-3",
+                        run_id,
+                        "callback_accepted",
+                        {
+                            "node_id": "worker-1",
+                            "lease_id": "lease-1",
+                            "payload": {"output_records": large_payload},
+                        },
+                    ),
+                ],
+            )
+
+    async with session_factory() as session:
+        events = await GraphEventStore(session).read_run_light(run_id)
+
+    assert [event.event_id for event in events] == ["evt-light-1", "evt-light-2", "evt-light-3"]
+    assert events[0].payload == {
+        "kind": "worker",
+        "node_id": "worker-1",
+        "resource_claims": [{"mode": "write", "scope": "repo"}],
+        "state": "planned",
+        "task_region_id": "step/task",
+    }
+    assert events[1].payload == {
+        "candidate_id": "candidate-1",
+        "port": "candidate",
+        "producer_node_id": "worker-1",
+        "record_id": "candidate-1",
+        "record_kind": "output",
+        "task_region_id": "step/task",
+    }
+    assert events[2].payload == {"lease_id": "lease-1", "node_id": "worker-1"}
+    assert all("value" not in event.payload for event in events)
+    assert all("payload" not in event.payload for event in events)

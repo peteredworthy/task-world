@@ -504,7 +504,9 @@ async def test_graph_run_observability_parity_through_run_apis(
         assert events_response.status_code == 200
         assert any(event["event_type"] == "callback_accepted" for event in events_response.json())
 
-        node_response = await client.get(f"/api/runs/{run_id}/graph/nodes/{verifier_node}")
+        node_response = await client.get(
+            f"/api/runs/{run_id}/graph/nodes/{verifier_node}?payload_mode=full"
+        )
         assert node_response.status_code == 200
         node_json = node_response.json()
         assert node_json["state"] == "completed"

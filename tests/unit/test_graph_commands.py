@@ -293,6 +293,77 @@ def test_schedule_tick_defers_node_without_base_snapshot() -> None:
     )
 
 
+def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -> None:
+    clock = FakeClock()
+    expired_at = clock.now() - timedelta(seconds=1)
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created", {"node_id": "verifier-1", "kind": "verifier", "state": "running"}, 1
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": expired_at.isoformat(),
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["docs/out.md"]}],
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-2",
+                "kind": "worker",
+                "state": "ready",
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["docs/out.md"]}],
+            },
+            3,
+        ),
+    ]
+
+    output = apply_command(
+        _project(events),
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        clock,
+        SequentialIdGenerator(),
+    )
+
+    assert [event.event_type for event in output[:3]] == [
+        "lease_expired",
+        "node_state_changed",
+        "node_ready",
+    ]
+    assert output[0].payload == {
+        "lease_id": "lease-1",
+        "node_id": "verifier-1",
+        "generation": 1,
+        "execution_id": "exec-1",
+        "expires_at": expired_at.isoformat(),
+        "reason": "lease_expired_without_callback",
+    }
+    assert output[1].payload == {
+        "node_id": "verifier-1",
+        "new_state": "failed",
+        "trigger": "lease_expired_without_callback",
+        "reason": "lease_expired_without_callback",
+    }
+    assert any(
+        event.event_type == "lease_granted" and event.payload["node_id"] == "worker-2"
+        for event in output
+    )
+
+    projected = _project([*events, *output])
+    assert projected["leases"]["lease-1"]["state"] == "expired"
+    assert projected["node_states"]["verifier-1"] == "failed"
+
+
 def test_callback_after_acknowledge_start_accepts_boundary() -> None:
     events = _leased_lease_events()
     start_output = _apply(

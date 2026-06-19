@@ -14,6 +14,7 @@ from orchestrator.graph import (
 from orchestrator.graph import reduce_event
 from orchestrator.graph_runtime import GraphDispatchContext, HORIZON_REGION_PURPOSES
 from orchestrator.graph_runtime.dispatch import (
+    MAX_GRAPH_PROMPT_CHARS,
     _planner_packet,
     _prompt_for_node,
 )
@@ -696,6 +697,34 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert "submit_graph_patch" not in verifier_prompt
     assert "horizon_region_templates" not in verifier_prompt
     assert "Standard horizon region templates" not in verifier_prompt
+
+
+def test_verifier_prompt_is_bounded_for_oversized_rubric() -> None:
+    context = GraphDispatchContext(
+        run_id="run-planner-packet",
+        node_id="verifier-huge",
+        node_kind="verifier",
+        node_payload={
+            "node_id": "verifier-huge",
+            "task_region_id": "region-huge",
+            "candidate_id": "candidate-huge",
+            "rubric": [{"requirement": "x" * 2_000_000}],
+        },
+        requirements=["REQ-1"],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-verifier-huge",
+        lease_generation=1,
+        execution_id="exec-verifier-huge",
+        base_snapshot_id="snapshot-0",
+        dispatch_event_id="dispatch-verifier-huge",
+    )
+
+    prompt = _prompt_for_node(context)
+
+    assert len(prompt) <= MAX_GRAPH_PROMPT_CHARS
+    assert "Rubric:" in prompt
+    assert '"truncated": true' in prompt
+    assert "original_chars" in prompt
 
 
 def test_planner_packet_includes_dynamic_feature_inputs() -> None:

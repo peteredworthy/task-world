@@ -669,6 +669,8 @@ def build_node_detail_response(
     run_id: str,
     node_id: str,
     events: list[EventEnvelope],
+    *,
+    payload_mode: Literal["full", "summary"] = "full",
 ) -> NodeDetailResponse | None:
     node_events = [event for event in events if _node_events_filter(event, node_id)]
     if not node_events:
@@ -694,8 +696,10 @@ def build_node_detail_response(
         output_records=output_records,
         file_state_records=file_state_records,
         active_lease=active_lease,
-        callback_history=[_event_to_response(event) for event in callback_history],
-        events=[_event_to_response(event) for event in node_events],
+        callback_history=[
+            _event_to_response(event, payload_mode=payload_mode) for event in callback_history
+        ],
+        events=[_event_to_response(event, payload_mode=payload_mode) for event in node_events],
     )
 
 
@@ -704,7 +708,7 @@ async def get_graph_projection(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> GraphProjectionResponse:
-    events = await graph_store.read_run(run_id)
+    events = await graph_store.read_run_projection(run_id)
     if not events:
         return GraphProjectionResponse(
             run_id=run_id,
@@ -722,7 +726,7 @@ async def get_graph_projection(
 async def get_graph_events(
     run_id: str,
     from_position: int = Query(default=0, ge=0),
-    payload_mode: Literal["full", "summary"] = Query(default="full"),
+    payload_mode: Literal["summary", "full"] = Query(default="summary"),
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> list[GraphEventResponse]:
     if payload_mode == "summary":
@@ -737,7 +741,7 @@ async def get_graph_scheduler_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> SchedulerViewResponse:
-    events = await graph_store.read_run(run_id)
+    events = await graph_store.read_run_light(run_id)
     return build_scheduler_view_response(run_id, events)
 
 
@@ -746,7 +750,7 @@ async def get_graph_decision_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> DecisionViewResponse:
-    events = await graph_store.read_run(run_id)
+    events = await graph_store.read_run_light(run_id)
     return build_decision_view_response(run_id, events)
 
 
@@ -763,13 +767,17 @@ async def get_graph_file_state_report(
 async def get_graph_node_detail(
     run_id: str,
     node_id: str,
+    payload_mode: Literal["summary", "full"] = Query(default="summary"),
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> NodeDetailResponse:
-    events = await graph_store.read_run(run_id)
+    if payload_mode == "full":
+        events = await graph_store.read_run(run_id)
+    else:
+        events = await graph_store.read_run_light(run_id)
     if not events:
         raise HTTPException(status_code=404, detail="No graph projection found for run")
 
-    detail = build_node_detail_response(run_id, node_id, events)
+    detail = build_node_detail_response(run_id, node_id, events, payload_mode=payload_mode)
     if detail is None:
         raise HTTPException(status_code=404, detail="Graph node not found")
     return detail

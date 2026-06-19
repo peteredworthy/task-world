@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 from sqlalchemy import func, select
@@ -12,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.db import EventV2Model
-from orchestrator.graph import EventEnvelope
+from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime.errors import StaleProjectionError
 
 GRAPH_AGGREGATE_PREFIX = "graph:"
@@ -50,6 +51,126 @@ SUMMARY_PAYLOAD_FIELDS = (
     "state",
     "task_region_id",
     "tokens",
+)
+LIGHT_GRAPH_PAYLOAD_FIELDS = (
+    "accepted_record_selector",
+    "active",
+    "allowed_actions",
+    "appeal_node_id",
+    "appeal_type",
+    "appealed_node_id",
+    "approved",
+    "authority",
+    "authority_required_reason",
+    "base_snapshot_id",
+    "behavior_change",
+    "blocker",
+    "cache_read_tokens",
+    "cache_write_tokens",
+    "candidate_id",
+    "classification",
+    "cleanup_id",
+    "command_definition",
+    "command_definition_id",
+    "confidence",
+    "decision",
+    "deleted_snapshot_ref",
+    "dependency_type",
+    "edge_id",
+    "evidence_id",
+    "execution_id",
+    "expires_at",
+    "explicit_authority_required",
+    "failed_candidate_id",
+    "file_state_record_id",
+    "from_node_id",
+    "from_port",
+    "from_state",
+    "gate_id",
+    "gate_type",
+    "generation",
+    "generation_index",
+    "input",
+    "input_tokens",
+    "kind",
+    "lease_generation",
+    "lease_id",
+    "membership",
+    "model_id",
+    "new_behavior",
+    "new_state",
+    "node_id",
+    "operation",
+    "outcome",
+    "output_tokens",
+    "path",
+    "port",
+    "patch_id",
+    "planner_chain",
+    "planner_generation_budget",
+    "previous_version_id",
+    "priority",
+    "prompt",
+    "producer_node_id",
+    "proposed_by_node_id",
+    "reason",
+    "record_id",
+    "record_kind",
+    "region_id",
+    "region_label",
+    "rejected_patches",
+    "required",
+    "requirement",
+    "requirement_id",
+    "requirement_version_id",
+    "requires_authority",
+    "resource_claims",
+    "revision_index",
+    "revision_type",
+    "role",
+    "semantic_change",
+    "session_id",
+    "stale_only",
+    "stale_reason",
+    "state",
+    "status",
+    "successor_planner_node_ids",
+    "superseding_record_id",
+    "support_id",
+    "supported",
+    "task_region_id",
+    "to_node_id",
+    "to_port",
+    "to_state",
+    "trigger",
+    "unsupported",
+    "validation_strengthening",
+    "verdict",
+    "verdicts",
+    "version_id",
+)
+GRAPH_PROJECTION_PAYLOAD_FIELDS = (
+    "attempt_number",
+    "base_snapshot_id",
+    "candidate_id",
+    "execution_id",
+    "expires_at",
+    "failed_candidate_id",
+    "from_state",
+    "generation",
+    "kind",
+    "lease_id",
+    "new_state",
+    "node_id",
+    "port",
+    "producer_node_id",
+    "record_id",
+    "record_kind",
+    "role",
+    "session_id",
+    "state",
+    "task_region_id",
+    "to_state",
 )
 
 
@@ -145,6 +266,85 @@ class GraphEventStore:
             events.append(EventEnvelope.model_validate(payload))
         return events
 
+    async def read_run_light(self, run_id: str, from_position: int = 0) -> list[EventEnvelope]:
+        """Read graph events with only projection/search payload fields.
+
+        This avoids selecting and validating the full JSON payload column for
+        callback/output/file-state bodies. Use ``read_run`` only when an API or
+        runtime path explicitly needs complete payloads.
+        """
+        return await self._read_run_extracting_fields(
+            run_id,
+            from_position,
+            LIGHT_GRAPH_PAYLOAD_FIELDS,
+        )
+
+    async def read_run_projection(
+        self,
+        run_id: str,
+        from_position: int = 0,
+    ) -> list[EventEnvelope]:
+        """Read only fields needed for the compact ``/graph`` projection."""
+        return await self._read_run_extracting_fields(
+            run_id,
+            from_position,
+            GRAPH_PROJECTION_PAYLOAD_FIELDS,
+        )
+
+    async def _read_run_extracting_fields(
+        self,
+        run_id: str,
+        from_position: int,
+        fields: tuple[str, ...],
+    ) -> list[EventEnvelope]:
+        payload_selects = [
+            func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(field)
+            for field in fields
+        ]
+        result = await self._session.execute(
+            select(
+                EventV2Model.event_type,
+                EventV2Model.version,
+                EventV2Model.timestamp,
+                func.json_extract(EventV2Model.payload, "$.event_id").label("event_id"),
+                func.json_extract(EventV2Model.payload, "$.causation_id").label("causation_id"),
+                func.json_extract(EventV2Model.payload, "$.correlation_id").label("correlation_id"),
+                *payload_selects,
+            )
+            .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
+            .where(EventV2Model.version >= from_position)
+            .order_by(EventV2Model.version)
+        )
+
+        events: list[EventEnvelope] = []
+        for row in result.mappings():
+            payload = {
+                field: _json_extract_value(row[field])
+                for field in fields
+                if row.get(field) is not None
+            }
+            events.append(
+                EventEnvelope(
+                    event_id=str(row.get("event_id") or f"graph-event-{row['version']}"),
+                    run_id=run_id,
+                    position=int(row["version"]),
+                    event_type=str(row["event_type"]),
+                    schema_version=1,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    causation_id=(
+                        str(row["causation_id"]) if row.get("causation_id") is not None else None
+                    ),
+                    correlation_id=(
+                        str(row["correlation_id"])
+                        if row.get("correlation_id") is not None
+                        else None
+                    ),
+                    timestamp=datetime.fromisoformat(str(row["timestamp"])),
+                    payload=payload,
+                )
+            )
+        return events
+
     async def read_run_summaries(
         self,
         run_id: str,
@@ -234,3 +434,16 @@ def _summary_from_event(event: EventEnvelope) -> GraphEventSummary:
         timestamp=event.timestamp.isoformat(),
         payload=payload,
     )
+
+
+def _json_extract_value(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    if not value:
+        return value
+    if value[0] not in "[{":
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
