@@ -89,6 +89,28 @@ The dry-run model in `dynamic_intent_graph_feature_dry_run.md` is the template:
 ambiguous `R2`, validation requirement `R4`, a gap-planner finding after local
 verification, and appended corrective work.
 
+## Scenario Admission Gate
+
+Do not launch A/C/E arms until the candidate scenario passes this gate:
+
+1. A one-shot single-agent baseline on the same starting snapshot fails the
+   hidden oracle materially, while still producing useful partial work.
+2. The failure is caused by missed discovery, weak local validation, or missing
+   corrective work, not by tool outage, quota, dependency setup, or an oracle
+   that encodes a preferred implementation seam.
+3. The deterministic harness can run the weak acceptance and hidden oracle
+   outside all agents.
+4. All known dynamic-graph smoke invariants from DG-5.1x/DG-5.2x are covered by
+   local harness checks before Arm E spends live model tokens.
+5. The scenario has enough coupled surface area that a single prompt is unlikely
+   to hold all relevant state: at least 5-8 active requirements, repo-state
+   discovery, cross-feature interactions, and at least one required
+   post-validation correction.
+
+S1 dynamic smoke is operational evidence only. S2 live agent-output streaming is
+also rejected as a comparison scenario because the single-agent arm completed it
+correctly in one pass.
+
 ## Fairness Controls
 
 - Same repository snapshot for every arm.

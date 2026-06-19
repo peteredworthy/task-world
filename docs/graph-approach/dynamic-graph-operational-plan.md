@@ -1796,6 +1796,54 @@ Next action: retry `abba86e4-5b6e-459c-a074-63118005cb95` after the
 non-rate-limited runner. Expected outcome is corrective verifier completion and
 final invariant scheduling, or a new verified blocker beyond runner quota.
 
+2026-06-18 Spark retry `498f23f3-aadc-4b88-91b0-145ade3dd6f0` used
+`codex_server` with `gpt-5.3-codex-spark` after Codex quota reset. Verified
+progress:
+
+- root planner accepted `dynamic-smoke-runtime-regions-impl-gap-v1`;
+- root planner accepted `dynamic-smoke-runtime-regions-corrective-final-v2`;
+- implementation worker completed;
+- weak verifier passed at graph position 64;
+- gap planner accepted `planner-gap-dynamic-smoke-corrective-wiring-v1`;
+- corrective worker completed and produced an artifact in `worktrees/r306`.
+
+New blocker: corrective verifier `verifier-corrective-dynamic-smoke` remains
+`running` with no output records after its lease expiry
+`2026-06-18T10:47:26Z`. The run stayed API `active` with no pause reason and no
+new token/action counters after `102` actions, `5,002,238` input tokens,
+`50,170` output tokens, and `4,546,816` cache tokens. Node readback showed the
+active lease `lease-5f25ce2ee27747e1814582c1bba772aa` and callback history only
+through `runtime_start_acknowledged` at position 113. The corrective artifact
+contains `dynamic-smoke` but still lacks `validation-strengthened: true`, so the
+hidden oracle has not passed.
+
+Next action: DG-5.2e — Codex verifier lease timeout and read-contention harness.
+Do not spend another live dynamic smoke run until deterministic harnesses cover:
+expired active graph leases whose agent task is still running or lost, prompt
+size/token growth for graph verifier nodes, and graph read responsiveness while
+an agent execution is active.
+
+### Slice DG-5.2e — Codex Verifier Lease Timeout Harness
+
+Deliverables:
+
+- Add deterministic tests or harness checks for active graph leases that exceed
+  expiry without callback, especially under `codex_server`.
+- Ensure the graph driver reports or recovers the condition without leaving the
+  run indefinitely `active`.
+- Add a prompt/context budget check for verifier nodes so live runs cannot
+  silently consume multi-million-token packets on smoke-sized work.
+- Add a bounded readback check for `/api/runs/{id}/graph`,
+  `/graph/events?payload_mode=summary`, and node read endpoints while a graph
+  agent execution is active.
+
+Done when:
+
+- The harness reproduces the timeout/read-contention class without a live LLM.
+- The run outcome is a bounded pause/retry/recovery state with explicit evidence,
+  not an indefinitely active run.
+- Focused tests pass before any further Arm E live smoke attempt.
+
 ## Recommended Slice Order
 
 1. DG-0.1 Baseline Matrix
@@ -1839,6 +1887,7 @@ final invariant scheduling, or a new verified blocker beyond runner quota.
 39. DG-5.2b Hidden Oracle Isolation
 40. DG-5.2c Gap Planner Final Evidence Safety
 41. DG-5.2d Gap Planner Retry Obligation Signal
+42. DG-5.2e Codex Verifier Lease Timeout Harness
 
 ## First Action
 

@@ -183,6 +183,42 @@ approach                 runs compl all-A avg_in  avg_out  avg_cache  avg_tools 
 isolated3                1    0     0     22      7595     216187     12.0       0.3276
 ```
 
+### Isolated Arm E Retry With Codex Spark
+
+Run `498f23f3-aadc-4b88-91b0-145ade3dd6f0` used `codex_server` with
+`gpt-5.3-codex-spark`.
+
+Outcome: **active / blocked in practice**. The graph progressed past the prior
+Claude quota blocker but did not reach final invariant execution.
+
+Verified evidence:
+
+- Root planner accepted `dynamic-smoke-runtime-regions-impl-gap-v1`.
+- Root planner accepted `dynamic-smoke-runtime-regions-corrective-final-v2`.
+- Implementation worker completed.
+- Weak verifier passed at graph position 64.
+- Gap planner accepted `planner-gap-dynamic-smoke-corrective-wiring-v1`.
+- Corrective worker completed.
+- Corrective verifier `verifier-corrective-dynamic-smoke` reached `running` at
+  position 113, but had no output records after its lease expiry
+  `2026-06-18T10:47:26Z`.
+- The run remained API `active` with no pause reason.
+- The corrective artifact contained `dynamic-smoke` but lacked
+  `validation-strengthened: true`; hidden oracle still fails.
+
+Metrics:
+
+```text
+approach                 runs compl all-A avg_in  avg_out  avg_cache  avg_tools  avg_cost$
+-------------------------------------------------------------------------------------------
+spark                    1    0     0     5002238 50170    4546816    102.0      0.0000
+```
+
+Interpretation: DG-5.2d succeeded as a graph-obligation fix, but live Arm E
+still is not operational under Spark. The next work must be deterministic
+harness work for expired active leases, verifier prompt growth, and graph
+readback responsiveness, not another live smoke retry.
+
 ## Scenario S2: Live Agent-Output Streaming (real work)
 
 Real repo feature, chosen so the comparison measures cost on *real* work rather
@@ -227,14 +263,17 @@ The feature itself is fixed (in worktree r305; port to main pending).
 
 ## Next Slice
 
-After the 2026-06-15 19:30 BST Claude CLI quota reset, resume or retry Arm E
-from run `abba86e4-5b6e-459c-a074-63118005cb95`. Then define or launch the
-first controlled Arms A-D pass for S1 if Arm E completes under hidden-oracle
-discipline:
+Before launching A/C/E comparison arms, choose a scenario that passes the
+admission gate in `true-comparison-plan.md`: a one-shot single-agent baseline
+must fail the hidden oracle materially while still producing useful partial
+work. S1 remains smoke-only. S2 is rejected as a comparison scenario because Arm
+A completed it in one pass.
 
-- select exact routines for legacy, fixed 3-agent, static graph, and faithful
-  Mind-the-gap arms;
-- use the same weak acceptance and hidden oracle commands;
+Once Arm E is operational under deterministic DG-5.2e harness checks, define or
+launch the first controlled A/C/E pass:
+
+- use the same repo snapshot, weak acceptance, and hidden oracle;
+- keep B/D out unless a specific fixed-routine/static-graph question remains;
 - record run IDs and metrics in this ledger;
 - preserve a clear distinction between smoke-harness validation and broader
   dynamic-planning quality claims.
