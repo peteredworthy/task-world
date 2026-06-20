@@ -385,6 +385,41 @@ class GraphProjectionSnapshotModel(Base):
     decisions: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
 
 
+class GraphNodeDetailSummaryModel(Base):
+    """Disposable compact graph node-detail row derived from events_v2."""
+
+    __tablename__ = "graph_node_detail_summaries"
+    __table_args__ = (
+        Index("idx_graph_node_detail_summaries_run", "run_id"),
+        Index("idx_graph_node_detail_summaries_run_position", "run_id", "position"),
+    )
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    node_id: Mapped[str] = mapped_column(String, primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+    kind: Mapped[str | None] = mapped_column(String, nullable=True)
+    role: Mapped[str | None] = mapped_column(String, nullable=True)
+    state: Mapped[str | None] = mapped_column(String, nullable=True)
+    task_region_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    input_ports: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default=dict)
+    output_records: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    file_state_records: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    leases: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    active_lease: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    callback_history: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    events: Mapped[list[Any]] = mapped_column(JSON, nullable=False, default=list)
+    prompt_summary: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+
+class GraphNodeDetailSummaryCheckpointModel(Base):
+    """Disposable node-detail summary rebuild checkpoint derived from events_v2."""
+
+    __tablename__ = "graph_node_detail_summary_checkpoints"
+
+    run_id: Mapped[str] = mapped_column(String, primary_key=True)
+    position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class GraphOutboxModel(Base):
     """Transactional side-effect intent emitted from accepted graph events."""
 

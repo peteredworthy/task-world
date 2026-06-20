@@ -22,7 +22,11 @@ from orchestrator.graph import (
     project_scheduler_view,
     project_task_states,
 )
-from orchestrator.graph_runtime.store import GraphEventStore, GraphEventSummary
+from orchestrator.graph_runtime.store import (
+    GraphEventStore,
+    GraphEventSummary,
+    GraphNodeDetailSummary,
+)
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
 
@@ -814,6 +818,25 @@ def build_node_detail_response(
     )
 
 
+def build_node_detail_response_from_summary(
+    summary: GraphNodeDetailSummary,
+) -> NodeDetailResponse:
+    return NodeDetailResponse(
+        run_id=summary.run_id,
+        node_id=summary.node_id,
+        kind=summary.kind,
+        role=summary.role,
+        state=summary.state,
+        input_ports=summary.input_ports,
+        output_records=summary.output_records,
+        file_state_records=summary.file_state_records,
+        active_lease=summary.active_lease,
+        callback_history=[GraphEventResponse(**event) for event in summary.callback_history],
+        events=[GraphEventResponse(**event) for event in summary.events],
+        prompt_summary=summary.prompt_summary,
+    )
+
+
 @router.get("/{run_id}/graph", response_model=GraphProjectionResponse)
 async def get_graph_projection(
     run_id: str,
@@ -882,12 +905,18 @@ async def get_graph_node_detail(
 ) -> NodeDetailResponse:
     if payload_mode == "full":
         events = await graph_store.read_run(run_id)
-    else:
-        events = await graph_store.read_run_node_detail(run_id)
-    if not events:
-        raise HTTPException(status_code=404, detail="No graph projection found for run")
+        if not events:
+            raise HTTPException(status_code=404, detail="No graph projection found for run")
 
-    detail = build_node_detail_response(run_id, node_id, events, payload_mode=payload_mode)
-    if detail is None:
+        detail = build_node_detail_response(run_id, node_id, events, payload_mode=payload_mode)
+        if detail is None:
+            raise HTTPException(status_code=404, detail="Graph node not found")
+        return detail
+
+    summary = await graph_store.read_node_detail_summary(run_id, node_id)
+    await graph_store.commit_read_model_changes()
+    if summary is None:
+        if await graph_store.current_position(run_id) == 0:
+            raise HTTPException(status_code=404, detail="No graph projection found for run")
         raise HTTPException(status_code=404, detail="Graph node not found")
-    return detail
+    return build_node_detail_response_from_summary(summary)

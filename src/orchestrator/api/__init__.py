@@ -85,7 +85,11 @@ _MCP_SERVER_SYMBOLS = {"OrchestratorMCPServer", "ALL_TOOLS"}
 
 # Pure helpers from graph router + runs router, exposed here so tests don't
 # reach into orchestrator.api.routers.* sub-packages directly.
-_GRAPH_ROUTER_SYMBOLS = {"build_graph_projection_response", "build_node_detail_response"}
+_GRAPH_ROUTER_SYMBOLS = {
+    "build_graph_projection_response",
+    "build_node_detail_response",
+    "build_node_detail_response_from_summary",
+}
 _RUNS_ROUTER_SYMBOLS = {"_graph_backed_run_ids_from_rows"}
 
 
