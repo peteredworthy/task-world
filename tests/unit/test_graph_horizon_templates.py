@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 
 from orchestrator.graph import PLANNER_OPS, PatchEnvelope, initial_projection, validate_patch
+from orchestrator.graph.projections import GraphProjection
 from orchestrator.graph_runtime import (
     HORIZON_REGION_PURPOSES,
     horizon_region_templates,
@@ -55,7 +56,7 @@ def test_instantiated_horizon_templates_validate_as_planner_patches(purpose: str
         envelope,
         current_position=0,
         events_since_base=[],
-        projection=initial_projection(),
+        projection=_projection_for_template(purpose, f"region-{purpose}"),
         actor_role="planner",
     )
 
@@ -107,3 +108,37 @@ def _bind_test_check_command(ops: list[dict[str, Any]]) -> None:
         node = op.get("node")
         if isinstance(node, dict) and node.get("kind") == "check":
             node["command_binding"] = "dynamic_feature_hidden_oracle"
+
+
+def _projection_for_template(purpose: str, region_id: str) -> GraphProjection:
+    projection = initial_projection()
+    upstream_by_purpose = {
+        "validation_region": (
+            f"worker-implementation-{region_id}",
+            "worker",
+            "builder",
+        ),
+        "gap_analysis_region": (
+            f"verifier-validation-{region_id}",
+            "verifier",
+            "verifier",
+        ),
+        "corrective_work_region": (
+            f"planner-gap-{region_id}",
+            "planner",
+            "gap_planner",
+        ),
+        "final_invariant_region": (
+            f"verifier-corrective-{region_id}",
+            "verifier",
+            "verifier",
+        ),
+    }
+    upstream = upstream_by_purpose.get(purpose)
+    if upstream is None:
+        return projection
+    node_id, kind, role = upstream
+    projection["node_kinds"][node_id] = kind
+    projection["node_roles"][node_id] = role
+    projection["node_states"][node_id] = "completed"
+    return projection

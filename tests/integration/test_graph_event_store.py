@@ -64,6 +64,39 @@ async def test_append_read_round_trip(
 
 
 @pytest.mark.asyncio
+async def test_append_events_stores_durable_input_binding_position(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-input-bound-position"
+    events = [
+        _event("evt-node", run_id, "node_created", {"node_id": "verifier-1", "kind": "verifier"}),
+        _event(
+            "evt-input",
+            run_id,
+            "input_bound",
+            {
+                "edge_id": "edge-candidate",
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+                "bound_at_position": 0,
+            },
+        ),
+    ]
+
+    async with session_factory() as session:
+        async with session.begin():
+            stored = await GraphEventStore(session).append_events(run_id, 0, events)
+
+    async with session_factory() as session:
+        read_back = await GraphEventStore(session).read_run(run_id)
+
+    assert stored[1].position == 2
+    assert stored[1].payload["bound_at_position"] == 2
+    assert read_back[1].payload["bound_at_position"] == 2
+
+
+@pytest.mark.asyncio
 async def test_per_run_isolation(session_factory: async_sessionmaker[AsyncSession]) -> None:
     async with session_factory() as session:
         async with session.begin():
@@ -326,13 +359,30 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                             "payload": {"output_records": large_payload},
                         },
                     ),
+                    _event(
+                        "evt-light-4",
+                        run_id,
+                        "input_bound",
+                        {
+                            "edge_id": "edge-candidate",
+                            "to_node_id": "verifier-1",
+                            "to_port": "candidate_under_test",
+                            "record_ids": ["candidate-1"],
+                            "bound_at_position": 2,
+                        },
+                    ),
                 ],
             )
 
     async with session_factory() as session:
         events = await GraphEventStore(session).read_run_light(run_id)
 
-    assert [event.event_id for event in events] == ["evt-light-1", "evt-light-2", "evt-light-3"]
+    assert [event.event_id for event in events] == [
+        "evt-light-1",
+        "evt-light-2",
+        "evt-light-3",
+        "evt-light-4",
+    ]
     assert events[0].payload == {
         "kind": "worker",
         "node_id": "worker-1",
@@ -349,5 +399,12 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "task_region_id": "step/task",
     }
     assert events[2].payload == {"lease_id": "lease-1", "node_id": "worker-1"}
+    assert events[3].payload == {
+        "bound_at_position": 2,
+        "edge_id": "edge-candidate",
+        "record_ids": ["candidate-1"],
+        "to_node_id": "verifier-1",
+        "to_port": "candidate_under_test",
+    }
     assert all("value" not in event.payload for event in events)
     assert all("payload" not in event.payload for event in events)

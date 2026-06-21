@@ -2,6 +2,7 @@
   given_events:
     - output_record_accepted: {task_region_id: task-accepted, candidate_id: cand-accepted, attempt_number: 1}
     - verification_passed: {candidate_id: cand-accepted}
+    - file_state_accepted: {record_id: file-state-cand-accepted, record_kind: file_state, task_region_id: task-accepted, candidate_id: cand-accepted, snapshot_id: snapshot-cand-accepted, base_snapshot_id: S0, verdict: captured}
     - approval_decision_recorded: {task_region_id: task-accepted, gate_id: gate-accepted, approved: true}
   when_command: null
   then_events: []

@@ -40,6 +40,10 @@ def _row(**kw: object) -> dict[str, object]:
         "gap_findings": 0,
         "proposal_decisions": 0,
         "invariant_gate_failures": 0,
+        "expired_leases": 0,
+        "failed_nodes": 0,
+        "final_blockers": 0,
+        "stale_evidence_count": 0,
         "graph_verifier_grades": {},
         "tokens_by_node_kind": {},
     }
@@ -238,6 +242,15 @@ def test_run_metrics_extracts_dynamic_graph_metrics_from_graph_events() -> None:
                     },
                 },
             ]
+        if path == "/api/runs/test-run/graph/health":
+            return {
+                "counts": {
+                    "expired_leases": 1,
+                    "failed_nodes": 2,
+                    "final_blockers": 3,
+                    "stale_evidence": 4,
+                }
+            }
         raise AssertionError(f"unexpected path: {path}")
 
     metrics = _run_metrics_with_fake_get("test-run", fake_get)
@@ -252,6 +265,10 @@ def test_run_metrics_extracts_dynamic_graph_metrics_from_graph_events() -> None:
     assert metrics["gap_findings"] == 4
     assert metrics["proposal_decisions"] == 3
     assert metrics["invariant_gate_failures"] == 1
+    assert metrics["expired_leases"] == 1
+    assert metrics["failed_nodes"] == 2
+    assert metrics["final_blockers"] == 3
+    assert metrics["stale_evidence_count"] == 4
     assert metrics["patch_rejection_reasons"] == {"read_set_changed": 2, "budget_exhausted": 1}
     assert metrics["graph_verifier_grades"] == {"C": 1, "B": 1, "A": 1}
     assert metrics["tokens_by_node_kind"] == {"planner": 5, "review": 12}
@@ -269,10 +286,13 @@ def test_run_metrics_defaults_on_missing_or_malformed_graph_payload() -> None:
             return {"activities": []}
         if path == "/api/runs/missing-run/graph/events?payload_mode=summary":
             raise urllib.error.URLError("missing")
+        if path == "/api/runs/missing-run/graph/health":
+            raise urllib.error.URLError("missing")
         raise AssertionError(f"unexpected path: {path}")
 
     missing = _run_metrics_with_fake_get("missing-run", missing_graph_get)
     assert missing["planner_patches"] == 0
+    assert missing["expired_leases"] == 0
     assert missing["patch_rejection_reasons"] == {}
     assert missing["graph_verifier_grades"] == {}
 
@@ -282,6 +302,8 @@ def test_run_metrics_defaults_on_missing_or_malformed_graph_payload() -> None:
         if path == "/api/runs/malformed-run/activity?limit=1000":
             return []
         if path == "/api/runs/malformed-run/graph/events?payload_mode=summary":
+            return {"unexpected": True}
+        if path == "/api/runs/malformed-run/graph/health":
             return {"unexpected": True}
         raise AssertionError(f"unexpected path: {path}")
 
@@ -308,6 +330,10 @@ def test_aggregate_empty_bucket_preserves_existing_and_dynamic_defaults() -> Non
         "gap_findings": 0,
         "proposal_decisions": 0,
         "invariant_gate_failures": 0,
+        "expired_leases": 0,
+        "failed_nodes": 0,
+        "final_blockers": 0,
+        "stale_evidence_count": 0,
         "patch_rejection_reasons": {},
         "graph_verifier_grades": {},
         "tokens_by_node_kind": {},

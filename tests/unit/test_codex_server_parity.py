@@ -83,6 +83,14 @@ def test_allowlist_contains_expected_tools() -> None:
             "submit_graph_patch",
             "request_clarification",
             "complete_recovery",
+            "create_work_region",
+            "create_corrective_region",
+            "attach_verifier",
+            "attach_check",
+            "create_gap_planner",
+            "create_join",
+            "request_gate",
+            "retire_or_supersede",
         }
     )
     assert CodexServerAgent.TOOL_ALLOWLIST == expected

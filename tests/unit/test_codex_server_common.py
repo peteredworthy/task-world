@@ -68,6 +68,14 @@ def test_tool_allowlist_contains_expected_tools() -> None:
             "submit_graph_patch",
             "request_clarification",
             "complete_recovery",
+            "create_work_region",
+            "create_corrective_region",
+            "attach_verifier",
+            "attach_check",
+            "create_gap_planner",
+            "create_join",
+            "request_gate",
+            "retire_or_supersede",
         }
     )
 
@@ -79,7 +87,15 @@ def test_tool_allowlist_contains_expected_tools() -> None:
 
 @pytest.mark.parametrize(
     "tool",
-    ["update_checklist", "grade", "submit", "submit_graph_patch", "request_clarification"],
+    [
+        "update_checklist",
+        "grade",
+        "submit",
+        "submit_graph_patch",
+        "request_clarification",
+        "create_work_region",
+        "attach_check",
+    ],
 )
 def test_is_allowed_tool_true_for_allowed(tool: str) -> None:
     assert is_allowed_tool(tool) is True
@@ -189,11 +205,13 @@ def test_builder_planner_prompt_contains_submit_graph_patch_instructions() -> No
         _ctx(node_kind="planner", node_role="planner"), is_verifier=False
     )
     assert "Planner Graph-Mutation Tool" in result
+    assert "Prefer graph macros" in result
+    assert "create_work_region" in result
     assert "submit_graph_patch" in result
     assert "base_graph_position: Use current_graph_position from the planner packet." in result
-    assert "ops: List using only allowed_patch_operations from the planner packet" in result
+    assert "ops: Raw fallback list using only allowed_patch_operations" in result
     assert "gap planners may use [] for an explicit no-op decision" in result
-    assert "If feedback says stale, malformed, or rejected, submit a corrected patch" in result
+    assert "submit a corrected macro or patch" in result
     assert (
         "Plain submit is only for finishing after at least one submit_graph_patch attempt."
         in result
@@ -571,6 +589,49 @@ def test_submit_graph_patch_exposed_only_to_graph_planner() -> None:
     assert schema["properties"]["ops"]["minItems"] == 0
 
 
+def test_planner_macros_are_exposed_with_typed_schemas() -> None:
+    specs = build_dynamic_tool_specs(
+        is_verifier=False,
+        context=_ctx(node_kind="planner", node_role="planner"),
+    )
+    names = {s["name"] for s in specs}
+    assert {
+        "create_work_region",
+        "attach_verifier",
+        "attach_check",
+        "create_gap_planner",
+        "create_join",
+        "request_gate",
+        "retire_or_supersede",
+    }.issubset(names)
+
+    create_join = next(s for s in specs if s["name"] == "create_join")
+    join_schema = create_join["inputSchema"]
+    assert join_schema["additionalProperties"] is False
+    assert join_schema["required"] == ["patch_id", "base_graph_position", "join_id"]
+    assert join_schema["properties"]["source_ids"]["type"] == "array"
+    assert join_schema["properties"]["source_ids"]["items"]["type"] == "string"
+
+
+def test_gap_planner_macros_are_exposed_with_typed_schemas() -> None:
+    specs = build_dynamic_tool_specs(
+        is_verifier=False,
+        context=_ctx(node_kind="planner", node_role="gap_planner"),
+    )
+    names = {s["name"] for s in specs}
+    assert {
+        "create_corrective_region",
+        "attach_verifier",
+        "attach_check",
+        "request_gate",
+        "submit_graph_patch",
+    }.issubset(names)
+    assert "create_work_region" not in names
+    assert "create_gap_planner" not in names
+    assert "create_join" not in names
+    assert "retire_or_supersede" not in names
+
+
 @pytest.mark.asyncio
 async def test_submit_graph_patch_routes_empty_ops_no_op_patch() -> None:
     received: list[dict[str, object]] = []
@@ -599,6 +660,52 @@ async def test_submit_graph_patch_routes_empty_ops_no_op_patch() -> None:
 
     assert result == "accepted no-op"
     assert received == [{"patch_id": "gap-no-op", "base_graph_position": 42, "ops": []}]
+
+
+@pytest.mark.asyncio
+async def test_macro_tool_routes_as_graph_patch_invocation() -> None:
+    received: list[dict[str, object]] = []
+
+    async def on_checklist_update(
+        _req_id: str,
+        _status: ChecklistStatus,
+        _note: str | None,
+    ) -> None:
+        return None
+
+    async def on_submit() -> None:
+        return None
+
+    async def on_submit_graph_patch(payload: dict[str, object]) -> str:
+        received.append(payload)
+        return "macro accepted"
+
+    result = await route_tool_call(
+        "create_work_region",
+        {
+            "patch_id": "macro-work",
+            "base_graph_position": 42,
+            "region_id": "feature-region",
+            "worker_id": "worker-feature",
+        },
+        on_checklist_update,
+        on_submit,
+        on_submit_graph_patch=on_submit_graph_patch,
+    )
+
+    assert result == "macro accepted"
+    assert received == [
+        {
+            "patch_id": "macro-work",
+            "base_graph_position": 42,
+            "macro_invocations": [
+                {
+                    "macro": "create_work_region",
+                    "args": {"region_id": "feature-region", "worker_id": "worker-feature"},
+                }
+            ],
+        }
+    ]
 
 
 # ---------------------------------------------------------------------------

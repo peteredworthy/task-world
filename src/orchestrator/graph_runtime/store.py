@@ -87,6 +87,7 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "base_snapshot_id",
     "behavior_change",
     "blocker",
+    "bound_at_position",
     "cache_read_tokens",
     "cache_write_tokens",
     "candidate_id",
@@ -137,7 +138,9 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "proposed_by_node_id",
     "reason",
     "record_id",
+    "record_ids",
     "record_kind",
+    "record_type",
     "region_id",
     "region_label",
     "rejected_patches",
@@ -150,6 +153,7 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "revision_index",
     "revision_type",
     "role",
+    "schema",
     "semantic_change",
     "session_id",
     "stale_only",
@@ -244,6 +248,9 @@ NODE_DETAIL_PAYLOAD_FIELDS = (
     "to_port",
     "trigger",
     "verdict",
+    "classifications",
+    "diff_summary",
+    "patch_bundle_id",
 )
 
 
@@ -255,6 +262,24 @@ def graph_aggregate_id(run_id: str) -> str:
     (aggregate_id, version) sequence and never appear in each other's reads.
     """
     return f"{GRAPH_AGGREGATE_PREFIX}{run_id}"
+
+
+def _payload_with_durable_graph_position(
+    event: EventEnvelope,
+    position: int,
+) -> dict[str, Any]:
+    payload = dict(event.payload)
+    if event.event_type != "input_bound":
+        return payload
+    bound_at_position = payload.get("bound_at_position")
+    if (
+        isinstance(bound_at_position, int)
+        and not isinstance(bound_at_position, bool)
+        and bound_at_position > 0
+    ):
+        return payload
+    payload["bound_at_position"] = position
+    return payload
 
 
 @dataclass(frozen=True)
@@ -324,7 +349,13 @@ class GraphEventStore:
         rows: list[EventV2Model] = []
         for offset, event in enumerate(events, start=1):
             position = expected_position + offset
-            stored = event.model_copy(update={"run_id": run_id, "position": position})
+            stored = event.model_copy(
+                update={
+                    "run_id": run_id,
+                    "position": position,
+                    "payload": _payload_with_durable_graph_position(event, position),
+                }
+            )
             stored_events.append(stored)
             rows.append(
                 EventV2Model(
@@ -1184,8 +1215,7 @@ def _node_detail_field_updates(
                 position,
             )
             records = [dict(record) for record in summary.file_state_records]
-            record = dict(payload)
-            record["classification_summary"] = _classification_summary(record)
+            record = _compact_file_state_record(payload)
             records.append(record)
             updates[node_id] = _replace_summary(
                 summary,
@@ -1415,11 +1445,8 @@ def _classification_summary(record: dict[str, Any]) -> dict[str, Any]:
         "classifications": {},
     }
     class_counts: dict[str, int] = {}
-    for key in ("tracked", "untracked", "ignored", "external", "classifications", "residue"):
-        entries = record.get(key)
-        if not isinstance(entries, list):
-            continue
-        summary[key] = len(cast(list[Any], entries))
+    entries = record.get("classifications")
+    if isinstance(entries, list):
         for raw_entry in cast(list[Any], entries):
             if not isinstance(raw_entry, dict):
                 continue
@@ -1430,11 +1457,29 @@ def _classification_summary(record: dict[str, Any]) -> dict[str, Any]:
             classification = entry.get("classification")
             if isinstance(classification, str):
                 class_counts[classification] = class_counts.get(classification, 0) + 1
-    rejected_paths = record.get("rejected_paths")
-    if isinstance(rejected_paths, list):
-        summary["rejected_paths"] = len(cast(list[Any], rejected_paths))
     summary["classifications"] = class_counts
     return summary
+
+
+def _compact_file_state_record(payload: dict[str, Any]) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "classification_summary": _classification_summary(payload),
+    }
+    for key in (
+        "record_id",
+        "record_kind",
+        "producer_node_id",
+        "snapshot_id",
+        "verdict",
+        "patch_bundle_id",
+    ):
+        value = payload.get(key)
+        if isinstance(value, str):
+            record[key] = value
+    diff_summary = payload.get("diff_summary")
+    if isinstance(diff_summary, dict):
+        record["diff_summary"] = dict(cast(dict[str, Any], diff_summary))
+    return record
 
 
 def _node_detail_summary_from_row(

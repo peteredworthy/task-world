@@ -51,6 +51,8 @@ def _projection(
     *,
     node_states: dict[str, str] | None = None,
     node_kinds: dict[str, str] | None = None,
+    node_roles: dict[str, str] | None = None,
+    edges: dict[str, dict[str, Any]] | None = None,
     resource_claims: dict[str, list[dict[str, Any]]] | None = None,
 ) -> GraphProjection:
     projection = initial_projection()
@@ -58,6 +60,10 @@ def _projection(
         projection["node_states"] = node_states
     if node_kinds is not None:
         projection["node_kinds"] = node_kinds
+    if node_roles is not None:
+        projection["node_roles"] = node_roles
+    if edges is not None:
+        projection["edges"] = edges
     if resource_claims is not None:
         cast(dict[str, Any], projection)["resource_claims"] = resource_claims
     return projection
@@ -153,6 +159,36 @@ def test_planner_can_create_node() -> None:
     assert result.accepted
 
 
+def test_create_node_rejects_unknown_node_type() -> None:
+    result = _validate(
+        _patch([{"op": "create_node", "node": {"node_id": "mystery-1", "kind": "mystery"}}])
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "unknown node type: mystery"
+
+
+def test_create_node_rejects_unknown_declared_input_port() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "inputs": [{"port": "not_a_real_input", "direction": "input"}],
+                    },
+                }
+            ]
+        )
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "node worker-1 declares unknown input port: not_a_real_input"
+
+
 def test_planner_cannot_create_check_without_command_definition() -> None:
     result = _validate(
         _patch(
@@ -177,7 +213,7 @@ def test_planner_cannot_create_check_without_command_definition() -> None:
     )
 
 
-def test_planner_can_create_check_with_hidden_oracle_command() -> None:
+def test_planner_cannot_create_check_with_hidden_oracle_command() -> None:
     result = _validate(
         _patch(
             [
@@ -202,10 +238,15 @@ def test_planner_can_create_check_with_hidden_oracle_command() -> None:
                     "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
                 },
             ]
-        )
+        ),
+        projection=_projection(node_kinds={"verifier-1": "verifier"}),
     )
 
-    assert result.accepted
+    assert not result.accepted
+    assert (
+        result.rejection_reason
+        == "check node cannot expose hidden_oracle_command; use command_binding: check-1"
+    )
 
 
 def test_planner_can_create_check_with_command_definition() -> None:
@@ -233,7 +274,8 @@ def test_planner_can_create_check_with_command_definition() -> None:
                     "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
                 },
             ]
-        )
+        ),
+        projection=_projection(node_kinds={"verifier-1": "verifier"}),
     )
 
     assert result.accepted
@@ -264,10 +306,255 @@ def test_planner_can_create_check_with_dynamic_feature_oracle_binding() -> None:
                     "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
                 },
             ]
-        )
+        ),
+        projection=_projection(node_kinds={"verifier-1": "verifier"}),
     )
 
     assert result.accepted
+
+
+def test_planner_cannot_create_check_with_unknown_command_binding() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "command_binding": "unknown_binding",
+                    },
+                }
+            ]
+        )
+    )
+
+    assert not result.accepted
+    assert (
+        result.rejection_reason
+        == "check node requires command_definition, hidden_oracle_command, or command_binding: check-1"
+    )
+
+
+def test_create_edge_rejects_unknown_endpoint_node_in_projection() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-1",
+                    "from_node_id": "missing-source",
+                    "from_port": "verification_report",
+                    "to_node_id": "missing-target",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                }
+            ]
+        )
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "edge edge-1 references unknown source node: missing-source"
+
+
+def test_create_edge_rejects_unknown_endpoint_node_in_same_patch() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-1",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "missing-target",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                },
+            ]
+        ),
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "edge edge-1 references unknown target node: missing-target"
+
+
+def test_create_edge_rejects_unknown_source_port() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "command_binding": "dynamic_feature_hidden_oracle",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-1",
+                    "from_node_id": "verifier-1",
+                    "from_port": "not_a_real_output",
+                    "to_node_id": "check-1",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                },
+            ]
+        ),
+    )
+
+    assert not result.accepted
+    assert (
+        result.rejection_reason
+        == "edge edge-1 references unknown source port verifier.not_a_real_output"
+    )
+
+
+def test_create_edge_rejects_unknown_target_port() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "command_binding": "dynamic_feature_hidden_oracle",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-1",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-1",
+                    "to_port": "not_a_real_input",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                },
+            ]
+        ),
+    )
+
+    assert not result.accepted
+    assert (
+        result.rejection_reason
+        == "edge edge-1 references unknown target port check.not_a_real_input"
+    )
+
+
+def test_create_edge_rejects_new_cycle() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-cycle",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "worker-1",
+                    "to_port": "verification_report",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                },
+            ]
+        ),
+        projection=_projection(
+            node_kinds={"worker-1": "worker", "verifier-1": "verifier"},
+            edges={
+                "edge-existing": {
+                    "edge_id": "edge-existing",
+                    "from_node_id": "worker-1",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-1",
+                    "to_port": "candidate_under_test",
+                    "required": True,
+                }
+            },
+        ),
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == (
+        "graph patch would create forbidden cycle: verifier-1 -> worker-1 -> verifier-1"
+    )
+
+
+def test_create_edge_rejects_selector_incompatible_with_source_port() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "command_binding": "dynamic_feature_hidden_oracle",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-1",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-1",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["candidate"]},
+                },
+            ]
+        ),
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "edge edge-1 selector is incompatible with source output port"
 
 
 def test_planner_cannot_create_gate() -> None:
@@ -509,6 +796,119 @@ def test_create_worker_without_role_rejected() -> None:
     assert not result.accepted
     assert result.rejection_reason is not None
     assert "requires role" in result.rejection_reason
+
+
+def test_unknown_node_type_rejected() -> None:
+    result = _validate(
+        _patch([{"op": "create_node", "node": {"node_id": "mystery-1", "kind": "mystery"}}])
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "unknown node type: mystery"
+
+
+def test_declared_unknown_node_port_rejected() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "inputs": [{"port": "untyped_blob", "direction": "input"}],
+                    },
+                }
+            ]
+        )
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == "node worker-1 declares unknown input port: untyped_blob"
+
+
+def test_edge_unknown_source_node_rejected() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-worker-verifier",
+                    "from_node_id": "worker-missing",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-1",
+                    "to_port": "candidate_under_test",
+                },
+            ]
+        )
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == (
+        "edge edge-worker-verifier references unknown source node: worker-missing"
+    )
+
+
+def test_edge_unknown_port_rejected() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-worker-verifier",
+                    "from_node_id": "worker-1",
+                    "from_port": "diagnostic",
+                    "to_node_id": "verifier-1",
+                    "to_port": "candidate_under_test",
+                }
+            ]
+        ),
+        projection=_projection(
+            node_kinds={"worker-1": "worker", "verifier-1": "verifier"},
+            node_states={"worker-1": "completed", "verifier-1": "planned"},
+        ),
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == (
+        "edge edge-worker-verifier references unknown source port worker.diagnostic"
+    )
+
+
+def test_edge_selector_incompatible_with_source_port_rejected() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-worker-verifier",
+                    "from_node_id": "worker-1",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-1",
+                    "to_port": "candidate_under_test",
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                }
+            ]
+        ),
+        projection=_projection(
+            node_kinds={"worker-1": "worker", "verifier-1": "verifier"},
+            node_states={"worker-1": "completed", "verifier-1": "planned"},
+        ),
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == (
+        "edge edge-worker-verifier selector is incompatible with source output port"
+    )
 
 
 def test_multi_op_patch_one_fails_rejected() -> None:

@@ -225,6 +225,15 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
                         "candidate_id": candidate_id,
                         "verdict": "passed",
                         "evidence": {"summary": "looks good"},
+                        "value": {
+                            "grades": [
+                                {
+                                    "requirement_id": "R-1",
+                                    "grade": "A",
+                                    "reason": "candidate satisfies requirement",
+                                }
+                            ]
+                        },
                     }
                 ],
             },

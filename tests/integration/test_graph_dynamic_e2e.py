@@ -261,6 +261,60 @@ def _gap_planner_no_op() -> dict[str, Any]:
     return {"patch_id": "patch-ds-gap-no-op", "base_graph_position": 0, "ops": []}
 
 
+def _macro_root_planner_patch(_proposed_by: str) -> dict[str, Any]:
+    return {
+        "patch_id": "patch-macro-root-plan",
+        "base_graph_position": 0,
+        "macro_invocations": [
+            {
+                "macro": "create_work_region",
+                "args": {
+                    "region_id": "feature-region",
+                    "worker_id": "worker-ds-builder",
+                    "verifier_id": "verifier-ds-initial",
+                    "candidate_id": "cand-ds",
+                },
+            },
+            {
+                "macro": "create_gap_planner",
+                "args": {
+                    "region_id": "feature-region",
+                    "node_id": "planner-ds-gap",
+                    "evidence_source_node_id": "verifier-ds-initial",
+                },
+            },
+            {
+                "macro": "create_corrective_region",
+                "args": {
+                    "region_id": "corrective_work_region",
+                    "worker_id": "worker-ds-corrective",
+                    "verifier_id": "verifier-ds-corrective",
+                    "candidate_id": "cand-ds-fix",
+                    "classified_gap_source_node_id": "planner-ds-gap",
+                },
+            },
+        ],
+    }
+
+
+def _macro_gap_planner_patch(_proposed_by: str) -> dict[str, Any]:
+    return {
+        "patch_id": "patch-macro-gap-invariant",
+        "base_graph_position": 0,
+        "macro_invocations": [
+            {
+                "macro": "attach_check",
+                "args": {
+                    "region_id": "corrective_work_region",
+                    "check_id": "check-ds-invariant",
+                    "evidence_source_node_id": "verifier-ds-corrective",
+                    "command_binding": "dynamic_feature_hidden_oracle",
+                },
+            }
+        ],
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Scripted agents                                                               #
 # --------------------------------------------------------------------------- #
@@ -284,6 +338,9 @@ class WorkerAgent(_BaseAgent):
         on_agent_metadata: AgentMetadataCallback | None = None,
         on_escalation: EscalationCallback | None = None,
     ) -> ExecutionResult:
+        output_path = Path(context.working_dir) / "docs/graph-approach/dynamic-smoke-output.txt"
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text("dynamic-smoke\n")
         await on_submit()
         return ExecutionResult(success=True)
 
@@ -304,21 +361,6 @@ class VerifierAgent(_BaseAgent):
     ) -> ExecutionResult:
         if on_grade is not None:
             await on_grade("req-1", self._grade, None)
-        await on_submit()
-        return ExecutionResult(success=True)
-
-
-class CheckAgent(_BaseAgent):
-    async def execute(
-        self,
-        context: ExecutionContext,
-        on_checklist_update: ChecklistUpdateCallback,
-        on_submit: SubmitCallback,
-        on_output: LogLineCallback | None = None,
-        on_grade: GradeCallback | None = None,
-        on_agent_metadata: AgentMetadataCallback | None = None,
-        on_escalation: EscalationCallback | None = None,
-    ) -> ExecutionResult:
         await on_submit()
         return ExecutionResult(success=True)
 
@@ -383,6 +425,36 @@ class DynamicPlannerAgent(_BaseAgent):
         return ExecutionResult(success=True)
 
 
+class MacroPlannerAgent(_BaseAgent):
+    """Drives the same graph as ``DynamicPlannerAgent`` using macro invocations."""
+
+    def __init__(self) -> None:
+        self.patch_feedback: list[str] = []
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        assert context.graph_patch_callback is not None, "planner must receive patch callback"
+        submit_patch = context.graph_patch_callback
+        if context.node_role == "gap_planner":
+            self.patch_feedback.append(
+                await submit_patch(_macro_gap_planner_patch(context.node_id))
+            )
+        else:
+            self.patch_feedback.append(
+                await submit_patch(_macro_root_planner_patch(context.node_id))
+            )
+        await on_submit()
+        return ExecutionResult(success=True)
+
+
 # --------------------------------------------------------------------------- #
 # Fixtures / helpers                                                            #
 # --------------------------------------------------------------------------- #
@@ -411,6 +483,14 @@ def _run_config() -> dict[str, Any]:
         "patch_budget": 8,
         "gap_policy_profile": "standard",
     }
+
+
+def _failing_oracle_config() -> dict[str, Any]:
+    config = _run_config()
+    config["hidden_oracle_command"] = (
+        "grep -q not-present docs/graph-approach/dynamic-smoke-output.txt"
+    )
+    return config
 
 
 def _init_repo(path: Path) -> None:
@@ -455,7 +535,7 @@ async def _create_graph_run(
     run.execution_mode = "graph"
     run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
     run.worktree_path = str(repo)
-    run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+    run.agent_runner_type = AgentRunnerType.CODEX_SERVER
     async with session_factory() as session:
         service = WorkflowService(session)
         await service.create_run(run)
@@ -543,7 +623,6 @@ async def test_dynamic_full_happy_path_completes(
             "planner": DynamicPlannerAgent(),
             "worker": WorkerAgent(),
             "verifier": VerifierAgent("A"),
-            "check": CheckAgent(),
         },
         dispatch_order=dispatch_order,
     )
@@ -558,7 +637,6 @@ async def test_dynamic_full_happy_path_completes(
         "gap_planner",
         "worker",
         "verifier",
-        "check",
     ]
     assert outcome.completed is True, outcome.blocked_reason
     assert project_run_state(events) == "completed"
@@ -574,6 +652,59 @@ async def test_dynamic_full_happy_path_completes(
     task_states = project_task_states(events)
     assert task_states, "expected dynamic task regions to be projected"
     assert all(state == "accepted" for state in task_states.values()), task_states
+
+
+@pytest.mark.asyncio
+async def test_dynamic_macro_created_graph_completes(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """End-to-end proof that planner-facing macros expand to a completable graph."""
+
+    _, session_factory = file_db
+    repo = tmp_path / "repo-macro"
+    _init_repo(repo)
+    run_id = "graph-dynamic-macro"
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, config=_run_config()
+    )
+    dispatch_order: list[str] = []
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={
+            "planner": MacroPlannerAgent(),
+            "worker": WorkerAgent(),
+            "verifier": VerifierAgent("A"),
+        },
+        dispatch_order=dispatch_order,
+    )
+
+    outcome = await driver.run(run_id)
+
+    events = await _events(session_factory, run_id)
+    assert dispatch_order == [
+        "planner",
+        "worker",
+        "verifier",
+        "gap_planner",
+        "worker",
+        "verifier",
+    ]
+    assert outcome.completed is True, outcome.blocked_reason
+    assert project_run_state(events) == "completed"
+    accepted_patches = [
+        event.payload.get("patch_id")
+        for event in events
+        if event.event_type == "graph_patch_accepted"
+    ]
+    assert accepted_patches == ["patch-macro-root-plan", "patch-macro-gap-invariant"]
+    assert any(
+        event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "check_result"
+        and event.payload.get("value", {}).get("status") == "passed"
+        for event in events
+    )
 
 
 @pytest.mark.asyncio
@@ -602,7 +733,6 @@ async def test_dynamic_gap_no_op_is_rejected_then_corrective_completes(
             "planner": planner,
             "worker": WorkerAgent(),
             "verifier": VerifierAgent("A"),
-            "check": CheckAgent(),
         },
         dispatch_order=dispatch_order,
     )
@@ -624,17 +754,13 @@ async def test_dynamic_gap_no_op_is_rejected_then_corrective_completes(
 
 
 @pytest.mark.asyncio
-async def test_dynamic_run_does_not_complete_while_final_invariant_unmet(
+async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
 ) -> None:
-    """The final invariant check exists and is bound, but its agent exits without
-    submitting. Two guarantees must hold together:
-
-    * the runtime records ``agent_died`` and recovers the lease (DG-5.1d) rather
-      than leaving an active lease and quiescing silently;
-    * the run does **not** reach ``completed`` while the final invariant check is
-      unsatisfied (DG-5.1t / DG-3.3 premature-completion guard).
+    """The final invariant check exists and is bound, but its deterministic
+    command fails. The run must not reach ``completed`` while the final invariant
+    check is unsatisfied (DG-5.1t / DG-3.3 premature-completion guard).
     """
 
     _, session_factory = file_db
@@ -642,7 +768,7 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_unmet(
     _init_repo(repo)
     run_id = "graph-dynamic-no-submit-check"
     await _create_graph_run(
-        session_factory, _routine(), run_id=run_id, repo=repo, config=_run_config()
+        session_factory, _routine(), run_id=run_id, repo=repo, config=_failing_oracle_config()
     )
     dispatch_order: list[str] = []
     driver = _driver(
@@ -652,7 +778,6 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_unmet(
             "planner": DynamicPlannerAgent(),
             "worker": WorkerAgent(),
             "verifier": VerifierAgent("A"),
-            "check": NoSubmitAgent(),  # final invariant check never submits
         },
         dispatch_order=dispatch_order,
     )
@@ -664,11 +789,14 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_unmet(
     assert outcome.blocked_reason is not None
     assert project_run_state(events) != "completed"
     assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
-    assert any(
-        event.event_type == "agent_died"
-        and "without submit" in str(event.payload.get("reason", ""))
+    failed_check_results = [
+        event.payload
         for event in events
-    ), "expected an agent_died 'exited without submit' event for the check node"
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "check_result"
+        and event.payload.get("value", {}).get("status") == "failed"
+    ]
+    assert failed_check_results, "expected a failed deterministic check_result"
 
 
 @pytest.mark.asyncio
@@ -697,7 +825,6 @@ async def test_dynamic_root_planner_accepted_patch_then_no_submit_does_not_dupli
             "planner": DynamicPlannerAgent(root_skip_submit=True),
             "worker": WorkerAgent(),
             "verifier": VerifierAgent("A"),
-            "check": CheckAgent(),
         },
         dispatch_order=dispatch_order,
     )

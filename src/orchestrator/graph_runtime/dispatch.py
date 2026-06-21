@@ -6,8 +6,9 @@ import asyncio
 import hashlib
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
 from collections.abc import Awaitable, Callable
+from pathlib import Path
+from time import perf_counter
 from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -19,6 +20,7 @@ from orchestrator.graph import (
     PLANNER_OPS,
     initial_projection,
     project_planner_freshness_packet,
+    resolve_check_command_definition,
 )
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
 from orchestrator.graph_runtime.errors import CompromisedFileStateError, StaleProjectionError
@@ -40,6 +42,9 @@ from orchestrator.runners.types import ExecutionContext
 MAX_GRAPH_PROMPT_CHARS = 60_000
 MAX_GRAPH_JSON_SECTION_CHARS = 36_000
 MAX_GRAPH_PROMPT_FIELD_CHARS = 8_000
+MAX_CHECK_OUTPUT_CHARS = 20_000
+DEFAULT_CHECK_TIMEOUT_SECONDS = 300
+MAX_STALE_COMMAND_RETRIES = 5
 
 
 def _empty_event_list() -> list[EventEnvelope]:
@@ -146,8 +151,15 @@ class GraphDispatchExecutor(SideEffectExecutor):
         if existing is not None and not existing.done():
             return
 
-        runner = self._agent_factory.create_runner(context)
-        task = asyncio.create_task(self._run_agent(context, runner))
+        if context.node_kind == "check":
+            task = asyncio.create_task(self._run_check(context))
+        elif context.node_kind == "join":
+            task = asyncio.create_task(self._run_join(context))
+        elif context.node_kind == "final_gate":
+            task = asyncio.create_task(self._run_final_gate(context))
+        else:
+            runner = self._agent_factory.create_runner(context)
+            task = asyncio.create_task(self._run_agent(context, runner))
         task.add_done_callback(_consume_task_exception)
         self._running[context.execution_id] = task
 
@@ -236,6 +248,48 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 await self._on_agent_usage(context, result)
             if not submitted_callback:
                 await self._agent_died(context, "agent exited without submit")
+        except Exception as exc:
+            await self._agent_died(context, str(exc))
+
+    async def _run_check(self, context: GraphDispatchContext) -> None:
+        try:
+            await self._acknowledge_start(context)
+            record = await _execute_check_command(context)
+            await self._submit_check_result(context, record)
+        except Exception as exc:
+            await self._agent_died(context, str(exc))
+
+    async def _run_final_gate(self, context: GraphDispatchContext) -> None:
+        try:
+            await self._acknowledge_start(context)
+            observed_position = await self._current_position(context.run_id)
+            await self._handle_command_retry_stale(
+                context.run_id,
+                observed_position,
+                "evaluate_final_gate",
+                {
+                    "node_id": context.node_id,
+                    "lease_id": context.lease_id,
+                    "lease_generation": context.lease_generation,
+                },
+            )
+        except Exception as exc:
+            await self._agent_died(context, str(exc))
+
+    async def _run_join(self, context: GraphDispatchContext) -> None:
+        try:
+            await self._acknowledge_start(context)
+            observed_position = await self._current_position(context.run_id)
+            await self._handle_command_retry_stale(
+                context.run_id,
+                observed_position,
+                "evaluate_join",
+                {
+                    "node_id": context.node_id,
+                    "lease_id": context.lease_id,
+                    "lease_generation": context.lease_generation,
+                },
+            )
         except Exception as exc:
             await self._agent_died(context, str(exc))
 
@@ -379,6 +433,33 @@ class GraphDispatchExecutor(SideEffectExecutor):
         )
         await self._record_gatekeeper_verdicts(context, result.projection_position, result.events)
 
+    async def _submit_check_result(
+        self,
+        context: GraphDispatchContext,
+        record: dict[str, Any],
+    ) -> None:
+        observed_position = await self._current_position(context.run_id)
+        payload = {
+            "payload_hash": _payload_hash([record]),
+            "output_records": [record],
+        }
+        await self._handle_command_retry_stale(
+            context.run_id,
+            observed_position,
+            "submit_callback",
+            {
+                "node_id": context.node_id,
+                "execution_id": context.execution_id,
+                "lease_id": context.lease_id,
+                "lease_generation": context.lease_generation,
+                "base_snapshot_id": context.base_snapshot_id,
+                "observed_graph_position": observed_position,
+                "idempotency_key": f"{context.dispatch_event_id}:{context.execution_id}:check",
+                "payload_hash": payload["payload_hash"],
+                "payload": payload,
+            },
+        )
+
     async def _submit_graph_patch_callback(
         self,
         context: GraphDispatchContext,
@@ -435,7 +516,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         return "graph patch command completed without accepted or rejected patch event"
 
     async def _agent_died(self, context: GraphDispatchContext, reason: str) -> None:
-        await self._controller.handle_command(
+        await self._handle_command_retry_stale(
             context.run_id,
             await self._current_position(context.run_id),
             "agent_died",
@@ -453,24 +534,23 @@ class GraphDispatchExecutor(SideEffectExecutor):
         command_type: str,
         payload: dict[str, object],
     ) -> Any:
-        try:
-            return await self._controller.handle_command(
-                run_id,
-                expected_position,
-                command_type,
-                payload,
-            )
-        except StaleProjectionError:
-            current_position = await self._current_position(run_id)
-            retry_payload = dict(payload)
-            if "observed_graph_position" in retry_payload:
-                retry_payload["observed_graph_position"] = current_position
-            return await self._controller.handle_command(
-                run_id,
-                current_position,
-                command_type,
-                retry_payload,
-            )
+        current_position = expected_position
+        retry_payload = dict(payload)
+        for attempt in range(MAX_STALE_COMMAND_RETRIES + 1):
+            try:
+                return await self._controller.handle_command(
+                    run_id,
+                    current_position,
+                    command_type,
+                    retry_payload,
+                )
+            except StaleProjectionError:
+                if attempt >= MAX_STALE_COMMAND_RETRIES:
+                    raise
+                current_position = await self._current_position(run_id)
+                if "observed_graph_position" in retry_payload:
+                    retry_payload["observed_graph_position"] = current_position
+        raise StaleProjectionError(f"stale graph projection for run {run_id}: retry loop exhausted")
 
     async def _current_position(self, run_id: str) -> int:
         async with self._session_factory() as session:
@@ -775,10 +855,11 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
                     "",
                     "Planner mutation contract:",
                     "- Your job is to propose future graph structure, not edit repository files.",
-                    "- Mutate the graph only by calling submit_graph_patch with a patch envelope.",
+                    "- Prefer planner-facing graph macros; low-level ops are the internal expansion format.",
+                    "- Mutate the graph only through submit_graph_patch or macro-backed patch envelopes.",
                     "- Use current_graph_position from the packet as base_graph_position.",
                     "- Use node_id from the packet as planner identity; dispatch will bind proposer evidence.",
-                    "- Choose ops only from allowed_patch_operations.",
+                    "- When using raw fallback ops, choose only from allowed_patch_operations.",
                     "- Use horizon_region_templates for standard discovery, implementation, validation, gap-analysis, corrective-work, and final invariant regions.",
                     "- Read frontier, evidence, open_planner_proposals, accepted_planner_patches, and patch_rejections before proposing.",
                     "- If dynamic_feature is present, ground generated worker, verifier, gap-analysis, corrective-work, and final invariant regions in those feature inputs.",
@@ -1549,7 +1630,10 @@ def _patch_payload_has_ops(patch_payload: dict[str, Any]) -> bool:
     raw_patch = patch_payload.get("patch")
     payload = cast(dict[str, Any], raw_patch) if isinstance(raw_patch, dict) else patch_payload
     ops = payload.get("ops")
-    return isinstance(ops, list) and bool(cast(list[object], ops))
+    if isinstance(ops, list) and bool(cast(list[object], ops)):
+        return True
+    macro_invocations = payload.get("macro_invocations")
+    return isinstance(macro_invocations, list) and bool(cast(list[object], macro_invocations))
 
 
 def _output_records_for_submit(
@@ -1626,24 +1710,7 @@ def _output_records_for_submit(
             ]
         return []
     if context.node_kind == "check":
-        command_definition = node.get("command_definition")
-        return [
-            {
-                "record_id": f"check-{context.execution_id}",
-                "record_kind": "output",
-                "producer_node_id": context.node_id,
-                "port": "check_result",
-                "schema": "CheckResult",
-                "candidate_id": candidate_id,
-                "task_region_id": task_region_id,
-                "attempt_number": attempt_number,
-                "value": {
-                    "status": "passed",
-                    "exit_code": 0,
-                    "command": command_definition,
-                },
-            }
-        ]
+        return []
     if context.node_kind == "verifier":
         verdict = "passed" if _grades_pass(grades) else "failed"
         return [
@@ -1684,6 +1751,142 @@ def _grades_pass(grades: list[tuple[str, str, str | None]]) -> bool:
         return True
     passing = {"a", "pass", "passed", "ok", "yes"}
     return all(grade.strip().lower() in passing for _, grade, _ in grades)
+
+
+async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any]:
+    command_definition = _check_command_definition(context.node_payload, context.graph_events)
+    invocation, command_text, shell = _check_invocation(command_definition)
+    timeout_seconds = _check_timeout_seconds(command_definition)
+    started = perf_counter()
+    stdout = ""
+    stderr = ""
+    timed_out = False
+    exit_code: int | None
+    proc: asyncio.subprocess.Process | None = None
+
+    try:
+        if shell:
+            proc = await asyncio.create_subprocess_shell(
+                cast(str, invocation),
+                cwd=context.worktree_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        else:
+            argv = cast(list[str], invocation)
+            proc = await asyncio.create_subprocess_exec(
+                *argv,
+                cwd=context.worktree_path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            proc.communicate(),
+            timeout=timeout_seconds,
+        )
+        exit_code = proc.returncode
+        stdout = _decode_output(stdout_bytes)
+        stderr = _decode_output(stderr_bytes)
+    except TimeoutError:
+        timed_out = True
+        exit_code = None
+        if proc is not None:
+            proc.kill()
+            await proc.wait()
+
+    duration_ms = int((perf_counter() - started) * 1000)
+    status = "timeout" if timed_out else "passed" if exit_code == 0 else "failed"
+    candidate_id = str(context.node_payload.get("candidate_id") or f"candidate-{context.node_id}")
+    task_region_id = str(context.node_payload.get("task_region_id") or context.node_id)
+    attempt_number = int(context.node_payload.get("attempt_number", 0))
+    command_id = str(command_definition.get("id") or context.node_id)
+    value = {
+        "status": status,
+        "classification": status,
+        "command_id": command_id,
+        "command_binding": command_definition.get("command_binding")
+        or context.node_payload.get("command_binding"),
+        "command_text": command_text,
+        "command": command_definition,
+        "worktree_path": context.worktree_path,
+        "base_snapshot_id": context.base_snapshot_id,
+        "execution_id": context.execution_id,
+        "exit_code": exit_code,
+        "duration_ms": duration_ms,
+        "stdout": _trim_check_output(stdout),
+        "stderr": _trim_check_output(stderr),
+        "stdout_truncated": len(stdout) > MAX_CHECK_OUTPUT_CHARS,
+        "stderr_truncated": len(stderr) > MAX_CHECK_OUTPUT_CHARS,
+        "timeout_seconds": timeout_seconds,
+        "environment_policy": {
+            "cwd": context.worktree_path,
+            "env": "inherited",
+            "shell": shell,
+        },
+    }
+    return {
+        "record_id": f"check-{context.execution_id}",
+        "record_kind": "output",
+        "record_type": "check_result",
+        "producer_node_id": context.node_id,
+        "port": "check_result",
+        "schema": "CheckResult",
+        "candidate_id": candidate_id,
+        "task_region_id": task_region_id,
+        "attempt_number": attempt_number,
+        "value": value,
+    }
+
+
+def _check_command_definition(
+    node: dict[str, Any],
+    events: list[EventEnvelope],
+) -> dict[str, Any]:
+    command_definition = resolve_check_command_definition(node, events)
+    if command_definition is None:
+        msg = "check node missing command_definition"
+        raise ValueError(msg)
+    return command_definition
+
+
+def _check_invocation(command_definition: dict[str, Any]) -> tuple[str | list[str], str, bool]:
+    raw_argv = command_definition.get("argv")
+    if isinstance(raw_argv, list):
+        raw_parts = cast(list[Any], raw_argv)
+        typed_argv = [part for part in raw_parts if isinstance(part, str)]
+        if len(typed_argv) != len(raw_parts):
+            typed_argv = []
+        if typed_argv:
+            return typed_argv, " ".join(typed_argv), False
+
+    command = command_definition.get("cmd")
+    if not isinstance(command, str):
+        command = command_definition.get("command")
+    if isinstance(command, str) and command.strip():
+        return command, command, True
+
+    msg = "check command_definition requires non-empty argv or cmd"
+    raise ValueError(msg)
+
+
+def _check_timeout_seconds(command_definition: dict[str, Any]) -> float:
+    raw_timeout = command_definition.get("timeout_seconds")
+    if isinstance(raw_timeout, int | float) and not isinstance(raw_timeout, bool):
+        if raw_timeout > 0:
+            return float(raw_timeout)
+    return float(DEFAULT_CHECK_TIMEOUT_SECONDS)
+
+
+def _decode_output(output: bytes | None) -> str:
+    if output is None:
+        return ""
+    return output.decode("utf-8", errors="replace")
+
+
+def _trim_check_output(output: str) -> str:
+    if len(output) <= MAX_CHECK_OUTPUT_CHARS:
+        return output
+    return output[-MAX_CHECK_OUTPUT_CHARS:]
 
 
 def _payload_hash(output_records: list[dict[str, Any]]) -> str:

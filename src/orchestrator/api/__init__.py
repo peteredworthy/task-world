@@ -1,5 +1,7 @@
 """FastAPI application for the orchestrator."""
 
+from typing import Any
+
 from orchestrator.api.app import create_app
 from orchestrator.api.deps import get_codex_models_fn, get_connection_manager, get_runner_executor
 from orchestrator.api.metrics import PRICING, CostEstimate, estimate_cost
@@ -61,6 +63,9 @@ __all__ = [
     "create_app",
     "compute_run_totals_from_attempts",
     "estimate_cost",
+    "build_graph_patch_attempts_response",
+    "build_final_invariant_blockers_response",
+    "build_graph_topology_response",
     "get_codex_models_fn",
     "get_agent_runner_display_name",
     "get_agent_runner_icon",
@@ -86,11 +91,34 @@ _MCP_SERVER_SYMBOLS = {"OrchestratorMCPServer", "ALL_TOOLS"}
 # Pure helpers from graph router + runs router, exposed here so tests don't
 # reach into orchestrator.api.routers.* sub-packages directly.
 _GRAPH_ROUTER_SYMBOLS = {
+    "build_graph_projection_response_from_snapshot",
+    "build_final_invariant_blockers_response",
+    "build_graph_patch_attempts_response",
     "build_graph_projection_response",
+    "build_graph_topology_response",
+    "build_scheduler_view_response_from_snapshot",
     "build_node_detail_response",
     "build_node_detail_response_from_summary",
 }
 _RUNS_ROUTER_SYMBOLS = {"_graph_backed_run_ids_from_rows"}
+
+
+def build_graph_patch_attempts_response(*args: Any, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
+
+    return _graph_router.build_graph_patch_attempts_response(*args, **kwargs)
+
+
+def build_final_invariant_blockers_response(*args: Any, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
+
+    return _graph_router.build_final_invariant_blockers_response(*args, **kwargs)
+
+
+def build_graph_topology_response(*args: Any, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
+
+    return _graph_router.build_graph_topology_response(*args, **kwargs)
 
 
 def __getattr__(name: str) -> object:

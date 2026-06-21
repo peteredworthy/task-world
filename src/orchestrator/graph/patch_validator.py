@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+from orchestrator.graph.command_bindings import is_known_check_command_binding
+from orchestrator.graph.contracts import validate_edge_payload, validate_node_payload
 from orchestrator.graph.models import EventEnvelope, PatchEnvelope
 from orchestrator.graph.projections import GraphProjection
 
@@ -154,6 +156,12 @@ def validate_patch(
             node = op.get("node")
             if isinstance(node, dict):
                 typed_node = cast(dict[str, Any], node)
+                contract_error = validate_node_payload(typed_node)
+                if contract_error is not None:
+                    return PatchValidationResult(
+                        accepted=False,
+                        rejection_reason=contract_error,
+                    )
                 kind = typed_node.get("kind")
                 role = typed_node.get("role")
                 if actor_role == "gap_planner":
@@ -169,12 +177,20 @@ def validate_patch(
                         rejection_reason=f"executable node requires role: {kind}",
                     )
                 if kind == "check":
-                    check_command_error = _validate_check_command(typed_node)
+                    check_command_error = _validate_check_command(typed_node, actor_role)
                     if check_command_error is not None:
                         return PatchValidationResult(
                             accepted=False,
                             rejection_reason=check_command_error,
                         )
+
+    topology_error = _validate_typed_topology(ops, projection)
+    if topology_error is not None:
+        return PatchValidationResult(accepted=False, rejection_reason=topology_error)
+
+    cycle_error = _validate_no_forbidden_cycles(ops, projection)
+    if cycle_error is not None:
+        return PatchValidationResult(accepted=False, rejection_reason=cycle_error)
 
     planner_successor_error = _validate_planner_successor_bindings(ops)
     if planner_successor_error is not None:
@@ -185,6 +201,88 @@ def validate_patch(
         return PatchValidationResult(accepted=False, rejection_reason=dynamic_region_error)
 
     return PatchValidationResult(accepted=True)
+
+
+def _validate_typed_topology(
+    ops: list[dict[str, Any]],
+    projection: GraphProjection,
+) -> str | None:
+    created_nodes: dict[str, tuple[str, str | None]] = {}
+    seen_node_ids: set[str] = set()
+    seen_edge_ids: set[str] = set()
+
+    for op in ops:
+        op_name = op.get("op")
+        if op_name == "create_node":
+            node = op.get("node")
+            if not isinstance(node, dict):
+                return "create_node requires node payload"
+            typed_node = cast(dict[str, Any], node)
+            node_id = typed_node.get("node_id")
+            if not isinstance(node_id, str) or not node_id:
+                return "create_node requires node_id"
+            if node_id in seen_node_ids or node_id in projection["node_kinds"]:
+                return f"duplicate node id: {node_id}"
+            seen_node_ids.add(node_id)
+            kind = typed_node.get("kind")
+            if isinstance(kind, str):
+                role = typed_node.get("role")
+                created_nodes[node_id] = (kind, role if isinstance(role, str) else None)
+        elif op_name == "create_edge":
+            edge_id = op.get("edge_id")
+            if not isinstance(edge_id, str) or not edge_id:
+                return "create_edge requires edge_id"
+            if edge_id in seen_edge_ids or edge_id in projection["edges"]:
+                return f"duplicate edge id: {edge_id}"
+            seen_edge_ids.add(edge_id)
+
+    for op in ops:
+        if op.get("op") != "create_edge":
+            continue
+        edge = op
+        edge_id = edge.get("edge_id")
+        from_node_id = edge.get("from_node_id")
+        to_node_id = edge.get("to_node_id")
+        if not isinstance(edge_id, str) or not edge_id:
+            return "create_edge requires edge_id"
+        if not isinstance(from_node_id, str) or not from_node_id:
+            return f"edge {edge_id} requires from_node_id"
+        if not isinstance(to_node_id, str) or not to_node_id:
+            return f"edge {edge_id} requires to_node_id"
+
+        source = _node_contract_identity(from_node_id, created_nodes, projection)
+        if source is None:
+            return f"edge {edge_id} references unknown source node: {from_node_id}"
+        target = _node_contract_identity(to_node_id, created_nodes, projection)
+        if target is None:
+            return f"edge {edge_id} references unknown target node: {to_node_id}"
+
+        contract_error = validate_edge_payload(
+            edge,
+            source_kind=source[0],
+            source_role=source[1],
+            target_kind=target[0],
+            target_role=target[1],
+        )
+        if contract_error is not None:
+            return contract_error
+
+    return None
+
+
+def _node_contract_identity(
+    node_id: str,
+    created_nodes: dict[str, tuple[str, str | None]],
+    projection: GraphProjection,
+) -> tuple[str, str | None] | None:
+    created = created_nodes.get(node_id)
+    if created is not None:
+        return created
+    kind = projection["node_kinds"].get(node_id)
+    if not isinstance(kind, str):
+        return None
+    role = projection.get("node_roles", {}).get(node_id)
+    return (kind, role if isinstance(role, str) else None)
 
 
 def _validate_gap_planner_node(node: dict[str, Any]) -> str | None:
@@ -199,17 +297,22 @@ def _validate_gap_planner_node(node: dict[str, Any]) -> str | None:
     return None
 
 
-def _validate_check_command(node: dict[str, Any]) -> str | None:
+def _validate_check_command(node: dict[str, Any], actor_role: str) -> str | None:
     command_definition = node.get("command_definition")
     if isinstance(command_definition, dict):
         return None
 
     hidden_oracle_command = node.get("hidden_oracle_command")
     if isinstance(hidden_oracle_command, str) and hidden_oracle_command.strip():
+        if actor_role in {"planner", "gap_planner"}:
+            node_id = node.get("node_id")
+            if isinstance(node_id, str):
+                return f"check node cannot expose hidden_oracle_command; use command_binding: {node_id}"
+            return "check node cannot expose hidden_oracle_command; use command_binding"
         return None
 
     command_binding = node.get("command_binding")
-    if command_binding == "dynamic_feature_hidden_oracle":
+    if is_known_check_command_binding(command_binding):
         return None
 
     node_id = node.get("node_id")
@@ -219,6 +322,57 @@ def _validate_check_command(node: dict[str, Any]) -> str | None:
             f"or command_binding: {node_id}"
         )
     return "check node requires command_definition, hidden_oracle_command, or command_binding"
+
+
+def _validate_no_forbidden_cycles(
+    ops: list[dict[str, Any]],
+    projection: GraphProjection,
+) -> str | None:
+    adjacency: dict[str, set[str]] = {}
+    patch_nodes: set[str] = set()
+
+    for edge in projection["edges"].values():
+        source = edge.get("from_node_id")
+        target = edge.get("to_node_id")
+        if isinstance(source, str) and isinstance(target, str):
+            adjacency.setdefault(source, set()).add(target)
+
+    for op in ops:
+        if op.get("op") != "create_edge":
+            continue
+        source = op.get("from_node_id")
+        target = op.get("to_node_id")
+        if not isinstance(source, str) or not isinstance(target, str):
+            continue
+        adjacency.setdefault(source, set()).add(target)
+        patch_nodes.update((source, target))
+
+    visited: set[str] = set()
+    visiting: set[str] = set()
+
+    def visit(node_id: str, path: list[str]) -> list[str] | None:
+        if node_id in visiting:
+            cycle_start = path.index(node_id) if node_id in path else 0
+            return path[cycle_start:]
+        if node_id in visited:
+            return None
+        visiting.add(node_id)
+        for next_node_id in sorted(adjacency.get(node_id, set())):
+            cycle = visit(next_node_id, [*path, next_node_id])
+            if cycle is not None:
+                return cycle
+        visiting.remove(node_id)
+        visited.add(node_id)
+        return None
+
+    for node_id in sorted(adjacency):
+        cycle = visit(node_id, [node_id])
+        if cycle is None:
+            continue
+        if patch_nodes.isdisjoint(cycle):
+            continue
+        return f"graph patch would create forbidden cycle: {' -> '.join(cycle)}"
+    return None
 
 
 def _validate_planner_successor_bindings(ops: list[dict[str, Any]]) -> str | None:

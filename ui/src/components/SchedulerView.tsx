@@ -1,16 +1,6 @@
 import type { SchedulerBlockedNode, SchedulerLease, SchedulerViewResponse } from '../types';
 
-interface SchedulerViewProps {
-  view: SchedulerViewResponse;
-}
-
-function DeferredList({
-  title,
-  nodes,
-}: {
-  title: string;
-  nodes: SchedulerBlockedNode[];
-}) {
+function DeferredList({ title, nodes }: { title: string; nodes: SchedulerBlockedNode[] }) {
   return (
     <div className="rounded border border-border bg-bg-card p-2">
       <h4 className="text-xs font-semibold text-text-primary">{title}</h4>
@@ -20,8 +10,12 @@ function DeferredList({
         <ul className="mt-2 space-y-1">
           {nodes.map((node) => (
             <li key={`${node.node_id}:${node.reason}`} className="text-xs">
-              <div className="break-all font-mono text-text-primary">{node.node_id}</div>
-              <div className="break-all text-[11px] text-text-muted">{node.reason}</div>
+              <div className="break-all font-mono text-text-primary">
+                {node.node_id}
+              </div>
+              <div className="break-all text-[11px] text-text-muted">
+                {node.reason}
+              </div>
             </li>
           ))}
         </ul>
@@ -86,7 +80,7 @@ function LeasesTable({ leases }: { leases: SchedulerLease[] }) {
   );
 }
 
-export function SchedulerView({ view }: SchedulerViewProps) {
+export function SchedulerView({ view }: { view: SchedulerViewResponse }) {
   const leases = [...view.leases.active, ...view.leases.suspended];
   return (
     <section>

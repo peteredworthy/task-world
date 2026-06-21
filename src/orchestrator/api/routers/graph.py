@@ -5,12 +5,17 @@ from __future__ import annotations
 from typing import Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import Field
 
 from orchestrator.api.deps import get_graph_store
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.graph import (
     EventEnvelope,
+    project_final_invariant_blockers,
+    project_graph_patch_attempts,
+    node_contract_summary,
     project_decision_view,
+    project_graph_topology,
     project_leases,
     project_lease_view,
     project_node_metadata,
@@ -48,6 +53,57 @@ class GraphProjectionResponse(ApiModel):
     task_states: dict[str, str]
     leases: dict[str, dict[str, Any]]
     ready_nodes: list[str]
+
+
+class GraphTopologyNodeResponse(ApiModel):
+    node_id: str
+    kind: str | None = None
+    role: str | None = None
+    state: str | None = None
+    contract: dict[str, Any] | None = None
+
+
+class GraphTopologyBoundRecordResponse(ApiModel):
+    record_id: str
+    record_type: str | None = None
+    record_kind: str | None = None
+    schema_: str | None = Field(default=None, alias="schema")
+    producer_node_id: str | None = None
+    producer_port: str | None = None
+    position: int | None = None
+
+
+class GraphTopologyBindingResponse(ApiModel):
+    edge_id: str | None = None
+    to_node_id: str | None = None
+    to_port: str | None = None
+    record_ids: list[str]
+    bound_at_position: int | None = None
+    trigger: str | None = None
+
+
+class GraphTopologyEdgeResponse(ApiModel):
+    edge_id: str
+    from_node_id: str
+    from_port: str
+    to_node_id: str
+    to_port: str
+    required: bool
+    dependency_type: str
+    accepted_record_selector: dict[str, Any] | None = None
+    metadata: dict[str, Any]
+    source_port_contract: dict[str, Any] | None = None
+    target_port_contract: dict[str, Any] | None = None
+    record_types: list[str]
+    binding: GraphTopologyBindingResponse | None = None
+    bound_records: list[GraphTopologyBoundRecordResponse]
+
+
+class GraphTopologyResponse(ApiModel):
+    run_id: str
+    event_count: int
+    nodes: list[GraphTopologyNodeResponse]
+    edges: list[GraphTopologyEdgeResponse]
 
 
 class SchedulerBlockedNodeResponse(ApiModel):
@@ -114,6 +170,7 @@ class NodeDetailResponse(ApiModel):
     kind: str | None
     role: str | None
     state: str | None
+    contract: dict[str, Any] | None = None
     input_ports: dict[str, list[str]]
     output_records: list[dict[str, Any]]
     file_state_records: list[dict[str, Any]]
@@ -170,6 +227,47 @@ class FileStateReportResponse(ApiModel):
     event_count: int
     nodes: list[FileStateNodeReportResponse]
     gatekeeper: dict[str, Any] | None = None
+
+
+class GraphPatchAttemptResponse(ApiModel):
+    patch_id: str
+    proposed_by_node_id: str | None = None
+    base_graph_position: int | None = None
+    current_graph_position: int
+    status: Literal["accepted", "rejected"]
+    rejection_reason: str | None = None
+    diagnostics: dict[str, Any] | None = None
+    read_set_diff: dict[str, Any] | None = None
+    accepted_event_id: str | None = None
+    accepted_position: int | None = None
+    rejected_event_id: str | None = None
+    rejected_position: int | None = None
+    created_node_ids: list[str] = Field(default_factory=list)
+    created_edge_ids: list[str] = Field(default_factory=list)
+
+
+class GraphPatchAttemptsResponse(ApiModel):
+    run_id: str
+    current_graph_position: int
+    attempts: list[GraphPatchAttemptResponse]
+
+
+class FinalInvariantBlockerResponse(ApiModel):
+    kind: str
+    reason: str
+    node_id: str | None = None
+    proposal_id: str | None = None
+    requirement_id: str | None = None
+    revision_id: str | None = None
+    task_region_id: str | None = None
+    state: str | None = None
+    support_ids: list[str] | None = None
+
+
+class FinalInvariantBlockersResponse(ApiModel):
+    run_id: str
+    event_count: int
+    blockers: list[FinalInvariantBlockerResponse]
 
 
 def _event_to_response(
@@ -309,6 +407,60 @@ def build_graph_projection_response_from_snapshot(
         task_states=cast(dict[str, str], snapshot.task_states),
         leases=cast(dict[str, dict[str, Any]], snapshot.leases),
         ready_nodes=cast(list[str], snapshot.ready_nodes),
+    )
+
+
+def build_graph_topology_response(
+    run_id: str,
+    events: list[EventEnvelope],
+) -> GraphTopologyResponse:
+    if not events:
+        return GraphTopologyResponse(run_id=run_id, event_count=0, nodes=[], edges=[])
+
+    topology = project_graph_topology(events)
+    return GraphTopologyResponse(
+        run_id=run_id,
+        event_count=max(event.position for event in events),
+        nodes=[
+            GraphTopologyNodeResponse(**cast(dict[str, Any], node)) for node in topology["nodes"]
+        ],
+        edges=[
+            GraphTopologyEdgeResponse(**cast(dict[str, Any], edge)) for edge in topology["edges"]
+        ],
+    )
+
+
+def build_graph_patch_attempts_response(
+    run_id: str,
+    events: list[EventEnvelope],
+    *,
+    current_graph_position: int | None = None,
+) -> GraphPatchAttemptsResponse:
+    if current_graph_position is None:
+        current_graph_position = max((event.position for event in events), default=0)
+    attempts = project_graph_patch_attempts(
+        events,
+        run_id=run_id,
+        current_graph_position=current_graph_position,
+    )
+    return GraphPatchAttemptsResponse(
+        run_id=run_id,
+        current_graph_position=current_graph_position,
+        attempts=[GraphPatchAttemptResponse(**entry) for entry in attempts["attempts"]],
+    )
+
+
+def build_final_invariant_blockers_response(
+    run_id: str,
+    events: list[EventEnvelope],
+) -> FinalInvariantBlockersResponse:
+    return FinalInvariantBlockersResponse(
+        run_id=run_id,
+        event_count=max((event.position for event in events), default=0),
+        blockers=[
+            FinalInvariantBlockerResponse(**cast(dict[str, Any], blocker))
+            for blocker in project_final_invariant_blockers(events)
+        ],
     )
 
 
@@ -528,7 +680,9 @@ def _classification_summary(record: dict[str, Any]) -> dict[str, Any]:
                 class_counts[classification] = class_counts.get(classification, 0) + 1
     rejected_paths = record.get("rejected_paths")
     if isinstance(rejected_paths, list):
-        summary["rejected_paths"] = len(cast(list[Any], rejected_paths))
+        rejected_count = len(cast(list[Any], rejected_paths))
+        summary["rejected_paths"] = rejected_count
+        summary["total_paths"] = int(summary["total_paths"]) + rejected_count
     summary["classifications"] = class_counts
     return summary
 
@@ -807,6 +961,7 @@ def build_node_detail_response(
         kind=cast(str | None, metadata.get("kind")),
         role=cast(str | None, metadata.get("role")),
         state=state,
+        contract=cast(dict[str, Any] | None, metadata.get("contract")),
         input_ports=cast(dict[str, list[str]], metadata.get("input_ports", {})),
         output_records=output_records,
         file_state_records=file_state_records,
@@ -827,6 +982,7 @@ def build_node_detail_response_from_summary(
         kind=summary.kind,
         role=summary.role,
         state=summary.state,
+        contract=node_contract_summary(summary.kind, summary.role),
         input_ports=summary.input_ports,
         output_records=summary.output_records,
         file_state_records=summary.file_state_records,
@@ -845,6 +1001,38 @@ async def get_graph_projection(
     snapshot = await graph_store.read_projection_snapshot(run_id)
     await graph_store.commit_read_model_changes()
     return build_graph_projection_response_from_snapshot(run_id, snapshot)
+
+
+@router.get("/{run_id}/graph/topology", response_model=GraphTopologyResponse)
+async def get_graph_topology(
+    run_id: str,
+    graph_store: GraphEventStore = Depends(get_graph_store),
+) -> GraphTopologyResponse:
+    events = await graph_store.read_run_light(run_id)
+    return build_graph_topology_response(run_id, events)
+
+
+@router.get("/{run_id}/graph/patches", response_model=GraphPatchAttemptsResponse)
+async def get_graph_patch_attempts(
+    run_id: str,
+    graph_store: GraphEventStore = Depends(get_graph_store),
+) -> GraphPatchAttemptsResponse:
+    events = await graph_store.read_run(run_id)
+    current_graph_position = await graph_store.current_position(run_id)
+    return build_graph_patch_attempts_response(
+        run_id,
+        events,
+        current_graph_position=current_graph_position,
+    )
+
+
+@router.get("/{run_id}/graph/final-blockers", response_model=FinalInvariantBlockersResponse)
+async def get_graph_final_blockers(
+    run_id: str,
+    graph_store: GraphEventStore = Depends(get_graph_store),
+) -> FinalInvariantBlockersResponse:
+    events = await graph_store.read_run_light(run_id)
+    return build_final_invariant_blockers_response(run_id, events)
 
 
 @router.get("/{run_id}/graph/events", response_model=list[GraphEventResponse])
@@ -872,9 +1060,8 @@ async def get_graph_scheduler_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> SchedulerViewResponse:
-    snapshot = await graph_store.read_projection_snapshot(run_id)
-    await graph_store.commit_read_model_changes()
-    return build_scheduler_view_response_from_snapshot(run_id, snapshot)
+    events = await graph_store.read_run_light(run_id)
+    return build_scheduler_view_response(run_id, events)
 
 
 @router.get("/{run_id}/graph/decisions", response_model=DecisionViewResponse)
@@ -882,9 +1069,8 @@ async def get_graph_decision_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> DecisionViewResponse:
-    snapshot = await graph_store.read_projection_snapshot(run_id)
-    await graph_store.commit_read_model_changes()
-    return build_decision_view_response_from_snapshot(run_id, snapshot)
+    events = await graph_store.read_run_light(run_id)
+    return build_decision_view_response(run_id, events)
 
 
 @router.get("/{run_id}/graph/file-state", response_model=FileStateReportResponse)

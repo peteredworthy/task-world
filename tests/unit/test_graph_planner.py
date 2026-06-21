@@ -95,57 +95,41 @@ def test_planner_patch_canonicalizes_verification_result_edge_port() -> None:
     assert edge.payload["from_port"] == "verification_report"
 
 
-def test_planner_patch_canonicalizes_hidden_oracle_check_command() -> None:
+def test_planner_patch_rejects_hidden_oracle_check_command_text() -> None:
     events = _planner_events()
-    accepted = _append(
+    rejected = _submit_patch(
         events,
-        _submit_patch(
-            events,
-            "patch-check-command",
-            [
-                {
-                    "op": "create_node",
-                    "node": {
-                        "node_id": "verifier-final",
-                        "kind": "verifier",
-                        "role": "verifier",
-                        "state": "planned",
-                        "task_region_id": "region-1",
-                        "candidate_id": "candidate-1",
-                    },
+        "patch-check-command",
+        [
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "verifier-final",
+                    "kind": "verifier",
+                    "role": "verifier",
+                    "state": "planned",
+                    "task_region_id": "region-1",
+                    "candidate_id": "candidate-1",
                 },
-                {
-                    "op": "create_node",
-                    "node": {
-                        "node_id": "check-final",
-                        "kind": "check",
-                        "role": "invariant_gate",
-                        "state": "planned",
-                        "task_region_id": "region-1",
-                        "hidden_oracle_command": "uv run pytest tests/oracle -q",
-                    },
+            },
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "check-final",
+                    "kind": "check",
+                    "role": "invariant_gate",
+                    "state": "planned",
+                    "task_region_id": "region-1",
+                    "hidden_oracle_command": "uv run pytest tests/oracle -q",
                 },
-                {
-                    "op": "create_edge",
-                    "edge_id": "edge-verifier-to-check-final",
-                    "from_node_id": "verifier-final",
-                    "from_port": "verification_report",
-                    "to_node_id": "check-final",
-                    "to_port": "verification_evidence",
-                    "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification"]},
-                },
-            ],
-        ),
+            },
+        ],
     )
 
-    check = next(event for event in accepted if event.payload.get("node_id") == "check-final")
-    assert check.payload["command_definition"] == {
-        "id": "check-final",
-        "cmd": "uv run pytest tests/oracle -q",
-        "must": True,
-        "source": "planner_patch_hidden_oracle",
-    }
+    assert [event.event_type for event in rejected] == ["graph_patch_rejected"]
+    assert rejected[0].payload["reason"] == (
+        "check node cannot expose hidden_oracle_command; use command_binding: check-final"
+    )
 
 
 def test_planner_patch_binds_dynamic_feature_hidden_oracle_command() -> None:
@@ -248,7 +232,7 @@ def test_planner_patch_rejects_dynamic_nodes_without_required_input_edges() -> N
                     "role": "invariant_gate",
                     "state": "planned",
                     "task_region_id": "final-region",
-                    "hidden_oracle_command": "uv run pytest tests/oracle -q",
+                    "command_binding": "dynamic_feature_hidden_oracle",
                 },
             },
         ],
@@ -316,7 +300,7 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                         "role": "invariant_gate",
                         "state": "planned",
                         "task_region_id": "final-region",
-                        "hidden_oracle_command": "uv run pytest tests/oracle -q",
+                        "command_binding": "dynamic_feature_hidden_oracle",
                     },
                 },
                 {
@@ -732,6 +716,15 @@ def _drive_region_to_accepted(events: list[EventEnvelope]) -> list[EventEnvelope
                     "record_kind": "verification",
                     "candidate_id": "candidate-1",
                     "verdict": "passed",
+                    "value": {
+                        "grades": [
+                            {
+                                "requirement_id": "R-1",
+                                "grade": "A",
+                                "reason": "candidate satisfies requirement",
+                            }
+                        ]
+                    },
                 },
                 {
                     "record_id": "summary-1",

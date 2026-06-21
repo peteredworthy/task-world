@@ -39,6 +39,20 @@ from orchestrator.config.enums import ChecklistStatus
 logger = logging.getLogger(__name__)
 
 
+GRAPH_MACRO_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "create_work_region",
+        "create_corrective_region",
+        "attach_verifier",
+        "attach_check",
+        "create_gap_planner",
+        "create_join",
+        "request_gate",
+        "retire_or_supersede",
+    }
+)
+
+
 # ---------------------------------------------------------------------------
 # Transport protocol (implemented by both stdio and WebSocket variants)
 # ---------------------------------------------------------------------------
@@ -303,6 +317,157 @@ def build_dynamic_tool_specs(
             "additionalProperties": False,
         },
     }
+    macro_patch_properties = {
+        "patch_id": {"type": "string"},
+        "base_graph_position": {"type": "integer", "minimum": 0},
+        "rationale_record_id": {"type": "string"},
+    }
+    attach_verifier_spec: dict[str, Any] = {
+        "name": "attach_verifier",
+        "description": "Attach a verifier to the current graph region.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["patch_id", "base_graph_position", "region_id", "verifier_id"],
+            "properties": {
+                **macro_patch_properties,
+                "region_id": {"type": "string"},
+                "verifier_id": {"type": "string"},
+                "candidate_source_node_id": {"type": "string"},
+                "candidate_id": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+    }
+    attach_check_spec: dict[str, Any] = {
+        "name": "attach_check",
+        "description": "Attach a check to the current graph region.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["patch_id", "base_graph_position", "region_id", "check_id"],
+            "properties": {
+                **macro_patch_properties,
+                "region_id": {"type": "string"},
+                "check_id": {"type": "string"},
+                "evidence_source_node_id": {"type": "string"},
+                "command_binding": {"type": "string"},
+                "hidden_oracle_command": {"type": "string"},
+                "command_definition": {"type": "object", "additionalProperties": True},
+            },
+            "additionalProperties": False,
+        },
+    }
+    request_gate_spec: dict[str, Any] = {
+        "name": "request_gate",
+        "description": "Request a gate decision for the current graph node.",
+        "inputSchema": {
+            "type": "object",
+            "required": ["patch_id", "base_graph_position", "node_id"],
+            "properties": {
+                **macro_patch_properties,
+                "node_id": {"type": "string"},
+                "reason": {"type": "string"},
+            },
+            "additionalProperties": False,
+        },
+    }
+    planner_macro_specs: dict[str, dict[str, Any]] = {
+        "create_work_region": {
+            "name": "create_work_region",
+            "description": "Create a work region in the graph.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["patch_id", "base_graph_position", "region_id"],
+                "properties": {
+                    **macro_patch_properties,
+                    "region_id": {"type": "string"},
+                    "worker_id": {"type": "string"},
+                    "verifier_id": {"type": "string"},
+                    "candidate_id": {"type": "string"},
+                    "checks": {"type": "array", "items": {"type": "object"}},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "create_gap_planner": {
+            "name": "create_gap_planner",
+            "description": "Create a gap planner node for the graph.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["patch_id", "base_graph_position", "node_id", "region_id"],
+                "properties": {
+                    **macro_patch_properties,
+                    "node_id": {"type": "string"},
+                    "region_id": {"type": "string"},
+                    "evidence_source_node_id": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "create_join": {
+            "name": "create_join",
+            "description": "Create a join node in the graph.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["patch_id", "base_graph_position", "join_id"],
+                "properties": {
+                    **macro_patch_properties,
+                    "join_id": {"type": "string"},
+                    "source_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "minItems": 2,
+                    },
+                    "sources": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["node_id"],
+                            "properties": {
+                                "node_id": {"type": "string"},
+                                "port": {"type": "string"},
+                            },
+                            "additionalProperties": False,
+                        },
+                        "minItems": 1,
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+        "retire_or_supersede": {
+            "name": "retire_or_supersede",
+            "description": "Retire or supersede an existing graph node.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["patch_id", "base_graph_position", "target_id", "action"],
+                "properties": {
+                    **macro_patch_properties,
+                    "target_id": {"type": "string"},
+                    "action": {"type": "string", "enum": ["retire", "supersede"]},
+                    "replacement_ops": {"type": "array", "items": {"type": "object"}},
+                },
+                "additionalProperties": False,
+            },
+        },
+        "create_corrective_region": {
+            "name": "create_corrective_region",
+            "description": "Create a corrective region in the graph.",
+            "inputSchema": {
+                "type": "object",
+                "required": ["patch_id", "base_graph_position", "region_id"],
+                "properties": {
+                    **macro_patch_properties,
+                    "region_id": {"type": "string"},
+                    "worker_id": {"type": "string"},
+                    "verifier_id": {"type": "string"},
+                    "candidate_id": {"type": "string"},
+                    "classified_gap_source_node_id": {"type": "string"},
+                    "checks": {"type": "array", "items": {"type": "object"}},
+                },
+                "additionalProperties": False,
+            },
+        },
+    }
     grade_spec: dict[str, Any] = {
         "name": "grade",
         "description": "Set a grade on a requirement (verifier phase only).",
@@ -334,13 +499,30 @@ def build_dynamic_tool_specs(
         ]
     )
 
-    if (
-        not is_verifier
-        and context is not None
-        and context.node_kind == "planner"
-        and context.node_role in {"planner", "gap_planner"}
-    ):
-        specs.append(submit_graph_patch_spec)
+    if not is_verifier and context is not None and context.node_kind == "planner":
+        if context.node_role == "planner":
+            specs.extend(
+                [
+                    planner_macro_specs["create_work_region"],
+                    attach_verifier_spec,
+                    attach_check_spec,
+                    planner_macro_specs["create_gap_planner"],
+                    planner_macro_specs["create_join"],
+                    request_gate_spec,
+                    planner_macro_specs["retire_or_supersede"],
+                    submit_graph_patch_spec,
+                ]
+            )
+        elif context.node_role == "gap_planner":
+            specs.extend(
+                [
+                    planner_macro_specs["create_corrective_region"],
+                    attach_verifier_spec,
+                    attach_check_spec,
+                    request_gate_spec,
+                    submit_graph_patch_spec,
+                ]
+            )
 
     # Add step-level tools from context.available_tools
     if context and context.available_tools:
@@ -658,15 +840,18 @@ def extract_turn_usage(notification: dict[str, Any]) -> dict[str, int]:
 
 
 #: v1 Codex callback tool allow-list — contract-matrix.md §4.
-CODEX_SERVER_TOOL_ALLOWLIST: frozenset[str] = frozenset(
-    {
-        "update_checklist",
-        "grade",
-        "submit",
-        "submit_graph_patch",
-        "request_clarification",
-        "complete_recovery",
-    }
+CODEX_SERVER_TOOL_ALLOWLIST: frozenset[str] = (
+    frozenset(
+        {
+            "update_checklist",
+            "grade",
+            "submit",
+            "submit_graph_patch",
+            "request_clarification",
+            "complete_recovery",
+        }
+    )
+    | GRAPH_MACRO_TOOL_NAMES
 )
 
 
@@ -770,13 +955,19 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
         if context.node_kind == "planner" and context.node_role in {"planner", "gap_planner"}:
             planner_tool_section = (
                 "\n### Planner Graph-Mutation Tool\n"
+                "- Prefer graph macros: **create_work_region**, **attach_verifier**, "
+                "**attach_check**, **create_gap_planner**, **create_join**, "
+                "**request_gate**, and **retire_or_supersede**. Gap planners use "
+                "**create_corrective_region**, **attach_verifier**, **attach_check**, "
+                "and **request_gate**.\n"
+                "  Macro tools submit macro-backed patch envelopes and return accepted or rejected feedback.\n"
                 "- **submit_graph_patch**(patch) or **submit_graph_patch**(patch_id, base_graph_position, ops, rationale_record_id?)\n"
-                "  Submit a graph patch envelope. Use this for every graph mutation.\n"
+                "  Submit an explicit graph patch envelope only when a macro cannot express the mutation.\n"
                 "  - patch_id: Stable id for this attempt.\n"
                 "  - base_graph_position: Use current_graph_position from the planner packet.\n"
-                "  - ops: List using only allowed_patch_operations from the planner packet; gap planners may use [] for an explicit no-op decision.\n"
+                "  - ops: Raw fallback list using only allowed_patch_operations; gap planners may use [] for an explicit no-op decision.\n"
                 "  - rationale_record_id: Optional accepted evidence record supporting the patch.\n"
-                "  The tool returns accepted or rejected feedback. If feedback says stale, malformed, or rejected, submit a corrected patch instead of editing graph events directly.\n"
+                "  If feedback says stale, malformed, or rejected, submit a corrected macro or patch instead of editing graph events directly.\n"
                 "  Plain submit is only for finishing after at least one submit_graph_patch attempt."
             )
 
@@ -973,6 +1164,12 @@ async def route_tool_call(
         payload = _normalize_patch_payload(args)
         return await on_submit_graph_patch(payload)
 
+    elif tool_name in GRAPH_MACRO_TOOL_NAMES:
+        if on_submit_graph_patch is None:
+            raise ValueError(f"{tool_name} is not registered for this session")
+        payload = _normalize_macro_tool_payload(tool_name, args)
+        return await on_submit_graph_patch(payload)
+
     elif tool_name == "grade":
         if on_grade is not None:
             req_id = str(args.get("req_id", "")).strip()
@@ -1002,6 +1199,30 @@ async def route_tool_call(
                 outcome,
             )
     return ""
+
+
+def _normalize_macro_tool_payload(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
+    patch_id = args.get("patch_id")
+    base_graph_position = args.get("base_graph_position")
+    if not isinstance(patch_id, str) or not patch_id.strip():
+        raise ValueError(f"{tool_name} requires a non-empty patch_id")
+    if not isinstance(base_graph_position, int):
+        raise ValueError(f"{tool_name} requires integer base_graph_position")
+
+    macro_args = {
+        key: value
+        for key, value in args.items()
+        if key not in {"patch_id", "base_graph_position", "rationale_record_id"}
+    }
+    payload: dict[str, Any] = {
+        "patch_id": patch_id,
+        "base_graph_position": base_graph_position,
+        "macro_invocations": [{"macro": tool_name, "args": macro_args}],
+    }
+    rationale_record_id = args.get("rationale_record_id")
+    if isinstance(rationale_record_id, str):
+        payload["rationale_record_id"] = rationale_record_id
+    return payload
 
 
 def _normalize_patch_payload(args: dict[str, Any]) -> dict[str, Any]:

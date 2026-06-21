@@ -40,7 +40,24 @@
     - node_created: {node_id: review-5, kind: review, state: running}
     - lease_granted: {node_id: review-5, lease_id: lease-review-5, generation: 1, execution_id: exec-review-5, base_snapshot_id: S0}
   when_command:
-    submit_callback: {run_id: run-1, node_id: review-5, execution_id: exec-review-5, lease_id: lease-review-5, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-review-5, payload: {review_record_id: review-record-5}}
+    submit_callback:
+      run_id: run-1
+      node_id: review-5
+      execution_id: exec-review-5
+      lease_id: lease-review-5
+      lease_generation: 1
+      base_snapshot_id: S0
+      observed_graph_position: 1
+      idempotency_key: key-review-5
+      payload:
+        review_record_id: review-record-5
+        output_records:
+          - record_id: recovery-plan-review-5
+            record_kind: output
+            producer_node_id: review-5
+            port: recovery_plan
+            schema: RecoveryPlan
+            value: {summary: review completed}
   then_events:
     - callback_accepted: {node_id: review-5}
     - node_state_changed: {node_id: review-5, new_state: completed}

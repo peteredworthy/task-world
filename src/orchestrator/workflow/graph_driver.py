@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.config.enums import RunStatus
+from orchestrator.config.enums import AgentRunnerType, RunStatus
 from datetime import UTC, datetime
 from uuid import uuid4
 
@@ -42,6 +42,14 @@ if TYPE_CHECKING:
     from orchestrator.workflow.service import WorkflowService
 
 logger = logging.getLogger(__name__)
+
+
+SUPPORTED_GRAPH_RUNNER_TYPES = frozenset(
+    {
+        AgentRunnerType.CODEX_SERVER,
+        AgentRunnerType.CLAUDE_SDK,
+    }
+)
 
 
 class SystemClock:
@@ -222,6 +230,22 @@ class GraphRunDriver:
                 run_state=None,
                 completed=False,
                 blocked_reason="Graph run has no agent runner type",
+            )
+        if run.agent_runner_type not in SUPPORTED_GRAPH_RUNNER_TYPES:
+            supported = ", ".join(
+                sorted(runner_type.value for runner_type in SUPPORTED_GRAPH_RUNNER_TYPES)
+            )
+            runner_type = run.agent_runner_type.value
+            message = (
+                "Graph execution requires a runner with native graph callback tools; "
+                f"unsupported runner '{runner_type}'. Supported runners: {supported}."
+            )
+            await self._apply_pause(run_id, "graph_runner_unsupported", message)
+            return GraphRunOutcome(
+                run_id=run_id,
+                run_state=None,
+                completed=False,
+                blocked_reason=message,
             )
 
         controller_position = await self._current_position(run_id)

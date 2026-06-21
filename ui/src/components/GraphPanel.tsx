@@ -430,7 +430,9 @@ function DecisionsSection({ view }: { view: DecisionViewResponse }) {
             <ul className="space-y-1">
               {view.pending_gates.map((gate) => (
                 <li key={gate.node_id} className="rounded border border-border/80 bg-bg-elevated px-2 py-1.5">
-                  <div className="break-all font-mono text-text-primary">{gate.node_id}</div>
+                  <div className="break-all font-mono text-text-primary">
+                    {gate.node_id}
+                  </div>
                   <div className="mt-1 text-text-muted">{gate.gate_type}</div>
                   {gate.prompt && <div className="mt-1 text-text-secondary">{gate.prompt}</div>}
                 </li>

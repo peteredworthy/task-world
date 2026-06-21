@@ -96,7 +96,31 @@
     - node_created: {node_id: worker-stale-9a, kind: worker, state: running}
     - lease_granted: {node_id: worker-stale-9a, lease_id: lease-9a, generation: 1}
   when_command:
-    submit_callback: {run_id: run-1, node_id: worker-stale-9a, execution_id: exec-9a, lease_id: lease-9a, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 3, idempotency_key: key-9a}
+    submit_callback:
+      run_id: run-1
+      node_id: worker-stale-9a
+      execution_id: exec-9a
+      lease_id: lease-9a
+      lease_generation: 1
+      base_snapshot_id: S0
+      observed_graph_position: 3
+      idempotency_key: key-9a
+      payload:
+        output_records:
+          - record_id: candidate-stale-9a
+            record_kind: output
+            producer_node_id: worker-stale-9a
+            port: candidate
+            schema: ImplementationCandidate
+            value: {summary: stale race callback completed}
+          - record_id: file-state-stale-9a
+            record_kind: file_state
+            producer_node_id: worker-stale-9a
+            port: file_state
+            schema: FileStateRecord
+            snapshot_id: snapshot-stale-9a
+            base_snapshot_id: S0
+            verdict: captured
   then_events:
     - callback_accepted: {node_id: worker-stale-9a}
     - node_state_changed: {node_id: worker-stale-9a, new_state: completed}

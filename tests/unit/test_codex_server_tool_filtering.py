@@ -51,7 +51,34 @@ class TestCodexPhaseFiltering:
             context=_make_context(node_kind="planner", node_role="planner"),
         )
         names = {s["name"] for s in specs}
+        assert {
+            "create_work_region",
+            "attach_verifier",
+            "attach_check",
+            "create_gap_planner",
+            "create_join",
+            "request_gate",
+            "retire_or_supersede",
+            "submit_graph_patch",
+        }.issubset(names)
         assert "submit_graph_patch" in names
+
+    def test_gap_planner_context_includes_gap_macros(self):
+        specs = build_dynamic_tool_specs(
+            is_verifier=False,
+            context=_make_context(node_kind="planner", node_role="gap_planner"),
+        )
+        names = {s["name"] for s in specs}
+        assert {
+            "create_corrective_region",
+            "attach_verifier",
+            "attach_check",
+            "request_gate",
+            "submit_graph_patch",
+        }.issubset(names)
+        assert "create_work_region" not in names
+        assert "create_join" not in names
+        assert "retire_or_supersede" not in names
 
     def test_non_planner_context_excludes_submit_graph_patch(self):
         specs = build_dynamic_tool_specs(

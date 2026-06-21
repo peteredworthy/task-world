@@ -188,7 +188,7 @@ async def _create_run(
     run.execution_mode = routine.execution_mode
     run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
     run.worktree_path = str(repo)
-    run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+    run.agent_runner_type = AgentRunnerType.CODEX_SERVER
     async with session_factory() as session:
         await WorkflowService(session).create_run(run)
 

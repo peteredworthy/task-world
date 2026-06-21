@@ -13,6 +13,7 @@ from typing import Any
 
 import pytest
 
+from orchestrator.graph import node_contract_summary
 from orchestrator.graph.models import PatchEnvelope, PatchOp
 from orchestrator.graph.patch_validator import validate_patch
 from orchestrator.graph.projections import GraphProjection, initial_projection
@@ -42,6 +43,19 @@ def _projection_with_classified_gap_successor(gap_node_id: str) -> GraphProjecti
         }
     }
     return projection
+
+
+def test_agent_contracts_allow_runtime_file_state_output() -> None:
+    for node_type, role in (
+        ("planner", "planner"),
+        ("planner", "gap_planner"),
+        ("worker", "builder"),
+        ("verifier", "verifier"),
+        ("summarizer", None),
+    ):
+        summary = node_contract_summary(node_type, role)
+        assert summary is not None
+        assert "file_state" in summary["output_ports"]
 
 
 # --- canonical op fragments ------------------------------------------------- #
@@ -102,6 +116,15 @@ _GAP_NODE = {
         "state": "planned",
     },
 }
+_SOURCE_VERIFIER = {
+    "op": "create_node",
+    "node": {
+        "node_id": "verifier-x",
+        "kind": "verifier",
+        "role": "verifier",
+        "state": "planned",
+    },
+}
 _VERIFICATION_TO_GAP = _edge(
     "e1",
     "verifier-x",
@@ -140,6 +163,16 @@ _INVARIANT_CHECK = {
         "command_binding": "dynamic_feature_hidden_oracle",
     },
 }
+_CORRECTIVE_VERIFIER = {
+    "op": "create_node",
+    "node": {
+        "node_id": "verifier-corrective",
+        "kind": "verifier",
+        "role": "verifier",
+        "state": "planned",
+        "task_region_id": "corrective_work_region",
+    },
+}
 _INVARIANT_EDGE = _edge(
     "e3",
     "verifier-corrective",
@@ -162,7 +195,7 @@ CONTRACT_CASES: list[tuple[str, list[dict[str, Any]], str, bool, str | None]] = 
     ),
     (
         "gap_planner_with_verification_edge",
-        [_GAP_NODE, _VERIFICATION_TO_GAP],
+        [_SOURCE_VERIFIER, _GAP_NODE, _VERIFICATION_TO_GAP],
         "planner",
         True,
         None,
@@ -184,7 +217,7 @@ CONTRACT_CASES: list[tuple[str, list[dict[str, Any]], str, bool, str | None]] = 
     ),
     (
         "invariant_check_with_verification_edge",
-        [_INVARIANT_CHECK, _INVARIANT_EDGE],
+        [_CORRECTIVE_VERIFIER, _INVARIANT_CHECK, _INVARIANT_EDGE],
         "gap_planner",
         True,
         None,

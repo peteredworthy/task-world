@@ -215,7 +215,19 @@ class ReattachedSubmitProcess:
                 "task_region_id": task_region_id,
                 "attempt_number": attempt_number,
                 "value": {"summary": "submitted after process reattach"},
-            }
+            },
+            {
+                "record_id": f"file-state-{node_id}",
+                "record_kind": "file_state",
+                "producer_node_id": node_id,
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "snapshot_id": f"snapshot-{node_id}",
+                "base_snapshot_id": str(self._dispatch_payload["base_snapshot_id"]),
+                "task_region_id": task_region_id,
+                "candidate_id": candidate_id,
+                "verdict": "captured",
+            },
         ]
         observed_position = await controller.current_position(run_id)
         await controller.handle_command(

@@ -254,7 +254,7 @@ async def _create_graph_run(
     run.execution_mode = "graph"
     run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
     run.worktree_path = str(repo)
-    run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+    run.agent_runner_type = AgentRunnerType.CODEX_SERVER
     async with session_factory() as session:
         await WorkflowService(session).create_run(run)
 
@@ -438,7 +438,11 @@ async def test_common_routine_shapes_seed_and_complete_as_graph(
         assert project_task_states(events)["step-1/task-1"] == "accepted"
         assert "worker" in dispatch_order
         if routine.id == "auto-verify":
-            assert "check" in dispatch_order
+            assert any(
+                event.event_type == "output_record_accepted"
+                and event.payload.get("record_type") == "check_result"
+                for event in events
+            )
         assert "verifier" in dispatch_order
 
 

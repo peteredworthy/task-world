@@ -10,6 +10,13 @@ from orchestrator.graph.callbacks import (
     CallbackRequest,
     validate_callback,
 )
+from orchestrator.graph.command_bindings import canonicalize_check_command_definition
+from orchestrator.graph.contracts import (
+    DEFAULT_NODE_CONTRACTS,
+    output_port_contract,
+    validate_output_record,
+)
+from orchestrator.graph.macros import expand_patch_macros
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -96,6 +103,10 @@ def apply_command(
         return _apply_record_requirement_revision(payload, make_event)
     if command_type == "record_support_evidence":
         return _apply_record_support_evidence(projection, payload, make_event)
+    if command_type == "evaluate_join":
+        return _apply_evaluate_join(projection, payload, make_event, id_gen)
+    if command_type == "evaluate_final_gate":
+        return _apply_evaluate_final_gate(projection, events, payload, make_event, id_gen)
     if command_type == "record_cleanup_applied":
         return _apply_record_cleanup_applied(projection, events, payload, make_event)
 
@@ -159,6 +170,136 @@ def _apply_lifecycle_command(
             current_state,
             next_state,
             payload.get("trigger", f"{command_type}_command_accepted"),
+        )
+    ]
+
+
+def _apply_evaluate_final_gate(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    id_gen: IdGenerator,
+) -> list[EventEnvelope]:
+    node_id = payload.get("node_id")
+    if not isinstance(node_id, str) or not node_id:
+        return [_command_rejected(make_event, "evaluate_final_gate", "missing node_id")]
+    if projection["node_kinds"].get(node_id) != "final_gate":
+        return [_command_rejected(make_event, "evaluate_final_gate", "node is not a final_gate")]
+
+    blockers = final_invariant_blockers_for_events(
+        events,
+        projection,
+        include_completion_decision=False,
+    )
+    status = "blocked" if blockers else "passed"
+    record_id = payload.get("record_id")
+    if not isinstance(record_id, str) or not record_id:
+        record_id = id_gen.next_id("completion-decision")
+    decision = {
+        "status": status,
+        "blockers": blockers,
+    }
+    output_record = {
+        "record_id": record_id,
+        "record_kind": "output",
+        "record_type": "completion_decision",
+        "producer_node_id": node_id,
+        "port": "completion_decision",
+        "schema": "CompletionDecision",
+        "value": decision,
+    }
+    return [
+        make_event("output_record_accepted", output_record),
+        make_event(
+            "node_state_changed",
+            {
+                "node_id": node_id,
+                "new_state": "completed",
+                "trigger": "final_gate_evaluated",
+                "completion_status": status,
+                "completion_decision_record_id": record_id,
+            },
+        ),
+        *_maybe_release_lease(payload, make_event, node_id),
+    ]
+
+
+def _apply_evaluate_join(
+    projection: GraphProjection,
+    payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    id_gen: IdGenerator,
+) -> list[EventEnvelope]:
+    node_id = payload.get("node_id")
+    if not isinstance(node_id, str) or not node_id:
+        return [_command_rejected(make_event, "evaluate_join", "missing node_id")]
+    if projection["node_kinds"].get(node_id) != "join":
+        return [_command_rejected(make_event, "evaluate_join", "node is not a join")]
+
+    source_record_ids = _join_source_record_ids(projection, node_id)
+    if not source_record_ids:
+        return [_command_rejected(make_event, "evaluate_join", "join has no bound source records")]
+    record_id = payload.get("record_id")
+    if not isinstance(record_id, str) or not record_id:
+        record_id = id_gen.next_id("join-result")
+    output_record = {
+        "record_id": record_id,
+        "record_kind": "output",
+        "record_type": "join_result",
+        "producer_node_id": node_id,
+        "port": "join_result",
+        "schema": "JoinResult",
+        "value": {
+            "status": "ready",
+            "source_record_ids": source_record_ids,
+        },
+    }
+    return [
+        make_event("output_record_accepted", output_record),
+        make_event(
+            "node_state_changed",
+            {
+                "node_id": node_id,
+                "new_state": "completed",
+                "trigger": "join_evaluated",
+                "join_result_record_id": record_id,
+            },
+        ),
+        *_maybe_release_lease(payload, make_event, node_id),
+    ]
+
+
+def _join_source_record_ids(projection: GraphProjection, node_id: str) -> list[str]:
+    bindings = projection["input_bindings"].get(node_id, {})
+    output: list[str] = []
+    for _, binding in sorted(bindings.items()):
+        record_ids = binding.get("record_ids")
+        if not isinstance(record_ids, list):
+            continue
+        for record_id in cast(list[Any], record_ids):
+            if isinstance(record_id, str) and record_id not in output:
+                output.append(record_id)
+    return output
+
+
+def _maybe_release_lease(
+    payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    node_id: str,
+) -> list[EventEnvelope]:
+    lease_id = payload.get("lease_id")
+    generation = payload.get("lease_generation")
+    if not isinstance(lease_id, str) or not isinstance(generation, int):
+        return []
+    return [
+        make_event(
+            "lease_released",
+            {
+                "node_id": node_id,
+                "lease_id": lease_id,
+                "generation": generation,
+            },
         )
     ]
 
@@ -326,6 +467,34 @@ def _apply_callback_command(
                 {**event_payload, "reason": verification_conflict},
             )
         ]
+    output_contract_conflict = _output_record_contract_conflict(
+        projection,
+        request,
+        expected_producer_node_id,
+    )
+    if output_contract_conflict is not None:
+        return [
+            make_event(
+                "callback_rejected_conflict",
+                {**event_payload, "reason": output_contract_conflict},
+            )
+        ]
+    missing_output_conflict = _required_output_record_conflict(
+        projection,
+        request,
+        expected_producer_node_id,
+        successful_completion=(
+            bool(payload.get("complete_node", True))
+            and str(payload.get("new_state", "completed")) == "completed"
+        ),
+    )
+    if missing_output_conflict is not None:
+        return [
+            make_event(
+                "callback_rejected_conflict",
+                {**event_payload, "reason": missing_output_conflict},
+            )
+        ]
 
     accepted = make_event("callback_accepted", event_payload)
     output: list[EventEnvelope] = [accepted]
@@ -445,6 +614,39 @@ def _file_state_rejected_events(
     return [make_event("file_state_rejected", payload)]
 
 
+def _output_record_contract_conflict(
+    projection: GraphProjection,
+    request: CallbackRequest,
+    expected_producer_node_id: str,
+) -> str | None:
+    raw_records = request.payload.get("output_records") if request.payload is not None else None
+    if not isinstance(raw_records, list):
+        return None
+
+    node_kind = projection["node_kinds"].get(expected_producer_node_id)
+    if not isinstance(node_kind, str):
+        return f"output records produced by unknown node: {expected_producer_node_id}"
+    node_role = projection["node_roles"].get(expected_producer_node_id)
+    typed_role = node_role if isinstance(node_role, str) else None
+    for index, raw_record in enumerate(cast(list[Any], raw_records)):
+        if not isinstance(raw_record, dict):
+            return f"malformed output record at index {index}"
+        record_payload = dict(cast(dict[str, Any], raw_record))
+        if record_payload.get("record_kind") == "file_state":
+            record_payload.setdefault("port", "file_state")
+        if record_payload.get("record_kind") == "verification":
+            record_payload.setdefault("port", "verification_report")
+        error = validate_output_record(
+            node_kind=node_kind,
+            node_role=typed_role,
+            record_payload=record_payload,
+            index=index,
+        )
+        if error is not None:
+            return error
+    return None
+
+
 def _accepted_output_record_events(
     projection: GraphProjection,
     request: CallbackRequest,
@@ -558,7 +760,82 @@ def _verification_record_conflict(
         verdict = record_payload.get("verdict")
         if verdict not in {"passed", "failed", "pass", "fail"}:
             return f"verification record at index {index} has invalid verdict: {verdict}"
+        grades = _verification_grades(record_payload)
+        if not grades:
+            return f"verification record at index {index} missing grades"
     return None
+
+
+def _verification_grades(record_payload: dict[str, Any]) -> list[Any]:
+    grades = record_payload.get("grades")
+    if isinstance(grades, list):
+        return list(cast(list[Any], grades))
+    value = record_payload.get("value")
+    if isinstance(value, dict):
+        value_grades = cast(dict[str, Any], value).get("grades")
+        if isinstance(value_grades, list):
+            return list(cast(list[Any], value_grades))
+    return []
+
+
+def _required_output_record_conflict(
+    projection: GraphProjection,
+    request: CallbackRequest,
+    expected_producer_node_id: str,
+    *,
+    successful_completion: bool,
+) -> str | None:
+    if not successful_completion:
+        return None
+
+    node_kind = projection["node_kinds"].get(expected_producer_node_id)
+    if not isinstance(node_kind, str):
+        return f"output records produced by unknown node: {expected_producer_node_id}"
+    node_role = projection["node_roles"].get(expected_producer_node_id)
+    typed_role = node_role if isinstance(node_role, str) else None
+    contract = DEFAULT_NODE_CONTRACTS.contract_for(node_kind, typed_role)
+    if contract is None:
+        return f"output records produced by unknown node type: {node_kind}"
+
+    required_ports = {port.name for port in contract.output_ports.values() if port.required}
+    if not required_ports:
+        return None
+
+    raw_records = request.payload.get("output_records") if request.payload is not None else None
+    if not isinstance(raw_records, list):
+        raw_records = []
+    produced_ports = {
+        canonical_port
+        for raw_record in cast(list[Any], raw_records)
+        if isinstance(raw_record, dict)
+        for canonical_port in [
+            _output_record_contract_port(contract, cast(dict[str, Any], raw_record))
+        ]
+        if canonical_port is not None
+    }
+    missing = sorted(required_ports - produced_ports)
+    if missing:
+        return f"node completion missing required output record ports: {', '.join(missing)}"
+    return None
+
+
+def _output_record_contract_port(
+    contract: Any,
+    record_payload: dict[str, Any],
+) -> str | None:
+    record_payload = dict(record_payload)
+    if record_payload.get("record_kind") == "file_state":
+        record_payload.setdefault("port", "file_state")
+    if record_payload.get("record_kind") == "verification":
+        record_payload.setdefault("port", "verification_report")
+    port = record_payload.get("port")
+    if not isinstance(port, str):
+        return None
+    if output_port_contract(contract, port) is None:
+        return None
+    if port == "verification_result":
+        return "verification_report"
+    return port
 
 
 def _accepted_verification_record_events(
@@ -574,6 +851,8 @@ def _accepted_verification_record_events(
     if not _candidate_is_bound_to_verifier(projection, expected_producer_node_id, candidate_id):
         return []
 
+    record_payload.setdefault("port", "verification_report")
+    _canonicalize_verification_record_port(record_payload)
     verdict = str(record_payload.get("verdict"))
     event_type = "verification_passed" if verdict in {"passed", "pass"} else "verification_failed"
     task_region_id = projection["node_task_regions"].get(expected_producer_node_id)
@@ -607,6 +886,11 @@ def _accepted_verification_record_events(
             )
         )
     return output
+
+
+def _canonicalize_verification_record_port(record_payload: dict[str, Any]) -> None:
+    if record_payload.get("port") == "verification_result":
+        record_payload["port"] = "verification_report"
 
 
 def _candidate_is_bound_to_verifier(
@@ -719,6 +1003,7 @@ def _apply_patch_command(
 ) -> list[EventEnvelope]:
     actor_role = str(payload.get("actor_role", "planner"))
     try:
+        payload = expand_patch_macros(payload)
         patch = PatchEnvelope(
             patch_id=str(payload["patch_id"]),
             proposed_by_node_id=str(payload.get("proposed_by_node_id", "controller")),
@@ -1355,7 +1640,7 @@ def _apply_record_decision(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     decision_type = payload.get("decision_type")
-    if decision_type not in {"approval", "oversight"}:
+    if decision_type not in {"approval", "oversight", "authority"}:
         return [_command_rejected(make_event, "record_decision", "unknown decision_type")]
 
     node_id = payload.get("node_id")
@@ -1389,13 +1674,17 @@ def _apply_record_decision(
     if task_region_id is not None:
         event_payload.setdefault("task_region_id", task_region_id)
 
-    event_type = (
-        "approval_decision_recorded"
-        if decision_type == "approval"
-        else "oversight_decision_recorded"
-    )
-    return [
-        make_event(event_type, event_payload),
+    if decision_type == "approval":
+        event_type = "approval_decision_recorded"
+    elif decision_type == "authority":
+        event_type = "authority_decision_recorded"
+    else:
+        event_type = "oversight_decision_recorded"
+    output = [make_event(event_type, event_payload)]
+    decision_record = _decision_output_record(projection, node_id, event_payload, decision_type)
+    if decision_record is not None:
+        output.append(make_event("output_record_accepted", decision_record))
+    output.append(
         make_event(
             "node_state_changed",
             {
@@ -1403,8 +1692,48 @@ def _apply_record_decision(
                 "new_state": "completed",
                 "trigger": f"{event_type}_accepted",
             },
-        ),
-    ]
+        )
+    )
+    return output
+
+
+def _decision_output_record(
+    projection: GraphProjection,
+    node_id: str,
+    event_payload: dict[str, Any],
+    decision_type: Any,
+) -> dict[str, Any] | None:
+    node_kind = projection["node_kinds"].get(node_id)
+    if decision_type == "authority" or node_kind == "authority_request":
+        record_type = "authority_decision"
+        port = "authority_decision"
+        schema = "AuthorityDecision"
+    elif decision_type == "approval" or node_kind in {"gate", "human_gate"}:
+        record_type = "decision_record"
+        port = "decision_record"
+        schema = "DecisionRecord"
+    else:
+        return None
+    record_id = event_payload.get("record_id")
+    if not isinstance(record_id, str) or not record_id:
+        record_id = f"{record_type}-{node_id}"
+    value = {
+        "decision": event_payload.get("decision"),
+        "decision_type": decision_type,
+        "decider": event_payload.get("decider"),
+        "scope": event_payload.get("scope"),
+        "expires_at": event_payload.get("expires_at"),
+        "reason": event_payload.get("reason"),
+    }
+    return {
+        "record_id": record_id,
+        "record_kind": "output",
+        "record_type": record_type,
+        "producer_node_id": node_id,
+        "port": port,
+        "schema": schema,
+        "value": {key: entry for key, entry in value.items() if entry is not None},
+    }
 
 
 def _apply_record_gatekeeper_verdicts(
@@ -1896,7 +2225,7 @@ def _patch_op_events(
     op_payload = _op_payload(op)
     if op.op == "create_node" and isinstance(op.node, dict):
         node_payload = dict(op.node)
-        _canonicalize_check_command_definition(node_payload, events)
+        canonicalize_check_command_definition(node_payload, events)
         if node_payload.get("kind") == "planner" and node_payload.get("role") == "planner":
             if inherited_session_id is not None:
                 node_payload.setdefault("session_id", inherited_session_id)
@@ -1916,6 +2245,17 @@ def _patch_op_events(
             "required": required if isinstance(required, bool) else True,
             "dependency_type": op_payload.get("dependency_type", "input_binding"),
         }
+        for key in (
+            "purpose",
+            "description",
+            "selection",
+            "binding_policy",
+            "freshness_policy",
+            "prompt_hydration_policy",
+            "metadata",
+        ):
+            if key in op_payload:
+                edge_payload[key] = op_payload[key]
         selector = op_payload.get("accepted_record_selector")
         if isinstance(selector, dict):
             edge_payload["accepted_record_selector"] = selector
@@ -2189,13 +2529,26 @@ def _node_exists(projection: GraphProjection, node_id: str) -> bool:
 def _decision_value(decision_type: Any, payload: dict[str, Any]) -> str | None:
     decision = payload.get("decision")
     if decision_type == "approval":
-        if decision in {"approved", "rejected"}:
+        if decision in {"approved", "rejected", "deferred"}:
             return cast(str, decision)
+        if decision == "defer":
+            return "deferred"
         approved = payload.get("approved")
         if approved is True:
             return "approved"
         if approved is False:
             return "rejected"
+        return None
+
+    if decision_type == "authority":
+        if decision in {"granted", "denied", "deferred"}:
+            return cast(str, decision)
+        if decision == "grant":
+            return "granted"
+        if decision == "deny":
+            return "denied"
+        if decision == "defer":
+            return "deferred"
         return None
 
     if decision in {"accepted", "rejected", "invalid_test_accepted"}:
@@ -2246,49 +2599,6 @@ def _node_payload_for_op(op_payload: dict[str, Any], *, default_kind: str) -> di
         if key in op_payload and key not in node_payload:
             node_payload[key] = op_payload[key]
     return node_payload
-
-
-def _canonicalize_check_command_definition(
-    node_payload: dict[str, Any],
-    events: list[EventEnvelope],
-) -> None:
-    if node_payload.get("kind") != "check" or "command_definition" in node_payload:
-        return
-    command = node_payload.get("hidden_oracle_command")
-    source = "planner_patch_hidden_oracle"
-    if not isinstance(command, str) or not command.strip():
-        if node_payload.get("command_binding") != "dynamic_feature_hidden_oracle":
-            return
-        command = _dynamic_feature_hidden_oracle_command(events)
-        source = "dynamic_feature_hidden_oracle_binding"
-    if not isinstance(command, str) or not command.strip():
-        return
-    node_payload["command_definition"] = {
-        "id": str(node_payload.get("node_id", "planner_patch_check")),
-        "cmd": command,
-        "must": True,
-        "source": source,
-    }
-
-
-def _dynamic_feature_hidden_oracle_command(events: list[EventEnvelope]) -> str | None:
-    for event in reversed(events):
-        snapshot = event.payload.get("snapshot")
-        if isinstance(snapshot, dict):
-            typed_snapshot = cast(dict[str, Any], snapshot)
-            dynamic_feature = typed_snapshot.get("dynamic_feature")
-            if isinstance(dynamic_feature, dict):
-                typed_feature = cast(dict[str, Any], dynamic_feature)
-                command = typed_feature.get("hidden_oracle_command")
-                if isinstance(command, str) and command.strip():
-                    return command
-        dynamic_feature = event.payload.get("dynamic_feature")
-        if isinstance(dynamic_feature, dict):
-            typed_feature = cast(dict[str, Any], dynamic_feature)
-            command = typed_feature.get("hidden_oracle_command")
-            if isinstance(command, str) and command.strip():
-                return command
-    return None
 
 
 def _input_bound_events_for_edge(

@@ -511,9 +511,9 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert "Planner context packet:" in planner_prompt
     assert '"run_id": "run-planner-packet"' in planner_prompt
     assert "Planner mutation contract:" in planner_prompt
-    assert (
-        "Mutate the graph only by calling submit_graph_patch with a patch envelope."
-        in planner_prompt
+    assert "Prefer planner-facing graph macros" in planner_prompt
+    assert "Mutate the graph only through submit_graph_patch or macro-backed patch envelopes." in (
+        planner_prompt
     )
     assert (
         "Your job is to propose future graph structure, not edit repository files."

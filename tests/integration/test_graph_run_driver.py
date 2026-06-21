@@ -239,13 +239,14 @@ async def _create_graph_run(
     *,
     run_id: str,
     repo: Path,
+    agent_runner_type: AgentRunnerType = AgentRunnerType.CODEX_SERVER,
 ) -> None:
     run = create_run_from_routine(routine, repo_name=repo.name, source_branch="main")
     run.id = run_id
     run.execution_mode = "graph"
     run.routine_embedded = routine.model_dump(mode="json", by_alias=True)
     run.worktree_path = str(repo)
-    run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
+    run.agent_runner_type = agent_runner_type
     async with session_factory() as session:
         service = WorkflowService(session)
         await service.create_run(run)
@@ -379,6 +380,41 @@ async def test_driver_blocks_on_verifier_fail_without_completing(
 
     assert outcome.completed is False
     assert outcome.blocked_reason is not None
+    assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
+
+
+@pytest.mark.asyncio
+async def test_driver_rejects_unsupported_graph_runner_before_seeding(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "repo-unsupported-runner"
+    _init_repo(repo)
+    run_id = "graph-driver-unsupported-runner"
+    await _create_graph_run(
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        repo=repo,
+        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+    )
+    dispatch_order: list[str] = []
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=dispatch_order,
+    )
+
+    outcome = await driver.run(run_id)
+    events = await _events(session_factory, run_id)
+
+    assert outcome.completed is False
+    assert outcome.blocked_reason is not None
+    assert "unsupported runner 'cli_subprocess'" in outcome.blocked_reason
+    assert events == []
+    assert dispatch_order == []
     assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
 
 

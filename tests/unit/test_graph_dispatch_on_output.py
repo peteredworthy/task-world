@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config.enums import AgentRunnerType
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphDispatchContext, GraphDispatchExecutor
-from orchestrator.graph_runtime.dispatch import _output_records_for_submit
+from orchestrator.graph_runtime.dispatch import _execute_check_command, _output_records_for_submit
 from orchestrator.runners.types import (
     AgentMetadataCallback,
     AgentRunnerInfo,
@@ -26,27 +28,46 @@ def _context(
     node_id: str = "worker-1",
     node_kind: str = "worker",
     node_role: str = "",
+    node_payload: dict[str, Any] | None = None,
+    worktree_path: str = "/tmp/worktree",
+    graph_events: list[EventEnvelope] | None = None,
 ) -> GraphDispatchContext:
+    payload = {
+        "node_id": node_id,
+        "kind": node_kind,
+        "role": node_role,
+        "task_id": "task-1",
+        "title": "Task 1",
+        "task_context": "Do the work.",
+    }
+    payload.update(node_payload or {})
     return GraphDispatchContext(
         run_id="run-1",
         node_id=node_id,
         node_kind=node_kind,
         node_role=node_role,
-        node_payload={
-            "node_id": node_id,
-            "kind": node_kind,
-            "role": node_role,
-            "task_id": "task-1",
-            "title": "Task 1",
-            "task_context": "Do the work.",
-        },
+        node_payload=payload,
         requirements=["R1: Pass"],
-        worktree_path="/tmp/worktree",
+        worktree_path=worktree_path,
         lease_id="lease-1",
         lease_generation=1,
         execution_id="exec-1",
         base_snapshot_id="routine-snapshot",
         dispatch_event_id="dispatch-1",
+        graph_events=graph_events or [],
+    )
+
+
+def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=f"{event_type}-{position}",
+        run_id="run-1",
+        position=position,
+        event_type=event_type,
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=FakeClock().now(),
+        payload=payload,
     )
 
 
@@ -134,9 +155,18 @@ class RecordingExecutor(GraphDispatchExecutor):
         )
         self.started: list[GraphDispatchContext] = []
         self.submitted: list[GraphDispatchContext] = []
+        self.submitted_checks: list[tuple[GraphDispatchContext, dict[str, Any]]] = []
+        self.joins: list[GraphDispatchContext] = []
+        self.final_gates: list[GraphDispatchContext] = []
         self.graph_patches: list[tuple[GraphDispatchContext, dict[str, Any]]] = []
         self.failures: list[str] = []
         self.graph_patch_feedback = graph_patch_feedback
+        self.dispatch_context: GraphDispatchContext | None = None
+
+    async def _build_dispatch_context(self, item: Any) -> GraphDispatchContext:
+        if self.dispatch_context is None:
+            return await super()._build_dispatch_context(item)
+        return self.dispatch_context
 
     async def _acknowledge_start(self, context: GraphDispatchContext) -> None:
         self.started.append(context)
@@ -155,6 +185,19 @@ class RecordingExecutor(GraphDispatchExecutor):
     ) -> str:
         self.graph_patches.append((context, patch_payload))
         return self.graph_patch_feedback
+
+    async def _submit_check_result(
+        self,
+        context: GraphDispatchContext,
+        record: dict[str, Any],
+    ) -> None:
+        self.submitted_checks.append((context, record))
+
+    async def _run_final_gate(self, context: GraphDispatchContext) -> None:
+        self.final_gates.append(context)
+
+    async def _run_join(self, context: GraphDispatchContext) -> None:
+        self.joins.append(context)
 
     async def _agent_died(self, context: GraphDispatchContext, reason: str) -> None:
         self.failures.append(reason)
@@ -331,6 +374,214 @@ def test_gap_planner_submit_emits_classified_gap_after_accepted_nonempty_patch()
             },
         },
     ]
+
+
+def test_check_submit_does_not_fabricate_pass_record() -> None:
+    context = _context(
+        node_id="check-1",
+        node_kind="check",
+        node_payload={"command_definition": {"id": "unit-check", "cmd": "true"}},
+    )
+
+    assert _output_records_for_submit(context, []) == []
+
+
+@pytest.mark.asyncio
+async def test_execute_check_command_records_real_process_success(tmp_path: Path) -> None:
+    context = _context(
+        node_id="check-1",
+        node_kind="check",
+        worktree_path=str(tmp_path),
+        node_payload={
+            "task_region_id": "task-1",
+            "candidate_id": "candidate-1",
+            "attempt_number": 2,
+            "command_definition": {
+                "id": "pass-check",
+                "argv": ["sh", "-c", "printf pass-output"],
+                "timeout_seconds": 5,
+            },
+        },
+    )
+
+    record = await _execute_check_command(context)
+
+    assert record["record_type"] == "check_result"
+    assert record["record_kind"] == "output"
+    assert record["producer_node_id"] == "check-1"
+    assert record["port"] == "check_result"
+    assert record["candidate_id"] == "candidate-1"
+    assert record["task_region_id"] == "task-1"
+    assert record["attempt_number"] == 2
+    value = cast(dict[str, Any], record["value"])
+    assert value["status"] == "passed"
+    assert value["exit_code"] == 0
+    assert value["stdout"] == "pass-output"
+    assert value["stderr"] == ""
+    assert value["command_id"] == "pass-check"
+    assert value["command_text"] == "sh -c printf pass-output"
+    assert value["base_snapshot_id"] == "routine-snapshot"
+    assert value["worktree_path"] == str(tmp_path)
+    assert isinstance(value["duration_ms"], int)
+
+
+@pytest.mark.asyncio
+async def test_execute_check_command_records_real_process_failure(tmp_path: Path) -> None:
+    context = _context(
+        node_id="check-1",
+        node_kind="check",
+        worktree_path=str(tmp_path),
+        node_payload={
+            "command_definition": {
+                "id": "fail-check",
+                "cmd": "printf fail-error >&2; exit 7",
+                "timeout_seconds": 5,
+            },
+        },
+    )
+
+    record = await _execute_check_command(context)
+
+    value = cast(dict[str, Any], record["value"])
+    assert value["status"] == "failed"
+    assert value["classification"] == "failed"
+    assert value["exit_code"] == 7
+    assert value["stderr"] == "fail-error"
+    assert value["stdout"] == ""
+
+
+@pytest.mark.asyncio
+async def test_execute_check_command_resolves_bound_dynamic_feature_oracle(tmp_path: Path) -> None:
+    context = _context(
+        node_id="check-1",
+        node_kind="check",
+        worktree_path=str(tmp_path),
+        node_payload={
+            "command_binding": "dynamic_feature_hidden_oracle",
+        },
+        graph_events=[
+            _event(
+                "node_created",
+                {
+                    "node_id": "routine-snapshot",
+                    "kind": "routine_snapshot",
+                    "state": "completed",
+                    "snapshot": {
+                        "dynamic_feature": {
+                            "hidden_oracle_command": "printf bound-oracle",
+                        }
+                    },
+                },
+                1,
+            )
+        ],
+    )
+
+    record = await _execute_check_command(context)
+
+    value = cast(dict[str, Any], record["value"])
+    assert value["status"] == "passed"
+    assert value["command_id"] == "check-1"
+    assert value["command_binding"] == "dynamic_feature_hidden_oracle"
+    assert value["command"]["source"] == "dynamic_feature_hidden_oracle_binding"
+    assert value["stdout"] == "bound-oracle"
+
+
+@pytest.mark.asyncio
+async def test_executor_runs_check_node_without_agent_submit(tmp_path: Path) -> None:
+    context = _context(
+        node_id="check-1",
+        node_kind="check",
+        worktree_path=str(tmp_path),
+        node_payload={
+            "command_definition": {
+                "id": "runtime-check",
+                "cmd": "printf runtime-ok",
+                "timeout_seconds": 5,
+            },
+        },
+    )
+    executor = RecordingExecutor()
+
+    await executor._run_check(context)
+
+    assert executor.started == [context]
+    assert executor.submitted == []
+    assert executor.failures == []
+    assert len(executor.submitted_checks) == 1
+    check_context, record = executor.submitted_checks[0]
+    assert check_context is context
+    value = cast(dict[str, Any], record["value"])
+    assert value["status"] == "passed"
+    assert value["stdout"] == "runtime-ok"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_routes_final_gate_without_agent() -> None:
+    context = _context(node_id="gate-final", node_kind="final_gate")
+    executor = RecordingExecutor()
+    executor.dispatch_context = context
+
+    await executor.dispatch(
+        cast(
+            Any,
+            type(
+                "Item",
+                (),
+                {
+                    "kind": "agent_dispatch",
+                    "run_id": context.run_id,
+                    "event_id": context.dispatch_event_id,
+                    "payload": {
+                        "node_id": context.node_id,
+                        "lease_id": context.lease_id,
+                        "generation": context.lease_generation,
+                        "execution_id": context.execution_id,
+                        "base_snapshot_id": context.base_snapshot_id,
+                    },
+                },
+            )(),
+        )
+    )
+    await executor.wait_for_all()
+
+    assert executor.final_gates == [context]
+    assert executor.submitted == []
+    assert executor.submitted_checks == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_routes_join_without_agent() -> None:
+    context = _context(node_id="join-1", node_kind="join")
+    executor = RecordingExecutor()
+    executor.dispatch_context = context
+
+    await executor.dispatch(
+        cast(
+            Any,
+            type(
+                "Item",
+                (),
+                {
+                    "kind": "agent_dispatch",
+                    "run_id": context.run_id,
+                    "event_id": context.dispatch_event_id,
+                    "payload": {
+                        "node_id": context.node_id,
+                        "lease_id": context.lease_id,
+                        "generation": context.lease_generation,
+                        "execution_id": context.execution_id,
+                        "base_snapshot_id": context.base_snapshot_id,
+                    },
+                },
+            )(),
+        )
+    )
+    await executor.wait_for_all()
+
+    assert executor.joins == [context]
+    assert executor.submitted == []
+    assert executor.submitted_checks == []
 
 
 @pytest.mark.asyncio

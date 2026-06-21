@@ -32,6 +32,14 @@ build_graph_projection_response = cast(
     Callable[[str, list[EventEnvelope]], Any],
     getattr(api, "build_graph_projection_response"),
 )
+build_graph_projection_response_from_snapshot = cast(
+    Callable[[str, Any], Any],
+    getattr(api, "build_graph_projection_response_from_snapshot"),
+)
+build_scheduler_view_response_from_snapshot = cast(
+    Callable[[str, Any], Any],
+    getattr(api, "build_scheduler_view_response_from_snapshot"),
+)
 build_node_detail_response = cast(
     Callable[[str, str, list[EventEnvelope]], Any],
     getattr(api, "build_node_detail_response"),
@@ -196,6 +204,33 @@ async def _read_summary(session_factory: async_sessionmaker[AsyncSession]) -> st
     return json.dumps([asdict(summary) for summary in summaries], sort_keys=True)
 
 
+async def _append_readback_tick(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    index: int,
+) -> None:
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            position = await store.current_position(RUN_ID)
+            await store.append_events(
+                RUN_ID,
+                position,
+                [
+                    _event(
+                        f"profile-readback-tick-{index}-{position + 1}",
+                        "node_state_changed",
+                        {
+                            "node_id": PROFILE_NODE_ID,
+                            "new_state": "running",
+                            "reason": "profile_readback_tick",
+                        },
+                        position + 1,
+                    )
+                ],
+            )
+
+
 async def _events_full_json(session_factory: async_sessionmaker[AsyncSession]) -> str:
     events = await _read_full(session_factory)
     return json.dumps([event.model_dump(mode="json") for event in events], sort_keys=True)
@@ -204,6 +239,42 @@ async def _events_full_json(session_factory: async_sessionmaker[AsyncSession]) -
 async def _projection_endpoint_like(session_factory: async_sessionmaker[AsyncSession]) -> str:
     events = await _read_projection(session_factory)
     return build_graph_projection_response(RUN_ID, events).model_dump_json()
+
+
+async def _projection_snapshot_endpoint_like(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> str:
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        snapshot = await store.read_projection_snapshot(RUN_ID)
+        await store.commit_read_model_changes()
+    return build_graph_projection_response_from_snapshot(RUN_ID, snapshot).model_dump_json()
+
+
+async def _scheduler_snapshot_endpoint_like(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> str:
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        snapshot = await store.read_projection_snapshot(RUN_ID)
+        await store.commit_read_model_changes()
+    return build_scheduler_view_response_from_snapshot(RUN_ID, snapshot).model_dump_json()
+
+
+async def _projection_snapshot_after_append_like(
+    session_factory: async_sessionmaker[AsyncSession],
+    index: int,
+) -> str:
+    await _append_readback_tick(session_factory, index=index)
+    return await _projection_snapshot_endpoint_like(session_factory)
+
+
+async def _projection_after_append_like(
+    session_factory: async_sessionmaker[AsyncSession],
+    index: int,
+) -> str:
+    await _append_readback_tick(session_factory, index=index)
+    return await _projection_endpoint_like(session_factory)
 
 
 async def _projection_endpoint_full_payload_like(
@@ -243,6 +314,29 @@ async def _measure_async(
     for _ in range(iterations):
         start = perf_counter()
         output = await fn()
+        elapsed_ms = (perf_counter() - start) * 1000
+        samples.append(elapsed_ms)
+        output_bytes = _output_size(output)
+    return Measurement(
+        name=name,
+        samples=iterations,
+        median_ms=round(median(samples), 3),
+        min_ms=round(min(samples), 3),
+        max_ms=round(max(samples), 3),
+        output_bytes=output_bytes,
+    )
+
+
+async def _measure_async_indexed(
+    name: str,
+    iterations: int,
+    fn: Callable[[int], Awaitable[object]],
+) -> Measurement:
+    samples: list[float] = []
+    output_bytes: int | None = None
+    for index in range(iterations):
+        start = perf_counter()
+        output = await fn(index)
         elapsed_ms = (perf_counter() - start) * 1000
         samples.append(elapsed_ms)
         output_bytes = _output_size(output)
@@ -351,6 +445,26 @@ async def profile(args: argparse.Namespace) -> dict[str, Any]:
                 "endpoint_like.graph_projection",
                 args.iterations,
                 lambda: _projection_endpoint_like(session_factory),
+            ),
+            await _measure_async(
+                "read_model.graph_projection_snapshot",
+                args.iterations,
+                lambda: _projection_snapshot_endpoint_like(session_factory),
+            ),
+            await _measure_async(
+                "read_model.scheduler_snapshot",
+                args.iterations,
+                lambda: _scheduler_snapshot_endpoint_like(session_factory),
+            ),
+            await _measure_async_indexed(
+                "read_model.graph_projection_snapshot_after_append",
+                args.iterations,
+                lambda index: _projection_snapshot_after_append_like(session_factory, index),
+            ),
+            await _measure_async_indexed(
+                "endpoint_like.graph_projection_after_append",
+                args.iterations,
+                lambda index: _projection_after_append_like(session_factory, index),
             ),
             await _measure_async(
                 "endpoint_like.graph_projection_full_payload_baseline",

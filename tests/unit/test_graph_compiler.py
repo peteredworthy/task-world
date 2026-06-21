@@ -597,18 +597,44 @@ def _callback_payload(
     *,
     new_state: str = "completed",
 ) -> dict[str, Any]:
-    return {
+    node_id = str(lease_granted.payload["node_id"])
+    payload: dict[str, Any] = {
         "run_id": "run-1",
-        "node_id": lease_granted.payload["node_id"],
+        "node_id": node_id,
         "execution_id": lease_granted.payload["execution_id"],
         "lease_id": lease_granted.payload["lease_id"],
         "lease_generation": lease_granted.payload["generation"],
         "base_snapshot_id": lease_granted.payload["base_snapshot_id"],
         "observed_graph_position": lease_granted.position,
-        "idempotency_key": f"callback-{lease_granted.payload['node_id']}-{new_state}",
-        "payload_hash": f"hash-{lease_granted.payload['node_id']}-{new_state}",
+        "idempotency_key": f"callback-{node_id}-{new_state}",
+        "payload_hash": f"hash-{node_id}-{new_state}",
         "new_state": new_state,
     }
+    if new_state == "completed" and node_id.startswith("worker-"):
+        payload["payload"] = {
+            "payload_hash": f"hash-{node_id}-{new_state}",
+            "output_records": [
+                {
+                    "record_id": f"candidate-{node_id}",
+                    "record_kind": "output",
+                    "producer_node_id": node_id,
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "value": {"summary": "done"},
+                },
+                {
+                    "record_id": f"file-state-{node_id}",
+                    "record_kind": "file_state",
+                    "producer_node_id": node_id,
+                    "port": "file_state",
+                    "schema": "FileStateRecord",
+                    "snapshot_id": f"snapshot-{node_id}",
+                    "base_snapshot_id": lease_granted.payload["base_snapshot_id"],
+                    "verdict": "captured",
+                },
+            ],
+        }
+    return payload
 
 
 def _start_payload(lease_granted: EventEnvelope) -> dict[str, Any]:

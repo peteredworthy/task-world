@@ -36,6 +36,23 @@ ROUTINE_PATHS = [
 DYNAMIC_FEATURE_ROUTINE_PATH = Path("routines/dynamic-graph-feature/routine.yaml")
 
 
+def _with_durable_input_bound_positions(events: list[EventEnvelope]) -> list[EventEnvelope]:
+    normalized: list[EventEnvelope] = []
+    for position, event in enumerate(events, start=1):
+        if event.event_type != "input_bound":
+            normalized.append(event)
+            continue
+        bound_at_position = event.payload.get("bound_at_position")
+        if isinstance(bound_at_position, int) and not isinstance(bound_at_position, bool):
+            if bound_at_position > 0:
+                normalized.append(event)
+                continue
+        normalized.append(
+            event.model_copy(update={"payload": {**event.payload, "bound_at_position": position}})
+        )
+    return normalized
+
+
 @pytest.mark.parametrize("routine_path", ROUTINE_PATHS, ids=lambda path: str(path))
 def test_routine_corpus_loads_and_compiles_cleanly(routine_path: Path) -> None:
     """Corpus scope is active top-level routines plus examples, not archived fragments."""
@@ -95,7 +112,7 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
         source_path="routines/demo-task.yaml",
         source_ref="test-ref",
     )
-    expected_projection = _project(expected_events)
+    expected_projection = _project(_with_durable_input_bound_positions(expected_events))
     engine = create_engine(tmp_path / "seed-demo.db")
     await init_db(engine)
     session_factory = create_session_factory(engine)
@@ -493,10 +510,20 @@ async def _schedule_ack_and_complete_next(
         "new_state": new_state,
     }
     kind = _lease_kind(lease)
-    if output_candidate and kind == "worker":
+    output_records: list[dict[str, object]] = []
+    if new_state == "completed" and kind == "worker":
+        output_records = [_candidate_record(node_id), _file_state_record(node_id)]
+    elif new_state == "completed" and kind == "check":
+        output_records = [_check_result_record(node_id)]
+    elif new_state == "completed" and kind == "verifier":
+        output_records = [_verification_record(node_id)]
+    elif output_candidate:
+        output_records = [_candidate_record(node_id), _file_state_record(node_id)]
+
+    if output_records:
         callback_payload["payload"] = {
             "payload_hash": callback_payload.pop("payload_hash"),
-            "output_records": [_candidate_record(node_id)],
+            "output_records": output_records,
         }
     completed = await controller.handle_command(
         run_id,
@@ -515,6 +542,50 @@ def _candidate_record(node_id: str) -> dict[str, object]:
         "port": "candidate",
         "schema": "ImplementationCandidate",
         "value": {"node_id": node_id},
+    }
+
+
+def _file_state_record(node_id: str) -> dict[str, object]:
+    return {
+        "record_id": f"file-state-{node_id}",
+        "record_kind": "file_state",
+        "producer_node_id": node_id,
+        "port": "file_state",
+        "schema": "FileStateRecord",
+        "snapshot_id": f"snapshot-{node_id}",
+        "base_snapshot_id": "S0",
+        "verdict": "captured",
+    }
+
+
+def _check_result_record(node_id: str) -> dict[str, object]:
+    return {
+        "record_id": f"check-result-{node_id}",
+        "record_kind": "output",
+        "record_type": "check_result",
+        "producer_node_id": node_id,
+        "port": "check_result",
+        "schema": "CheckResult",
+        "value": {"status": "passed", "exit_code": 0},
+    }
+
+
+def _verification_record(node_id: str) -> dict[str, object]:
+    worker_node_id = node_id.replace("verifier-", "worker-", 1)
+    candidate_id = f"candidate-{worker_node_id}"
+    return {
+        "record_id": f"verification-{node_id}",
+        "record_kind": "verification",
+        "producer_node_id": node_id,
+        "port": "verification_report",
+        "schema": "VerificationReport",
+        "candidate_id": candidate_id,
+        "verdict": "passed",
+        "value": {
+            "candidate_id": candidate_id,
+            "verdict": "passed",
+            "grades": [{"requirement_id": "rubric", "grade": "pass"}],
+        },
     }
 
 

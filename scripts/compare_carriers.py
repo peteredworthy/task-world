@@ -45,6 +45,10 @@ GRAPH_DYNAMIC_FIELDS: tuple[str, ...] = (
     "gap_findings",
     "proposal_decisions",
     "invariant_gate_failures",
+    "expired_leases",
+    "failed_nodes",
+    "final_blockers",
+    "stale_evidence_count",
     "graph_verifier_grades",
     "tokens_by_node_kind",
 )
@@ -118,6 +122,14 @@ def _get_graph_events(run_id: str, fetcher: Fetcher = _get) -> list[dict[str, An
     return _coerce_graph_events(payload)
 
 
+def _get_graph_health(run_id: str, fetcher: Fetcher = _get) -> dict[str, Any]:
+    try:
+        payload = fetcher(f"/api/runs/{run_id}/graph/health")
+    except (urllib.error.HTTPError, urllib.error.URLError, ValueError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
 def _merge_dict_metrics(target: dict[str, int], additions: dict[str, int]) -> None:
     for key, count in additions.items():
         if not isinstance(key, str):
@@ -142,6 +154,10 @@ def _default_graph_metrics() -> dict[str, Any]:
         "gap_findings": 0,
         "proposal_decisions": 0,
         "invariant_gate_failures": 0,
+        "expired_leases": 0,
+        "failed_nodes": 0,
+        "final_blockers": 0,
+        "stale_evidence_count": 0,
         "graph_verifier_grades": {},
         "tokens_by_node_kind": {},
     }
@@ -262,6 +278,26 @@ def _merge_token_metrics(target: dict[str, int], payload: dict[str, Any]) -> Non
         _merge_dict_metrics(target, {node_kind: token_total})
 
 
+def _extract_graph_health_metrics(health: dict[str, Any]) -> dict[str, int]:
+    counts = health.get("counts")
+    if not isinstance(counts, dict):
+        counts = {}
+
+    def count_or_len(count_key: str, list_key: str) -> int:
+        count = _coerce_non_negative_int(counts.get(count_key))
+        if count is not None:
+            return count
+        rows = health.get(list_key)
+        return len(rows) if isinstance(rows, list) else 0
+
+    return {
+        "expired_leases": count_or_len("expired_leases", "expired_leases"),
+        "failed_nodes": count_or_len("failed_nodes", "failed_nodes"),
+        "final_blockers": count_or_len("final_blockers", "blockers"),
+        "stale_evidence_count": count_or_len("stale_evidence", "stale_evidence"),
+    }
+
+
 def _extract_graph_metrics(graph_events: list[dict[str, Any]]) -> dict[str, Any]:
     dynamic: dict[str, Any] = _default_graph_metrics()
 
@@ -336,6 +372,7 @@ def run_metrics(run_id: str, fetcher: Fetcher = _get) -> dict[str, Any]:
     run = fetcher(f"/api/runs/{run_id}")
     evs = _events(run_id, fetcher)
     dynamic = _extract_graph_metrics(_get_graph_events(run_id, fetcher))
+    dynamic.update(_extract_graph_health_metrics(_get_graph_health(run_id, fetcher)))
 
     def etype(e: dict[str, Any]) -> str:
         return _event_type(e)
@@ -409,6 +446,10 @@ def aggregate_bucket(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "gap_findings": dynamic_numeric["gap_findings"],
         "proposal_decisions": dynamic_numeric["proposal_decisions"],
         "invariant_gate_failures": dynamic_numeric["invariant_gate_failures"],
+        "expired_leases": dynamic_numeric["expired_leases"],
+        "failed_nodes": dynamic_numeric["failed_nodes"],
+        "final_blockers": dynamic_numeric["final_blockers"],
+        "stale_evidence_count": dynamic_numeric["stale_evidence_count"],
         "patch_rejection_reasons": dynamic_dict["patch_rejection_reasons"],
         "graph_verifier_grades": dynamic_dict["graph_verifier_grades"],
         "tokens_by_node_kind": dynamic_dict["tokens_by_node_kind"],

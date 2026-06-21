@@ -1,0 +1,67 @@
+routine:
+  id: "comparison-feature-single-agent"
+  name: "Comparison Feature Single Agent"
+  description: "One-pass legacy carrier for A/C/E comparison admission baselines."
+
+  inputs:
+    - name: feature_spec_path
+      required: true
+      description: "Repo-relative path to the feature specification document"
+    - name: acceptance_command
+      required: true
+      description: "Weak acceptance command to run after implementation"
+
+  steps:
+    - id: "S-01"
+      title: "Implement comparison feature"
+      step_context: |
+        Implement the requested comparison feature in one pass. Do not run or
+        inspect hidden oracle commands; only use the public feature spec and
+        weak acceptance command.
+      tasks:
+        - id: "T-01"
+          title: "Implement feature from spec"
+          task_context: |
+            Read `{{feature_spec_path}}`, discover the relevant repository
+            surfaces, implement the requested user-facing behavior, and run the
+            weak acceptance command:
+
+            ```bash
+            {{acceptance_command}}
+            ```
+
+            Keep changes scoped to the feature. Do not add hidden-oracle-only
+            behavior or inspect hidden oracle files.
+          requirements:
+            - id: "R1"
+              desc: "The public behavior in {{feature_spec_path}} is implemented"
+              priority: critical
+            - id: "R2"
+              desc: "The weak acceptance command passes"
+              priority: critical
+            - id: "R3"
+              desc: "Changes are scoped to the requested feature"
+              priority: expected
+          auto_verify:
+            items:
+              - id: "weak_acceptance"
+                cmd: "{{acceptance_command}}"
+                must: true
+          verifier:
+            rubric:
+              - id: "public_behavior"
+                text: |
+                  R1 — A: the feature spec's user-facing behavior is implemented.
+                  B: most visible behavior is present but cross-cutting details are weak.
+                  F: the implementation does not address the requested behavior.
+              - id: "weak_acceptance"
+                text: |
+                  R2 — A: the weak acceptance command passes in the run worktree.
+                  F: the weak acceptance command fails or was not run.
+              - id: "scope"
+                text: |
+                  R3 — A: edits are scoped to the requested feature.
+                  B: minor unrelated cleanup is present.
+                  F: substantial unrelated changes are present.
+          retry:
+            max_attempts: 1

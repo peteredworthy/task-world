@@ -44,7 +44,7 @@ npm run dev   # starts on port 5173
 
 ```
 task-world/
-├── src/orchestrator/          # Python backend — 9 canonical modules
+├── src/orchestrator/          # Python backend modules
 │   ├── errors.py              # Root-level domain exceptions
 │   ├── time_utils.py          # Time utilities (injectable clocks for testing)
 │   │
@@ -134,6 +134,22 @@ task-world/
 │   │   │   └── prune_ops.py   # Selective change removal (file/hunk/line granularity)
 │   │   └── testing/           # Async test execution (absorbed from review/test_runner)
 │   │       └── test_runner.py # TestRunner with polling and result tracking
+│   │
+│   ├── graph/                 # Pure dynamic execution graph kernel
+│   │   ├── command_bindings.py # Opaque check-command binding resolution
+│   │   ├── commands.py        # Command applier and graph event generation
+│   │   ├── compiler.py        # Routine-to-graph compiler
+│   │   ├── contracts.py       # Typed node/port contract registry
+│   │   ├── macros.py          # Planner-facing macro expansion to low-level patch ops
+│   │   ├── patch_validator.py # Pure graph patch validation
+│   │   ├── projections.py     # Event-sourced graph projections/read models
+│   │   └── scheduler.py       # Pure readiness and lease scheduling helpers
+│   │
+│   ├── graph_runtime/         # Effectful graph runtime bridge
+│   │   ├── controller.py      # Applies graph commands and appends events/outbox rows
+│   │   ├── dispatch.py        # Outbox-to-runner/controller execution bridge
+│   │   ├── outbox.py          # Durable side-effect outbox mapping/dispatcher
+│   │   └── store.py           # Graph event store and summary read models
 │   │
 │   ├── runners/               # Agent execution: all runner types, detection, profiles
 │   │   ├── interface.py       # AgentRunner protocol definition
@@ -623,6 +639,8 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/graph/events` | Graph event log for a run |
 | GET | `/api/runs/{id}/graph/scheduler` | Graph scheduler buckets and leases |
 | GET | `/api/runs/{id}/graph/decisions` | Graph human decisions, appeals, and review readiness |
+| GET | `/api/runs/{id}/graph/patches` | Graph patch proposal/result readback |
+| GET | `/api/runs/{id}/graph/final-blockers` | Typed final invariant blocker readback |
 | GET | `/api/runs/{id}/graph/file-state` | Graph file-state boundary and residue report |
 | GET | `/api/runs/{id}/graph/nodes/{node_id}` | Graph node detail with inputs, outputs, callbacks, and file-state facts |
 | GET | `/api/runs/{id}/branch-status` | Branch ahead/behind status |
