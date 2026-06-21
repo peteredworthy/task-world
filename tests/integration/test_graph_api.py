@@ -311,6 +311,44 @@ async def test_graph_projection_reflects_seeded_events(
     assert not_found.status_code == 404
 
 
+async def test_active_graph_execution_readback_uses_bounded_summary_paths(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = "graph-active-readback"
+
+    await _seed_graph_run(app, run_id)
+
+    projection_resp = await client.get(f"/api/runs/{run_id}/graph")
+    assert projection_resp.status_code == 200
+    projection = projection_resp.json()
+    active_leases = [
+        lease for lease in projection["leases"].values() if lease.get("state") == "active"
+    ]
+    assert active_leases
+    active_node_id = active_leases[0]["node_id"]
+
+    scheduler_resp = await client.get(f"/api/runs/{run_id}/graph/scheduler")
+    events_resp = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=summary")
+    node_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/{active_node_id}")
+
+    assert scheduler_resp.status_code == 200
+    assert events_resp.status_code == 200
+    assert node_resp.status_code == 200
+
+    scheduler = scheduler_resp.json()
+    assert any(lease["node_id"] == active_node_id for lease in scheduler["leases"]["active"])
+
+    summary_events = events_resp.json()
+    assert len(summary_events) == projection["event_count"]
+    assert all("routine" not in event["payload"] for event in summary_events)
+
+    node = node_resp.json()
+    assert node["node_id"] == active_node_id
+    assert node["active_lease"]["state"] == "active"
+    assert "routine" not in str(node["events"])
+
+
 async def test_graph_projection_routes_recreate_deleted_read_models(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:

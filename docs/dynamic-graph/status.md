@@ -29,6 +29,10 @@ quality and cost.
   dynamic path on a tiny scenario.
 - Hidden-oracle isolated Arm E has not yet been re-proven end to end after the
   latest deterministic lease/readback fixes.
+- DG-5.2e cheap validation is covered by deterministic tests: expired active
+  graph leases leave explicit failed-node evidence, graph verifier prompts stay
+  bounded, and graph projection/events/scheduler/node readback works through
+  summary paths while a graph lease is active.
 - The S2 live agent-output streaming feature is no longer pending port to main;
   the hidden oracle in
   `docs/graph-approach/complete/oracles/test_stream_output_oracle_v2.py` passes
@@ -52,20 +56,13 @@ runtime defects.
 
 ## What Remains
 
-1. Finish DG-5.2e validation with cheap checks.
-   - Expired active graph leases must produce explicit evidence instead of
-     leaving runs indefinitely active.
-   - Graph verifier prompts must stay bounded.
-   - `/graph`, `/graph/events?payload_mode=summary`, scheduler, and node-detail
-     readback must remain bounded while graph agent execution is active.
-
-2. Re-prove isolated Arm E once DG-5.2e is covered.
+1. Re-prove isolated Arm E once DG-5.2e is covered.
    - Use the hidden-oracle binding path.
    - Confirm corrective verifier completion.
    - Confirm final invariant scheduling and terminal evidence.
    - Record cost and dynamic graph metrics.
 
-3. Select an actual comparison scenario.
+2. Select an actual comparison scenario.
    - The one-shot single-agent baseline must fail the hidden oracle materially.
    - The failed single-agent attempt must still produce useful partial work.
    - The failure should come from missed discovery, weak validation, or missing
@@ -74,14 +71,14 @@ runtime defects.
    - The scenario should have enough coupled requirements and repo-state
      discovery that adaptive planning is genuinely relevant.
 
-4. Run the three-way A/C/E comparison.
+3. Run the three-way A/C/E comparison.
    - Same starting repo snapshot.
    - Same weak acceptance and hidden oracle, both run outside agents.
    - Comparable model/runner budget where practical.
    - Record pass/fail, cost, tool calls, retries, accepted/rejected graph
      patches, corrective work, and final review result.
 
-5. Update this file after each accepted result.
+4. Update this file after each accepted result.
    - Keep this document compact.
    - Put detailed historical logs and superseded plans under
      `docs/dynamic-graph/complete/`.
