@@ -1,3 +1,8 @@
+---
+name: mind-the-gap
+description: Use this skill for implementation work that should run through repeated planner/gap-finder, builder, and validator cycles with compact durable state, fresh role context, independent validation, and one small verified chunk at a time.
+---
+
 # Mind the Gap Skill
 
 Use this skill when a clear implementation target should be completed through
