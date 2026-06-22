@@ -26,6 +26,7 @@ from orchestrator.graph.models import (
     Actor,
     ActorKind,
     AnalysisSummaryRecord,
+    ArtifactReferenceRecord,
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
     CandidateRecord,
@@ -873,7 +874,10 @@ def _file_state_changed_paths(record_payload: dict[str, Any]) -> list[str]:
         for raw_entry in cast(list[Any], raw_entries):
             if not isinstance(raw_entry, dict):
                 continue
-            path = cast(dict[str, Any], raw_entry).get("path")
+            entry = cast(dict[str, Any], raw_entry)
+            if entry.get("classification") == "tool_cache":
+                continue
+            path = entry.get("path")
             if isinstance(path, str) and path not in paths:
                 paths.append(path)
     return paths
@@ -1016,6 +1020,15 @@ def _output_record_contract_conflict(
                 GraphPatchProposalRecord.model_validate(record_payload)
             except ValueError as exc:
                 return f"graph_patch_proposal record at index {index} is invalid: {exc}"
+        if _is_artifact_reference_record_payload(record_payload):
+            record_payload = _artifact_reference_record_payload_for_validation(
+                record_payload,
+                expected_producer_node_id,
+            )
+            try:
+                ArtifactReferenceRecord.model_validate(record_payload)
+            except ValueError as exc:
+                return f"artifact_reference record at index {index} is invalid: {exc}"
     return None
 
 
@@ -1142,6 +1155,28 @@ def _accepted_output_record_events(
             )
             try:
                 record = GraphPatchProposalRecord.model_validate(record_payload)
+            except ValueError:
+                continue
+            payload = record.model_dump(mode="json")
+            output.append(make_event("output_record_accepted", payload))
+            output.extend(
+                _input_bound_events_for_record(
+                    projection,
+                    record.producer_node_id,
+                    record.port,
+                    record.record_id,
+                    payload,
+                    make_event,
+                )
+            )
+            continue
+        if _is_artifact_reference_record_payload(record_payload):
+            record_payload = _artifact_reference_record_payload_for_validation(
+                record_payload,
+                expected_producer_node_id,
+            )
+            try:
+                record = ArtifactReferenceRecord.model_validate(record_payload)
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
@@ -1473,6 +1508,26 @@ def _graph_patch_proposal_record_payload_for_validation(
     output = dict(payload)
     output.setdefault("producer_node_id", expected_producer_node_id)
     output.setdefault("record_type", "graph_patch_proposal")
+    return output
+
+
+def _is_artifact_reference_record_payload(payload: dict[str, Any]) -> bool:
+    return payload.get("record_type") == "artifact_reference" or payload.get("port") in {
+        "artifact_reference",
+        "artifact",
+    }
+
+
+def _artifact_reference_record_payload_for_validation(
+    payload: dict[str, Any],
+    expected_producer_node_id: str,
+) -> dict[str, Any]:
+    output = dict(payload)
+    output.setdefault("producer_node_id", expected_producer_node_id)
+    output.setdefault("record_kind", "graph_record")
+    output.setdefault("record_type", "artifact_reference")
+    output.setdefault("schema", "ArtifactReference")
+    output.setdefault("port", "artifact_reference")
     return output
 
 

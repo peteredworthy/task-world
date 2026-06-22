@@ -795,6 +795,41 @@ def test_check_submit_does_not_fabricate_pass_record() -> None:
     assert _output_records_for_submit(context, []) == []
 
 
+def test_worker_submit_emits_declared_artifact_references() -> None:
+    context = _context(
+        node_id="worker-1",
+        node_kind="worker",
+        node_payload={
+            "candidate_id": "candidate-1",
+            "artifacts": [
+                {
+                    "path": "docs/dynamic-graph/output-proof.txt",
+                    "description": "Output proof artifact",
+                }
+            ],
+        },
+    )
+
+    records = _output_records_for_submit(context, [])
+
+    assert records[0]["record_id"] == "candidate-1"
+    assert records[1] == {
+        "record_id": "artifact-reference-exec-1-0",
+        "record_kind": "graph_record",
+        "record_type": "artifact_reference",
+        "producer_node_id": "worker-1",
+        "port": "artifact_reference",
+        "schema": "ArtifactReference",
+        "value": {
+            "artifact_id": "docs/dynamic-graph/output-proof.txt",
+            "artifact_type": "run_output",
+            "uri": "docs/dynamic-graph/output-proof.txt",
+            "summary": "Output proof artifact",
+            "source_record_ids": ["candidate-1"],
+        },
+    }
+
+
 def test_execution_context_uses_contract_tools_when_node_tools_are_absent() -> None:
     context = _context(node_id="planner-1", node_kind="planner", node_role="planner")
     executor = RecordingExecutor()

@@ -1143,6 +1143,67 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
     )
 
 
+def test_callback_accepts_artifact_reference_output_record() -> None:
+    output = _apply(
+        _active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-artifact",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "done"},
+                    },
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                    },
+                    {
+                        "record_id": "artifact-reference-1",
+                        "record_kind": "graph_record",
+                        "record_type": "artifact_reference",
+                        "producer_node_id": "worker-1",
+                        "port": "artifact_reference",
+                        "schema": "ArtifactReference",
+                        "value": {
+                            "artifact_id": "docs/out.txt",
+                            "artifact_type": "run_output",
+                            "uri": "docs/out.txt",
+                            "summary": "submitted artifact",
+                            "source_record_ids": ["candidate-1"],
+                        },
+                    },
+                ],
+            },
+            payload_hash="hash-artifact",
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "output_record_accepted",
+        "file_state_accepted",
+        "output_record_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert output[4].payload["record_type"] == "artifact_reference"
+    assert output[4].payload["port"] == "artifact_reference"
+    assert output[4].payload["value"]["uri"] == "docs/out.txt"
+
+
 def test_callback_binds_first_record_only_for_one_cardinality_input() -> None:
     events = [
         *_active_lease_events(),
@@ -2540,6 +2601,63 @@ def test_callback_accepts_file_state_paths_within_lease_write_scope() -> None:
                         "base_snapshot_id": "S0",
                         "verdict": "captured",
                         "tracked": [{"path": "docs/out.md", "status": "modified"}],
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "output_record_accepted",
+        "file_state_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+
+
+def test_callback_allows_tool_cache_file_state_outside_write_scope() -> None:
+    output = _apply(
+        _active_lease_events_with_resource_claims(
+            [{"mode": "write", "scope": "repo", "paths": ["docs/out.md"]}]
+        ),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-file-state-tool-cache",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "docs updated"},
+                    },
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                        "tracked": [{"path": "docs/out.md", "status": "modified"}],
+                        "untracked": [
+                            {
+                                "path": ".claude/settings.local.json",
+                                "classification": "tool_cache",
+                            }
+                        ],
+                        "classifications": [
+                            {"path": "docs/out.md", "classification": "source_code"},
+                            {
+                                "path": ".claude/settings.local.json",
+                                "classification": "tool_cache",
+                            },
+                        ],
                     },
                 ],
             }

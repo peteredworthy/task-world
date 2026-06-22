@@ -2233,8 +2233,46 @@ def _output_records_for_submit(
             "task_region_id": task_region_id,
             "attempt_number": attempt_number,
             "value": {"summary": "submitted by graph runner"},
-        }
+        },
+        *_artifact_reference_records_for_submit(context, candidate_id),
     ]
+
+
+def _artifact_reference_records_for_submit(
+    context: GraphDispatchContext,
+    candidate_id: str,
+) -> list[dict[str, Any]]:
+    artifacts = context.node_payload.get("artifacts")
+    if not isinstance(artifacts, list):
+        return []
+    output: list[dict[str, Any]] = []
+    for index, raw_artifact in enumerate(cast(list[Any], artifacts)):
+        if not isinstance(raw_artifact, dict):
+            continue
+        artifact = cast(dict[str, Any], raw_artifact)
+        raw_path = artifact.get("path")
+        if not isinstance(raw_path, str) or not raw_path.strip():
+            continue
+        artifact_id = str(artifact.get("id") or raw_path)
+        summary = artifact.get("summary") or artifact.get("description")
+        output.append(
+            {
+                "record_id": f"artifact-reference-{context.execution_id}-{index}",
+                "record_kind": "graph_record",
+                "record_type": "artifact_reference",
+                "producer_node_id": context.node_id,
+                "port": "artifact_reference",
+                "schema": "ArtifactReference",
+                "value": {
+                    "artifact_id": artifact_id,
+                    "artifact_type": "run_output",
+                    "uri": raw_path,
+                    "summary": str(summary) if summary is not None else None,
+                    "source_record_ids": [candidate_id],
+                },
+            }
+        )
+    return output
 
 
 def _gap_classification_record(

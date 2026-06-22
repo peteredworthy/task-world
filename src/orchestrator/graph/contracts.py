@@ -804,6 +804,7 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     schemas=("AnalysisSummary",),
                     required=False,
                 ),
+                _port("artifact_reference", "artifact_reference", required=False),
                 _port("completion", "completion", schemas=("NodeCompletion",), required=False),
             ),
         ),
