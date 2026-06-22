@@ -124,12 +124,14 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "gate_type",
     "generation",
     "generation_index",
+    "freshness_policy",
     "input",
     "input_tokens",
     "kind",
     "lease_generation",
     "lease_id",
     "membership",
+    "metadata",
     "model_id",
     "new_behavior",
     "new_state",
@@ -145,6 +147,7 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "previous_version_id",
     "priority",
     "prompt",
+    "prompt_hydration_policy",
     "producer_node_id",
     "proposed_by_node_id",
     "reason",
@@ -186,6 +189,15 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "verdict",
     "verdicts",
     "version_id",
+)
+DECISION_RECORD_VALUE_FIELDS = (
+    "consequence_summary",
+    "default_option",
+    "expires_at",
+    "options",
+    "requested_authority",
+    "target_node_id",
+    "target_region_id",
 )
 SUMMARY_REBUILD_PAYLOAD_FIELDS = tuple(
     dict.fromkeys(
@@ -581,6 +593,12 @@ class GraphEventStore:
             func.json_extract(EventV2Model.payload, "$.payload.value.classification").label(
                 "__value_classification"
             ),
+            *[
+                func.json_extract(EventV2Model.payload, f"$.payload.value.{field}").label(
+                    f"__decision_value_{field}"
+                )
+                for field in DECISION_RECORD_VALUE_FIELDS
+            ],
         ]
         result = await self._session.execute(
             select(
@@ -613,6 +631,19 @@ class GraphEventStore:
                 and row.get("__value_classification")
             ):
                 payload["classification"] = _json_extract_value(row["__value_classification"])
+            record_type = payload.get("record_type")
+            port = payload.get("port")
+            if record_type in {"decision_request", "authority_request_record"} or port in {
+                "decision_request",
+                "authority_request_record",
+            }:
+                value_payload = {
+                    field: _json_extract_value(row[f"__decision_value_{field}"])
+                    for field in DECISION_RECORD_VALUE_FIELDS
+                    if row.get(f"__decision_value_{field}") is not None
+                }
+                if value_payload:
+                    payload["value"] = value_payload
             events.append(
                 EventEnvelope(
                     event_id=str(row.get("event_id") or f"graph-event-{row['version']}"),

@@ -83,6 +83,33 @@ async def _seed_decision_graph_run(app: Any, run_id: str) -> None:
         ),
         _event(
             "node_created",
+            {
+                "node_id": "authority-1",
+                "kind": "authority_request",
+                "state": "ready",
+                "prompt": "Grant docs write authority?",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "authority-request-1",
+                "record_kind": "graph_record",
+                "record_type": "authority_request_record",
+                "producer_node_id": "authority-1",
+                "port": "authority_request_record",
+                "schema": "AuthorityRequest",
+                "value": {
+                    "requested_authority": ["repo:docs/**:write"],
+                    "target_node_id": "worker-docs",
+                    "target_region_id": "task-1",
+                    "reason": "Worker needs docs write access.",
+                    "expires_at": "2026-06-13T12:05:00+00:00",
+                },
+            },
+        ),
+        _event(
+            "node_created",
             {"node_id": "appeal-1", "kind": "appeal", "state": "completed"},
         ),
         _event(
@@ -116,13 +143,22 @@ async def test_decisions_endpoint_reflects_seeded_gates_and_appeals(
     assert response.status_code == 200
     body = response.json()
     assert body["run_id"] == run_id
-    assert body["event_count"] == 4
+    assert body["event_count"] == 6
     assert body["pending_gates"] == [
+        {
+            "node_id": "authority-1",
+            "gate_type": "authority_request",
+            "prompt": "Grant docs write authority?",
+            "expires_at": "2026-06-13T12:05:00+00:00",
+            "requested_authority": ["repo:docs/**:write"],
+            "target_node_id": "worker-docs",
+            "target_region_id": "task-1",
+        },
         {
             "node_id": "gate-1",
             "gate_type": "human_approval",
             "prompt": "Approve verified candidate?",
-        }
+        },
     ]
     assert body["appeals"] == [{"node_id": "appeal-1", "state": "completed", "outcome": "rejected"}]
     assert body["review"] == {"ready": False, "blockers": ["review-1: merge_conflicts"]}

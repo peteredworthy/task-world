@@ -15,7 +15,7 @@ from orchestrator.db import (
     GraphProjectionSnapshotModel,
     RunModel,
 )
-from orchestrator.graph import FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.db.access.mutations import save_run
@@ -52,6 +52,19 @@ def _routine() -> RoutineConfig:
     )
 
 
+def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=f"{event_type}-{uuid4().hex}",
+        run_id="placeholder",
+        position=-1,
+        event_type=event_type,
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=FakeClock().now(),
+        payload=payload,
+    )
+
+
 class _RunSeedIdGenerator:
     def __init__(self, run_id: str) -> None:
         self._run_id = run_id.replace("-", "")
@@ -61,6 +74,20 @@ class _RunSeedIdGenerator:
         value = f"{self._run_id}-{prefix}-{self._next}"
         self._next += 1
         return value
+
+
+async def _save_manual_graph_run(app: Any, run_id: str) -> None:
+    run = create_run_from_routine(
+        _routine(),
+        repo_name=f"graph-api-manual-repo-{run_id}",
+        source_branch="main",
+    )
+    run.id = run_id
+    run.execution_mode = "graph"
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await save_run(session, run)
+        await session.commit()
 
 
 async def _seed_graph_run(
@@ -101,6 +128,207 @@ async def _seed_graph_run(
     async with session_factory() as session:
         await save_run(session, run)
         await session.commit()
+
+
+async def _seed_control_topology_graph_run(app: Any, run_id: str) -> None:
+    await _save_manual_graph_run(app, run_id)
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-control",
+                "kind": "worker",
+                "role": "builder",
+                "state": "completed",
+                "task_region_id": "task-1",
+                "command_definition": {
+                    "id": "worker-command",
+                    "cmd": "uv run pytest tests/unit/test_graph_scheduler_view.py -q",
+                    "source": "test",
+                },
+            },
+        ),
+        _event(
+            "node_authority_changed",
+            {
+                "node_id": "worker-control",
+                "authority": {
+                    "resource_claims": [{"mode": "write", "scope": "paths", "paths": ["src/"]}],
+                    "allowed_actions": ["submit", "record_heartbeat"],
+                    "preconditions": ["candidate_bound", "no_active_conflicts"],
+                },
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-control",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "ready",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-control-candidate",
+                "from_node_id": "worker-control",
+                "from_port": "candidate",
+                "to_node_id": "verifier-control",
+                "to_port": "candidate_under_test",
+                "required": True,
+                "dependency_type": "input_binding",
+                "binding_policy": "bind_latest",
+                "freshness_policy": "latest_only",
+                "prompt_hydration_policy": "artifact_reference",
+                "metadata": {"purpose": "verify bound candidate"},
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-control",
+                "record_kind": "output",
+                "producer_node_id": "worker-control",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "value": {"summary": "control readback candidate"},
+            },
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-control-candidate",
+                "to_node_id": "verifier-control",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-control"],
+                "bound_at_position": 0,
+                "trigger": "record_accepted",
+            },
+        ),
+    ]
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+
+
+async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
+    await _save_manual_graph_run(app, run_id)
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}),
+        _event(
+            "node_created",
+            {"node_id": "worker-callback", "kind": "worker", "state": "running"},
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-callback",
+                "lease_id": "lease-callback",
+                "generation": 1,
+                "execution_id": "exec-callback",
+                "expires_at": "2026-01-01T00:01:00+00:00",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "artifact-callback",
+                "record_kind": "graph_record",
+                "record_type": "artifact_reference",
+                "producer_node_id": "worker-callback",
+                "port": "artifact",
+                "schema": "ContextArtifact",
+                "value": {
+                    "artifact_id": "stdout",
+                    "artifact_type": "agent_output",
+                    "uri": "artifacts/stdout.txt",
+                },
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "failure-callback",
+                "record_kind": "graph_record",
+                "record_type": "failure_record",
+                "producer_node_id": "worker-callback",
+                "port": "failure_record",
+                "schema": "FailureRecord",
+                "value": {
+                    "failed_node_id": "worker-callback",
+                    "phase": "runtime",
+                    "error_class": "agent_error",
+                    "retryable": True,
+                },
+            },
+        ),
+    ]
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+
+    controller = GraphController(
+        session_factory,
+        FakeClock(),
+        _RunSeedIdGenerator(run_id),
+        auto_dispatch=False,
+    )
+    heartbeat = await controller.handle_command(
+        run_id,
+        len(events),
+        "record_heartbeat",
+        {
+            "lease_id": "lease-callback",
+            "node_id": "worker-callback",
+            "generation": 1,
+            "ttl_seconds": 120,
+        },
+    )
+    await controller.handle_command(run_id, heartbeat.projection_position, "cancel")
+
+
+async def _seed_rejected_patch_graph_run(app: Any, run_id: str) -> None:
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    controller = GraphController(
+        session_factory,
+        FakeClock(),
+        _RunSeedIdGenerator(run_id),
+        auto_dispatch=False,
+    )
+    await controller.handle_command(
+        run_id,
+        0,
+        "submit_patch",
+        {
+            "run_id": run_id,
+            "patch_id": "patch-bad-request",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "gate-review",
+                        "kind": "human_gate",
+                        "state": "planned",
+                        "decision_request": {
+                            "decision_type": "approval",
+                            "options": ["approve"],
+                            "default_option": "reject",
+                            "consequence_summary": "Review graph expansion.",
+                        },
+                    },
+                }
+            ],
+        },
+    )
 
 
 async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
@@ -505,6 +733,157 @@ async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
     assert verifier["output_records"][0]["record_kind"] == "verification"
     verifier_callback_types = [event["event_type"] for event in verifier["callback_history"]]
     assert verifier_callback_types == ["node_state_changed", "callback_accepted"]
+
+
+async def test_fresh_control_and_topology_readbacks_preserve_runtime_controls(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-control-topology-{uuid4().hex[:8]}"
+    await _seed_control_topology_graph_run(app, run_id)
+
+    node_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/worker-control")
+    full_node_resp = await client.get(
+        f"/api/runs/{run_id}/graph/nodes/worker-control?payload_mode=full"
+    )
+    topology_resp = await client.get(f"/api/runs/{run_id}/graph/topology")
+    events_resp = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
+
+    assert node_resp.status_code == 200
+    assert full_node_resp.status_code == 200
+    assert topology_resp.status_code == 200
+    assert events_resp.status_code == 200
+
+    node = node_resp.json()
+    full_node = full_node_resp.json()
+    expected_controls = {
+        "resource_claims": [{"mode": "write", "scope": "paths", "paths": ["src/"]}],
+        "allowed_actions": ["submit", "record_heartbeat"],
+        "preconditions": ["candidate_bound", "no_active_conflicts"],
+        "command_definition": {
+            "id": "worker-command",
+            "cmd": "uv run pytest tests/unit/test_graph_scheduler_view.py -q",
+            "source": "test",
+        },
+    }
+    for key, expected in expected_controls.items():
+        assert node[key] == expected
+        assert full_node[key] == expected
+
+    topology = topology_resp.json()
+    assert topology["event_count"] == len(events_resp.json()) == 7
+    edge = next(edge for edge in topology["edges"] if edge["edge_id"] == "edge-control-candidate")
+    assert edge["metadata"] == {
+        "binding_policy": "bind_latest",
+        "freshness_policy": "latest_only",
+        "prompt_hydration_policy": "artifact_reference",
+        "metadata": {"purpose": "verify bound candidate"},
+    }
+    assert edge["binding"] == {
+        "edge_id": "edge-control-candidate",
+        "to_node_id": "verifier-control",
+        "to_port": "candidate_under_test",
+        "record_ids": ["candidate-control"],
+        "bound_at_position": 7,
+        "record_bound_positions": {"candidate-control": 7},
+        "binding_policy": "bind_latest",
+        "trigger": "record_accepted",
+    }
+    assert edge["bound_records"] == [
+        {
+            "record_id": "candidate-control",
+            "record_type": "candidate",
+            "record_kind": "output",
+            "schema": "ImplementationCandidate",
+            "producer_node_id": "worker-control",
+            "producer_port": "candidate",
+            "position": 6,
+        }
+    ]
+
+
+async def test_callback_lifecycle_readbacks_cover_heartbeat_cancel_artifact_and_failure(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-callback-lifecycle-{uuid4().hex[:8]}"
+    await _seed_callback_lifecycle_graph_run(app, run_id)
+
+    graph_resp = await client.get(f"/api/runs/{run_id}/graph")
+    scheduler_resp = await client.get(f"/api/runs/{run_id}/graph/scheduler")
+    node_resp = await client.get(
+        f"/api/runs/{run_id}/graph/nodes/worker-callback?payload_mode=full"
+    )
+    events_resp = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
+
+    assert graph_resp.status_code == 200
+    assert scheduler_resp.status_code == 200
+    assert node_resp.status_code == 200
+    assert events_resp.status_code == 200
+
+    graph = graph_resp.json()
+    scheduler = scheduler_resp.json()
+    node = node_resp.json()
+    events = events_resp.json()
+    event_types = [event["event_type"] for event in events]
+
+    assert graph["run_state"] == "cancelling"
+    assert graph["node_states"]["worker-callback"] == "cancelled"
+    assert graph["leases"]["lease-callback"]["state"] == "revoked"
+    assert graph["leases"]["lease-callback"]["expires_at"] == "2026-01-01T00:02:00+00:00"
+    assert scheduler["leases"] == {"active": [], "suspended": []}
+    assert scheduler["scheduler"] == {
+        "ready": [],
+        "blocked": [],
+        "waiting_resources": [],
+        "waiting_gates": [],
+    }
+
+    assert "heartbeat_recorded" in event_types
+    assert "lease_renewed" in event_types
+    assert "lease_revoked" in event_types
+    assert any(record["record_type"] == "artifact_reference" for record in node["output_records"])
+    assert any(record["record_type"] == "failure_record" for record in node["output_records"])
+    callback_events = [event["event_type"] for event in node["callback_history"]]
+    assert callback_events == []
+    node_event_types = [event["event_type"] for event in node["events"]]
+    assert "heartbeat_recorded" in node_event_types
+    assert "lease_revoked" in node_event_types
+
+
+async def test_patch_attempt_readback_surfaces_rejected_patch_diagnostics(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-patch-probe-{uuid4().hex[:8]}"
+    await _seed_rejected_patch_graph_run(app, run_id)
+
+    patches_resp = await client.get(f"/api/runs/{run_id}/graph/patches")
+    events_resp = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
+
+    assert patches_resp.status_code == 200
+    assert events_resp.status_code == 200
+    events = events_resp.json()
+    assert [event["event_type"] for event in events] == ["graph_patch_rejected"]
+
+    body = patches_resp.json()
+    assert body["run_id"] == run_id
+    assert body["current_graph_position"] == 1
+    assert len(body["attempts"]) == 1
+    attempt = body["attempts"][0]
+    assert attempt["patch_id"] == "patch-bad-request"
+    assert attempt["proposed_by_node_id"] == "planner-1"
+    assert attempt["base_graph_position"] is None
+    assert attempt["current_graph_position"] == 1
+    assert attempt["status"] == "rejected"
+    assert attempt["rejected_event_id"] == events[0]["event_id"]
+    assert attempt["rejected_position"] == 1
+    assert attempt["created_node_ids"] == []
+    assert attempt["created_edge_ids"] == []
+    assert attempt["diagnostics"]["actor_role"] == "planner"
+    assert events[0]["payload"]["base_graph_position"] == -1
+    assert "invalid request record for node gate-review" in attempt["rejection_reason"]
+    assert "default_option must be one of options" in attempt["rejection_reason"]
 
 
 async def test_node_detail_404_for_unknown_node(

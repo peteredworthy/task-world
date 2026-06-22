@@ -464,6 +464,14 @@ def test_claims_read_write_conflict() -> None:
     )
 
 
+def test_claims_disjoint_writes_do_not_conflict() -> None:
+    assert claims_conflict(_repo_claim("write", ["src/a.py"]), _repo_claim("write", ["src/a.py"]))
+    assert claims_conflict(_repo_claim("write"), _repo_claim("write", ["src/a.py"]))
+    assert not claims_conflict(
+        _repo_claim("write", ["src/a.py"]), _repo_claim("write", ["src/b.py"])
+    )
+
+
 def test_glob_path_overlap_detects_file_under_recursive_glob() -> None:
     assert claims_conflict(_repo_claim("read", ["src/**"]), _repo_claim("write", ["src/foo.py"]))
 
@@ -544,8 +552,7 @@ def test_schedule_decision_has_deferred_reasons() -> None:
 
     decision = schedule(nodes, "active", [], projection_position=7, max_grants=2)
 
-    assert decision.selected == ["writer-a"]
-    assert decision.deferred == ["writer-b", "writer-c"]
+    assert decision.selected == ["writer-a", "writer-c"]
+    assert decision.deferred == ["writer-b"]
     assert set(decision.deferred_reasons) == set(decision.deferred)
     assert decision.deferred_reasons["writer-b"] == "resource_conflict:write:write"
-    assert decision.deferred_reasons["writer-c"] == "resource_conflict:write:write"

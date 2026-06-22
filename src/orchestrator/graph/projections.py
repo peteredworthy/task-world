@@ -1410,7 +1410,11 @@ def _apply_patch_payload(attempt: GraphPatchAttempt, payload: dict[str, Any]) ->
     if isinstance(proposed_by_node_id, str):
         attempt["proposed_by_node_id"] = proposed_by_node_id
     base_graph_position = payload.get("base_graph_position")
-    if isinstance(base_graph_position, int) and not isinstance(base_graph_position, bool):
+    if (
+        isinstance(base_graph_position, int)
+        and not isinstance(base_graph_position, bool)
+        and base_graph_position >= 0
+    ):
         attempt["base_graph_position"] = base_graph_position
     reason = payload.get("reason")
     if isinstance(reason, str) and reason:

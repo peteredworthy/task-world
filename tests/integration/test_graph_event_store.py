@@ -806,6 +806,23 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                         },
                     ),
                     _event(
+                        "evt-light-edge",
+                        run_id,
+                        "edge_created",
+                        {
+                            "edge_id": "edge-candidate",
+                            "from_node_id": "worker-1",
+                            "from_port": "candidate",
+                            "to_node_id": "verifier-1",
+                            "to_port": "candidate_under_test",
+                            "binding_policy": "bind_latest",
+                            "freshness_policy": "latest_only",
+                            "prompt_hydration_policy": "artifact_reference",
+                            "metadata": {"purpose": "verify candidate"},
+                            "value": {"body": large_payload},
+                        },
+                    ),
+                    _event(
                         "evt-light-5",
                         run_id,
                         "output_record_accepted",
@@ -835,6 +852,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "evt-light-2",
         "evt-light-3",
         "evt-light-4",
+        "evt-light-edge",
         "evt-light-5",
     ]
     assert events[0].payload == {
@@ -862,6 +880,17 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "to_port": "candidate_under_test",
     }
     assert events[4].payload == {
+        "binding_policy": "bind_latest",
+        "edge_id": "edge-candidate",
+        "freshness_policy": "latest_only",
+        "from_node_id": "worker-1",
+        "from_port": "candidate",
+        "metadata": {"purpose": "verify candidate"},
+        "prompt_hydration_policy": "artifact_reference",
+        "to_node_id": "verifier-1",
+        "to_port": "candidate_under_test",
+    }
+    assert events[5].payload == {
         "candidate_id": "candidate-check-1",
         "classification": "passed",
         "port": "check_result",

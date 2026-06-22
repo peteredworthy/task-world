@@ -104,7 +104,7 @@ def claims_conflict(existing: ResourceClaim, requested: ResourceClaim) -> bool:
         return _review_claims_conflict(existing, requested)
 
     if existing.mode == "write" and requested.mode == "write":
-        return True
+        return _paths_overlap(existing.paths, requested.paths)
     if existing.scope == "repo" and requested.scope == "repo":
         if existing.mode == "read" and requested.mode == "write":
             return existing.snapshot_id is None and _paths_overlap(existing.paths, requested.paths)
