@@ -2644,10 +2644,12 @@ def _apply_agent_died(
         "policy": "v1_requeue_same_node_after_agent_death",
         "reason": reason,
     }
+    next_attempt_number = attempt_number + 1
     node_state_payload = {
         "node_id": node_id,
         "new_state": "ready",
         "trigger": "agent_died_retry_scheduled",
+        "attempt_number": next_attempt_number,
     }
     if retry_backoff_seconds > 0:
         retry_not_before = (clock.now() + timedelta(seconds=retry_backoff_seconds)).isoformat()
@@ -2658,6 +2660,7 @@ def _apply_agent_died(
             "new_state": "blocked",
             "trigger": "agent_died_retry_backoff_scheduled",
             "retry_not_before": retry_not_before,
+            "attempt_number": next_attempt_number,
         }
     return [
         make_event("agent_died", event_payload),

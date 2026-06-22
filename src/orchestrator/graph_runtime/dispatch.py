@@ -565,15 +565,19 @@ class GraphDispatchExecutor(SideEffectExecutor):
         return "graph patch command completed without accepted or rejected patch event"
 
     async def _agent_died(self, context: GraphDispatchContext, reason: str) -> None:
+        payload: dict[str, object] = {
+            "lease_id": context.lease_id,
+            "execution_id": context.execution_id,
+            "reason": reason or "runtime_process_died",
+        }
+        max_attempts = context.node_payload.get("max_attempts")
+        if isinstance(max_attempts, int):
+            payload["max_attempts"] = max_attempts
         await self._handle_command_retry_stale(
             context.run_id,
             await self._current_position(context.run_id),
             "agent_died",
-            {
-                "lease_id": context.lease_id,
-                "execution_id": context.execution_id,
-                "reason": reason or "runtime_process_died",
-            },
+            payload,
         )
 
     async def _handle_command_retry_stale(

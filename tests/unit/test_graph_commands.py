@@ -4041,6 +4041,7 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         "node_id": "worker-1",
         "new_state": "ready",
         "trigger": "agent_died_retry_scheduled",
+        "attempt_number": 1,
     }
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["worker-1"] == "ready"
@@ -4099,6 +4100,7 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         "new_state": "blocked",
         "trigger": "agent_died_retry_backoff_scheduled",
         "retry_not_before": retry_not_before,
+        "attempt_number": 1,
     }
     assert projection["node_states"]["worker-1"] == "blocked"
 

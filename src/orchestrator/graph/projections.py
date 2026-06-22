@@ -429,6 +429,9 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         new_state = event.payload.get("new_state")
         if isinstance(node_id, str) and isinstance(new_state, str):
             next_state["node_states"][node_id] = new_state
+            attempt_number = _attempt_number(event.payload)
+            if attempt_number is not None:
+                next_state["node_attempts"][node_id] = attempt_number
     elif event.event_type == "node_retired":
         node_id = event.payload.get("node_id")
         if isinstance(node_id, str):

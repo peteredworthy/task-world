@@ -405,6 +405,7 @@ class _Compiler:
         check_ids = self._compile_checks(
             task.auto_verify.items,
             task.auto_verify.tail_lines,
+            task.retry.max_attempts,
             worker_id,
             task_region_id,
             candidate_id,
@@ -416,6 +417,7 @@ class _Compiler:
                 self._compile_checks(
                     task.fan_out.auto_verify.items,
                     task.fan_out.auto_verify.tail_lines,
+                    task.retry.max_attempts,
                     worker_id,
                     task_region_id,
                     candidate_id,
@@ -463,6 +465,7 @@ class _Compiler:
                 "task_index": task_index,
                 "title": task.title,
                 "task_context": task.task_context,
+                "max_attempts": task.retry.max_attempts,
                 "work_mode": task.work_mode,
                 "complexity": task.complexity.value,
                 "profile": task.profile.value if task.profile is not None else None,
@@ -696,6 +699,7 @@ class _Compiler:
                 "attempt_number": 1,
                 "candidate_id": candidate_id,
                 "execution_id": f"exec-{verifier_id}-1",
+                "max_attempts": task.retry.max_attempts,
                 "verifier_agent": task.verifier_agent or self._routine.verifier_agent,
                 "rubric": [item.model_dump(mode="json") for item in task.verifier.rubric],
                 "submission_template": task.verifier.submission_template.model_dump(mode="json"),
@@ -745,6 +749,7 @@ class _Compiler:
         self,
         items: list[AutoVerifyItemConfig],
         tail_lines: int,
+        max_attempts: int,
         worker_id: str,
         task_region_id: str,
         candidate_id: str,
@@ -764,6 +769,7 @@ class _Compiler:
                     "attempt_number": 1,
                     "candidate_id": candidate_id,
                     "execution_id": f"exec-{check_id}-1",
+                    "max_attempts": max_attempts,
                     "check_index": index,
                     "command_definition": {
                         "id": item.id,
