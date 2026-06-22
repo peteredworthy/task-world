@@ -537,6 +537,7 @@ class RecordingExecutor(GraphDispatchExecutor):
         self.joins: list[GraphDispatchContext] = []
         self.final_gates: list[GraphDispatchContext] = []
         self.graph_patches: list[tuple[GraphDispatchContext, dict[str, Any]]] = []
+        self.heartbeats: list[GraphDispatchContext] = []
         self.failures: list[str] = []
         self.graph_patch_feedback = graph_patch_feedback
         self.dispatch_context: GraphDispatchContext | None = None
@@ -548,6 +549,9 @@ class RecordingExecutor(GraphDispatchExecutor):
 
     async def _acknowledge_start(self, context: GraphDispatchContext) -> None:
         self.started.append(context)
+
+    async def _record_start_heartbeat(self, context: GraphDispatchContext) -> None:
+        self.heartbeats.append(context)
 
     async def _submit_callback(
         self,

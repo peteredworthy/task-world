@@ -586,6 +586,8 @@ async def cancel_run(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
+    session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
+    graph_store: Annotated[Any, Depends(get_graph_store)],
 ) -> RunResponse:
     """Cancel a run (ACTIVE/PAUSED -> FAILED).
 
@@ -594,6 +596,16 @@ async def cancel_run(
     run = await service.get_run(run_id)
     if run.status == RunStatus.STOPPING:
         raise HTTPException(status_code=409, detail="Cannot cancel a run in STOPPING state")
+    if getattr(run, "execution_mode", "legacy") == "graph":
+        from orchestrator.workflow.graph_driver import apply_graph_cancel_until_terminal
+
+        run = await service.cancel_run(run_id)
+        await apply_graph_cancel_until_terminal(session_factory, run_id, reason="api_cancel")
+        await executor.cancel_run(run_id)
+        await _cancel_active_child_executors(run_id, service, executor)
+        graph_position = await graph_store.current_position(run_id)
+        return _run_to_response(run, is_graph_backed=graph_position > 0)
+
     # Cancel any running agent first
     await executor.cancel_run(run_id)
     await _cancel_active_child_executors(run_id, service, executor)

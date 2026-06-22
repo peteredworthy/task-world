@@ -501,6 +501,7 @@ _COMMON_EXEC_INPUTS = (
     _port("root_snapshot", "routine_snapshot", schemas=("RoutineSnapshot",), required=False),
     _port("prior_step_completion", "completion", schemas=("NodeCompletion",), required=False),
     _port("approval", "decision_record", schemas=("ApprovalDecision",), required=False),
+    _port("authority", "authority_decision", schemas=("AuthorityDecision",), required=False),
     _port("file_state", "file_state", schemas=("FileStateRecord",), required=False),
 )
 

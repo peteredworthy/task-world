@@ -292,6 +292,52 @@ async def test_append_creates_and_updates_node_detail_summaries(
 
 
 @pytest.mark.asyncio
+async def test_check_node_detail_summary_derives_command_precondition(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "node-detail-check-precondition"
+    node_id = "check-1"
+    events = [
+        _event(
+            "evt-check",
+            run_id,
+            "node_created",
+            {
+                "node_id": node_id,
+                "kind": "check",
+                "role": "auto_verify",
+                "state": "planned",
+                "task_region_id": "task-1",
+                "command_definition": {
+                    "id": "unit-check",
+                    "cmd": "uv run python -c 'print(42)'",
+                    "must": True,
+                },
+                "authority": {
+                    "allowed_actions": ["submit_records"],
+                    "resource_claims": [{"mode": "read", "scope": "repo", "paths": ["."]}],
+                },
+            },
+        )
+    ]
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, events)
+
+    async with session_factory() as session:
+        check = await _materialized_response(session, run_id, node_id)
+
+    assert check["allowed_actions"] == ["submit_records"]
+    assert check["resource_claims"] == [{"mode": "read", "scope": "repo", "paths": ["."]}]
+    assert check["command_definition"] == {
+        "id": "unit-check",
+        "cmd": "uv run python -c 'print(42)'",
+        "must": True,
+    }
+    assert check["preconditions"] == ["has_command_definition"]
+
+
+@pytest.mark.asyncio
 async def test_node_detail_summary_accumulates_bind_all_input_ports(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:

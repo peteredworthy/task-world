@@ -367,14 +367,28 @@ def build_dynamic_tool_specs(
     }
     request_gate_spec: dict[str, Any] = {
         "name": "request_gate",
-        "description": "Request a gate decision for the current graph node.",
+        "description": "Request a human gate or authority decision for the current graph node.",
         "inputSchema": {
             "type": "object",
             "required": ["patch_id", "base_graph_position", "node_id"],
             "properties": {
                 **macro_patch_properties,
                 "node_id": {"type": "string"},
+                "kind": {
+                    "type": "string",
+                    "enum": ["human_gate", "authority_request"],
+                    "description": "Defaults to human_gate. Use authority_request for authority grants.",
+                },
                 "reason": {"type": "string"},
+                "requested_authority": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 1,
+                    "description": "Required when kind is authority_request.",
+                },
+                "target_node_id": {"type": "string"},
+                "target_region_id": {"type": "string"},
+                "expires_at": {"type": "string"},
             },
             "additionalProperties": False,
         },

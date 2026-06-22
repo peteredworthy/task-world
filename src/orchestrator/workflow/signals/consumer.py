@@ -508,6 +508,17 @@ class SignalConsumer:
             del self._active_workflows[run_id]
             logger.info("SignalConsumer: CANCEL for %s with active workflow — removed", run_id)
 
+        current_run = await service.get_run(run_id)
+        if getattr(current_run, "execution_mode", "legacy") == "graph":
+            from orchestrator.workflow.graph_driver import apply_graph_cancel_until_terminal
+
+            self._active_graph_runs.discard(run_id)
+            await apply_graph_cancel_until_terminal(
+                self._session_factory,
+                run_id,
+                reason=reason,
+            )
+
         await service.apply_cancel_run(run_id, reason=reason)
         logger.info("SignalConsumer: CANCEL applied for %s", run_id)
 

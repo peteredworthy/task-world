@@ -154,9 +154,9 @@
       every acceptance criterion in that row.
     </section>
     <section class="metric">
-      <strong>3</strong>
-      Main proof clusters remain: controls/readbacks, recovery/callbacks, and
-      mutation/scheduler edge cases.
+      <strong>4</strong>
+      Remaining proof clusters: final-gate/less-used readbacks, recovery
+      re-entry, callback tails, and mutation/scheduler edge cases.
     </section>
   </div>
 
@@ -177,6 +177,15 @@
     <code>waiting_resources</code> readback gaps, and incomplete node-detail
     control summaries.
   </p>
+  <p>
+    Later product probes closed several items that this plan originally listed
+    as open: pending gate and native authority-request decisions, live
+    <code>waiting_resources</code>, path-scoped non-conflicting writes,
+    heartbeat renewal, terminal cancellation, stale late-callback rejection,
+    concurrent start acknowledgement retry, check-node preconditions, topology
+    binding metadata, and failed-final-invariant blockers now all have
+    product-path proof in <code>status.md</code>.
+  </p>
 
   <h2>What Remains</h2>
   <table>
@@ -192,12 +201,13 @@
         <td>Control and readback depth</td>
         <td>FR-03, FR-06, FR-09, FR-10, FR-17</td>
         <td>
-          Node detail must show non-resource controls such as
-          <code>allowed_actions</code>, <code>preconditions</code>, and
-          <code>command_definition</code>; topology must expose binding policy
-          and bound positions; live scheduler readback must show
-          <code>waiting_resources</code>; packet/readback proof must cover every
-          canonical node kind used by the product path.
+          Product readbacks now show non-resource controls such as
+          <code>allowed_actions</code>, <code>preconditions</code>, concrete
+          <code>command_definition</code>, topology binding policy and bound
+          positions, and live <code>waiting_resources</code>. Remaining proof is
+          explicit <code>final_gate</code> completion-rule/detail semantics if a
+          product routine creates final-gate nodes, plus less-used node and
+          packet/readiness families.
         </td>
       </tr>
       <tr>
@@ -205,27 +215,32 @@
         <td>FR-12, FR-16</td>
         <td>
           Product recovery must exercise the stale-report guard without
-          duplicate-position or SQLite-lock failure. Heartbeat, cancellation,
-          artifact/output, and failure callback paths still need dogfood proof.
+          duplicate-position or SQLite-lock failure. Heartbeat, terminal
+          cancellation, and late stale-callback rejection are now product-proven;
+          artifact/output and failure callback paths still need dogfood proof.
         </td>
       </tr>
       <tr>
         <td>Mutation and scheduler edge cases</td>
         <td>FR-07, FR-08, FR-10, FR-11, FR-13, FR-15, FR-18</td>
         <td>
-          Product probes still need to prove unsafe patch rejection, authority
-          gates, hidden-command scrubbing, active-node safety, deterministic
-          fairness across multiple ready nodes, failed-final-invariant blocking,
-          path-scoped non-conflicting write claims, and explicit cleanup work.
+          Product probes still need to prove hidden-command scrubbing,
+          resource/active-node safety, authority denial/revocation, broader
+          deterministic fairness across multiple ready nodes, fan-out/join/
+          optional-edge/supersede topology, and explicit cleanup work. Authority
+          grant, failed-final-invariant blocking, and path-scoped
+          non-conflicting write claims are product-proven.
         </td>
       </tr>
       <tr>
         <td>Completion semantics</td>
         <td>FR-04, FR-05, FR-14, FR-18</td>
         <td>
-          Decide and prove whether check-gated dynamic feature runs should emit
-          separate <code>completion_decision</code> records, or narrow those
-          rows with a documented scope decision.
+          The scope decision is now documented: check-gated dynamic-feature runs
+          do not require separate <code>completion_decision</code> records.
+          Explicit <code>final_gate</code> and lifecycle completion-decision
+          records remain product-unproven only for routines that create or call
+          those paths.
         </td>
       </tr>
     </tbody>
@@ -276,8 +291,8 @@
       </tr>
       <tr>
         <td>No durable transient-state capture</td>
-        <td>Resource conflict behavior was visible in events but missed by scheduler readback at the live moment.</td>
-        <td>Add pause/checkpoint support or stop-after-position probes for scheduler states.</td>
+        <td>Several transient states were initially visible only in events; live resource and gate states have since been captured.</td>
+        <td>Keep adding bounded product probes for transient states that remain open, especially recovery and invalid mutation windows.</td>
       </tr>
       <tr>
         <td>Restart races treated as unit recovery only</td>
@@ -286,13 +301,13 @@
       </tr>
       <tr>
         <td>Incomplete callback matrix</td>
-        <td>Submit, grade, and patch were exercised, but heartbeat, cancellation, artifact/output, and failure callbacks were not.</td>
-        <td>Create tiny callback-specific dogfood runs with minimal topology and no broad feature work.</td>
+        <td>Submit, grade, patch, heartbeat, cancellation, and stale late-callback rejection are exercised; artifact/output and failure callbacks are not.</td>
+        <td>Create tiny callback-specific dogfood runs for artifact/output and failure paths with minimal topology and no broad feature work.</td>
       </tr>
       <tr>
         <td>Stale fixture shape</td>
-        <td>Old summary rows lacked newer control fields, so old DB readbacks could not prove new node-detail behavior.</td>
-        <td>Use old state for replay/readback regressions, but create fresh narrow runs for newly added readback fields.</td>
+        <td>Old summary rows lacked newer control fields; fresh probes now prove the current node-detail fields, but older state still cannot prove newly added behavior.</td>
+        <td>Use old state for replay/readback regressions, and create fresh narrow runs only for newly added fields or node families.</td>
       </tr>
     </tbody>
   </table>
@@ -312,12 +327,11 @@
     <section class="card">
       <h3>2. Live Resource Conflict Checkpoint</h3>
       <p>
-        Reuse the two-writer routine shape from <code>3c5bfc81...</code>, but
-        stop after the first write lease and second deferral. Query
-        <code>/graph/scheduler</code>, node detail, and bounded events before
-        allowing the first worker to release.
+        This is now product-proven by <code>c4902f8e...</code> and extended by
+        the path-scoped run <code>7bd58637...</code>. Keep the scenario as a
+        cheap regression/state-pack shape rather than a primary remaining proof.
       </p>
-      <p><span class="label proof">Covers</span> FR-10, FR-15, FR-17 product proof for <code>waiting_resources</code>.</p>
+      <p><span class="label proof">Covers</span> FR-10, FR-15, FR-17 regression proof for <code>waiting_resources</code>.</p>
     </section>
 
     <section class="card">
@@ -333,12 +347,12 @@
     <section class="card">
       <h3>4. Decision and Authority Gate</h3>
       <p>
-        Seed a narrow graph with a <code>human_gate</code> and
-        <code>authority_request</code>. Query pending decision readbacks,
-        grant/deny authority, and prove downstream readiness changes only after
-        the accepted decision.
+        Human-gate approval and native authority grant are product-proven by
+        <code>5263df20...</code> and <code>3a9af7c4...</code>. Remaining
+        decision work should focus on authority denial/revocation and invalid
+        target rejection through product paths.
       </p>
-      <p><span class="label partial">Covers</span> FR-02, FR-05, FR-08, FR-10, FR-16, FR-17.</p>
+      <p><span class="label partial">Covers</span> FR-08, FR-10, FR-16, FR-17.</p>
     </section>
 
     <section class="card">
@@ -355,9 +369,9 @@
     <section class="card">
       <h3>6. Failed Final Invariant</h3>
       <p>
-        Use a tiny run where worker/verifier evidence exists but the final
-        deterministic check fails. Prove the run stays non-completed with
-        explicit final blockers, then repair the evidence and prove completion.
+        This is now product-proven by <code>f3501792...</code>. Keep it as a
+        regression/state-pack scenario; future product proof should use a
+        harder-than-smoke blocked-progress case if FR-13/FR-18 need promotion.
       </p>
       <p><span class="label partial">Covers</span> FR-01, FR-13, FR-14, FR-18.</p>
     </section>
@@ -365,8 +379,9 @@
     <section class="card">
       <h3>7. Callback Lifecycle Matrix</h3>
       <p>
-        Create callback-specific runs for heartbeat, artifact/output, failure,
-        and cancellation. Keep topology small enough that the scenario tests the
+        Heartbeat, terminal cancellation, and stale late-callback rejection are
+        product-proven. Create callback-specific runs for artifact/output and
+        failure paths. Keep topology small enough that the scenario tests the
         callback contract rather than a full dynamic feature.
       </p>
       <p><span class="label partial">Covers</span> FR-12, FR-16.</p>
@@ -385,9 +400,10 @@
     <section class="card">
       <h3>9. File Cleanup and Scoped Writes</h3>
       <p>
-        Run one path-scoped non-conflicting write scenario and one revoked write
-        lease scenario. Prove cleanup is visible as graph work and file-state
-        evidence.
+        Path-scoped non-conflicting writes are product-proven by
+        <code>7bd58637...</code>. Remaining work is one revoked/failed write
+        lease scenario that proves cleanup is visible as graph work and
+        file-state evidence.
       </p>
       <p><span class="label partial">Covers</span> FR-15 and related recovery safety.</p>
     </section>

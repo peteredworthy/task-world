@@ -488,6 +488,26 @@ def _maybe_release_lease(
     ]
 
 
+def _release_active_node_leases(
+    projection: GraphProjection,
+    node_id: str,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    output: list[EventEnvelope] = []
+    for lease_id, lease in sorted(projection["leases"].items()):
+        if lease.get("node_id") != node_id or lease.get("state") not in {"active", "suspended"}:
+            continue
+        payload: dict[str, Any] = {
+            "node_id": node_id,
+            "lease_id": lease_id,
+        }
+        generation = lease.get("generation")
+        if isinstance(generation, int) and not isinstance(generation, bool):
+            payload["generation"] = generation
+        output.append(make_event("lease_released", payload))
+    return output
+
+
 def _apply_seed_compiled_events(
     projection: GraphProjection,
     payload: dict[str, Any],
@@ -1861,6 +1881,7 @@ def _record_matches_selector(
         value
         for value in (
             record_payload.get("record_kind"),
+            record_payload.get("record_type"),
             record_payload.get("schema"),
             record_payload.get("port"),
             record_payload.get("milestone_kind"),
@@ -1883,6 +1904,15 @@ def _apply_patch_command(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     actor_role = str(payload.get("actor_role", "planner"))
+    run_state = projection["run_state"]
+    if run_state is not None and run_state != "active":
+        return [
+            _command_rejected(
+                make_event,
+                "submit_patch",
+                f"run_not_active:{run_state or 'unknown'}",
+            )
+        ]
     try:
         payload = expand_patch_macros(payload)
         patch = PatchEnvelope(
@@ -2746,6 +2776,16 @@ def _apply_record_decision(
     if not _node_exists(projection, node_id):
         return [_command_rejected(make_event, "record_decision", f"unknown target node: {node_id}")]
 
+    node_kind = projection["node_kinds"].get(node_id)
+    if decision_type == "authority" and node_kind != "authority_request":
+        return [
+            _command_rejected(
+                make_event,
+                "record_decision",
+                "authority decisions require authority_request target",
+            )
+        ]
+
     node_state = projection["node_states"].get(node_id)
     if node_state in {"completed", "failed", "cancelled", "retired"}:
         return [
@@ -2784,6 +2824,17 @@ def _apply_record_decision(
     output = [make_event(event_type, event_payload)]
     if decision_record is not None:
         output.append(make_event("output_record_accepted", decision_record))
+        output.extend(
+            _input_bound_events_for_record(
+                projection,
+                node_id,
+                str(decision_record["port"]),
+                str(decision_record["record_id"]),
+                decision_record,
+                make_event,
+                _record_selector_aliases(decision_record),
+            )
+        )
     output.append(
         make_event(
             "node_state_changed",
@@ -2794,6 +2845,7 @@ def _apply_record_decision(
             },
         )
     )
+    output.extend(_release_active_node_leases(projection, node_id, make_event))
     return output
 
 
@@ -3441,7 +3493,11 @@ def _request_payload_object(
     if not isinstance(raw_request, dict):
         msg = f"{key} must be an object"
         raise ValueError(msg)
-    return dict(cast(dict[str, Any], raw_request))
+    request = dict(cast(dict[str, Any], raw_request))
+    value = request.get("value")
+    if isinstance(value, dict):
+        return dict(cast(dict[str, Any], value))
+    return request
 
 
 def _request_payload_string(node_payload: dict[str, Any], key: str) -> str | None:

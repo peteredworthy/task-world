@@ -58,6 +58,18 @@ def test_agent_contracts_allow_runtime_file_state_output() -> None:
         assert "file_state" in summary["output_ports"]
 
 
+def test_worker_contract_accepts_authority_decision_input() -> None:
+    summary = node_contract_summary("worker", "builder")
+
+    assert summary is not None
+    assert summary["input_ports"]["authority"] == {
+        "record_types": ["authority_decision"],
+        "schemas": ["AuthorityDecision"],
+        "required": False,
+        "cardinality": "one",
+    }
+
+
 # --- canonical op fragments ------------------------------------------------- #
 def _worker(node_id: str, region: str, candidate: str = "cand") -> dict[str, Any]:
     return {
@@ -315,6 +327,43 @@ def test_patch_contract(
     if reason_substring is not None:
         assert result.rejection_reason is not None
         assert reason_substring in result.rejection_reason
+
+
+def test_authority_request_edge_to_worker_authority_port_is_valid() -> None:
+    result = validate_patch(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "authority-docs-write",
+                        "kind": "authority_request",
+                        "state": "planned",
+                        "authority_request_record": {
+                            "requested_authority": ["repo:docs/**:write"],
+                            "target_node_id": "worker-docs-authorized",
+                            "reason": "Worker needs docs write access.",
+                        },
+                    },
+                },
+                _worker("worker-docs-authorized", "authority-product-proof"),
+                _edge(
+                    "edge-authority-docs-write-to-worker-docs-authorized",
+                    "authority-docs-write",
+                    "authority_decision",
+                    "worker-docs-authorized",
+                    "authority",
+                    ["authority_decision"],
+                ),
+            ]
+        ),
+        current_position=0,
+        events_since_base=[],
+        projection=initial_projection(),
+        actor_role="planner",
+    )
+
+    assert result.accepted is True, result.rejection_reason
 
 
 def test_gap_planner_no_op_rejected_when_classified_gap_successor_unsatisfied() -> None:

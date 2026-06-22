@@ -32,6 +32,7 @@ from orchestrator.graph_runtime import (
     GraphDispatchExecutor,
     GraphEventStore,
     OutboxDispatcher,
+    StaleProjectionError,
     build_graph_runtime,
     recover,
     reconcile_runtime,
@@ -72,6 +73,55 @@ class UuidIdGenerator:
 
     def next_id(self, prefix: str = "") -> str:
         return f"{prefix}-{uuid4().hex}"
+
+
+async def apply_graph_cancel_until_terminal(
+    session_factory: async_sessionmaker[AsyncSession],
+    run_id: str,
+    *,
+    reason: str | None = None,
+) -> None:
+    """Durably cancel graph runtime state before external callbacks can win.
+
+    Run-row lifecycle still flows through the signal queue. This helper only
+    records graph-kernel cancellation facts, including lease revocation and
+    terminal graph state, so active runner callbacks are rejected consistently.
+    """
+    controller = GraphController(
+        session_factory,
+        SystemClock(),
+        UuidIdGenerator(),
+        auto_dispatch=False,
+    )
+    payload: dict[str, object] = {"reason": reason or "signal_cancel"}
+
+    for _ in range(4):
+        projection = await controller.read_projection(run_id)
+        run_state = projection["run_state"]
+        if run_state is None or run_state in {"cancelled", "completed", "failed"}:
+            return
+
+        position = await controller.current_position(run_id)
+        if position == 0:
+            return
+        try:
+            result = await controller.handle_command(run_id, position, "cancel", payload)
+        except StaleProjectionError:
+            continue
+
+        if any(
+            event.event_type == "run_lifecycle_changed"
+            and event.payload.get("to_state") == "cancelled"
+            for event in result.events
+        ):
+            return
+        if any(
+            event.event_type == "command_rejected" and event.payload.get("command_type") == "cancel"
+            for event in result.events
+        ):
+            return
+
+    logger.warning("Graph cancel for %s stayed stale after retries", run_id)
 
 
 @dataclass(frozen=True)

@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from orchestrator.db import Base
 from orchestrator.db import EventV2Model
 from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.workflow import (
     RunWorkflow,
     SignalConsumer,
@@ -27,6 +29,7 @@ class ServiceRun:
     agent_runner_type: Any = None
     agent_runner_config: dict[str, Any] = field(default_factory=dict)
     status: str = "active"
+    execution_mode: str = "legacy"
 
 
 class RecordingWorkflowService:
@@ -219,6 +222,24 @@ async def _get_processed_payloads(session_factory: async_sessionmaker, run_id: s
     return [json.loads(row) for row in rows]
 
 
+def _graph_event(
+    run_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    position: int = -1,
+) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=f"{event_type}-{position}",
+        run_id=run_id,
+        position=position,
+        event_type=event_type,
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=FakeClock().now(),
+        payload=payload,
+    )
+
+
 @pytest.mark.asyncio
 async def test_fifo_ordering_per_run_id(session_factory) -> None:
     service = RecordingWorkflowService()
@@ -230,7 +251,11 @@ async def test_fifo_ordering_per_run_id(session_factory) -> None:
 
     await consumer._process_run("run-1")
 
-    assert [name for name, _, _ in service.calls] == ["apply_pause_run", "apply_cancel_run"]
+    assert [name for name, _, _ in service.calls] == [
+        "apply_pause_run",
+        "get_run",
+        "apply_cancel_run",
+    ]
     processed = await _get_processed_positions(session_factory, "run-1")
     assert pos_pause in processed
     assert pos_cancel in processed
@@ -406,6 +431,81 @@ async def test_pause_and_cancel_remove_active_workflow(session_factory) -> None:
 
     assert "run-2" not in consumer._active_workflows
     assert _calls(service, "apply_cancel_run") == [(("run-2",), {"reason": "user_cancel"})]
+
+
+@pytest.mark.asyncio
+async def test_cancel_graph_run_appends_graph_cancel_before_run_row_failure(
+    session_factory,
+) -> None:
+    run_id = "graph-cancel-run"
+    service = RecordingWorkflowService()
+    service.run.execution_mode = "graph"
+    consumer = _consumer(session_factory, service)
+    consumer._active_graph_runs.add(run_id)
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _graph_event(run_id, "run_lifecycle_changed", {"to_state": "active"}),
+                _graph_event(
+                    run_id,
+                    "node_created",
+                    {"node_id": "worker-1", "kind": "worker", "state": "running"},
+                ),
+                _graph_event(
+                    run_id,
+                    "lease_granted",
+                    {
+                        "node_id": "worker-1",
+                        "lease_id": "lease-1",
+                        "generation": 1,
+                        "execution_id": "exec-1",
+                    },
+                ),
+            ],
+        )
+        await session.commit()
+    pos = await _insert_signal_event(
+        session_factory,
+        run_id,
+        WorkflowSignal.CANCEL,
+        {"reason": "user_cancel"},
+    )
+
+    await consumer._process_run(run_id)
+
+    assert run_id not in consumer._active_graph_runs
+    assert _calls(service, "apply_cancel_run") == [
+        (("graph-cancel-run",), {"reason": "user_cancel"})
+    ]
+    async with session_factory() as session:
+        events = await GraphEventStore(session).read_run(run_id)
+    event_types = [event.event_type for event in events]
+    assert event_types[-4:] == [
+        "run_lifecycle_changed",
+        "lease_revoked",
+        "node_state_changed",
+        "run_lifecycle_changed",
+    ]
+    assert events[-4].payload["to_state"] == "cancelling"
+    assert events[-3].payload == {
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "trigger": "cancel_command_accepted",
+        "reason": "run_cancelled",
+        "generation": 1,
+        "execution_id": "exec-1",
+    }
+    assert events[-2].payload == {
+        "node_id": "worker-1",
+        "new_state": "cancelled",
+        "trigger": "run_cancelled",
+        "reason": "run_cancelled",
+    }
+    assert events[-1].payload["to_state"] == "cancelled"
+    processed = await _get_processed_positions(session_factory, run_id)
+    assert pos in processed
 
 
 @pytest.mark.asyncio

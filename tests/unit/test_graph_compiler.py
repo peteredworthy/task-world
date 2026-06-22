@@ -3,6 +3,7 @@
 from typing import Any
 
 from orchestrator.config.models import (
+    ArtifactSpec,
     AutoVerifyConfig,
     AutoVerifyItemConfig,
     ContextSource,
@@ -99,6 +100,83 @@ def test_task_maps_to_task_region_projection_and_worker_node() -> None:
     assert projection["node_task_regions"]["worker-s-01-t-01"] == "S-01/T-01"
     assert projection["node_attempts"]["worker-s-01-t-01"] == 1
     assert projection["node_candidates"]["worker-s-01-t-01"] == "candidate-s-01-t-01-1"
+
+
+def test_worker_write_claims_are_scoped_to_declared_artifacts() -> None:
+    routine = _routine_with_task(
+        TaskConfig(
+            id="T-01",
+            title="Task",
+            artifacts=[
+                ArtifactSpec(path="docs/out.md"),
+                ArtifactSpec(path="./tests/../tests/out.md"),
+                ArtifactSpec(path="/tmp/not-repo.md"),
+                ArtifactSpec(path="../outside.md"),
+            ],
+        )
+    )
+
+    events = _compile(routine)
+    worker = _node_event(events, "worker-s-01-t-01").payload
+
+    assert worker["authority"]["resource_claims"] == [
+        {"mode": "write", "scope": "repo", "paths": ["docs/out.md", "tests/out.md"]}
+    ]
+
+
+def test_same_step_artifact_scoped_workers_can_schedule_without_conflict() -> None:
+    routine = RoutineConfig(
+        id="path-scoped",
+        name="Path Scoped",
+        steps=[
+            StepConfig(
+                id="S-01",
+                title="Step",
+                tasks=[
+                    TaskConfig(
+                        id="DOCS",
+                        title="Docs",
+                        artifacts=[ArtifactSpec(path="docs/a.md")],
+                    ),
+                    TaskConfig(
+                        id="TESTS",
+                        title="Tests",
+                        artifacts=[ArtifactSpec(path="tests/a.txt")],
+                    ),
+                    TaskConfig(
+                        id="DOCS-OVERLAP",
+                        title="Docs overlap",
+                        artifacts=[ArtifactSpec(path="docs/a.md")],
+                    ),
+                ],
+            )
+        ],
+    )
+    active_events = _with_lifecycle_started(_compile(routine))
+
+    schedule_events = _apply(
+        active_events,
+        "schedule_tick",
+        {"run_id": "run-1", "max_grants": 10},
+    )
+
+    lease_grants = schedule_events_by_type(schedule_events, "lease_granted")
+    assert [event.payload["node_id"] for event in lease_grants] == [
+        "worker-s-01-docs",
+        "worker-s-01-tests",
+    ]
+    assert [event.payload["resource_claims"][0]["paths"] for event in lease_grants] == [
+        ["docs/a.md"],
+        ["tests/a.txt"],
+    ]
+    assert any(
+        event.payload
+        == {
+            "node_id": "worker-s-01-docs-overlap",
+            "reason": "resource_conflict:write:write",
+        }
+        for event in schedule_events_by_type(schedule_events, "node_deferred")
+    )
 
 
 def test_requirements_map_to_requirement_nodes_and_bound_edges_to_worker_and_verifier() -> None:

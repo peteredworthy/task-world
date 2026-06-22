@@ -623,6 +623,13 @@ def test_planner_macros_are_exposed_with_typed_schemas() -> None:
     assert join_schema["properties"]["source_ids"]["type"] == "array"
     assert join_schema["properties"]["source_ids"]["items"]["type"] == "string"
 
+    request_gate = next(s for s in specs if s["name"] == "request_gate")
+    gate_schema = request_gate["inputSchema"]
+    assert gate_schema["additionalProperties"] is False
+    assert gate_schema["properties"]["kind"]["enum"] == ["human_gate", "authority_request"]
+    assert gate_schema["properties"]["requested_authority"]["minItems"] == 1
+    assert gate_schema["properties"]["target_node_id"]["type"] == "string"
+
 
 def test_gap_planner_macros_are_exposed_with_typed_schemas() -> None:
     specs = build_dynamic_tool_specs(

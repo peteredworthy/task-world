@@ -2882,6 +2882,40 @@ def test_patch_accept_emits_graph_events() -> None:
     assert output[0].payload["base_graph_position"] == -1
 
 
+def test_patch_rejected_after_run_cancellation() -> None:
+    events = [
+        _event(
+            "run_lifecycle_changed",
+            {"from_state": "active", "to_state": "cancelled", "trigger": "cancel_command_accepted"},
+            1,
+        )
+    ]
+
+    output = _apply(
+        events,
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-after-cancel",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": 1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {"node_id": "artifact-1", "kind": "artifact", "state": "planned"},
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload == {
+        "command_type": "submit_patch",
+        "reason": "run_not_active:cancelled",
+    }
+
+
 def test_patch_accept_adds_default_worker_write_authority() -> None:
     output = _apply(
         [],
@@ -3029,6 +3063,111 @@ def test_patch_accept_emits_authority_request_record_and_binding() -> None:
     }
     assert output[3].payload["to_port"] == "authority_request_record"
     assert output[3].payload["record_ids"] == ["authority-request-gate-authority"]
+
+
+def test_patch_accepts_authority_request_typed_record_envelope() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-authority-request-envelope",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "gate-authority",
+                        "kind": "authority_request",
+                        "state": "planned",
+                        "authority_request_record": {
+                            "record_type": "authority_request_record",
+                            "schema": "AuthorityRequest",
+                            "value": {
+                                "requested_authority": ["repo:docs/**:write"],
+                                "target_node_id": "worker-docs",
+                                "reason": "Worker needs docs write access.",
+                            },
+                        },
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "graph_patch_accepted",
+        "node_created",
+        "output_record_accepted",
+        "input_bound",
+    ]
+    assert output[2].payload["value"] == {
+        "requested_authority": ["repo:docs/**:write"],
+        "target_node_id": "worker-docs",
+        "reason": "Worker needs docs write access.",
+    }
+
+
+def test_patch_accepts_authority_request_edge_to_worker_authority_input() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-authority-gated-worker",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "authority-docs-write",
+                        "kind": "authority_request",
+                        "state": "planned",
+                        "authority_request_record": {
+                            "requested_authority": ["repo:docs/**:write"],
+                            "target_node_id": "worker-docs-authorized",
+                            "reason": "Worker needs docs write access.",
+                        },
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-docs-authorized",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "task_region_id": "authority-product-proof",
+                        "candidate_id": "candidate-docs-authorized",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-authority-docs-write-to-worker-docs-authorized",
+                    "from_node_id": "authority-docs-write",
+                    "from_port": "authority_decision",
+                    "to_node_id": "worker-docs-authorized",
+                    "to_port": "authority",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["authority_decision"]},
+                },
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "graph_patch_accepted",
+        "node_created",
+        "output_record_accepted",
+        "input_bound",
+        "node_created",
+        "edge_created",
+    ]
+    assert output[-1].payload["to_port"] == "authority"
 
 
 def test_patch_rejects_malformed_request_gate_record() -> None:
@@ -3381,6 +3520,15 @@ def test_schedule_tick_defers_missing_required_input() -> None:
                 "required": True,
             },
             3,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "lease_id": "lease-authority-1",
+                "node_id": "authority-1",
+                "generation": 1,
+            },
+            4,
         ),
     ]
 
@@ -4320,6 +4468,109 @@ def test_record_decision_accepts_authority_request_with_typed_record() -> None:
         },
     }
     assert output[2].payload["new_state"] == "completed"
+
+
+def test_record_decision_binds_authority_decision_to_worker_input() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "authority-1",
+                "kind": "authority_request",
+                "state": "running",
+            },
+            1,
+        ),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "planned"}, 2),
+        _event(
+            "lease_granted",
+            {
+                "lease_id": "lease-authority-1",
+                "node_id": "authority-1",
+                "generation": 1,
+            },
+            3,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-authority",
+                "from_node_id": "authority-1",
+                "from_port": "authority_decision",
+                "to_node_id": "worker-1",
+                "to_port": "authority",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["authority_decision"]},
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "record_decision",
+        {
+            "run_id": "run-1",
+            "decision_type": "authority",
+            "node_id": "authority-1",
+            "decision": "granted",
+            "decider": {"kind": "human", "id": "alice"},
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "authority_decision_recorded",
+        "output_record_accepted",
+        "input_bound",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert output[2].payload == {
+        "edge_id": "edge-authority",
+        "to_node_id": "worker-1",
+        "to_port": "authority",
+        "record_ids": ["authority_decision-authority-1"],
+        "bound_at_position": 0,
+    }
+    assert output[4].payload == {
+        "node_id": "authority-1",
+        "lease_id": "lease-authority-1",
+        "generation": 1,
+    }
+
+
+def test_record_decision_rejects_authority_for_non_authority_target() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "gate-1",
+                "kind": "gate",
+                "state": "blocked",
+            },
+            1,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "record_decision",
+        {
+            "run_id": "run-1",
+            "decision_type": "authority",
+            "node_id": "gate-1",
+            "decision": "grant",
+            "decider": {"kind": "human", "id": "alice"},
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload == {
+        "command_type": "record_decision",
+        "reason": "authority decisions require authority_request target",
+    }
 
 
 def test_record_decision_rejects_missing_target() -> None:

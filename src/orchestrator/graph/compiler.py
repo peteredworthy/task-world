@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import posixpath
 import re
 from typing import Any
 
@@ -479,7 +480,13 @@ class _Compiler:
                         "request_clarification",
                         "raise_appeal",
                     ],
-                    "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+                    "resource_claims": [
+                        {
+                            "mode": "write",
+                            "scope": "repo",
+                            "paths": _worker_write_paths(task),
+                        }
+                    ],
                 },
                 "inputs": [
                     {
@@ -1010,6 +1017,24 @@ def _dynamic_feature_inputs(
     selected.setdefault("patch_budget", 8)
     selected.setdefault("gap_policy_profile", "standard")
     return selected
+
+
+def _worker_write_paths(task: TaskConfig) -> list[str]:
+    paths: list[str] = []
+    for artifact in task.artifacts:
+        normalized = _repo_relative_path(artifact.path)
+        if normalized is not None and normalized not in paths:
+            paths.append(normalized)
+    return paths or ["."]
+
+
+def _repo_relative_path(path: str) -> str | None:
+    if not path or path.startswith("/"):
+        return None
+    normalized = posixpath.normpath(path)
+    if normalized == "." or normalized == ".." or normalized.startswith("../"):
+        return None
+    return normalized
 
 
 def _json_safe(value: Any) -> Any:

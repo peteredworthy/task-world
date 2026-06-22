@@ -200,6 +200,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
     async def _run_agent(self, context: GraphDispatchContext, runner: AgentRunner) -> None:
         try:
             await self._acknowledge_start(context)
+            await self._record_start_heartbeat(context)
             grades: list[tuple[str, str, str | None]] = []
             graph_patch_submitted = False
             graph_patch_accepted = False
@@ -365,7 +366,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         )
 
     async def _acknowledge_start(self, context: GraphDispatchContext) -> None:
-        await self._controller.handle_command(
+        await self._handle_command_retry_stale(
             context.run_id,
             await self._current_position(context.run_id),
             "acknowledge_start",
@@ -376,6 +377,31 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "execution_id": context.execution_id,
             },
         )
+
+    async def _record_start_heartbeat(self, context: GraphDispatchContext) -> None:
+        result = await self._handle_command_retry_stale(
+            context.run_id,
+            await self._current_position(context.run_id),
+            "record_heartbeat",
+            {
+                "node_id": context.node_id,
+                "lease_id": context.lease_id,
+                "generation": context.lease_generation,
+                "ttl_seconds": 300,
+            },
+        )
+        rejection = next(
+            (
+                event
+                for event in result.events
+                if event.event_type == "command_rejected"
+                and event.payload.get("command_type") == "record_heartbeat"
+            ),
+            None,
+        )
+        if rejection is not None:
+            reason = rejection.payload.get("reason") or "record_heartbeat rejected"
+            raise ValueError(str(reason))
 
     async def _submit_callback(
         self,

@@ -293,6 +293,35 @@ def _routine() -> RoutineConfig:
     )
 
 
+def _parallel_artifact_routine() -> RoutineConfig:
+    return RoutineConfig.model_validate(
+        {
+            "id": "graph-parallel-artifacts",
+            "name": "Graph Parallel Artifacts",
+            "steps": [
+                {
+                    "id": "step-1",
+                    "title": "Step 1",
+                    "tasks": [
+                        {
+                            "id": "docs",
+                            "title": "Docs artifact",
+                            "task_context": "Write docs/out.txt only.",
+                            "artifacts": [{"path": "docs/out.txt"}],
+                        },
+                        {
+                            "id": "tests",
+                            "title": "Tests artifact",
+                            "task_context": "Write tests/out.txt only.",
+                            "artifacts": [{"path": "tests/out.txt"}],
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+
 def _init_repo(path: Path) -> None:
     path.mkdir()
     (path / "README.md").write_text("# tmp repo\n")
@@ -341,8 +370,9 @@ async def _seed_active_run(
     run_id: str,
     clock: FixedClock,
     ids: SequentialIds,
+    routine: RoutineConfig | None = None,
 ) -> GraphController:
-    await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    await seed_run(session_factory, routine or _routine(), run_id=run_id, clock=clock, id_gen=ids)
     controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
     position = await controller.current_position(run_id)
     accepted = await controller.handle_command(run_id, position, "accept_run")
@@ -393,6 +423,51 @@ async def test_graph_runner_builder_verifier_pass_accepts_task(
     assert project_task_states(events) == {"step-1/task-1": "accepted"}
     residue_report = project_residue_report(events)
     assert residue_report["real-run-residue.txt"][0]["classification"] == "unknown_untracked"
+
+
+@pytest.mark.asyncio
+async def test_parallel_worker_start_acknowledgements_retry_stale_positions(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "repo-parallel-start"
+    _init_repo(repo)
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "graph-runner-parallel-start"
+    controller = await _seed_active_run(
+        session_factory,
+        run_id,
+        clock,
+        ids,
+        routine=_parallel_artifact_routine(),
+    )
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({"worker": SubmitAgent()}),
+        worktree_path=repo,
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+
+    await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "schedule_tick",
+        {"lease_seconds": 60, "max_grants": 2, "base_snapshot_id": "snapshot-parallel"},
+    )
+    await dispatcher.dispatch_pending()
+    await executor.wait_for_all()
+
+    events = await _read_events(session_factory, run_id)
+    lease_grants = [event for event in events if event.event_type == "lease_granted"]
+    assert [event.payload["node_id"] for event in lease_grants] == [
+        "worker-step-1-docs",
+        "worker-step-1-tests",
+    ]
+    assert not any(event.event_type == "agent_died" for event in events)
+    assert len([event for event in events if event.event_type == "callback_accepted"]) == 2
 
 
 @pytest.mark.asyncio
@@ -827,5 +902,12 @@ async def test_graph_dispatch_carries_projection_base_snapshot_id_to_callback(
     lease_granted = next(event for event in events if event.event_type == "lease_granted")
     assert lease_granted.payload["base_snapshot_id"] == "routine-snapshot-record"
     assert dispatch_payload["base_snapshot_id"] == "routine-snapshot-record"
+    heartbeat_recorded = next(event for event in events if event.event_type == "heartbeat_recorded")
+    assert heartbeat_recorded.payload["lease_id"] == dispatch_payload["lease_id"]
+    assert heartbeat_recorded.payload["node_id"] == dispatch_payload["node_id"]
+    assert heartbeat_recorded.payload["generation"] == dispatch_payload["generation"]
+    assert heartbeat_recorded.payload["execution_id"] == dispatch_payload["execution_id"]
+    lease_renewed = next(event for event in events if event.event_type == "lease_renewed")
+    assert lease_renewed.payload["lease_id"] == dispatch_payload["lease_id"]
     assert any(event.event_type == "callback_accepted" for event in events)
     assert not any(event.event_type == "callback_rejected_stale" for event in events)

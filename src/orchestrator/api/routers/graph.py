@@ -1,13 +1,16 @@
-"""Graph projection read-only API endpoints."""
+"""Graph projection API endpoints."""
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Literal, cast
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import Field
+from pydantic import Field, model_validator
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.api.deps import get_graph_store, get_workflow_service
+from orchestrator.api.deps import get_graph_store, get_session_factory, get_workflow_service
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import RunStatus
 from orchestrator.graph import (
@@ -28,6 +31,7 @@ from orchestrator.graph import (
     project_scheduler_view,
     project_task_states,
 )
+from orchestrator.graph_runtime import GraphController, StaleProjectionError
 from orchestrator.graph_runtime.store import (
     GraphEventStore,
     GraphEventSummary,
@@ -36,6 +40,16 @@ from orchestrator.graph_runtime.store import (
 from orchestrator.state import RunNotFoundError
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
+
+
+class _ApiGraphClock:
+    def now(self) -> datetime:
+        return datetime.now(timezone.utc)
+
+
+class _ApiGraphIdGenerator:
+    def next_id(self, prefix: str = "") -> str:
+        return f"{prefix}-{uuid4().hex}"
 
 
 class GraphEventResponse(ApiModel):
@@ -166,6 +180,43 @@ class DecisionViewResponse(ApiModel):
     pending_gates: list[PendingGateDecisionResponse]
     appeals: list[AppealDecisionResponse]
     review: ReviewReadinessResponse
+
+
+class RecordGraphDecisionRequest(ApiModel):
+    decision_type: Literal["approval", "authority", "oversight"]
+    node_id: str = Field(min_length=1, max_length=200)
+    decision: str = Field(min_length=1, max_length=64)
+    decider: dict[str, Any] | str
+    scope: dict[str, Any] | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+    record_id: str | None = Field(default=None, min_length=1, max_length=200)
+
+    @model_validator(mode="after")
+    def validate_decision_request(self) -> "RecordGraphDecisionRequest":
+        valid_by_type = {
+            "approval": {"approved", "rejected", "deferred", "defer"},
+            "authority": {"granted", "denied", "deferred", "grant", "deny", "defer"},
+            "oversight": {"accepted", "rejected", "invalid_test_accepted"},
+        }
+        valid = valid_by_type[self.decision_type]
+        if self.decision not in valid:
+            options = ", ".join(sorted(valid))
+            raise ValueError(f"decision for {self.decision_type} must be one of: {options}")
+        if isinstance(self.decider, str):
+            if not self.decider:
+                raise ValueError("decider must be a non-empty string or an actor object")
+            return self
+        if not isinstance(self.decider.get("kind"), str) or not self.decider["kind"]:
+            raise ValueError("decider actor object must include a non-empty kind")
+        return self
+
+
+class RecordGraphDecisionResponse(ApiModel):
+    run_id: str
+    graph_position: int
+    events: list[GraphEventResponse]
+    decision_view: DecisionViewResponse
 
 
 class SchedulerViewResponse(ApiModel):
@@ -1125,6 +1176,13 @@ def _node_detail_controls_from_summary(
         if isinstance(raw_command_definition, dict):
             command_definition = dict(cast(dict[str, Any], raw_command_definition))
 
+    if (
+        summary.kind == "check"
+        and command_definition is not None
+        and "has_command_definition" not in preconditions
+    ):
+        preconditions = [*preconditions, "has_command_definition"]
+
     if not resource_claims:
         for lease in summary.leases:
             raw_claims = lease.get("resource_claims")
@@ -1276,6 +1334,66 @@ async def get_graph_decision_view(
 ) -> DecisionViewResponse:
     events = await graph_store.read_run_light(run_id)
     return build_decision_view_response(run_id, events)
+
+
+@router.post(
+    "/{run_id}/graph/decisions",
+    response_model=RecordGraphDecisionResponse,
+    response_model_exclude_none=True,
+)
+async def record_graph_decision(
+    run_id: str,
+    request: RecordGraphDecisionRequest,
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+    graph_store: GraphEventStore = Depends(get_graph_store),
+) -> RecordGraphDecisionResponse:
+    current_position = await graph_store.current_position(run_id)
+    if current_position == 0:
+        raise HTTPException(status_code=404, detail="Graph not found for run")
+
+    controller = GraphController(
+        session_factory,
+        _ApiGraphClock(),
+        _ApiGraphIdGenerator(),
+        auto_dispatch=False,
+    )
+    try:
+        result = await controller.handle_command(
+            run_id,
+            current_position,
+            "record_decision",
+            request.model_dump(exclude_none=True),
+        )
+    except StaleProjectionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    rejected = [event.payload for event in result.events if event.event_type == "command_rejected"]
+    if rejected:
+        reason = rejected[-1].get("reason", "decision rejected")
+        raise HTTPException(status_code=409, detail=str(reason))
+
+    response_events = list(result.events)
+    events = await graph_store.read_run_light(run_id)
+    if project_run_state(events) == "active":
+        schedule_result = await controller.handle_command(
+            run_id,
+            result.projection_position,
+            "schedule_tick",
+            {
+                "lease_seconds": 300,
+                "max_grants": 0,
+                "base_snapshot_id": "routine-snapshot",
+            },
+        )
+        response_events.extend(schedule_result.events)
+        events = await graph_store.read_run_light(run_id)
+    await graph_store.commit_read_model_changes()
+    return RecordGraphDecisionResponse(
+        run_id=run_id,
+        graph_position=len(events),
+        events=[_event_to_response(event) for event in response_events],
+        decision_view=build_decision_view_response(run_id, events),
+    )
 
 
 @router.get("/{run_id}/graph/file-state", response_model=FileStateReportResponse)
