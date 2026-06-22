@@ -641,6 +641,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/graph/decisions` | Graph human decisions, appeals, and review readiness |
 | GET | `/api/runs/{id}/graph/patches` | Graph patch proposal/result readback |
 | GET | `/api/runs/{id}/graph/final-blockers` | Typed final invariant blocker readback |
+| GET | `/api/runs/{id}/graph/regions` | Graph task-region state and blocker readback |
 | GET | `/api/runs/{id}/graph/file-state` | Graph file-state boundary and residue report |
 | GET | `/api/runs/{id}/graph/nodes/{node_id}` | Graph node detail with inputs, outputs, callbacks, and file-state facts |
 | GET | `/api/runs/{id}/branch-status` | Branch ahead/behind status |

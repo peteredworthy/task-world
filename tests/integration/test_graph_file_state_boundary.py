@@ -204,7 +204,7 @@ async def test_file_state_boundary_accepts_residue_and_snapshots_captured_tree(
     restore(repo, snapshot_id)
     assert (repo / "README.md").read_text() == "# changed\n"
     assert (repo / "residue.txt").read_text() == "temporary residue\n"
-    assert (repo / "__pycache__" / "app.cpython-312.pyc").read_bytes() == b"cache"
+    assert not (repo / "__pycache__" / "app.cpython-312.pyc").exists()
     assert (repo / "ignored.log").read_text() == "ignored but captured\n"
 
     report = project_residue_report(events)

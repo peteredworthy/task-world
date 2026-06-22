@@ -20,6 +20,7 @@ from orchestrator.graph_runtime import (
     GraphDispatchExecutor,
     GraphEventStore,
     OutboxDispatcher,
+    RecoveryReport,
     recover,
     reconcile_runtime,
     seed_run,
@@ -568,6 +569,67 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
 
 
 @pytest.mark.asyncio
+async def test_reconcile_runtime_skips_lease_already_recovered_by_another_driver(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "repo-reconcile-stale"
+    _init_repo(repo)
+    clock = FixedClock()
+    ids = SequentialIds()
+    run_id = "graph-runner-reconcile-stale"
+    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
+        worktree_path=repo,
+    )
+    await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "schedule_tick",
+        {"lease_seconds": 60, "max_grants": 1},
+    )
+    projection = await controller.read_projection(run_id)
+    active_lease = next(
+        lease for lease in projection["leases"].values() if lease.get("state") == "active"
+    )
+    stale_lease = {
+        "run_id": run_id,
+        "lease_id": str(active_lease["lease_id"]),
+        "node_id": str(active_lease["node_id"]),
+        "generation": int(active_lease["generation"]),
+        "execution_id": str(active_lease["execution_id"]),
+        "classification": "awaiting_start_ack",
+    }
+
+    await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "agent_died",
+        {
+            "lease_id": str(stale_lease["lease_id"]),
+            "execution_id": str(stale_lease["execution_id"]),
+            "reason": "other_driver_already_reconciled",
+        },
+    )
+
+    stale_report = RecoveryReport(
+        redispatched=[],
+        pending_cleanups=[],
+        awaiting_start_ack=[stale_lease],
+        awaiting_callback=[],
+    )
+    await reconcile_runtime(controller, executor, stale_report)
+
+    events = await _read_events(session_factory, run_id)
+    assert len([event for event in events if event.event_type == "agent_died"]) == 1
+    assert not any(event.event_type == "command_rejected" for event in events)
+
+
+@pytest.mark.asyncio
 async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
@@ -763,7 +825,7 @@ async def test_graph_dispatch_carries_projection_base_snapshot_id_to_callback(
     dispatch_payload = scheduled.outbox_items[0].payload
     events = await _read_events(session_factory, run_id)
     lease_granted = next(event for event in events if event.event_type == "lease_granted")
-    assert lease_granted.payload["base_snapshot_id"] == "routine-snapshot"
-    assert dispatch_payload["base_snapshot_id"] == "routine-snapshot"
+    assert lease_granted.payload["base_snapshot_id"] == "routine-snapshot-record"
+    assert dispatch_payload["base_snapshot_id"] == "routine-snapshot-record"
     assert any(event.event_type == "callback_accepted" for event in events)
     assert not any(event.event_type == "callback_rejected_stale" for event in events)

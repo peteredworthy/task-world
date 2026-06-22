@@ -44,6 +44,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+TERMINAL_GRAPH_NODE_STATES = frozenset({"completed", "failed", "cancelled", "retired"})
+
+
 SUPPORTED_GRAPH_RUNNER_TYPES = frozenset(
     {
         AgentRunnerType.CODEX_SERVER,
@@ -590,4 +593,22 @@ def _blocked_reason(projection: GraphProjectionSnapshot) -> str:
             details.append(f"{node_id}: {reason}" if reason else node_id)
         suffix = "" if len(failed_nodes) <= 3 else f" (+{len(failed_nodes) - 3} more)"
         return f"graph has failed node(s): {', '.join(details)}{suffix}"
+    nonterminal_nodes = sorted(
+        f"{node_id}={state}"
+        for node_id, state in projection.node_states.items()
+        if state not in TERMINAL_GRAPH_NODE_STATES
+    )
+    if nonterminal_nodes:
+        suffix = "" if len(nonterminal_nodes) <= 3 else f" (+{len(nonterminal_nodes) - 3} more)"
+        return (
+            f"graph quiescent with non-terminal node(s): {', '.join(nonterminal_nodes[:3])}{suffix}"
+        )
+    blocked_tasks = sorted(
+        f"{task_id}={state}"
+        for task_id, state in projection.task_states.items()
+        if state != "accepted"
+    )
+    if blocked_tasks:
+        suffix = "" if len(blocked_tasks) <= 3 else f" (+{len(blocked_tasks) - 3} more)"
+        return f"graph quiescent with non-accepted task(s): {', '.join(blocked_tasks[:3])}{suffix}"
     return "graph quiescent without completion"

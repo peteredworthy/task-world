@@ -6,7 +6,7 @@ low-level patch ops as the kernel's internal representation.
 
 from __future__ import annotations
 
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
@@ -108,7 +108,15 @@ class CreateJoinArgs(MacroArgs):
 class RequestGateArgs(MacroArgs):
     gate_id: str | None = None
     node_id: str | None = None
+    kind: Literal["human_gate", "authority_request"] | None = None
     reason: str | None = None
+    decision_type: str | None = None
+    options: list[str] | None = None
+    default_option: str | None = None
+    requested_authority: list[str] | None = None
+    target_node_id: str | None = None
+    target_region_id: str | None = None
+    expires_at: str | None = None
 
 
 class RetireOrSupersedeArgs(MacroArgs):
@@ -386,14 +394,46 @@ def _create_join(args: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _request_gate(args: dict[str, Any]) -> list[dict[str, Any]]:
     gate_id = _str(args, "gate_id") or _str(args, "node_id") or "human-gate"
+    kind = _str(args, "kind") or "human_gate"
+    reason = _str(args, "reason") or "Manual decision required before graph can continue."
     node: dict[str, Any] = {
         "node_id": gate_id,
-        "kind": "human_gate",
+        "kind": kind,
         "state": "planned",
+        "reason": reason,
     }
-    reason = _str(args, "reason")
-    if reason is not None:
-        node["reason"] = reason
+    if kind == "human_gate":
+        options = args.get("options")
+        if options is None:
+            options = ["approve", "reject"]
+        request: dict[str, Any] = {
+            "decision_type": _str(args, "decision_type") or "approval",
+            "options": options,
+            "consequence_summary": reason,
+        }
+        default_option = _str(args, "default_option")
+        if default_option is not None:
+            request["default_option"] = default_option
+        node["decision_request"] = request
+    elif kind == "authority_request":
+        requested_authority = args.get("requested_authority")
+        if not requested_authority:
+            msg = "request_gate authority_request requires requested_authority"
+            raise ValueError(msg)
+        request = {
+            "requested_authority": requested_authority,
+            "reason": reason,
+        }
+        target_node_id = _str(args, "target_node_id")
+        if target_node_id is not None:
+            request["target_node_id"] = target_node_id
+        target_region_id = _str(args, "target_region_id")
+        if target_region_id is not None:
+            request["target_region_id"] = target_region_id
+        expires_at = _str(args, "expires_at")
+        if expires_at is not None:
+            request["expires_at"] = expires_at
+        node["authority_request_record"] = request
     return [{"op": "create_node", "node": node}]
 
 
@@ -430,6 +470,14 @@ def _worker_node(
             "task_region_id": region_id,
             "candidate_id": candidate_id,
             "attempt_number": attempt_number,
+            "authority": {
+                "allowed_actions": [
+                    "submit_records",
+                    "request_clarification",
+                    "raise_appeal",
+                ],
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+            },
         },
     }
 

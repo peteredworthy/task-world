@@ -229,6 +229,45 @@ def test_outcome_classification() -> None:
         "graph has failed node(s): verifier-1: lease_expired_without_callback"
     )
 
+    pending_task_blocked = classify_graph_outcome(
+        "run-7",
+        GraphProjectionSnapshot(
+            run_state="active",
+            ready_nodes=[],
+            active_leases={},
+            schedulable_nodes=[],
+            task_states={"step/task-a": "pending", "step/task-b": "in_progress"},
+        ),
+    )
+
+    assert pending_task_blocked.completed is False
+    assert pending_task_blocked.blocked_reason == (
+        "graph quiescent with non-accepted task(s): step/task-a=pending, step/task-b=in_progress"
+    )
+
+    nonterminal_nodes_blocked = classify_graph_outcome(
+        "run-8",
+        GraphProjectionSnapshot(
+            run_state="active",
+            ready_nodes=[],
+            active_leases={},
+            schedulable_nodes=[],
+            task_states={},
+            node_states={
+                "check-1": "blocked",
+                "planner-1": "planned",
+                "worker-1": "running",
+                "verifier-1": "suspended",
+            },
+        ),
+    )
+
+    assert nonterminal_nodes_blocked.completed is False
+    assert nonterminal_nodes_blocked.blocked_reason == (
+        "graph quiescent with non-terminal node(s): "
+        "check-1=blocked, planner-1=planned, verifier-1=suspended (+1 more)"
+    )
+
 
 @pytest.mark.asyncio
 async def test_drive_stops_when_should_continue_false() -> None:

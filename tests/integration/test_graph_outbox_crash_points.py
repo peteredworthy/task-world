@@ -287,6 +287,41 @@ def _secret_verdict(path: str) -> dict[str, object]:
     }
 
 
+def test_file_state_snapshot_excludes_ignored_tool_cache(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    _init_repo(repo)
+    (repo / ".gitignore").write_text(".venv/\nbuild/\n", encoding="utf-8")
+    _run_git(repo, ["add", ".gitignore"])
+    _run_git(repo, ["commit", "-m", "ignore tool cache and build output"])
+    (repo / ".venv" / "bin").mkdir(parents=True)
+    (repo / ".venv" / "bin" / "python").write_text("tool cache\n", encoding="utf-8")
+    (repo / "build").mkdir()
+    (repo / "build" / "artifact.txt").write_text("artifact\n", encoding="utf-8")
+
+    boundary = capture_file_state_boundary(
+        worktree_path=repo,
+        run_id="run-1",
+        node_id="worker-1",
+        execution_id="exec-1",
+        base_snapshot_id="base-snapshot",
+    )
+
+    assert boundary.output_record is not None
+    assert boundary.snapshot_result is not None
+    raw_classifications = boundary.output_record["classifications"]
+    assert isinstance(raw_classifications, list)
+    classifications = {
+        entry["path"]: entry["classification"]
+        for entry in raw_classifications
+        if isinstance(entry, dict)
+    }
+    assert classifications[".venv/bin/python"] == "tool_cache"
+    assert classifications["build/artifact.txt"] == "unknown_ignored"
+    tree_paths = _tree_paths(repo, boundary.snapshot_result.commit_sha)
+    assert ".venv/bin/python" not in tree_paths
+    assert "build/artifact.txt" in tree_paths
+
+
 async def _seed_cleanup_request(
     session_factory: async_sessionmaker[AsyncSession],
     repo: Path,
@@ -487,8 +522,11 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         "agent_died",
         "lease_revoked",
         "runtime_retry_scheduled",
+        "output_record_accepted",
         "node_state_changed",
     ]
+    assert died.events[3].payload["record_type"] == "recovery_plan"
+    assert died.events[3].payload["value"]["action"] == "retry"
     assert projection_after_death["leases"][lease_id]["state"] == "revoked"
     assert projection_after_death["node_states"]["worker-1"] == "ready"
     assert any(event.event_type == "runtime_retry_scheduled" for event in died.events)

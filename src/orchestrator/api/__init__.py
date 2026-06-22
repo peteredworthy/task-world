@@ -65,6 +65,7 @@ __all__ = [
     "estimate_cost",
     "build_graph_patch_attempts_response",
     "build_final_invariant_blockers_response",
+    "build_graph_regions_response",
     "build_graph_topology_response",
     "get_codex_models_fn",
     "get_agent_runner_display_name",
@@ -95,6 +96,7 @@ _GRAPH_ROUTER_SYMBOLS = {
     "build_final_invariant_blockers_response",
     "build_graph_patch_attempts_response",
     "build_graph_projection_response",
+    "build_graph_regions_response",
     "build_graph_topology_response",
     "build_scheduler_view_response_from_snapshot",
     "build_node_detail_response",
@@ -113,6 +115,12 @@ def build_final_invariant_blockers_response(*args: Any, **kwargs: Any) -> Any:
     import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
 
     return _graph_router.build_final_invariant_blockers_response(*args, **kwargs)
+
+
+def build_graph_regions_response(*args: Any, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
+
+    return _graph_router.build_graph_regions_response(*args, **kwargs)
 
 
 def build_graph_topology_response(*args: Any, **kwargs: Any) -> Any:

@@ -7,8 +7,14 @@ from httpx import AsyncClient
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
+from orchestrator.config import RunStatus
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db import EventV2Model, GraphEventSummaryModel, GraphProjectionSnapshotModel
+from orchestrator.db import (
+    EventV2Model,
+    GraphEventSummaryModel,
+    GraphProjectionSnapshotModel,
+    RunModel,
+)
 from orchestrator.graph import FakeClock
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
@@ -318,6 +324,28 @@ async def test_graph_projection_reflects_seeded_events(
 
     not_found = await client.get(f"/api/runs/{run_id}/graph/nodes/nonexistent")
     assert not_found.status_code == 404
+
+
+async def test_graph_projection_uses_paused_run_row_as_effective_state(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-paused-effective-{uuid4().hex[:8]}"
+    await _seed_graph_run(app, run_id)
+
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        stored = await session.get(RunModel, run_id)
+        assert stored is not None
+        stored.status = RunStatus.PAUSED
+        stored.pause_reason = "graph_blocked"
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph")
+    assert response.status_code == 200
+    projection = response.json()
+    assert projection["event_count"] > 0
+    assert projection["run_state"] == "paused"
 
 
 async def test_active_graph_execution_readback_uses_bounded_summary_paths(

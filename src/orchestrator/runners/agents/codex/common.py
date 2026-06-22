@@ -23,6 +23,7 @@ from typing import Any, cast
 
 from typing_extensions import Protocol
 
+from orchestrator.graph import DEFAULT_NODE_CONTRACTS
 from orchestrator.state.models import ActionLog
 from orchestrator.runners.types import (
     ChecklistUpdateCallback,
@@ -292,6 +293,10 @@ def build_dynamic_tool_specs(
                         "base_graph_position": {"type": "integer", "minimum": 0},
                         "ops": {
                             "type": "array",
+                            "description": (
+                                "Validated low-level patch expansion. Prefer macro tools; use "
+                                "raw ops only when no macro can express the mutation."
+                            ),
                             "items": {"type": "object", "additionalProperties": True},
                             "minItems": 0,
                             "maxItems": 200,
@@ -304,6 +309,10 @@ def build_dynamic_tool_specs(
                 "base_graph_position": {"type": "integer", "minimum": 0},
                 "ops": {
                     "type": "array",
+                    "description": (
+                        "Validated low-level patch expansion. Prefer macro tools; use raw ops "
+                        "only when no macro can express the mutation."
+                    ),
                     "items": {"type": "object", "additionalProperties": True},
                     "minItems": 0,
                     "maxItems": 200,
@@ -499,30 +508,18 @@ def build_dynamic_tool_specs(
         ]
     )
 
-    if not is_verifier and context is not None and context.node_kind == "planner":
-        if context.node_role == "planner":
-            specs.extend(
-                [
-                    planner_macro_specs["create_work_region"],
-                    attach_verifier_spec,
-                    attach_check_spec,
-                    planner_macro_specs["create_gap_planner"],
-                    planner_macro_specs["create_join"],
-                    request_gate_spec,
-                    planner_macro_specs["retire_or_supersede"],
-                    submit_graph_patch_spec,
-                ]
-            )
-        elif context.node_role == "gap_planner":
-            specs.extend(
-                [
-                    planner_macro_specs["create_corrective_region"],
-                    attach_verifier_spec,
-                    attach_check_spec,
-                    request_gate_spec,
-                    submit_graph_patch_spec,
-                ]
-            )
+    if not is_verifier and context is not None:
+        graph_tool_specs = {
+            **planner_macro_specs,
+            "attach_verifier": attach_verifier_spec,
+            "attach_check": attach_check_spec,
+            "request_gate": request_gate_spec,
+            "submit_graph_patch": submit_graph_patch_spec,
+        }
+        for tool_name in _contract_allowed_graph_tools(context):
+            spec = graph_tool_specs.get(tool_name)
+            if spec is not None:
+                specs.append(spec)
 
     # Add step-level tools from context.available_tools
     if context and context.available_tools:
@@ -537,6 +534,24 @@ def build_dynamic_tool_specs(
             )
 
     return specs
+
+
+def _contract_allowed_graph_tools(context: ExecutionContext) -> list[str]:
+    allowed_tools = DEFAULT_NODE_CONTRACTS.allowed_tools_for(
+        context.node_kind or "", context.node_role
+    )
+    ordered_names = [
+        "create_work_region",
+        "create_corrective_region",
+        "attach_verifier",
+        "attach_check",
+        "create_gap_planner",
+        "create_join",
+        "request_gate",
+        "retire_or_supersede",
+        "submit_graph_patch",
+    ]
+    return [tool_name for tool_name in ordered_names if tool_name in allowed_tools]
 
 
 def extract_agent_message_delta(notification: dict[str, Any]) -> str | None:
@@ -965,7 +980,7 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
                 "  Submit an explicit graph patch envelope only when a macro cannot express the mutation.\n"
                 "  - patch_id: Stable id for this attempt.\n"
                 "  - base_graph_position: Use current_graph_position from the planner packet.\n"
-                "  - ops: Raw fallback list using only allowed_patch_operations; gap planners may use [] for an explicit no-op decision.\n"
+                "  - ops: Validated raw fallback list using only allowed_patch_operations; gap planners may use [] for an explicit no-op decision.\n"
                 "  - rationale_record_id: Optional accepted evidence record supporting the patch.\n"
                 "  If feedback says stale, malformed, or rejected, submit a corrected macro or patch instead of editing graph events directly.\n"
                 "  Plain submit is only for finishing after at least one submit_graph_patch attempt."

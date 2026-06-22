@@ -6,6 +6,9 @@ import fnmatch
 import posixpath
 
 
+_DECISION_GATE_KINDS = {"gate", "human_gate", "authority_request"}
+
+
 def _empty_paths() -> list[str]:
     return []
 
@@ -150,9 +153,10 @@ def evaluate_readiness(
         upstream_node_id = edge.from_node_id
         if node.upstream_states.get(upstream_node_id) is None:
             continue
-        if node.upstream_kinds.get(upstream_node_id) == "gate":
+        upstream_kind = node.upstream_kinds.get(upstream_node_id)
+        if upstream_kind in _DECISION_GATE_KINDS:
             if node.gate_decisions.get(upstream_node_id) is not True:
-                return False, f"gate_not_approved:{upstream_node_id}"
+                return False, _decision_gate_blocker_reason(upstream_kind, upstream_node_id)
     invalid_claim = _invalid_claim_reason(node.resource_claims)
     if invalid_claim:
         return False, invalid_claim
@@ -186,6 +190,7 @@ def schedule(
         (node for node in nodes if node.state == "ready" and node.kind != "gate"),
         key=lambda node: (
             -node.priority,
+            _kind_schedule_order(node.kind),
             node.region_order,
             node.creation_position,
             node.node_id,
@@ -218,6 +223,12 @@ def schedule(
         deferred=deferred,
         deferred_reasons=deferred_reasons,
     )
+
+
+def _kind_schedule_order(kind: str) -> int:
+    if kind in {"check", "join", "final_gate"}:
+        return 0
+    return 1
 
 
 def _paths_overlap(existing_paths: list[str], requested_paths: list[str]) -> bool:
@@ -368,6 +379,12 @@ def _upstream_failure_allowed(node: NodeScheduleInfo, edge: InputEdgeInfo) -> bo
         "verification_failure",
         "failed_candidate",
     }
+
+
+def _decision_gate_blocker_reason(kind: str, node_id: str) -> str:
+    if kind == "authority_request":
+        return f"authority_not_granted:{node_id}"
+    return f"gate_not_approved:{node_id}"
 
 
 def _first_conflict_reason(

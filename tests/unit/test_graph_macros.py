@@ -54,6 +54,11 @@ def test_create_work_region_macro_expands_to_valid_patch() -> None:
 
     assert result.accepted is True
     assert [op.op for op in patch.ops] == ["create_node", "create_node", "create_edge"]
+    worker = patch.ops[0].node
+    assert worker is not None
+    assert worker["authority"]["resource_claims"] == [
+        {"mode": "write", "scope": "repo", "paths": ["."]}
+    ]
 
 
 def test_gap_planner_corrective_region_macro_expands_to_valid_patch() -> None:
@@ -132,6 +137,67 @@ def test_create_join_macro_uses_distinct_source_record_ports() -> None:
     assert result.accepted is True
     to_ports = [op.to_port for op in patch.ops if op.op == "create_edge"]
     assert to_ports == ["source_record_1", "source_record_2"]
+
+
+def test_request_gate_macro_expands_human_gate_with_decision_request() -> None:
+    patch = _patch(
+        {
+            "patch_id": "macro-request-gate",
+            "base_graph_position": 0,
+            "macro_invocations": [
+                {
+                    "macro": "request_gate",
+                    "args": {
+                        "gate_id": "gate-review",
+                        "reason": "Review widened tool access.",
+                        "options": ["approve", "reject", "defer"],
+                        "default_option": "defer",
+                    },
+                }
+            ],
+        }
+    )
+
+    assert [op.op for op in patch.ops] == ["create_node"]
+    gate = patch.ops[0].node
+    assert gate is not None
+    assert gate["kind"] == "human_gate"
+    assert gate["decision_request"] == {
+        "decision_type": "approval",
+        "options": ["approve", "reject", "defer"],
+        "consequence_summary": "Review widened tool access.",
+        "default_option": "defer",
+    }
+
+
+def test_request_gate_macro_expands_authority_request() -> None:
+    patch = _patch(
+        {
+            "patch_id": "macro-authority-request",
+            "base_graph_position": 0,
+            "macro_invocations": [
+                {
+                    "macro": "request_gate",
+                    "args": {
+                        "gate_id": "gate-authority",
+                        "kind": "authority_request",
+                        "reason": "Worker needs docs write access.",
+                        "requested_authority": ["repo:docs/**:write"],
+                        "target_node_id": "worker-docs",
+                    },
+                }
+            ],
+        }
+    )
+
+    gate = patch.ops[0].node
+    assert gate is not None
+    assert gate["kind"] == "authority_request"
+    assert gate["authority_request_record"] == {
+        "requested_authority": ["repo:docs/**:write"],
+        "reason": "Worker needs docs write access.",
+        "target_node_id": "worker-docs",
+    }
 
 
 def test_submit_patch_command_accepts_macro_invocations() -> None:

@@ -732,7 +732,12 @@ def _drive_region_to_accepted(events: list[EventEnvelope]) -> list[EventEnvelope
                     "producer_node_id": "verifier-1",
                     "port": "region_summary",
                     "schema": "RegionSummary",
-                    "value": {"milestone_kind": "region_summary"},
+                    "value": {
+                        "summary": "Verification evidence was summarized for the region.",
+                        "source_record_ids": ["verification-1"],
+                        "lossy": False,
+                        "omitted_details": [],
+                    },
                 },
             ],
             base_snapshot_id="snapshot-1",

@@ -13,6 +13,26 @@ from typing import Any, Literal, cast
 
 HandlerType = Literal["controller", "agent", "human", "deterministic_command"]
 PortDirection = Literal["input", "output"]
+BindingPolicy = Literal[
+    "bind_first",
+    "bind_latest",
+    "bind_all",
+    "rebind_on_superseding",
+    "never_rebind",
+]
+PromptHydrationPolicy = Literal[
+    "inline_summary",
+    "structured_json",
+    "artifact_reference",
+    "tool_only",
+]
+
+VALID_BINDING_POLICIES: frozenset[str] = frozenset(
+    {"bind_first", "bind_latest", "bind_all", "rebind_on_superseding", "never_rebind"}
+)
+VALID_PROMPT_HYDRATION_POLICIES: frozenset[str] = frozenset(
+    {"inline_summary", "structured_json", "artifact_reference", "tool_only"}
+)
 
 
 @dataclass(frozen=True)
@@ -57,6 +77,14 @@ class NodeContractRegistry:
 
     def has_node_type(self, node_type: str, role: str | None = None) -> bool:
         return self.contract_for(node_type, role) is not None
+
+    def allowed_tools_for(self, node_type: str, role: str | None = None) -> frozenset[str]:
+        contract = self.contract_for(node_type, role)
+        if contract is None:
+            return frozenset()
+        if contract.node_type == "planner" and role not in {None, "planner"}:
+            return frozenset()
+        return contract.allowed_tools
 
 
 def validate_node_payload(node: dict[str, Any]) -> str | None:
@@ -115,6 +143,12 @@ def validate_edge_payload(
             f"edge {edge_id} record type mismatch: {source_kind}.{from_port} -> "
             f"{target_kind}.{to_port}"
         )
+    policy_error = _binding_policy_error(edge, edge_id, target)
+    if policy_error is not None:
+        return policy_error
+    hydration_policy_error = _prompt_hydration_policy_error(edge, edge_id)
+    if hydration_policy_error is not None:
+        return hydration_policy_error
     return _selector_compatibility_error(edge, edge_id, source)
 
 
@@ -134,6 +168,28 @@ def validate_output_record(
     port_contract = output_port_contract(contract, port)
     if port_contract is None:
         return f"output record at index {index} uses unknown output port: {port}"
+    record_type = record_payload.get("record_type")
+    if record_type is not None:
+        if not isinstance(record_type, str) or not record_type:
+            return f"output record at index {index} has invalid record_type"
+        if record_type not in port_contract.record_types:
+            return (
+                f"output record at index {index} has incompatible record_type for "
+                f"{port}: {record_type}"
+            )
+    producer_port = record_payload.get("producer_port")
+    if producer_port is not None:
+        if not isinstance(producer_port, str) or producer_port != port:
+            return (
+                f"output record at index {index} producer_port does not match port: {producer_port}"
+            )
+    schema_version = record_payload.get("schema_version")
+    if schema_version is not None and (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version <= 0
+    ):
+        return f"output record at index {index} has invalid schema_version"
     schema = record_payload.get("schema")
     if (
         isinstance(schema, str)
@@ -192,6 +248,53 @@ def node_contract_summary(node_type: str | None, role: str | None = None) -> dic
 
 def port_contract_summary(port: PortContract) -> dict[str, Any]:
     return _port_summary(port)
+
+
+def binding_policy_for_edge(
+    edge: dict[str, Any],
+    target_port: PortContract | None,
+) -> BindingPolicy:
+    raw_policy = edge.get("binding_policy")
+    if isinstance(raw_policy, str) and raw_policy in VALID_BINDING_POLICIES:
+        return cast(BindingPolicy, raw_policy)
+    if target_port is not None:
+        if target_port.cardinality in {"many", "all"}:
+            return "bind_all"
+        if target_port.cardinality == "latest":
+            return "bind_latest"
+    return "bind_first"
+
+
+def merge_bound_record_ids(
+    policy: str,
+    existing_ids: list[str],
+    incoming_ids: list[str],
+    *,
+    supersedes_record_id: Any = None,
+) -> list[str]:
+    if not incoming_ids:
+        return list(existing_ids)
+    if policy in {"bind_first", "never_rebind"}:
+        return list(existing_ids or incoming_ids[:1])
+    if policy == "bind_latest":
+        return [incoming_ids[-1]]
+    if policy == "bind_all":
+        output = list(existing_ids)
+        for record_id in incoming_ids:
+            if record_id not in output:
+                output.append(record_id)
+        return output
+    if policy == "rebind_on_superseding":
+        latest = incoming_ids[-1]
+        if not existing_ids:
+            return [latest]
+        if isinstance(supersedes_record_id, str) and supersedes_record_id in existing_ids:
+            return [
+                latest if record_id == supersedes_record_id else record_id
+                for record_id in existing_ids
+            ]
+        return list(existing_ids)
+    return list(existing_ids or incoming_ids[:1])
 
 
 def _port_summary(port: PortContract) -> dict[str, Any]:
@@ -260,6 +363,41 @@ def _selector_compatibility_error(
     schema = typed_selector.get("schema")
     if isinstance(schema, str) and source.schemas and schema not in source.schemas:
         return f"edge {edge_id} schema selector is incompatible with source output port"
+    return None
+
+
+def _binding_policy_error(
+    edge: dict[str, Any],
+    edge_id: str,
+    target: PortContract,
+) -> str | None:
+    raw_policy = edge.get("binding_policy")
+    if raw_policy is None:
+        return None
+    if not isinstance(raw_policy, str) or raw_policy not in VALID_BINDING_POLICIES:
+        return f"edge {edge_id} has unknown binding_policy: {raw_policy}"
+
+    allowed_by_cardinality = {
+        "one": {"bind_first", "never_rebind", "rebind_on_superseding"},
+        "latest": {"bind_latest", "rebind_on_superseding"},
+        "many": {"bind_all"},
+        "all": {"bind_all"},
+    }
+    allowed = allowed_by_cardinality[target.cardinality]
+    if raw_policy not in allowed:
+        return (
+            f"edge {edge_id} binding_policy {raw_policy} is incompatible with "
+            f"target cardinality {target.cardinality}"
+        )
+    return None
+
+
+def _prompt_hydration_policy_error(edge: dict[str, Any], edge_id: str) -> str | None:
+    raw_policy = edge.get("prompt_hydration_policy")
+    if raw_policy is None:
+        return None
+    if not isinstance(raw_policy, str) or raw_policy not in VALID_PROMPT_HYDRATION_POLICIES:
+        return f"edge {edge_id} has unknown prompt_hydration_policy: {raw_policy}"
     return None
 
 
@@ -438,7 +576,12 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 ),
                 _port("check_result", "check_result", schemas=("CheckResult",)),
                 _port("region_summary", "analysis_summary", schemas=("AnalysisSummary",)),
-                _port("accepted_file_state", "file_state", schemas=("FileStateRecord",)),
+                _port(
+                    "accepted_file_state",
+                    "file_state",
+                    schemas=("FileStateRecord",),
+                    cardinality="latest",
+                ),
                 _port("outstanding_failures", "failure_record", schemas=("FailureRecord",)),
                 _port(
                     "session_carryover",
@@ -541,6 +684,7 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     required=False,
                 ),
                 _port(
+                    "gap_classification",
                     "gap_classification",
                     "classified_gap",
                     schemas=("GapClassification",),

@@ -67,6 +67,24 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
                 "role": "builder",
                 "state": "planned",
                 "task_region_id": "task-1",
+                "command_definition": {
+                    "id": "worker-command",
+                    "cmd": "true",
+                    "source": "test",
+                },
+            },
+        ),
+        _event(
+            "evt-authority",
+            run_id,
+            "node_authority_changed",
+            {
+                "node_id": "worker-1",
+                "authority": {
+                    "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+                    "allowed_actions": ["submit"],
+                    "preconditions": ["candidate_bound"],
+                },
             },
         ),
         _event(
@@ -104,6 +122,7 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
                 "execution_id": "exec-1",
                 "expires_at": "2026-01-01T00:01:00+00:00",
                 "base_snapshot_id": "S0",
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
             },
         ),
         _event(
@@ -253,6 +272,14 @@ async def test_append_creates_and_updates_node_detail_summaries(
     assert worker["kind"] == "worker"
     assert worker["role"] == "builder"
     assert worker["state"] == "completed"
+    assert worker["resource_claims"] == [{"mode": "write", "scope": "repo", "paths": ["."]}]
+    assert worker["allowed_actions"] == ["submit"]
+    assert worker["preconditions"] == ["candidate_bound"]
+    assert worker["command_definition"] == {
+        "id": "worker-command",
+        "cmd": "true",
+        "source": "test",
+    }
     assert worker["active_lease"]["state"] == "released"
     assert worker["output_records"][0]["record_id"] == "candidate-1"
     assert "value" not in worker["output_records"][0]
@@ -262,6 +289,72 @@ async def test_append_creates_and_updates_node_detail_summaries(
         "callback_accepted",
     ]
     assert verifier["input_ports"] == {"candidate_under_test": ["candidate-1"]}
+
+
+@pytest.mark.asyncio
+async def test_node_detail_summary_accumulates_bind_all_input_ports(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "node-detail-bind-all"
+    events = [
+        _event(
+            "evt-worker",
+            run_id,
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "role": "builder", "state": "completed"},
+        ),
+        _event(
+            "evt-summarizer",
+            run_id,
+            "node_created",
+            {"node_id": "summarizer-1", "kind": "summarizer", "state": "planned"},
+        ),
+        _event(
+            "evt-edge",
+            run_id,
+            "edge_created",
+            {
+                "edge_id": "edge-source-records",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+            },
+        ),
+        _event(
+            "evt-bind-1",
+            run_id,
+            "input_bound",
+            {
+                "edge_id": "edge-source-records",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "record_ids": ["candidate-1"],
+                "binding_policy": "bind_all",
+            },
+        ),
+        _event(
+            "evt-bind-2",
+            run_id,
+            "input_bound",
+            {
+                "edge_id": "edge-source-records",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "record_ids": ["candidate-2"],
+                "binding_policy": "bind_all",
+            },
+        ),
+    ]
+
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, events)
+
+    async with session_factory() as session:
+        summarizer = await _materialized_response(session, run_id, "summarizer-1")
+
+    assert summarizer["input_ports"] == {"source_records": ["candidate-1", "candidate-2"]}
 
 
 @pytest.mark.asyncio

@@ -174,7 +174,10 @@ def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None
     assert planner.payload["state"] == "planned"
 
     planner_input_binding = projection["input_bindings"][planner_ids[0]]["routine_snapshot"]
-    assert planner_input_binding["record_ids"] == ["routine-snapshot"]
+    assert planner_input_binding["record_ids"] == ["routine-snapshot-record"]
+    snapshot_record = _accepted_record(events, "routine-snapshot-record")
+    assert snapshot_record.payload["record_type"] == "routine_snapshot"
+    assert snapshot_record.payload["producer_node_id"] == "routine-snapshot"
 
     root_node = _node_event(events, "root")
     assert root_node.payload["planner_generation_budget"] == 10
@@ -541,7 +544,7 @@ def _candidate_record(node_id: str) -> dict[str, object]:
         "producer_node_id": node_id,
         "port": "candidate",
         "schema": "ImplementationCandidate",
-        "value": {"node_id": node_id},
+        "value": {"node_id": node_id, "summary": f"completed {node_id}"},
     }
 
 
@@ -566,7 +569,32 @@ def _check_result_record(node_id: str) -> dict[str, object]:
         "producer_node_id": node_id,
         "port": "check_result",
         "schema": "CheckResult",
-        "value": {"status": "passed", "exit_code": 0},
+        "candidate_id": f"candidate-{node_id}",
+        "task_region_id": node_id,
+        "attempt_number": 0,
+        "value": {
+            "status": "passed",
+            "classification": "passed",
+            "command_id": f"check-{node_id}",
+            "command_binding": None,
+            "command_text": "test helper check",
+            "command": {"id": f"check-{node_id}", "argv": ["true"]},
+            "worktree_path": "/tmp/test-worktree",
+            "base_snapshot_id": "S0",
+            "execution_id": f"exec-{node_id}",
+            "exit_code": 0,
+            "duration_ms": 0,
+            "stdout": "",
+            "stderr": "",
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+            "timeout_seconds": 60,
+            "environment_policy": {
+                "cwd": "/tmp/test-worktree",
+                "env": "inherited",
+                "shell": False,
+            },
+        },
     }
 
 
@@ -607,3 +635,13 @@ def _node_event(events: list[EventEnvelope], node_id: str) -> EventEnvelope:
         if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
             return event
     raise AssertionError(f"missing node_created event for {node_id}")
+
+
+def _accepted_record(events: list[EventEnvelope], record_id: str) -> EventEnvelope:
+    for event in events:
+        if (
+            event.event_type == "output_record_accepted"
+            and event.payload.get("record_id") == record_id
+        ):
+            return event
+    raise AssertionError(f"missing output_record_accepted event for {record_id}")

@@ -1,9 +1,11 @@
 """Unit tests for pure graph projections."""
 
 from pathlib import Path
+import random
 from typing import Any, cast
 
 import yaml
+import pytest
 
 from orchestrator.graph import (
     Actor,
@@ -16,6 +18,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     initial_projection,
     project_final_invariant_blockers,
+    project_graph_patch_attempts,
     project_decision_view,
     project_leases,
     project_node_states,
@@ -65,6 +68,22 @@ def _file_state_event(task_region_id: str, candidate_id: str, position: int) -> 
     ).model_copy(update={"position": position})
 
 
+def test_graph_patch_attempt_projection_rejects_malformed_result() -> None:
+    events = [
+        _event(
+            "graph_patch_rejected",
+            {
+                "patch_id": "patch-1",
+                "proposed_by_node_id": "planner-1",
+                "base_graph_position": 2,
+            },
+        ).model_copy(update={"position": 2})
+    ]
+
+    with pytest.raises(ValueError, match="requires rejection_reason"):
+        project_graph_patch_attempts(events, run_id="run-1", current_graph_position=3)
+
+
 def test_empty_projection() -> None:
     assert initial_projection() == {
         "run_state": None,
@@ -107,6 +126,56 @@ def test_empty_projection() -> None:
         "active_requirement_versions": {},
         "support_evidence": {},
     }
+
+
+def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
+    events = [
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "completed"}),
+        _event(
+            "node_created",
+            {"node_id": "summarizer-1", "kind": "summarizer", "state": "planned"},
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-source-records",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "required": True,
+            },
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-source-records",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "record_ids": ["candidate-1"],
+                "bound_at_position": 4,
+            },
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-source-records",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "record_ids": ["candidate-2"],
+                "bound_at_position": 5,
+            },
+        ),
+    ]
+
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+
+    binding = projection["input_bindings"]["summarizer-1"]["source_records"]
+    assert binding["binding_policy"] == "bind_all"
+    assert binding["record_ids"] == ["candidate-1", "candidate-2"]
+    assert binding["record_bound_positions"] == {"candidate-1": 4, "candidate-2": 5}
 
 
 def test_replay_determinism() -> None:
@@ -521,6 +590,226 @@ def test_final_invariant_blockers_are_projected_from_graph_events() -> None:
     ]
 
 
+def test_final_invariant_blockers_include_generic_non_terminal_nodes() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "authority-1",
+                "kind": "authority_request",
+                "state": "blocked",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "human-gate-1",
+                "kind": "human_gate",
+                "state": "blocked",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-1",
+                "kind": "verifier",
+                "state": "suspended",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "running",
+                "task_region_id": "task-1",
+            },
+        ),
+    ]
+
+    blockers: list[FinalInvariantBlocker] = project_final_invariant_blockers(events)
+
+    assert blockers == [
+        {
+            "kind": "pending_node",
+            "reason": "node has not reached a terminal state",
+            "node_id": "authority-1",
+            "state": "blocked",
+        },
+        {
+            "kind": "pending_node",
+            "reason": "node has not reached a terminal state",
+            "node_id": "human-gate-1",
+            "state": "blocked",
+        },
+        {
+            "kind": "pending_node",
+            "reason": "node has not reached a terminal state",
+            "node_id": "verifier-1",
+            "state": "suspended",
+            "task_region_id": "task-1",
+        },
+        {
+            "kind": "pending_node",
+            "reason": "node has not reached a terminal state",
+            "node_id": "worker-1",
+            "state": "running",
+            "task_region_id": "task-1",
+        },
+        {
+            "kind": "task_not_accepted",
+            "reason": "task region has not reached accepted",
+            "task_region_id": "task-1",
+            "state": "pending",
+        },
+    ]
+
+
+def test_final_invariant_blockers_explain_check_only_task_region() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-1",
+                "kind": "check",
+                "state": "completed",
+                "task_region_id": "task-check-only",
+            },
+        ),
+    ]
+
+    blockers = project_final_invariant_blockers(events)
+
+    assert {
+        "kind": "invalid_task_region",
+        "reason": "check-only task region has no candidate-producing worker",
+        "task_region_id": "task-check-only",
+        "state": "pending",
+    } in blockers
+    assert {
+        "kind": "task_not_accepted",
+        "reason": "task region has not reached accepted",
+        "task_region_id": "task-check-only",
+        "state": "pending",
+    } in blockers
+
+
+def test_final_invariant_blockers_explain_required_edge_with_missing_producer() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "planned",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-missing-candidate",
+                "from_node_id": "missing-worker",
+                "from_port": "candidate",
+                "to_node_id": "worker-1",
+                "to_port": "candidate",
+                "required": True,
+                "dependency_type": "input_binding",
+            },
+        ),
+    ]
+
+    blockers = project_final_invariant_blockers(events)
+
+    assert {
+        "kind": "impossible_input",
+        "reason": "required input edge has no producer node",
+        "node_id": "worker-1",
+        "edge_id": "edge-missing-candidate",
+        "to_port": "candidate",
+        "task_region_id": "task-1",
+        "state": "planned",
+    } in blockers
+
+
+def test_final_invariant_blockers_explain_standalone_planner_task_regions() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-1",
+                "kind": "planner",
+                "role": "planner",
+                "state": "completed",
+                "task_region_id": "task-planner-only",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "gap-planner-1",
+                "kind": "gap_planner",
+                "state": "completed",
+                "task_region_id": "task-gap-only",
+            },
+        ),
+    ]
+
+    blockers = project_final_invariant_blockers(events)
+
+    for task_region_id in ("task-planner-only", "task-gap-only"):
+        assert {
+            "kind": "invalid_task_region",
+            "reason": ("planner or gap-planner task region has no candidate-producing worker"),
+            "task_region_id": task_region_id,
+            "state": "pending",
+        } in blockers
+        assert {
+            "kind": "task_not_accepted",
+            "reason": "task region has not reached accepted",
+            "task_region_id": task_region_id,
+            "state": "pending",
+        } in blockers
+
+
+def test_active_nonterminal_random_graph_shapes_have_explicit_blockers() -> None:
+    rng = random.Random(17)
+    node_kinds = ["worker", "verifier", "check", "human_gate", "authority_request"]
+    node_states = ["planned", "ready", "leased", "running", "blocked", "suspended"]
+
+    for graph_index in range(30):
+        events = [_event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"})]
+        node_count = rng.randint(1, 6)
+        expected_node_ids: set[str] = set()
+        for node_index in range(node_count):
+            kind = rng.choice(node_kinds)
+            state = rng.choice(node_states)
+            node_id = f"{kind}-{graph_index}-{node_index}"
+            task_region_id = f"task-{graph_index}-{rng.randint(1, 3)}"
+            payload: dict[str, Any] = {
+                "node_id": node_id,
+                "kind": kind,
+                "state": state,
+            }
+            if kind not in {"human_gate", "authority_request"}:
+                payload["task_region_id"] = task_region_id
+            events.append(_event("node_created", payload))
+            expected_node_ids.add(node_id)
+
+        blockers = project_final_invariant_blockers(events)
+        blocker_node_ids = {
+            node_id for blocker in blockers if isinstance((node_id := blocker.get("node_id")), str)
+        }
+
+        assert blockers, f"graph {graph_index} silently quiesced"
+        assert expected_node_ids <= blocker_node_ids
+
+
 def test_decision_view_projects_human_gate_and_authority_request() -> None:
     events = [
         _event(
@@ -826,12 +1115,28 @@ def test_failed_check_result_blocks_projected_completion_after_task_acceptance()
                 "producer_node_id": "check-final-1",
                 "port": "check_result",
                 "task_region_id": "task-1",
-                "value": {"status": "failed", "exit_code": 1},
+                "candidate_record_ids": ["candidate-1"],
+                "file_state_record_ids": ["file-state-candidate-1"],
+                "evaluated_record_ids": ["candidate-1", "file-state-candidate-1"],
+                "value": {
+                    "status": "failed",
+                    "exit_code": 1,
+                    "candidate_record_ids": ["candidate-1"],
+                    "file_state_record_ids": ["file-state-candidate-1"],
+                    "evaluated_record_ids": ["candidate-1", "file-state-candidate-1"],
+                },
             },
         ),
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+    check_result = projection["check_results"]["check-final-1"]
+    assert check_result["candidate_record_ids"] == ["candidate-1"]
+    assert check_result["file_state_record_ids"] == ["file-state-candidate-1"]
+    assert check_result["evaluated_record_ids"] == ["candidate-1", "file-state-candidate-1"]
     assert project_task_states(events) == {"task-1": "pending"}
     assert project_final_invariant_blockers(events) == [
         {
@@ -848,6 +1153,251 @@ def test_failed_check_result_blocks_projected_completion_after_task_acceptance()
             "state": "pending",
         },
     ]
+    assert project_run_state(events) == "active"
+
+
+def test_check_result_candidate_id_does_not_replace_latest_task_candidate() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+            },
+        ).model_copy(update={"position": 1}),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-1",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+            },
+        ).model_copy(update={"position": 2}),
+        _file_state_event("task-1", "candidate-1", 3),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-1",
+                "kind": "check",
+                "state": "completed",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "candidate_id": "candidate-check-final-1",
+                "task_region_id": "task-1",
+                "candidate_record_ids": ["candidate-1"],
+                "evaluated_record_ids": ["candidate-1"],
+                "value": {
+                    "status": "passed",
+                    "exit_code": 0,
+                    "candidate_record_ids": ["candidate-1"],
+                    "evaluated_record_ids": ["candidate-1"],
+                },
+            },
+        ).model_copy(update={"position": 4}),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+
+    assert projection["task_candidates"]["task-1"] == [
+        {
+            "candidate_id": "candidate-1",
+            "attempt_number": 0,
+            "position": 1,
+            "file_state_record_ids": [],
+        }
+    ]
+    assert project_task_states(events) == {"task-1": "accepted"}
+    assert project_final_invariant_blockers(events) == []
+    assert project_run_state(events) == "completed"
+
+
+def test_uncited_check_result_does_not_accept_task_region() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+                "file_state_record_ids": ["file-state-candidate-1"],
+                "value": {"file_state_record_ids": ["file-state-candidate-1"]},
+            },
+        ).model_copy(update={"position": 1}),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-1",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+            },
+        ).model_copy(update={"position": 2}),
+        _file_state_event("task-1", "candidate-1", 3),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-1",
+                "kind": "check",
+                "state": "completed",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "candidate_id": "candidate-check-final-1",
+                "task_region_id": "task-1",
+                "value": {"status": "passed", "exit_code": 0},
+            },
+        ).model_copy(update={"position": 4}),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    assert project_task_states(events) == {"task-1": "pending"}
+    assert project_final_invariant_blockers(events) == [
+        {
+            "kind": "task_not_accepted",
+            "reason": "task region has not reached accepted",
+            "task_region_id": "task-1",
+            "state": "pending",
+        }
+    ]
+    assert project_run_state(events) == "active"
+
+
+def test_check_result_must_cite_latest_candidate_file_state() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-old",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-old",
+                "task_region_id": "task-1",
+                "attempt_number": 1,
+                "file_state_record_ids": ["file-state-old"],
+                "value": {"file_state_record_ids": ["file-state-old"]},
+            },
+        ).model_copy(update={"position": 1}),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-new",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-new",
+                "task_region_id": "task-1",
+                "attempt_number": 2,
+                "file_state_record_ids": ["file-state-candidate-new"],
+                "value": {"file_state_record_ids": ["file-state-candidate-new"]},
+            },
+        ).model_copy(update={"position": 2}),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-1",
+                "candidate_id": "candidate-new",
+                "task_region_id": "task-1",
+            },
+        ).model_copy(update={"position": 3}),
+        _file_state_event("task-1", "candidate-new", 4),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-1",
+                "kind": "check",
+                "state": "completed",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "task-1",
+                "candidate_record_ids": ["candidate-old"],
+                "file_state_record_ids": ["file-state-old"],
+                "value": {
+                    "status": "passed",
+                    "candidate_record_ids": ["candidate-old"],
+                    "file_state_record_ids": ["file-state-old"],
+                },
+            },
+        ).model_copy(update={"position": 5}),
+        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
+    ]
+
+    assert project_task_states(events) == {"task-1": "pending"}
     assert project_run_state(events) == "active"
 
 

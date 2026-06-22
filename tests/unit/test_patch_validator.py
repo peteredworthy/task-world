@@ -479,6 +479,131 @@ def test_create_edge_rejects_unknown_target_port() -> None:
     )
 
 
+def test_create_edge_rejects_binding_policy_incompatible_with_target_cardinality() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-1",
+                    "from_node_id": "worker-1",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-1",
+                    "to_port": "candidate_under_test",
+                    "required": True,
+                    "binding_policy": "bind_all",
+                },
+            ]
+        ),
+    )
+
+    assert not result.accepted
+    assert (
+        result.rejection_reason
+        == "edge edge-1 binding_policy bind_all is incompatible with target cardinality one"
+    )
+
+
+def test_create_edge_accepts_known_prompt_hydration_policy() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-1",
+                    "from_node_id": "worker-1",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-1",
+                    "to_port": "candidate_under_test",
+                    "required": True,
+                    "prompt_hydration_policy": "structured_json",
+                },
+            ]
+        ),
+    )
+
+    assert result.accepted
+
+
+def test_create_edge_rejects_unknown_prompt_hydration_policy() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-1",
+                    "from_node_id": "worker-1",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-1",
+                    "to_port": "candidate_under_test",
+                    "required": True,
+                    "prompt_hydration_policy": "dump_everything",
+                },
+            ]
+        ),
+    )
+
+    assert not result.accepted
+    assert (
+        result.rejection_reason
+        == "edge edge-1 has unknown prompt_hydration_policy: dump_everything"
+    )
+
+
 def test_create_edge_rejects_new_cycle() -> None:
     result = _validate(
         _patch(

@@ -32,10 +32,19 @@ def test_routine_maps_to_root_and_routine_snapshot_record_node() -> None:
 
     assert projection["node_kinds"]["root"] == "root"
     assert projection["node_kinds"]["routine-snapshot"] == "artifact"
+    root_record = _accepted_record(events, "run-context")
+    assert root_record.payload["record_type"] == "run_context"
+    assert root_record.payload["port"] == "run_context"
+    assert root_record.payload["schema"] == "RunContext"
+    assert root_record.payload["value"]["routine_id"] == "minimal"
     snapshot_event = _node_event(events, "routine-snapshot")
     assert snapshot_event.payload["role"] == "routine_snapshot"
     assert snapshot_event.payload["snapshot"]["routine_id"] == "minimal"
     assert len(snapshot_event.payload["snapshot"]["content_hash"]) == 64
+    snapshot_record = _accepted_record(events, "routine-snapshot-record")
+    assert snapshot_record.payload["record_type"] == "routine_snapshot"
+    assert snapshot_record.payload["producer_node_id"] == "routine-snapshot"
+    assert snapshot_record.payload["value"] == snapshot_event.payload["snapshot"]
 
 
 def test_routine_snapshot_content_hash_is_deterministic_and_changes_with_content() -> None:
@@ -108,6 +117,34 @@ def test_requirements_map_to_requirement_nodes_and_bound_edges_to_worker_and_ver
     requirement_id = "requirement-s-01-t-01-r-01"
     assert projection["node_kinds"][requirement_id] == "requirement"
     assert projection["node_kinds"]["verifier-s-01-t-01"] == "verifier"
+    requirement_event = _node_event(events, requirement_id)
+    assert requirement_event.payload["outputs"][0]["schema"] == "RequirementRecord"
+    assert requirement_event.payload["requirement"] == {
+        "id": "R-01",
+        "text": "Must be done",
+        "desc": "Must be done",
+        "priority": "critical",
+        "source": "routine",
+        "version": "initial",
+        "must": True,
+    }
+    assert requirement_event.payload["requirement_record"] == {
+        "record_id": requirement_id,
+        "record_kind": "graph_record",
+        "record_type": "requirement_record",
+        "producer_node_id": requirement_id,
+        "port": "requirement",
+        "schema": "RequirementRecord",
+        "value": {
+            "id": "R-01",
+            "text": "Must be done",
+            "desc": "Must be done",
+            "priority": "critical",
+            "source": "routine",
+            "version": "initial",
+            "must": True,
+        },
+    }
     requirement_edges = [
         edge for edge in projection["edges"].values() if edge["from_node_id"] == requirement_id
     ]
@@ -255,6 +292,13 @@ def test_context_dependency_maps_to_bound_input_edge() -> None:
         for edge in projection["edges"].values()
     )
     assert "context_0" in projection["input_bindings"]["worker-s-01-t-01"]
+    artifact_record = _accepted_record(events, "artifact-reference-s-01-t-01-0")
+    assert artifact_record.payload["record_type"] == "artifact_reference"
+    assert artifact_record.payload["producer_node_id"] == context_id
+    assert artifact_record.payload["value"]["uri"] == "docs/plan.md"
+    assert projection["input_bindings"]["worker-s-01-t-01"]["context_0"]["record_ids"] == [
+        "artifact-reference-s-01-t-01-0"
+    ]
 
 
 def test_fan_out_maps_to_reader_template_and_distinct_synthesis_join_template() -> None:
@@ -332,7 +376,7 @@ def test_compile_planner_step_seeds_chain_head() -> None:
     assert _node_event(events, "planner-plan").payload["role"] == "planner"
     assert _node_event(events, "planner-plan").payload["generation_index"] == 0
     assert projection["input_bindings"]["planner-plan"]["routine_snapshot"]["record_ids"] == [
-        "routine-snapshot"
+        "routine-snapshot-record"
     ]
 
 
@@ -411,7 +455,7 @@ def test_events_replay_cleanly_into_expected_projection() -> None:
     assert len(projection["node_kinds"]) == 3
     assert len(projection["edges"]) == 1
     assert projection["input_bindings"]["worker-s-01-t-01"]["routine_snapshot"]["record_ids"] == [
-        "routine-snapshot"
+        "routine-snapshot-record"
     ]
 
 
@@ -652,6 +696,16 @@ def _node_event(events: list[EventEnvelope], node_id: str) -> EventEnvelope:
         if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
             return event
     raise AssertionError(f"missing node_created event for {node_id}")
+
+
+def _accepted_record(events: list[EventEnvelope], record_id: str) -> EventEnvelope:
+    for event in events:
+        if (
+            event.event_type == "output_record_accepted"
+            and event.payload.get("record_id") == record_id
+        ):
+            return event
+    raise AssertionError(f"missing output_record_accepted event for {record_id}")
 
 
 def _node_ids_by_kind(projection: Any, kind: str) -> list[str]:

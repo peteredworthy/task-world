@@ -80,6 +80,33 @@ class TestCodexPhaseFiltering:
         assert "create_join" not in names
         assert "retire_or_supersede" not in names
 
+    def test_registered_gap_planner_kind_uses_contract_tools(self):
+        specs = build_dynamic_tool_specs(
+            is_verifier=False,
+            context=_make_context(node_kind="gap_planner"),
+        )
+        names = {s["name"] for s in specs}
+        assert {
+            "create_corrective_region",
+            "attach_verifier",
+            "attach_check",
+            "request_gate",
+            "submit_graph_patch",
+        }.issubset(names)
+        assert "create_work_region" not in names
+        assert "create_join" not in names
+        assert "retire_or_supersede" not in names
+
+    def test_special_planner_roles_do_not_inherit_graph_mutation_tools(self):
+        for role in ("fan_out_reader", "fan_out_join"):
+            specs = build_dynamic_tool_specs(
+                is_verifier=False,
+                context=_make_context(node_kind="planner", node_role=role),
+            )
+            names = {s["name"] for s in specs}
+            assert "submit_graph_patch" not in names
+            assert names == {"update_checklist", "submit", "request_clarification"}
+
     def test_non_planner_context_excludes_submit_graph_patch(self):
         specs = build_dynamic_tool_specs(
             is_verifier=False,

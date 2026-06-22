@@ -7,8 +7,9 @@ from typing import Any, Literal, cast
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import Field
 
-from orchestrator.api.deps import get_graph_store
+from orchestrator.api.deps import get_graph_store, get_workflow_service
 from orchestrator.api.schemas.base import ApiModel
+from orchestrator.config import RunStatus
 from orchestrator.graph import (
     EventEnvelope,
     project_final_invariant_blockers,
@@ -32,6 +33,7 @@ from orchestrator.graph_runtime.store import (
     GraphEventSummary,
     GraphNodeDetailSummary,
 )
+from orchestrator.state import RunNotFoundError
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
 
@@ -79,6 +81,8 @@ class GraphTopologyBindingResponse(ApiModel):
     to_port: str | None = None
     record_ids: list[str]
     bound_at_position: int | None = None
+    record_bound_positions: dict[str, int] | None = None
+    binding_policy: str | None = None
     trigger: str | None = None
 
 
@@ -136,6 +140,13 @@ class PendingGateDecisionResponse(ApiModel):
     node_id: str
     gate_type: str
     prompt: str | None = None
+    options: list[str] | None = None
+    default_option: str | None = None
+    consequence_summary: str | None = None
+    expires_at: str | None = None
+    requested_authority: list[str] | None = None
+    target_node_id: str | None = None
+    target_region_id: str | None = None
 
 
 class AppealDecisionResponse(ApiModel):
@@ -164,6 +175,14 @@ class SchedulerViewResponse(ApiModel):
     leases: LeaseViewResponse
 
 
+def _empty_dict_items() -> list[dict[str, Any]]:
+    return []
+
+
+def _empty_str_items() -> list[str]:
+    return []
+
+
 class NodeDetailResponse(ApiModel):
     run_id: str
     node_id: str
@@ -171,6 +190,10 @@ class NodeDetailResponse(ApiModel):
     role: str | None
     state: str | None
     contract: dict[str, Any] | None = None
+    resource_claims: list[dict[str, Any]] = Field(default_factory=_empty_dict_items)
+    allowed_actions: list[str] = Field(default_factory=_empty_str_items)
+    preconditions: list[str] = Field(default_factory=_empty_str_items)
+    command_definition: dict[str, Any] | None = None
     input_ports: dict[str, list[str]]
     output_records: list[dict[str, Any]]
     file_state_records: list[dict[str, Any]]
@@ -256,6 +279,8 @@ class FinalInvariantBlockerResponse(ApiModel):
     kind: str
     reason: str
     node_id: str | None = None
+    edge_id: str | None = None
+    to_port: str | None = None
     proposal_id: str | None = None
     requirement_id: str | None = None
     revision_id: str | None = None
@@ -268,6 +293,18 @@ class FinalInvariantBlockersResponse(ApiModel):
     run_id: str
     event_count: int
     blockers: list[FinalInvariantBlockerResponse]
+
+
+class GraphRegionResponse(ApiModel):
+    task_region_id: str
+    state: str
+    blockers: list[FinalInvariantBlockerResponse]
+
+
+class GraphRegionsResponse(ApiModel):
+    run_id: str
+    event_count: int
+    regions: list[GraphRegionResponse]
 
 
 def _event_to_response(
@@ -311,9 +348,12 @@ def _summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
     keys = {
         "accepted_patches",
         "actor_role",
+        "allowed_actions",
+        "authority",
         "blocker",
         "blockers",
         "command_type",
+        "command_definition",
         "execution_id",
         "generation",
         "grade",
@@ -329,12 +369,14 @@ def _summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "patch_rejection_reasons",
         "port",
         "producer_node_id",
+        "preconditions",
         "proposed_by_node_id",
         "reason",
         "record_id",
         "record_kind",
         "rejected_patches",
         "rejection_reason",
+        "resource_claims",
         "role",
         "state",
         "task_region_id",
@@ -410,6 +452,22 @@ def build_graph_projection_response_from_snapshot(
     )
 
 
+def _graph_api_run_state(
+    projected_run_state: str | None,
+    run_status: RunStatus | None,
+) -> str | None:
+    if projected_run_state is None or run_status is None:
+        return projected_run_state
+    if run_status in {
+        RunStatus.PAUSED,
+        RunStatus.STOPPING,
+        RunStatus.COMPLETED,
+        RunStatus.FAILED,
+    }:
+        return run_status.value
+    return projected_run_state
+
+
 def build_graph_topology_response(
     run_id: str,
     events: list[EventEnvelope],
@@ -460,6 +518,37 @@ def build_final_invariant_blockers_response(
         blockers=[
             FinalInvariantBlockerResponse(**cast(dict[str, Any], blocker))
             for blocker in project_final_invariant_blockers(events)
+        ],
+    )
+
+
+def build_graph_regions_response(
+    run_id: str,
+    events: list[EventEnvelope],
+) -> GraphRegionsResponse:
+    if not events:
+        return GraphRegionsResponse(run_id=run_id, event_count=0, regions=[])
+    task_states = project_task_states(events)
+    blockers = project_final_invariant_blockers(events)
+    blockers_by_region: dict[str, list[FinalInvariantBlockerResponse]] = {}
+    for blocker in blockers:
+        task_region_id = blocker.get("task_region_id")
+        if not isinstance(task_region_id, str) or not task_region_id:
+            continue
+        blockers_by_region.setdefault(task_region_id, []).append(
+            FinalInvariantBlockerResponse(**blocker)
+        )
+    region_ids = sorted(set(task_states) | set(blockers_by_region))
+    return GraphRegionsResponse(
+        run_id=run_id,
+        event_count=max(event.position for event in events),
+        regions=[
+            GraphRegionResponse(
+                task_region_id=region_id,
+                state=task_states.get(region_id, "blocked"),
+                blockers=blockers_by_region.get(region_id, []),
+            )
+            for region_id in region_ids
         ],
     )
 
@@ -962,6 +1051,10 @@ def build_node_detail_response(
         role=cast(str | None, metadata.get("role")),
         state=state,
         contract=cast(dict[str, Any] | None, metadata.get("contract")),
+        resource_claims=cast(list[dict[str, Any]], metadata.get("resource_claims", [])),
+        allowed_actions=cast(list[str], metadata.get("allowed_actions", [])),
+        preconditions=cast(list[str], metadata.get("preconditions", [])),
+        command_definition=cast(dict[str, Any] | None, metadata.get("command_definition")),
         input_ports=cast(dict[str, list[str]], metadata.get("input_ports", {})),
         output_records=output_records,
         file_state_records=file_state_records,
@@ -976,6 +1069,7 @@ def build_node_detail_response(
 def build_node_detail_response_from_summary(
     summary: GraphNodeDetailSummary,
 ) -> NodeDetailResponse:
+    controls = _node_detail_controls_from_summary(summary)
     return NodeDetailResponse(
         run_id=summary.run_id,
         node_id=summary.node_id,
@@ -983,6 +1077,10 @@ def build_node_detail_response_from_summary(
         role=summary.role,
         state=summary.state,
         contract=node_contract_summary(summary.kind, summary.role),
+        resource_claims=controls["resource_claims"],
+        allowed_actions=controls["allowed_actions"],
+        preconditions=controls["preconditions"],
+        command_definition=controls["command_definition"],
         input_ports=summary.input_ports,
         output_records=summary.output_records,
         file_state_records=summary.file_state_records,
@@ -993,14 +1091,108 @@ def build_node_detail_response_from_summary(
     )
 
 
+def _node_detail_controls_from_summary(
+    summary: GraphNodeDetailSummary,
+) -> dict[str, Any]:
+    resource_claims: list[dict[str, Any]] = []
+    allowed_actions: list[str] = []
+    preconditions: list[str] = []
+    command_definition: dict[str, Any] | None = None
+
+    for event in summary.events:
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        payload = cast(dict[str, Any], payload)
+        if payload.get("node_id") != summary.node_id:
+            continue
+        event_claims = _resource_claims_from_payload(payload)
+        if event_claims:
+            resource_claims = event_claims
+        event_allowed_actions = _string_list_from_payload(
+            payload,
+            "allowed_actions",
+        )
+        if event_allowed_actions:
+            allowed_actions = event_allowed_actions
+        event_preconditions = _string_list_from_payload(
+            payload,
+            "preconditions",
+        )
+        if event_preconditions:
+            preconditions = event_preconditions
+        raw_command_definition = payload.get("command_definition")
+        if isinstance(raw_command_definition, dict):
+            command_definition = dict(cast(dict[str, Any], raw_command_definition))
+
+    if not resource_claims:
+        for lease in summary.leases:
+            raw_claims = lease.get("resource_claims")
+            if isinstance(raw_claims, list):
+                claims = [
+                    dict(cast(dict[str, Any], claim))
+                    for claim in cast(list[Any], raw_claims)
+                    if isinstance(claim, dict)
+                ]
+                if claims:
+                    resource_claims = claims
+                    break
+
+    return {
+        "resource_claims": resource_claims,
+        "allowed_actions": allowed_actions,
+        "preconditions": preconditions,
+        "command_definition": command_definition,
+    }
+
+
+def _resource_claims_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    raw_claims = payload.get("resource_claims")
+    if not isinstance(raw_claims, list):
+        authority = payload.get("authority")
+        if isinstance(authority, dict):
+            raw_claims = cast(dict[str, Any], authority).get("resource_claims")
+    if not isinstance(raw_claims, list):
+        return []
+    return [
+        dict(cast(dict[str, Any], claim))
+        for claim in cast(list[Any], raw_claims)
+        if isinstance(claim, dict)
+    ]
+
+
+def _string_list_from_payload(payload: dict[str, Any], field: str) -> list[str]:
+    raw_values = payload.get(field)
+    if not isinstance(raw_values, list):
+        authority = payload.get("authority")
+        if isinstance(authority, dict):
+            raw_values = cast(dict[str, Any], authority).get(field)
+    if not isinstance(raw_values, list):
+        return []
+    return [value for value in cast(list[Any], raw_values) if isinstance(value, str)]
+
+
 @router.get("/{run_id}/graph", response_model=GraphProjectionResponse)
 async def get_graph_projection(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
+    service: Any = Depends(get_workflow_service),
 ) -> GraphProjectionResponse:
     snapshot = await graph_store.read_projection_snapshot(run_id)
     await graph_store.commit_read_model_changes()
-    return build_graph_projection_response_from_snapshot(run_id, snapshot)
+    response = build_graph_projection_response_from_snapshot(run_id, snapshot)
+    try:
+        run = await service.get_run(run_id)
+    except RunNotFoundError:
+        return response
+    return response.model_copy(
+        update={
+            "run_state": _graph_api_run_state(
+                response.run_state,
+                cast(RunStatus | None, run.status),
+            )
+        }
+    )
 
 
 @router.get("/{run_id}/graph/topology", response_model=GraphTopologyResponse)
@@ -1035,6 +1227,15 @@ async def get_graph_final_blockers(
     return build_final_invariant_blockers_response(run_id, events)
 
 
+@router.get("/{run_id}/graph/regions", response_model=GraphRegionsResponse)
+async def get_graph_regions(
+    run_id: str,
+    graph_store: GraphEventStore = Depends(get_graph_store),
+) -> GraphRegionsResponse:
+    events = await graph_store.read_run_light(run_id)
+    return build_graph_regions_response(run_id, events)
+
+
 @router.get("/{run_id}/graph/events", response_model=list[GraphEventResponse])
 async def get_graph_events(
     run_id: str,
@@ -1064,7 +1265,11 @@ async def get_graph_scheduler_view(
     return build_scheduler_view_response(run_id, events)
 
 
-@router.get("/{run_id}/graph/decisions", response_model=DecisionViewResponse)
+@router.get(
+    "/{run_id}/graph/decisions",
+    response_model=DecisionViewResponse,
+    response_model_exclude_none=True,
+)
 async def get_graph_decision_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),

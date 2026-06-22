@@ -31,18 +31,24 @@ def test_scheduler_view_buckets_deferral_reasons() -> None:
         _event("node_created", {"node_id": "input-node", "state": "planned"}, 2),
         _event("node_created", {"node_id": "resource-node", "state": "planned"}, 3),
         _event("node_created", {"node_id": "gate-node", "state": "planned"}, 4),
+        _event("node_created", {"node_id": "authority-node", "state": "planned"}, 5),
         _event(
             "node_deferred",
             {"node_id": "input-node", "reason": "missing_required_input:candidate"},
-            5,
+            6,
         ),
         _event(
             "node_deferred",
             {"node_id": "resource-node", "reason": "resource_conflict:write:write"},
-            6,
+            7,
         ),
-        _event("node_deferred", {"node_id": "gate-node", "reason": "gate_not_approved:gate-1"}, 7),
-        _event("node_state_changed", {"node_id": "ready-node", "new_state": "ready"}, 8),
+        _event("node_deferred", {"node_id": "gate-node", "reason": "gate_not_approved:gate-1"}, 8),
+        _event(
+            "node_deferred",
+            {"node_id": "authority-node", "reason": "authority_not_granted:authority-1"},
+            9,
+        ),
+        _event("node_state_changed", {"node_id": "ready-node", "new_state": "ready"}, 10),
     ]
 
     view = project_scheduler_view(events)
@@ -54,7 +60,30 @@ def test_scheduler_view_buckets_deferral_reasons() -> None:
     assert view["waiting_resources"] == [
         {"node_id": "resource-node", "reason": "resource_conflict:write:write"}
     ]
-    assert view["waiting_gates"] == [{"node_id": "gate-node", "reason": "gate_not_approved:gate-1"}]
+    assert view["waiting_gates"] == [
+        {"node_id": "authority-node", "reason": "authority_not_granted:authority-1"},
+        {"node_id": "gate-node", "reason": "gate_not_approved:gate-1"},
+    ]
+
+
+def test_scheduler_view_buckets_ready_resource_deferral() -> None:
+    events = [
+        _event("node_created", {"node_id": "writer-a", "state": "leased"}, 1),
+        _event("node_created", {"node_id": "writer-b", "state": "planned"}, 2),
+        _event("node_state_changed", {"node_id": "writer-b", "new_state": "ready"}, 3),
+        _event(
+            "node_deferred",
+            {"node_id": "writer-b", "reason": "resource_conflict:write:write"},
+            4,
+        ),
+    ]
+
+    view = project_scheduler_view(events)
+
+    assert view["ready"] == ["writer-b"]
+    assert view["waiting_resources"] == [
+        {"node_id": "writer-b", "reason": "resource_conflict:write:write"}
+    ]
 
 
 def test_lease_view_reports_active_and_suspended() -> None:

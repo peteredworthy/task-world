@@ -253,6 +253,26 @@ def _gap_planner_patch(proposed_by: str) -> dict[str, Any]:
                 "required": True,
                 "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
             },
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "final-gate-ds",
+                    "kind": "final_gate",
+                    "role": "final_gate",
+                    "state": "planned",
+                    "task_region_id": "corrective_work_region",
+                },
+            },
+            {
+                "op": "create_edge",
+                "edge_id": "edge-ds-invariant-final-gate",
+                "from_node_id": "check-ds-invariant",
+                "from_port": "check_result",
+                "to_node_id": "final-gate-ds",
+                "to_port": "check_result",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["check_result"]},
+            },
         ],
     }
 
@@ -652,6 +672,23 @@ async def test_dynamic_full_happy_path_completes(
     task_states = project_task_states(events)
     assert task_states, "expected dynamic task regions to be projected"
     assert all(state == "accepted" for state in task_states.values()), task_states
+    passed_check_results = [
+        event.payload
+        for event in events
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "check_result"
+        and event.payload.get("value", {}).get("status") == "passed"
+    ]
+    assert passed_check_results, "expected final invariant check_result to pass"
+    completion_decisions = [
+        event.payload
+        for event in events
+        if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "completion_decision"
+    ]
+    assert any(
+        decision.get("value", {}).get("status") == "passed" for decision in completion_decisions
+    ), "expected final_gate completion_decision to pass"
 
 
 @pytest.mark.asyncio

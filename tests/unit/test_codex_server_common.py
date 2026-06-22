@@ -113,6 +113,9 @@ def test_is_allowed_tool_true_for_allowed(tool: str) -> None:
         "",
         "UPDATE_CHECKLIST",  # case-sensitive
         "GRADE",
+        "record_heartbeat",
+        "agent_died",
+        "submit_artifact",
     ],
 )
 def test_is_allowed_tool_false_for_disallowed(tool: str) -> None:
@@ -140,6 +143,9 @@ def test_enforce_tool_allowlist_passes_for_allowed(tool: str) -> None:
         "shell",
         "",
         "SUBMIT",
+        "record_heartbeat",
+        "agent_died",
+        "submit_artifact",
     ],
 )
 def test_enforce_tool_allowlist_raises_for_disallowed(tool: str) -> None:
@@ -209,7 +215,7 @@ def test_builder_planner_prompt_contains_submit_graph_patch_instructions() -> No
     assert "create_work_region" in result
     assert "submit_graph_patch" in result
     assert "base_graph_position: Use current_graph_position from the planner packet." in result
-    assert "ops: Raw fallback list using only allowed_patch_operations" in result
+    assert "ops: Validated raw fallback list using only allowed_patch_operations" in result
     assert "gap planners may use [] for an explicit no-op decision" in result
     assert "submit a corrected macro or patch" in result
     assert (
@@ -586,7 +592,12 @@ def test_submit_graph_patch_exposed_only_to_graph_planner() -> None:
         {"required": ["patch_id", "base_graph_position", "ops"]},
     ]
     assert schema["properties"]["patch"]["properties"]["ops"]["minItems"] == 0
+    assert (
+        "Validated low-level patch expansion"
+        in schema["properties"]["patch"]["properties"]["ops"]["description"]
+    )
     assert schema["properties"]["ops"]["minItems"] == 0
+    assert "Validated low-level patch expansion" in schema["properties"]["ops"]["description"]
 
 
 def test_planner_macros_are_exposed_with_typed_schemas() -> None:
@@ -706,6 +717,34 @@ async def test_macro_tool_routes_as_graph_patch_invocation() -> None:
             ],
         }
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool_name", ["record_heartbeat", "agent_died", "submit_artifact"])
+async def test_lifecycle_and_artifact_callbacks_are_not_agent_routable_tools(
+    tool_name: str,
+) -> None:
+    callback_calls: list[str] = []
+
+    async def on_checklist_update(
+        _req_id: str,
+        _status: ChecklistStatus,
+        _note: str | None,
+    ) -> None:
+        callback_calls.append("checklist")
+
+    async def on_submit() -> None:
+        callback_calls.append("submit")
+
+    with pytest.raises(ValueError, match="not on the Codex server v1 allow-list"):
+        await route_tool_call(
+            tool_name,
+            {},
+            on_checklist_update,
+            on_submit,
+        )
+
+    assert callback_calls == []
 
 
 # ---------------------------------------------------------------------------

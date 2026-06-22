@@ -565,6 +565,11 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
             "node_id": "worker-1",
             "title": "Implement candidate",
             "task_context": "Build it.",
+            "available_tools": ["read_file", "write_file"],
+            "authority": {
+                "allowed_actions": ["submit_records"],
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["docs/out.md"]}],
+            },
         },
         requirements=["REQ-1"],
         worktree_path="/tmp/worktree",
@@ -581,6 +586,12 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert "Standard horizon region templates" not in worker_prompt
     assert "Implement candidate" in worker_prompt
     assert "Build it." in worker_prompt
+    assert "worker_authority:" in worker_prompt
+    assert '"allowed_actions": ["submit_records"]' in worker_prompt
+    assert '"available_tools": ["read_file", "write_file"]' in worker_prompt
+    assert '"lease_id": "lease-worker-1"' in worker_prompt
+    assert '"paths": ["docs/out.md"]' in worker_prompt
+    assert '"worktree_path": "/tmp/worktree"' in worker_prompt
 
     dynamic_worker_context = GraphDispatchContext(
         run_id="run-planner-packet",
@@ -671,6 +682,56 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert "dynamic_worker_instruction:" in fallback_dynamic_worker_prompt
     assert "Do not work on unrelated repository slices." in fallback_dynamic_worker_prompt
 
+    verifier_events = [
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "task_region_id": "region-1",
+                "value": {"summary": "candidate payload"},
+            },
+            100,
+        ),
+        _event(
+            "file_state_accepted",
+            {
+                "record_id": "file-state-1",
+                "record_kind": "file_state",
+                "producer_node_id": "worker-1",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "snapshot_id": "snapshot-1",
+                "base_snapshot_id": "snapshot-0",
+                "candidate_id": "candidate-1",
+                "task_region_id": "region-1",
+                "verdict": "captured",
+            },
+            101,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            102,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "file_state",
+                "record_ids": ["file-state-1"],
+            },
+            103,
+        ),
+    ]
     verifier_context = GraphDispatchContext(
         run_id="run-planner-packet",
         node_id="verifier-1",
@@ -689,14 +750,73 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
         execution_id="exec-verifier",
         base_snapshot_id="snapshot-0",
         dispatch_event_id="dispatch-verifier",
+        graph_projection=_projection(verifier_events),
+        graph_events=verifier_events,
     )
     verifier_prompt = _prompt_for_node(verifier_context)
     assert "Verify task region region-1." in verifier_prompt
     assert "Candidate: candidate-1" in verifier_prompt
     assert "Rubric:" in verifier_prompt
+    assert "Verifier context packet:" in verifier_prompt
+    assert '"bound_records"' in verifier_prompt
+    assert '"candidate_under_test"' in verifier_prompt
+    assert '"file-state-1"' in verifier_prompt
+    assert '"required_report_schema"' in verifier_prompt
+    assert '"candidate_record_ids": ["candidate-1"]' in verifier_prompt
+    assert '"file_state_record_ids": ["file-state-1"]' in verifier_prompt
     assert "submit_graph_patch" not in verifier_prompt
     assert "horizon_region_templates" not in verifier_prompt
     assert "Standard horizon region templates" not in verifier_prompt
+
+    summarizer_events = [
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-summary-source",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "value": {"summary": "candidate details"},
+            },
+            110,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "record_ids": ["candidate-summary-source"],
+            },
+            111,
+        ),
+    ]
+    summarizer_context = GraphDispatchContext(
+        run_id="run-planner-packet",
+        node_id="summarizer-1",
+        node_kind="summarizer",
+        node_payload={
+            "node_id": "summarizer-1",
+            "kind": "summarizer",
+            "task_region_id": "region-1",
+        },
+        requirements=[],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-summarizer-1",
+        lease_generation=1,
+        execution_id="exec-summarizer",
+        base_snapshot_id="snapshot-0",
+        dispatch_event_id="dispatch-summarizer",
+        graph_projection=_projection(summarizer_events),
+        graph_events=summarizer_events,
+    )
+    summarizer_prompt = _prompt_for_node(summarizer_context)
+    assert "Summarizer context packet:" in summarizer_prompt
+    assert '"source_records"' in summarizer_prompt
+    assert '"candidate-summary-source"' in summarizer_prompt
+    assert '"required_summary_schema"' in summarizer_prompt
+    assert '"schema": "AnalysisSummary"' in summarizer_prompt
+    assert "worker_authority:" not in summarizer_prompt
 
 
 def test_verifier_prompt_is_bounded_for_oversized_rubric() -> None:

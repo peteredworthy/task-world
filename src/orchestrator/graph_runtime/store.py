@@ -23,6 +23,7 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
+    merge_bound_record_ids,
     project_decision_view,
     project_leases,
     project_lease_view,
@@ -48,7 +49,10 @@ HEAVY_GRAPH_EVENT_TYPES = frozenset(
 SUMMARY_PAYLOAD_FIELDS = (
     "accepted_patches",
     "actor_role",
+    "allowed_actions",
+    "authority",
     "blocker",
+    "command_definition",
     "command_type",
     "execution_id",
     "generation",
@@ -66,6 +70,8 @@ SUMMARY_PAYLOAD_FIELDS = (
     "reason",
     "record_id",
     "record_kind",
+    "resource_claims",
+    "preconditions",
     "rejected_patches",
     "rejection_reason",
     "role",
@@ -85,11 +91,14 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "authority",
     "authority_required_reason",
     "base_snapshot_id",
+    "binding_policy",
     "behavior_change",
     "blocker",
     "bound_at_position",
     "cache_read_tokens",
     "cache_write_tokens",
+    "candidate_record_id",
+    "candidate_record_ids",
     "candidate_id",
     "classification",
     "cleanup_id",
@@ -102,9 +111,11 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "edge_id",
     "evidence_id",
     "execution_id",
+    "evaluated_record_ids",
     "expires_at",
     "explicit_authority_required",
     "failed_candidate_id",
+    "file_state_record_ids",
     "file_state_record_id",
     "from_node_id",
     "from_port",
@@ -160,6 +171,7 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "stale_reason",
     "state",
     "status",
+    "supersedes_record_id",
     "successor_planner_node_ids",
     "superseding_record_id",
     "support_id",
@@ -220,13 +232,21 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
 )
 NODE_DETAIL_PAYLOAD_FIELDS = (
     "accepted_record_selector",
+    "allowed_actions",
+    "authority",
     "base_snapshot_id",
+    "binding_policy",
+    "candidate_record_id",
+    "candidate_record_ids",
     "candidate_id",
+    "command_definition",
     "edge_id",
+    "evaluated_record_ids",
     "execution_id",
     "expires_at",
     "from_node_id",
     "from_port",
+    "file_state_record_ids",
     "generation",
     "input",
     "kind",
@@ -239,10 +259,13 @@ NODE_DETAIL_PAYLOAD_FIELDS = (
     "record_id",
     "record_ids",
     "record_kind",
+    "resource_claims",
+    "preconditions",
     "role",
     "schema",
     "session_id",
     "state",
+    "supersedes_record_id",
     "task_region_id",
     "to_node_id",
     "to_port",
@@ -267,8 +290,12 @@ def graph_aggregate_id(run_id: str) -> str:
 def _payload_with_durable_graph_position(
     event: EventEnvelope,
     position: int,
+    run_id: str,
 ) -> dict[str, Any]:
     payload = dict(event.payload)
+    if event.event_type in {"output_record_accepted", "file_state_accepted"}:
+        _add_durable_record_base_fields(event, payload, position, run_id)
+        _validate_durable_record_base_fields(event.event_type, payload)
     if event.event_type != "input_bound":
         return payload
     bound_at_position = payload.get("bound_at_position")
@@ -280,6 +307,98 @@ def _payload_with_durable_graph_position(
         return payload
     payload["bound_at_position"] = position
     return payload
+
+
+_RECORD_PAYLOAD_BASE_FIELDS = {
+    "created_at",
+    "graph_position",
+    "payload",
+    "producer_node_id",
+    "producer_port",
+    "provenance",
+    "record_id",
+    "record_type",
+    "run_id",
+    "schema_version",
+}
+
+_LEGACY_RECORD_METADATA_FIELDS = {"port", "record_kind", "schema"}
+
+
+def _add_durable_record_base_fields(
+    event: EventEnvelope,
+    payload: dict[str, Any],
+    position: int,
+    run_id: str,
+) -> None:
+    port = payload.get("port")
+    if event.event_type == "file_state_accepted" and not isinstance(port, str):
+        port = "file_state"
+        payload["port"] = port
+    if isinstance(port, str) and port:
+        payload.setdefault("producer_port", port)
+        payload.setdefault("record_type", _record_type_for_port(port, payload))
+    payload.setdefault("schema_version", 1)
+    payload["run_id"] = run_id
+    payload["created_at"] = event.timestamp.isoformat()
+    payload["graph_position"] = position
+    payload.setdefault("payload", _typed_record_payload(payload))
+
+
+def _validate_durable_record_base_fields(event_type: str, payload: dict[str, Any]) -> None:
+    for field in (
+        "record_id",
+        "record_type",
+        "producer_node_id",
+        "producer_port",
+        "created_at",
+        "graph_position",
+        "run_id",
+        "payload",
+    ):
+        value = payload.get(field)
+        if value is None or value == "":
+            msg = f"{event_type} missing durable record base field: {field}"
+            raise ValueError(msg)
+    schema_version = payload.get("schema_version")
+    if (
+        not isinstance(schema_version, int)
+        or isinstance(schema_version, bool)
+        or schema_version <= 0
+    ):
+        msg = f"{event_type} has invalid durable record schema_version"
+        raise ValueError(msg)
+    port = payload.get("port")
+    producer_port = payload.get("producer_port")
+    if isinstance(port, str) and producer_port != port:
+        msg = f"{event_type} producer_port does not match port"
+        raise ValueError(msg)
+    if not isinstance(payload.get("payload"), dict):
+        msg = f"{event_type} payload base field must be an object"
+        raise ValueError(msg)
+
+
+def _record_type_for_port(port: str, payload: dict[str, Any]) -> str:
+    if payload.get("record_kind") == "verification":
+        return "verification_report"
+    if payload.get("record_kind") == "file_state":
+        return "file_state"
+    if port in {"file_state", "accepted_file_state"}:
+        return "file_state"
+    if port == "verification_result":
+        return "verification_report"
+    return port
+
+
+def _typed_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    value = payload.get("value")
+    if isinstance(value, dict):
+        return dict(cast(dict[str, Any], value))
+    return {
+        key: value
+        for key, value in payload.items()
+        if key not in _RECORD_PAYLOAD_BASE_FIELDS and key not in _LEGACY_RECORD_METADATA_FIELDS
+    }
 
 
 @dataclass(frozen=True)
@@ -353,7 +472,7 @@ class GraphEventStore:
                 update={
                     "run_id": run_id,
                     "position": position,
-                    "payload": _payload_with_durable_graph_position(event, position),
+                    "payload": _payload_with_durable_graph_position(event, position, run_id),
                 }
             )
             stored_events.append(stored)
@@ -455,6 +574,14 @@ class GraphEventStore:
             func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(field)
             for field in fields
         ]
+        nested_payload_selects = [
+            func.json_extract(EventV2Model.payload, "$.payload.value.status").label(
+                "__value_status"
+            ),
+            func.json_extract(EventV2Model.payload, "$.payload.value.classification").label(
+                "__value_classification"
+            ),
+        ]
         result = await self._session.execute(
             select(
                 EventV2Model.event_type,
@@ -464,6 +591,7 @@ class GraphEventStore:
                 func.json_extract(EventV2Model.payload, "$.causation_id").label("causation_id"),
                 func.json_extract(EventV2Model.payload, "$.correlation_id").label("correlation_id"),
                 *payload_selects,
+                *nested_payload_selects,
             )
             .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
             .where(EventV2Model.version >= from_position)
@@ -477,6 +605,14 @@ class GraphEventStore:
                 for field in fields
                 if row.get(field) is not None
             }
+            if "status" in fields and "status" not in payload and row.get("__value_status"):
+                payload["status"] = _json_extract_value(row["__value_status"])
+            if (
+                "classification" in fields
+                and "classification" not in payload
+                and row.get("__value_classification")
+            ):
+                payload["classification"] = _json_extract_value(row["__value_classification"])
             events.append(
                 EventEnvelope(
                     event_id=str(row.get("event_id") or f"graph-event-{row['version']}"),
@@ -1124,7 +1260,12 @@ def _node_detail_field_updates(
             position,
         )
         input_ports = {key: list(value) for key, value in summary.input_ports.items()}
-        input_ports[port] = bound_ids
+        input_ports[port] = merge_bound_record_ids(
+            str(payload.get("binding_policy", "bind_first")),
+            input_ports.get(port, []),
+            bound_ids,
+            supersedes_record_id=payload.get("supersedes_record_id"),
+        )
         updates[node_id] = _replace_summary(summary, position=position, input_ports=input_ports)
     elif event.event_type == "lease_granted":
         node_id = payload.get("node_id")
@@ -1468,6 +1609,7 @@ def _compact_file_state_record(payload: dict[str, Any]) -> dict[str, Any]:
     for key in (
         "record_id",
         "record_kind",
+        "port",
         "producer_node_id",
         "snapshot_id",
         "verdict",

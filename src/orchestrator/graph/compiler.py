@@ -27,7 +27,15 @@ from orchestrator.config.models import (
     TaskConfig,
 )
 from orchestrator.graph.commands import Clock, IdGenerator
-from orchestrator.graph.models import Actor, ActorKind, EventEnvelope
+from orchestrator.graph.models import (
+    Actor,
+    ActorKind,
+    ArtifactReferenceRecord,
+    EventEnvelope,
+    RequirementRecord,
+    RoutineSnapshotRecord,
+    RunContextRecord,
+)
 
 
 def compile_routine(
@@ -122,6 +130,23 @@ class _Compiler:
         return self._events
 
     def _create_root(self) -> None:
+        run_context_record = RunContextRecord.model_validate(
+            {
+                "record_id": "run-context",
+                "record_kind": "graph_record",
+                "record_type": "run_context",
+                "producer_node_id": "root",
+                "port": "run_context",
+                "schema": "RunContext",
+                "value": {
+                    "routine_id": self._routine.id,
+                    "routine_name": self._routine.name,
+                    "planner_generation_budget": self._routine.planner_generation_budget
+                    if self._has_planner_step
+                    else None,
+                },
+            }
+        )
         payload: dict[str, Any] = {
             "node_id": "root",
             "kind": "root",
@@ -129,12 +154,19 @@ class _Compiler:
             "role": "run_root",
             "outputs": [
                 {
+                    "port": "run_context",
+                    "direction": "output",
+                    "schema": "RunContext",
+                    "record_layers": ["graph_record"],
+                },
+                {
                     "port": "routine_snapshot",
                     "direction": "output",
                     "schema": "RoutineSnapshot",
                     "record_layers": ["graph_record"],
-                }
+                },
             ],
+            "run_context_record": run_context_record.model_dump(mode="json"),
             "routine": {
                 "id": self._routine.id,
                 "name": self._routine.name,
@@ -143,8 +175,33 @@ class _Compiler:
         if self._has_planner_step:
             payload["planner_generation_budget"] = self._routine.planner_generation_budget
         self._node(payload)
+        self._accept_record(run_context_record.model_dump(mode="json"))
 
     def _create_routine_snapshot(self) -> None:
+        snapshot_value = {
+            "routine_id": self._routine.id,
+            "name": self._routine.name,
+            "description": self._routine.description,
+            "content_hash": _routine_content_hash(self._routine),
+            "source_path": self._source_path,
+            "source_ref": self._source_ref,
+            "step_count": len(self._routine.steps),
+            "task_count": sum(len(step.tasks) for step in self._routine.steps),
+            "builder_agent": self._routine.builder_agent,
+            "verifier_agent": self._routine.verifier_agent,
+            "dynamic_feature": self._dynamic_feature_inputs,
+        }
+        snapshot_record = RoutineSnapshotRecord.model_validate(
+            {
+                "record_id": _ROUTINE_SNAPSHOT_RECORD_ID,
+                "record_kind": "graph_record",
+                "record_type": "routine_snapshot",
+                "producer_node_id": _ROUTINE_SNAPSHOT_NODE_ID,
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+                "value": snapshot_value,
+            }
+        )
         self._node(
             {
                 "node_id": _ROUTINE_SNAPSHOT_NODE_ID,
@@ -159,21 +216,11 @@ class _Compiler:
                         "record_layers": ["graph_record"],
                     }
                 ],
-                "snapshot": {
-                    "routine_id": self._routine.id,
-                    "name": self._routine.name,
-                    "description": self._routine.description,
-                    "content_hash": _routine_content_hash(self._routine),
-                    "source_path": self._source_path,
-                    "source_ref": self._source_ref,
-                    "step_count": len(self._routine.steps),
-                    "task_count": sum(len(step.tasks) for step in self._routine.steps),
-                    "builder_agent": self._routine.builder_agent,
-                    "verifier_agent": self._routine.verifier_agent,
-                    "dynamic_feature": self._dynamic_feature_inputs,
-                },
+                "snapshot": snapshot_record.value.model_dump(mode="json"),
+                "routine_snapshot_record": snapshot_record.model_dump(mode="json"),
             }
         )
+        self._accept_record(snapshot_record.model_dump(mode="json"))
 
     def _create_step_gate(self, step: StepConfig, step_index: int) -> str | None:
         if step.gate is None:
@@ -568,18 +615,38 @@ class _Compiler:
         requirement_node_ids: list[str] = []
         for requirement in task.requirements:
             requirement_id = f"requirement-{stem}-{_slug(requirement.id)}"
+            requirement_record = RequirementRecord.model_validate(
+                {
+                    "record_id": requirement_id,
+                    "record_kind": "graph_record",
+                    "record_type": "requirement_record",
+                    "producer_node_id": requirement_id,
+                    "port": "requirement",
+                    "schema": "RequirementRecord",
+                    "value": {
+                        "id": requirement.id,
+                        "text": requirement.desc,
+                        "desc": requirement.desc,
+                        "priority": requirement.priority.value,
+                        "source": "routine",
+                        "version": "initial",
+                        "must": requirement.must,
+                    },
+                }
+            )
             self._node(
                 {
                     "node_id": requirement_id,
                     "kind": "requirement",
                     "state": "completed",
                     "role": "requirement",
-                    "requirement": requirement.model_dump(mode="json"),
+                    "requirement": requirement_record.value.model_dump(mode="json"),
+                    "requirement_record": requirement_record.model_dump(mode="json"),
                     "outputs": [
                         {
                             "port": "requirement",
                             "direction": "output",
-                            "schema": "Requirement",
+                            "schema": "RequirementRecord",
                             "record_layers": ["graph_record"],
                         }
                     ],
@@ -741,6 +808,29 @@ class _Compiler:
     def _compile_context_sources(self, task: TaskConfig, entry_node_id: str, stem: str) -> None:
         for index, source in enumerate(task.context_from):
             context_node_id = f"context-{stem}-{index}-{_slug(source.as_name or source.artifact)}"
+            artifact_record_id = f"artifact-reference-{stem}-{index}"
+            artifact_record = ArtifactReferenceRecord.model_validate(
+                {
+                    "record_id": artifact_record_id,
+                    "record_kind": "graph_record",
+                    "record_type": "artifact_reference",
+                    "producer_node_id": context_node_id,
+                    "port": "artifact",
+                    "schema": "ContextArtifact",
+                    "value": {
+                        "artifact_id": source.as_name or source.artifact,
+                        "artifact_type": "context_source",
+                        "uri": source.artifact,
+                        "summary": source.critical,
+                        "source_record_ids": [],
+                        "required": source.required,
+                        "section": source.section,
+                        "max_tokens": source.max_tokens,
+                        "summarize": source.summarize,
+                        "summarize_model": source.summarize_model,
+                    },
+                }
+            )
             self._node(
                 {
                     "node_id": context_node_id,
@@ -756,8 +846,10 @@ class _Compiler:
                             "record_layers": ["graph_record"],
                         }
                     ],
+                    "artifact_reference_record": artifact_record.model_dump(mode="json"),
                 }
             )
+            self._accept_record(artifact_record.model_dump(mode="json"))
             port = f"context_{index}"
             edge_id = self._edge(
                 context_node_id,
@@ -768,7 +860,7 @@ class _Compiler:
                 required=source.required,
             )
             if source.required:
-                self._bind(edge_id, entry_node_id, port, [context_node_id])
+                self._bind(edge_id, entry_node_id, port, [artifact_record_id])
 
     def _bind_routine_snapshot(self, node_id: str) -> None:
         edge_id = self._edge(
@@ -778,7 +870,7 @@ class _Compiler:
             "routine_snapshot",
             purpose="routine_snapshot",
         )
-        self._bind(edge_id, node_id, "routine_snapshot", [_ROUTINE_SNAPSHOT_NODE_ID])
+        self._bind(edge_id, node_id, "routine_snapshot", [_ROUTINE_SNAPSHOT_RECORD_ID])
 
     def _node(self, payload: dict[str, Any]) -> None:
         payload.setdefault("run_id", self._run_id)
@@ -831,6 +923,9 @@ class _Compiler:
             },
         )
 
+    def _accept_record(self, payload: dict[str, Any]) -> None:
+        self._event("output_record_accepted", payload)
+
     def _event(self, event_type: str, payload: dict[str, Any]) -> None:
         self._events.append(
             EventEnvelope(
@@ -867,6 +962,7 @@ class _CompiledTask:
 
 
 _ROUTINE_SNAPSHOT_NODE_ID = "routine-snapshot"
+_ROUTINE_SNAPSHOT_RECORD_ID = "routine-snapshot-record"
 _SLUG_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
 
 

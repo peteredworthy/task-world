@@ -123,3 +123,87 @@ def test_planner_budget_gate_surfaces_as_pending_decision() -> None:
     ]
     assert view["appeals"] == []
     assert view["review"] == {"ready": False, "blockers": []}
+
+
+def test_decision_view_includes_typed_request_details() -> None:
+    events = [
+        _event(
+            "node_created",
+            {
+                "node_id": "human-gate-1",
+                "kind": "human_gate",
+                "state": "planned",
+                "reason": "Approve widened tool access.",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "decision-request-1",
+                "record_kind": "graph_record",
+                "record_type": "decision_request",
+                "producer_node_id": "human-gate-1",
+                "port": "decision_request",
+                "schema": "DecisionRequest",
+                "value": {
+                    "decision_type": "approval",
+                    "options": ["approve", "reject", "defer"],
+                    "default_option": "defer",
+                    "consequence_summary": "Approval grants wider graph tooling.",
+                    "expires_at": "2026-01-02T00:00:00+00:00",
+                },
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "authority-1",
+                "kind": "authority_request",
+                "state": "blocked",
+                "reason": "Needs docs write access.",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "authority-request-1",
+                "record_kind": "graph_record",
+                "record_type": "authority_request_record",
+                "producer_node_id": "authority-1",
+                "port": "authority_request_record",
+                "schema": "AuthorityRequest",
+                "value": {
+                    "requested_authority": ["repo:docs/**:write"],
+                    "target_node_id": "worker-docs",
+                    "reason": "Needs docs write access.",
+                    "expires_at": "2026-01-02T00:00:00+00:00",
+                },
+            },
+            4,
+        ),
+    ]
+
+    view = project_decision_view(events)
+
+    assert view["pending_gates"] == [
+        {
+            "node_id": "authority-1",
+            "gate_type": "authority_request",
+            "prompt": "Needs docs write access.",
+            "requested_authority": ["repo:docs/**:write"],
+            "target_node_id": "worker-docs",
+            "expires_at": "2026-01-02T00:00:00+00:00",
+        },
+        {
+            "node_id": "human-gate-1",
+            "gate_type": "Approve widened tool access.",
+            "prompt": "Approve widened tool access.",
+            "options": ["approve", "reject", "defer"],
+            "default_option": "defer",
+            "consequence_summary": "Approval grants wider graph tooling.",
+            "expires_at": "2026-01-02T00:00:00+00:00",
+        },
+    ]

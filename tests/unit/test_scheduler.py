@@ -262,6 +262,39 @@ def test_evaluate_readiness_approved_gate_input_passes() -> None:
     assert reason == ""
 
 
+def test_evaluate_readiness_authority_request_input_must_be_granted() -> None:
+    node = _node(
+        "n1",
+        state="planned",
+        required_edges=[_edge("authority-1", "authority")],
+        satisfied_input_ports={"authority"},
+        upstream_states={"authority-1": "completed"},
+        upstream_kinds={"authority-1": "authority_request"},
+    )
+
+    ready, reason = evaluate_readiness(node, "active", [], [])
+
+    assert ready is False
+    assert reason == "authority_not_granted:authority-1"
+
+
+def test_evaluate_readiness_granted_authority_request_input_passes() -> None:
+    node = _node(
+        "n1",
+        state="planned",
+        required_edges=[_edge("authority-1", "authority")],
+        satisfied_input_ports={"authority"},
+        upstream_states={"authority-1": "completed"},
+        upstream_kinds={"authority-1": "authority_request"},
+        gate_decisions={"authority-1": True},
+    )
+
+    ready, reason = evaluate_readiness(node, "active", [], [])
+
+    assert ready is True
+    assert reason == ""
+
+
 def test_evaluate_readiness_precondition_unmet_blocks_with_exact_reason() -> None:
     node = _node(
         "check-1",
@@ -340,6 +373,40 @@ def test_schedule_tie_break_node_id() -> None:
     decision = schedule(nodes, "active", [], projection_position=1)
 
     assert decision.candidates == ["node-a", "node-b", "node-c"]
+
+
+def test_schedule_tie_break_creation_position_before_node_id() -> None:
+    nodes = [
+        _node("node-a", region_order=1, creation_position=3),
+        _node("node-b", region_order=1, creation_position=1),
+        _node("node-c", region_order=1, creation_position=2),
+    ]
+
+    decision = schedule(nodes, "active", [], projection_position=1)
+
+    assert decision.candidates == ["node-b", "node-c", "node-a"]
+    assert decision.selected == ["node-b", "node-c", "node-a"]
+
+
+def test_schedule_tie_break_controller_and_deterministic_nodes_before_agents() -> None:
+    nodes = [
+        _node("worker-1", kind="worker", creation_position=1),
+        _node("verifier-1", kind="verifier", creation_position=2),
+        _node("check-1", kind="check", creation_position=3),
+        _node("join-1", kind="join", creation_position=4),
+        _node("final-gate-1", kind="final_gate", creation_position=5),
+    ]
+
+    decision = schedule(nodes, "active", [], projection_position=1)
+
+    assert decision.candidates == [
+        "check-1",
+        "join-1",
+        "final-gate-1",
+        "worker-1",
+        "verifier-1",
+    ]
+    assert decision.selected == decision.candidates
 
 
 def test_schedule_excludes_gate_nodes_from_leases() -> None:

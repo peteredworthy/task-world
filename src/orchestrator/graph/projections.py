@@ -6,12 +6,14 @@ from orchestrator.graph.command_bindings import check_command_reference
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
     PortContract,
+    binding_policy_for_edge,
     input_port_contract,
+    merge_bound_record_ids,
     node_contract_summary,
     output_port_contract,
     port_contract_summary,
 )
-from orchestrator.graph.models import EventEnvelope
+from orchestrator.graph.models import EventEnvelope, GraphPatchResultRecord
 
 
 _EDGE_METADATA_KEYS = (
@@ -83,6 +85,8 @@ class GraphTopologyBinding(TypedDict, total=False):
     to_port: str
     record_ids: list[str]
     bound_at_position: int
+    record_bound_positions: dict[str, int]
+    binding_policy: str
     trigger: str
 
 
@@ -142,10 +146,17 @@ class LeaseView(TypedDict):
     suspended: list[LeaseViewEntry]
 
 
-class PendingGateDecision(TypedDict):
+class PendingGateDecision(TypedDict, total=False):
     node_id: str
     gate_type: str
     prompt: str | None
+    options: list[str]
+    default_option: str
+    consequence_summary: str
+    expires_at: str
+    requested_authority: list[str]
+    target_node_id: str
+    target_region_id: str
 
 
 class AppealDecision(TypedDict):
@@ -190,6 +201,8 @@ class FinalInvariantBlocker(TypedDict, total=False):
     kind: str
     reason: str
     node_id: str
+    edge_id: str
+    to_port: str
     proposal_id: str
     requirement_id: str
     revision_id: str
@@ -491,6 +504,16 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             lease = dict(next_state["leases"].get(lease_id, {"lease_id": lease_id}))
             lease["state"] = event.event_type.removeprefix("lease_")
             next_state["leases"][lease_id] = lease
+    elif event.event_type == "lease_renewed":
+        lease_id = event.payload.get("lease_id")
+        if isinstance(lease_id, str):
+            lease = dict(next_state["leases"].get(lease_id, {"lease_id": lease_id}))
+            lease["state"] = "active"
+            for key in ("node_id", "generation", "execution_id", "expires_at"):
+                value = event.payload.get(key)
+                if value is not None:
+                    lease[key] = value
+            next_state["leases"][lease_id] = lease
     elif event.event_type == "output_record_accepted":
         _record_candidate(next_state, event)
         _record_check_result(next_state, event)
@@ -502,6 +525,8 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_oversight_decision(next_state, event)
     elif event.event_type == "approval_decision_recorded":
         _record_gate_decision(next_state, event)
+    elif event.event_type == "authority_decision_recorded":
+        _record_authority_decision(next_state, event)
     elif event.event_type == "node_authority_changed":
         _record_authority_change(next_state, event)
     elif event.event_type in {"environment_failure_accepted", "check_result_classified"}:
@@ -569,7 +594,7 @@ def final_invariant_blockers_for_events(
     include_completion_decision: bool = True,
 ) -> list[FinalInvariantBlocker]:
     blockers: list[FinalInvariantBlocker] = []
-    pending_states = {"planned", "ready", "leased", "running"}
+    pending_states = {"planned", "ready", "leased", "running", "blocked", "suspended"}
     for node_id, node_state in sorted(projection["node_states"].items()):
         kind = projection["node_kinds"].get(node_id)
         role = projection["node_roles"].get(node_id)
@@ -613,9 +638,12 @@ def final_invariant_blockers_for_events(
     blockers.extend(_requirement_evidence_blockers(events, projection))
     blockers.extend(_authority_revision_blockers(events))
     blockers.extend(_blocked_requirement_node_blockers(events, projection))
+    blockers.extend(_impossible_input_blockers(projection))
     blockers.extend(_failed_check_result_blockers(events))
     if include_completion_decision:
         blockers.extend(_completion_decision_blockers(events, projection))
+    blockers.extend(_non_terminal_node_blockers(projection, blockers, pending_states))
+    blockers.extend(_invalid_task_region_blockers(projection))
     for task_region_id, task_state in sorted(projection["task_states"].items()):
         if task_state == "accepted":
             continue
@@ -627,6 +655,102 @@ def final_invariant_blockers_for_events(
                 "state": task_state,
             }
         )
+    return blockers
+
+
+def _impossible_input_blockers(projection: GraphProjection) -> list[FinalInvariantBlocker]:
+    blockers: list[FinalInvariantBlocker] = []
+    terminal_states = {"completed", "failed", "cancelled", "retired"}
+    for edge_id, edge in sorted(projection["edges"].items()):
+        if edge.get("required") is False:
+            continue
+        if edge.get("dependency_type", "input_binding") != "input_binding":
+            continue
+        from_node_id = edge.get("from_node_id")
+        to_node_id = edge.get("to_node_id")
+        to_port = edge.get("to_port")
+        if not all(isinstance(value, str) for value in (from_node_id, to_node_id, to_port)):
+            continue
+        if projection["node_states"].get(str(to_node_id)) in terminal_states:
+            continue
+        if str(from_node_id) in projection["node_states"]:
+            continue
+        blocker: FinalInvariantBlocker = {
+            "kind": "impossible_input",
+            "reason": "required input edge has no producer node",
+            "node_id": str(to_node_id),
+            "edge_id": str(edge_id),
+            "to_port": str(to_port),
+            "state": projection["node_states"].get(str(to_node_id), "unknown"),
+        }
+        task_region_id = projection["node_task_regions"].get(str(to_node_id))
+        if task_region_id is not None:
+            blocker["task_region_id"] = task_region_id
+        blockers.append(blocker)
+    return blockers
+
+
+def _invalid_task_region_blockers(projection: GraphProjection) -> list[FinalInvariantBlocker]:
+    blockers: list[FinalInvariantBlocker] = []
+    by_region: dict[str, set[str]] = {}
+    for node_id, task_region_id in projection["node_task_regions"].items():
+        kind = projection["node_kinds"].get(node_id)
+        if isinstance(kind, str):
+            by_region.setdefault(task_region_id, set()).add(kind)
+    for task_region_id, kinds in sorted(by_region.items()):
+        if "check" in kinds and "worker" not in kinds and "final_gate" not in kinds:
+            blockers.append(
+                {
+                    "kind": "invalid_task_region",
+                    "reason": "check-only task region has no candidate-producing worker",
+                    "task_region_id": task_region_id,
+                    "state": projection["task_states"].get(task_region_id, "pending"),
+                }
+            )
+        elif (
+            ("planner" in kinds or "gap_planner" in kinds)
+            and "worker" not in kinds
+            and "final_gate" not in kinds
+        ):
+            blockers.append(
+                {
+                    "kind": "invalid_task_region",
+                    "reason": "planner or gap-planner task region has no candidate-producing worker",
+                    "task_region_id": task_region_id,
+                    "state": projection["task_states"].get(task_region_id, "pending"),
+                }
+            )
+    return blockers
+
+
+def _non_terminal_node_blockers(
+    projection: GraphProjection,
+    existing_blockers: list[FinalInvariantBlocker],
+    pending_states: set[str],
+) -> list[FinalInvariantBlocker]:
+    blocked_node_ids = {
+        node_id
+        for blocker in existing_blockers
+        if isinstance((node_id := blocker.get("node_id")), str)
+    }
+    blockers: list[FinalInvariantBlocker] = []
+    for node_id, node_state in sorted(projection["node_states"].items()):
+        if (
+            node_id in blocked_node_ids
+            or node_state not in pending_states
+            or projection["node_kinds"].get(node_id) == "final_gate"
+        ):
+            continue
+        blocker: FinalInvariantBlocker = {
+            "kind": "pending_node",
+            "reason": "node has not reached a terminal state",
+            "node_id": node_id,
+            "state": node_state,
+        }
+        task_region_id = projection["node_task_regions"].get(node_id)
+        if task_region_id is not None:
+            blocker["task_region_id"] = task_region_id
+        blockers.append(blocker)
     return blockers
 
 
@@ -1153,7 +1277,13 @@ def project_node_metadata(events: list[EventEnvelope]) -> dict[str, dict[str, An
                 port: _bound_record_ids(binding)
                 for port, binding in projection["input_bindings"].get(node_id, {}).items()
             },
+            "resource_claims": list(projection["node_resource_claims"].get(node_id, [])),
+            "allowed_actions": list(projection["node_allowed_actions"].get(node_id, [])),
+            "preconditions": list(projection["node_preconditions"].get(node_id, [])),
         }
+        command_definition = projection["node_command_definitions"].get(node_id)
+        if command_definition is not None:
+            detail["command_definition"] = command_definition
         contract = node_contract_summary(kind, role)
         if contract is not None:
             detail["contract"] = contract
@@ -1256,9 +1386,18 @@ def project_graph_patch_attempts(
 
     if current_graph_position is None:
         current_graph_position = max((event.position for event in events), default=0)
-    ordered_attempts = [attempts[patch_id] for patch_id in order if "status" in attempts[patch_id]]
-    for attempt in ordered_attempts:
+    ordered_attempts: list[GraphPatchAttempt] = []
+    for patch_id in order:
+        attempt = attempts[patch_id]
+        if "status" not in attempt:
+            continue
         attempt.setdefault("current_graph_position", current_graph_position)
+        ordered_attempts.append(
+            cast(
+                GraphPatchAttempt,
+                GraphPatchResultRecord.model_validate(attempt).model_dump(mode="json"),
+            )
+        )
     return {
         "run_id": run_id,
         "current_graph_position": current_graph_position,
@@ -1429,11 +1568,18 @@ def project_scheduler_view(events: list[EventEnvelope]) -> SchedulerView:
         "waiting_resources": [],
         "waiting_gates": [],
     }
-    pending_states = {"planned", "blocked"}
     for node_id, node_state in sorted(node_states.items()):
-        if node_state not in pending_states:
-            continue
         reason = latest_deferrals.get(node_id)
+        if node_state == "ready":
+            if reason is None:
+                continue
+            entry = {"node_id": node_id, "reason": reason}
+            bucket = _scheduler_bucket_for_reason(reason)
+            if bucket == "waiting_resources":
+                view[bucket].append(entry)
+            continue
+        if node_state not in {"planned", "blocked"}:
+            continue
         if reason is None and node_state != "blocked":
             continue
         if reason is None:
@@ -1478,6 +1624,7 @@ def project_decision_view(events: list[EventEnvelope]) -> DecisionView:
     authority_decisions = _latest_decisions(events, "authority_decision_recorded")
     oversight_decisions = _latest_decisions(events, "oversight_decision_recorded")
     latest_deferrals = _latest_node_deferrals(events)
+    request_details = _request_details_by_node(events)
 
     pending_gates: list[PendingGateDecision] = []
     appeals: list[AppealDecision] = []
@@ -1493,25 +1640,29 @@ def project_decision_view(events: list[EventEnvelope]) -> DecisionView:
             and state in _PENDING_DECISION_STATES
             and (node_id not in approval_decisions)
         ):
-            pending_gates.append(
-                {
-                    "node_id": node_id,
-                    "gate_type": _gate_type(node_id, payload, projection),
-                    "prompt": _gate_prompt(payload),
-                }
+            pending_gate: PendingGateDecision = {
+                "node_id": node_id,
+                "gate_type": _gate_type(node_id, payload, projection),
+                "prompt": _gate_prompt(payload),
+            }
+            pending_gate.update(
+                _request_details_for_pending_gate(node_id, payload, request_details)
             )
+            pending_gates.append(pending_gate)
         elif (
             kind == "authority_request"
             and state in _PENDING_DECISION_STATES
             and node_id not in authority_decisions
         ):
-            pending_gates.append(
-                {
-                    "node_id": node_id,
-                    "gate_type": "authority_request",
-                    "prompt": _gate_prompt(payload),
-                }
+            pending_gate = {
+                "node_id": node_id,
+                "gate_type": "authority_request",
+                "prompt": _gate_prompt(payload),
+            }
+            pending_gate.update(
+                _request_details_for_pending_gate(node_id, payload, request_details)
             )
+            pending_gates.append(pending_gate)
         elif kind == "appeal":
             appeals.append(
                 {
@@ -1692,13 +1843,22 @@ def _topology_binding(binding: dict[str, Any]) -> GraphTopologyBinding:
     summary: GraphTopologyBinding = {
         "record_ids": _bound_record_ids(binding),
     }
-    for key in ("edge_id", "to_node_id", "to_port", "trigger"):
+    for key in ("edge_id", "to_node_id", "to_port", "binding_policy", "trigger"):
         value = binding.get(key)
         if isinstance(value, str):
             summary[key] = value
     bound_at_position = binding.get("bound_at_position")
     if isinstance(bound_at_position, int) and not isinstance(bound_at_position, bool):
         summary["bound_at_position"] = bound_at_position
+    record_bound_positions = binding.get("record_bound_positions")
+    if isinstance(record_bound_positions, dict):
+        summary["record_bound_positions"] = {
+            record_id: position
+            for record_id, position in cast(dict[Any, Any], record_bound_positions).items()
+            if isinstance(record_id, str)
+            and isinstance(position, int)
+            and not isinstance(position, bool)
+        }
     return summary
 
 
@@ -1927,6 +2087,74 @@ def _latest_decisions(
     return decisions
 
 
+def _request_details_by_node(events: list[EventEnvelope]) -> dict[str, PendingGateDecision]:
+    details: dict[str, PendingGateDecision] = {}
+    for event in events:
+        if event.event_type != "output_record_accepted":
+            continue
+        node_id = event.payload.get("producer_node_id")
+        if not isinstance(node_id, str):
+            continue
+        record_type = event.payload.get("record_type")
+        port = event.payload.get("port")
+        if record_type not in {"decision_request", "authority_request_record"} and port not in {
+            "decision_request",
+            "authority_request_record",
+        }:
+            continue
+        value = event.payload.get("value")
+        if not isinstance(value, dict):
+            continue
+        projected = _request_details_from_value(cast(dict[str, Any], value))
+        if projected:
+            details[node_id] = projected
+    return details
+
+
+def _request_details_for_pending_gate(
+    node_id: str,
+    payload: dict[str, Any],
+    request_details: dict[str, PendingGateDecision],
+) -> PendingGateDecision:
+    details = request_details.get(node_id)
+    if details is not None:
+        return cast(PendingGateDecision, dict(details))
+    for key in ("decision_request", "authority_request_record", "authority_request"):
+        raw_request = payload.get(key)
+        if isinstance(raw_request, dict):
+            return _request_details_from_value(cast(dict[str, Any], raw_request))
+    return {}
+
+
+def _request_details_from_value(value: dict[str, Any]) -> PendingGateDecision:
+    details: PendingGateDecision = {}
+    options = value.get("options")
+    if isinstance(options, list):
+        string_options = [option for option in cast(list[Any], options) if isinstance(option, str)]
+        if string_options:
+            details["options"] = string_options
+    requested_authority = value.get("requested_authority")
+    if isinstance(requested_authority, list):
+        authorities = [
+            authority
+            for authority in cast(list[Any], requested_authority)
+            if isinstance(authority, str)
+        ]
+        if authorities:
+            details["requested_authority"] = authorities
+    for source_key, target_key in (
+        ("default_option", "default_option"),
+        ("consequence_summary", "consequence_summary"),
+        ("expires_at", "expires_at"),
+        ("target_node_id", "target_node_id"),
+        ("target_region_id", "target_region_id"),
+    ):
+        value_field = value.get(source_key)
+        if isinstance(value_field, str) and value_field:
+            details[target_key] = value_field
+    return details
+
+
 def _gate_type(
     node_id: str,
     payload: dict[str, Any],
@@ -1996,7 +2224,11 @@ def _scheduler_bucket_for_reason(
 ) -> Literal["blocked", "waiting_resources", "waiting_gates"]:
     if reason.startswith("resource_") or reason.startswith("invalid_claim:"):
         return "waiting_resources"
-    if reason.startswith("gate_") or reason.startswith("waiting_gate"):
+    if (
+        reason.startswith("gate_")
+        or reason.startswith("waiting_gate")
+        or reason.startswith("authority_")
+    ):
         return "waiting_gates"
     return "blocked"
 
@@ -2094,7 +2326,17 @@ def _record_candidate(state: GraphProjection, event: EventEnvelope) -> None:
     if record_kind is not None and record_kind != "output":
         return
     port = event.payload.get("port")
-    if port != "candidate" and not isinstance(event.payload.get("candidate_id"), str):
+    record_type = event.payload.get("record_type")
+    schema = event.payload.get("schema")
+    candidate_ports = {"candidate", "reader_output", "fan_out_inputs"}
+    candidate_schemas = {"ImplementationCandidate", "FanOutInputs", "FanOutJoinedInputs"}
+    explicit_non_candidate = port is not None or record_type is not None or schema is not None
+    if (
+        explicit_non_candidate
+        and port not in candidate_ports
+        and record_type != "candidate"
+        and schema not in candidate_schemas
+    ):
         return
 
     producer_node_id = event.payload.get("producer_node_id")
@@ -2122,6 +2364,10 @@ def _record_candidate(state: GraphProjection, event: EventEnvelope) -> None:
             "candidate_id": candidate_id,
             "attempt_number": attempt_number,
             "position": event.position,
+            "file_state_record_ids": _record_ids_from_payload(
+                event.payload,
+                "file_state_record_ids",
+            ),
         }
     )
 
@@ -2157,6 +2403,10 @@ def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
     record_id = event.payload.get("record_id")
     if isinstance(record_id, str):
         result["record_id"] = record_id
+    for field in ("candidate_record_ids", "file_state_record_ids", "evaluated_record_ids"):
+        record_ids = _record_ids_from_payload(event.payload, field)
+        if record_ids:
+            result[field] = record_ids
     state["check_results"][node_id] = result
 
 
@@ -2232,6 +2482,14 @@ def _record_gate_decision(state: GraphProjection, event: EventEnvelope) -> None:
     if not isinstance(gate_id, str):
         gate_id = "default"
     state["gate_decisions"].setdefault(task_region_id, {})[gate_id] = passed
+
+
+def _record_authority_decision(state: GraphProjection, event: EventEnvelope) -> None:
+    node_id = event.payload.get("node_id")
+    decision = event.payload.get("decision")
+    passed = decision in {"granted", "approved", "passed", "accepted"}
+    if isinstance(node_id, str):
+        state["node_gate_decisions"][node_id] = passed
 
 
 def _record_edge(state: GraphProjection, event: EventEnvelope) -> None:
@@ -2462,7 +2720,98 @@ def _record_input_binding(state: GraphProjection, event: EventEnvelope) -> None:
     binding = dict(event.payload)
     binding.setdefault("to_node_id", to_node_id)
     binding.setdefault("to_port", to_port)
+    existing_binding = state["input_bindings"].get(to_node_id, {}).get(to_port)
+    policy = _binding_policy_for_input_event(state, binding, to_node_id, to_port)
+    binding["binding_policy"] = policy
+    merged_ids = merge_bound_record_ids(
+        policy,
+        _bound_record_ids(existing_binding or {}),
+        _bound_record_ids(binding),
+        supersedes_record_id=binding.get("supersedes_record_id"),
+    )
+    if existing_binding is not None and merged_ids == _bound_record_ids(existing_binding):
+        return
+    binding["record_ids"] = merged_ids
+    record_positions = _merged_record_bound_positions(existing_binding, binding, merged_ids)
+    if record_positions:
+        binding["record_bound_positions"] = record_positions
     state["input_bindings"].setdefault(to_node_id, {})[to_port] = binding
+
+
+def _binding_policy_for_input_event(
+    state: GraphProjection,
+    binding: dict[str, Any],
+    to_node_id: str,
+    to_port: str,
+) -> str:
+    edge = _edge_for_input_binding(state, binding, to_node_id, to_port)
+    target_port = _target_port_for_binding(state, edge, to_node_id, to_port)
+    if edge is not None:
+        return binding_policy_for_edge(edge, target_port)
+    return binding_policy_for_edge(binding, target_port)
+
+
+def _edge_for_input_binding(
+    state: GraphProjection,
+    binding: dict[str, Any],
+    to_node_id: str,
+    to_port: str,
+) -> dict[str, Any] | None:
+    edge_id = binding.get("edge_id")
+    if isinstance(edge_id, str):
+        edge = state["edges"].get(edge_id)
+        if edge is not None:
+            return edge
+    for edge in state["edges"].values():
+        if edge.get("to_node_id") == to_node_id and edge.get("to_port") == to_port:
+            return edge
+    return None
+
+
+def _target_port_for_binding(
+    state: GraphProjection,
+    edge: dict[str, Any] | None,
+    to_node_id: str,
+    to_port: str,
+) -> PortContract | None:
+    if edge is not None:
+        _, target_port = _edge_port_contracts(edge, state)
+        if target_port is not None:
+            return target_port
+    target_kind = state["node_kinds"].get(to_node_id)
+    if target_kind is None:
+        return None
+    target_role = state["node_roles"].get(to_node_id)
+    contract = DEFAULT_NODE_CONTRACTS.contract_for(target_kind, target_role)
+    if contract is None:
+        return None
+    return input_port_contract(contract, to_port)
+
+
+def _merged_record_bound_positions(
+    existing_binding: dict[str, Any] | None,
+    incoming_binding: dict[str, Any],
+    merged_ids: list[str],
+) -> dict[str, int]:
+    positions: dict[str, int] = {}
+    if existing_binding is not None:
+        raw_existing_positions = existing_binding.get("record_bound_positions")
+        if isinstance(raw_existing_positions, dict):
+            for record_id, position in cast(dict[Any, Any], raw_existing_positions).items():
+                if isinstance(record_id, str) and isinstance(position, int):
+                    positions[record_id] = position
+        else:
+            bound_at_position = existing_binding.get("bound_at_position")
+            if isinstance(bound_at_position, int) and not isinstance(bound_at_position, bool):
+                for record_id in _bound_record_ids(existing_binding):
+                    positions.setdefault(record_id, bound_at_position)
+
+    incoming_position = incoming_binding.get("bound_at_position")
+    if not isinstance(incoming_position, int) or isinstance(incoming_position, bool):
+        incoming_position = 0
+    for record_id in _bound_record_ids(incoming_binding):
+        positions.setdefault(record_id, incoming_position)
+    return {record_id: positions[record_id] for record_id in merged_ids if record_id in positions}
 
 
 def _record_authority_change(state: GraphProjection, event: EventEnvelope) -> None:
@@ -2477,6 +2826,10 @@ def _record_authority_change(state: GraphProjection, event: EventEnvelope) -> No
     allowed_actions = _allowed_actions(event.payload)
     if allowed_actions:
         state["node_allowed_actions"][node_id] = allowed_actions
+
+    preconditions = _preconditions(event.payload)
+    if preconditions:
+        state["node_preconditions"][node_id] = preconditions
 
 
 def _record_environment_failure(state: GraphProjection, event: EventEnvelope) -> None:
@@ -2839,6 +3192,7 @@ def _task_file_state_accepted(
 
 
 def _required_checks_passed(state: GraphProjection, task_region_id: str) -> bool:
+    latest_candidate = _latest_candidate(state["task_candidates"].get(task_region_id, []))
     check_node_ids = [
         node_id
         for node_id, kind in state["node_kinds"].items()
@@ -2855,7 +3209,45 @@ def _required_checks_passed(state: GraphProjection, task_region_id: str) -> bool
         status = result.get("status")
         if status not in {"passed", "pass", "ok"}:
             return False
+        if latest_candidate is not None and not _check_result_cites_latest_candidate(
+            result,
+            latest_candidate,
+        ):
+            return False
     return True
+
+
+def _check_result_cites_latest_candidate(
+    result: dict[str, Any],
+    latest_candidate: dict[str, Any],
+) -> bool:
+    candidate_id = latest_candidate.get("candidate_id")
+    candidate_record_ids = result.get("candidate_record_ids")
+    if not isinstance(candidate_id, str) or not isinstance(candidate_record_ids, list):
+        return False
+    if candidate_id not in {
+        record_id
+        for record_id in cast(list[Any], candidate_record_ids)
+        if isinstance(record_id, str)
+    }:
+        return False
+
+    expected_file_state_ids = latest_candidate.get("file_state_record_ids")
+    if not isinstance(expected_file_state_ids, list) or not expected_file_state_ids:
+        return True
+    check_file_state_ids = result.get("file_state_record_ids")
+    if not isinstance(check_file_state_ids, list):
+        return False
+    cited_file_state_ids = {
+        record_id
+        for record_id in cast(list[Any], check_file_state_ids)
+        if isinstance(record_id, str)
+    }
+    return all(
+        record_id in cited_file_state_ids
+        for record_id in cast(list[Any], expected_file_state_ids)
+        if isinstance(record_id, str)
+    )
 
 
 def _latest_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -2957,6 +3349,26 @@ def _candidate_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
+def _record_ids_from_payload(payload: dict[str, Any], field: str) -> list[str]:
+    for source in (
+        payload,
+        payload.get("value"),
+        payload.get("provenance"),
+        payload.get("evidence"),
+    ):
+        if not isinstance(source, dict):
+            continue
+        raw_value = cast(dict[str, Any], source).get(field)
+        if not isinstance(raw_value, list):
+            continue
+        record_ids = [
+            record_id for record_id in cast(list[Any], raw_value) if isinstance(record_id, str)
+        ]
+        if record_ids:
+            return record_ids
+    return []
+
+
 def _failed_candidate_id(payload: dict[str, Any]) -> str | None:
     value = payload.get("failed_candidate_id")
     if isinstance(value, str):
@@ -2998,6 +3410,10 @@ def _allowed_actions(payload: dict[str, Any]) -> list[str]:
 
 def _preconditions(payload: dict[str, Any]) -> list[str]:
     raw_preconditions = payload.get("preconditions")
+    if raw_preconditions is None:
+        authority = payload.get("authority")
+        if isinstance(authority, dict):
+            raw_preconditions = cast(dict[str, Any], authority).get("preconditions")
     if not isinstance(raw_preconditions, list):
         return []
     return [

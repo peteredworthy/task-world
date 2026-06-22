@@ -103,6 +103,12 @@ class GraphController:
         async with self._session_factory() as session:
             return await GraphEventStore(session).current_position(run_id)
 
+    async def read_projection(self, run_id: str) -> GraphProjection:
+        """Return the current durable graph projection for a run."""
+        async with self._session_factory() as session:
+            events = await GraphEventStore(session).read_run(run_id)
+        return rebuild_projection(events)
+
     def _add_dispatch_intent_events(
         self,
         events: list[EventEnvelope],

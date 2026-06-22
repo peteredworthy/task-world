@@ -1,0 +1,421 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dynamic Graph Remaining FR Validation Plan</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17202a;
+      --muted: #5d6d7e;
+      --line: #d8dee6;
+      --panel: #f7f9fb;
+      --accent: #1565c0;
+      --risk: #b42318;
+      --ok: #137333;
+      --warn: #8a5a00;
+    }
+    body {
+      margin: 0;
+      font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: white;
+    }
+    main {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 32px 24px 48px;
+    }
+    h1, h2, h3 {
+      line-height: 1.2;
+      margin: 0;
+      letter-spacing: 0;
+    }
+    h1 {
+      font-size: 30px;
+      margin-bottom: 8px;
+    }
+    h2 {
+      font-size: 20px;
+      margin-top: 34px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--line);
+      padding-bottom: 8px;
+    }
+    h3 {
+      font-size: 16px;
+      margin-bottom: 6px;
+    }
+    p {
+      margin: 0 0 12px;
+    }
+    ul {
+      margin: 8px 0 0;
+      padding-left: 20px;
+    }
+    li {
+      margin: 5px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      background: var(--panel);
+    }
+    code {
+      font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      background: #eef2f6;
+      border-radius: 4px;
+      padding: 1px 4px;
+    }
+    .summary {
+      color: var(--muted);
+      max-width: 880px;
+      margin-bottom: 20px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 18px 0 8px;
+    }
+    .metric, .card {
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .metric strong {
+      display: block;
+      font-size: 22px;
+      margin-bottom: 4px;
+    }
+    .label {
+      display: inline-block;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid var(--line);
+      background: white;
+    }
+    .partial {
+      color: var(--warn);
+    }
+    .blocked {
+      color: var(--risk);
+    }
+    .proof {
+      color: var(--ok);
+    }
+    .scenario-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+    @media (max-width: 860px) {
+      .grid, .scenario-grid {
+        grid-template-columns: 1fr;
+      }
+      main {
+        padding: 24px 16px 40px;
+      }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Dynamic Graph Remaining FR Validation Plan</h1>
+  <p class="summary">
+    Status update for the typed work graph effort. The ledger in
+    <code>docs/dynamic-graph/status.md</code> remains the source of truth. This
+    page explains what is still unproven, why progress has been slow, and the
+    smallest scenarios that should close the remaining functional requirements.
+  </p>
+
+  <div class="grid">
+    <section class="metric">
+      <strong>18</strong>
+      Functional product requirements tracked, excluding FR-19 comparison
+      oracle work.
+    </section>
+    <section class="metric">
+      <strong>0</strong>
+      Rows should be called fully validated until product-path proof exists for
+      every acceptance criterion in that row.
+    </section>
+    <section class="metric">
+      <strong>3</strong>
+      Main proof clusters remain: controls/readbacks, recovery/callbacks, and
+      mutation/scheduler edge cases.
+    </section>
+  </div>
+
+  <h2>Where We Are</h2>
+  <p>
+    The graph implementation has substantial product evidence: real
+    <code>/api/runs</code> dogfood runs have created planner-authored topology,
+    moved work through worker, verifier, gap planner, corrective worker, and
+    deterministic check nodes, captured file state, enforced callback
+    validation, recovered a dead check lease, completed accepted regions, and
+    rejected unsupported graph runners before seeding graph events.
+  </p>
+  <p>
+    The same dogfood runs also found bugs that deterministic tests missed:
+    missing verifier requirement packets, stale final-check acceptance,
+    validator citation mismatch, ignored tool-cache staging, stale recovery
+    duplicate-position races, API state incoherence, scheduler
+    <code>waiting_resources</code> readback gaps, and incomplete node-detail
+    control summaries.
+  </p>
+
+  <h2>What Remains</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Cluster</th>
+        <th>FR rows</th>
+        <th>Missing product proof</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Control and readback depth</td>
+        <td>FR-03, FR-06, FR-09, FR-10, FR-17</td>
+        <td>
+          Node detail must show non-resource controls such as
+          <code>allowed_actions</code>, <code>preconditions</code>, and
+          <code>command_definition</code>; topology must expose binding policy
+          and bound positions; live scheduler readback must show
+          <code>waiting_resources</code>; packet/readback proof must cover every
+          canonical node kind used by the product path.
+        </td>
+      </tr>
+      <tr>
+        <td>Recovery and callback lifecycle</td>
+        <td>FR-12, FR-16</td>
+        <td>
+          Product recovery must exercise the stale-report guard without
+          duplicate-position or SQLite-lock failure. Heartbeat, cancellation,
+          artifact/output, and failure callback paths still need dogfood proof.
+        </td>
+      </tr>
+      <tr>
+        <td>Mutation and scheduler edge cases</td>
+        <td>FR-07, FR-08, FR-10, FR-11, FR-13, FR-15, FR-18</td>
+        <td>
+          Product probes still need to prove unsafe patch rejection, authority
+          gates, hidden-command scrubbing, active-node safety, deterministic
+          fairness across multiple ready nodes, failed-final-invariant blocking,
+          path-scoped non-conflicting write claims, and explicit cleanup work.
+        </td>
+      </tr>
+      <tr>
+        <td>Completion semantics</td>
+        <td>FR-04, FR-05, FR-14, FR-18</td>
+        <td>
+          Decide and prove whether check-gated dynamic feature runs should emit
+          separate <code>completion_decision</code> records, or narrow those
+          rows with a documented scope decision.
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Why Progress Has Been Slow</h2>
+  <ul>
+    <li>
+      The implementation is validating an event-sourced runtime, not a pure
+      library. Many failures only appear when API state, graph projections,
+      runner callbacks, worktree staging, database writes, and scheduler timing
+      interact in the same product path.
+    </li>
+    <li>
+      Tests were too good at proving isolated functions and too weak at proving
+      the product contract. They did not consistently compare public
+      <code>/api/runs</code> state with <code>/graph</code> projections, capture
+      transient scheduler states, or replay restart and stale lease races.
+    </li>
+    <li>
+      Dogfooding used real Codex runner work. That finds high-value bugs, but
+      every run consumes time and tokens, and some evidence was lost because
+      transient states such as resource deferral were not captured at the exact
+      moment they occurred.
+    </li>
+    <li>
+      The ledger was previously too willing to treat passing regression tests
+      as validation. The corrected proof standard requires product-real usage
+      plus supporting tests, which exposes more remaining work but prevents
+      false completion.
+    </li>
+  </ul>
+
+  <h2>Systemic Testing Gaps</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>Gap</th>
+        <th>Effect</th>
+        <th>Repair direction</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Function tests without product-path oracles</td>
+        <td>Pure command/projection tests passed while runner packets and API readbacks were wrong.</td>
+        <td>Add product-state fixtures that assert public API, graph projection, and event facts together.</td>
+      </tr>
+      <tr>
+        <td>No durable transient-state capture</td>
+        <td>Resource conflict behavior was visible in events but missed by scheduler readback at the live moment.</td>
+        <td>Add pause/checkpoint support or stop-after-position probes for scheduler states.</td>
+      </tr>
+      <tr>
+        <td>Restart races treated as unit recovery only</td>
+        <td>Duplicate event-position and SQLite-lock bugs appeared only during server startup recovery.</td>
+        <td>Use copied DB state packs with active leases and restart the real server path.</td>
+      </tr>
+      <tr>
+        <td>Incomplete callback matrix</td>
+        <td>Submit, grade, and patch were exercised, but heartbeat, cancellation, artifact/output, and failure callbacks were not.</td>
+        <td>Create tiny callback-specific dogfood runs with minimal topology and no broad feature work.</td>
+      </tr>
+      <tr>
+        <td>Stale fixture shape</td>
+        <td>Old summary rows lacked newer control fields, so old DB readbacks could not prove new node-detail behavior.</td>
+        <td>Use old state for replay/readback regressions, but create fresh narrow runs for newly added readback fields.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>Minimal Scenarios</h2>
+  <div class="scenario-grid">
+    <section class="card">
+      <h3>1. Completed Smoke State Pack</h3>
+      <p>
+        Copy the completed <code>5268031d...</code> DB/event state. Use it for
+        cheap API/projection regression of terminal readbacks, accepted region,
+        final blockers, file-state citation, and no tool-cache staging.
+      </p>
+      <p><span class="label proof">Covers</span> FR-01, FR-03, FR-04, FR-06, FR-14, FR-15, FR-17, FR-18 regression proof.</p>
+    </section>
+
+    <section class="card">
+      <h3>2. Live Resource Conflict Checkpoint</h3>
+      <p>
+        Reuse the two-writer routine shape from <code>3c5bfc81...</code>, but
+        stop after the first write lease and second deferral. Query
+        <code>/graph/scheduler</code>, node detail, and bounded events before
+        allowing the first worker to release.
+      </p>
+      <p><span class="label proof">Covers</span> FR-10, FR-15, FR-17 product proof for <code>waiting_resources</code>.</p>
+    </section>
+
+    <section class="card">
+      <h3>3. Stale Recovery State Pack</h3>
+      <p>
+        Snapshot a DB with an active stale lease and recovery report pending.
+        Start the real server path and prove recovery skips already-revoked
+        leases without duplicate graph positions or database locks.
+      </p>
+      <p><span class="label blocked">Covers</span> FR-12 product proof for restart/re-entry durability.</p>
+    </section>
+
+    <section class="card">
+      <h3>4. Decision and Authority Gate</h3>
+      <p>
+        Seed a narrow graph with a <code>human_gate</code> and
+        <code>authority_request</code>. Query pending decision readbacks,
+        grant/deny authority, and prove downstream readiness changes only after
+        the accepted decision.
+      </p>
+      <p><span class="label partial">Covers</span> FR-02, FR-05, FR-08, FR-10, FR-16, FR-17.</p>
+    </section>
+
+    <section class="card">
+      <h3>5. Invalid Patch Probe Matrix</h3>
+      <p>
+        Through the runner callback path, submit one invalid patch at a time:
+        unauthorized actor, stale base position, hidden command, unsafe
+        resource mutation, and active-node retire. Assert rejection diagnostics
+        in <code>/graph/patches</code>.
+      </p>
+      <p><span class="label partial">Covers</span> FR-07, FR-08 product rejection proof.</p>
+    </section>
+
+    <section class="card">
+      <h3>6. Failed Final Invariant</h3>
+      <p>
+        Use a tiny run where worker/verifier evidence exists but the final
+        deterministic check fails. Prove the run stays non-completed with
+        explicit final blockers, then repair the evidence and prove completion.
+      </p>
+      <p><span class="label partial">Covers</span> FR-01, FR-13, FR-14, FR-18.</p>
+    </section>
+
+    <section class="card">
+      <h3>7. Callback Lifecycle Matrix</h3>
+      <p>
+        Create callback-specific runs for heartbeat, artifact/output, failure,
+        and cancellation. Keep topology small enough that the scenario tests the
+        callback contract rather than a full dynamic feature.
+      </p>
+      <p><span class="label partial">Covers</span> FR-12, FR-16.</p>
+    </section>
+
+    <section class="card">
+      <h3>8. Edge Binding Topology</h3>
+      <p>
+        Use a deterministic topology with fan-out, join, optional edge,
+        <code>bind_all</code>, and supersede. Assert topology readback contains
+        policies, bound record IDs, and positions.
+      </p>
+      <p><span class="label partial">Covers</span> FR-06, FR-11, FR-17.</p>
+    </section>
+
+    <section class="card">
+      <h3>9. File Cleanup and Scoped Writes</h3>
+      <p>
+        Run one path-scoped non-conflicting write scenario and one revoked write
+        lease scenario. Prove cleanup is visible as graph work and file-state
+        evidence.
+      </p>
+      <p><span class="label partial">Covers</span> FR-15 and related recovery safety.</p>
+    </section>
+  </div>
+
+  <h2>How To Reduce Busy Work</h2>
+  <ul>
+    <li>
+      Convert expensive dogfood DBs into named state packs for readback,
+      projection, and restart regression. Use real product runs only when the
+      FR requires proving a live callback, runner, scheduler, or worktree path.
+    </li>
+    <li>
+      Add precise checkpoints such as "stop after graph position N" or "pause
+      after first lease" so transient proof can be captured without rerunning a
+      full feature.
+    </li>
+    <li>
+      Keep each product scenario tied to one or two ledger rows. Do not use a
+      large dynamic feature run to prove a narrow API readback or rejection
+      behavior.
+    </li>
+    <li>
+      Label evidence honestly: copied state and seeded fixtures are regression
+      proof unless the scenario exercises the same product path a user or
+      downstream runner would use.
+    </li>
+  </ul>
+</main>
+</body>
+</html>

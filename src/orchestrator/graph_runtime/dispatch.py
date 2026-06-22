@@ -5,6 +5,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import re
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -15,9 +19,13 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.graph import (
+    CheckResultRecord,
+    DEFAULT_NODE_CONTRACTS,
     EventEnvelope,
+    GapClassificationRecord,
     GraphProjection,
     PLANNER_OPS,
+    RequirementRecord,
     initial_projection,
     project_planner_freshness_packet,
     resolve_check_command_definition,
@@ -45,6 +53,7 @@ MAX_GRAPH_PROMPT_FIELD_CHARS = 8_000
 MAX_CHECK_OUTPUT_CHARS = 20_000
 DEFAULT_CHECK_TIMEOUT_SECONDS = 300
 MAX_STALE_COMMAND_RETRIES = 5
+SNAPSHOT_REF_PATTERN = re.compile(r"^refs/orchestrator/snapshots/[0-9a-f]{32}$")
 
 
 def _empty_event_list() -> list[EventEnvelope]:
@@ -80,6 +89,14 @@ class GraphDispatchContext:
     graph_projection: GraphProjection = field(default_factory=initial_projection)
     graph_events: list[EventEnvelope] = field(default_factory=_empty_event_list)
     node_role: str = ""
+
+
+@dataclass(frozen=True)
+class CheckExecutionWorktree:
+    path: str
+    snapshot_id: str | None = None
+    snapshot_ref: str | None = None
+    temporary_path: str | None = None
 
 
 class GraphAgentFactory(Protocol):
@@ -342,7 +359,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             node_kind=context.node_kind,
             node_role=context.node_role,
             graph_patch_callback=graph_patch_callback,
-            available_tools=cast(list[str] | None, node.get("available_tools")),
+            available_tools=_available_tools_for_context(context),
             mcp_servers=cast(Any, node.get("mcp_servers")),
             work_mode=_work_mode(node.get("work_mode")),
         )
@@ -431,6 +448,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "submit_callback",
             payload_data,
         )
+        conflict_reason = _callback_conflict_reason(result.events)
+        if conflict_reason is not None:
+            raise ValueError(f"submit callback rejected: {conflict_reason}")
         await self._record_gatekeeper_verdicts(context, result.projection_position, result.events)
 
     async def _submit_check_result(
@@ -465,6 +485,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
         context: GraphDispatchContext,
         patch_payload: dict[str, Any],
     ) -> str:
+        if not _can_submit_graph_patch(context):
+            msg = f"node {context.node_id} is not authorized to submit graph patches"
+            raise ValueError(msg)
         observed_position = await self._current_position(context.run_id)
         payload: dict[str, object] = dict(patch_payload)
         payload["run_id"] = context.run_id
@@ -665,16 +688,45 @@ async def reconcile_runtime(
         if execution_id and dispatcher.is_running(execution_id):
             continue
         run_id = str(lease["run_id"])
-        await controller.handle_command(
-            run_id,
-            await controller.current_position(run_id),
-            "agent_died",
-            {
-                "lease_id": str(lease["lease_id"]),
-                "execution_id": execution_id,
-                "reason": "runtime_process_missing_after_restart",
-            },
-        )
+        lease_id = str(lease["lease_id"])
+        for attempt in range(MAX_STALE_COMMAND_RETRIES):
+            if not await _recovered_lease_still_active(
+                controller,
+                run_id,
+                lease_id,
+                execution_id,
+            ):
+                break
+            try:
+                await controller.handle_command(
+                    run_id,
+                    await controller.current_position(run_id),
+                    "agent_died",
+                    {
+                        "lease_id": lease_id,
+                        "execution_id": execution_id,
+                        "reason": "runtime_process_missing_after_restart",
+                    },
+                )
+                break
+            except StaleProjectionError:
+                if attempt == MAX_STALE_COMMAND_RETRIES - 1:
+                    raise
+                continue
+
+
+async def _recovered_lease_still_active(
+    controller: GraphController,
+    run_id: str,
+    lease_id: str,
+    execution_id: str,
+) -> bool:
+    projection = await controller.read_projection(run_id)
+    lease = projection["leases"].get(lease_id)
+    if lease is None or lease.get("state") != "active":
+        return False
+    lease_execution_id = lease.get("execution_id")
+    return not isinstance(lease_execution_id, str) or lease_execution_id == execution_id
 
 
 def build_graph_runtime(
@@ -729,11 +781,75 @@ def _requirements_for_node(events: list[EventEnvelope], node_id: str) -> list[st
         requirement_node_id = event.payload.get("node_id")
         if not isinstance(requirement_node_id, str) or requirement_node_id not in bound_record_ids:
             continue
+        requirement_record = event.payload.get("requirement_record")
+        if isinstance(requirement_record, dict):
+            try:
+                record = RequirementRecord.model_validate(requirement_record)
+            except ValueError:
+                continue
+            requirements.append(f"{record.value.id}: {record.value.text}")
+            continue
         requirement = event.payload.get("requirement")
         if isinstance(requirement, dict):
             req = cast(dict[str, Any], requirement)
             requirements.append(f"{req.get('id', requirement_node_id)}: {req.get('desc', '')}")
+    if requirements:
+        return requirements
+
+    dynamic_feature = _dynamic_feature_from_events(events)
+    if dynamic_feature is not None:
+        requirement = _dynamic_feature_acceptance_requirement(dynamic_feature)
+        if requirement is not None:
+            return [requirement]
     return requirements
+
+
+def _dynamic_feature_from_events(events: list[EventEnvelope]) -> dict[str, Any] | None:
+    for event in reversed(events):
+        if event.event_type != "node_created":
+            continue
+        snapshot = event.payload.get("snapshot")
+        if isinstance(snapshot, dict):
+            typed_snapshot = cast(dict[str, Any], snapshot)
+            snapshot_feature = typed_snapshot.get("dynamic_feature")
+            if isinstance(snapshot_feature, dict):
+                return cast(dict[str, Any], snapshot_feature)
+        payload_feature = event.payload.get("dynamic_feature")
+        if isinstance(payload_feature, dict):
+            return cast(dict[str, Any], payload_feature)
+    return None
+
+
+def _dynamic_feature_acceptance_requirement(
+    dynamic_feature: dict[str, Any],
+) -> str | None:
+    content = dynamic_feature.get("feature_spec_content")
+    command = dynamic_feature.get("acceptance_command")
+    parts: list[str] = []
+    if isinstance(content, str) and content.strip():
+        parts.append(content.strip())
+    if isinstance(command, str) and command.strip():
+        parts.append(f"Acceptance command: {command.strip()}")
+    if not parts:
+        return None
+    return f"dynamic_feature_acceptance: {' '.join(parts)}"
+
+
+def _callback_conflict_reason(events: list[EventEnvelope]) -> str | None:
+    conflict = next(
+        (
+            event
+            for event in events
+            if event.event_type in {"callback_rejected_conflict", "command_rejected"}
+        ),
+        None,
+    )
+    if conflict is None:
+        return None
+    reason = conflict.payload.get("reason")
+    if isinstance(reason, str) and reason:
+        return reason
+    return "unknown callback conflict"
 
 
 def _guard_no_pending_compromised_file_state_bindings(
@@ -832,9 +948,65 @@ def _bounded_text(value: object, *, max_chars: int = MAX_GRAPH_PROMPT_FIELD_CHAR
     return f"{text[: max_chars - len(suffix)]}{suffix}"
 
 
+def _verifier_packet(context: GraphDispatchContext) -> dict[str, Any]:
+    node = context.node_payload
+    return {
+        "node_id": context.node_id,
+        "task_region_id": node.get("task_region_id", context.node_id),
+        "candidate_id": node.get("candidate_id"),
+        "requirements": list(context.requirements),
+        "rubric": node.get("rubric") or [],
+        "bound_records": _planner_evidence(
+            context,
+            context.graph_projection,
+            context.graph_events,
+        )["bound_records"],
+        "evaluated_record_citations": _evaluated_record_citations(context),
+        "required_report_schema": {
+            "record_kind": "verification",
+            "port": "verification_report",
+            "schema": "VerificationReport",
+            "required_fields": [
+                "candidate_id",
+                "verdict",
+                "value.grades",
+                "evidence.evaluated_record_ids",
+            ],
+            "verdict_values": ["passed", "failed"],
+        },
+    }
+
+
+def _summarizer_packet(context: GraphDispatchContext) -> dict[str, Any]:
+    node = context.node_payload
+    return {
+        "node_id": context.node_id,
+        "task_region_id": node.get("task_region_id", context.node_id),
+        "source_records": _planner_evidence(
+            context,
+            context.graph_projection,
+            context.graph_events,
+        )["bound_records"].get("source_records", []),
+        "required_summary_schema": {
+            "record_kind": "output",
+            "record_type": "analysis_summary",
+            "port": "analysis_summary",
+            "schema": "AnalysisSummary",
+            "required_fields": [
+                "summary",
+                "source_record_ids",
+                "lossiness",
+                "omitted_details",
+            ],
+            "lossiness_values": ["lossless", "lossy"],
+        },
+    }
+
+
 def _prompt_for_node(context: GraphDispatchContext) -> str:
     node = context.node_payload
     if context.node_kind == "verifier":
+        packet = _verifier_packet(context)
         rubric = node.get("rubric")
         return _bounded_prompt(
             "\n".join(
@@ -842,6 +1014,21 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
                     f"Verify task region {node.get('task_region_id', context.node_id)}.",
                     f"Candidate: {node.get('candidate_id', '')}",
                     f"Rubric: {_bounded_json(rubric or [])}",
+                    "",
+                    "Verifier context packet:",
+                    _bounded_json(packet),
+                ]
+            )
+        )
+    if context.node_kind == "summarizer":
+        packet = _summarizer_packet(context)
+        return _bounded_prompt(
+            "\n".join(
+                [
+                    f"Summarize source records for {node.get('task_region_id', context.node_id)}.",
+                    "",
+                    "Summarizer context packet:",
+                    _bounded_json(packet),
                 ]
             )
         )
@@ -912,11 +1099,52 @@ def _worker_like_prompt(context: GraphDispatchContext) -> str:
     if isinstance(invariants, list) and invariants:
         context_lines.append(f"invariants: {_bounded_json(cast(list[Any], invariants))}")
 
+    authority_packet = _worker_authority_packet(context)
+    if authority_packet:
+        context_lines.append(f"worker_authority: {_bounded_json(authority_packet)}")
+
     dynamic_feature = _dynamic_feature_from_context(context)
     if dynamic_feature is not None:
         context_lines.extend(_dynamic_feature_prompt_lines(node, dynamic_feature))
 
     return _bounded_prompt("\n".join([_bounded_text(title), *context_lines]).strip())
+
+
+def _worker_authority_packet(context: GraphDispatchContext) -> dict[str, Any]:
+    node = context.node_payload
+    authority = node.get("authority")
+    authority_payload = cast(dict[str, Any], authority) if isinstance(authority, dict) else {}
+    allowed_actions = authority_payload.get("allowed_actions")
+    resource_claims = authority_payload.get("resource_claims")
+    available_tools = _available_tools_for_context(context)
+
+    packet: dict[str, Any] = {
+        "node_id": context.node_id,
+        "lease_id": context.lease_id,
+        "lease_generation": context.lease_generation,
+        "worktree_path": context.worktree_path,
+    }
+    if isinstance(allowed_actions, list):
+        packet["allowed_actions"] = [
+            action for action in cast(list[Any], allowed_actions) if isinstance(action, str)
+        ]
+    if isinstance(resource_claims, list):
+        packet["resource_claims"] = [
+            claim for claim in cast(list[Any], resource_claims) if isinstance(claim, dict)
+        ]
+    if available_tools is not None:
+        packet["available_tools"] = list(available_tools)
+    return packet
+
+
+def _available_tools_for_context(context: GraphDispatchContext) -> list[str] | None:
+    explicit_tools = context.node_payload.get("available_tools")
+    if isinstance(explicit_tools, list):
+        return [tool for tool in cast(list[Any], explicit_tools) if isinstance(tool, str)]
+    contract_tools = sorted(
+        DEFAULT_NODE_CONTRACTS.allowed_tools_for(context.node_kind, context.node_role)
+    )
+    return contract_tools or None
 
 
 def _dynamic_feature_from_context(context: GraphDispatchContext) -> dict[str, Any] | None:
@@ -1189,6 +1417,7 @@ def _planner_evidence(
         raw_record_ids = binding.get("record_ids")
         if not isinstance(raw_record_ids, list):
             continue
+        hydration_policy = _hydration_policy_for_binding(binding, projection)
         records: list[dict[str, Any]] = []
         for raw_record_id in cast(list[object], raw_record_ids):
             if not isinstance(raw_record_id, str):
@@ -1196,26 +1425,26 @@ def _planner_evidence(
 
             if raw_record_id in projection["file_state_records"]:
                 records.append(
-                    {
-                        "record_id": raw_record_id,
-                        "record_kind": "file_state",
-                        "record_payload": _compact_file_state_record(
+                    _hydrated_bound_record(
+                        record_id=raw_record_id,
+                        record_kind="file_state",
+                        record_payload=_compact_file_state_record(
                             projection["file_state_records"][raw_record_id]
                         ),
-                        "status": "accepted",
-                    }
+                        hydration_policy=hydration_policy,
+                    )
                 )
                 continue
 
             output_payload = output_records.get(raw_record_id)
             if output_payload is not None:
                 records.append(
-                    {
-                        "record_id": raw_record_id,
-                        "record_kind": output_payload.get("record_kind", "output"),
-                        "record_payload": output_payload,
-                        "status": "accepted",
-                    }
+                    _hydrated_bound_record(
+                        record_id=raw_record_id,
+                        record_kind=str(output_payload.get("record_kind", "output")),
+                        record_payload=output_payload,
+                        hydration_policy=hydration_policy,
+                    )
                 )
                 continue
 
@@ -1234,6 +1463,88 @@ def _planner_evidence(
         "outstanding_failures": _planner_outstanding_failures(context, projection),
         "session_carryover_record_id": _planner_session_carryover_record(context, projection),
     }
+
+
+def _hydration_policy_for_binding(
+    binding: dict[str, Any],
+    projection: GraphProjection,
+) -> str:
+    edge_id = binding.get("edge_id")
+    if not isinstance(edge_id, str):
+        return "structured_json"
+    edge = projection["edges"].get(edge_id)
+    if not isinstance(edge, dict):
+        return "structured_json"
+    policy = edge.get("prompt_hydration_policy")
+    if isinstance(policy, str) and policy in {
+        "inline_summary",
+        "structured_json",
+        "artifact_reference",
+        "tool_only",
+    }:
+        return policy
+    return "structured_json"
+
+
+def _hydrated_bound_record(
+    *,
+    record_id: str,
+    record_kind: str,
+    record_payload: dict[str, Any],
+    hydration_policy: str,
+) -> dict[str, Any]:
+    record: dict[str, Any] = {
+        "record_id": record_id,
+        "record_kind": record_kind,
+        "hydration_policy": hydration_policy,
+        "status": "accepted",
+    }
+    if hydration_policy == "tool_only":
+        record["omitted_from_prompt"] = True
+        return record
+    if hydration_policy == "artifact_reference":
+        record["record_reference"] = _artifact_reference_payload(record_payload)
+        return record
+    if hydration_policy == "inline_summary":
+        record["record_summary"] = _inline_record_summary(record_payload)
+        return record
+    record["record_payload"] = record_payload
+    return record
+
+
+def _artifact_reference_payload(record_payload: dict[str, Any]) -> dict[str, Any]:
+    value = record_payload.get("value")
+    typed_value = cast(dict[str, Any], value) if isinstance(value, dict) else {}
+    reference: dict[str, Any] = {
+        "record_id": record_payload.get("record_id"),
+        "record_type": record_payload.get("record_type"),
+        "schema": record_payload.get("schema"),
+        "producer_node_id": record_payload.get("producer_node_id"),
+        "producer_port": record_payload.get("producer_port") or record_payload.get("port"),
+    }
+    for key in ("artifact_id", "artifact_type", "uri", "summary"):
+        value_field = typed_value.get(key)
+        if isinstance(value_field, str) and value_field:
+            reference[key] = value_field
+    return {key: value for key, value in reference.items() if value is not None}
+
+
+def _inline_record_summary(record_payload: dict[str, Any]) -> dict[str, Any]:
+    value = record_payload.get("value")
+    typed_value = cast(dict[str, Any], value) if isinstance(value, dict) else {}
+    summary = typed_value.get("summary") or typed_value.get("text") or record_payload.get("summary")
+    inline: dict[str, Any] = {
+        "record_id": record_payload.get("record_id"),
+        "record_type": record_payload.get("record_type"),
+        "schema": record_payload.get("schema"),
+    }
+    if isinstance(summary, str) and summary:
+        inline["summary"] = _bounded_text(summary, max_chars=MAX_GRAPH_PROMPT_FIELD_CHARS)
+    for key in ("status", "classification", "verdict", "candidate_id"):
+        value_field = record_payload.get(key) or typed_value.get(key)
+        if isinstance(value_field, str) and value_field:
+            inline[key] = value_field
+    return {key: value for key, value in inline.items() if value is not None}
 
 
 def _compact_file_state_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -1615,7 +1926,9 @@ def _node_role(node_kind: str, node_payload: dict[str, Any]) -> str:
 
 
 def _can_submit_graph_patch(context: GraphDispatchContext) -> bool:
-    return context.node_kind == "planner" and context.node_role in {"planner", "gap_planner"}
+    return "submit_graph_patch" in DEFAULT_NODE_CONTRACTS.allowed_tools_for(
+        context.node_kind, context.node_role
+    )
 
 
 def _requires_graph_patch_before_submit(context: GraphDispatchContext) -> bool:
@@ -1634,6 +1947,159 @@ def _patch_payload_has_ops(patch_payload: dict[str, Any]) -> bool:
         return True
     macro_invocations = payload.get("macro_invocations")
     return isinstance(macro_invocations, list) and bool(cast(list[object], macro_invocations))
+
+
+def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list[str]]:
+    candidate_record_ids = _bound_record_ids_for_ports(
+        context,
+        ("candidate_under_test", "candidate"),
+    )
+    file_state_record_ids = _bound_record_ids_for_ports(
+        context,
+        ("file_state", "accepted_file_state"),
+    )
+    evidence_record_ids = _bound_record_ids_for_ports(
+        context,
+        ("verification_evidence", "verification_report", "verifier_check_results"),
+    )
+    for record in _record_payloads_for_ids(context.graph_events, candidate_record_ids):
+        file_state_record_ids.extend(_citation_record_ids(record, "file_state_record_ids"))
+    for record in _record_payloads_for_ids(context.graph_events, evidence_record_ids):
+        candidate_record_ids.extend(_citation_record_ids(record, "candidate_record_ids"))
+        file_state_record_ids.extend(_citation_record_ids(record, "file_state_record_ids"))
+    if not file_state_record_ids:
+        file_state_record_ids.extend(_file_state_record_ids_for_task_region(context))
+    citations: dict[str, list[str]] = {}
+    unique_candidate_record_ids = _unique_record_ids(candidate_record_ids)
+    unique_file_state_record_ids = _unique_record_ids(file_state_record_ids)
+    if unique_candidate_record_ids:
+        citations["candidate_record_ids"] = unique_candidate_record_ids
+    if unique_file_state_record_ids:
+        citations["file_state_record_ids"] = unique_file_state_record_ids
+    evaluated_record_ids = _unique_record_ids(
+        [*evidence_record_ids, *unique_candidate_record_ids, *unique_file_state_record_ids]
+    )
+    if evaluated_record_ids:
+        citations["evaluated_record_ids"] = evaluated_record_ids
+    return citations
+
+
+def _record_payloads_for_ids(
+    events: list[EventEnvelope],
+    record_ids: list[str],
+) -> list[dict[str, Any]]:
+    wanted = set(record_ids)
+    records: list[dict[str, Any]] = []
+    for event in events:
+        if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
+            continue
+        record_id = event.payload.get("record_id")
+        if isinstance(record_id, str) and record_id in wanted:
+            records.append(dict(event.payload))
+    return records
+
+
+def _citation_record_ids(record: dict[str, Any], field: str) -> list[str]:
+    for source in (record, record.get("value"), record.get("provenance"), record.get("evidence")):
+        if not isinstance(source, dict):
+            continue
+        raw_ids = cast(dict[str, Any], source).get(field)
+        if not isinstance(raw_ids, list):
+            continue
+        record_ids = [
+            record_id for record_id in cast(list[Any], raw_ids) if isinstance(record_id, str)
+        ]
+        if record_ids:
+            return record_ids
+    return []
+
+
+def _file_state_record_ids_for_task_region(context: GraphDispatchContext) -> list[str]:
+    task_region_id = context.node_payload.get("task_region_id")
+    if not isinstance(task_region_id, str):
+        return []
+    output: list[str] = []
+    for record_id, record in context.graph_projection["file_state_records"].items():
+        record_region_id = record.get("task_region_id")
+        if not isinstance(record_region_id, str):
+            producer_node_id = record.get("producer_node_id")
+            if isinstance(producer_node_id, str):
+                record_region_id = context.graph_projection["node_task_regions"].get(
+                    producer_node_id
+                )
+        if record_region_id != task_region_id:
+            continue
+        if record.get("verdict") in {"rejected", "failed"}:
+            continue
+        output.append(record_id)
+    return _unique_record_ids(output)
+
+
+def _bound_record_ids_for_ports(
+    context: GraphDispatchContext,
+    ports: tuple[str, ...],
+) -> list[str]:
+    bindings = context.graph_projection["input_bindings"].get(context.node_id, {})
+    output: list[str] = []
+    for port in ports:
+        binding = bindings.get(port)
+        if binding is None:
+            continue
+        record_ids = binding.get("record_ids")
+        if not isinstance(record_ids, list):
+            continue
+        output.extend(
+            record_id for record_id in cast(list[Any], record_ids) if isinstance(record_id, str)
+        )
+    return _unique_record_ids(output)
+
+
+def _unique_record_ids(record_ids: list[str]) -> list[str]:
+    output: list[str] = []
+    for record_id in record_ids:
+        if record_id not in output:
+            output.append(record_id)
+    return output
+
+
+def _add_evaluated_record_citations(
+    record: dict[str, Any],
+    citations: dict[str, list[str]],
+    *,
+    evidence: bool = False,
+    value: bool = False,
+) -> dict[str, Any]:
+    if not citations:
+        return record
+    output = dict(record)
+    for key, record_ids in citations.items():
+        output.setdefault(key, list(record_ids))
+    candidate_ids = citations.get("candidate_record_ids")
+    if candidate_ids is not None and len(candidate_ids) == 1:
+        output.setdefault("candidate_record_id", candidate_ids[0])
+    _merge_record_citations(output, "provenance", citations)
+    if evidence:
+        _merge_record_citations(output, "evidence", citations)
+    if value:
+        _merge_record_citations(output, "value", citations)
+    return output
+
+
+def _merge_record_citations(
+    record: dict[str, Any],
+    field: str,
+    citations: dict[str, list[str]],
+) -> None:
+    existing = record.get(field)
+    if existing is None:
+        record[field] = {key: list(value) for key, value in citations.items()}
+        return
+    if not isinstance(existing, dict):
+        return
+    merged = dict(cast(dict[str, Any], existing))
+    for key, value in citations.items():
+        merged.setdefault(key, list(value))
+    record[field] = merged
 
 
 def _output_records_for_submit(
@@ -1655,30 +2121,24 @@ def _output_records_for_submit(
                 "attempt_number": attempt_number,
             }
             return [
-                {
-                    "record_id": f"gap-plan-{context.execution_id}",
-                    "record_kind": "output",
-                    "producer_node_id": context.node_id,
-                    "port": "gap_plan",
-                    "schema": "GapClassification",
-                    "value": gap_value,
-                },
-                {
-                    "record_id": f"gap-classification-{context.execution_id}",
-                    "record_kind": "output",
-                    "producer_node_id": context.node_id,
-                    "port": "gap_classification",
-                    "schema": "GapClassification",
-                    "value": gap_value,
-                },
-                {
-                    "record_id": f"classified-gap-{context.execution_id}",
-                    "record_kind": "output",
-                    "producer_node_id": context.node_id,
-                    "port": "classified_gap",
-                    "schema": "GapClassification",
-                    "value": gap_value,
-                },
+                _gap_classification_record(
+                    f"gap-plan-{context.execution_id}",
+                    context.node_id,
+                    "gap_plan",
+                    gap_value,
+                ),
+                _gap_classification_record(
+                    f"gap-classification-{context.execution_id}",
+                    context.node_id,
+                    "gap_classification",
+                    gap_value,
+                ),
+                _gap_classification_record(
+                    f"classified-gap-{context.execution_id}",
+                    context.node_id,
+                    "classified_gap",
+                    gap_value,
+                ),
             ]
         if role == "fan_out_reader":
             return [
@@ -1713,23 +2173,28 @@ def _output_records_for_submit(
         return []
     if context.node_kind == "verifier":
         verdict = "passed" if _grades_pass(grades) else "failed"
+        citations = _evaluated_record_citations(context)
         return [
-            {
-                "record_id": f"verification-{context.execution_id}",
-                "record_kind": "verification",
-                "producer_node_id": context.node_id,
-                "port": "verification_report",
-                "schema": "VerificationReport",
-                "candidate_id": candidate_id,
-                "task_region_id": task_region_id,
-                "verdict": verdict,
-                "value": {
-                    "grades": [
-                        {"requirement_id": req_id, "grade": grade, "reason": reason}
-                        for req_id, grade, reason in grades
-                    ]
+            _add_evaluated_record_citations(
+                {
+                    "record_id": f"verification-{context.execution_id}",
+                    "record_kind": "verification",
+                    "producer_node_id": context.node_id,
+                    "port": "verification_report",
+                    "schema": "VerificationReport",
+                    "candidate_id": candidate_id,
+                    "task_region_id": task_region_id,
+                    "verdict": verdict,
+                    "value": {
+                        "grades": [
+                            {"requirement_id": req_id, "grade": grade, "reason": reason}
+                            for req_id, grade, reason in grades
+                        ]
+                    },
                 },
-            }
+                citations,
+                evidence=True,
+            )
         ]
     return [
         {
@@ -1746,6 +2211,25 @@ def _output_records_for_submit(
     ]
 
 
+def _gap_classification_record(
+    record_id: str,
+    producer_node_id: str,
+    port: str,
+    value: dict[str, Any],
+) -> dict[str, Any]:
+    return GapClassificationRecord.model_validate(
+        {
+            "record_id": record_id,
+            "record_kind": "output",
+            "record_type": port,
+            "producer_node_id": producer_node_id,
+            "port": port,
+            "schema": "GapClassification",
+            "value": value,
+        }
+    ).model_dump(mode="json")
+
+
 def _grades_pass(grades: list[tuple[str, str, str | None]]) -> bool:
     if not grades:
         return True
@@ -1757,6 +2241,7 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
     command_definition = _check_command_definition(context.node_payload, context.graph_events)
     invocation, command_text, shell = _check_invocation(command_definition)
     timeout_seconds = _check_timeout_seconds(command_definition)
+    execution_worktree = await asyncio.to_thread(_prepare_check_execution_worktree, context)
     started = perf_counter()
     stdout = ""
     stderr = ""
@@ -1768,7 +2253,7 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
         if shell:
             proc = await asyncio.create_subprocess_shell(
                 cast(str, invocation),
-                cwd=context.worktree_path,
+                cwd=execution_worktree.path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -1776,7 +2261,7 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
             argv = cast(list[str], invocation)
             proc = await asyncio.create_subprocess_exec(
                 *argv,
-                cwd=context.worktree_path,
+                cwd=execution_worktree.path,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -1793,6 +2278,8 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
         if proc is not None:
             proc.kill()
             await proc.wait()
+    finally:
+        await asyncio.to_thread(_cleanup_check_execution_worktree, context, execution_worktree)
 
     duration_ms = int((perf_counter() - started) * 1000)
     status = "timeout" if timed_out else "passed" if exit_code == 0 else "failed"
@@ -1809,7 +2296,11 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
         "command_text": command_text,
         "command": command_definition,
         "worktree_path": context.worktree_path,
+        "source_worktree_path": context.worktree_path,
+        "execution_worktree_path": execution_worktree.path,
         "base_snapshot_id": context.base_snapshot_id,
+        "execution_snapshot_id": execution_worktree.snapshot_id,
+        "execution_snapshot_ref": execution_worktree.snapshot_ref,
         "execution_id": context.execution_id,
         "exit_code": exit_code,
         "duration_ms": duration_ms,
@@ -1819,23 +2310,99 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
         "stderr_truncated": len(stderr) > MAX_CHECK_OUTPUT_CHARS,
         "timeout_seconds": timeout_seconds,
         "environment_policy": {
-            "cwd": context.worktree_path,
+            "cwd": execution_worktree.path,
             "env": "inherited",
             "shell": shell,
+            "source_worktree_path": context.worktree_path,
+            "snapshot_id": execution_worktree.snapshot_id,
         },
     }
-    return {
-        "record_id": f"check-{context.execution_id}",
-        "record_kind": "output",
-        "record_type": "check_result",
-        "producer_node_id": context.node_id,
-        "port": "check_result",
-        "schema": "CheckResult",
-        "candidate_id": candidate_id,
-        "task_region_id": task_region_id,
-        "attempt_number": attempt_number,
-        "value": value,
-    }
+    record_payload = _add_evaluated_record_citations(
+        {
+            "record_id": f"check-{context.execution_id}",
+            "record_kind": "output",
+            "record_type": "check_result",
+            "producer_node_id": context.node_id,
+            "port": "check_result",
+            "schema": "CheckResult",
+            "candidate_id": candidate_id,
+            "task_region_id": task_region_id,
+            "attempt_number": attempt_number,
+            "value": value,
+        },
+        _evaluated_record_citations(context),
+        value=True,
+    )
+    return CheckResultRecord.model_validate(record_payload).model_dump(mode="json")
+
+
+def _prepare_check_execution_worktree(context: GraphDispatchContext) -> CheckExecutionWorktree:
+    snapshot = _bound_file_state_snapshot(context)
+    if snapshot is None:
+        return CheckExecutionWorktree(path=context.worktree_path)
+
+    snapshot_id, snapshot_ref = snapshot
+    if not SNAPSHOT_REF_PATTERN.fullmatch(snapshot_ref):
+        msg = f"invalid file-state snapshot ref for check execution: {snapshot_ref}"
+        raise ValueError(msg)
+
+    tempdir = tempfile.mkdtemp(prefix="orchestrator-check-snapshot-")
+    result = subprocess.run(
+        ["git", "worktree", "add", "--detach", tempdir, snapshot_ref],
+        cwd=context.worktree_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if result.returncode != 0:
+        shutil.rmtree(tempdir, ignore_errors=True)
+        msg = f"failed to create check snapshot worktree: {result.stderr.strip()}"
+        raise ValueError(msg)
+    return CheckExecutionWorktree(
+        path=tempdir,
+        snapshot_id=snapshot_id,
+        snapshot_ref=snapshot_ref,
+        temporary_path=tempdir,
+    )
+
+
+def _cleanup_check_execution_worktree(
+    context: GraphDispatchContext,
+    execution_worktree: CheckExecutionWorktree,
+) -> None:
+    tempdir = execution_worktree.temporary_path
+    if tempdir is None:
+        return
+    subprocess.run(
+        ["git", "worktree", "remove", "--force", tempdir],
+        cwd=context.worktree_path,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    shutil.rmtree(tempdir, ignore_errors=True)
+
+
+def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str] | None:
+    citations = _evaluated_record_citations(context)
+    file_state_record_ids = citations.get("file_state_record_ids", [])
+    if not file_state_record_ids:
+        return None
+    wanted = set(file_state_record_ids)
+    for event in context.graph_events:
+        if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
+            continue
+        record_id = event.payload.get("record_id")
+        if not isinstance(record_id, str) or record_id not in wanted:
+            continue
+        snapshot_id = event.payload.get("snapshot_id")
+        git = event.payload.get("git")
+        snapshot_ref = cast(dict[str, Any], git).get("ref") if isinstance(git, dict) else None
+        if isinstance(snapshot_id, str) and isinstance(snapshot_ref, str):
+            return snapshot_id, snapshot_ref
+    return None
 
 
 def _check_command_definition(

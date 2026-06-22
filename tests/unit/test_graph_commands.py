@@ -100,6 +100,41 @@ def _active_lease_events() -> list[EventEnvelope]:
     ]
 
 
+def _active_lease_events_with_resource_claims(
+    resource_claims: list[dict[str, Any]],
+) -> list[EventEnvelope]:
+    return [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "resource_claims": resource_claims,
+            },
+            2,
+        ),
+    ]
+
+
+def _planner_active_lease_events() -> list[EventEnvelope]:
+    return [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "planner-1", "kind": "planner", "role": "planner", "state": "running"},
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {"node_id": "planner-1", "lease_id": "lease-1", "generation": 1},
+            2,
+        ),
+    ]
+
+
 def _leased_lease_events() -> list[EventEnvelope]:
     return [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -136,8 +171,129 @@ def test_lifecycle_legal_transitions() -> None:
     for events, command_type, expected_state in cases:
         output = _apply(events, command_type)
 
-        assert output[0].event_type == "run_lifecycle_changed"
-        assert output[0].payload["to_state"] == expected_state
+        lifecycle_event = next(
+            event for event in output if event.event_type == "run_lifecycle_changed"
+        )
+        assert lifecycle_event.payload["to_state"] == expected_state
+
+
+def test_cancel_revokes_active_lease_and_cancels_running_node() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 2,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(events, "cancel")
+
+    assert [event.event_type for event in output] == [
+        "run_lifecycle_changed",
+        "lease_revoked",
+        "node_state_changed",
+    ]
+    assert output[1].payload == {
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "trigger": "cancel_command_accepted",
+        "reason": "run_cancelled",
+        "generation": 2,
+        "execution_id": "exec-1",
+    }
+    assert output[2].payload == {
+        "node_id": "worker-1",
+        "new_state": "cancelled",
+        "trigger": "run_cancelled",
+        "reason": "run_cancelled",
+    }
+
+    projected = _project([*events, *output])
+    assert projected["leases"]["lease-1"]["state"] == "revoked"
+    assert projected["node_states"]["worker-1"] == "cancelled"
+
+
+def test_cancel_revokes_suspended_lease_without_reopening_terminal_node() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "paused"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "failed"}, 1),
+        _event("lease_granted", {"node_id": "worker-1", "lease_id": "lease-1"}, 2),
+        _event("lease_suspended", {"node_id": "worker-1", "lease_id": "lease-1"}, 3),
+    ]
+
+    output = _apply(events, "cancel")
+
+    assert [event.event_type for event in output] == ["run_lifecycle_changed", "lease_revoked"]
+    projected = _project([*events, *output])
+    assert projected["leases"]["lease-1"]["state"] == "revoked"
+    assert projected["node_states"]["worker-1"] == "failed"
+
+
+def test_record_heartbeat_renews_active_lease() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 2,
+                "execution_id": "exec-1",
+                "expires_at": "2026-01-01T00:01:00+00:00",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "record_heartbeat",
+        {"run_id": "run-1", "lease_id": "lease-1", "node_id": "worker-1", "ttl_seconds": 120},
+    )
+
+    assert [event.event_type for event in output] == ["heartbeat_recorded", "lease_renewed"]
+    assert output[0].payload == {
+        "lease_id": "lease-1",
+        "node_id": "worker-1",
+        "observed_at": "2026-01-01T00:00:00+00:00",
+        "expires_at": "2026-01-01T00:02:00+00:00",
+        "generation": 2,
+        "execution_id": "exec-1",
+    }
+    assert output[1].payload == output[0].payload
+
+    projected = _project([*events, *output])
+    assert projected["leases"]["lease-1"]["state"] == "active"
+    assert projected["leases"]["lease-1"]["expires_at"] == "2026-01-01T00:02:00+00:00"
+
+
+def test_record_heartbeat_rejects_non_active_lease() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event("lease_granted", {"node_id": "worker-1", "lease_id": "lease-1"}, 2),
+        _event("lease_suspended", {"node_id": "worker-1", "lease_id": "lease-1"}, 3),
+    ]
+
+    output = _apply(
+        events,
+        "record_heartbeat",
+        {"run_id": "run-1", "lease_id": "lease-1", "node_id": "worker-1"},
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload == {
+        "command_type": "record_heartbeat",
+        "reason": "lease_not_active:suspended",
+    }
 
 
 def test_lifecycle_illegal_transition_rejected() -> None:
@@ -182,8 +338,17 @@ def test_lifecycle_complete_rejected_with_final_blocker_evidence() -> None:
 def test_lifecycle_complete_accepts_clean_graph_without_blockers() -> None:
     output = _apply([_event("run_lifecycle_changed", {"to_state": "active"}, 0)], "complete")
 
-    assert [event.event_type for event in output] == ["run_lifecycle_changed"]
-    assert output[0].payload["to_state"] == "completed"
+    assert [event.event_type for event in output] == [
+        "output_record_accepted",
+        "run_lifecycle_changed",
+    ]
+    assert output[0].payload["record_type"] == "completion_decision"
+    assert output[0].payload["producer_node_id"] == "run_lifecycle"
+    assert output[0].payload["port"] == "completion_decision"
+    assert output[0].payload["schema"] == "CompletionDecision"
+    assert output[0].payload["value"] == {"status": "passed", "blockers": []}
+    assert output[0].payload["provenance"] == {"source": "lifecycle_complete"}
+    assert output[1].payload["to_state"] == "completed"
 
 
 def test_evaluate_final_gate_emits_blocked_completion_decision() -> None:
@@ -458,6 +623,258 @@ def test_callback_accept_emits_boundary_events() -> None:
         "node_state_changed",
         "lease_released",
     ]
+    candidate_record = output[1].payload
+    assert candidate_record["file_state_record_id"] == "file-state-1"
+    assert candidate_record["file_state_record_ids"] == ["file-state-1"]
+    assert candidate_record["value"]["file_state_record_ids"] == ["file-state-1"]
+    assert candidate_record["provenance"]["file_state_record_ids"] == ["file-state-1"]
+
+
+def test_callback_rejects_candidate_file_state_citation_mismatch() -> None:
+    output = _apply(
+        _active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "file_state_record_ids": ["file-state-other"],
+                        "value": {"summary": "done"},
+                    },
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                    },
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "file_state_record_ids does not match bound records" in output[0].payload["reason"]
+
+
+def test_callback_rejects_malformed_candidate_record() -> None:
+    output = _apply(
+        _active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {},
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "candidate record at index 0 is invalid" in output[0].payload["reason"]
+    assert "Field required" in output[0].payload["reason"]
+
+
+def test_callback_accepts_analysis_summary_record() -> None:
+    output = _apply(
+        _active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "done"},
+                    },
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                    },
+                    {
+                        "record_id": "summary-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "record_type": "analysis_summary",
+                        "port": "analysis_summary",
+                        "schema": "AnalysisSummary",
+                        "value": {
+                            "summary": "Build output summarized.",
+                            "source_record_ids": ["candidate-1"],
+                            "lossy": True,
+                            "omitted_details": ["full diff omitted"],
+                        },
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "output_record_accepted",
+        "file_state_accepted",
+        "output_record_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert output[4].payload["record_type"] == "analysis_summary"
+    assert output[4].payload["value"]["source_record_ids"] == ["candidate-1"]
+
+
+def test_callback_rejects_malformed_analysis_summary_record_atomically() -> None:
+    output = _apply(
+        _active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "done"},
+                    },
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                    },
+                    {
+                        "record_id": "summary-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "analysis_summary",
+                        "schema": "AnalysisSummary",
+                        "value": {
+                            "source_record_ids": ["candidate-1"],
+                            "lossy": True,
+                            "omitted_details": [],
+                        },
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "analysis_summary record at index 2 is invalid" in output[0].payload["reason"]
+
+
+def test_callback_accepts_graph_patch_proposal_record() -> None:
+    output = _apply(
+        _planner_active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            node_id="planner-1",
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "proposal-1",
+                        "record_kind": "output",
+                        "record_type": "graph_patch_proposal",
+                        "producer_node_id": "planner-1",
+                        "port": "graph_patch_proposal",
+                        "schema": "GraphPatch",
+                        "value": {
+                            "patch_id": "patch-1",
+                            "proposed_by_node_id": "planner-1",
+                            "base_graph_position": 3,
+                            "ops": [
+                                {
+                                    "op": "create_node",
+                                    "node": {
+                                        "node_id": "worker-1",
+                                        "kind": "worker",
+                                        "role": "builder",
+                                    },
+                                }
+                            ],
+                            "expected_downstream_effects": ["creates worker-1"],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert output[1].payload["record_type"] == "graph_patch_proposal"
+    assert output[1].payload["value"]["patch_id"] == "patch-1"
+
+
+def test_callback_rejects_malformed_graph_patch_proposal_record_atomically() -> None:
+    output = _apply(
+        _planner_active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            node_id="planner-1",
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "proposal-1",
+                        "record_kind": "output",
+                        "producer_node_id": "planner-1",
+                        "port": "graph_patch_proposal",
+                        "schema": "GraphPatch",
+                        "value": {
+                            "patch_id": "patch-1",
+                            "proposed_by_node_id": "planner-1",
+                            "base_graph_position": 3,
+                            "ops": [],
+                            "macro_invocations": [],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "graph_patch_proposal record at index 0 is invalid" in output[0].payload["reason"]
 
 
 def test_callback_before_acknowledge_start_rejected_and_leaves_lease_intact() -> None:
@@ -556,6 +973,12 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
 
     assert [event.event_type for event in output[:3]] == [
         "lease_expired",
+        "output_record_accepted",
+        "node_state_changed",
+    ]
+    assert [event.event_type for event in output[:4]] == [
+        "lease_expired",
+        "output_record_accepted",
         "node_state_changed",
         "node_ready",
     ]
@@ -567,7 +990,19 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
         "expires_at": expired_at.isoformat(),
         "reason": "lease_expired_without_callback",
     }
-    assert output[1].payload == {
+    assert output[1].payload["record_type"] == "failure_record"
+    assert output[1].payload["value"] == {
+        "failed_node_id": "verifier-1",
+        "phase": "runtime",
+        "error_class": "lease_expired_without_callback",
+        "retryable": False,
+        "lease_id": "lease-1",
+        "execution_id": "exec-1",
+        "lease_generation": 1,
+        "reason": "lease_expired_without_callback",
+        "expires_at": expired_at.isoformat(),
+    }
+    assert output[2].payload == {
         "node_id": "verifier-1",
         "new_state": "failed",
         "trigger": "lease_expired_without_callback",
@@ -706,6 +1141,217 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
         event.event_type == "lease_granted" and event.payload["node_id"] == "verifier-1"
         for event in schedule_output
     )
+
+
+def test_callback_binds_first_record_only_for_one_cardinality_input() -> None:
+    events = [
+        *_active_lease_events(),
+        _event(
+            "node_created", {"node_id": "verifier-1", "kind": "verifier", "state": "planned"}, 3
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-candidate",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "required": True,
+            },
+            4,
+        ),
+    ]
+
+    first_output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload_hash="hash-first",
+            idempotency_key="key-first",
+            payload={
+                "payload_hash": "hash-first",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "first"},
+                    }
+                ],
+            },
+            complete_node=False,
+        ),
+    )
+    second_output = _apply(
+        [*events, *first_output],
+        "submit_callback",
+        _callback_payload(
+            payload_hash="hash-second",
+            idempotency_key="key-second",
+            payload={
+                "payload_hash": "hash-second",
+                "output_records": [
+                    {
+                        "record_id": "candidate-2",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "second"},
+                    }
+                ],
+            },
+            complete_node=False,
+        ),
+    )
+
+    assert "input_bound" not in [event.event_type for event in second_output]
+    projected = _project([*events, *first_output, *second_output])
+    binding = projected["input_bindings"]["verifier-1"]["candidate_under_test"]
+    assert binding["binding_policy"] == "bind_first"
+    assert binding["record_ids"] == ["candidate-1"]
+
+
+def test_callback_accumulates_records_for_many_cardinality_input() -> None:
+    events = [
+        *_active_lease_events(),
+        _event(
+            "node_created",
+            {"node_id": "summarizer-1", "kind": "summarizer", "state": "planned"},
+            3,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-source-records",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "required": True,
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload_hash="hash-many",
+            idempotency_key="key-many",
+            payload={
+                "payload_hash": "hash-many",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "first"},
+                    },
+                    {
+                        "record_id": "candidate-2",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "second"},
+                    },
+                ],
+            },
+            complete_node=False,
+        ),
+    )
+
+    assert [event.event_type for event in output].count("input_bound") == 2
+    projected = _project([*events, *output])
+    binding = projected["input_bindings"]["summarizer-1"]["source_records"]
+    assert binding["binding_policy"] == "bind_all"
+    assert binding["record_ids"] == ["candidate-1", "candidate-2"]
+
+
+def test_callback_rebinds_superseding_record_when_policy_allows() -> None:
+    events = [
+        *_active_lease_events(),
+        _event(
+            "node_created",
+            {"node_id": "planner-1", "kind": "planner", "role": "planner", "state": "planned"},
+            3,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-file-state",
+                "from_node_id": "worker-1",
+                "from_port": "file_state",
+                "to_node_id": "planner-1",
+                "to_port": "accepted_file_state",
+                "required": True,
+                "binding_policy": "rebind_on_superseding",
+            },
+            4,
+        ),
+    ]
+
+    first_output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload_hash="hash-file-state-1",
+            idempotency_key="key-file-state-1",
+            payload={
+                "payload_hash": "hash-file-state-1",
+                "output_records": [
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                    }
+                ],
+            },
+            complete_node=False,
+        ),
+    )
+    second_output = _apply(
+        [*events, *first_output],
+        "submit_callback",
+        _callback_payload(
+            payload_hash="hash-file-state-2",
+            idempotency_key="key-file-state-2",
+            payload={
+                "payload_hash": "hash-file-state-2",
+                "output_records": [
+                    {
+                        "record_id": "file-state-2",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-2",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                        "supersedes_record_id": "file-state-1",
+                    }
+                ],
+            },
+            complete_node=False,
+        ),
+    )
+
+    projected = _project([*events, *first_output, *second_output])
+    binding = projected["input_bindings"]["planner-1"]["accepted_file_state"]
+    assert binding["binding_policy"] == "rebind_on_superseding"
+    assert binding["record_ids"] == ["file-state-2"]
 
 
 def test_callback_accepts_gap_analysis_output_and_binds_classified_gap() -> None:
@@ -948,6 +1594,22 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
             2,
         ),
         _event(
+            "file_state_accepted",
+            {
+                "record_id": "file-state-1",
+                "record_kind": "file_state",
+                "producer_node_id": "worker-1",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+                "snapshot_id": "snapshot-1",
+                "base_snapshot_id": "S0",
+                "verdict": "captured",
+            },
+            3,
+        ),
+        _event(
             "node_created",
             {
                 "node_id": "verifier-1",
@@ -956,7 +1618,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                 "task_region_id": "task-1",
                 "candidate_id": "candidate-1",
             },
-            3,
+            4,
         ),
         _event(
             "node_created",
@@ -967,7 +1629,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                 "state": "planned",
                 "task_region_id": "task-1",
             },
-            4,
+            5,
         ),
         _event(
             "input_bound",
@@ -976,7 +1638,16 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                 "to_port": "candidate_under_test",
                 "record_ids": ["candidate-1"],
             },
-            5,
+            6,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "file_state",
+                "record_ids": ["file-state-1"],
+            },
+            7,
         ),
         _event(
             "edge_created",
@@ -989,7 +1660,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                 "required": True,
                 "accepted_record_selector": {"record_kinds": ["verification"]},
             },
-            6,
+            8,
         ),
         _event(
             "lease_granted",
@@ -1000,7 +1671,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
             },
-            7,
+            9,
         ),
     ]
 
@@ -1046,7 +1717,21 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         "node_state_changed",
         "lease_released",
     ]
+    accepted_record = output[1].payload
+    assert accepted_record["candidate_record_id"] == "candidate-1"
+    assert accepted_record["candidate_record_ids"] == ["candidate-1"]
+    assert accepted_record["file_state_record_ids"] == ["file-state-1"]
+    assert accepted_record["evaluated_record_ids"] == ["candidate-1", "file-state-1"]
+    assert accepted_record["provenance"]["evaluated_record_ids"] == [
+        "candidate-1",
+        "file-state-1",
+    ]
+    assert accepted_record["evidence"]["file_state_record_ids"] == ["file-state-1"]
     assert output[2].payload["candidate_id"] == "candidate-1"
+    assert output[2].payload["evidence"]["evaluated_record_ids"] == [
+        "candidate-1",
+        "file-state-1",
+    ]
     assert output[3].payload == {
         "edge_id": "edge-verifier-gap",
         "to_node_id": "planner-gap",
@@ -1367,6 +2052,243 @@ def test_verifier_callback_rejects_unbound_verification_candidate() -> None:
     assert "not bound" in output[0].payload["reason"]
 
 
+def test_verifier_callback_rejects_mismatched_candidate_record_citation() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-1",
+                "kind": "verifier",
+                "state": "running",
+                "task_region_id": "task-1",
+            },
+            1,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            2,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-v",
+                "generation": 1,
+                "execution_id": "exec-v",
+                "base_snapshot_id": "S0",
+            },
+            3,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-1",
+            lease_id="lease-v",
+            execution_id="exec-v",
+            idempotency_key="verify-key",
+            payload={
+                "payload_hash": "hash-v",
+                "output_records": [
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "candidate_record_ids": ["candidate-other"],
+                        "verdict": "passed",
+                        "value": {
+                            "grades": [
+                                {
+                                    "requirement_id": "R-1",
+                                    "grade": "A",
+                                    "reason": "candidate satisfies requirement",
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "candidate_record_ids does not match bound records" in output[0].payload["reason"]
+
+
+def test_check_result_rejects_mismatched_evaluated_record_citation() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-1",
+                "kind": "check",
+                "state": "running",
+                "task_region_id": "task-1",
+            },
+            1,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "check-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            2,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "check-1",
+                "to_port": "file_state",
+                "record_ids": ["file-state-1"],
+            },
+            3,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "check-1",
+                "lease_id": "lease-c",
+                "generation": 1,
+                "execution_id": "exec-c",
+                "base_snapshot_id": "S0",
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="check-1",
+            lease_id="lease-c",
+            execution_id="exec-c",
+            idempotency_key="check-key",
+            payload={
+                "payload_hash": "hash-c",
+                "output_records": [
+                    {
+                        "record_id": "check-1-result",
+                        "record_kind": "output",
+                        "record_type": "check_result",
+                        "producer_node_id": "check-1",
+                        "port": "check_result",
+                        "schema": "CheckResult",
+                        "candidate_id": "candidate-1",
+                        "task_region_id": "task-1",
+                        "value": {
+                            "status": "passed",
+                            "classification": "passed",
+                            "command_id": "unit-check",
+                            "exit_code": 0,
+                            "duration_ms": 1,
+                            "evaluated_record_ids": ["candidate-other"],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "value.evaluated_record_ids does not match bound records" in output[0].payload["reason"]
+
+
+def test_callback_rejects_malformed_check_result_record() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-1",
+                "kind": "check",
+                "state": "running",
+                "task_region_id": "task-1",
+            },
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "check-1",
+                "lease_id": "lease-c",
+                "generation": 1,
+                "execution_id": "exec-c",
+                "base_snapshot_id": "S0",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="check-1",
+            lease_id="lease-c",
+            execution_id="exec-c",
+            idempotency_key="check-key",
+            payload={
+                "payload_hash": "hash-c",
+                "output_records": [
+                    {
+                        "record_id": "check-1-result",
+                        "record_kind": "output",
+                        "record_type": "check_result",
+                        "producer_node_id": "check-1",
+                        "port": "check_result",
+                        "schema": "CheckResult",
+                        "candidate_id": "candidate-1",
+                        "task_region_id": "task-1",
+                        "attempt_number": 1,
+                        "value": {
+                            "status": "unknown",
+                            "classification": "failed",
+                            "command_id": "unit-check",
+                            "command_binding": None,
+                            "command_text": "unit check",
+                            "command": {"id": "unit-check", "argv": ["false"]},
+                            "worktree_path": "/tmp/worktree",
+                            "base_snapshot_id": "S0",
+                            "execution_id": "exec-c",
+                            "exit_code": 1,
+                            "duration_ms": 1,
+                            "stdout": "",
+                            "stderr": "failed",
+                            "stdout_truncated": False,
+                            "stderr_truncated": False,
+                            "timeout_seconds": 60,
+                            "environment_policy": {
+                                "cwd": "/tmp/worktree",
+                                "env": "inherited",
+                                "shell": False,
+                            },
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "check_result record at index 0 is invalid" in output[0].payload["reason"]
+    assert "Input should be 'passed', 'failed' or 'timeout'" in output[0].payload["reason"]
+
+
 def test_worker_smuggled_verification_record_rejected_atomically() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -1590,6 +2512,130 @@ def test_callback_rejects_forged_file_state_record_atomically() -> None:
     assert "file_state_accepted" not in [event.event_type for event in output]
 
 
+def test_callback_accepts_file_state_paths_within_lease_write_scope() -> None:
+    output = _apply(
+        _active_lease_events_with_resource_claims(
+            [{"mode": "write", "scope": "repo", "paths": ["docs/**"]}]
+        ),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-file-state-authorized",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "docs updated"},
+                    },
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                        "tracked": [{"path": "docs/out.md", "status": "modified"}],
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "output_record_accepted",
+        "file_state_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+
+
+def test_callback_rejects_file_state_path_outside_lease_write_scope() -> None:
+    output = _apply(
+        _active_lease_events_with_resource_claims(
+            [{"mode": "write", "scope": "repo", "paths": ["docs/**"]}]
+        ),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-file-state-outside-scope",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "src updated"},
+                    },
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                        "tracked": [{"path": "src/app.py", "status": "modified"}],
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert output[0].payload["reason"] == (
+        "file_state path outside lease write authority at index 1: src/app.py"
+    )
+
+
+def test_callback_rejects_file_state_path_with_only_read_authority() -> None:
+    output = _apply(
+        _active_lease_events_with_resource_claims(
+            [{"mode": "read", "scope": "repo", "paths": ["docs/**"]}]
+        ),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-file-state-read-only",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "docs updated"},
+                    },
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                        "tracked": [{"path": "docs/out.md", "status": "modified"}],
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert output[0].payload["reason"] == (
+        "file_state path outside lease write authority at index 1: docs/out.md"
+    )
+
+
 def test_callback_rejects_forged_file_state_rejected_node_id() -> None:
     output = _apply(
         _active_lease_events(),
@@ -1662,6 +2708,93 @@ def test_callback_rejects_unregistered_output_port() -> None:
     assert output[0].payload["reason"] == (
         "output record at index 0 uses unknown output port: diagnostic"
     )
+
+
+def test_callback_rejects_incompatible_explicit_record_type() -> None:
+    output = _apply(
+        _active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "record_type": "check_result",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "done"},
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert output[0].payload["reason"] == (
+        "output record at index 0 has incompatible record_type for candidate: check_result"
+    )
+    assert "output_record_accepted" not in [event.event_type for event in output]
+
+
+def test_callback_rejects_explicit_producer_port_mismatch() -> None:
+    output = _apply(
+        _active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "producer_port": "check_result",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "done"},
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert output[0].payload["reason"] == (
+        "output record at index 0 producer_port does not match port: check_result"
+    )
+    assert "output_record_accepted" not in [event.event_type for event in output]
+
+
+def test_callback_rejects_explicit_record_run_id_mismatch() -> None:
+    output = _apply(
+        _active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "run_id": "other-run",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "done"},
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert output[0].payload["reason"] == (
+        "output record at index 0 run_id does not match callback run: other-run"
+    )
+    assert "output_record_accepted" not in [event.event_type for event in output]
 
 
 def test_callback_rejected_stale() -> None:
@@ -1747,6 +2880,190 @@ def test_patch_accept_emits_graph_events() -> None:
     assert output[0].payload["proposed_by_node_id"] == "planner-1"
     assert output[0].payload["actor_role"] == "planner"
     assert output[0].payload["base_graph_position"] == -1
+
+
+def test_patch_accept_adds_default_worker_write_authority() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-worker",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "task_region_id": "region-1",
+                        "candidate_id": "candidate-1",
+                        "attempt_number": 1,
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_accepted", "node_created"]
+    assert output[1].payload["authority"]["resource_claims"] == [
+        {"mode": "write", "scope": "repo", "paths": ["."]}
+    ]
+
+
+def test_patch_accept_emits_human_gate_request_record_and_binding() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-human-gate",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "gate-review",
+                        "kind": "human_gate",
+                        "state": "planned",
+                        "reason": "Review graph expansion.",
+                        "decision_request": {
+                            "decision_type": "approval",
+                            "options": ["approve", "reject"],
+                            "default_option": "reject",
+                            "consequence_summary": "Review graph expansion.",
+                        },
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "graph_patch_accepted",
+        "node_created",
+        "output_record_accepted",
+        "input_bound",
+    ]
+    request_record = output[2].payload
+    assert request_record == {
+        "record_id": "decision-request-gate-review",
+        "record_kind": "graph_record",
+        "record_type": "decision_request",
+        "producer_node_id": "gate-review",
+        "port": "decision_request",
+        "schema": "DecisionRequest",
+        "value": {
+            "decision_type": "approval",
+            "options": ["approve", "reject"],
+            "default_option": "reject",
+            "consequence_summary": "Review graph expansion.",
+        },
+    }
+    assert output[3].payload == {
+        "edge_id": "edge-decision-request-gate-review-to-gate-review-decision_request",
+        "to_node_id": "gate-review",
+        "to_port": "decision_request",
+        "record_ids": ["decision-request-gate-review"],
+        "bound_at_position": 0,
+        "binding_policy": "bind_latest",
+    }
+    projected = _project(output)
+    assert projected["input_bindings"]["gate-review"]["decision_request"]["record_ids"] == [
+        "decision-request-gate-review"
+    ]
+
+
+def test_patch_accept_emits_authority_request_record_and_binding() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-authority-request",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "gate-authority",
+                        "kind": "authority_request",
+                        "state": "planned",
+                        "authority_request_record": {
+                            "requested_authority": ["repo:docs/**:write"],
+                            "target_node_id": "worker-docs",
+                            "reason": "Worker needs docs write access.",
+                        },
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "graph_patch_accepted",
+        "node_created",
+        "output_record_accepted",
+        "input_bound",
+    ]
+    assert output[2].payload == {
+        "record_id": "authority-request-gate-authority",
+        "record_kind": "graph_record",
+        "record_type": "authority_request_record",
+        "producer_node_id": "gate-authority",
+        "port": "authority_request_record",
+        "schema": "AuthorityRequest",
+        "value": {
+            "requested_authority": ["repo:docs/**:write"],
+            "target_node_id": "worker-docs",
+            "reason": "Worker needs docs write access.",
+        },
+    }
+    assert output[3].payload["to_port"] == "authority_request_record"
+    assert output[3].payload["record_ids"] == ["authority-request-gate-authority"]
+
+
+def test_patch_rejects_malformed_request_gate_record() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-bad-request",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "gate-review",
+                        "kind": "human_gate",
+                        "state": "planned",
+                        "decision_request": {
+                            "decision_type": "approval",
+                            "options": ["approve"],
+                            "default_option": "reject",
+                            "consequence_summary": "Review graph expansion.",
+                        },
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_rejected"]
+    assert output[0].payload["patch_id"] == "patch-bad-request"
+    assert "invalid request record for node gate-review" in output[0].payload["reason"]
+    assert "default_option must be one of options" in output[0].payload["reason"]
 
 
 def test_gap_planner_no_op_patch_accepts_through_submit_patch() -> None:
@@ -1925,13 +3242,26 @@ def test_malformed_patch_rejection_preserves_submitter_evidence() -> None:
     assert output[0].payload["base_graph_position"] == "not-an-int"
 
 
-def test_seed_compiled_events_accepts_topology_only_for_empty_run() -> None:
+def test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_run() -> None:
     seed_events = [
         _event("node_created", {"node_id": "root", "kind": "root", "state": "completed"}, 0),
         _event(
+            "output_record_accepted",
+            {
+                "record_id": "run-context",
+                "record_kind": "graph_record",
+                "record_type": "run_context",
+                "producer_node_id": "root",
+                "port": "run_context",
+                "schema": "RunContext",
+                "value": {"routine_id": "routine-1", "routine_name": "Routine"},
+            },
+            1,
+        ),
+        _event(
             "node_created",
             {"node_id": "worker-1", "kind": "worker", "state": "planned"},
-            1,
+            2,
         ),
         _event(
             "edge_created",
@@ -1943,12 +3273,12 @@ def test_seed_compiled_events_accepts_topology_only_for_empty_run() -> None:
                 "to_port": "routine_snapshot",
                 "required": True,
             },
-            2,
+            3,
         ),
         _event(
             "input_bound",
             {"edge_id": "edge-1", "to_node_id": "worker-1", "to_port": "routine_snapshot"},
-            3,
+            4,
         ),
     ]
 
@@ -2113,6 +3443,83 @@ def test_schedule_tick_allows_approved_gate_input() -> None:
         _event(
             "input_bound",
             {"edge_id": "edge-gate", "to_node_id": "worker-1", "to_port": "approval"},
+            5,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    assert [event.event_type for event in output] == [
+        "node_ready",
+        "node_state_changed",
+        "lease_granted",
+        "node_state_changed",
+    ]
+
+
+def test_schedule_tick_defers_ungranted_authority_request_input() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "authority-1", "kind": "authority_request", "state": "completed"},
+            1,
+        ),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "blocked"}, 2),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-authority",
+                "from_node_id": "authority-1",
+                "from_port": "authority_decision",
+                "to_node_id": "worker-1",
+                "to_port": "authority",
+                "required": True,
+            },
+            3,
+        ),
+        _event(
+            "input_bound",
+            {"edge_id": "edge-authority", "to_node_id": "worker-1", "to_port": "authority"},
+            4,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    assert [(event.event_type, event.payload) for event in output] == [
+        (
+            "node_deferred",
+            {"node_id": "worker-1", "reason": "authority_not_granted:authority-1"},
+        )
+    ]
+
+
+def test_schedule_tick_allows_granted_authority_request_input() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "authority-1", "kind": "authority_request", "state": "completed"},
+            1,
+        ),
+        _event("authority_decision_recorded", {"node_id": "authority-1", "decision": "granted"}, 2),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "blocked"}, 3),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-authority",
+                "from_node_id": "authority-1",
+                "from_port": "authority_decision",
+                "to_node_id": "worker-1",
+                "to_port": "authority",
+                "required": True,
+            },
+            4,
+        ),
+        _event(
+            "input_bound",
+            {"edge_id": "edge-authority", "to_node_id": "worker-1", "to_port": "authority"},
             5,
         ),
     ]
@@ -2339,6 +3746,7 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         "agent_died",
         "lease_revoked",
         "runtime_retry_scheduled",
+        "output_record_accepted",
         "node_state_changed",
     ]
     assert output[0].payload == {
@@ -2350,12 +3758,192 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
     }
     assert output[2].payload["policy"] == "v1_requeue_same_node_after_agent_death"
     assert output[3].payload == {
+        "record_id": "recovery-plan-worker-1-lease-1",
+        "record_kind": "output",
+        "record_type": "recovery_plan",
+        "producer_node_id": "worker-1",
+        "port": "recovery_plan",
+        "schema": "RecoveryPlan",
+        "value": {
+            "action": "retry",
+            "responsible_actor": "controller",
+            "graph_changes": [{"op": "set_node_state", "node_id": "worker-1", "state": "ready"}],
+            "reason": "process_exit",
+        },
+    }
+    assert output[4].payload == {
         "node_id": "worker-1",
         "new_state": "ready",
         "trigger": "agent_died_retry_scheduled",
     }
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["worker-1"] == "ready"
+
+
+def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+    clock = FakeClock()
+    id_gen = SequentialIdGenerator()
+
+    output = apply_command(
+        _project(events),
+        events,
+        "agent_died",
+        {
+            "run_id": "run-1",
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+            "retry_backoff_seconds": 60,
+        },
+        clock,
+        id_gen,
+    )
+    retry_not_before = (clock.now() + timedelta(seconds=60)).isoformat()
+    projection = _project([*events, *output])
+
+    assert output[2].event_type == "runtime_retry_scheduled"
+    assert output[2].payload["retry_after_seconds"] == 60
+    assert output[2].payload["retry_not_before"] == retry_not_before
+    assert output[3].event_type == "output_record_accepted"
+    assert output[3].payload["record_type"] == "recovery_plan"
+    assert output[3].payload["value"] == {
+        "action": "retry",
+        "responsible_actor": "controller",
+        "graph_changes": [{"op": "set_node_state", "node_id": "worker-1", "state": "blocked"}],
+        "reason": "process_exit",
+        "retry_after_seconds": 60,
+        "retry_not_before": retry_not_before,
+    }
+    assert output[4].payload == {
+        "node_id": "worker-1",
+        "new_state": "blocked",
+        "trigger": "agent_died_retry_backoff_scheduled",
+        "retry_not_before": retry_not_before,
+    }
+    assert projection["node_states"]["worker-1"] == "blocked"
+
+    immediate = apply_command(
+        projection,
+        [*events, *output],
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        clock,
+        id_gen,
+    )
+    assert [(event.event_type, event.payload) for event in immediate] == [
+        (
+            "node_deferred",
+            {
+                "node_id": "worker-1",
+                "reason": f"retry_backoff_until:{retry_not_before}",
+            },
+        )
+    ]
+
+    clock.advance(61)
+    later = apply_command(
+        _project([*events, *output, *immediate]),
+        [*events, *output, *immediate],
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        clock,
+        id_gen,
+    )
+    assert [event.event_type for event in later] == [
+        "node_ready",
+        "node_state_changed",
+        "lease_granted",
+        "node_state_changed",
+    ]
+    assert later[2].payload["node_id"] == "worker-1"
+    assert later[3].payload == {
+        "node_id": "worker-1",
+        "new_state": "leased",
+        "trigger": "scheduler_grants_lease",
+    }
+
+
+def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "running",
+                "attempt_number": 2,
+            },
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "run_id": "run-1",
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+            "max_attempts": 2,
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "output_record_accepted",
+        "node_state_changed",
+    ]
+    assert output[2].payload["record_type"] == "failure_record"
+    assert output[2].payload["value"] == {
+        "failed_node_id": "worker-1",
+        "phase": "runtime",
+        "error_class": "max_attempts_exhausted",
+        "retryable": False,
+        "lease_id": "lease-1",
+        "execution_id": "exec-1",
+        "lease_generation": 1,
+        "reason": "process_exit",
+        "attempt_number": 2,
+        "max_attempts": 2,
+    }
+    assert output[3].payload == {
+        "node_id": "worker-1",
+        "new_state": "failed",
+        "trigger": "max_attempts_exhausted",
+        "reason": "max_attempts_exhausted",
+        "attempt_number": 2,
+        "max_attempts": 2,
+    }
+    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["node_states"]["worker-1"] == "failed"
 
 
 def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
@@ -2390,9 +3978,21 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
     assert [event.event_type for event in output] == [
         "agent_died",
         "lease_revoked",
+        "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[2].payload == {
+    assert output[2].payload["record_type"] == "failure_record"
+    assert output[2].payload["value"] == {
+        "failed_node_id": "planner-1",
+        "phase": "runtime",
+        "error_class": "agent_rate_limited",
+        "retryable": False,
+        "lease_id": "lease-1",
+        "execution_id": "exec-1",
+        "lease_generation": 1,
+        "reason": reason,
+    }
+    assert output[3].payload == {
         "node_id": "planner-1",
         "new_state": "failed",
         "trigger": "agent_rate_limited",
@@ -2505,9 +4105,11 @@ def test_agent_died_requeues_gap_planner_after_accepted_patch() -> None:
         "agent_died",
         "lease_revoked",
         "runtime_retry_scheduled",
+        "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[3].payload["new_state"] == "ready"
+    assert output[3].payload["record_type"] == "recovery_plan"
+    assert output[4].payload["new_state"] == "ready"
 
 
 def test_agent_died_rejects_unknown_or_inactive_lease() -> None:
@@ -2742,6 +4344,35 @@ def test_record_decision_rejects_invalid_decision() -> None:
 
     assert output[0].event_type == "command_rejected"
     assert "invalid decision value" in output[0].payload["reason"]
+
+
+def test_record_decision_rejects_malformed_typed_authority_record_atomically() -> None:
+    output = _apply(
+        [
+            _event(
+                "run_lifecycle_changed",
+                {"to_state": "active"},
+                0,
+            ),
+            _event(
+                "node_created",
+                {"node_id": "authority-1", "kind": "authority_request", "state": "blocked"},
+                1,
+            ),
+        ],
+        "record_decision",
+        {
+            "run_id": "run-1",
+            "decision_type": "authority",
+            "node_id": "authority-1",
+            "decision": "grant",
+            "scope": "graph_write",
+            "decider": {"kind": "human", "id": "alice"},
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert "invalid decision record" in output[0].payload["reason"]
 
 
 def test_record_decision_rejects_missing_decider() -> None:
