@@ -390,6 +390,7 @@ def _apply_evaluate_final_gate(
             "port": "completion_decision",
             "schema": "CompletionDecision",
             "value": decision,
+            "provenance": {"source": "final_gate_evaluated"},
         }
     ).model_dump(mode="json")
     return [

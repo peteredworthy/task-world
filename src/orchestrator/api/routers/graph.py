@@ -240,6 +240,7 @@ class NodeDetailResponse(ApiModel):
     kind: str | None
     role: str | None
     state: str | None
+    task_region_id: str | None = None
     contract: dict[str, Any] | None = None
     resource_claims: list[dict[str, Any]] = Field(default_factory=_empty_dict_items)
     allowed_actions: list[str] = Field(default_factory=_empty_str_items)
@@ -1101,6 +1102,7 @@ def build_node_detail_response(
         kind=cast(str | None, metadata.get("kind")),
         role=cast(str | None, metadata.get("role")),
         state=state,
+        task_region_id=cast(str | None, metadata.get("task_region_id")),
         contract=cast(dict[str, Any] | None, metadata.get("contract")),
         resource_claims=cast(list[dict[str, Any]], metadata.get("resource_claims", [])),
         allowed_actions=cast(list[str], metadata.get("allowed_actions", [])),
@@ -1127,6 +1129,7 @@ def build_node_detail_response_from_summary(
         kind=summary.kind,
         role=summary.role,
         state=summary.state,
+        task_region_id=summary.task_region_id,
         contract=node_contract_summary(summary.kind, summary.role),
         resource_claims=controls["resource_claims"],
         allowed_actions=controls["allowed_actions"],

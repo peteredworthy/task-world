@@ -1276,6 +1276,7 @@ def project_node_metadata(events: list[EventEnvelope]) -> dict[str, dict[str, An
         detail: dict[str, Any] = {
             "kind": projection["node_kinds"].get(node_id),
             "role": projection["node_roles"].get(node_id),
+            "task_region_id": projection["node_task_regions"].get(node_id),
             "input_ports": {
                 port: _bound_record_ids(binding)
                 for port, binding in projection["input_bindings"].get(node_id, {}).items()
