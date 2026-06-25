@@ -433,6 +433,45 @@ uv run pyright tests/integration/test_graph_fr17_acceptance.py
 # 0 errors, 0 warnings, 0 informations
 ```
 
+FR-03 now has row-level acceptance coverage:
+`tests/integration/test_graph_fr03_acceptance.py::test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks`
+drives a real graph run row through `GraphController.submit_patch`,
+`GraphController.evaluate_join`, and public graph API readbacks. The harness
+creates less-used contract families and aliases including `summarizer`, `join`,
+`review` as the `recovery` contract alias, `gap_planner`, and
+`authority_request`; proves accepted patch validation plus rejected unknown-port
+validation; proves `evaluate_join` emits the contract-owned `join_result`; and
+reads `/graph/events`, `/graph/topology`, `/graph/patches`,
+`/graph/scheduler`, `/graph/final-blockers`, and `/graph/nodes/{id}` for
+contract handler types, input/output port schemas, allowed tools, resource
+claims, allowed actions, preconditions, command definitions, prompt-hydration
+metadata, binding policies/positions, patch rejection diagnostics, scheduler
+readiness, and blocker node IDs. This closes the remaining less-used
+contract-schema-depth/readback gap without new live `codex_server` product
+proof because the unproven tail was controller/API contract behavior; runner
+prompt/tool paths were already product-proven above and are covered by adjacent
+prompt-packet regressions.
+
+```bash
+uv run pytest tests/integration/test_graph_fr03_acceptance.py -q
+# 1 passed in 2.41s
+
+uv run pytest tests/integration/test_graph_fr03_acceptance.py tests/integration/test_graph_api.py tests/integration/test_graph_node_detail_read_models.py tests/unit/test_graph_dynamic_contract.py tests/unit/test_graph_planner_packet.py tests/unit/test_graph_api_projection.py -q
+# 63 passed in 3.23s
+
+uv run pytest tests/unit/test_graph_*.py tests/unit/test_patch_validator.py tests/unit/test_scheduler.py tests/integration/test_graph_*.py tests/unit/test_codex_server_common.py tests/unit/test_codex_server_tool_filtering.py -q
+# 791 passed in 16.11s
+
+uv run ruff check tests/integration/test_graph_fr03_acceptance.py
+# All checks passed
+
+uv run ruff format --check tests/integration/test_graph_fr03_acceptance.py
+# 1 file already formatted
+
+uv run pyright tests/integration/test_graph_fr03_acceptance.py
+# 0 errors, 0 warnings, 0 informations
+```
+
 Worker write claims are now derived from declared routine artifact paths instead
 of defaulting every compiled worker to repo-wide writes. The compiler ignores
 absolute and traversal paths, falls back to repo-wide only when no safe artifact
@@ -982,14 +1021,14 @@ graph/API/runtime path needed for this row scope.
 The explicit final-gate gap is now covered by a row-level executable acceptance
 harness. This validates FR-04, FR-05, and FR-14 because their only remaining
 row-scope ambiguity was explicit `final_gate`/`completion_decision` production,
-record envelope/readback, and region acceptance semantics. FR-03 and FR-17 keep
-the new evidence but remain partial because those rows still include broader
-less-used node contract/readback families outside this final-gate pass.
+record envelope/readback, and region acceptance semantics. FR-03 and FR-17 kept
+that evidence but stayed partial until their later row-level harnesses closed
+the broader contract/readback gaps.
 
 ### 2026-06-25 FR-12 Acceptance Harness Refresh
 
-Product-scope FR rows remain `partial` except FR-04, FR-05, FR-08, FR-11,
-FR-12, FR-14, FR-15, FR-16, and FR-17, which now have row-level executable acceptance
+Product-scope FR rows remain `partial` except FR-03, FR-04, FR-05, FR-08,
+FR-11, FR-12, FR-14, FR-15, FR-16, and FR-17, which now have row-level executable acceptance
 coverage plus calibrated product-path evidence, and FR-19, which is explicitly
 out of scope. No additional row should be promoted to `validated` until every acceptance
 criterion for that row has product-real proof or deterministic
@@ -1002,15 +1041,17 @@ Unresolved or implemented-unproven rows now cluster as follows:
   smoke and failed-final-invariant product proof, but still need a
   harder-than-smoke feature/topology scenario before the broad bootstrap and
   blocked-progress contract is fully validated.
-- FR-02/FR-03: authority and approval decision records,
+- FR-02: authority and approval decision records,
   gate/authority node detail, allowed actions, command definitions,
   preconditions, binding metadata, and failed-final blockers are now
   product-proven, and explicit `final_gate` completion-decision semantics are
   now acceptance-harness-proven. FR-17's less-used API/readback families,
   including recovery, review, appeal, decision, patch, region, blocker, and
   rebuildable read-model surfaces, are now acceptance-harness-proven.
-  Remaining FR-03 proof is narrower: broader contract schema depth for
-  less-used node/control families where the row scope still asks for them.
+  FR-03's less-used contract schema depth is now acceptance-harness-proven
+  through real graph controller/API readbacks. Remaining FR-02 proof is
+  narrower: product creation/readback of recovery-node and any other canonical
+  families not yet created by a product routine.
 - FR-06/FR-07/FR-08: simple binding policies, authority-request binding, and
   duplicate/malformed patch rejection have product proof. Broader fan-out,
   join, optional-edge, `bind_all`, supersede/retire, hidden-command rejection,
@@ -1085,7 +1126,7 @@ first installs or extends the executable row-level acceptance harness.
 |---|---|---|---|---|---|---|
 | FR-01 Scope and bootstrap | A graph run starts from a feature goal/routine snapshot, creates typed planner/worker/verifier/check/control topology, routes records, schedules work, supports authorized mutation, and completes only by invariants. | Real orchestrator graph run reaches terminal completion through planner-authored topology and cannot complete while final invariants fail. | `src/orchestrator/graph/compiler.py`, `src/orchestrator/workflow/graph_driver.py`, `src/orchestrator/graph/commands.py`, `src/orchestrator/graph_runtime/dispatch.py`. | Product run `2aa3be3b...` completed through planner-authored topology, worker/verifier/gap/corrective/check path, recovery, accepted region, and empty final blockers. Fresh run `f85e3af1...` exposed typed blockers instead of false completion. Product run `f3501792...` proved a failed final invariant keeps the run paused `graph_blocked` with explicit `failed_check_result` and `task_not_accepted` blockers. | partial | Need non-smoke topology coverage before calling the bootstrap/completion contract validated. |
 | FR-02 Canonical node taxonomy | Canonical graph node types are registered with contracts. | Product run creates/uses canonical node kinds and readback exposes their contracts. | `DEFAULT_NODE_CONTRACTS` in `src/orchestrator/graph/contracts.py`. | Product topology/events showed `root`, `artifact`, `planner`, `worker`, `verifier`, and `check` nodes created by planner/runtime. Product probes `963c40bd...`, `5263df20...`, and `3a9af7c4...` exercised human-gate and native authority-request node families with node-detail/topology readbacks. The final-gate acceptance harness exercises an explicit `final_gate` node with topology and node-detail readback. | partial | Recovery-node and other less-used canonical families remain product-unproven unless a product routine creates them. |
-| FR-03 Node contract schema depth | Node contracts and runtime controls govern validation, scheduling, prompt rendering, tool exposure, lifecycle, completion, deterministic handlers, and readback shape. | Real graph run shows contract-derived tools/ports plus runtime controls such as resource claims, preconditions, command definitions, leases, and node detail readback. | `contracts.py`, `scheduler.py`, `dispatch.py`, `commands.py`, `api/routers/graph.py`. | Product run exercised graph patch tools, submit/grade callbacks, leases, scheduler readback, and command execution. 2026-06-22 product node-detail summary readbacks for completed planner/worker/verifier/check nodes returned contracts, ports, output/file-state record IDs, released leases, callbacks, and lifecycle state. Bounded full event readback on `3c5bfc81...` returned write resource claims and conflict deferral evidence; follow-up node-detail summary readbacks for both conflict workers returned top-level write `resource_claims` from released leases. Fresh product probe `963c40bd...` returned worker node detail with resource claims and non-resource `allowed_actions`, and check node detail with `allowed_actions` plus concrete `command_definition`. Post-fix readback on the same product run returned check-node `preconditions=["has_command_definition"]` through `/graph/nodes`. Product authority probe `407dff61...` exposed a missing worker `authority` input contract; regression now proves executable contracts accept optional `authority_decision` input. Product run `3a9af7c4...` accepted a native `authority_request`, posted an authority grant through `/graph/decisions`, released the authority lease, and `/graph/nodes` showed authority request/decision records plus worker `authority` input and ready state. The final-gate acceptance harness `tests/integration/test_graph_fr14_final_gate_acceptance.py::test_final_gate_completion_decision_and_region_readbacks` proves explicit `final_gate` controller execution, node detail `task_region_id`, bound input, output record, runtime-start callback, and `final_gate_evaluated` lifecycle readback through `/api/runs`, `/graph/events`, `/graph/nodes`, `/graph/topology`, `/graph/regions`, and `/graph/final-blockers`. | partial | Final-gate completion-rule/detail semantics are now harness-proven; broader contract readback is still partial for less-used node kinds outside this pass. |
+| FR-03 Node contract schema depth | Node contracts and runtime controls govern validation, scheduling, prompt rendering, tool exposure, lifecycle, completion, deterministic handlers, and readback shape. | Real graph run shows contract-derived tools/ports plus runtime controls such as resource claims, preconditions, command definitions, leases, and node detail readback. | `contracts.py`, `scheduler.py`, `dispatch.py`, `commands.py`, `api/routers/graph.py`; FR-03 acceptance harness in `tests/integration/test_graph_fr03_acceptance.py`. | Product run exercised graph patch tools, submit/grade callbacks, leases, scheduler readback, and command execution. 2026-06-22 product node-detail summary readbacks for completed planner/worker/verifier/check nodes returned contracts, ports, output/file-state record IDs, released leases, callbacks, and lifecycle state. Bounded full event readback on `3c5bfc81...` returned write resource claims and conflict deferral evidence; follow-up node-detail summary readbacks for both conflict workers returned top-level write `resource_claims` from released leases. Fresh product probe `963c40bd...` returned worker node detail with resource claims and non-resource `allowed_actions`, and check node detail with `allowed_actions` plus concrete `command_definition`. Post-fix readback on the same product run returned check-node `preconditions=["has_command_definition"]` through `/graph/nodes`. Product authority probe `407dff61...` exposed a missing worker `authority` input contract; regression now proves executable contracts accept optional `authority_decision` input. Product run `3a9af7c4...` accepted a native `authority_request`, posted an authority grant through `/graph/decisions`, released the authority lease, and `/graph/nodes` showed authority request/decision records plus worker `authority` input and ready state. The final-gate acceptance harness `tests/integration/test_graph_fr14_final_gate_acceptance.py::test_final_gate_completion_decision_and_region_readbacks` proves explicit `final_gate` controller execution, node detail `task_region_id`, bound input, output record, runtime-start callback, and `final_gate_evaluated` lifecycle readback through `/api/runs`, `/graph/events`, `/graph/nodes`, `/graph/topology`, `/graph/regions`, and `/graph/final-blockers`. The row-level harness `tests/integration/test_graph_fr03_acceptance.py::test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks` closes the remaining contract-schema-depth gap through a real graph run row, `GraphController.submit_patch`, `GraphController.evaluate_join`, and public `/graph/events`, `/graph/topology`, `/graph/patches`, `/graph/scheduler`, `/graph/final-blockers`, and `/graph/nodes/{id}` readbacks: it proves less-used `summarizer`, `join`, `review`/`recovery`, `gap_planner`, and `authority_request` contract summaries; allowed tools/actions; resource claims; preconditions; command definitions; prompt-hydration metadata; accepted and rejected contract validation; controller-owned `join_result` lifecycle; scheduler readiness; and blocker readback. Existing prompt-packet regressions remain the executable prompt/tool exposure proof for runner packet rendering. | validated | No remaining FR-03 gap in the current row scope. Future node/control contract families or prompt surfaces require new criteria. |
 | FR-04 Universal typed record envelope | Records on graph edges have immutable IDs, type/schema metadata, producer identity/port, run/position/time enrichment, payload, and provenance. | Real run emits accepted bootstrap, candidate, file-state, verification, check, and completion records with enriched universal fields. | `models.py`, `store.py`, `commands.py`, `compiler.py`; final-gate provenance hardening in `src/orchestrator/graph/commands.py`; node-detail region readback in `src/orchestrator/api/routers/graph.py` and `src/orchestrator/graph/projections.py`. | Product run emitted bootstrap, candidate, file-state, verification, gap, recovery, and check records with graph positions and producer identity. Product run `5263df20...` emitted an enriched approval decision record, and `3a9af7c4...` emitted enriched authority-request and authority-decision records. Product run `a9b658fa...` emitted and read back an enriched `artifact_reference` output record with producer port `artifact_reference` and URI `docs/dynamic-graph/callback-output-proof-20260622205127.txt`. Completion is reflected in lifecycle/readbacks. 2026-06-22 scope decision: check-gated `dynamic-graph-feature` runs do not require separate `completion_decision` records unless they create explicit `final_gate` nodes. The final-gate acceptance harness `tests/integration/test_graph_fr14_final_gate_acceptance.py::test_final_gate_completion_decision_and_region_readbacks` closes the explicit completion-record gap: it reads a `completion_decision` from `/graph/events` and `/graph/nodes/final-gate-s-01-t-01` with immutable ID, type/schema metadata, producer node/port, run ID, graph position, timestamp/created_at, payload `{"status":"passed","blockers":[]}`, and provenance `{"source":"final_gate_evaluated"}`. | validated | No remaining FR-04 gap in the current row scope. Future record families require new rows or reopened criteria. |
 | FR-05 Record type catalog and producers | Required record types have concrete typed contracts and producer/callback validation paths. | Real run produces the required record families and rejects malformed/unsupported output paths through runtime callbacks. | `models.py`, `commands.py`, `compiler.py`, `projections.py`, `dispatch.py`; `/graph/decisions` API bridge in `api/routers/graph.py`; final-gate acceptance harness in `tests/integration/test_graph_fr14_final_gate_acceptance.py`. | Product runs rejected a malformed verifier record, accepted candidate/file-state/verification/gap/check/recovery records, and exposed missing-grade and pending-node diagnostics. 2026-06-22 scope decision narrows `completion_decision` for check-gated dynamic-feature runs; explicit `final_gate` producers remain in the catalog. Product run `5263df20...` accepted an approval decision through `POST /graph/decisions` and emitted an enriched `decision_record` output visible through events and node detail. Product run `1b19441e...` rejected a malformed `authority_request_record` with explicit Pydantic diagnostics through `/graph/patches`. Product run `3a9af7c4...` accepted a native `authority_request_record` and emitted an enriched `authority_decision` output record through the public decision API. Product run `a9b658fa...` accepted a worker `artifact_reference` callback record through the supported runner/runtime path, and product run `32be2af2...` emitted real `agent_died`, `lease_revoked`, `runtime_retry_scheduled`, and recovery-plan records after the runner exited without submit. The FR-16 harness covers terminal `failure_record`; the final-gate harness now covers explicit `completion_decision` production through controller/runtime/API readbacks. | validated | No remaining FR-05 gap in the current row scope. Future record families or producer paths require new rows or reopened criteria. |
 | FR-06 Typed edges and bindings | Edges validate endpoints/ports/schema/cardinality/policies and bind accepted records deterministically. | Real topology readback shows typed edges, bound record IDs, policies, metadata, and no missing required inputs at completion. | `contracts.py`, `commands.py`, `projections.py`. | Product run bound candidate/file-state into verifier, verification into gap planner, classified gap into corrective work, corrective verification into final check, and ended with accepted region and no final blockers. Follow-up topology readback for `3c5bfc81...` returned 11 nodes and 10 edges, but edge rows did not expose binding policy or bound-record positions for this stale run. Fresh product probe `963c40bd...` returned topology edges with `binding_policy=bind_first`, `bound_at_position`, `record_bound_positions`, source/target port contracts, and bound routine-snapshot records. Product run `3a9af7c4...` returned `edge-authority-proof` bound to `authority_decision-authority-proof-gate` with `bound_at_position=43`, `record_bound_positions`, `binding_policy=bind_first`, source/target authority port contracts, and bound record summary. Terminal no-missing-required-input behavior is proven for the completed dynamic-feature path, but not for broader topology shapes. | partial | Broader fan-out/join/optional-edge/`bind_all`/supersede shapes remain product-unvalidated. |
@@ -1120,23 +1161,22 @@ remaining live-runner evidence. The next work must move these rows:
    be reproduced deterministically inside the harness. Do not mark any row
    `validated` unless the harness covers the whole row or this ledger scopes out
    the missing cases with rationale.
-1. FR-03: native accepted authority-request decision readbacks are now
-   product-proven by `3a9af7c4...`: pending authority details, public authority
-   grant write/readback, released gate lease, bound authority edge metadata,
-   worker authority input/readiness, and scheduler no-gate/no-resource/no-lease
-   state all came from the product graph/API path. Explicit `final_gate`
-   completion-rule/detail semantics are now covered by
-   `tests/integration/test_graph_fr14_final_gate_acceptance.py::test_final_gate_completion_decision_and_region_readbacks`.
-   FR-17 is now validated by
-   `tests/integration/test_graph_fr17_acceptance.py::test_fr17_less_used_readbacks_survive_projection_rebuild`.
-   Remaining FR-03 proof is narrower: broader contract schema depth for
-   less-used node/control families not covered by the authority, callback,
-   failure, final-gate, and FR-17 readback harnesses. Actual pending gate,
-   approval/authority decision write/readback, allowed actions, check command
-   definitions, check-node preconditions, edge binding metadata, live
-   `waiting_resources`, and failed-final-invariant blockers were
-   product-proven on 2026-06-22.
-2. FR-15 is now validated by
+1. FR-02 remains partial for product creation/readback of recovery-node and any
+   other canonical node families not yet created by a product routine. FR-03 is
+   now validated by
+   `tests/integration/test_graph_fr03_acceptance.py::test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks`.
+2. FR-06 remains partial for broader fan-out, join, optional-edge, `bind_all`,
+   and supersede edge/binding behavior. Supersede must either gain first-class
+   product behavior or be explicitly scoped out with rationale before FR-06 can
+   be validated.
+3. FR-07 remains partial for the broader macro/tool catalog, including joins,
+   gates, retire/supersede, and invalid macro/tool rejection paths.
+4. FR-09/FR-10 remain partial for packet/readiness coverage of less-used node
+   kinds, broader precondition/command-binding cases, and retry readiness
+   beyond the already product-proven gate/authority/resource paths.
+5. FR-01/FR-13/FR-18 remain partial for harder-than-smoke bootstrap,
+   blocked-progress, and end-to-end product scenarios.
+6. FR-15 is now validated by
    `tests/integration/test_graph_fr15_acceptance.py::test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable`
    and
    `tests/integration/test_graph_fr15_acceptance.py::test_fr15_rejected_file_state_revokes_write_lease_and_retries_cleanly`.
