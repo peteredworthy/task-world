@@ -1751,7 +1751,7 @@ def _topology_edge(
         "from_port": str(edge["from_port"]),
         "to_node_id": str(edge["to_node_id"]),
         "to_port": str(edge["to_port"]),
-        "required": edge.get("required") is not False,
+        "required": _edge_required(edge.get("required")),
         "dependency_type": str(edge.get("dependency_type", "input_binding")),
         "metadata": dict(metadata),
         "record_types": _compatible_edge_record_types(source_contract, target_contract),
@@ -2518,7 +2518,7 @@ def _record_edge(state: GraphProjection, event: EventEnvelope) -> None:
         "from_port": from_port,
         "to_node_id": to_node_id,
         "to_port": to_port,
-        "required": required is not False,
+        "required": _edge_required(required),
         "dependency_type": event.payload.get("dependency_type", "input_binding"),
     }
     selector = event.payload.get("accepted_record_selector")
@@ -2534,6 +2534,14 @@ def _record_edge(state: GraphProjection, event: EventEnvelope) -> None:
             state["edges"][edge_id][key] = list(cast(list[Any], value))
         elif isinstance(value, str | int | float | bool):
             state["edges"][edge_id][key] = value
+
+
+def _edge_required(value: Any) -> bool:
+    if value is False:
+        return False
+    if isinstance(value, int) and not isinstance(value, bool) and value == 0:
+        return False
+    return True
 
 
 def _record_requirement_revision(state: GraphProjection, event: EventEnvelope) -> None:
