@@ -717,6 +717,17 @@ async def recover_run(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _is_deletable_startup_orphan(run: Run) -> bool:
+    """Return True for persisted rows that never launched real work."""
+    if run.status != RunStatus.PAUSED:
+        return False
+    if run.pause_reason != "agent_not_running_on_startup":
+        return False
+    if run.started_at is not None or run.agent_runner_type is not None or run.worktree_path:
+        return False
+    return not any(task.attempts for step in run.steps for task in step.tasks)
+
+
 @router.delete("/{run_id}", status_code=204)
 async def delete_run(
     run_id: str,
@@ -727,7 +738,9 @@ async def delete_run(
     run = await service.get_run(run_id)
 
     # Reject deletion if run is ACTIVE or PAUSED
-    if run.status in (RunStatus.ACTIVE, RunStatus.PAUSED):
+    if run.status == RunStatus.ACTIVE or (
+        run.status == RunStatus.PAUSED and not _is_deletable_startup_orphan(run)
+    ):
         raise HTTPException(
             status_code=409,
             detail=f"Cannot delete run with status {run.status.value}. Cancel or complete the run first.",

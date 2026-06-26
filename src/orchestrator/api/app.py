@@ -41,6 +41,11 @@ def _is_startup_recoverable_pause_reason(reason: str | None) -> bool:
     before the first loop iteration clears it, the run is left paused even
     though the correct recovery action is to continue from the current state.
 
+    `agent_not_running_on_startup` is intentionally not auto-recoverable here.
+    It means startup found a persisted ACTIVE row without a surviving agent,
+    which may be an old experiment or an unclean shutdown. Leave those paused
+    for an explicit user decision instead of silently resurrecting stale work.
+
     Cascade reasons (`parent_*`) reflect *why* a child was paused (their parent
     was being controlled) but recoverability is determined by the underlying
     reason, so strip the prefix before checking. A child paused as
@@ -52,7 +57,6 @@ def _is_startup_recoverable_pause_reason(reason: str | None) -> bool:
     canonical = reason.removeprefix("parent_")
     return canonical in (
         "server_shutdown",
-        "agent_not_running_on_startup",
         "executor_not_started",
     )
 

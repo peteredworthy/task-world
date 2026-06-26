@@ -63,7 +63,7 @@ class _RecordingExecutor:
 
 def test_startup_recovery_includes_executor_not_started() -> None:
     assert _is_startup_recoverable_pause_reason("server_shutdown") is True
-    assert _is_startup_recoverable_pause_reason("agent_not_running_on_startup") is True
+    assert _is_startup_recoverable_pause_reason("agent_not_running_on_startup") is False
     assert _is_startup_recoverable_pause_reason("executor_not_started") is True
     assert _is_startup_recoverable_pause_reason("manual") is False
     assert _is_startup_recoverable_pause_reason(None) is False
@@ -73,7 +73,7 @@ def test_startup_recovery_accepts_parent_prefixed_reasons() -> None:
     """Cascade pauses (parent_X) must be recoverable when the underlying reason is."""
     assert _is_startup_recoverable_pause_reason("parent_server_shutdown") is True
     assert _is_startup_recoverable_pause_reason("parent_executor_not_started") is True
-    assert _is_startup_recoverable_pause_reason("parent_agent_not_running_on_startup") is True
+    assert _is_startup_recoverable_pause_reason("parent_agent_not_running_on_startup") is False
     assert _is_startup_recoverable_pause_reason("parent_manual_pause") is False
     assert _is_startup_recoverable_pause_reason("parent_paused_manual") is False
     assert _is_startup_recoverable_pause_reason("parent_escalated_requirement") is False

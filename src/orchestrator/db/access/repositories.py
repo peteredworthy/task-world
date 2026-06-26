@@ -1,6 +1,7 @@
 """Repository pattern for Run persistence."""
 
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -49,6 +50,18 @@ from orchestrator.time_utils import (
 )
 
 _UNSET = object()
+
+
+@dataclass(frozen=True)
+class RunLivenessRecord:
+    """Minimal run data needed for agent liveness recovery."""
+
+    id: str
+    repo_name: str
+    status: RunStatus
+    execution_mode: str
+    agent_runner_type: AgentRunnerType | None
+    agent_runner_config: dict[str, Any]
 
 
 def _agent_runner_type(value: str | None) -> AgentRunnerType | None:
@@ -578,6 +591,30 @@ class RunRepository:
                 routine_embedded_loaded=include_routine_embedded,
             )
             for m in result.scalars().all()
+        ]
+
+    async def list_liveness_records_by_status(self, status: RunStatus) -> list[RunLivenessRecord]:
+        """List minimal run records needed for startup liveness checks."""
+        result = await self._session.execute(
+            select(
+                RunModel.id,
+                RunModel.repo_name,
+                RunModel.status,
+                RunModel.execution_mode,
+                RunModel.runner_type,
+                RunModel.runner_config,
+            ).where(RunModel.status == status.value)
+        )
+        return [
+            RunLivenessRecord(
+                id=row.id,
+                repo_name=row.repo_name,
+                status=RunStatus(row.status),
+                execution_mode=row.execution_mode,
+                agent_runner_type=_agent_runner_type(row.runner_type),
+                agent_runner_config=row.runner_config or {},
+            )
+            for row in result
         ]
 
     async def list_child_runs(

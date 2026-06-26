@@ -269,6 +269,90 @@ async def test_check_agent_alive_with_no_agent_runner_type(
     assert is_alive is False
 
 
+# ---------- startup recovery tests ----------
+
+
+@pytest.mark.asyncio
+async def test_recover_active_runs_on_startup_batches_dead_managed_runs(
+    db_setup: async_sessionmaker[AsyncSession],
+) -> None:
+    """Startup recovery pauses orphaned managed runs without per-run reloads."""
+    session_factory = db_setup
+    monitor = AgentRunnerMonitor(session_factory)
+
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        for run_id in ("run-startup-a", "run-startup-b"):
+            run = _create_test_run(
+                run_id=run_id,
+                agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+                agent_runner_config={"pid": 12345},
+            )
+            run.status = RunStatus.ACTIVE
+            await save_run(repo.session, run)
+
+        completed = _create_test_run(
+            run_id="run-startup-completed",
+            agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        )
+        completed.status = RunStatus.COMPLETED
+        await save_run(repo.session, completed)
+        await session.commit()
+
+    paused_ids = await monitor.recover_active_runs_on_startup()
+
+    assert paused_ids == ["run-startup-a", "run-startup-b"]
+
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        event_store = SqliteEventStore(session)
+
+        for run_id in paused_ids:
+            run = await repo.get(run_id)
+            assert run.status == RunStatus.PAUSED
+            assert run.pause_reason == "agent_not_running_on_startup"
+
+            events = await event_store.get_stream(run_id)
+            assert [e.event_type for e in events] == ["agent_died", "run_status_changed"]
+            agent_died_payload = json.loads(events[0].payload)
+            assert agent_died_payload["reason"] == "agent_not_running_on_startup"
+            status_payload = json.loads(events[1].payload)
+            assert status_payload["old_status"] == "active"
+            assert status_payload["new_status"] == "paused"
+            assert status_payload["pause_reason"] == "agent_not_running_on_startup"
+
+        completed_run = await repo.get("run-startup-completed")
+        assert completed_run.status == RunStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_recover_active_runs_on_startup_ignores_graph_runs(
+    db_setup: async_sessionmaker[AsyncSession],
+) -> None:
+    """Graph-mode lifecycle recovery is owned by graph startup recovery."""
+    session_factory = db_setup
+    monitor = AgentRunnerMonitor(session_factory)
+
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        run = _create_test_run(run_id="run-startup-graph", agent_runner_type=None)
+        run.status = RunStatus.ACTIVE
+        run.execution_mode = "graph"
+        await save_run(repo.session, run)
+        await session.commit()
+
+    paused_ids = await monitor.recover_active_runs_on_startup()
+
+    assert paused_ids == []
+
+    async with session_factory() as session:
+        repo = RunRepository(session)
+        event_store = SqliteEventStore(session)
+        run = await repo.get("run-startup-graph")
+        assert run.status == RunStatus.ACTIVE
+        assert await event_store.get_stream("run-startup-graph") == []
+
+
 # ---------- lock cleanup tests ----------
 
 

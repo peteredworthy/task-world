@@ -81,6 +81,7 @@ if TYPE_CHECKING:
         TaskStateProjector,
     )
     from orchestrator.db.access.repositories import (
+        RunLivenessRecord,
         RunRepository,
     )
     from orchestrator.db.access.mutations import (
@@ -97,6 +98,10 @@ def __getattr__(name: str):
         from orchestrator.db.access.repositories import RunRepository
 
         return RunRepository
+    elif name == "RunLivenessRecord":
+        from orchestrator.db.access.repositories import RunLivenessRecord
+
+        return RunLivenessRecord
     elif name == "delete_run":
         from orchestrator.db.access.mutations import delete_run
 
@@ -179,6 +184,7 @@ __all__ = [
     "create_session_factory",
     "init_db",
     "RunRepository",
+    "RunLivenessRecord",
     "create_clarification_request",
     "delete_run",
     "merge_token_usage_into_run",

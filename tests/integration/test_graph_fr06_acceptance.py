@@ -18,7 +18,7 @@ from orchestrator.graph_runtime import GraphController, GraphEventStore
 
 @pytest.fixture
 async def fr06_app() -> AsyncGenerator[tuple[AsyncClient, Any], None]:
-    app = create_app(db_path=None, routine_dirs=[])
+    app = create_app(db_path=":memory:", routine_dirs=[])
     await init_db(app.state.engine)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     async with AsyncClient(transport=transport, base_url="http://test") as client:

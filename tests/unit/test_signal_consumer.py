@@ -22,6 +22,7 @@ from orchestrator.workflow import (
     SignalConsumer,
     WorkflowSignal,
 )
+from orchestrator.state.errors import RunNotFoundError
 
 
 @dataclass
@@ -320,6 +321,27 @@ async def test_error_leaves_signal_unprocessed_for_redelivery(session_factory) -
         (("run-1",), {"reason": "signal_pause", "error_detail": None}),
         (("run-1",), {"reason": "signal_pause", "error_detail": None}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_missing_run_signal_is_marked_processed(session_factory) -> None:
+    """Signals for deleted runs are stale and should not redeliver forever."""
+
+    class MissingRunService(RecordingWorkflowService):
+        async def get_run(self, run_id: str) -> ServiceRun:
+            self._record("get_run", run_id)
+            raise RunNotFoundError(run_id)
+
+    service = MissingRunService()
+    consumer = _consumer(session_factory, service)
+    pos = await _insert_signal_event(session_factory, "deleted-run", WorkflowSignal.CANCEL)
+
+    await consumer._process_run("deleted-run")
+
+    processed = await _get_processed_positions(session_factory, "deleted-run")
+    assert pos in processed
+    assert _calls(service, "get_run") == [(("deleted-run",), {})]
+    assert _calls(service, "apply_cancel_run") == []
 
 
 @pytest.mark.asyncio

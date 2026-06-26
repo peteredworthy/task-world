@@ -360,6 +360,32 @@ async def test_delete_run_not_found(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
+async def test_delete_startup_orphan_run(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+    repo_name: str,
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    created = await _create_run(client, repo_name)
+    run_id = created["id"]
+
+    async with app.state.session_factory() as session:
+        repo = RunRepository(session)
+        run = await repo.get(run_id)
+        run.status = RunStatus.PAUSED
+        run.pause_reason = "agent_not_running_on_startup"
+        run.started_at = None
+        run.agent_runner_type = None
+        run.worktree_path = None
+        await save_run(repo.session, run)
+        await session.commit()
+
+    response = await client.delete(f"/api/runs/{run_id}")
+    assert response.status_code == 204
+
+    response = await client.get(f"/api/runs/{run_id}")
+    assert response.status_code == 404
+
+
 async def test_pause_run(client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str) -> None:
     client, drain = client_and_drain
     created = await _create_run(client, repo_name)

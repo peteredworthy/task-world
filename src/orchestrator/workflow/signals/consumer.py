@@ -294,6 +294,7 @@ class SignalConsumer:
         )
         from orchestrator.workflow import SignalProcessed
 
+        from orchestrator.state.errors import RunNotFoundError
         from orchestrator.workflow import InvalidTransitionError
 
         enqueued_position, signal_type, payload = signal_data
@@ -309,7 +310,7 @@ class SignalConsumer:
                     enqueued_position=enqueued_position,
                 )
                 await store.append([processed_event])
-            except InvalidTransitionError:
+            except (InvalidTransitionError, RunNotFoundError):
                 # Signal is stale — run already moved past this state.
                 # Rollback the failed attempt then mark processed so the
                 # signal is not retried indefinitely.

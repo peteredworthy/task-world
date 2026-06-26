@@ -11,11 +11,13 @@ from typing import TYPE_CHECKING
 from orchestrator.config.enums import AgentRunnerType, RunStatus, TaskStatus
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.state.models import Run
-from orchestrator.workflow import AgentDiedEvent
+from orchestrator.workflow import AgentDiedEvent, RunStatusChanged
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+    from orchestrator.db import RunLivenessRecord
+    from orchestrator.workflow import WorkflowEvent
     from orchestrator.workflow.locks import LockManager
 
 logger = logging.getLogger(__name__)
@@ -272,14 +274,18 @@ class AgentRunnerMonitor:
                 "AgentRunnerMonitor requires a session_factory to use recover_active_runs_on_startup"
             )
 
-        from orchestrator.db import RunRepository
+        from orchestrator.db import (
+            RunRepository,
+            commit_with_event_outbox,
+            create_wired_event_store_v2,
+        )
 
-        paused_runs: list[str] = []
+        dead_runs: list[RunLivenessRecord] = []
 
         # Get all ACTIVE runs using a fresh session
         async with self._session_factory() as session:
             repo = RunRepository(session)
-            active_runs = await repo.list_by_status(RunStatus.ACTIVE)
+            active_runs = await repo.list_liveness_records_by_status(RunStatus.ACTIVE)
 
         # In-process agent runner types cannot survive a server restart, so they
         # are always considered dead on startup regardless of check_agent_alive
@@ -293,21 +299,65 @@ class AgentRunnerMonitor:
         }
 
         for run in active_runs:
+            if run.execution_mode == "graph":
+                continue
+
             if run.agent_runner_type in _IN_PROCESS_AGENT_TYPES:
                 agent_alive = False
             else:
-                agent_alive = await self.check_agent_alive(run)
+                agent_alive = await self.check_agent_alive(
+                    Run(
+                        id=run.id,
+                        repo_name=run.repo_name,
+                        status=run.status,
+                        agent_runner_type=run.agent_runner_type,
+                        agent_runner_config=run.agent_runner_config,
+                    )
+                )
 
             if not agent_alive:
-                # on_agent_died creates its own session and commits
-                await self.on_agent_died(
-                    run_id=run.id,
-                    agent_runner_type=run.agent_runner_type or AgentRunnerType.CLI_SUBPROCESS,
-                    reason="agent_not_running_on_startup",
-                )
-                paused_runs.append(run.id)
-                logger.info(f"Run {run.id}: agent not running on startup, moved to PAUSED")
+                dead_runs.append(run)
             else:
                 logger.info(f"Run {run.id}: agent still alive, no action needed")
 
+        if not dead_runs:
+            return []
+
+        timestamp = datetime.now(timezone.utc)
+        events: list[WorkflowEvent] = []
+        for run in dead_runs:
+            agent_runner_type = run.agent_runner_type or AgentRunnerType.CLI_SUBPROCESS
+            events.extend(
+                [
+                    AgentDiedEvent(
+                        timestamp=timestamp,
+                        run_id=run.id,
+                        event_type="agent_died",
+                        agent_runner_type=agent_runner_type,
+                        exit_code=None,
+                        reason="agent_not_running_on_startup",
+                    ),
+                    RunStatusChanged(
+                        timestamp=timestamp,
+                        run_id=run.id,
+                        event_type="run_status_changed",
+                        old_status=RunStatus.ACTIVE,
+                        new_status=RunStatus.PAUSED,
+                        pause_reason="agent_not_running_on_startup",
+                    ),
+                ]
+            )
+
+        async with self._session_factory() as session:
+            event_store = create_wired_event_store_v2(session)
+            await event_store.append(events)
+            await commit_with_event_outbox(session)
+
+        paused_runs = [run.id for run in dead_runs]
+        logger.warning(
+            "Startup recovery: %d active run(s) had no surviving agent; moved to PAUSED. "
+            "Reason: agent_not_running_on_startup. Run IDs: %s",
+            len(paused_runs),
+            ", ".join(paused_runs),
+        )
         return paused_runs
