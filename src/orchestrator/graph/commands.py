@@ -2486,16 +2486,16 @@ def _apply_acknowledge_start(
     if isinstance(lease_execution_id, str) and lease_execution_id != execution_id:
         return [_command_rejected(make_event, "acknowledge_start", "execution_incompatible")]
 
-    return [
-        make_event(
-            "node_state_changed",
-            {
-                "node_id": node_id,
-                "new_state": "running",
-                "trigger": "runtime_start_acknowledged",
-            },
-        )
-    ]
+    event_payload: dict[str, Any] = {
+        "node_id": node_id,
+        "new_state": "running",
+        "trigger": "runtime_start_acknowledged",
+    }
+    prompt_summary = payload.get("prompt_summary")
+    if isinstance(prompt_summary, dict):
+        event_payload["prompt_summary"] = dict(cast(dict[str, Any], prompt_summary))
+
+    return [make_event("node_state_changed", event_payload)]
 
 
 def _apply_agent_died(

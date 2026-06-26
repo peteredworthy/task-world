@@ -268,6 +268,7 @@ NODE_DETAIL_PAYLOAD_FIELDS = (
     "node_id",
     "port",
     "producer_node_id",
+    "prompt_summary",
     "record_id",
     "record_ids",
     "record_kind",
@@ -1253,7 +1254,11 @@ def _node_detail_field_updates(
                 node_id,
                 position,
             )
-            updates[node_id] = _replace_summary(summary, position=position, state=new_state)
+            prompt_summary = payload.get("prompt_summary")
+            update_fields: dict[str, Any] = {"position": position, "state": new_state}
+            if isinstance(prompt_summary, dict):
+                update_fields["prompt_summary"] = dict(cast(dict[str, Any], prompt_summary))
+            updates[node_id] = _replace_summary(summary, **update_fields)
     elif event.event_type == "node_retired":
         node_id = payload.get("node_id")
         if isinstance(node_id, str):

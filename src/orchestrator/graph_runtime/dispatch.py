@@ -375,6 +375,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "lease_id": context.lease_id,
                 "lease_generation": context.lease_generation,
                 "execution_id": context.execution_id,
+                "prompt_summary": _prompt_summary_for_node(context),
             },
         )
 
@@ -1098,6 +1099,139 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
             )
         )
     return _worker_like_prompt(context)
+
+
+def _prompt_summary_for_node(context: GraphDispatchContext) -> dict[str, Any]:
+    packet = _packet_for_prompt_summary(context)
+    summary: dict[str, Any] = {
+        "node_id": context.node_id,
+        "node_kind": context.node_kind,
+        "node_role": context.node_role,
+        "packet_type": _packet_type_for_context(context),
+        "packet_keys": sorted(packet),
+        "prompt_sections": _prompt_sections_for_context(context),
+        "available_tools": _available_tools_for_context(context) or [],
+        "lease": {
+            "lease_id": context.lease_id,
+            "generation": context.lease_generation,
+            "execution_id": context.execution_id,
+            "base_snapshot_id": context.base_snapshot_id,
+        },
+        "input_ports": _prompt_summary_input_ports(context),
+        "bound_records": _prompt_summary_bound_records(context),
+    }
+    task_region_id = context.node_payload.get("task_region_id")
+    if isinstance(task_region_id, str):
+        summary["task_region_id"] = task_region_id
+    command_definition = context.node_payload.get("command_definition")
+    if isinstance(command_definition, dict):
+        summary["command_definition"] = dict(cast(dict[str, Any], command_definition))
+    if "required_report_schema" in packet:
+        summary["required_report_schema"] = packet["required_report_schema"]
+    if "required_summary_schema" in packet:
+        summary["required_summary_schema"] = packet["required_summary_schema"]
+    if "gap_analysis_contract" in packet:
+        summary["gap_analysis_contract"] = packet["gap_analysis_contract"]
+    return summary
+
+
+def _packet_for_prompt_summary(context: GraphDispatchContext) -> dict[str, Any]:
+    if context.node_kind == "verifier":
+        return _verifier_packet(context)
+    if context.node_kind == "summarizer":
+        return _summarizer_packet(context)
+    if context.node_kind == "planner":
+        return _planner_packet(context)
+    if context.node_kind == "check":
+        return {
+            "node_id": context.node_id,
+            "task_region_id": context.node_payload.get("task_region_id", context.node_id),
+            "command_definition": resolve_check_command_definition(
+                context.node_payload,
+                context.graph_events,
+            ),
+            "bound_records": _planner_evidence(
+                context,
+                context.graph_projection,
+                context.graph_events,
+            )["bound_records"],
+        }
+    return {
+        "node_id": context.node_id,
+        "task_region_id": context.node_payload.get("task_region_id", context.node_id),
+        "worker_authority": _worker_authority_packet(context),
+    }
+
+
+def _packet_type_for_context(context: GraphDispatchContext) -> str:
+    if context.node_kind == "planner" and context.node_role == "gap_planner":
+        return "gap_planner"
+    return context.node_kind
+
+
+def _prompt_sections_for_context(context: GraphDispatchContext) -> list[str]:
+    if context.node_kind == "verifier":
+        return ["rubric", "verifier_context_packet"]
+    if context.node_kind == "summarizer":
+        return ["summarizer_context_packet"]
+    if context.node_kind == "planner":
+        sections = [
+            "planner_context_packet",
+            "planner_mutation_contract",
+            "allowed_patch_operations",
+            "horizon_region_templates",
+            "patch_examples",
+        ]
+        if context.node_role == "gap_planner":
+            sections.append("gap_analysis_contract")
+        return sections
+    if context.node_kind == "check":
+        return ["check_command", "bound_evidence"]
+    return ["worker_instruction", "worker_authority"]
+
+
+def _prompt_summary_input_ports(context: GraphDispatchContext) -> dict[str, list[str]]:
+    bindings = context.graph_projection["input_bindings"].get(context.node_id, {})
+    input_ports: dict[str, list[str]] = {}
+    for port, binding in sorted(bindings.items()):
+        record_ids = binding.get("record_ids")
+        if isinstance(record_ids, list):
+            input_ports[port] = [
+                record_id for record_id in cast(list[Any], record_ids) if isinstance(record_id, str)
+            ]
+    return input_ports
+
+
+def _prompt_summary_bound_records(context: GraphDispatchContext) -> dict[str, list[dict[str, Any]]]:
+    evidence = _planner_evidence(context, context.graph_projection, context.graph_events)
+    compact: dict[str, list[dict[str, Any]]] = {}
+    for port, records in evidence["bound_records"].items():
+        compact[port] = [_compact_prompt_bound_record(record) for record in records[:10]]
+    return compact
+
+
+def _compact_prompt_bound_record(record: dict[str, Any]) -> dict[str, Any]:
+    compact = {
+        key: record[key]
+        for key in ("record_id", "record_kind", "hydration_policy", "status")
+        if key in record
+    }
+    payload = record.get("record_payload")
+    if isinstance(payload, dict):
+        typed_payload = cast(dict[str, Any], payload)
+        for key in ("record_type", "schema", "producer_node_id", "port"):
+            value = typed_payload.get(key)
+            if isinstance(value, str):
+                compact[key] = value
+    reference = record.get("record_reference")
+    if isinstance(reference, dict):
+        compact["record_reference"] = dict(cast(dict[str, Any], reference))
+    summary = record.get("record_summary")
+    if isinstance(summary, dict):
+        compact["record_summary"] = dict(cast(dict[str, Any], summary))
+    if record.get("omitted_from_prompt") is True:
+        compact["omitted_from_prompt"] = True
+    return compact
 
 
 def _worker_like_prompt(context: GraphDispatchContext) -> str:

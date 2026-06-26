@@ -1116,7 +1116,16 @@ def build_node_detail_response(
             _event_to_response(event, payload_mode=payload_mode) for event in callback_history
         ],
         events=[_event_to_response(event, payload_mode=payload_mode) for event in node_events],
+        prompt_summary=_latest_prompt_summary(node_events),
     )
+
+
+def _latest_prompt_summary(events: list[EventEnvelope]) -> dict[str, Any] | None:
+    for event in reversed(events):
+        prompt_summary = event.payload.get("prompt_summary")
+        if isinstance(prompt_summary, dict):
+            return dict(cast(dict[str, Any], prompt_summary))
+    return None
 
 
 def build_node_detail_response_from_summary(
