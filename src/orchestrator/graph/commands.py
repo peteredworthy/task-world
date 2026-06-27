@@ -2211,6 +2211,14 @@ def _apply_schedule_tick(
         and lease.get("lease_id") not in expired_lease_ids
         and isinstance(lease.get("node_id"), str)
     ]
+    output.extend(
+        _failed_check_recovery_events(
+            projection,
+            events,
+            active_lease_node_ids,
+            make_event,
+        )
+    )
     nodes: list[NodeScheduleInfo] = []
     readied_node_ids: set[str] = set()
     for node_id, node_state in projection["node_states"].items():
@@ -2336,6 +2344,164 @@ def _apply_schedule_tick(
             )
         )
     return output
+
+
+def _failed_check_recovery_events(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    active_lease_node_ids: list[str],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    if projection["run_state"] != "active":
+        return []
+    if active_lease_node_ids:
+        return []
+    if any(
+        state in {"planned", "blocked", "ready"} for state in projection["node_states"].values()
+    ):
+        return []
+    if not any(state != "accepted" for state in projection["task_states"].values()):
+        return []
+
+    routine_snapshot = _latest_routine_snapshot_record(events)
+    if routine_snapshot is None:
+        return []
+
+    output: list[EventEnvelope] = []
+    for check_result in _current_failed_check_results(projection):
+        recovery_node_id = _failed_check_recovery_node_id(check_result)
+        if recovery_node_id in projection["node_states"]:
+            continue
+        if _has_existing_failed_check_recovery(projection, check_result):
+            continue
+        node_id = check_result["node_id"]
+        record_id = check_result["record_id"]
+        task_region_id = check_result.get("task_region_id", node_id)
+        recovery_region_id = f"recovery-{_stable_graph_id_part(task_region_id)}"
+        output.append(
+            make_event(
+                "node_created",
+                {
+                    "node_id": recovery_node_id,
+                    "kind": "planner",
+                    "role": "gap_planner",
+                    "state": "planned",
+                    "task_region_id": recovery_region_id,
+                    "recovery_reason": "failed_required_check",
+                    "recovery_of_node_id": node_id,
+                    "recovery_of_record_id": record_id,
+                },
+            )
+        )
+        recovery_edges = [
+            {
+                "edge_id": f"edge-{_stable_graph_id_part(record_id)}-recovery-evidence",
+                "from_node_id": node_id,
+                "from_port": "check_result",
+                "to_node_id": recovery_node_id,
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["check_result"]},
+                "metadata": {
+                    "purpose": "failed_required_check_recovery",
+                    "recovery_of_record_id": record_id,
+                },
+            },
+            {
+                "edge_id": f"edge-routine-snapshot-{recovery_node_id}",
+                "from_node_id": routine_snapshot["producer_node_id"],
+                "from_port": routine_snapshot["port"],
+                "to_node_id": recovery_node_id,
+                "to_port": "routine_snapshot",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["routine_snapshot"]},
+                "metadata": {"purpose": "failed_required_check_recovery_context"},
+            },
+        ]
+        for edge in recovery_edges:
+            output.append(make_event("edge_created", edge))
+            output.extend(_input_bound_events_for_edge(events, edge, make_event))
+    return output
+
+
+def _current_failed_check_results(projection: GraphProjection) -> list[dict[str, str]]:
+    failed: list[dict[str, str]] = []
+    for node_id, result in sorted(projection["check_results"].items()):
+        status = result.get("status")
+        if status in {"passed", "pass", "ok"}:
+            continue
+        record_id = result.get("record_id")
+        if not isinstance(record_id, str) or not record_id:
+            continue
+        check_result = {"node_id": node_id, "record_id": record_id}
+        task_region_id = result.get("task_region_id")
+        if isinstance(task_region_id, str) and task_region_id:
+            check_result["task_region_id"] = task_region_id
+        failed.append(check_result)
+    return failed
+
+
+def _has_existing_failed_check_recovery(
+    projection: GraphProjection,
+    check_result: dict[str, str],
+) -> bool:
+    node_id = check_result["node_id"]
+    for edge in projection["edges"].values():
+        if edge.get("from_node_id") != node_id:
+            continue
+        if edge.get("from_port") != "check_result":
+            continue
+        if edge.get("to_port") != "verification_evidence":
+            continue
+        to_node_id = edge.get("to_node_id")
+        if not isinstance(to_node_id, str):
+            continue
+        if projection["node_kinds"].get(to_node_id) == "planner" and (
+            projection["node_roles"].get(to_node_id) == "gap_planner"
+        ):
+            return True
+    return False
+
+
+def _latest_routine_snapshot_record(events: list[EventEnvelope]) -> dict[str, str] | None:
+    latest: dict[str, str] | None = None
+    for event in events:
+        if event.event_type != "output_record_accepted":
+            continue
+        payload = event.payload
+        record_id = payload.get("record_id")
+        producer_node_id = payload.get("producer_node_id")
+        port = payload.get("port")
+        if not all(
+            isinstance(value, str) and value for value in (record_id, producer_node_id, port)
+        ):
+            continue
+        is_routine_snapshot = (
+            payload.get("record_type") == "routine_snapshot"
+            or payload.get("record_kind") == "routine_snapshot"
+            or payload.get("schema") == "RoutineSnapshot"
+            or (producer_node_id == "routine-snapshot" and port in {"snapshot", "routine_snapshot"})
+        )
+        if not is_routine_snapshot:
+            continue
+        latest = {
+            "record_id": cast(str, record_id),
+            "producer_node_id": cast(str, producer_node_id),
+            "port": cast(str, port),
+        }
+    return latest
+
+
+def _failed_check_recovery_node_id(check_result: dict[str, str]) -> str:
+    return f"planner-recover-{_stable_graph_id_part(check_result['record_id'])}"
+
+
+def _stable_graph_id_part(value: str) -> str:
+    chars = [
+        char.lower() if char.isalnum() or char in {"-", "_", "."} else "-" for char in value.strip()
+    ]
+    normalized = "".join(chars).strip("-")
+    return normalized or "unknown"
 
 
 def _base_snapshot_id_for_node(

@@ -535,6 +535,8 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert "gap_analysis_region" in planner_prompt
     assert "corrective_work_region" in planner_prompt
     assert "final_invariant_region" in planner_prompt
+    assert "Every required check, including final invariant checks" in planner_prompt
+    assert "failed check_result evidence into a gap planner" in planner_prompt
     assert "Compact patch examples:" in planner_prompt
     assert "create_worker_verifier_region" in planner_prompt
     assert "create_successor_planner" in planner_prompt

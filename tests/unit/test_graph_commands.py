@@ -3578,6 +3578,172 @@ def test_schedule_tick_grants_leases() -> None:
     assert output[1].payload["node_id"] == "worker-1"
 
 
+def test_schedule_tick_recovers_quiescent_graph_after_failed_required_check() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+                "value": {"routine_id": "routine-1"},
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-r1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant-r1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "status": "failed",
+                "value": {"status": "failed", "exit_code": 127},
+            },
+            4,
+        ),
+    ]
+
+    assert project_task_states(events) == {"region-r1-final": "pending"}
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert [event.event_type for event in output] == [
+        "node_created",
+        "edge_created",
+        "input_bound",
+        "edge_created",
+        "input_bound",
+    ]
+    recovery_node = output[0].payload
+    assert recovery_node["node_id"] == "planner-recover-check-result-r1"
+    assert recovery_node["kind"] == "planner"
+    assert recovery_node["role"] == "gap_planner"
+    assert recovery_node["recovery_reason"] == "failed_required_check"
+    assert output[2].payload["to_port"] == "verification_evidence"
+    assert output[2].payload["record_ids"] == ["check-result-r1"]
+    assert output[4].payload["to_port"] == "routine_snapshot"
+    assert output[4].payload["record_ids"] == ["routine-snapshot-record"]
+
+    next_output = _apply(events + output, "schedule_tick", {"run_id": "run-1"})
+
+    assert any(
+        event.event_type == "lease_granted"
+        and event.payload["node_id"] == "planner-recover-check-result-r1"
+        and event.payload["base_snapshot_id"] == "routine-snapshot-record"
+        for event in next_output
+    )
+
+
+def test_schedule_tick_does_not_duplicate_existing_failed_check_recovery() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-r1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant-r1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "status": "failed",
+            },
+            4,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-gap-existing",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "region-r1-gap",
+            },
+            5,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-existing-gap",
+                "from_node_id": "check-final-invariant-r1",
+                "from_port": "check_result",
+                "to_node_id": "planner-gap-existing",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["check_result"]},
+            },
+            6,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert output == []
+
+
 def test_schedule_tick_marks_planned_node_ready_when_required_input_bound() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),

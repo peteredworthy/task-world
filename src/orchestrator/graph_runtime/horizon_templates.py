@@ -113,7 +113,8 @@ def instantiate_horizon_template(
             "purpose": purpose,
             "description": "Create a gap planner that classifies verifier or check failures.",
             "expected_successor_readiness": (
-                "Gap analysis waits for bound failure evidence before proposing corrective work."
+                "Gap analysis waits for bound failure evidence before proposing corrective work. "
+                "Use this as the failure continuation for required checks."
             ),
             "canonical_inputs": {
                 "verification_evidence": {
@@ -206,7 +207,8 @@ def instantiate_horizon_template(
             "description": "Create a final invariant check for accepted graph work.",
             "expected_successor_readiness": (
                 "Completion waits for the check result record accepted by the invariant node. "
-                "The planner must supply command_definition or command_binding."
+                "The planner must supply command_definition or command_binding and wire failed "
+                "check_result evidence to a gap-analysis or corrective-work continuation."
             ),
             "runtime_binding_required": {
                 "check_command": (
