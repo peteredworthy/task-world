@@ -12,6 +12,12 @@ from typing import Any, Literal, cast
 
 
 HandlerType = Literal["controller", "agent", "human", "deterministic_command"]
+FulfillmentContribution = Literal[
+    "task_acceptance",
+    "control_progress",
+    "final_invariant",
+    "none",
+]
 PortDirection = Literal["input", "output"]
 BindingPolicy = Literal[
     "bind_first",
@@ -59,6 +65,8 @@ class NodeContract:
     output_ports: dict[str, PortContract] = field(default_factory=_empty_port_contracts)
     allowed_tools: frozenset[str] = frozenset()
     compatibility_aliases: frozenset[str] = frozenset()
+    fulfillment_contribution: FulfillmentContribution = "none"
+    fulfillment_required_outputs: frozenset[str] = frozenset()
 
     def allows_role(self, role: str | None) -> bool:
         return self.roles is None or role is None or role in self.roles
@@ -243,6 +251,10 @@ def node_contract_summary(node_type: str | None, role: str | None = None) -> dic
             name: _port_summary(port) for name, port in sorted(contract.output_ports.items())
         },
         "allowed_tools": sorted(contract.allowed_tools),
+        "fulfillment": {
+            "contribution": contract.fulfillment_contribution,
+            "required_outputs": sorted(contract.fulfillment_required_outputs),
+        },
     }
 
 
@@ -473,6 +485,8 @@ def _node_contract(
     outputs: tuple[PortContract, ...] = (),
     tools: tuple[str, ...] = (),
     aliases: tuple[str, ...] = (),
+    fulfillment: FulfillmentContribution = "none",
+    fulfillment_outputs: tuple[str, ...] = (),
 ) -> NodeContract:
     return NodeContract(
         node_type=node_type,
@@ -483,6 +497,8 @@ def _node_contract(
         output_ports={port.name: port for port in outputs},
         allowed_tools=frozenset(tools),
         compatibility_aliases=frozenset(aliases),
+        fulfillment_contribution=fulfillment,
+        fulfillment_required_outputs=frozenset(fulfillment_outputs),
     )
 
 
@@ -733,6 +749,8 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 "request_gate",
                 "submit_graph_patch",
             ),
+            fulfillment="control_progress",
+            fulfillment_outputs=("classified_gap",),
         ),
         _node_contract(
             "worker",
@@ -807,6 +825,8 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 _port("artifact_reference", "artifact_reference", required=False),
                 _port("completion", "completion", schemas=("NodeCompletion",), required=False),
             ),
+            fulfillment="task_acceptance",
+            fulfillment_outputs=("candidate", "file_state"),
         ),
         _node_contract(
             "verifier",
@@ -842,6 +862,8 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 ),
                 _port("completion", "completion", schemas=("NodeCompletion",), required=False),
             ),
+            fulfillment="task_acceptance",
+            fulfillment_outputs=("verification_report",),
         ),
         _node_contract(
             "summarizer",
@@ -892,6 +914,8 @@ DEFAULT_NODE_CONTRACTS = _registry(
                 _port("check_result", "check_result", schemas=("CheckResult",)),
                 _port("completion", "completion", schemas=("NodeCompletion",), required=False),
             ),
+            fulfillment="final_invariant",
+            fulfillment_outputs=("check_result",),
         ),
         _node_contract(
             "join",
@@ -927,6 +951,8 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     "completion_decision", "completion_decision", schemas=("CompletionDecision",)
                 ),
             ),
+            fulfillment="final_invariant",
+            fulfillment_outputs=("completion_decision",),
         ),
         _node_contract(
             "human_gate",

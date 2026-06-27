@@ -2216,7 +2216,7 @@ def _apply_schedule_tick(
     for node_id, node_state in projection["node_states"].items():
         if node_state not in {"planned", "blocked", "ready"}:
             continue
-        node = _node_schedule_info(projection, payload, node_id)
+        node = _node_schedule_info(projection, events, payload, node_id)
         backoff_reason = _retry_backoff_deferred_reason(events, node_id, clock.now())
         if backoff_reason is not None:
             output.append(
@@ -2229,11 +2229,9 @@ def _apply_schedule_tick(
                 )
             )
             continue
-        if node_state == "ready":
-            nodes.append(node)
-            continue
+        readiness_node = replace(node, state="planned") if node_state == "ready" else node
         ready, reason = evaluate_readiness(
-            node,
+            readiness_node,
             projection["run_state"] or "draft",
             active_lease_node_ids,
             active_claims,
@@ -2249,18 +2247,19 @@ def _apply_schedule_tick(
                 )
             )
             continue
-        output.append(make_event("node_ready", {"node_id": node_id}))
-        output.append(
-            make_event(
-                "node_state_changed",
-                {
-                    "node_id": node_id,
-                    "new_state": "ready",
-                    "trigger": "readiness_evaluator",
-                },
+        if node_state != "ready":
+            output.append(make_event("node_ready", {"node_id": node_id}))
+            output.append(
+                make_event(
+                    "node_state_changed",
+                    {
+                        "node_id": node_id,
+                        "new_state": "ready",
+                        "trigger": "readiness_evaluator",
+                    },
+                )
             )
-        )
-        readied_node_ids.add(node_id)
+            readied_node_ids.add(node_id)
         nodes.append(replace(node, state="ready"))
     decision = schedule(
         nodes,
@@ -2593,6 +2592,42 @@ def _apply_agent_died(
             ),
         ]
 
+    if _is_non_retryable_runtime_death(reason):
+        return [
+            make_event("agent_died", event_payload),
+            make_event(
+                "lease_revoked",
+                {
+                    "lease_id": lease_id,
+                    "node_id": node_id,
+                    "generation": generation,
+                    "reason": reason,
+                },
+            ),
+            make_event(
+                "output_record_accepted",
+                _failure_record_payload(
+                    node_id=node_id,
+                    phase="runtime",
+                    error_class="runtime_configuration_error",
+                    retryable=False,
+                    lease_id=lease_id,
+                    execution_id=event_payload.get("execution_id"),
+                    generation=generation,
+                    reason=reason,
+                ),
+            ),
+            make_event(
+                "node_state_changed",
+                {
+                    "node_id": node_id,
+                    "new_state": "failed",
+                    "trigger": "non_retryable_runtime_error",
+                    "reason": reason,
+                },
+            ),
+        ]
+
     max_attempts = _positive_int(payload.get("max_attempts"), 0)
     attempt_number = projection["node_attempts"].get(node_id, 0)
     if max_attempts > 0 and attempt_number >= max_attempts:
@@ -2783,6 +2818,12 @@ def _non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: st
 def _is_rate_limit_death(reason: str) -> bool:
     normalized = reason.lower()
     return "rate limit" in normalized or "hit rate limit" in normalized
+
+
+def _is_non_retryable_runtime_death(reason: str) -> bool:
+    return reason.startswith("check node missing command_definition") or reason.startswith(
+        "check command_definition requires "
+    )
 
 
 def _apply_raise_appeal(
@@ -3803,6 +3844,7 @@ def _lease_is_expired(lease: dict[str, Any], now: datetime) -> bool:
 
 def _node_schedule_info(
     projection: GraphProjection,
+    events: list[EventEnvelope],
     payload: dict[str, Any],
     node_id: str,
 ) -> NodeScheduleInfo:
@@ -3824,7 +3866,7 @@ def _node_schedule_info(
         state=projection["node_states"][node_id],
         priority=int(priorities.get(node_id, 0)),
         region_order=int(region_order.get(node_id, 0)),
-        creation_position=0,
+        creation_position=_node_creation_position(events, node_id),
         resource_claims=[
             _claim_from_dict(claim) for claim in projection["node_resource_claims"].get(node_id, [])
         ],
@@ -3854,6 +3896,13 @@ def _node_schedule_info(
         preconditions=projection["node_preconditions"].get(node_id, []),
         command_definition_present=node_id in projection["node_command_definitions"],
     )
+
+
+def _node_creation_position(events: list[EventEnvelope], node_id: str) -> int:
+    for event in events:
+        if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
+            return event.position
+    return 0
 
 
 def _required_edges_for_node(

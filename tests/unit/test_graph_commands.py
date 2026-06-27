@@ -3836,6 +3836,22 @@ def test_schedule_tick_check_precondition_requires_command_definition() -> None:
     ]
 
 
+def test_schedule_tick_rechecks_ready_check_precondition_requires_command_definition() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "check-1", "kind": "check", "state": "ready"}, 1),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    assert [(event.event_type, event.payload) for event in output] == [
+        (
+            "node_deferred",
+            {"node_id": "check-1", "reason": "precondition_failed:has_command_definition"},
+        )
+    ]
+
+
 def test_schedule_tick_check_precondition_passes_with_command_definition() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -4045,6 +4061,61 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
     }
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["worker-1"] == "ready"
+
+
+def test_agent_died_check_missing_command_fails_without_retry() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "check-1", "kind": "check", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "check-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "run_id": "run-1",
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "check node missing command_definition",
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "output_record_accepted",
+        "node_state_changed",
+    ]
+    assert output[2].payload["record_type"] == "failure_record"
+    assert output[2].payload["value"] == {
+        "failed_node_id": "check-1",
+        "phase": "runtime",
+        "error_class": "runtime_configuration_error",
+        "retryable": False,
+        "lease_id": "lease-1",
+        "execution_id": "exec-1",
+        "lease_generation": 1,
+        "reason": "check node missing command_definition",
+    }
+    assert output[3].payload == {
+        "node_id": "check-1",
+        "new_state": "failed",
+        "trigger": "non_retryable_runtime_error",
+        "reason": "check node missing command_definition",
+    }
+    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["node_states"]["check-1"] == "failed"
 
 
 def test_agent_died_retry_backoff_blocks_until_not_before() -> None:

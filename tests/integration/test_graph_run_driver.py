@@ -12,8 +12,15 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from orchestrator.config.enums import AgentRunnerType, RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
-from orchestrator.graph import project_run_state, project_task_states
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    project_run_state,
+    project_task_states,
+)
 from orchestrator.graph_runtime import GraphController, GraphDispatchContext, GraphDispatchExecutor
+from orchestrator.graph_runtime.outbox import OutboxDispatcher
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner
 from orchestrator.runners.types import (
@@ -29,7 +36,7 @@ from orchestrator.runners.types import (
 )
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
-from orchestrator.workflow.graph_driver import GraphRunDriver
+from orchestrator.workflow.graph_driver import GraphRunDriver, _snapshot_from_events
 
 
 class FixedClock:
@@ -299,6 +306,24 @@ async def _events(
         return await GraphEventStore(session).read_run(run_id)
 
 
+def _graph_event(
+    run_id: str,
+    position: int,
+    event_type: str,
+    payload: dict[str, Any],
+) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=f"{event_type}-{position}",
+        run_id=run_id,
+        position=position,
+        event_type=event_type,
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        payload=payload,
+    )
+
+
 async def _run_status(
     session_factory: async_sessionmaker[AsyncSession],
     run_id: str,
@@ -356,6 +381,174 @@ async def test_driver_self_advances_across_node_boundaries(
     await driver.run(run_id)
 
     assert dispatch_order == ["worker", "verifier"]
+
+
+@pytest.mark.asyncio
+async def test_driver_dispatches_final_check_after_verifier_acceptance(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "repo-final-check"
+    _init_repo(repo)
+    run_id = "graph-driver-final-check"
+    clock = FixedClock()
+    ids = SequentialIds()
+    events = [
+        _graph_event(run_id, 1, "run_lifecycle_changed", {"to_state": "active"}),
+        _graph_event(
+            run_id,
+            2,
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "role": "builder",
+                "state": "completed",
+                "task_region_id": "region-implementation",
+            },
+        ),
+        _graph_event(
+            run_id,
+            3,
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "candidate_id": "candidate-1",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "task_region_id": "region-implementation",
+                "value": {"summary": "candidate accepted"},
+            },
+        ),
+        _graph_event(
+            run_id,
+            4,
+            "file_state_accepted",
+            {
+                "record_id": "file-state-1",
+                "record_kind": "file_state",
+                "candidate_id": "candidate-1",
+                "producer_node_id": "worker-1",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "task_region_id": "region-implementation",
+            },
+        ),
+        _graph_event(
+            run_id,
+            5,
+            "node_created",
+            {
+                "node_id": "verifier-1",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "region-implementation",
+            },
+        ),
+        _graph_event(
+            run_id,
+            6,
+            "output_record_accepted",
+            {
+                "record_id": "verification-1",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "candidate_id": "candidate-1",
+                "producer_node_id": "verifier-1",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "task_region_id": "region-implementation",
+                "value": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
+            },
+        ),
+        _graph_event(
+            run_id,
+            7,
+            "verification_passed",
+            {
+                "node_id": "verifier-1",
+                "record_id": "verification-1",
+                "task_region_id": "region-implementation",
+                "value": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
+            },
+        ),
+        _graph_event(
+            run_id,
+            8,
+            "node_created",
+            {
+                "node_id": "check-final",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "ready",
+                "task_region_id": "region-final-invariant",
+                "command_definition": {"id": "final-check", "cmd": "true", "must": True},
+            },
+        ),
+        _graph_event(
+            run_id,
+            9,
+            "input_bound",
+            {
+                "edge_id": "edge-verifier-check",
+                "to_node_id": "check-final",
+                "to_port": "verification_evidence",
+                "record_ids": ["verification-1"],
+                "bound_at_position": 9,
+            },
+        ),
+    ]
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    dispatch_order: list[str] = []
+    executor = GraphDispatchExecutor(
+        session_factory,
+        controller,
+        AgentFactory({}, dispatch_order),
+        worktree_path=repo,
+    )
+    dispatcher = OutboxDispatcher(session_factory, executor, clock)
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+
+    async def read_projection(target_run_id: str):
+        return _snapshot_from_events(await _events(session_factory, target_run_id))
+
+    outcome = await driver.drive_to_quiescence(
+        run_id,
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=read_projection,
+    )
+
+    final_events = await _events(session_factory, run_id)
+    final_check_event_types = [
+        event.event_type
+        for event in final_events
+        if event.payload.get("node_id") == "check-final"
+        or event.payload.get("producer_node_id") == "check-final"
+    ]
+    assert dispatch_order == []
+    assert "lease_granted" in final_check_event_types
+    assert "callback_accepted" in final_check_event_types
+    assert any(
+        event.event_type == "output_record_accepted"
+        and event.payload.get("producer_node_id") == "check-final"
+        and event.payload.get("port") == "check_result"
+        for event in final_events
+    )
+    assert project_task_states(final_events)["region-final-invariant"] == "accepted"
+    assert outcome.completed is False
+    assert outcome.blocked_reason is not None
+    assert "ready node(s) not dispatched" not in outcome.blocked_reason
 
 
 @pytest.mark.asyncio

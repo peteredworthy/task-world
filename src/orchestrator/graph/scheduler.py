@@ -226,9 +226,13 @@ def schedule(
 
 
 def _kind_schedule_order(kind: str) -> int:
-    if kind in {"check", "join", "final_gate"}:
+    if kind == "check":
         return 0
-    return 1
+    if kind == "final_gate":
+        return 1
+    if kind == "join":
+        return 2
+    return 3
 
 
 def _paths_overlap(existing_paths: list[str], requested_paths: list[str]) -> bool:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from hashlib import sha256
 from typing import Any, Literal, cast
 from uuid import uuid4
 
@@ -15,6 +16,7 @@ from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import RunStatus
 from orchestrator.graph import (
     EventEnvelope,
+    check_command_reference,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
     node_contract_summary,
@@ -40,6 +42,9 @@ from orchestrator.graph_runtime.store import (
 from orchestrator.state import RunNotFoundError
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
+
+_NODE_DETAIL_MAX_TEXT_CHARS = 1_000_000
+_NODE_DETAIL_MAX_LIST_ITEMS = 200
 
 
 class _ApiGraphClock:
@@ -1130,8 +1135,23 @@ def _latest_prompt_summary(events: list[EventEnvelope]) -> dict[str, Any] | None
 
 def build_node_detail_response_from_summary(
     summary: GraphNodeDetailSummary,
+    *,
+    full_events: list[EventEnvelope] | None = None,
 ) -> NodeDetailResponse:
     controls = _node_detail_controls_from_summary(summary)
+    response_events = [GraphEventResponse(**event) for event in summary.events]
+    callback_history = [GraphEventResponse(**event) for event in summary.callback_history]
+    output_records = summary.output_records
+    file_state_records = summary.file_state_records
+    if full_events is not None:
+        response_events = _full_node_event_responses(summary.events, full_events)
+        callback_history = _full_node_event_responses(summary.callback_history, full_events)
+        output_records = _bounded_node_detail_records(
+            _pick_output_records(full_events, summary.node_id)
+        )
+        file_state_records = _bounded_node_detail_records(
+            _pick_file_state_records(full_events, summary.node_id)
+        )
     return NodeDetailResponse(
         run_id=summary.run_id,
         node_id=summary.node_id,
@@ -1145,13 +1165,177 @@ def build_node_detail_response_from_summary(
         preconditions=controls["preconditions"],
         command_definition=controls["command_definition"],
         input_ports=summary.input_ports,
-        output_records=summary.output_records,
-        file_state_records=summary.file_state_records,
+        output_records=output_records,
+        file_state_records=file_state_records,
         active_lease=summary.active_lease,
-        callback_history=[GraphEventResponse(**event) for event in summary.callback_history],
-        events=[GraphEventResponse(**event) for event in summary.events],
+        callback_history=callback_history,
+        events=response_events,
         prompt_summary=summary.prompt_summary,
     )
+
+
+def _full_node_event_responses(
+    compact_events: list[dict[str, Any]],
+    full_events: list[EventEnvelope],
+) -> list[GraphEventResponse]:
+    full_by_position = {event.position: event for event in full_events}
+    responses: list[GraphEventResponse] = []
+    for compact_event in compact_events:
+        position = compact_event.get("position")
+        full_event = full_by_position.get(position) if isinstance(position, int) else None
+        if full_event is None:
+            responses.append(GraphEventResponse(**compact_event))
+        else:
+            responses.append(_node_detail_full_event_response(full_event))
+    return responses
+
+
+def _node_detail_full_event_response(event: EventEnvelope) -> GraphEventResponse:
+    return GraphEventResponse(
+        event_id=event.event_id,
+        event_type=event.event_type,
+        run_id=event.run_id,
+        position=event.position,
+        timestamp=event.timestamp.isoformat(),
+        payload=_node_detail_full_event_payload(event),
+    )
+
+
+def _node_detail_full_event_payload(event: EventEnvelope) -> dict[str, Any]:
+    payload = dict(event.payload)
+    if event.event_type in {
+        "callback_accepted",
+        "output_record_accepted",
+        "file_state_accepted",
+    }:
+        return _compact_node_detail_record_payload(payload)
+    return payload
+
+
+def _bounded_node_detail_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [cast(dict[str, Any], _bounded_node_detail_value(record)) for record in records]
+
+
+def _bounded_node_detail_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        bounded: dict[str, Any] = {}
+        truncated_fields: list[dict[str, Any]] = []
+        for key, child in cast(dict[str, Any], value).items():
+            if isinstance(child, str) and len(child) > _NODE_DETAIL_MAX_TEXT_CHARS:
+                digest = sha256(child.encode("utf-8")).hexdigest()
+                bounded[key] = (
+                    child[:_NODE_DETAIL_MAX_TEXT_CHARS]
+                    + f"\n...[truncated {len(child) - _NODE_DETAIL_MAX_TEXT_CHARS} chars]"
+                )
+                truncated_fields.append(
+                    {
+                        "field": key,
+                        "original_length": len(child),
+                        "sha256": digest,
+                    }
+                )
+                continue
+            if isinstance(child, list):
+                child_items = cast(list[Any], child)
+                if len(child_items) <= _NODE_DETAIL_MAX_LIST_ITEMS:
+                    bounded[key] = _bounded_node_detail_value(child_items)
+                    continue
+                bounded[key] = [
+                    _bounded_node_detail_value(item)
+                    for item in child_items[:_NODE_DETAIL_MAX_LIST_ITEMS]
+                ]
+                truncated_fields.append(
+                    {
+                        "field": key,
+                        "original_length": len(child_items),
+                        "retained_items": _NODE_DETAIL_MAX_LIST_ITEMS,
+                    }
+                )
+                continue
+            bounded[key] = _bounded_node_detail_value(child)
+        if truncated_fields:
+            bounded["__truncated_fields"] = truncated_fields
+        return bounded
+    if isinstance(value, list):
+        return [_bounded_node_detail_value(item) for item in cast(list[Any], value)]
+    return value
+
+
+def _compact_node_detail_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    compact_keys = {
+        "accepted_patches",
+        "attempt_number",
+        "base_snapshot_id",
+        "candidate_id",
+        "created_at",
+        "execution_id",
+        "generation",
+        "graph_position",
+        "idempotency_key",
+        "lease_generation",
+        "lease_id",
+        "new_state",
+        "node_id",
+        "observed_graph_position",
+        "payload_hash",
+        "port",
+        "producer_node_id",
+        "producer_port",
+        "prompt_summary",
+        "record_id",
+        "record_kind",
+        "record_type",
+        "reason",
+        "rejected_patches",
+        "schema",
+        "schema_version",
+        "snapshot_id",
+        "state",
+        "task_region_id",
+        "verdict",
+    }
+    compact = {key: value for key, value in payload.items() if key in compact_keys}
+    for records_key in ("output_records", "file_state_records"):
+        records = payload.get(records_key)
+        if isinstance(records, list):
+            compact[records_key] = [
+                _compact_node_detail_record_payload(cast(dict[str, Any], record))
+                for record in cast(list[Any], records)
+                if isinstance(record, dict)
+            ]
+            compact[f"{records_key}_payload_mode"] = "summary"
+    nested_payload = payload.get("payload")
+    if isinstance(nested_payload, dict):
+        compact["payload"] = _compact_node_detail_record_payload(
+            cast(dict[str, Any], nested_payload)
+        )
+    if "value" in payload and _node_detail_record_value_is_small_control_payload(payload):
+        compact["value"] = _bounded_node_detail_value(payload["value"])
+    return compact
+
+
+def _node_detail_record_value_is_small_control_payload(payload: dict[str, Any]) -> bool:
+    return payload.get("record_type") in {
+        "authority_request_record",
+        "decision_request",
+    } or payload.get("port") in {
+        "authority_request_record",
+        "decision_request",
+    }
+
+
+def _compact_event_positions(events: list[dict[str, Any]]) -> list[int]:
+    positions: list[int] = []
+    seen: set[int] = set()
+    for event in events:
+        position = event.get("position")
+        if not isinstance(position, int) or isinstance(position, bool) or position <= 0:
+            continue
+        if position in seen:
+            continue
+        seen.add(position)
+        positions.append(position)
+    return positions
 
 
 def _node_detail_controls_from_summary(
@@ -1187,6 +1371,10 @@ def _node_detail_controls_from_summary(
         raw_command_definition = payload.get("command_definition")
         if isinstance(raw_command_definition, dict):
             command_definition = dict(cast(dict[str, Any], raw_command_definition))
+        elif summary.kind == "check":
+            raw_command_reference = check_command_reference(payload)
+            if isinstance(raw_command_reference, dict):
+                command_definition = dict(cast(dict[str, Any], raw_command_reference))
 
     if (
         summary.kind == "check"
@@ -1251,16 +1439,19 @@ async def get_graph_projection(
     snapshot = await graph_store.read_projection_snapshot(run_id)
     await graph_store.commit_read_model_changes()
     response = build_graph_projection_response_from_snapshot(run_id, snapshot)
+    projection_events = await graph_store.read_run_projection(run_id)
+    projected_task_states = project_task_states(projection_events)
     try:
         run = await service.get_run(run_id)
     except RunNotFoundError:
-        return response
+        return response.model_copy(update={"task_states": projected_task_states})
     return response.model_copy(
         update={
             "run_state": _graph_api_run_state(
                 response.run_state,
                 cast(RunStatus | None, run.status),
-            )
+            ),
+            "task_states": projected_task_states,
         }
     )
 
@@ -1424,20 +1615,18 @@ async def get_graph_node_detail(
     payload_mode: Literal["summary", "full"] = Query(default="summary"),
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> NodeDetailResponse:
-    if payload_mode == "full":
-        events = await graph_store.read_run(run_id)
-        if not events:
-            raise HTTPException(status_code=404, detail="No graph projection found for run")
-
-        detail = build_node_detail_response(run_id, node_id, events, payload_mode=payload_mode)
-        if detail is None:
-            raise HTTPException(status_code=404, detail="Graph node not found")
-        return detail
-
     summary = await graph_store.read_node_detail_summary(run_id, node_id)
-    await graph_store.commit_read_model_changes()
     if summary is None:
+        await graph_store.commit_read_model_changes()
         if await graph_store.current_position(run_id) == 0:
             raise HTTPException(status_code=404, detail="No graph projection found for run")
         raise HTTPException(status_code=404, detail="Graph node not found")
+    if payload_mode == "full":
+        full_events = await graph_store.read_run_positions(
+            run_id,
+            _compact_event_positions(summary.events),
+        )
+        await graph_store.commit_read_model_changes()
+        return build_node_detail_response_from_summary(summary, full_events=full_events)
+    await graph_store.commit_read_model_changes()
     return build_node_detail_response_from_summary(summary)

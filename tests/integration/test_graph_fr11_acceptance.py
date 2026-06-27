@@ -84,7 +84,15 @@ async def _seed_fr11_ready_frontier(app: Any, run_id: str) -> GraphController:
     await _save_run(session_factory, run_id)
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}),
-        _event("node_created", {"node_id": "check-control", "kind": "check", "state": "ready"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-control",
+                "kind": "check",
+                "state": "ready",
+                "command_definition": {"argv": ["uv", "run", "pytest", "tests/unit"]},
+            },
+        ),
         _event("node_created", {"node_id": "join-control", "kind": "join", "state": "ready"}),
         _event(
             "node_created",
