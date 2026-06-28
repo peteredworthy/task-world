@@ -283,6 +283,59 @@ class RunTraceResponse(ApiModel):
     attempts: list[RunTraceAttempt]
 
 
+class RunEvidenceDigestRunSummary(ApiModel):
+    routine_id: str | None = None
+    repo_name: str
+    current_step_index: int
+    step_count: int
+    task_count: int
+    task_status_counts: dict[str, int] = Field(default_factory=dict)
+    pause_reason: str | None = None
+    last_error: str | None = None
+
+
+class RunEvidenceDigestScheduler(ApiModel):
+    graph_event_count: int
+    ready_count: int
+    blocked_count: int
+    waiting_resource_count: int
+    waiting_gate_count: int
+    active_lease_count: int
+    suspended_lease_count: int
+
+
+class RepresentativeNodeEvidence(ApiModel):
+    node_id: str
+    state: str | None = None
+    role: str | None = None
+    title: str | None = None
+    evidence_summary: str | None = None
+    blockers: list[str] = Field(default_factory=list)
+
+
+class RunEvidenceDigestMetrics(ApiModel):
+    total_tokens_read: int
+    total_tokens_write: int
+    total_tokens_cache: int
+    total_duration_ms: int
+    total_num_actions: int
+    estimated_cost_usd: float | None = None
+    token_usage_by_model_count: int
+
+
+class RunEvidenceDigestResponse(ApiModel):
+    run_id: str
+    status: str
+    execution_mode: str
+    is_graph_backed: bool
+    generated_at: datetime
+    run_summary: RunEvidenceDigestRunSummary
+    blockers: list[str]
+    scheduler: RunEvidenceDigestScheduler
+    representative_nodes: list[RepresentativeNodeEvidence]
+    metrics: RunEvidenceDigestMetrics
+
+
 class BackwardTransitionRequest(ApiModel):
     """Request to transition backward to an earlier step."""
 

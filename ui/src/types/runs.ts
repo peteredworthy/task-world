@@ -163,6 +163,59 @@ export interface RunResponse {
   cost_disclaimer: string | null;
 }
 
+export interface RunEvidenceDigestRunSummary {
+  routine_id: string | null;
+  repo_name: string;
+  current_step_index: number;
+  step_count: number;
+  task_count: number;
+  task_status_counts: Record<string, number>;
+  pause_reason: string | null;
+  last_error: string | null;
+}
+
+export interface RunEvidenceDigestScheduler {
+  graph_event_count: number;
+  ready_count: number;
+  blocked_count: number;
+  waiting_resource_count: number;
+  waiting_gate_count: number;
+  active_lease_count: number;
+  suspended_lease_count: number;
+}
+
+export interface RepresentativeNodeEvidence {
+  node_id: string;
+  state: string | null;
+  role: string | null;
+  title: string | null;
+  evidence_summary: string | null;
+  blockers: string[];
+}
+
+export interface RunEvidenceDigestMetrics {
+  total_tokens_read: number;
+  total_tokens_write: number;
+  total_tokens_cache: number;
+  total_duration_ms: number;
+  total_num_actions: number;
+  estimated_cost_usd: number | null;
+  token_usage_by_model_count: number;
+}
+
+export interface RunEvidenceDigestResponse {
+  run_id: string;
+  status: RunStatus;
+  execution_mode: 'legacy' | 'graph' | string;
+  is_graph_backed: boolean;
+  generated_at: string;
+  run_summary: RunEvidenceDigestRunSummary;
+  blockers: string[];
+  scheduler: RunEvidenceDigestScheduler;
+  representative_nodes: RepresentativeNodeEvidence[];
+  metrics: RunEvidenceDigestMetrics;
+}
+
 export interface GraphEventResponse {
   event_id: string;
   event_type: string;

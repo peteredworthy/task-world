@@ -6,7 +6,11 @@ from orchestrator.api.app import create_app
 from orchestrator.api.deps import get_codex_models_fn, get_connection_manager, get_runner_executor
 from orchestrator.api.metrics import PRICING, CostEstimate, estimate_cost
 from orchestrator.api.mcp.clarification_tools import validate_clarification_question_payloads
-from orchestrator.api.presenters import compute_run_totals_from_attempts, run_to_trace_response
+from orchestrator.api.presenters import (
+    build_run_evidence_digest_response,
+    compute_run_totals_from_attempts,
+    run_to_trace_response,
+)
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.api.schemas.envfiles import CopyBackRequest, RevertEnvFileRequest
 from orchestrator.api.schemas.repos import AddRepoRequest
@@ -16,7 +20,12 @@ from orchestrator.api.schemas.runs import (
     CreateRunRequest,
     EvidenceBundleSchema,
     InvalidEvidenceItem,
+    RepresentativeNodeEvidence,
     RunEvidenceResponse,
+    RunEvidenceDigestMetrics,
+    RunEvidenceDigestResponse,
+    RunEvidenceDigestRunSummary,
+    RunEvidenceDigestScheduler,
     MergeBackRequest,
     RecoverRequest,
     RecoverResponse,
@@ -48,10 +57,16 @@ __all__ = [
     "FilePrune",
     "MergeBackRequest",
     "PRICING",
+    "RepresentativeNodeEvidence",
+    "build_run_evidence_digest_response",
     "PruneSelection",
     "RecoverRequest",
     "RecoverResponse",
     "ResumeRunRequest",
+    "RunEvidenceDigestMetrics",
+    "RunEvidenceDigestResponse",
+    "RunEvidenceDigestRunSummary",
+    "RunEvidenceDigestScheduler",
     "RunEvidenceResponse",
     "RunTracePhase",
     "RunTraceResponse",

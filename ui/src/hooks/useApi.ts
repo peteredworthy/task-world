@@ -11,6 +11,7 @@ import type {
   FileStateReportResponse,
   SchedulerViewResponse,
   NodeDetailResponse,
+  RunEvidenceDigestResponse,
 } from '../types';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'stopping']);
@@ -39,6 +40,22 @@ export function useRun(runId: string | undefined) {
       const status = query.state.data?.status;
       return (status === 'completed' || status === 'failed') ? false : 10000;
     },
+  });
+}
+
+export function useRunEvidenceDigest(
+  runId: string | undefined,
+  params?: { max_nodes?: number; include_node_evidence?: boolean; enabled?: boolean },
+) {
+  return useQuery<RunEvidenceDigestResponse>({
+    queryKey: ['runEvidenceDigest', runId, params?.max_nodes, params?.include_node_evidence],
+    queryFn: () =>
+      api.getRunEvidenceDigest(runId!, {
+        max_nodes: params?.max_nodes,
+        include_node_evidence: params?.include_node_evidence,
+      }),
+    enabled: !!runId && (params?.enabled ?? true),
+    staleTime: 5000,
   });
 }
 

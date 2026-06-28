@@ -27,6 +27,7 @@ import { getLastAgentError } from '../../lib/activity';
 import { getPauseReasonMessage } from '../../lib/pauseReason';
 import { isRunStuck } from '../../lib/runStuck';
 import { ApiError } from '../../api/client';
+import { RunEvidenceDigest } from './RunEvidenceDigest';
 import { ReviewMergeTab } from '../review/ReviewMergeTab';
 import { ModelCostBreakdown } from '../detail/ModelCostBreakdown';
 import { RunTraceExplorer } from '../detail/RunTraceExplorer';
@@ -426,6 +427,8 @@ function RunDetailInner({ runId, page }: { runId: string; page: RunDetailPage })
           <RunDetailNav runId={run.id} page={page} />
 
           <ParentRunBanner run={run} />
+
+          {page === 'history' && <RunEvidenceDigest runId={run.id} />}
 
           {/* Manual gate control panel */}
           {run.status === 'paused' && run.pause_reason === 'manual_gate' && (() => {

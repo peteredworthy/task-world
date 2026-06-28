@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
+from orchestrator.api.metrics import estimate_cost
 from orchestrator.api.schemas.runs import (
     RunTraceAttempt,
     RunTracePhase,
@@ -21,6 +23,18 @@ from orchestrator.api.schemas.tasks import (
 )
 from orchestrator.state import Run
 from orchestrator.state.models import ModelTokenUsage
+
+
+@dataclass(frozen=True)
+class RunMetricSummary:
+    total_tokens_read: int
+    total_tokens_write: int
+    total_tokens_cache: int
+    total_duration_ms: int
+    total_num_actions: int
+    token_usage_by_model: list[ModelTokenUsage]
+    estimated_cost_usd: float | None
+    cost_disclaimer: str | None
 
 
 def compute_run_totals_from_attempts(
@@ -121,6 +135,77 @@ def compute_run_totals_from_attempts(
         tokens_cache = tokens_cache_fallback
 
     return tokens_read, tokens_write, tokens_cache, duration_ms, num_actions, usage_list
+
+
+def compute_run_metrics(run: Run) -> RunMetricSummary:
+    """Aggregate run-level totals and cost using the same fallback semantics as RunResponse."""
+    tokens_read = run.total_tokens_read
+    tokens_write = run.total_tokens_write
+    tokens_cache = run.total_tokens_cache
+    duration_ms = run.total_duration_ms
+    num_actions = run.total_num_actions
+    usage = run.token_usage_by_model
+
+    if not tokens_read and not tokens_write and not usage:
+        (
+            tokens_read,
+            tokens_write,
+            tokens_cache,
+            duration_ms,
+            num_actions,
+            usage,
+        ) = compute_run_totals_from_attempts(run)
+
+    estimated_cost_usd = None
+    cost_disclaimer = None
+    if usage:
+        computed_cost = round(sum(item.total_cost_usd for item in usage), 6)
+        if computed_cost > 0:
+            estimated_cost_usd = computed_cost
+            cost_disclaimer = "Per-model cost from embedded rates."
+
+    if estimated_cost_usd is None:
+        actual_cost_usd = 0.0
+        model_hint: str | None = None
+
+        raw_model = run.agent_runner_config.get("model")
+        if isinstance(raw_model, str) and raw_model:
+            model_hint = raw_model
+
+        for step in run.steps:
+            for task in step.tasks:
+                for attempt in task.attempts:
+                    if attempt.action_log is not None:
+                        if attempt.action_log.total_cost_usd > 0:
+                            actual_cost_usd += attempt.action_log.total_cost_usd
+                        if model_hint is None and attempt.action_log.agent_model:
+                            model_hint = attempt.action_log.agent_model
+
+        if actual_cost_usd > 0:
+            estimated_cost_usd = round(actual_cost_usd, 6)
+            cost_disclaimer = "Actual cost from API response."
+        elif tokens_read > 0 or tokens_write > 0 or tokens_cache > 0:
+            cost_estimate = estimate_cost(
+                tokens_read=tokens_read,
+                tokens_write=tokens_write,
+                tokens_cache=tokens_cache,
+                model=model_hint or "gpt-4o",
+            )
+            if cost_estimate:
+                estimated_cost_usd = cost_estimate.total_usd
+                model_label = model_hint or "gpt-4o"
+                cost_disclaimer = f"Estimate based on {model_label} pricing. {cost_estimate.disclaimer}"
+
+    return RunMetricSummary(
+        total_tokens_read=tokens_read,
+        total_tokens_write=tokens_write,
+        total_tokens_cache=tokens_cache,
+        total_duration_ms=duration_ms,
+        total_num_actions=num_actions,
+        token_usage_by_model=usage,
+        estimated_cost_usd=estimated_cost_usd,
+        cost_disclaimer=cost_disclaimer,
+    )
 
 
 def token_usage_to_schema(usage: Any) -> ModelTokenUsageSchema:

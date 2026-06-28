@@ -36,6 +36,7 @@ import type {
   RespondToClarificationRequest,
   RoutineDetail,
   RoutineListResponse,
+  RunEvidenceDigestResponse,
   RunListResponse,
   RunResponse,
   RunTraceResponse,
@@ -362,6 +363,19 @@ export const api = {
 
   getRun(runId: string): Promise<RunResponse> {
     return fetchApi('/api/runs/' + runId);
+  },
+
+  getRunEvidenceDigest(
+    runId: string,
+    params?: { max_nodes?: number; include_node_evidence?: boolean },
+  ): Promise<RunEvidenceDigestResponse> {
+    const sp = new URLSearchParams();
+    if (params?.max_nodes != null) sp.set('max_nodes', String(params.max_nodes));
+    if (params?.include_node_evidence != null) {
+      sp.set('include_node_evidence', String(params.include_node_evidence));
+    }
+    const qs = sp.toString();
+    return fetchApi('/api/runs/' + runId + '/evidence-digest' + (qs ? '?' + qs : ''));
   },
 
   createRun(req: CreateRunRequest): Promise<RunResponse> {

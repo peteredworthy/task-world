@@ -48,6 +48,7 @@ from orchestrator.api.schemas.runs import (
     RecoverRequest,
     RecoverResponse,
     ResumeRunRequest,
+    RunEvidenceDigestResponse,
     RunEvidenceItem,
     RunEvidenceResponse,
     RunListResponse,
@@ -64,8 +65,9 @@ from orchestrator.api.schemas.steps import (
     HumanApprovalResponse,
     StepResponse,
 )
-from orchestrator.api.presenters import compute_run_totals_from_attempts, run_to_trace_response
+from orchestrator.api.presenters import compute_run_metrics, run_to_trace_response
 from orchestrator.api.presenters.runs import token_usage_to_schema
+from orchestrator.api.presenters.evidence_digest import build_run_evidence_digest_response
 from orchestrator.config.enums import (
     AgentRunnerType,
     GateType,
@@ -78,7 +80,6 @@ from orchestrator.db import EventV2Model, RunRepository, create_wired_event_stor
 from orchestrator.db import SqliteEventStore
 from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, graph_aggregate_id
 from orchestrator.db import commit_with_event_outbox
-from orchestrator.api.metrics import estimate_cost
 from orchestrator.config import discover_routines
 from orchestrator.config import RoutineNotFoundError
 from orchestrator.state.factory import create_run_from_routine
@@ -222,70 +223,8 @@ def _run_to_response(run: Run, *, is_graph_backed: bool = False) -> RunResponse:
             )
         )
 
-    # Use stored run-level totals; fall back to aggregating from attempts when absent
-    eff_tokens_read = run.total_tokens_read
-    eff_tokens_write = run.total_tokens_write
-    eff_tokens_cache = run.total_tokens_cache
-    eff_duration_ms = run.total_duration_ms
-    eff_num_actions = run.total_num_actions
-    eff_usage = run.token_usage_by_model
-
-    if not eff_tokens_read and not eff_tokens_write and not eff_usage:
-        (
-            eff_tokens_read,
-            eff_tokens_write,
-            eff_tokens_cache,
-            eff_duration_ms,
-            eff_num_actions,
-            eff_usage,
-        ) = compute_run_totals_from_attempts(run)
-
-    token_usage_schemas = [token_usage_to_schema(u) for u in eff_usage]
-
-    # Compute cost: prefer per-model breakdown, fall back to action log, then estimate
-    estimated_cost_usd = None
-    cost_disclaimer = None
-
-    if token_usage_schemas:
-        # Accurate per-model cost from embedded rates (only if rates are populated)
-        computed_cost = round(sum(u.total_cost_usd for u in token_usage_schemas), 6)
-        if computed_cost > 0:
-            estimated_cost_usd = computed_cost
-            cost_disclaimer = "Per-model cost from embedded rates."
-    if estimated_cost_usd is None:
-        # Legacy fallback for old runs without per-model data
-        actual_cost_usd = 0.0
-        model_hint: str | None = None
-
-        raw_model = run.agent_runner_config.get("model")
-        if isinstance(raw_model, str) and raw_model:
-            model_hint = raw_model
-
-        for step in run.steps:
-            for task in step.tasks:
-                for attempt in task.attempts:
-                    if attempt.action_log is not None:
-                        if attempt.action_log.total_cost_usd > 0:
-                            actual_cost_usd += attempt.action_log.total_cost_usd
-                        if model_hint is None and attempt.action_log.agent_model:
-                            model_hint = attempt.action_log.agent_model
-
-        if actual_cost_usd > 0:
-            estimated_cost_usd = round(actual_cost_usd, 6)
-            cost_disclaimer = "Actual cost from API response."
-        elif eff_tokens_read > 0 or eff_tokens_write > 0 or eff_tokens_cache > 0:
-            cost_estimate = estimate_cost(
-                tokens_read=eff_tokens_read,
-                tokens_write=eff_tokens_write,
-                tokens_cache=eff_tokens_cache,
-                model=model_hint or "gpt-4o",
-            )
-            if cost_estimate:
-                estimated_cost_usd = cost_estimate.total_usd
-                model_label = model_hint or "gpt-4o"
-                cost_disclaimer = (
-                    f"Estimate based on {model_label} pricing. {cost_estimate.disclaimer}"
-                )
+    metrics = compute_run_metrics(run)
+    token_usage_schemas = [token_usage_to_schema(u) for u in metrics.token_usage_by_model]
 
     from orchestrator.api.schemas.runs import EnvFileSpecSchema
 
@@ -341,14 +280,14 @@ def _run_to_response(run: Run, *, is_graph_backed: bool = False) -> RunResponse:
         started_at=run.started_at,
         completed_at=run.completed_at,
         agent_runner_started_at=run.agent_runner_started_at,
-        total_tokens_read=eff_tokens_read,
-        total_tokens_write=eff_tokens_write,
-        total_tokens_cache=eff_tokens_cache,
-        total_duration_ms=eff_duration_ms,
-        total_num_actions=eff_num_actions,
+        total_tokens_read=metrics.total_tokens_read,
+        total_tokens_write=metrics.total_tokens_write,
+        total_tokens_cache=metrics.total_tokens_cache,
+        total_duration_ms=metrics.total_duration_ms,
+        total_num_actions=metrics.total_num_actions,
         token_usage_by_model=token_usage_schemas,
-        estimated_cost_usd=estimated_cost_usd,
-        cost_disclaimer=cost_disclaimer,
+        estimated_cost_usd=metrics.estimated_cost_usd,
+        cost_disclaimer=metrics.cost_disclaimer,
     )
 
 
@@ -564,6 +503,27 @@ async def get_run(
     run = await service.get_run(run_id)
     graph_position = await graph_store.current_position(run_id)
     return _run_to_response(run, is_graph_backed=graph_position > 0)
+
+
+@router.get("/{run_id}/evidence-digest", response_model=RunEvidenceDigestResponse)
+async def get_run_evidence_digest(
+    run_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    graph_store: Annotated[Any, Depends(get_graph_store)],
+    max_nodes: int = Query(default=3, ge=1, le=10),
+    include_node_evidence: bool = Query(default=True),
+) -> RunEvidenceDigestResponse:
+    """Return a bounded digest for benchmarking and run-detail readback."""
+    run = await service.get_run(run_id)
+    events = await graph_store.read_run(run_id)
+    pending_actions = await service.get_pending_actions(run_id)
+    return build_run_evidence_digest_response(
+        run,
+        events,
+        pending_actions=pending_actions,
+        max_nodes=max_nodes,
+        include_node_evidence=include_node_evidence,
+    )
 
 
 @router.post("/{run_id}/start", response_model=RunResponse, status_code=202)
