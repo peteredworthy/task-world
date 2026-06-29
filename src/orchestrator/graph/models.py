@@ -164,6 +164,7 @@ class NodeModel(GraphBaseModel):
 class RecordSelector(GraphBaseModel):
     record_kinds: list[str]
     schema_: str | None = Field(default=None, alias="schema")
+    value_matches: dict[str, Any] | None = None
 
 
 class EdgeModel(GraphBaseModel):
@@ -351,7 +352,14 @@ class JoinResultRecord(TypedRecordBase):
 
 class CheckResultValue(GraphBaseModel):
     status: Literal["passed", "failed", "timeout"]
-    classification: Literal["passed", "failed", "timeout"]
+    classification: Literal[
+        "passed",
+        "failed",
+        "timeout",
+        "environment_error",
+        "tool_error",
+        "tool_unavailable",
+    ]
     command_id: str
     command_binding: Any | None = None
     command_text: str

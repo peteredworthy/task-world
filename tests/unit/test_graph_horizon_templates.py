@@ -79,6 +79,20 @@ def test_gap_template_names_canonical_verifier_evidence_port() -> None:
     }
 
 
+def test_corrective_template_selects_only_corrective_required_gap() -> None:
+    template = instantiate_horizon_template("corrective_work_region")
+
+    gap_edge = next(
+        op
+        for op in template["ops"]
+        if op.get("op") == "create_edge" and op.get("to_port") == "classified_gap"
+    )
+    assert gap_edge["accepted_record_selector"] == {
+        "record_kinds": ["gap_analysis"],
+        "value_matches": {"classification": "corrective_work_required"},
+    }
+
+
 def test_final_invariant_template_declares_runtime_command_binding() -> None:
     template = instantiate_horizon_template("final_invariant_region")
 

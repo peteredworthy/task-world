@@ -360,6 +360,7 @@ def test_planner_packet_includes_generation_frontier_evidence_and_rejections() -
             "position": 14,
             "classification": "tool_error",
             "reason": "API timeout",
+            "node_id": "worker-1",
             "task_region_id": "region-1",
         }
     ]
@@ -940,7 +941,10 @@ def test_gap_planner_packet_includes_gap_contract_and_corrective_examples() -> N
         ),
         "no_gap_no_op_patch": {
             "ops": [],
-            "meaning": "no safe corrective mutation is available from bound evidence",
+            "meaning": (
+                "bound evidence shows no corrective work is needed; accepted no-op "
+                "emits a no_gap classified_gap record on submit"
+            ),
         },
         "corrective_region": "corrective_work_region",
         "repository_edits": "forbidden",
@@ -1019,8 +1023,9 @@ def test_gap_planner_packet_includes_blocking_obligations() -> None:
             "to_node_id": "worker-corrective",
             "to_port": "classified_gap",
             "reason": (
-                "required classified_gap successor is waiting; no-op patch will be "
-                "rejected until this planner classifies a gap or creates corrective work"
+                "required classified_gap successor is waiting; submit a no_gap no-op "
+                "patch or create corrective work so the successor can receive a "
+                "durable gap classification"
             ),
         },
         {

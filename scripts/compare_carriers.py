@@ -96,7 +96,7 @@ def _coerce_str(value: Any) -> str | None:
 
 
 def _events(run_id: str, fetcher: Fetcher = _get) -> list[dict[str, Any]]:
-    d = fetcher(f"/api/runs/{run_id}/activity?limit=1000")
+    d = fetcher(f"/api/runs/{run_id}/activity?limit=200&payload_mode=summary")
     return d if isinstance(d, list) else d.get("events", d.get("activities", []))
 
 

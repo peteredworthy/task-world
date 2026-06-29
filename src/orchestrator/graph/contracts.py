@@ -109,6 +109,16 @@ def validate_node_payload(node: dict[str, Any]) -> str | None:
         return f"unknown node type: {kind}"
     if not contract.allows_role(typed_role):
         return f"node role {typed_role} is not allowed for {kind}"
+    if contract.node_type == "verifier" and "candidate_id" in node:
+        return (
+            f"node {node_id} must not declare candidate_id; verifiers derive the "
+            "candidate from the required candidate_under_test input edge"
+        )
+    if contract.node_type == "check" and "candidate_id" in node:
+        return (
+            f"node {node_id} must not declare candidate_id; checks derive evaluated "
+            "candidates from bound candidate or verification evidence inputs"
+        )
     port_error = _validate_declared_ports(node, "inputs", "input", contract)
     if port_error is not None:
         return port_error

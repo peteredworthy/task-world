@@ -32,6 +32,7 @@ export function useActivitySSE(runId: string | undefined, options: UseActivitySS
 
       // Build URL with since_id if we have a last event
       const params = new URLSearchParams();
+      params.set('payload_mode', 'full');
       if (lastEventIdRef.current !== null) {
         params.set('since_id', String(lastEventIdRef.current));
       }

@@ -209,6 +209,10 @@ class FinalInvariantBlocker(TypedDict, total=False):
     revision_id: str
     task_region_id: str
     state: str
+    classification: str
+    command_text: str
+    stderr: str
+    exit_code: int
     support_ids: list[str]
 
 
@@ -527,6 +531,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_node_output_port(next_state, event)
         _record_candidate(next_state, event)
         _record_check_result(next_state, event)
+        _record_environment_failure(next_state, event)
     elif event.event_type in {"verification_passed", "verification_failed"}:
         _record_verdict(next_state, event)
     elif event.event_type == "appeal_opened":
@@ -671,9 +676,10 @@ def final_invariant_blockers_for_events(
 
 def _node_fulfillment_blockers(projection: GraphProjection) -> list[FinalInvariantBlocker]:
     blockers: list[FinalInvariantBlocker] = []
-    terminal_states = {"completed", "failed", "cancelled", "retired"}
     for node_id, node_state in sorted(projection["node_states"].items()):
-        if node_state not in terminal_states:
+        if node_state in {"cancelled", "retired"}:
+            continue
+        if node_state not in {"completed", "failed"}:
             continue
         contract = _contract_for_node(projection, node_id)
         if contract is None or contract.fulfillment_contribution == "none":
@@ -780,6 +786,27 @@ def _failed_check_result_blockers(events: list[EventEnvelope]) -> list[FinalInva
             "kind": "failed_check_result",
             "reason": "check result did not pass",
         }
+        value = event.payload.get("value")
+        if isinstance(value, dict):
+            typed_value = cast(dict[str, Any], value)
+            classification = typed_value.get("classification")
+            command_text = typed_value.get("command_text")
+            stderr = typed_value.get("stderr")
+            exit_code = typed_value.get("exit_code")
+            if isinstance(classification, str):
+                blocker["classification"] = classification
+            if isinstance(command_text, str):
+                blocker["command_text"] = command_text
+            if isinstance(stderr, str):
+                blocker["stderr"] = stderr
+            if isinstance(exit_code, int) and (
+                isinstance(command_text, str)
+                or isinstance(stderr, str)
+                or isinstance(classification, str)
+            ):
+                blocker["exit_code"] = exit_code
+            if classification in {"environment_error", "tool_error", "tool_unavailable"}:
+                blocker["reason"] = _environment_failure_reason_from_check_value(typed_value)
         node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
         if isinstance(node_id, str):
             blocker["node_id"] = node_id
@@ -2411,6 +2438,12 @@ def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
         "status": status,
         "position": event.position,
     }
+    value = event.payload.get("value")
+    if isinstance(value, dict):
+        typed_value = cast(dict[str, Any], value)
+        for key in ("classification", "command_text", "stderr", "stdout", "exit_code"):
+            if key in typed_value:
+                result[key] = typed_value[key]
     if task_region_id is not None:
         result["task_region_id"] = task_region_id
     record_id = event.payload.get("record_id")
@@ -2882,17 +2915,59 @@ def _record_environment_failure(state: GraphProjection, event: EventEnvelope) ->
 
     classification = event.payload.get("classification")
     reason = event.payload.get("reason")
+    command_text = event.payload.get("command_text")
+    stderr = event.payload.get("stderr")
+    exit_code = event.payload.get("exit_code")
+    value = event.payload.get("value")
+    if isinstance(value, dict):
+        typed_value = cast(dict[str, Any], value)
+        classification = typed_value.get("classification", classification)
+        command_text = typed_value.get("command_text", command_text)
+        stderr = typed_value.get("stderr", stderr)
+        exit_code = typed_value.get("exit_code", exit_code)
+        if reason is None:
+            reason = _environment_failure_reason_from_check_value(typed_value)
     is_environment = event.event_type == "environment_failure_accepted" or classification in {
         "environment_error",
         "tool_error",
         "tool_unavailable",
     }
     if is_environment:
-        state["environment_failures"][task_region_id] = {
+        failure = {
             "position": event.position,
             "classification": classification,
             "reason": reason,
         }
+        if isinstance(command_text, str):
+            failure["command_text"] = command_text
+        if isinstance(stderr, str):
+            failure["stderr"] = stderr
+        if isinstance(exit_code, int):
+            failure["exit_code"] = exit_code
+        if isinstance(node_id, str):
+            failure["node_id"] = node_id
+        record_id = event.payload.get("record_id")
+        if isinstance(record_id, str):
+            failure["record_id"] = record_id
+        state["environment_failures"][task_region_id] = failure
+
+
+def _environment_failure_reason_from_check_value(value: dict[str, Any]) -> str:
+    classification = value.get("classification")
+    command_text = value.get("command_text")
+    command_label = (
+        command_text if isinstance(command_text, str) and command_text else "check command"
+    )
+    stderr = value.get("stderr")
+    if classification == "tool_unavailable":
+        return f"check tool unavailable while running: {command_label}"
+    if classification == "tool_error":
+        return f"check tool error while running: {command_label}"
+    if classification == "environment_error":
+        return f"check environment setup failed while running: {command_label}"
+    if isinstance(stderr, str) and stderr.strip():
+        return stderr.strip().splitlines()[0]
+    return "check failed because of the execution environment"
 
 
 def _record_file_state(state: GraphProjection, event: EventEnvelope) -> None:
@@ -3199,9 +3274,16 @@ def _derive_candidate_free_region_state(
     if _has_active_task_lease(state, task_region_id):
         return "in_progress"
     node_ids = _task_region_node_ids(state, task_region_id)
-    contributing_node_ids = [
+    active_node_ids = [
         node_id
         for node_id in node_ids
+        if state["node_states"].get(node_id) not in {"retired", "cancelled"}
+    ]
+    if node_ids and not active_node_ids:
+        return "accepted"
+    contributing_node_ids = [
+        node_id
+        for node_id in active_node_ids
         if _contract_fulfillment_contribution(state, node_id) != "none"
     ]
     if not contributing_node_ids:

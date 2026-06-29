@@ -141,7 +141,7 @@ def test_run_metrics_extracts_dynamic_graph_metrics_from_graph_events() -> None:
                 "total_num_actions": 4,
                 "estimated_cost_usd": 0.42,
             }
-        if path == "/api/runs/test-run/activity?limit=1000":
+        if path == "/api/runs/test-run/activity?limit=200&payload_mode=summary":
             return []
         if path == "/api/runs/test-run/graph/events?payload_mode=summary":
             return [
@@ -282,7 +282,7 @@ def test_run_metrics_defaults_on_missing_or_malformed_graph_payload() -> None:
                 "execution_mode": "graph",
                 "agent_runner_type": "cli_subprocess",
             }
-        if path == "/api/runs/missing-run/activity?limit=1000":
+        if path == "/api/runs/missing-run/activity?limit=200&payload_mode=summary":
             return {"activities": []}
         if path == "/api/runs/missing-run/graph/events?payload_mode=summary":
             raise urllib.error.URLError("missing")
@@ -299,7 +299,7 @@ def test_run_metrics_defaults_on_missing_or_malformed_graph_payload() -> None:
     def malformed_graph_get(path: str):
         if path == "/api/runs/malformed-run":
             return {"status": "completed"}
-        if path == "/api/runs/malformed-run/activity?limit=1000":
+        if path == "/api/runs/malformed-run/activity?limit=200&payload_mode=summary":
             return []
         if path == "/api/runs/malformed-run/graph/events?payload_mode=summary":
             return {"unexpected": True}

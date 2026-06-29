@@ -705,7 +705,7 @@ def test_gap_planner_can_submit_no_op_patch() -> None:
     assert result.accepted
 
 
-def test_gap_planner_no_op_rejected_when_classified_gap_successor_waits() -> None:
+def test_gap_planner_no_op_allowed_when_classified_gap_successor_waits() -> None:
     projection = initial_projection()
     projection["edges"]["edge-gap-to-corrective"] = {
         "edge_id": "edge-gap-to-corrective",
@@ -719,11 +719,7 @@ def test_gap_planner_no_op_rejected_when_classified_gap_successor_waits() -> Non
 
     result = _validate(_patch([]), projection=projection, actor_role="gap_planner")
 
-    assert not result.accepted
-    assert (
-        result.rejection_reason
-        == "gap planner no-op leaves required classified_gap successor unsatisfied"
-    )
+    assert result.accepted
 
 
 def test_gap_planner_can_append_corrective_work_region() -> None:

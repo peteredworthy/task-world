@@ -237,7 +237,9 @@ async def test_activity_and_stream_read_agent_output_from_events_v2_only(
 
     agent_output_position = stored[0].position
 
-    resp = await client.get(f"/api/runs/{run_id}/activity?event_type=agent_output")
+    resp = await client.get(
+        f"/api/runs/{run_id}/activity?event_type=agent_output&payload_mode=full"
+    )
     assert resp.status_code == 200
     data = resp.json()
     assert data["has_more"] is False
@@ -250,7 +252,8 @@ async def test_activity_and_stream_read_agent_output_from_events_v2_only(
 
     events_received: list[dict[str, Any]] = []
     async with client.stream(
-        "GET", f"/api/runs/{run_id}/activity/stream?event_type=agent_output&once=true"
+        "GET",
+        f"/api/runs/{run_id}/activity/stream?event_type=agent_output&payload_mode=full&once=true",
     ) as response:
         assert response.status_code == 200
         async for line in response.aiter_lines():
@@ -259,6 +262,46 @@ async def test_activity_and_stream_read_agent_output_from_events_v2_only(
 
     assert [event["id"] for event in events_received] == [agent_output_position]
     assert events_received[0]["payload"]["lines"] == ["one", "two"]
+
+    await cleanup_runs_for_repo(client, repo_name)
+
+
+async def test_activity_defaults_to_summary_payload_for_agent_output(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+    repo_name: str,
+) -> None:
+    client, _drain, _repos_dir, _worktrees_dir, app = _shared_app_fixture
+    resp = await client.post(
+        "/api/runs",
+        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
+    )
+    assert resp.status_code == 201
+    run = resp.json()
+    run_id = run["id"]
+    task_id = run["steps"][0]["tasks"][0]["id"]
+
+    async with app.state.session_factory() as session:
+        store = SqliteEventStore(session)
+        await store.append(
+            AgentOutputEvent(
+                timestamp=datetime(2025, 1, 15, 10, 30, tzinfo=timezone.utc),
+                run_id=run_id,
+                event_type="agent_output",
+                task_id=task_id,
+                attempt_num=1,
+                lines=["one", "two", "three", "four"],
+                line_offset=0,
+            )
+        )
+        await session.commit()
+
+    resp = await client.get(f"/api/runs/{run_id}/activity?event_type=agent_output")
+    assert resp.status_code == 200
+    event = resp.json()["events"][0]
+    assert "lines" not in event["payload"]
+    assert event["payload"]["line_count"] == 4
+    assert event["payload"]["preview_lines"] == ["one", "two", "three"]
+    assert event["payload"]["omitted_lines"] == 1
 
     await cleanup_runs_for_repo(client, repo_name)
 

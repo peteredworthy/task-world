@@ -593,7 +593,7 @@ def build_graph_regions_response(
         if not isinstance(task_region_id, str) or not task_region_id:
             continue
         blockers_by_region.setdefault(task_region_id, []).append(
-            FinalInvariantBlockerResponse(**blocker)
+            FinalInvariantBlockerResponse(**cast(dict[str, Any], blocker))
         )
     region_ids = sorted(set(task_states) | set(blockers_by_region))
     return GraphRegionsResponse(

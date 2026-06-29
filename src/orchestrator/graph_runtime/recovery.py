@@ -28,9 +28,9 @@ async def recover(
     run_id: str | None = None,
 ) -> RecoveryReport:
     """Rebuild projections and reconcile in-flight side effects."""
-    pending_before = await dispatcher.pending_items()
+    pending_before = await dispatcher.pending_items(run_id=run_id)
     pending_cleanups = [item for item in pending_before if item.kind == "snapshot_cleanup"]
-    redispatched = await dispatcher.dispatch_pending()
+    redispatched = await dispatcher.dispatch_pending(run_id=run_id)
 
     awaiting_start_ack: list[dict[str, object]] = []
     awaiting_callback: list[dict[str, object]] = []

@@ -91,7 +91,6 @@ def instantiate_horizon_template(
                         "role": "verifier",
                         "state": "planned",
                         "task_region_id": region_id,
-                        "candidate_id": candidate_id,
                         "rubric": ["candidate satisfies the bound requirements"],
                     },
                 },
@@ -174,7 +173,6 @@ def instantiate_horizon_template(
                         "role": "verifier",
                         "state": "planned",
                         "task_region_id": region_id,
-                        "candidate_id": f"corrective-{candidate_id}",
                         "rubric": ["corrective candidate resolves the classified gap"],
                     },
                 },
@@ -186,7 +184,10 @@ def instantiate_horizon_template(
                     "to_node_id": f"worker-corrective-{region_id}",
                     "to_port": "classified_gap",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["gap_analysis"]},
+                    "accepted_record_selector": {
+                        "record_kinds": ["gap_analysis"],
+                        "value_matches": {"classification": "corrective_work_required"},
+                    },
                 },
                 {
                     "op": "create_edge",

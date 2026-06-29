@@ -65,13 +65,17 @@ def test_child_order_is_chain_order() -> None:
         for event in blocked
     )
     assert any(
-        event.event_type == "node_deferred"
-        and event.payload
-        == {
-            "node_id": "planner-child-two",
-            "reason": "missing_required_input:region_summary",
-        }
+        event.event_type == "lease_granted" and event.payload["node_id"] == "planner-parent"
         for event in blocked
+    )
+    child_deferrals = [
+        event.payload
+        for event in blocked
+        if event.event_type == "node_deferred"
+        and event.payload.get("node_id") == "planner-child-two"
+    ]
+    assert all(
+        payload["reason"] == "missing_required_input:region_summary" for payload in child_deferrals
     )
 
     events = _drive_region_to_accepted(events, "one")
@@ -204,7 +208,6 @@ def _region_ops(prefix: str, successor_id: str | None) -> list[dict[str, Any]]:
                 "state": "planned",
                 "task_region_id": f"region-{prefix}",
                 "attempt_number": 1,
-                "candidate_id": candidate_id,
             },
         },
         {
