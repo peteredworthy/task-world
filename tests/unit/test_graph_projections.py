@@ -101,6 +101,7 @@ def test_empty_projection() -> None:
         "node_allowed_actions": {},
         "node_preconditions": {},
         "node_command_definitions": {},
+        "node_output_ports": {},
         "edges": {},
         "input_bindings": {},
         "node_pending_appeals": {},
@@ -667,7 +668,39 @@ def test_final_invariant_blockers_include_generic_non_terminal_nodes() -> None:
     ]
 
 
-def test_final_invariant_blockers_explain_check_only_task_region() -> None:
+def test_check_only_task_region_uses_contract_fulfillment() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-1",
+                "kind": "check",
+                "state": "completed",
+                "task_region_id": "task-check-only",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-1-result",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-1",
+                "port": "check_result",
+                "task_region_id": "task-check-only",
+                "value": {"status": "passed"},
+            },
+        ),
+    ]
+
+    blockers = project_final_invariant_blockers(events)
+
+    assert blockers == []
+    assert project_task_states(events) == {"task-check-only": "accepted"}
+
+
+def test_check_only_task_region_missing_contract_output_is_blocked() -> None:
     events = [
         _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
         _event(
@@ -684,10 +717,12 @@ def test_final_invariant_blockers_explain_check_only_task_region() -> None:
     blockers = project_final_invariant_blockers(events)
 
     assert {
-        "kind": "invalid_task_region",
-        "reason": "check-only task region has no candidate-producing worker",
+        "kind": "node_unfulfilled",
+        "reason": "node contract fulfillment outputs are missing",
+        "node_id": "check-1",
+        "state": "completed",
+        "support_ids": ["check_result"],
         "task_region_id": "task-check-only",
-        "state": "pending",
     } in blockers
     assert {
         "kind": "task_not_accepted",
@@ -736,7 +771,7 @@ def test_final_invariant_blockers_explain_required_edge_with_missing_producer() 
     } in blockers
 
 
-def test_final_invariant_blockers_explain_standalone_planner_task_regions() -> None:
+def test_gap_planner_task_region_uses_contract_fulfillment() -> None:
     events = [
         _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
         _event(
@@ -758,23 +793,32 @@ def test_final_invariant_blockers_explain_standalone_planner_task_regions() -> N
                 "task_region_id": "task-gap-only",
             },
         ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "classified-gap-1",
+                "record_kind": "output",
+                "record_type": "classified_gap",
+                "producer_node_id": "gap-planner-1",
+                "port": "classified_gap",
+                "task_region_id": "task-gap-only",
+            },
+        ),
     ]
 
     blockers = project_final_invariant_blockers(events)
 
-    for task_region_id in ("task-planner-only", "task-gap-only"):
-        assert {
-            "kind": "invalid_task_region",
-            "reason": ("planner or gap-planner task region has no candidate-producing worker"),
-            "task_region_id": task_region_id,
-            "state": "pending",
-        } in blockers
-        assert {
-            "kind": "task_not_accepted",
-            "reason": "task region has not reached accepted",
-            "task_region_id": task_region_id,
-            "state": "pending",
-        } in blockers
+    assert {
+        "kind": "task_not_accepted",
+        "reason": "task region has not reached accepted",
+        "task_region_id": "task-planner-only",
+        "state": "pending",
+    } in blockers
+    assert all(blocker.get("task_region_id") != "task-gap-only" for blocker in blockers)
+    assert project_task_states(events) == {
+        "task-gap-only": "accepted",
+        "task-planner-only": "pending",
+    }
 
 
 def test_active_nonterminal_random_graph_shapes_have_explicit_blockers() -> None:

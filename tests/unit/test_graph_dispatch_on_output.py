@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 import subprocess
 from typing import Any, cast
@@ -518,6 +519,30 @@ class PatchThenSubmitAgent(OutputAgent):
         return ExecutionResult(success=True)
 
 
+class NoOpPatchThenSubmitAgent(OutputAgent):
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        assert context.graph_patch_callback is not None
+        await context.graph_patch_callback(
+            {
+                "patch_id": "patch-1",
+                "base_graph_position": 3,
+                "ops": [],
+            }
+        )
+        await on_submit()
+        self.submitted = True
+        return ExecutionResult(success=True)
+
+
 class RecordingExecutor(GraphDispatchExecutor):
     def __init__(
         self,
@@ -591,6 +616,35 @@ class RecordingOutputSink:
 
     async def __call__(self, context: GraphDispatchContext, lines: list[str]) -> None:
         self.calls.append((context, lines))
+
+
+@pytest.mark.asyncio
+async def test_wait_for_all_timeout_returns_without_cancelling_active_task() -> None:
+    release = asyncio.Event()
+
+    async def _blocked() -> None:
+        await release.wait()
+
+    task = asyncio.create_task(_blocked())
+    running = {"exec-active": task}
+    executor = GraphDispatchExecutor(
+        cast(async_sessionmaker[AsyncSession], object()),
+        cast(Any, object()),
+        cast(Any, object()),
+        worktree_path="/tmp/worktree",
+        running_executions=running,
+    )
+
+    await executor.wait_for_all(timeout_seconds=0.0, active_execution_ids={"exec-active"})
+
+    assert not task.done()
+    assert running == {"exec-active": task}
+
+    release.set()
+    await executor.wait_for_all(active_execution_ids={"exec-active"})
+
+    assert task.done()
+    assert running == {}
 
 
 @pytest.mark.asyncio
@@ -704,6 +758,31 @@ async def test_gap_planner_graph_patch_callback_allows_submit() -> None:
     assert executor.submitted == [context]
     assert executor.failures == []
     assert context.node_payload["_accepted_graph_patch_had_ops"] is True
+    assert context.node_payload["_accepted_gap_planner_patch_had_ops"] is True
+
+
+@pytest.mark.asyncio
+async def test_gap_planner_no_op_graph_patch_callback_allows_submit() -> None:
+    context = _context(node_id="gap-planner-1", node_kind="planner", node_role="gap_planner")
+    executor = RecordingExecutor()
+    agent = NoOpPatchThenSubmitAgent([])
+
+    await executor._run_agent(context, agent)
+
+    assert executor.graph_patches == [
+        (
+            context,
+            {
+                "patch_id": "patch-1",
+                "base_graph_position": 3,
+                "ops": [],
+            },
+        )
+    ]
+    assert executor.submitted == [context]
+    assert executor.failures == []
+    assert context.node_payload["_accepted_gap_planner_patch_had_ops"] is False
+    assert "_accepted_graph_patch_had_ops" not in context.node_payload
 
 
 @pytest.mark.asyncio
@@ -732,7 +811,7 @@ async def test_graph_patch_callback_rejects_unauthorized_node_contracts() -> Non
 
 def test_gap_planner_submit_emits_classified_gap_after_accepted_nonempty_patch() -> None:
     context = _context(node_id="gap-planner-1", node_kind="planner", node_role="gap_planner")
-    context.node_payload["_accepted_graph_patch_had_ops"] = True
+    context.node_payload["_accepted_gap_planner_patch_had_ops"] = True
 
     records = _output_records_for_submit(context, [])
 
@@ -783,6 +862,21 @@ def test_gap_planner_submit_emits_classified_gap_after_accepted_nonempty_patch()
             },
         },
     ]
+
+
+def test_gap_planner_submit_emits_no_gap_after_accepted_no_op_patch() -> None:
+    context = _context(node_id="gap-planner-1", node_kind="planner", node_role="gap_planner")
+    context.node_payload["_accepted_gap_planner_patch_had_ops"] = False
+
+    records = _output_records_for_submit(context, [])
+
+    assert [record["record_type"] for record in records] == [
+        "gap_plan",
+        "gap_classification",
+        "classified_gap",
+    ]
+    assert {record["value"]["classification"] for record in records} == {"no_gap"}
+    assert {record["value"]["source"] for record in records} == {"accepted_gap_planner_no_op_patch"}
 
 
 def test_check_submit_does_not_fabricate_pass_record() -> None:
@@ -903,6 +997,34 @@ def test_verifier_submit_cites_bound_candidate_and_file_state_records() -> None:
     assert record["evidence"]["candidate_record_ids"] == ["candidate-1"]
 
 
+def test_verifier_submit_uses_bound_candidate_over_node_metadata() -> None:
+    graph_events = [
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-bound"],
+            },
+            1,
+        ),
+    ]
+    context = _context(
+        node_id="verifier-1",
+        node_kind="verifier",
+        graph_events=graph_events,
+        node_payload={
+            "candidate_id": "candidate-from-planner-metadata",
+            "task_region_id": "task-1",
+        },
+    )
+
+    records = _output_records_for_submit(context, [("R1", "A", "verified")])
+
+    assert records[0]["candidate_id"] == "candidate-bound"
+    assert records[0]["candidate_record_id"] == "candidate-bound"
+
+
 def test_verifier_submit_inherits_file_state_citations_from_candidate_record() -> None:
     graph_events = [
         _event(
@@ -976,7 +1098,7 @@ async def test_execute_check_command_records_real_process_success(tmp_path: Path
         graph_events=graph_events,
         node_payload={
             "task_region_id": "task-1",
-            "candidate_id": "candidate-1",
+            "candidate_id": "stale-node-metadata-candidate",
             "attempt_number": 2,
             "command_definition": {
                 "id": "pass-check",
@@ -1081,6 +1203,95 @@ async def test_execute_check_command_runs_against_bound_file_state_snapshot(
 
 
 @pytest.mark.asyncio
+async def test_execute_check_command_provisions_node_dependencies_for_snapshot(
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, capture_output=True, text=True, check=True)
+    ui_dir = repo / "ui"
+    ui_dir.mkdir()
+    (ui_dir / "package.json").write_text('{"scripts":{"test":"vitest"}}', encoding="utf-8")
+    subprocess.run(["git", "add", "ui/package.json"], cwd=repo, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "user.name=Test User",
+            "commit",
+            "-m",
+            "package",
+        ],
+        cwd=repo,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    snap = snapshot(repo, "candidate snapshot")
+    node_bin = ui_dir / "node_modules" / ".bin"
+    node_bin.mkdir(parents=True)
+    (node_bin / "vitest").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (node_bin / "vitest").chmod(0o755)
+    graph_events = [
+        _event(
+            "file_state_accepted",
+            {
+                "record_id": "file-state-1",
+                "record_kind": "file_state",
+                "producer_node_id": "worker-1",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "snapshot_id": snap.id,
+                "base_snapshot_id": "routine-snapshot",
+                "git": {"ref": snap.ref, "commit_sha": snap.commit_sha, "tree_sha": snap.tree_sha},
+                "verdict": "captured",
+            },
+            1,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "check-1",
+                "to_port": "file_state",
+                "record_ids": ["file-state-1"],
+            },
+            2,
+        ),
+    ]
+    context = _context(
+        node_id="check-1",
+        node_kind="check",
+        worktree_path=str(repo),
+        graph_events=graph_events,
+        node_payload={
+            "task_region_id": "task-1",
+            "candidate_id": "candidate-1",
+            "command_definition": {
+                "id": "snapshot-node-check",
+                "cmd": "test -x ui/node_modules/.bin/vitest",
+                "timeout_seconds": 5,
+            },
+        },
+    )
+
+    record = await _execute_check_command(context)
+
+    value = cast(dict[str, Any], record["value"])
+    assert value["status"] == "passed"
+    provisioning = value["environment_policy"]["dependency_provisioning"]
+    assert provisioning == [
+        {
+            "package_dir": "ui",
+            "strategy": "symlink_source_node_modules",
+            "status": "provisioned",
+            "detail": f"linked {ui_dir / 'node_modules'}",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_execute_check_command_records_real_process_failure(tmp_path: Path) -> None:
     context = _context(
         node_id="check-1",
@@ -1103,6 +1314,31 @@ async def test_execute_check_command_records_real_process_failure(tmp_path: Path
     assert value["exit_code"] == 7
     assert value["stderr"] == "fail-error"
     assert value["stdout"] == ""
+
+
+@pytest.mark.asyncio
+async def test_execute_check_command_classifies_missing_tool_as_environment_issue(
+    tmp_path: Path,
+) -> None:
+    context = _context(
+        node_id="check-1",
+        node_kind="check",
+        worktree_path=str(tmp_path),
+        node_payload={
+            "command_definition": {
+                "id": "missing-tool",
+                "cmd": "definitely_missing_graph_tool_12345 --version",
+                "timeout_seconds": 5,
+            },
+        },
+    )
+
+    record = await _execute_check_command(context)
+
+    value = cast(dict[str, Any], record["value"])
+    assert value["status"] == "failed"
+    assert value["classification"] == "tool_unavailable"
+    assert value["exit_code"] == 127
 
 
 @pytest.mark.asyncio
@@ -1228,6 +1464,7 @@ async def test_execute_check_command_cites_bound_verification_and_region_file_st
 
     record = await _execute_check_command(context)
 
+    assert record["candidate_id"] == "candidate-1"
     assert record["candidate_record_ids"] == ["candidate-1"]
     assert record["file_state_record_ids"] == ["file-state-1"]
     assert record["evaluated_record_ids"] == ["verification-1", "candidate-1", "file-state-1"]

@@ -43,6 +43,7 @@ class GraphProjection(TypedDict):
     node_allowed_actions: dict[str, list[str]]
     node_preconditions: dict[str, list[str]]
     node_command_definitions: dict[str, Any]
+    node_output_ports: dict[str, dict[str, list[str]]]
     edges: dict[str, dict[str, Any]]
     input_bindings: dict[str, dict[str, dict[str, Any]]]
     node_pending_appeals: dict[str, bool]
@@ -208,6 +209,10 @@ class FinalInvariantBlocker(TypedDict, total=False):
     revision_id: str
     task_region_id: str
     state: str
+    classification: str
+    command_text: str
+    stderr: str
+    exit_code: int
     support_ids: list[str]
 
 
@@ -251,6 +256,7 @@ def initial_projection() -> GraphProjection:
         "node_allowed_actions": {},
         "node_preconditions": {},
         "node_command_definitions": {},
+        "node_output_ports": {},
         "edges": {},
         "input_bindings": {},
         "node_pending_appeals": {},
@@ -303,6 +309,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             for node_id, preconditions in state["node_preconditions"].items()
         },
         "node_command_definitions": dict(state["node_command_definitions"]),
+        "node_output_ports": {
+            node_id: {port: list(record_ids) for port, record_ids in ports.items()}
+            for node_id, ports in state.get("node_output_ports", {}).items()
+        },
         "edges": {edge_id: dict(edge) for edge_id, edge in state["edges"].items()},
         "input_bindings": {
             node_id: {port: dict(binding) for port, binding in ports.items()}
@@ -518,8 +528,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                     lease[key] = value
             next_state["leases"][lease_id] = lease
     elif event.event_type == "output_record_accepted":
+        _record_node_output_port(next_state, event)
         _record_candidate(next_state, event)
         _record_check_result(next_state, event)
+        _record_environment_failure(next_state, event)
     elif event.event_type in {"verification_passed", "verification_failed"}:
         _record_verdict(next_state, event)
     elif event.event_type == "appeal_opened":
@@ -535,6 +547,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
     elif event.event_type in {"environment_failure_accepted", "check_result_classified"}:
         _record_environment_failure(next_state, event)
     elif event.event_type == "file_state_accepted":
+        _record_node_output_port(next_state, event)
         _record_file_state(next_state, event)
     elif event.event_type == "graph_patch_accepted":
         planner_node_id = event.payload.get("proposed_by_node_id")
@@ -645,8 +658,8 @@ def final_invariant_blockers_for_events(
     blockers.extend(_failed_check_result_blockers(events))
     if include_completion_decision:
         blockers.extend(_completion_decision_blockers(events, projection))
+    blockers.extend(_node_fulfillment_blockers(projection))
     blockers.extend(_non_terminal_node_blockers(projection, blockers, pending_states))
-    blockers.extend(_invalid_task_region_blockers(projection))
     for task_region_id, task_state in sorted(projection["task_states"].items()):
         if task_state == "accepted":
             continue
@@ -658,6 +671,37 @@ def final_invariant_blockers_for_events(
                 "state": task_state,
             }
         )
+    return blockers
+
+
+def _node_fulfillment_blockers(projection: GraphProjection) -> list[FinalInvariantBlocker]:
+    blockers: list[FinalInvariantBlocker] = []
+    for node_id, node_state in sorted(projection["node_states"].items()):
+        if node_state in {"cancelled", "retired"}:
+            continue
+        if node_state not in {"completed", "failed"}:
+            continue
+        contract = _contract_for_node(projection, node_id)
+        if contract is None or contract.fulfillment_contribution == "none":
+            continue
+        if contract.fulfillment_contribution == "task_acceptance":
+            continue
+        if contract.node_type == "final_gate":
+            continue
+        missing_ports = _missing_fulfillment_ports(projection, node_id)
+        if not missing_ports:
+            continue
+        blocker: FinalInvariantBlocker = {
+            "kind": "node_unfulfilled",
+            "reason": "node contract fulfillment outputs are missing",
+            "node_id": node_id,
+            "state": node_state,
+            "support_ids": missing_ports,
+        }
+        task_region_id = projection["node_task_regions"].get(node_id)
+        if task_region_id is not None:
+            blocker["task_region_id"] = task_region_id
+        blockers.append(blocker)
     return blockers
 
 
@@ -690,39 +734,6 @@ def _impossible_input_blockers(projection: GraphProjection) -> list[FinalInvaria
         if task_region_id is not None:
             blocker["task_region_id"] = task_region_id
         blockers.append(blocker)
-    return blockers
-
-
-def _invalid_task_region_blockers(projection: GraphProjection) -> list[FinalInvariantBlocker]:
-    blockers: list[FinalInvariantBlocker] = []
-    by_region: dict[str, set[str]] = {}
-    for node_id, task_region_id in projection["node_task_regions"].items():
-        kind = projection["node_kinds"].get(node_id)
-        if isinstance(kind, str):
-            by_region.setdefault(task_region_id, set()).add(kind)
-    for task_region_id, kinds in sorted(by_region.items()):
-        if "check" in kinds and "worker" not in kinds and "final_gate" not in kinds:
-            blockers.append(
-                {
-                    "kind": "invalid_task_region",
-                    "reason": "check-only task region has no candidate-producing worker",
-                    "task_region_id": task_region_id,
-                    "state": projection["task_states"].get(task_region_id, "pending"),
-                }
-            )
-        elif (
-            ("planner" in kinds or "gap_planner" in kinds)
-            and "worker" not in kinds
-            and "final_gate" not in kinds
-        ):
-            blockers.append(
-                {
-                    "kind": "invalid_task_region",
-                    "reason": "planner or gap-planner task region has no candidate-producing worker",
-                    "task_region_id": task_region_id,
-                    "state": projection["task_states"].get(task_region_id, "pending"),
-                }
-            )
     return blockers
 
 
@@ -775,6 +786,27 @@ def _failed_check_result_blockers(events: list[EventEnvelope]) -> list[FinalInva
             "kind": "failed_check_result",
             "reason": "check result did not pass",
         }
+        value = event.payload.get("value")
+        if isinstance(value, dict):
+            typed_value = cast(dict[str, Any], value)
+            classification = typed_value.get("classification")
+            command_text = typed_value.get("command_text")
+            stderr = typed_value.get("stderr")
+            exit_code = typed_value.get("exit_code")
+            if isinstance(classification, str):
+                blocker["classification"] = classification
+            if isinstance(command_text, str):
+                blocker["command_text"] = command_text
+            if isinstance(stderr, str):
+                blocker["stderr"] = stderr
+            if isinstance(exit_code, int) and (
+                isinstance(command_text, str)
+                or isinstance(stderr, str)
+                or isinstance(classification, str)
+            ):
+                blocker["exit_code"] = exit_code
+            if classification in {"environment_error", "tool_error", "tool_unavailable"}:
+                blocker["reason"] = _environment_failure_reason_from_check_value(typed_value)
         node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
         if isinstance(node_id, str):
             blocker["node_id"] = node_id
@@ -2406,6 +2438,12 @@ def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
         "status": status,
         "position": event.position,
     }
+    value = event.payload.get("value")
+    if isinstance(value, dict):
+        typed_value = cast(dict[str, Any], value)
+        for key in ("classification", "command_text", "stderr", "stdout", "exit_code"):
+            if key in typed_value:
+                result[key] = typed_value[key]
     if task_region_id is not None:
         result["task_region_id"] = task_region_id
     record_id = event.payload.get("record_id")
@@ -2416,6 +2454,25 @@ def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
         if record_ids:
             result[field] = record_ids
     state["check_results"][node_id] = result
+
+
+def _record_node_output_port(state: GraphProjection, event: EventEnvelope) -> None:
+    node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
+    if not isinstance(node_id, str):
+        return
+    port = event.payload.get("port")
+    if not isinstance(port, str) or not port:
+        if event.event_type == "file_state_accepted":
+            port = "file_state"
+        else:
+            return
+    record_id = event.payload.get("record_id")
+    if not isinstance(record_id, str) or not record_id:
+        record_id = f"{event.event_type}:{event.position}"
+    ports = state["node_output_ports"].setdefault(node_id, {})
+    records = ports.setdefault(port, [])
+    if record_id not in records:
+        records.append(record_id)
 
 
 def _record_open_appeal(state: GraphProjection, event: EventEnvelope) -> None:
@@ -2858,17 +2915,59 @@ def _record_environment_failure(state: GraphProjection, event: EventEnvelope) ->
 
     classification = event.payload.get("classification")
     reason = event.payload.get("reason")
+    command_text = event.payload.get("command_text")
+    stderr = event.payload.get("stderr")
+    exit_code = event.payload.get("exit_code")
+    value = event.payload.get("value")
+    if isinstance(value, dict):
+        typed_value = cast(dict[str, Any], value)
+        classification = typed_value.get("classification", classification)
+        command_text = typed_value.get("command_text", command_text)
+        stderr = typed_value.get("stderr", stderr)
+        exit_code = typed_value.get("exit_code", exit_code)
+        if reason is None:
+            reason = _environment_failure_reason_from_check_value(typed_value)
     is_environment = event.event_type == "environment_failure_accepted" or classification in {
         "environment_error",
         "tool_error",
         "tool_unavailable",
     }
     if is_environment:
-        state["environment_failures"][task_region_id] = {
+        failure = {
             "position": event.position,
             "classification": classification,
             "reason": reason,
         }
+        if isinstance(command_text, str):
+            failure["command_text"] = command_text
+        if isinstance(stderr, str):
+            failure["stderr"] = stderr
+        if isinstance(exit_code, int):
+            failure["exit_code"] = exit_code
+        if isinstance(node_id, str):
+            failure["node_id"] = node_id
+        record_id = event.payload.get("record_id")
+        if isinstance(record_id, str):
+            failure["record_id"] = record_id
+        state["environment_failures"][task_region_id] = failure
+
+
+def _environment_failure_reason_from_check_value(value: dict[str, Any]) -> str:
+    classification = value.get("classification")
+    command_text = value.get("command_text")
+    command_label = (
+        command_text if isinstance(command_text, str) and command_text else "check command"
+    )
+    stderr = value.get("stderr")
+    if classification == "tool_unavailable":
+        return f"check tool unavailable while running: {command_label}"
+    if classification == "tool_error":
+        return f"check tool error while running: {command_label}"
+    if classification == "environment_error":
+        return f"check environment setup failed while running: {command_label}"
+    if isinstance(stderr, str) and stderr.strip():
+        return stderr.strip().splitlines()[0]
+    return "check failed because of the execution environment"
 
 
 def _record_file_state(state: GraphProjection, event: EventEnvelope) -> None:
@@ -3127,8 +3226,9 @@ def _derive_task_states(state: GraphProjection) -> dict[str, str]:
     for task_region_id in sorted(task_region_ids):
         latest_candidate = _latest_candidate(state["task_candidates"].get(task_region_id, []))
         if latest_candidate is None:
-            task_states[task_region_id] = (
-                "in_progress" if _has_active_task_lease(state, task_region_id) else "pending"
+            task_states[task_region_id] = _derive_candidate_free_region_state(
+                state,
+                task_region_id,
             )
             continue
 
@@ -3165,6 +3265,89 @@ def _derive_task_states(state: GraphProjection) -> dict[str, str]:
             task_states[task_region_id] = "pending"
 
     return task_states
+
+
+def _derive_candidate_free_region_state(
+    state: GraphProjection,
+    task_region_id: str,
+) -> str:
+    if _has_active_task_lease(state, task_region_id):
+        return "in_progress"
+    node_ids = _task_region_node_ids(state, task_region_id)
+    active_node_ids = [
+        node_id
+        for node_id in node_ids
+        if state["node_states"].get(node_id) not in {"retired", "cancelled"}
+    ]
+    if node_ids and not active_node_ids:
+        return "accepted"
+    contributing_node_ids = [
+        node_id
+        for node_id in active_node_ids
+        if _contract_fulfillment_contribution(state, node_id) != "none"
+    ]
+    if not contributing_node_ids:
+        return "pending"
+    if all(_node_contract_fulfilled(state, node_id) for node_id in contributing_node_ids):
+        return "accepted"
+    return "pending"
+
+
+def _task_region_node_ids(state: GraphProjection, task_region_id: str) -> list[str]:
+    return [
+        node_id
+        for node_id, node_task_region_id in sorted(state["node_task_regions"].items())
+        if node_task_region_id == task_region_id
+    ]
+
+
+def _contract_for_node(state: GraphProjection, node_id: str) -> Any | None:
+    kind = state["node_kinds"].get(node_id)
+    if kind is None:
+        return None
+    return DEFAULT_NODE_CONTRACTS.contract_for(kind, state["node_roles"].get(node_id))
+
+
+def _contract_fulfillment_contribution(state: GraphProjection, node_id: str) -> str:
+    contract = _contract_for_node(state, node_id)
+    if contract is None:
+        return "none"
+    return contract.fulfillment_contribution
+
+
+def _node_contract_fulfilled(state: GraphProjection, node_id: str) -> bool:
+    node_state = state["node_states"].get(node_id)
+    if node_state != "completed":
+        return False
+    missing_ports = _missing_fulfillment_ports(state, node_id)
+    if missing_ports:
+        return False
+    contract = _contract_for_node(state, node_id)
+    if contract is None:
+        return False
+    if contract.fulfillment_contribution == "final_invariant":
+        return _final_invariant_node_passed(state, node_id)
+    return True
+
+
+def _missing_fulfillment_ports(state: GraphProjection, node_id: str) -> list[str]:
+    contract = _contract_for_node(state, node_id)
+    if contract is None:
+        return []
+    ports = state["node_output_ports"].get(node_id, {})
+    return [port for port in sorted(contract.fulfillment_required_outputs) if not ports.get(port)]
+
+
+def _final_invariant_node_passed(state: GraphProjection, node_id: str) -> bool:
+    contract = _contract_for_node(state, node_id)
+    if contract is None:
+        return False
+    if "check_result" in contract.fulfillment_required_outputs:
+        result = state.get("check_results", {}).get(node_id)
+        return result is not None and result.get("status") in {"passed", "pass", "ok"}
+    if "completion_decision" in contract.fulfillment_required_outputs:
+        return bool(state["node_output_ports"].get(node_id, {}).get("completion_decision"))
+    return True
 
 
 def _verifier_requirement_passed(

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 import pytest
 
 from orchestrator.workflow.graph_driver import (
+    ActiveLeaseWaitPlan,
     GraphProjectionSnapshot,
     GraphRunDriver,
+    _active_lease_wait_plan,
     _graph_seed_run_config,
     classify_graph_outcome,
 )
@@ -30,23 +33,42 @@ class RecordingController:
         payload: dict[str, object] | None = None,
     ) -> object:
         self.commands.append(command_type)
-        return object()
+        events: list[object] = []
+        if command_type == "record_heartbeat":
+            events = [type("Event", (), {"event_type": "lease_renewed"})()]
+        return type("Result", (), {"events": events})()
 
 
 class RecordingDispatcher:
     def __init__(self) -> None:
         self.calls = 0
 
-    async def dispatch_pending(self) -> None:
+    async def dispatch_pending(self, *, run_id: str | None = None) -> None:
         self.calls += 1
 
 
 class RecordingExecutor:
-    def __init__(self) -> None:
+    def __init__(self, running_execution_ids: set[str] | None = None) -> None:
         self.calls = 0
+        self.waits: list[tuple[float | None, set[str] | None]] = []
+        self.running_execution_ids = set(running_execution_ids or set())
 
-    async def wait_for_all(self) -> None:
+    def is_running(self, execution_id: str) -> bool:
+        return execution_id in self.running_execution_ids
+
+    async def wait_for_all(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+        active_execution_ids: set[str] | None = None,
+    ) -> None:
         self.calls += 1
+        self.waits.append(
+            (
+                timeout_seconds,
+                set(active_execution_ids) if active_execution_ids is not None else None,
+            )
+        )
 
 
 @dataclass
@@ -55,8 +77,9 @@ class ScriptedProjectionReader:
     index: int = 0
 
     async def read(self, run_id: str) -> GraphProjectionSnapshot:
-        snapshot = self.snapshots[self.index]
-        self.index += 1
+        snapshot = self.snapshots[min(self.index, len(self.snapshots) - 1)]
+        if self.index < len(self.snapshots) - 1:
+            self.index += 1
         return snapshot
 
 
@@ -131,9 +154,218 @@ async def test_loop_terminates_on_quiescence() -> None:
         read_projection=reader.read,
     )
 
+    assert controller.commands == ["schedule_tick", "schedule_tick"]
+    assert dispatcher.calls == 2
+    assert executor.calls == 2
+    assert outcome.completed is True
+
+
+def test_active_lease_wait_plan_uses_nearest_deadline() -> None:
+    now = datetime.fromisoformat("2026-06-27T19:30:00+00:00")
+
+    wait_plan = _active_lease_wait_plan(
+        GraphProjectionSnapshot(
+            run_state="active",
+            ready_nodes=[],
+            active_leases={
+                "lease-expired": {
+                    "state": "active",
+                    "node_id": "worker-expired",
+                    "execution_id": "exec-expired",
+                    "expires_at": "2026-06-27T19:29:59+00:00",
+                },
+                "lease-future": {
+                    "state": "active",
+                    "node_id": "worker-future",
+                    "execution_id": "exec-future",
+                    "expires_at": "2026-06-27T19:30:10+00:00",
+                },
+            },
+            schedulable_nodes=[],
+            task_states={},
+        ),
+        now,
+    )
+
+    assert wait_plan == ActiveLeaseWaitPlan(
+        execution_ids={"exec-expired", "exec-future"},
+        timeout_seconds=0.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_driver_reaches_scheduler_after_expired_active_lease() -> None:
+    controller = RecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+    expired_lease_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={
+            "lease-expired": {
+                "state": "active",
+                "node_id": "appeal-final",
+                "execution_id": "exec-expired",
+                "expires_at": "2026-06-27T19:29:59+00:00",
+            }
+        },
+        schedulable_nodes=[],
+        task_states={"corrective_work_region": "pending"},
+    )
+    reader = ScriptedProjectionReader(
+        [
+            expired_lease_snapshot,
+            expired_lease_snapshot,
+            GraphProjectionSnapshot(
+                run_state="active",
+                ready_nodes=[],
+                active_leases={},
+                schedulable_nodes=[],
+                task_states={"corrective_work_region": "pending"},
+                node_states={"appeal-final": "failed"},
+                failed_node_reasons={"appeal-final": "lease_expired_without_callback"},
+            ),
+        ]
+    )
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    driver._clock = type(
+        "FixedDriverClock",
+        (),
+        {"now": lambda self: datetime.fromisoformat("2026-06-27T19:30:00+00:00")},
+    )()
+
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
     assert controller.commands == ["schedule_tick", "schedule_tick", "schedule_tick"]
-    assert dispatcher.calls == 3
-    assert executor.calls == 3
+    assert executor.waits[0] == (0.0, {"exec-expired"})
+    assert outcome.completed is False
+    assert outcome.blocked_reason == (
+        "graph has failed node(s): appeal-final: lease_expired_without_callback"
+    )
+
+
+@pytest.mark.asyncio
+async def test_driver_renews_expired_lease_when_execution_is_still_running() -> None:
+    controller = RecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor(running_execution_ids={"exec-live"})
+    expired_lease_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={
+            "lease-live": {
+                "lease_id": "lease-live",
+                "state": "active",
+                "node_id": "planner-s-01",
+                "generation": 1,
+                "execution_id": "exec-live",
+                "expires_at": "2026-06-27T19:29:59+00:00",
+            }
+        },
+        schedulable_nodes=[],
+        task_states={"S-01": "pending"},
+    )
+    completed_snapshot = GraphProjectionSnapshot(
+        run_state="completed",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"S-01": "accepted"},
+    )
+    reader = ScriptedProjectionReader(
+        [
+            expired_lease_snapshot,
+            expired_lease_snapshot,
+            completed_snapshot,
+            completed_snapshot,
+        ]
+    )
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    driver._clock = type(
+        "FixedDriverClock",
+        (),
+        {"now": lambda self: datetime.fromisoformat("2026-06-27T19:30:00+00:00")},
+    )()
+
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert controller.commands == ["schedule_tick", "record_heartbeat", "schedule_tick"]
+    assert executor.waits[0] == (0.0, {"exec-live"})
+    assert outcome.completed is True
+
+
+@pytest.mark.asyncio
+async def test_driver_runs_recovery_tick_before_quiescent_classification() -> None:
+    controller = RecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+    quiescent_pending = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"final-invariant-region": "pending"},
+        node_states={"check-final": "completed"},
+    )
+    reader = ScriptedProjectionReader(
+        [
+            quiescent_pending,
+            quiescent_pending,
+            GraphProjectionSnapshot(
+                run_state="active",
+                ready_nodes=[],
+                active_leases={},
+                schedulable_nodes=["planner-recover-check-final"],
+                task_states={"final-invariant-region": "pending"},
+                node_states={
+                    "check-final": "completed",
+                    "planner-recover-check-final": "planned",
+                },
+            ),
+            GraphProjectionSnapshot(
+                run_state="completed",
+                ready_nodes=[],
+                active_leases={},
+                schedulable_nodes=[],
+                task_states={"final-invariant-region": "accepted"},
+            ),
+            GraphProjectionSnapshot(
+                run_state="completed",
+                ready_nodes=[],
+                active_leases={},
+                schedulable_nodes=[],
+                task_states={"final-invariant-region": "accepted"},
+            ),
+        ]
+    )
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert controller.commands == ["schedule_tick", "schedule_tick", "schedule_tick"]
+    assert dispatcher.calls == 2
+    assert executor.calls == 2
     assert outcome.completed is True
 
 
@@ -266,6 +498,29 @@ def test_outcome_classification() -> None:
     assert nonterminal_nodes_blocked.blocked_reason == (
         "graph quiescent with non-terminal node(s): "
         "check-1=blocked, planner-1=planned, verifier-1=suspended (+1 more)"
+    )
+
+    environment_blocked = classify_graph_outcome(
+        "run-9",
+        GraphProjectionSnapshot(
+            run_state="active",
+            ready_nodes=[],
+            active_leases={},
+            schedulable_nodes=[],
+            task_states={"step/task": "blocked_environment"},
+            environment_failures={
+                "step/task": {
+                    "classification": "tool_unavailable",
+                    "reason": "check tool unavailable while running: npm --prefix ui test",
+                }
+            },
+        ),
+    )
+
+    assert environment_blocked.completed is False
+    assert environment_blocked.blocked_reason == (
+        "graph needs human/operator help for check environment issue(s): "
+        "step/task: tool_unavailable: check tool unavailable while running: npm --prefix ui test"
     )
 
 

@@ -129,13 +129,18 @@ class OutboxDispatcher:
         self._clock = clock
         self._max_attempts = max_attempts
 
-    async def dispatch_pending(self, limit: int | None = None) -> list[OutboxItem]:
+    async def dispatch_pending(
+        self,
+        limit: int | None = None,
+        *,
+        run_id: str | None = None,
+    ) -> list[OutboxItem]:
         """Dispatch pending rows in outbox order and return completed items."""
-        await self.reset_dispatching_to_pending()
+        await self.reset_dispatching_to_pending(run_id=run_id)
         completed: list[OutboxItem] = []
         remaining = limit
         while True:
-            item = await self._claim_next(remaining)
+            item = await self._claim_next(remaining, run_id=run_id)
             if item is None:
                 return completed
             try:
@@ -149,28 +154,39 @@ class OutboxDispatcher:
                 if remaining <= 0:
                     return completed
 
-    async def reset_dispatching_to_pending(self) -> int:
+    async def reset_dispatching_to_pending(self, *, run_id: str | None = None) -> int:
         """Treat startup ``dispatching`` rows as pending for at-least-once retry."""
         async with self._session_factory() as session:
             async with session.begin():
-                result = await session.execute(
+                stmt = (
                     update(GraphOutboxModel)
                     .where(GraphOutboxModel.status == OUTBOX_DISPATCHING)
                     .values(status=OUTBOX_PENDING, updated_at=self._clock.now())
                     .returning(GraphOutboxModel.outbox_id)
                 )
+                if run_id is not None:
+                    stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+                result = await session.execute(stmt)
                 return len(result.scalars().all())
 
-    async def pending_items(self) -> list[OutboxItem]:
+    async def pending_items(self, *, run_id: str | None = None) -> list[OutboxItem]:
         async with self._session_factory() as session:
-            result = await session.execute(
+            stmt = (
                 select(GraphOutboxModel)
                 .where(GraphOutboxModel.status.in_([OUTBOX_PENDING, OUTBOX_DISPATCHING]))
                 .order_by(GraphOutboxModel.outbox_id)
             )
+            if run_id is not None:
+                stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+            result = await session.execute(stmt)
             return [_to_item(row) for row in result.scalars()]
 
-    async def _claim_next(self, limit: int | None) -> OutboxItem | None:
+    async def _claim_next(
+        self,
+        limit: int | None,
+        *,
+        run_id: str | None = None,
+    ) -> OutboxItem | None:
         async with self._session_factory() as session:
             async with session.begin():
                 stmt = (
@@ -179,6 +195,8 @@ class OutboxDispatcher:
                     .order_by(GraphOutboxModel.outbox_id)
                     .limit(1)
                 )
+                if run_id is not None:
+                    stmt = stmt.where(GraphOutboxModel.run_id == run_id)
                 if limit is not None and limit <= 0:
                     return None
                 result = await session.execute(stmt)

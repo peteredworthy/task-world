@@ -212,7 +212,7 @@ export function useTask(runId: string, taskId: string | undefined) {
 export function useActivity(runId: string | undefined, runStatus?: string) {
   return useQuery({
     queryKey: ['activity', runId],
-    queryFn: () => api.getActivity(runId!),
+    queryFn: () => api.getActivity(runId!, { payload_mode: 'full' }),
     enabled: !!runId,
     refetchInterval: () => {
       // Stop polling once the run reaches a terminal state — no new events will arrive

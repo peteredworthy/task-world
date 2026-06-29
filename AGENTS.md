@@ -311,8 +311,8 @@ curl -s http://localhost:8000/api/runs/<run-id> | python3 -m json.tool
 # All tasks with status, attempts, grades
 curl -s http://localhost:8000/api/runs/<run-id>/tasks | python3 -m json.tool
 
-# Activity/event timeline
-curl -s http://localhost:8000/api/runs/<run-id>/activity | python3 -m json.tool
+# Activity/event timeline (compact by default; keep it bounded)
+curl -s 'http://localhost:8000/api/runs/<run-id>/activity?limit=50&payload_mode=summary' | uv run python -m json.tool
 
 # Pending actions (approvals, escalations)
 curl -s http://localhost:8000/api/runs/<run-id>/pending-actions | python3 -m json.tool

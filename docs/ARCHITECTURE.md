@@ -633,8 +633,8 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | POST | `/api/runs/{id}/cancel` | Cancel run |
 | GET | `/api/runs/{id}/evidence` | Return structured `run.evidence.v1` bundles from the run worktree |
 | GET | `/api/runs/{id}/trace` | Run trace data with attempts, phases, action logs, and token usage |
-| GET | `/api/runs/{id}/activity` | Activity log (paginated) |
-| GET | `/api/runs/{id}/activity/stream` | Activity SSE stream |
+| GET | `/api/runs/{id}/activity` | Activity log (paginated, compact `payload_mode=summary` by default; use `payload_mode=full` for transcript payloads) |
+| GET | `/api/runs/{id}/activity/stream` | Activity SSE stream (compact `payload_mode=summary` by default; use `payload_mode=full` for transcript payloads) |
 | GET | `/api/runs/{id}/guidance` | Aggregate guidance for agents |
 | GET | `/api/runs/{id}/graph/events` | Graph event log for a run |
 | GET | `/api/runs/{id}/graph/scheduler` | Graph scheduler buckets and leases |

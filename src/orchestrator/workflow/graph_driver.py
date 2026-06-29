@@ -7,7 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -19,11 +19,13 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktree
 from orchestrator.graph import (
     EventEnvelope,
+    initial_projection,
     project_leases,
     project_node_states,
     project_ready_nodes,
     project_run_state,
     project_task_states,
+    reduce_event,
 )
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime import (
@@ -136,6 +138,10 @@ def _empty_str_dict() -> dict[str, str]:
     return {}
 
 
+def _empty_environment_failures() -> dict[str, dict[str, Any]]:
+    return {}
+
+
 @dataclass(frozen=True)
 class GraphProjectionSnapshot:
     run_state: str | None
@@ -145,6 +151,9 @@ class GraphProjectionSnapshot:
     task_states: dict[str, str]
     node_states: dict[str, str] = field(default_factory=_empty_str_dict)
     failed_node_reasons: dict[str, str] = field(default_factory=_empty_str_dict)
+    environment_failures: dict[str, dict[str, Any]] = field(
+        default_factory=_empty_environment_failures
+    )
 
 
 async def _graph_seed_run_config(
@@ -211,11 +220,18 @@ class GraphLoopController(Protocol):
 
 
 class GraphLoopDispatcher(Protocol):
-    async def dispatch_pending(self) -> Any: ...
+    async def dispatch_pending(self, *, run_id: str | None = None) -> Any: ...
 
 
 class GraphLoopExecutor(Protocol):
-    async def wait_for_all(self) -> None: ...
+    def is_running(self, execution_id: str) -> bool: ...
+
+    async def wait_for_all(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+        active_execution_ids: set[str] | None = None,
+    ) -> None: ...
 
 
 class GraphRunDriver:
@@ -397,6 +413,8 @@ class GraphRunDriver:
         if current.status == RunStatus.ACTIVE:
             if outcome.completed:
                 await self._apply_complete(run_id)
+            elif outcome.run_state == "failed":
+                await self._apply_fail(run_id, outcome.blocked_reason)
             else:
                 await self._apply_pause(run_id, "graph_blocked", outcome.blocked_reason)
 
@@ -444,9 +462,24 @@ class GraphRunDriver:
                     "base_snapshot_id": "routine-snapshot",
                 },
             )
-            await dispatcher.dispatch_pending()
-            await executor.wait_for_all()
+            await dispatcher.dispatch_pending(run_id=run_id)
+            wait_projection = await read_projection(run_id)
+            clock = getattr(self, "_clock", None) or getattr(controller, "_clock", SystemClock())
+            wait_plan = _active_lease_wait_plan(wait_projection, clock.now())
+            await executor.wait_for_all(
+                timeout_seconds=wait_plan.timeout_seconds,
+                active_execution_ids=wait_plan.execution_ids,
+            )
             projection = await read_projection(run_id)
+            if await _renew_running_expired_leases(
+                run_id,
+                controller,
+                executor,
+                projection,
+                clock.now(),
+            ):
+                previous_signature = None
+                continue
             if (
                 not projection.ready_nodes
                 and not projection.active_leases
@@ -456,6 +489,22 @@ class GraphRunDriver:
                     position = await controller.current_position(run_id)
                     await controller.handle_command(run_id, position, "complete")
                     projection = await read_projection(run_id)
+                elif projection.run_state == "active":
+                    recovery_position = await controller.current_position(run_id)
+                    await controller.handle_command(
+                        run_id,
+                        recovery_position,
+                        "schedule_tick",
+                        {
+                            "lease_seconds": 300,
+                            "max_grants": 10,
+                            "base_snapshot_id": "routine-snapshot",
+                        },
+                    )
+                    recovery_projection = await read_projection(run_id)
+                    if _progress_signature(recovery_projection) != _progress_signature(projection):
+                        previous_signature = None
+                        continue
                 return classify_graph_outcome(run_id, projection)
             # No-progress guard: schedule_tick emits audit events (e.g.
             # node_deferred) every call, so raw event position always advances.
@@ -519,6 +568,11 @@ class GraphRunDriver:
             service = await self._create_service(session)
             await service.apply_complete_run(run_id)
 
+    async def _apply_fail(self, run_id: str, reason: str | None = None) -> None:
+        async with self._session_factory() as session:
+            service = await self._create_service(session)
+            await service.apply_cancel_run(run_id, reason=reason or "graph failed")
+
     async def _apply_pause(
         self,
         run_id: str,
@@ -530,6 +584,102 @@ class GraphRunDriver:
             run = await service.get_run(run_id)
             if run.status in (RunStatus.ACTIVE, RunStatus.STOPPING):
                 await service.apply_pause_run(run_id, reason=reason, error_detail=error_detail)
+
+
+@dataclass(frozen=True)
+class ActiveLeaseWaitPlan:
+    execution_ids: set[str]
+    timeout_seconds: float | None
+
+
+def _active_lease_wait_plan(
+    projection: GraphProjectionSnapshot,
+    now: datetime,
+) -> ActiveLeaseWaitPlan:
+    """Bound runner waiting by graph lease deadlines.
+
+    The graph kernel owns lease expiry during ``schedule_tick``. The driver
+    therefore must not wait indefinitely for runner tasks: once the nearest
+    active lease reaches its deadline, the loop needs to run another tick so
+    the kernel can emit ``lease_expired`` and any recovery/failure events.
+    """
+    execution_ids: set[str] = set()
+    timeouts: list[float] = []
+    for lease in projection.active_leases.values():
+        execution_id = lease.get("execution_id")
+        if isinstance(execution_id, str) and execution_id:
+            execution_ids.add(execution_id)
+        expires_at = lease.get("expires_at")
+        if not isinstance(expires_at, str):
+            continue
+        try:
+            expires_at_dt = datetime.fromisoformat(expires_at)
+        except ValueError:
+            continue
+        if expires_at_dt.tzinfo is None:
+            expires_at_dt = expires_at_dt.replace(tzinfo=UTC)
+        timeouts.append(max(0.0, (expires_at_dt - now).total_seconds()))
+    if not execution_ids:
+        return ActiveLeaseWaitPlan(execution_ids=set(), timeout_seconds=0.0)
+    if not timeouts:
+        return ActiveLeaseWaitPlan(execution_ids=execution_ids, timeout_seconds=None)
+    return ActiveLeaseWaitPlan(execution_ids=execution_ids, timeout_seconds=min(timeouts))
+
+
+async def _renew_running_expired_leases(
+    run_id: str,
+    controller: GraphLoopController,
+    executor: GraphLoopExecutor,
+    projection: GraphProjectionSnapshot,
+    now: datetime,
+) -> bool:
+    renewed = False
+    for lease in projection.active_leases.values():
+        if not _active_lease_expired(lease, now):
+            continue
+        execution_id = lease.get("execution_id")
+        if not isinstance(execution_id, str) or not executor.is_running(execution_id):
+            continue
+        lease_id = lease.get("lease_id")
+        node_id = lease.get("node_id")
+        if not isinstance(lease_id, str) or not isinstance(node_id, str):
+            continue
+        payload: dict[str, object] = {
+            "lease_id": lease_id,
+            "node_id": node_id,
+            "ttl_seconds": 300,
+        }
+        generation = lease.get("generation")
+        if isinstance(generation, int) and not isinstance(generation, bool):
+            payload["generation"] = generation
+        for attempt in range(5):
+            try:
+                result = await controller.handle_command(
+                    run_id,
+                    await controller.current_position(run_id),
+                    "record_heartbeat",
+                    payload,
+                )
+            except StaleProjectionError:
+                if attempt == 4:
+                    raise
+                continue
+            renewed = renewed or any(event.event_type == "lease_renewed" for event in result.events)
+            break
+    return renewed
+
+
+def _active_lease_expired(lease: dict[str, Any], now: datetime) -> bool:
+    expires_at = lease.get("expires_at")
+    if not isinstance(expires_at, str):
+        return False
+    try:
+        expires_at_dt = datetime.fromisoformat(expires_at)
+    except ValueError:
+        return False
+    if expires_at_dt.tzinfo is None:
+        expires_at_dt = expires_at_dt.replace(tzinfo=UTC)
+    return expires_at_dt <= now
 
 
 def _progress_signature(projection: GraphProjectionSnapshot) -> tuple[Any, ...]:
@@ -557,6 +707,9 @@ def _progress_signature(projection: GraphProjectionSnapshot) -> tuple[Any, ...]:
 def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapshot:
     leases = project_leases(events)
     node_states = project_node_states(events)
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
     active_leases = {
         lease_id: lease for lease_id, lease in leases.items() if lease.get("state") == "active"
     }
@@ -572,6 +725,10 @@ def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapsho
         task_states=project_task_states(events),
         node_states=node_states,
         failed_node_reasons=_failed_node_reasons(events),
+        environment_failures={
+            task_region_id: dict(failure)
+            for task_region_id, failure in projection["environment_failures"].items()
+        },
     )
 
 
@@ -653,6 +810,23 @@ def _blocked_reason(projection: GraphProjectionSnapshot) -> str:
         return (
             f"graph quiescent with non-terminal node(s): {', '.join(nonterminal_nodes[:3])}{suffix}"
         )
+    environment_failures = getattr(projection, "environment_failures", {})
+    if environment_failures:
+        details = []
+        for task_region_id, failure in sorted(environment_failures.items())[:3]:
+            typed_failure = cast(dict[str, Any], failure)
+            raw_reason = typed_failure.get("reason")
+            raw_classification = typed_failure.get("classification")
+            reason = raw_reason if isinstance(raw_reason, str) else None
+            classification = raw_classification if isinstance(raw_classification, str) else None
+            label: str = classification or "environment"
+            details.append(
+                f"{task_region_id}: {label}: {reason}" if reason else f"{task_region_id}: {label}"
+            )
+        suffix = (
+            "" if len(environment_failures) <= 3 else f" (+{len(environment_failures) - 3} more)"
+        )
+        return f"graph needs human/operator help for check environment issue(s): {', '.join(details)}{suffix}"
     blocked_tasks = sorted(
         f"{task_id}={state}"
         for task_id, state in projection.task_states.items()

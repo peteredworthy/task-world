@@ -13,9 +13,10 @@ from orchestrator.api import (
     build_graph_regions_response,
     build_graph_topology_response,
     build_node_detail_response,
+    build_node_detail_response_from_summary,
 )
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
-from orchestrator.graph_runtime.store import GraphEventStore
+from orchestrator.graph_runtime.store import GraphEventStore, GraphNodeDetailSummary
 from orchestrator.db import create_engine, create_session_factory, init_db
 
 
@@ -185,6 +186,92 @@ def test_build_node_detail_exposes_contract_and_runtime_controls_separately() ->
         "id": "unit-check",
         "cmd": "uv run pytest tests/unit/test_example.py -q",
         "timeout_seconds": 30,
+    }
+
+
+def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None:
+    long_body = "x" * 1_100_000
+    summary = GraphNodeDetailSummary(
+        run_id="run-node",
+        node_id="node-a",
+        position=3,
+        kind="worker",
+        role="builder",
+        state="completed",
+        task_region_id="task-a",
+        input_ports={},
+        output_records=[
+            {
+                "record_id": "out-a",
+                "record_kind": "output",
+                "producer_node_id": "node-a",
+                "port": "candidate",
+            }
+        ],
+        file_state_records=[],
+        leases=[],
+        active_lease=None,
+        callback_history=[],
+        events=[
+            {
+                "event_id": "compact-node-a",
+                "event_type": "output_record_accepted",
+                "run_id": "run-node",
+                "position": 2,
+                "timestamp": FakeClock().now().isoformat(),
+                "payload": {
+                    "record_id": "out-a",
+                    "producer_node_id": "node-a",
+                },
+            }
+        ],
+    )
+    full_events = [
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "out-a",
+                "record_kind": "output",
+                "producer_node_id": "node-a",
+                "port": "candidate",
+                "value": {"body": long_body, "paths": [f"file-{index}" for index in range(201)]},
+            },
+            run_id="run-node",
+            position=2,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "out-b",
+                "record_kind": "output",
+                "producer_node_id": "node-b",
+                "port": "candidate",
+                "value": {"body": "unrelated"},
+            },
+            run_id="run-node",
+            position=3,
+        ),
+    ]
+
+    detail = build_node_detail_response_from_summary(summary, full_events=full_events)
+
+    assert [event.position for event in detail.events] == [2]
+    assert detail.events[0].payload["record_id"] == "out-a"
+    assert "value" not in detail.events[0].payload
+    assert detail.output_records[0]["record_id"] == "out-a"
+    assert detail.output_records[0]["producer_node_id"] == "node-a"
+    bounded_body = detail.output_records[0]["value"]["body"]
+    assert len(bounded_body) < len(long_body)
+    assert bounded_body.endswith("...[truncated 100000 chars]")
+    assert detail.output_records[0]["value"]["__truncated_fields"][0]["field"] == "body"
+    assert detail.output_records[0]["value"]["__truncated_fields"][0]["original_length"] == len(
+        long_body
+    )
+    assert len(detail.output_records[0]["value"]["paths"]) == 200
+    assert detail.output_records[0]["value"]["__truncated_fields"][1] == {
+        "field": "paths",
+        "original_length": 201,
+        "retained_items": 200,
     }
 
 

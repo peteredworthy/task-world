@@ -20,6 +20,45 @@ FR-01 through FR-18 are validated, and FR-19 is explicitly out of scope. The
 validated closure snapshot is archived at
 `docs/dynamic-graph/complete/dynamic-graph-proof-ledger-validated-2026-06-26.md`.
 
+## Post-Closure Product Dogfood Outcome
+
+Dogfood run `784d9e7d-05f5-4d5e-8d74-6854cbf07c7a` was created through
+`/api/runs` on 2026-06-26 with `dynamic-graph-feature`, `execution_mode=graph`,
+the `codex_server` runner, and worktree `worktrees/r338`. It product-proved the
+planner/runner/callback path through accepted planner patch
+`dynamic-feature-graph-health-graph-plan-v1`, worker candidate/file-state
+records for `docs/dynamic-graph/dogfood/2026-06-26-graph-health.md`, verifier
+`A` grades, corrective worker/verifier evidence, and a passed hidden-oracle
+check `check-exec-fbebe3cdf4914cdeb31b533504575c98`.
+
+The run nevertheless paused with `pause_reason=graph_blocked` and
+`last_error="graph quiescent with non-accepted task(s): region-dynamic-feature-gap=pending, region-dynamic-feature-invariant=pending"`.
+Readbacks showed `/graph.run_state=paused`, `/graph/scheduler.leases.active=[]`,
+and `/graph/final-blockers` containing `invalid_task_region` plus
+`task_not_accepted` blockers for `region-dynamic-feature-gap` and
+`region-dynamic-feature-invariant`. This contradicts the closure expectation
+that a successful dynamic-feature dogfood path reaches completion once worker,
+verifier, corrective, and check evidence are accepted. The smallest product fix
+is to stop treating planner/gap-planner control regions and check-only invariant
+regions as ordinary candidate-producing task regions, or to avoid assigning
+`task_region_id` to those control nodes unless they participate in task-region
+acceptance.
+
+Resolution on 2026-06-26: task-region fulfillment is now contract-driven.
+Node contracts declare whether they contribute to task acceptance, control
+progress, final invariants, or no fulfillment, and candidate-free regions are
+accepted only when their contributing nodes complete with the required output
+ports. Public readbacks for the same dogfood run now show all five regions
+accepted, `/graph/final-blockers.blockers=[]`, and no active scheduler leases.
+
+Follow-up dogfood on 2026-06-26 validated the final-check dispatch path that the
+post-closure blocker exposed. The proof artifact is
+`docs/dynamic-graph/dogfood/2026-06-26-final-check-dispatch.md`: once final
+blockers clear, the final check remains schedulable, is dispatched under normal
+lease handling, and records final check result evidence instead of being
+stranded behind stale blocker state. This closes the product dogfood gap that
+contradicted the FR-01 through FR-18 closure snapshot.
+
 ## Current Regression Evidence
 
 Regression checks are useful guardrails, not validation:

@@ -65,7 +65,6 @@ def test_planner_patch_canonicalizes_verification_result_edge_port() -> None:
                         "role": "verifier",
                         "state": "planned",
                         "task_region_id": "region-1",
-                        "candidate_id": "candidate-1",
                     },
                 },
                 {
@@ -109,7 +108,6 @@ def test_planner_patch_rejects_hidden_oracle_check_command_text() -> None:
                     "role": "verifier",
                     "state": "planned",
                     "task_region_id": "region-1",
-                    "candidate_id": "candidate-1",
                 },
             },
             {
@@ -161,7 +159,6 @@ def test_planner_patch_binds_dynamic_feature_hidden_oracle_command() -> None:
                         "role": "verifier",
                         "state": "planned",
                         "task_region_id": "region-1",
-                        "candidate_id": "candidate-1",
                     },
                 },
                 {
@@ -258,7 +255,6 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                         "role": "verifier",
                         "state": "planned",
                         "task_region_id": "validation-region",
-                        "candidate_id": "candidate-1",
                     },
                 },
                 {
@@ -289,7 +285,6 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                         "role": "verifier",
                         "state": "planned",
                         "task_region_id": "corrective-validation-region",
-                        "candidate_id": "candidate-corrective",
                     },
                 },
                 {
@@ -532,7 +527,6 @@ def _region_ops(successor_id: str | None, *, generation: int = 1) -> list[dict[s
                 "state": "planned",
                 "task_region_id": "region-1",
                 "attempt_number": 1,
-                "candidate_id": "candidate-1",
             },
         },
         {

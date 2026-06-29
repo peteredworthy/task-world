@@ -108,11 +108,6 @@ def validate_patch(
     if stale_result is not None:
         return stale_result
 
-    if actor_role == "gap_planner" and not ops:
-        gap_no_op_error = _validate_gap_planner_no_op(patch.proposed_by_node_id, projection)
-        if gap_no_op_error is not None:
-            return PatchValidationResult(accepted=False, rejection_reason=gap_no_op_error)
-
     allowed_ops = ALLOWED_BY_ROLE.get(actor_role, set())
     for op in ops:
         op_name = op.get("op")
@@ -418,23 +413,6 @@ def _validate_planner_successor_bindings(ops: list[dict[str, Any]]) -> str | Non
         missing = sorted(required_ports - selector_ports_by_successor[node_id])
         if missing:
             return f"planner successor missing selector-bound inputs: {', '.join(missing)}"
-    return None
-
-
-def _validate_gap_planner_no_op(
-    proposed_by_node_id: str,
-    projection: GraphProjection,
-) -> str | None:
-    for edge in projection["edges"].values():
-        if edge.get("from_node_id") != proposed_by_node_id:
-            continue
-        if edge.get("required") is False:
-            continue
-        if edge.get("to_port") == "classified_gap" or edge.get("from_port") in {
-            "classified_gap",
-            "gap_classification",
-        }:
-            return "gap planner no-op leaves required classified_gap successor unsatisfied"
     return None
 
 

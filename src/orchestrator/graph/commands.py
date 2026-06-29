@@ -1950,7 +1950,21 @@ def _record_matches_selector(
         if isinstance(milestone_kind, str):
             candidates.add(milestone_kind)
     candidates.update(aliases or set())
-    return bool(accepted & candidates)
+    if not accepted & candidates:
+        return False
+
+    raw_value_matches = typed_selector.get("value_matches")
+    if not isinstance(raw_value_matches, dict):
+        return True
+    if not isinstance(value, dict):
+        typed_value = {}
+    else:
+        typed_value = cast(dict[str, Any], value)
+    for key, expected in cast(dict[str, Any], raw_value_matches).items():
+        actual = typed_value[key] if key in typed_value else record_payload.get(key)
+        if actual != expected:
+            return False
+    return True
 
 
 def _apply_patch_command(
@@ -2211,12 +2225,59 @@ def _apply_schedule_tick(
         and lease.get("lease_id") not in expired_lease_ids
         and isinstance(lease.get("node_id"), str)
     ]
+    output.extend(
+        _failed_check_recovery_events(
+            projection,
+            events,
+            active_lease_node_ids,
+            make_event,
+        )
+    )
+    output.extend(
+        _failed_verification_recovery_events(
+            projection,
+            events,
+            active_lease_node_ids,
+            make_event,
+        )
+    )
+    output.extend(
+        _passed_verification_terminalization_events(
+            projection,
+            events,
+            active_lease_node_ids,
+            make_event,
+        )
+    )
+    output.extend(
+        _passed_check_terminalization_events(
+            projection,
+            active_lease_node_ids,
+            make_event,
+        )
+    )
+    terminal_failure_events = _no_successor_recovery_terminal_failure_events(
+        projection,
+        events,
+        active_lease_node_ids,
+        make_event,
+    )
+    if terminal_failure_events:
+        output.extend(terminal_failure_events)
+        return output
+    retiring_node_ids = {
+        event.payload["node_id"]
+        for event in output
+        if event.event_type == "node_retired" and isinstance(event.payload.get("node_id"), str)
+    }
     nodes: list[NodeScheduleInfo] = []
     readied_node_ids: set[str] = set()
     for node_id, node_state in projection["node_states"].items():
+        if node_id in retiring_node_ids:
+            continue
         if node_state not in {"planned", "blocked", "ready"}:
             continue
-        node = _node_schedule_info(projection, payload, node_id)
+        node = _node_schedule_info(projection, events, payload, node_id)
         backoff_reason = _retry_backoff_deferred_reason(events, node_id, clock.now())
         if backoff_reason is not None:
             output.append(
@@ -2229,11 +2290,9 @@ def _apply_schedule_tick(
                 )
             )
             continue
-        if node_state == "ready":
-            nodes.append(node)
-            continue
+        readiness_node = replace(node, state="planned") if node_state == "ready" else node
         ready, reason = evaluate_readiness(
-            node,
+            readiness_node,
             projection["run_state"] or "draft",
             active_lease_node_ids,
             active_claims,
@@ -2249,18 +2308,19 @@ def _apply_schedule_tick(
                 )
             )
             continue
-        output.append(make_event("node_ready", {"node_id": node_id}))
-        output.append(
-            make_event(
-                "node_state_changed",
-                {
-                    "node_id": node_id,
-                    "new_state": "ready",
-                    "trigger": "readiness_evaluator",
-                },
+        if node_state != "ready":
+            output.append(make_event("node_ready", {"node_id": node_id}))
+            output.append(
+                make_event(
+                    "node_state_changed",
+                    {
+                        "node_id": node_id,
+                        "new_state": "ready",
+                        "trigger": "readiness_evaluator",
+                    },
+                )
             )
-        )
-        readied_node_ids.add(node_id)
+            readied_node_ids.add(node_id)
         nodes.append(replace(node, state="ready"))
     decision = schedule(
         nodes,
@@ -2337,6 +2397,698 @@ def _apply_schedule_tick(
             )
         )
     return output
+
+
+def _failed_check_recovery_events(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    active_lease_node_ids: list[str],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    if projection["run_state"] != "active":
+        return []
+    if active_lease_node_ids:
+        return []
+    if any(
+        state in {"planned", "blocked", "ready"} for state in projection["node_states"].values()
+    ):
+        return []
+    if not any(state != "accepted" for state in projection["task_states"].values()):
+        return []
+
+    routine_snapshot = _latest_routine_snapshot_record(events)
+    if routine_snapshot is None:
+        return []
+
+    output: list[EventEnvelope] = []
+    for check_result in _current_failed_check_results(projection):
+        recovery_node_id = _failed_check_recovery_node_id(check_result)
+        if recovery_node_id in projection["node_states"]:
+            continue
+        if _has_existing_failed_check_recovery(projection, check_result):
+            continue
+        node_id = check_result["node_id"]
+        record_id = check_result["record_id"]
+        task_region_id = check_result.get("task_region_id", node_id)
+        recovery_region_id = f"recovery-{_stable_graph_id_part(task_region_id)}"
+        output.append(
+            make_event(
+                "node_created",
+                {
+                    "node_id": recovery_node_id,
+                    "kind": "planner",
+                    "role": "gap_planner",
+                    "state": "planned",
+                    "task_region_id": recovery_region_id,
+                    "recovery_reason": "failed_required_check",
+                    "recovery_of_node_id": node_id,
+                    "recovery_of_record_id": record_id,
+                },
+            )
+        )
+        recovery_edges = [
+            {
+                "edge_id": f"edge-{_stable_graph_id_part(record_id)}-recovery-evidence",
+                "from_node_id": node_id,
+                "from_port": "check_result",
+                "to_node_id": recovery_node_id,
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["check_result"]},
+                "metadata": {
+                    "purpose": "failed_required_check_recovery",
+                    "recovery_of_record_id": record_id,
+                },
+            },
+            {
+                "edge_id": f"edge-routine-snapshot-{recovery_node_id}",
+                "from_node_id": routine_snapshot["producer_node_id"],
+                "from_port": routine_snapshot["port"],
+                "to_node_id": recovery_node_id,
+                "to_port": "routine_snapshot",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["routine_snapshot"]},
+                "metadata": {"purpose": "failed_required_check_recovery_context"},
+            },
+        ]
+        for edge in recovery_edges:
+            output.append(make_event("edge_created", edge))
+            output.extend(_input_bound_events_for_edge(events, edge, make_event))
+    return output
+
+
+def _failed_verification_recovery_events(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    active_lease_node_ids: list[str],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    if projection["run_state"] != "active":
+        return []
+    if active_lease_node_ids or projection["ready_nodes"]:
+        return []
+    if not any(state != "accepted" for state in projection["task_states"].values()):
+        return []
+
+    routine_snapshot = _latest_routine_snapshot_record(events)
+    if routine_snapshot is None:
+        return []
+
+    output: list[EventEnvelope] = []
+    for verification in _current_failed_verification_results(events):
+        recovery_node_id = _failed_verification_recovery_node_id(verification)
+        if recovery_node_id in projection["node_states"]:
+            continue
+        if _has_existing_failed_verification_recovery(projection, verification):
+            continue
+        node_id = verification["node_id"]
+        record_id = verification["record_id"]
+        task_region_id = verification.get("task_region_id", node_id)
+        recovery_region_id = f"recovery-{_stable_graph_id_part(task_region_id)}"
+        output.append(
+            make_event(
+                "node_created",
+                {
+                    "node_id": recovery_node_id,
+                    "kind": "planner",
+                    "role": "gap_planner",
+                    "state": "planned",
+                    "task_region_id": recovery_region_id,
+                    "recovery_reason": "failed_verification",
+                    "recovery_of_node_id": node_id,
+                    "recovery_of_record_id": record_id,
+                },
+            )
+        )
+        recovery_edges = [
+            {
+                "edge_id": f"edge-{_stable_graph_id_part(record_id)}-recovery-evidence",
+                "from_node_id": node_id,
+                "from_port": "verification_report",
+                "to_node_id": recovery_node_id,
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_kinds": ["verification"],
+                    "value_matches": {"verdict": "failed"},
+                },
+                "metadata": {
+                    "purpose": "failed_verification_recovery",
+                    "recovery_of_record_id": record_id,
+                },
+            },
+            {
+                "edge_id": f"edge-routine-snapshot-{recovery_node_id}",
+                "from_node_id": routine_snapshot["producer_node_id"],
+                "from_port": routine_snapshot["port"],
+                "to_node_id": recovery_node_id,
+                "to_port": "routine_snapshot",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["routine_snapshot"]},
+                "metadata": {"purpose": "failed_verification_recovery_context"},
+            },
+        ]
+        for edge in recovery_edges:
+            output.append(make_event("edge_created", edge))
+            output.extend(_input_bound_events_for_edge(events, edge, make_event))
+    return output
+
+
+def _current_failed_verification_results(events: list[EventEnvelope]) -> list[dict[str, str]]:
+    latest_by_record_id: dict[str, dict[str, str]] = {}
+    passed_candidates: set[str] = set()
+    for event in events:
+        if event.event_type not in {"verification_passed", "verification_failed"}:
+            continue
+        candidate_id = event.payload.get("candidate_id")
+        if isinstance(candidate_id, str) and event.event_type == "verification_passed":
+            passed_candidates.add(candidate_id)
+        if event.event_type != "verification_failed":
+            continue
+        node_id = event.payload.get("verifier_node_id") or event.payload.get("node_id")
+        record_id = event.payload.get("record_id")
+        if not isinstance(node_id, str) or not node_id:
+            continue
+        if not isinstance(record_id, str) or not record_id:
+            continue
+        failed = {
+            "node_id": node_id,
+            "record_id": record_id,
+        }
+        if isinstance(candidate_id, str) and candidate_id:
+            failed["candidate_id"] = candidate_id
+        task_region_id = event.payload.get("task_region_id")
+        if isinstance(task_region_id, str) and task_region_id:
+            failed["task_region_id"] = task_region_id
+        latest_by_record_id[record_id] = failed
+    return [
+        verification
+        for verification in latest_by_record_id.values()
+        if verification.get("candidate_id") not in passed_candidates
+    ]
+
+
+def _passed_verification_terminalization_events(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    active_lease_node_ids: list[str],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    if projection["run_state"] != "active":
+        return []
+    if active_lease_node_ids or projection["ready_nodes"]:
+        return []
+    if not any(state != "accepted" for state in projection["task_states"].values()):
+        return []
+
+    output: list[EventEnvelope] = []
+    for verification in _current_passed_verification_results(events):
+        retirable_node_ids = _unreachable_failure_branch_node_ids(
+            projection,
+            verification["node_id"],
+        )
+        if not retirable_node_ids:
+            continue
+        output.extend(
+            _passed_verification_final_check_edges(
+                projection,
+                events,
+                verification,
+                make_event,
+            )
+        )
+        for node_id in retirable_node_ids:
+            output.extend(_retire_node_events(projection, node_id, make_event))
+    return output
+
+
+def _passed_check_terminalization_events(
+    projection: GraphProjection,
+    active_lease_node_ids: list[str],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    if projection["run_state"] != "active":
+        return []
+    if active_lease_node_ids or projection["ready_nodes"]:
+        return []
+
+    output: list[EventEnvelope] = []
+    for check_node_id, result in sorted(projection["check_results"].items()):
+        if result.get("status") not in {"passed", "pass", "ok"}:
+            continue
+        for node_id in _unreachable_check_failure_branch_node_ids(projection, check_node_id):
+            output.extend(_retire_node_events(projection, node_id, make_event))
+    return output
+
+
+def _no_successor_recovery_terminal_failure_events(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    active_lease_node_ids: list[str],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    if projection["run_state"] != "active":
+        return []
+    if active_lease_node_ids or projection["ready_nodes"]:
+        return []
+    if any(
+        state in {"planned", "blocked", "ready", "leased", "running", "suspended"}
+        for state in projection["node_states"].values()
+    ):
+        return []
+    if not any(state != "accepted" for state in projection["task_states"].values()):
+        return []
+
+    terminal = _completed_no_successor_recovery(projection, events)
+    if terminal is None:
+        return []
+    if terminal.get("environment_failure") == "true":
+        return []
+    return [
+        make_event(
+            "run_lifecycle_changed",
+            {
+                "command_type": "schedule_tick",
+                "from_state": "active",
+                "to_state": "failed",
+                "trigger": "recovery_planner_no_successor",
+                "node_id": terminal["node_id"],
+                "patch_id": terminal["patch_id"],
+                "recovery_of_record_id": terminal["recovery_of_record_id"],
+                "recovery_reason": terminal["recovery_reason"],
+            },
+        )
+    ]
+
+
+def _completed_no_successor_recovery(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+) -> dict[str, str] | None:
+    recovery_nodes = _recovery_nodes_by_record_id(events)
+    for failed in [
+        *_current_failed_check_results(projection),
+        *_current_failed_verification_results(events),
+    ]:
+        record_id = failed["record_id"]
+        for recovery in recovery_nodes.get(record_id, []):
+            node_id = recovery["node_id"]
+            if projection["node_states"].get(node_id) != "completed":
+                continue
+            patch_id = _accepted_no_successor_patch_id(events, node_id)
+            if patch_id is None:
+                continue
+            return {
+                "node_id": node_id,
+                "patch_id": patch_id,
+                "recovery_of_record_id": record_id,
+                "recovery_reason": recovery["recovery_reason"],
+                "environment_failure": str(
+                    failed.get("classification")
+                    in {"environment_error", "tool_error", "tool_unavailable"}
+                ).lower(),
+            }
+    return None
+
+
+def _recovery_nodes_by_record_id(events: list[EventEnvelope]) -> dict[str, list[dict[str, str]]]:
+    output: dict[str, list[dict[str, str]]] = {}
+    for event in events:
+        if event.event_type != "node_created":
+            continue
+        node_id = event.payload.get("node_id")
+        recovery_reason = event.payload.get("recovery_reason")
+        record_id = event.payload.get("recovery_of_record_id")
+        if not all(
+            isinstance(value, str) and value for value in (node_id, recovery_reason, record_id)
+        ):
+            continue
+        if recovery_reason not in {"failed_required_check", "failed_verification"}:
+            continue
+        output.setdefault(cast(str, record_id), []).append(
+            {
+                "node_id": cast(str, node_id),
+                "recovery_reason": cast(str, recovery_reason),
+            }
+        )
+    return output
+
+
+def _accepted_no_successor_patch_id(events: list[EventEnvelope], node_id: str) -> str | None:
+    patch_id: str | None = None
+    for event in events:
+        if event.event_type != "graph_patch_accepted":
+            continue
+        if event.payload.get("proposed_by_node_id") != node_id:
+            continue
+        raw_patch_id = event.payload.get("patch_id")
+        if not isinstance(raw_patch_id, str) or not raw_patch_id:
+            continue
+        successors = event.payload.get("successor_planner_node_ids")
+        if isinstance(successors, list) and any(
+            isinstance(item, str) for item in cast(list[Any], successors)
+        ):
+            patch_id = None
+            continue
+        patch_id = raw_patch_id
+    return patch_id
+
+
+def _passed_verification_final_check_edges(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    verification: dict[str, str],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    verifier_node_id = verification["node_id"]
+    record_id = verification["record_id"]
+    output: list[EventEnvelope] = []
+    for check_node_id in _final_checks_waiting_for_verification_evidence(projection):
+        if _has_verification_evidence_edge(projection, verifier_node_id, check_node_id):
+            continue
+        edge = {
+            "edge_id": (
+                f"edge-{_stable_graph_id_part(record_id)}-passed-verification-final-"
+                f"{_stable_graph_id_part(check_node_id)}"
+            ),
+            "from_node_id": verifier_node_id,
+            "from_port": "verification_report",
+            "to_node_id": check_node_id,
+            "to_port": "verification_evidence",
+            "required": True,
+            "accepted_record_selector": {
+                "record_kinds": ["verification"],
+                "value_matches": {"verdict": "passed"},
+            },
+            "metadata": {
+                "purpose": "passed_verification_final_invariant_recovery",
+                "recovery_of_record_id": record_id,
+            },
+        }
+        output.append(make_event("edge_created", edge))
+        output.extend(_input_bound_events_for_edge(events, edge, make_event))
+    return output
+
+
+def _current_passed_verification_results(events: list[EventEnvelope]) -> list[dict[str, str]]:
+    latest_by_record_id: dict[str, dict[str, str]] = {}
+    failed_candidates: set[str] = set()
+    for event in events:
+        if event.event_type not in {"verification_passed", "verification_failed"}:
+            continue
+        candidate_id = event.payload.get("candidate_id")
+        if isinstance(candidate_id, str) and event.event_type == "verification_failed":
+            failed_candidates.add(candidate_id)
+        if event.event_type != "verification_passed":
+            continue
+        node_id = event.payload.get("verifier_node_id") or event.payload.get("node_id")
+        record_id = event.payload.get("record_id")
+        if not isinstance(node_id, str) or not node_id:
+            continue
+        if not isinstance(record_id, str) or not record_id:
+            continue
+        passed = {
+            "node_id": node_id,
+            "record_id": record_id,
+        }
+        if isinstance(candidate_id, str) and candidate_id:
+            passed["candidate_id"] = candidate_id
+        task_region_id = event.payload.get("task_region_id")
+        if isinstance(task_region_id, str) and task_region_id:
+            passed["task_region_id"] = task_region_id
+        latest_by_record_id[record_id] = passed
+    return [
+        verification
+        for verification in latest_by_record_id.values()
+        if verification.get("candidate_id") not in failed_candidates
+    ]
+
+
+def _final_checks_waiting_for_verification_evidence(
+    projection: GraphProjection,
+) -> list[str]:
+    waiting: list[str] = []
+    for node_id, kind in sorted(projection["node_kinds"].items()):
+        if kind != "check":
+            continue
+        if projection["node_roles"].get(node_id) != "invariant_gate":
+            continue
+        if projection["node_states"].get(node_id) not in {"planned", "blocked", "ready"}:
+            continue
+        if "verification_evidence" in projection["input_bindings"].get(node_id, {}):
+            continue
+        waiting.append(node_id)
+    return waiting
+
+
+def _has_verification_evidence_edge(
+    projection: GraphProjection,
+    verifier_node_id: str,
+    check_node_id: str,
+) -> bool:
+    for edge in projection["edges"].values():
+        if edge.get("from_node_id") != verifier_node_id:
+            continue
+        if edge.get("from_port") != "verification_report":
+            continue
+        if edge.get("to_node_id") != check_node_id:
+            continue
+        if edge.get("to_port") == "verification_evidence":
+            return True
+    return False
+
+
+def _unreachable_failure_branch_node_ids(
+    projection: GraphProjection,
+    passed_verifier_node_id: str,
+) -> list[str]:
+    roots: list[str] = []
+    for edge in projection["edges"].values():
+        if edge.get("from_node_id") != passed_verifier_node_id:
+            continue
+        if edge.get("from_port") != "verification_report":
+            continue
+        if edge.get("to_port") != "verification_evidence":
+            continue
+        if _selector_value_match(edge, "verdict") != "failed":
+            continue
+        to_node_id = edge.get("to_node_id")
+        if isinstance(to_node_id, str):
+            roots.append(to_node_id)
+    return _downstream_retirable_node_ids(projection, roots)
+
+
+def _unreachable_check_failure_branch_node_ids(
+    projection: GraphProjection,
+    passed_check_node_id: str,
+) -> list[str]:
+    roots: list[str] = []
+    for edge in projection["edges"].values():
+        if edge.get("from_node_id") != passed_check_node_id:
+            continue
+        if edge.get("from_port") != "check_result":
+            continue
+        to_node_id = edge.get("to_node_id")
+        if not isinstance(to_node_id, str):
+            continue
+        if edge.get("required") is not False and not _is_gap_planner(projection, to_node_id):
+            continue
+        roots.append(to_node_id)
+    return _downstream_retirable_node_ids(projection, roots)
+
+
+def _downstream_retirable_node_ids(
+    projection: GraphProjection,
+    root_node_ids: list[str],
+) -> list[str]:
+    terminal_states = {"completed", "failed", "cancelled", "retired"}
+    seen: set[str] = set()
+    output: list[str] = []
+    stack = list(reversed(root_node_ids))
+    while stack:
+        node_id = stack.pop()
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        state = projection["node_states"].get(node_id)
+        if state in terminal_states or state is None:
+            continue
+        if _is_final_invariant_check(projection, node_id):
+            continue
+        output.append(node_id)
+        downstream = [
+            edge.get("to_node_id")
+            for edge in projection["edges"].values()
+            if edge.get("from_node_id") == node_id
+            and edge.get("dependency_type") != "state_dependency"
+        ]
+        for downstream_node_id in reversed(downstream):
+            if isinstance(downstream_node_id, str):
+                stack.append(downstream_node_id)
+    return output
+
+
+def _is_final_invariant_check(projection: GraphProjection, node_id: str) -> bool:
+    return (
+        projection["node_kinds"].get(node_id) == "check"
+        and projection["node_roles"].get(node_id) == "invariant_gate"
+    )
+
+
+def _is_gap_planner(projection: GraphProjection, node_id: str) -> bool:
+    return (
+        projection["node_kinds"].get(node_id) == "gap_planner"
+        or projection["node_roles"].get(node_id) == "gap_planner"
+    )
+
+
+def _selector_value_match(edge: dict[str, Any], key: str) -> Any:
+    selector = edge.get("accepted_record_selector")
+    if not isinstance(selector, dict):
+        return None
+    value_matches = cast(dict[str, Any], selector).get("value_matches")
+    if not isinstance(value_matches, dict):
+        return None
+    return cast(dict[str, Any], value_matches).get(key)
+
+
+def _retire_node_events(
+    projection: GraphProjection,
+    node_id: str,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    if projection["node_states"].get(node_id) in {"completed", "failed", "cancelled", "retired"}:
+        return []
+    return [
+        make_event(
+            "node_retired",
+            {
+                "node_id": node_id,
+                "reason": "unreachable_after_passed_terminal_evidence",
+            },
+        ),
+        make_event(
+            "node_state_changed",
+            {
+                "node_id": node_id,
+                "new_state": "retired",
+                "trigger": "passed_terminal_evidence_recovery",
+            },
+        ),
+    ]
+
+
+def _has_existing_failed_verification_recovery(
+    projection: GraphProjection,
+    verification: dict[str, str],
+) -> bool:
+    node_id = verification["node_id"]
+    for edge in projection["edges"].values():
+        if edge.get("from_node_id") != node_id:
+            continue
+        if edge.get("from_port") != "verification_report":
+            continue
+        if edge.get("to_port") != "verification_evidence":
+            continue
+        to_node_id = edge.get("to_node_id")
+        if not isinstance(to_node_id, str):
+            continue
+        if projection["node_states"].get(to_node_id) in {"cancelled", "failed", "retired"}:
+            continue
+        if projection["node_kinds"].get(to_node_id) == "planner" and (
+            projection["node_roles"].get(to_node_id) == "gap_planner"
+        ):
+            return True
+    return False
+
+
+def _current_failed_check_results(projection: GraphProjection) -> list[dict[str, str]]:
+    failed: list[dict[str, str]] = []
+    for node_id, result in sorted(projection["check_results"].items()):
+        status = result.get("status")
+        if status in {"passed", "pass", "ok"}:
+            continue
+        record_id = result.get("record_id")
+        if not isinstance(record_id, str) or not record_id:
+            continue
+        check_result = {"node_id": node_id, "record_id": record_id}
+        classification = result.get("classification")
+        if isinstance(classification, str) and classification:
+            check_result["classification"] = classification
+        task_region_id = result.get("task_region_id")
+        if isinstance(task_region_id, str) and task_region_id:
+            check_result["task_region_id"] = task_region_id
+        failed.append(check_result)
+    return failed
+
+
+def _has_existing_failed_check_recovery(
+    projection: GraphProjection,
+    check_result: dict[str, str],
+) -> bool:
+    node_id = check_result["node_id"]
+    for edge in projection["edges"].values():
+        if edge.get("from_node_id") != node_id:
+            continue
+        if edge.get("from_port") != "check_result":
+            continue
+        if edge.get("to_port") != "verification_evidence":
+            continue
+        to_node_id = edge.get("to_node_id")
+        if not isinstance(to_node_id, str):
+            continue
+        if projection["node_states"].get(to_node_id) in {"cancelled", "failed", "retired"}:
+            continue
+        if projection["node_kinds"].get(to_node_id) == "planner" and (
+            projection["node_roles"].get(to_node_id) == "gap_planner"
+        ):
+            return True
+    return False
+
+
+def _latest_routine_snapshot_record(events: list[EventEnvelope]) -> dict[str, str] | None:
+    latest: dict[str, str] | None = None
+    for event in events:
+        if event.event_type != "output_record_accepted":
+            continue
+        payload = event.payload
+        record_id = payload.get("record_id")
+        producer_node_id = payload.get("producer_node_id")
+        port = payload.get("port")
+        if not all(
+            isinstance(value, str) and value for value in (record_id, producer_node_id, port)
+        ):
+            continue
+        is_routine_snapshot = (
+            payload.get("record_type") == "routine_snapshot"
+            or payload.get("record_kind") == "routine_snapshot"
+            or payload.get("schema") == "RoutineSnapshot"
+            or (producer_node_id == "routine-snapshot" and port in {"snapshot", "routine_snapshot"})
+        )
+        if not is_routine_snapshot:
+            continue
+        latest = {
+            "record_id": cast(str, record_id),
+            "producer_node_id": cast(str, producer_node_id),
+            "port": cast(str, port),
+        }
+    return latest
+
+
+def _failed_check_recovery_node_id(check_result: dict[str, str]) -> str:
+    return f"planner-recover-{_stable_graph_id_part(check_result['record_id'])}"
+
+
+def _failed_verification_recovery_node_id(verification: dict[str, str]) -> str:
+    return f"planner-recover-{_stable_graph_id_part(verification['record_id'])}"
+
+
+def _stable_graph_id_part(value: str) -> str:
+    chars = [
+        char.lower() if char.isalnum() or char in {"-", "_", "."} else "-" for char in value.strip()
+    ]
+    normalized = "".join(chars).strip("-")
+    return normalized or "unknown"
 
 
 def _base_snapshot_id_for_node(
@@ -2593,6 +3345,42 @@ def _apply_agent_died(
             ),
         ]
 
+    if _is_non_retryable_runtime_death(reason):
+        return [
+            make_event("agent_died", event_payload),
+            make_event(
+                "lease_revoked",
+                {
+                    "lease_id": lease_id,
+                    "node_id": node_id,
+                    "generation": generation,
+                    "reason": reason,
+                },
+            ),
+            make_event(
+                "output_record_accepted",
+                _failure_record_payload(
+                    node_id=node_id,
+                    phase="runtime",
+                    error_class="runtime_configuration_error",
+                    retryable=False,
+                    lease_id=lease_id,
+                    execution_id=event_payload.get("execution_id"),
+                    generation=generation,
+                    reason=reason,
+                ),
+            ),
+            make_event(
+                "node_state_changed",
+                {
+                    "node_id": node_id,
+                    "new_state": "failed",
+                    "trigger": "non_retryable_runtime_error",
+                    "reason": reason,
+                },
+            ),
+        ]
+
     max_attempts = _positive_int(payload.get("max_attempts"), 0)
     attempt_number = projection["node_attempts"].get(node_id, 0)
     if max_attempts > 0 and attempt_number >= max_attempts:
@@ -2783,6 +3571,12 @@ def _non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: st
 def _is_rate_limit_death(reason: str) -> bool:
     normalized = reason.lower()
     return "rate limit" in normalized or "hit rate limit" in normalized
+
+
+def _is_non_retryable_runtime_death(reason: str) -> bool:
+    return reason.startswith("check node missing command_definition") or reason.startswith(
+        "check command_definition requires "
+    )
 
 
 def _apply_raise_appeal(
@@ -3803,6 +4597,7 @@ def _lease_is_expired(lease: dict[str, Any], now: datetime) -> bool:
 
 def _node_schedule_info(
     projection: GraphProjection,
+    events: list[EventEnvelope],
     payload: dict[str, Any],
     node_id: str,
 ) -> NodeScheduleInfo:
@@ -3824,7 +4619,7 @@ def _node_schedule_info(
         state=projection["node_states"][node_id],
         priority=int(priorities.get(node_id, 0)),
         region_order=int(region_order.get(node_id, 0)),
-        creation_position=0,
+        creation_position=_node_creation_position(events, node_id),
         resource_claims=[
             _claim_from_dict(claim) for claim in projection["node_resource_claims"].get(node_id, [])
         ],
@@ -3854,6 +4649,13 @@ def _node_schedule_info(
         preconditions=projection["node_preconditions"].get(node_id, []),
         command_definition_present=node_id in projection["node_command_definitions"],
     )
+
+
+def _node_creation_position(events: list[EventEnvelope], node_id: str) -> int:
+    for event in events:
+        if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
+            return event.position
+    return 0
 
 
 def _required_edges_for_node(

@@ -5,7 +5,7 @@ import logging
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal, cast
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -98,6 +98,30 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
+ActivityPayloadMode = Literal["summary", "full"]
+DEFAULT_ACTIVITY_LIMIT = 50
+MAX_ACTIVITY_LIMIT = 200
+ACTIVITY_SUMMARY_MAX_STRING_CHARS = 500
+ACTIVITY_SUMMARY_MAX_LIST_ITEMS = 10
+ACTIVITY_SUMMARY_MAX_DEPTH = 3
+AGENT_OUTPUT_PREVIEW_LINES = 3
+
+_HEAVY_ACTIVITY_PAYLOAD_KEYS = {
+    "action_log",
+    "agent_output",
+    "attempt_snapshots",
+    "builder_prompt",
+    "messages",
+    "output_lines",
+    "prompt",
+    "raw_output",
+    "stderr",
+    "stdout",
+    "traceback",
+    "transcript",
+    "verifier_prompt",
+}
+
 
 def _is_codex_runner(runner_type: AgentRunnerType, config: dict[str, Any]) -> bool:
     """Return True when the runner type and config identify a Codex runner."""
@@ -127,6 +151,90 @@ def _graph_backed_run_ids_from_rows(rows: Any) -> set[str]:
         for aggregate_id, position in rows
         if int(position) > 0 and aggregate_id.startswith(GRAPH_AGGREGATE_PREFIX)
     }
+
+
+def _activity_payload_for_mode(
+    event_type: str,
+    payload: dict[str, Any],
+    payload_mode: ActivityPayloadMode,
+) -> dict[str, Any]:
+    if payload_mode == "full":
+        return payload
+    if event_type == "agent_output":
+        return _summarize_agent_output_payload(payload)
+    return {
+        key: _compact_activity_value(key, value, depth=0)
+        for key, value in payload.items()
+        if key not in _HEAVY_ACTIVITY_PAYLOAD_KEYS
+    } | {
+        f"{key}_summary": _summarize_heavy_activity_value(value)
+        for key, value in payload.items()
+        if key in _HEAVY_ACTIVITY_PAYLOAD_KEYS
+    }
+
+
+def _summarize_agent_output_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    lines = payload.get("lines")
+    typed_lines = [str(line) for line in cast(list[Any], lines)] if isinstance(lines, list) else []
+    summary = {
+        key: _compact_activity_value(key, value, depth=0)
+        for key, value in payload.items()
+        if key != "lines"
+    }
+    summary["line_count"] = len(typed_lines)
+    summary["preview_lines"] = [
+        _truncate_activity_string(line) for line in typed_lines[:AGENT_OUTPUT_PREVIEW_LINES]
+    ]
+    if len(typed_lines) > AGENT_OUTPUT_PREVIEW_LINES:
+        summary["omitted_lines"] = len(typed_lines) - AGENT_OUTPUT_PREVIEW_LINES
+    return summary
+
+
+def _compact_activity_value(key: str, value: Any, *, depth: int) -> Any:
+    if key in _HEAVY_ACTIVITY_PAYLOAD_KEYS:
+        return _summarize_heavy_activity_value(value)
+    if isinstance(value, str):
+        return _truncate_activity_string(value)
+    if isinstance(value, list):
+        typed_value = cast(list[Any], value)
+        if depth >= ACTIVITY_SUMMARY_MAX_DEPTH:
+            return {"item_count": len(typed_value), "payload_mode": "summary"}
+        compacted = [
+            _compact_activity_value("", item, depth=depth + 1)
+            for item in typed_value[:ACTIVITY_SUMMARY_MAX_LIST_ITEMS]
+        ]
+        if len(typed_value) > ACTIVITY_SUMMARY_MAX_LIST_ITEMS:
+            compacted.append({"omitted_items": len(typed_value) - ACTIVITY_SUMMARY_MAX_LIST_ITEMS})
+        return compacted
+    if isinstance(value, dict):
+        typed_value = cast(dict[Any, Any], value)
+        if depth >= ACTIVITY_SUMMARY_MAX_DEPTH:
+            return {"key_count": len(typed_value), "payload_mode": "summary"}
+        return {
+            str(child_key): _compact_activity_value(str(child_key), child_value, depth=depth + 1)
+            for child_key, child_value in typed_value.items()
+        }
+    return value
+
+
+def _summarize_heavy_activity_value(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        return {
+            "char_count": len(value),
+            "preview": _truncate_activity_string(value),
+            "payload_mode": "summary",
+        }
+    if isinstance(value, list):
+        return {"item_count": len(cast(list[Any], value)), "payload_mode": "summary"}
+    if isinstance(value, dict):
+        return {"key_count": len(cast(dict[Any, Any], value)), "payload_mode": "summary"}
+    return {"present": value is not None, "payload_mode": "summary"}
+
+
+def _truncate_activity_string(value: str) -> str:
+    if len(value) <= ACTIVITY_SUMMARY_MAX_STRING_CHARS:
+        return value
+    return value[:ACTIVITY_SUMMARY_MAX_STRING_CHARS] + "... [truncated]"
 
 
 def _run_to_response(run: Run, *, is_graph_backed: bool = False) -> RunResponse:
@@ -715,13 +823,15 @@ async def get_activity(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     event_store: Annotated[SqliteEventStore, Depends(get_event_store_v2)],
     after: int | None = Query(default=None),
-    limit: int = Query(default=200, ge=1, le=1000),
+    limit: int = Query(default=DEFAULT_ACTIVITY_LIMIT, ge=1, le=MAX_ACTIVITY_LIMIT),
     event_type: str | None = Query(default=None),
+    payload_mode: ActivityPayloadMode = Query(default="summary"),
 ) -> ActivityResponse:
     """Get the activity log for a run.
 
     Returns a paginated, optionally filtered list of events enriched with
-    step/task titles resolved from the current run state.
+    step/task titles resolved from the current run state. Payloads are compact
+    by default; pass ``payload_mode=full`` for transcript-style fields.
     """
     # Validate run exists (raises RunNotFoundError → 404)
     run = await service.get_run(run_id)
@@ -751,7 +861,7 @@ async def get_activity(
 
     events: list[ActivityEvent] = []
     for row in rows:
-        payload = row["payload"]
+        payload = _activity_payload_for_mode(row["event_type"], row["payload"], payload_mode)
         task_id = payload.get("task_id")
         step_id = payload.get("step_id")
 
@@ -784,6 +894,7 @@ async def stream_activity(
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
     since_id: int | None = Query(default=None, description="Resume from this event ID (exclusive)"),
     event_type: str | None = Query(default=None, description="Filter by event type"),
+    payload_mode: ActivityPayloadMode = Query(default="summary"),
     once: bool = Query(
         default=False, description="Yield all existing events and stop (for testing)"
     ),
@@ -846,7 +957,9 @@ async def stream_activity(
                 # Stream each event as SSE (outside the session context)
                 if rows:
                     for row in rows:
-                        payload = row["payload"]
+                        payload = _activity_payload_for_mode(
+                            row["event_type"], row["payload"], payload_mode
+                        )
                         task_id = payload.get("task_id")
                         step_id = payload.get("step_id")
 

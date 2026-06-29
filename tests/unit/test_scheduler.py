@@ -401,8 +401,8 @@ def test_schedule_tie_break_controller_and_deterministic_nodes_before_agents() -
 
     assert decision.candidates == [
         "check-1",
-        "join-1",
         "final-gate-1",
+        "join-1",
         "worker-1",
         "verifier-1",
     ]

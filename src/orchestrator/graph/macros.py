@@ -63,7 +63,6 @@ class AttachVerifierArgs(MacroArgs):
     worker_id: str | None = None
     verifier_id: str | None = None
     edge_id: str | None = None
-    candidate_id: str | None = None
     rubric: list[str] | None = None
 
 
@@ -75,7 +74,6 @@ class AttachCheckArgs(MacroArgs):
     verifier_id: str | None = None
     edge_id: str | None = None
     role: str | None = None
-    candidate_id: str | None = None
     evidence_source_port: str | None = None
     command_definition: dict[str, Any] | None = None
     command_binding: str | None = None
@@ -233,7 +231,6 @@ def _create_work_region(
         _verifier_node(
             verifier_id,
             region_id,
-            candidate_id,
             rubric=_rubric(args),
         ),
         _edge(
@@ -276,9 +273,8 @@ def _attach_verifier(args: dict[str, Any]) -> list[dict[str, Any]]:
         _str(args, "candidate_source_node_id") or _str(args, "worker_id") or f"worker-{region_id}"
     )
     verifier_id = _str(args, "verifier_id") or f"verifier-{region_id}"
-    candidate_id = _str(args, "candidate_id") or f"candidate-{region_id}"
     return [
-        _verifier_node(verifier_id, region_id, candidate_id, rubric=_rubric(args)),
+        _verifier_node(verifier_id, region_id, rubric=_rubric(args)),
         _edge(
             _str(args, "edge_id") or f"edge-{candidate_source}-candidate-to-{verifier_id}",
             candidate_source,
@@ -305,9 +301,6 @@ def _attach_check(args: dict[str, Any]) -> list[dict[str, Any]]:
         "state": "planned",
         "task_region_id": region_id,
     }
-    candidate_id = _str(args, "candidate_id")
-    if candidate_id is not None:
-        node["candidate_id"] = candidate_id
     _copy_command(args, node)
     return [
         {"op": "create_node", "node": node},
@@ -485,7 +478,6 @@ def _worker_node(
 def _verifier_node(
     node_id: str,
     region_id: str,
-    candidate_id: str,
     *,
     rubric: list[str],
 ) -> dict[str, Any]:
@@ -497,7 +489,6 @@ def _verifier_node(
             "role": "verifier",
             "state": "planned",
             "task_region_id": region_id,
-            "candidate_id": candidate_id,
             "rubric": rubric,
         },
     }

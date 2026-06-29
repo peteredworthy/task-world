@@ -1537,6 +1537,65 @@ def test_callback_accepts_classified_gap_port_and_binds_classified_gap() -> None
     }
 
 
+def test_callback_value_selector_blocks_no_gap_from_corrective_worker() -> None:
+    events = [
+        *_active_lease_events(),
+        _event(
+            "node_created",
+            {"node_id": "worker-2", "kind": "worker", "role": "fixer", "state": "planned"},
+            3,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-classified-gap",
+                "from_node_id": "worker-1",
+                "from_port": "classified_gap",
+                "to_node_id": "worker-2",
+                "to_port": "classified_gap",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_kinds": ["gap_analysis"],
+                    "value_matches": {"classification": "corrective_work_required"},
+                },
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-gap",
+                "output_records": [
+                    {
+                        "record_id": "classified-gap-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "classified_gap",
+                        "schema": "GapClassification",
+                        "value": {
+                            "milestone_kind": "gap_analysis",
+                            "classification": "no_gap",
+                            "source": "accepted_gap_planner_no_op_patch",
+                            "task_region_id": "region-1",
+                            "attempt_number": 0,
+                        },
+                    }
+                ],
+            },
+            complete_node=False,
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+    ]
+
+
 def test_patch_create_edge_backfills_existing_verification_record() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -3000,6 +3059,73 @@ def test_patch_accept_emits_graph_events() -> None:
     assert output[0].payload["base_graph_position"] == -1
 
 
+def test_patch_rejects_planner_authored_verifier_candidate_id() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-verifier-candidate",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "verifier-1",
+                        "kind": "verifier",
+                        "role": "verifier",
+                        "state": "planned",
+                        "candidate_id": "candidate-llm-authored",
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_rejected"]
+    assert (
+        output[0].payload["reason"]
+        == "node verifier-1 must not declare candidate_id; verifiers derive the "
+        "candidate from the required candidate_under_test input edge"
+    )
+
+
+def test_patch_rejects_planner_authored_check_candidate_id() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-check-candidate",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-1",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "candidate_id": "candidate-llm-authored",
+                        "command_definition": {"id": "unit-check", "argv": ["true"]},
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_rejected"]
+    assert (
+        output[0].payload["reason"]
+        == "node check-1 must not declare candidate_id; checks derive evaluated "
+        "candidates from bound candidate or verification evidence inputs"
+    )
+
+
 def test_patch_rejected_after_run_cancellation() -> None:
     events = [
         _event(
@@ -3578,6 +3704,1074 @@ def test_schedule_tick_grants_leases() -> None:
     assert output[1].payload["node_id"] == "worker-1"
 
 
+def test_schedule_tick_recovers_quiescent_graph_after_failed_required_check() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+                "value": {"routine_id": "routine-1"},
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-r1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant-r1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "status": "failed",
+                "value": {"status": "failed", "exit_code": 127},
+            },
+            4,
+        ),
+    ]
+
+    assert project_task_states(events) == {"region-r1-final": "pending"}
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert [event.event_type for event in output] == [
+        "node_created",
+        "edge_created",
+        "input_bound",
+        "edge_created",
+        "input_bound",
+    ]
+    recovery_node = output[0].payload
+    assert recovery_node["node_id"] == "planner-recover-check-result-r1"
+    assert recovery_node["kind"] == "planner"
+    assert recovery_node["role"] == "gap_planner"
+    assert recovery_node["recovery_reason"] == "failed_required_check"
+    assert output[2].payload["to_port"] == "verification_evidence"
+    assert output[2].payload["record_ids"] == ["check-result-r1"]
+    assert output[4].payload["to_port"] == "routine_snapshot"
+    assert output[4].payload["record_ids"] == ["routine-snapshot-record"]
+
+    next_output = _apply(events + output, "schedule_tick", {"run_id": "run-1"})
+
+    assert any(
+        event.event_type == "lease_granted"
+        and event.payload["node_id"] == "planner-recover-check-result-r1"
+        and event.payload["base_snapshot_id"] == "routine-snapshot-record"
+        for event in next_output
+    )
+
+
+def test_schedule_tick_does_not_duplicate_existing_failed_check_recovery() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-r1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant-r1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "status": "failed",
+            },
+            4,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-gap-existing",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "region-r1-gap",
+            },
+            5,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-existing-gap",
+                "from_node_id": "check-final-invariant-r1",
+                "from_port": "check_result",
+                "to_node_id": "planner-gap-existing",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["check_result"]},
+            },
+            6,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert output == []
+
+
+def test_schedule_tick_fails_after_no_successor_failed_check_recovery() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-r1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant-r1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "status": "failed",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-recover-check-result-r1",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "recovery-region-r1-final",
+                "recovery_reason": "failed_required_check",
+                "recovery_of_node_id": "check-final-invariant-r1",
+                "recovery_of_record_id": "check-result-r1",
+            },
+            3,
+        ),
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-no-safe-mutation",
+                "proposed_by_node_id": "planner-recover-check-result-r1",
+                "successor_planner_node_ids": [],
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert [event.event_type for event in output] == ["run_lifecycle_changed"]
+    assert output[0].payload["to_state"] == "failed"
+    assert output[0].payload["trigger"] == "recovery_planner_no_successor"
+    assert output[0].payload["node_id"] == "planner-recover-check-result-r1"
+    assert output[0].payload["patch_id"] == "patch-no-safe-mutation"
+    assert output[0].payload["recovery_of_record_id"] == "check-result-r1"
+
+
+def test_schedule_tick_does_not_fail_after_environment_no_successor_recovery() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-r1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant-r1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "value": {
+                    "status": "failed",
+                    "classification": "tool_unavailable",
+                    "command_text": "npm --prefix ui test -- RunEvidenceDigest",
+                    "stderr": "sh: vitest: command not found",
+                    "exit_code": 127,
+                },
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-recover-check-result-r1",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "recovery-region-r1-final",
+                "recovery_reason": "failed_required_check",
+                "recovery_of_node_id": "check-final-invariant-r1",
+                "recovery_of_record_id": "check-result-r1",
+            },
+            3,
+        ),
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-no-safe-mutation",
+                "proposed_by_node_id": "planner-recover-check-result-r1",
+                "successor_planner_node_ids": [],
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert not any(
+        event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
+        for event in output
+    )
+
+
+def test_schedule_tick_ignores_retired_failed_check_recovery_target() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-r1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant-r1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "status": "failed",
+            },
+            4,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-gap-retired",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "retired",
+                "task_region_id": "region-r1-gap",
+            },
+            5,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-retired-gap",
+                "from_node_id": "check-final-invariant-r1",
+                "from_port": "check_result",
+                "to_node_id": "planner-gap-retired",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["check_result"]},
+            },
+            6,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    recovery_node = next(event.payload for event in output if event.event_type == "node_created")
+    assert recovery_node["node_id"] == "planner-recover-check-result-r1"
+    assert recovery_node["recovery_reason"] == "failed_required_check"
+
+
+def test_schedule_tick_creates_gap_planner_for_failed_corrective_verifier() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-corrective",
+                "kind": "worker",
+                "role": "fixer",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+                "candidate_id": "candidate-fix",
+                "attempt_number": 2,
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-fix",
+                "record_kind": "output",
+                "producer_node_id": "worker-corrective",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-fix",
+                "task_region_id": "corrective_work_region",
+                "attempt_number": 2,
+                "value": {},
+            },
+            4,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-corrective",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+                "candidate_id": "candidate-fix",
+            },
+            5,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-passed-old",
+                "record_kind": "verification",
+                "producer_node_id": "verifier-corrective",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-old",
+                "verdict": "passed",
+                "value": {"grades": [{"requirement_id": "R-1", "grade": "A"}]},
+            },
+            6,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-fix-failed",
+                "record_kind": "verification",
+                "producer_node_id": "verifier-corrective",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-fix",
+                "verdict": "failed",
+                "value": {"grades": [{"requirement_id": "R-1", "grade": "C"}]},
+            },
+            7,
+        ),
+        _event(
+            "verification_failed",
+            {
+                "node_id": "verifier-corrective",
+                "verifier_node_id": "verifier-corrective",
+                "candidate_id": "candidate-fix",
+                "verdict": "failed",
+                "record_id": "verification-fix-failed",
+                "task_region_id": "corrective_work_region",
+            },
+            8,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "blocked",
+                "task_region_id": "final-region",
+                "command_definition": {"id": "hidden-oracle", "cmd": "true", "must": True},
+            },
+            9,
+        ),
+    ]
+
+    assert project_task_states(events)["corrective_work_region"] == "needs_revision"
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert [event.event_type for event in output[:5]] == [
+        "node_created",
+        "edge_created",
+        "input_bound",
+        "edge_created",
+        "input_bound",
+    ]
+    recovery_node = output[0].payload
+    assert recovery_node["node_id"] == "planner-recover-verification-fix-failed"
+    assert recovery_node["role"] == "gap_planner"
+    assert recovery_node["recovery_reason"] == "failed_verification"
+    assert output[2].payload["to_port"] == "verification_evidence"
+    assert output[2].payload["record_ids"] == ["verification-fix-failed"]
+    assert output[4].payload["to_port"] == "routine_snapshot"
+    assert output[4].payload["record_ids"] == ["routine-snapshot-record"]
+
+    next_output = _apply(events + output, "schedule_tick", {"run_id": "run-1"})
+
+    assert any(
+        event.event_type == "lease_granted"
+        and event.payload["node_id"] == "planner-recover-verification-fix-failed"
+        and event.payload["base_snapshot_id"] == "routine-snapshot-record"
+        for event in next_output
+    )
+
+
+def test_schedule_tick_does_not_duplicate_existing_failed_verification_recovery() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-implementation",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "implementation-region",
+                "candidate_id": "candidate-1",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-implementation",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "task_region_id": "implementation-region",
+                "value": {},
+            },
+            4,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-implementation",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "implementation-region",
+                "candidate_id": "candidate-1",
+            },
+            5,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-implementation-failed",
+                "record_kind": "verification",
+                "producer_node_id": "verifier-implementation",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-1",
+                "verdict": "failed",
+                "value": {"grades": [{"requirement_id": "R-1", "grade": "C"}]},
+            },
+            6,
+        ),
+        _event(
+            "verification_failed",
+            {
+                "node_id": "verifier-implementation",
+                "verifier_node_id": "verifier-implementation",
+                "candidate_id": "candidate-1",
+                "verdict": "failed",
+                "record_id": "verification-implementation-failed",
+                "task_region_id": "implementation-region",
+            },
+            7,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-gap-existing",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "implementation-region",
+            },
+            8,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-existing-verification-gap",
+                "from_node_id": "verifier-implementation",
+                "from_port": "verification_report",
+                "to_node_id": "planner-gap-existing",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["verification"]},
+            },
+            9,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert output == []
+
+
+def test_passed_corrective_verifier_releases_final_check_without_recovery() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-corrective",
+                "kind": "worker",
+                "role": "fixer",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+                "candidate_id": "candidate-fix",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-fix",
+                "record_kind": "output",
+                "producer_node_id": "worker-corrective",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-fix",
+                "task_region_id": "corrective_work_region",
+                "value": {},
+            },
+            4,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-corrective",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+                "candidate_id": "candidate-fix",
+            },
+            5,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "planned",
+                "task_region_id": "final-region",
+                "command_definition": {"id": "hidden-oracle", "cmd": "true", "must": True},
+            },
+            6,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-corrective-final",
+                "from_node_id": "verifier-corrective",
+                "from_port": "verification_report",
+                "to_node_id": "check-final",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["verification"]},
+            },
+            7,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-fix-passed",
+                "record_kind": "verification",
+                "producer_node_id": "verifier-corrective",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-fix",
+                "verdict": "passed",
+                "value": {"grades": [{"requirement_id": "R-1", "grade": "A"}]},
+            },
+            8,
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-corrective",
+                "verifier_node_id": "verifier-corrective",
+                "candidate_id": "candidate-fix",
+                "verdict": "passed",
+                "record_id": "verification-fix-passed",
+                "task_region_id": "corrective_work_region",
+            },
+            9,
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-corrective-final",
+                "to_node_id": "check-final",
+                "to_port": "verification_evidence",
+                "record_ids": ["verification-fix-passed"],
+            },
+            10,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    assert not any(
+        event.event_type == "node_created"
+        and event.payload.get("recovery_reason") == "failed_verification"
+        for event in output
+    )
+    assert any(
+        event.event_type == "lease_granted" and event.payload["node_id"] == "check-final"
+        for event in output
+    )
+
+
+def test_passed_verification_recovers_final_check_and_retires_failure_branch() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-implementation",
+                "kind": "worker",
+                "role": "builder",
+                "state": "completed",
+                "task_region_id": "implementation-region",
+                "candidate_id": "candidate-1",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-implementation",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "task_region_id": "implementation-region",
+                "value": {},
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-implementation",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "implementation-region",
+                "candidate_id": "candidate-1",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-implementation-passed",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-implementation",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-1",
+                "task_region_id": "implementation-region",
+                "verdict": "passed",
+                "value": {"grades": [{"requirement_id": "R-1", "grade": "A"}]},
+            },
+            4,
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-implementation",
+                "verifier_node_id": "verifier-implementation",
+                "candidate_id": "candidate-1",
+                "verdict": "passed",
+                "record_id": "verification-implementation-passed",
+                "task_region_id": "implementation-region",
+            },
+            5,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-gap",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "planned",
+                "task_region_id": "gap-region",
+            },
+            6,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-corrective",
+                "kind": "worker",
+                "role": "fixer",
+                "state": "planned",
+                "task_region_id": "corrective-region",
+                "candidate_id": "candidate-fix",
+            },
+            7,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-corrective",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "planned",
+                "task_region_id": "corrective-region",
+                "candidate_id": "candidate-fix",
+            },
+            8,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "planned",
+                "task_region_id": "final-region",
+                "command_definition": {"id": "hidden-oracle", "cmd": "true", "must": True},
+            },
+            9,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-verifier-gap",
+                "from_node_id": "verifier-implementation",
+                "from_port": "verification_report",
+                "to_node_id": "planner-gap",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_kinds": ["verification"],
+                    "value_matches": {"verdict": "failed"},
+                },
+            },
+            10,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-gap-corrective",
+                "from_node_id": "planner-gap",
+                "from_port": "classified_gap",
+                "to_node_id": "worker-corrective",
+                "to_port": "classified_gap",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_kinds": ["gap_analysis"],
+                    "value_matches": {"classification": "corrective_work_required"},
+                },
+            },
+            11,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-corrective-verifier",
+                "from_node_id": "worker-corrective",
+                "from_port": "candidate",
+                "to_node_id": "verifier-corrective",
+                "to_port": "candidate_under_test",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["candidate"]},
+            },
+            12,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-corrective-final",
+                "from_node_id": "verifier-corrective",
+                "from_port": "verification_report",
+                "to_node_id": "check-final",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["verification"]},
+            },
+            13,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    recovery_edge = next(
+        event
+        for event in output
+        if event.event_type == "edge_created"
+        and event.payload.get("metadata", {}).get("purpose")
+        == "passed_verification_final_invariant_recovery"
+    )
+    assert recovery_edge.payload["from_node_id"] == "verifier-implementation"
+    assert recovery_edge.payload["to_node_id"] == "check-final"
+    assert recovery_edge.payload["accepted_record_selector"] == {
+        "record_kinds": ["verification"],
+        "value_matches": {"verdict": "passed"},
+    }
+    assert any(
+        event.event_type == "input_bound"
+        and event.payload["to_node_id"] == "check-final"
+        and event.payload["record_ids"] == ["verification-implementation-passed"]
+        for event in output
+    )
+    retired_node_ids = {
+        event.payload["node_id"] for event in output if event.event_type == "node_retired"
+    }
+    assert retired_node_ids == {"planner-gap", "worker-corrective", "verifier-corrective"}
+
+    next_output = _apply(
+        events + output,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0"},
+    )
+
+    assert any(
+        event.event_type == "lease_granted" and event.payload["node_id"] == "check-final"
+        for event in next_output
+    )
+    task_states = project_task_states([*events, *output])
+    assert task_states["gap-region"] == "accepted"
+    assert task_states["corrective-region"] == "accepted"
+
+
+def test_passed_final_check_retires_failure_continuation() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "final-region",
+                "command_definition": {"id": "hidden-oracle", "cmd": "true", "must": True},
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-passed",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "final-region",
+                "value": {"status": "passed"},
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-gap-final",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "planned",
+                "task_region_id": "final-gap-region",
+            },
+            3,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-final-check-gap",
+                "from_node_id": "check-final",
+                "from_port": "check_result",
+                "to_node_id": "planner-gap-final",
+                "to_port": "verification_evidence",
+                "required": False,
+                "accepted_record_selector": {"record_kinds": ["check_result"]},
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    assert [event.payload["node_id"] for event in output if event.event_type == "node_retired"] == [
+        "planner-gap-final"
+    ]
+    task_states = project_task_states([*events, *output])
+    assert task_states["final-gap-region"] == "accepted"
+
+
 def test_schedule_tick_marks_planned_node_ready_when_required_input_bound() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -3836,6 +5030,22 @@ def test_schedule_tick_check_precondition_requires_command_definition() -> None:
     ]
 
 
+def test_schedule_tick_rechecks_ready_check_precondition_requires_command_definition() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "check-1", "kind": "check", "state": "ready"}, 1),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    assert [(event.event_type, event.payload) for event in output] == [
+        (
+            "node_deferred",
+            {"node_id": "check-1", "reason": "precondition_failed:has_command_definition"},
+        )
+    ]
+
+
 def test_schedule_tick_check_precondition_passes_with_command_definition() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -4045,6 +5255,61 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
     }
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["worker-1"] == "ready"
+
+
+def test_agent_died_check_missing_command_fails_without_retry() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "check-1", "kind": "check", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "check-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "run_id": "run-1",
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "check node missing command_definition",
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "output_record_accepted",
+        "node_state_changed",
+    ]
+    assert output[2].payload["record_type"] == "failure_record"
+    assert output[2].payload["value"] == {
+        "failed_node_id": "check-1",
+        "phase": "runtime",
+        "error_class": "runtime_configuration_error",
+        "retryable": False,
+        "lease_id": "lease-1",
+        "execution_id": "exec-1",
+        "lease_generation": 1,
+        "reason": "check node missing command_definition",
+    }
+    assert output[3].payload == {
+        "node_id": "check-1",
+        "new_state": "failed",
+        "trigger": "non_retryable_runtime_error",
+        "reason": "check node missing command_definition",
+    }
+    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["node_states"]["check-1"] == "failed"
 
 
 def test_agent_died_retry_backoff_blocks_until_not_before() -> None:

@@ -432,7 +432,6 @@ def _region_ops(prefix: str, successor_id: str | None) -> list[dict[str, Any]]:
                 "state": "planned",
                 "task_region_id": f"region-{prefix}",
                 "attempt_number": 1,
-                "candidate_id": candidate_id,
             },
         },
         {

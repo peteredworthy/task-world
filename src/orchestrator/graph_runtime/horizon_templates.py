@@ -91,7 +91,6 @@ def instantiate_horizon_template(
                         "role": "verifier",
                         "state": "planned",
                         "task_region_id": region_id,
-                        "candidate_id": candidate_id,
                         "rubric": ["candidate satisfies the bound requirements"],
                     },
                 },
@@ -113,7 +112,8 @@ def instantiate_horizon_template(
             "purpose": purpose,
             "description": "Create a gap planner that classifies verifier or check failures.",
             "expected_successor_readiness": (
-                "Gap analysis waits for bound failure evidence before proposing corrective work."
+                "Gap analysis waits for bound failure evidence before proposing corrective work. "
+                "Use this as the failure continuation for required checks."
             ),
             "canonical_inputs": {
                 "verification_evidence": {
@@ -173,7 +173,6 @@ def instantiate_horizon_template(
                         "role": "verifier",
                         "state": "planned",
                         "task_region_id": region_id,
-                        "candidate_id": f"corrective-{candidate_id}",
                         "rubric": ["corrective candidate resolves the classified gap"],
                     },
                 },
@@ -185,7 +184,10 @@ def instantiate_horizon_template(
                     "to_node_id": f"worker-corrective-{region_id}",
                     "to_port": "classified_gap",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["gap_analysis"]},
+                    "accepted_record_selector": {
+                        "record_kinds": ["gap_analysis"],
+                        "value_matches": {"classification": "corrective_work_required"},
+                    },
                 },
                 {
                     "op": "create_edge",
@@ -206,7 +208,8 @@ def instantiate_horizon_template(
             "description": "Create a final invariant check for accepted graph work.",
             "expected_successor_readiness": (
                 "Completion waits for the check result record accepted by the invariant node. "
-                "The planner must supply command_definition or command_binding."
+                "The planner must supply command_definition or command_binding and wire failed "
+                "check_result evidence to a gap-analysis or corrective-work continuation."
             ),
             "runtime_binding_required": {
                 "check_command": (

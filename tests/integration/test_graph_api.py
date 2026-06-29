@@ -4,7 +4,7 @@ from uuid import uuid4
 from typing import Any
 
 from httpx import AsyncClient
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
 from orchestrator.config import RunStatus
@@ -576,6 +576,27 @@ async def test_graph_projection_uses_paused_run_row_as_effective_state(
     assert projection["run_state"] == "paused"
 
 
+async def test_graph_projection_recomputes_task_states_from_events(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-fresh-task-states-{uuid4().hex[:8]}"
+    await _seed_graph_run(app, run_id)
+
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        snapshot = await GraphEventStore(session).read_projection_snapshot(run_id)
+        assert snapshot is not None
+        snapshot.task_states = {"task-1": "stale"}
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph")
+    assert response.status_code == 200
+    projection = response.json()
+    assert projection["task_states"] != {"task-1": "stale"}
+    assert "stale" not in projection["task_states"].values()
+
+
 async def test_active_graph_execution_readback_uses_bounded_summary_paths(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
@@ -733,6 +754,130 @@ async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
     assert verifier["output_records"][0]["record_kind"] == "verification"
     verifier_callback_types = [event["event_type"] for event in verifier["callback_history"]]
     assert verifier_callback_types == ["node_state_changed", "callback_accepted"]
+
+
+async def test_full_node_detail_hydrates_only_target_node_event_rows(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-node-detail-noisy-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-s-01",
+                "kind": "planner",
+                "role": "planner",
+                "state": "completed",
+                "task_region_id": "implementation",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "plan-1",
+                "record_kind": "output",
+                "producer_node_id": "planner-s-01",
+                "port": "plan",
+                "schema": "PlannerPacket",
+                "value": {"body": "target planner body"},
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-s-01-t-01",
+                "kind": "worker",
+                "role": "builder",
+                "state": "completed",
+                "task_region_id": "implementation",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-corrective-graph-health",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "corrective",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-graph-health",
+                "kind": "check",
+                "role": "final_check",
+                "state": "ready",
+                "task_region_id": "final-invariant",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "noise-worker",
+                "kind": "worker",
+                "role": "builder",
+                "state": "completed",
+                "task_region_id": "noise",
+            },
+        ),
+        *[
+            _event(
+                "output_record_accepted",
+                {
+                    "record_id": f"noise-{index}",
+                    "record_kind": "output",
+                    "producer_node_id": "noise-worker",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "value": {"body": "x" * 4096, "index": index},
+                },
+            )
+            for index in range(40)
+        ],
+    ]
+
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+
+    async with session_factory() as session:
+        noise_position = await session.scalar(
+            select(EventV2Model.version)
+            .where(EventV2Model.aggregate_id == f"graph:{run_id}")
+            .where(EventV2Model.event_type == "output_record_accepted")
+            .where(EventV2Model.version > 3)
+            .order_by(EventV2Model.version)
+            .limit(1)
+        )
+        assert noise_position is not None
+        await session.execute(
+            update(EventV2Model)
+            .where(EventV2Model.aggregate_id == f"graph:{run_id}")
+            .where(EventV2Model.version == noise_position)
+            .values(payload="{not-json")
+        )
+        await session.commit()
+
+    summary_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/planner-s-01")
+    assert summary_resp.status_code == 200
+
+    full_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/planner-s-01?payload_mode=full")
+    assert full_resp.status_code == 200
+    full = full_resp.json()
+    assert full["output_records"][0]["value"]["body"] == "target planner body"
+    assert all(record["producer_node_id"] == "planner-s-01" for record in full["output_records"])
+    assert all(
+        event["payload"].get("producer_node_id", "planner-s-01") == "planner-s-01"
+        for event in full["events"]
+    )
+    assert all("value" not in event["payload"] for event in full["events"])
 
 
 async def test_fresh_control_and_topology_readbacks_preserve_runtime_controls(

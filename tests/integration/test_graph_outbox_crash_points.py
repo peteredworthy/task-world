@@ -425,6 +425,46 @@ async def test_crash_after_append_before_outbox_starts_agent_restarts_dispatch(
 
 
 @pytest.mark.asyncio
+async def test_recover_run_dispatches_only_matching_outbox_rows(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, session_factory = file_db
+    target_run_id = "recover-target-run"
+    other_run_id = "recover-other-run"
+    await _seed_runnable_worker(session_factory, target_run_id)
+    await _seed_runnable_worker(session_factory, other_run_id)
+    clock = FixedClock()
+    ids = SequentialIds()
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+
+    target_result = await controller.handle_command(
+        target_run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0"},
+    )
+    other_result = await controller.handle_command(
+        other_run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0"},
+    )
+
+    call_log: list[str] = []
+    dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
+    report = await recover(session_factory, dispatcher, run_id=target_run_id)
+
+    assert [item.event_id for item in report.redispatched] == [
+        target_result.outbox_items[0].event_id
+    ]
+    assert call_log == [target_result.outbox_items[0].event_id]
+    assert await _outbox_statuses(session_factory) == ["completed", "pending"]
+    assert [item.event_id for item in await dispatcher.pending_items(run_id=other_run_id)] == [
+        other_result.outbox_items[0].event_id
+    ]
+
+
+@pytest.mark.asyncio
 async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_ack(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
 ) -> None:

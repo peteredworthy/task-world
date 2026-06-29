@@ -552,11 +552,12 @@ export const api = {
     return fetchApi('/api/runs/' + runId + '/graph/nodes/' + nodeId);
   },
 
-  getActivity(runId: string, params?: { after?: number; limit?: number; event_type?: string }): Promise<ActivityResponse> {
+  getActivity(runId: string, params?: { after?: number; limit?: number; event_type?: string; payload_mode?: 'summary' | 'full' }): Promise<ActivityResponse> {
     const sp = new URLSearchParams();
     if (params?.after != null) sp.set('after', String(params.after));
     if (params?.limit != null) sp.set('limit', String(params.limit));
     if (params?.event_type) sp.set('event_type', params.event_type);
+    if (params?.payload_mode) sp.set('payload_mode', params.payload_mode);
     const qs = sp.toString();
     return fetchApi('/api/runs/' + runId + '/activity' + (qs ? '?' + qs : ''));
   },

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -99,6 +100,14 @@ class CheckExecutionWorktree:
     temporary_path: str | None = None
 
 
+@dataclass(frozen=True)
+class DependencyProvisionResult:
+    package_dir: str
+    strategy: str
+    status: Literal["provisioned", "skipped", "failed"]
+    detail: str
+
+
 class GraphAgentFactory(Protocol):
     def create_runner(self, context: GraphDispatchContext) -> AgentRunner: ...
 
@@ -188,14 +197,36 @@ class GraphDispatchExecutor(SideEffectExecutor):
             execution_id
         )
 
-    async def wait_for_all(self) -> None:
-        tasks = list(self._running.values())
+    async def wait_for_all(
+        self,
+        *,
+        timeout_seconds: float | None = None,
+        active_execution_ids: set[str] | None = None,
+    ) -> None:
+        self._prune_done()
+        if active_execution_ids is None:
+            tasks = list(self._running.values())
+        else:
+            tasks = [
+                task
+                for execution_id, task in self._running.items()
+                if execution_id in active_execution_ids
+            ]
         if tasks:
-            await asyncio.gather(*tasks)
+            if timeout_seconds is None:
+                await asyncio.gather(*tasks)
+            else:
+                await asyncio.wait(tasks, timeout=max(0.0, timeout_seconds))
+        self._prune_done()
 
     def cancel_all(self) -> None:
         for task in self._running.values():
             task.cancel()
+
+    def _prune_done(self) -> None:
+        for execution_id, task in list(self._running.items()):
+            if task.done():
+                self._running.pop(execution_id, None)
 
     async def _run_agent(self, context: GraphDispatchContext, runner: AgentRunner) -> None:
         try:
@@ -236,7 +267,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 feedback = await self._submit_graph_patch_callback(context, patch_payload)
                 if _graph_patch_feedback_accepted(feedback):
                     graph_patch_accepted = True
-                    if _patch_payload_has_ops(patch_payload):
+                    patch_has_ops = _patch_payload_has_ops(patch_payload)
+                    if context.node_role == "gap_planner":
+                        context.node_payload["_accepted_gap_planner_patch_had_ops"] = patch_has_ops
+                    if patch_has_ops:
                         context.node_payload["_accepted_graph_patch_had_ops"] = True
                 return feedback
 
@@ -984,7 +1018,7 @@ def _verifier_packet(context: GraphDispatchContext) -> dict[str, Any]:
     return {
         "node_id": context.node_id,
         "task_region_id": node.get("task_region_id", context.node_id),
-        "candidate_id": node.get("candidate_id"),
+        "candidate_id": _candidate_id_for_verifier(context),
         "requirements": list(context.requirements),
         "rubric": node.get("rubric") or [],
         "bound_records": _planner_evidence(
@@ -1043,7 +1077,7 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
             "\n".join(
                 [
                     f"Verify task region {node.get('task_region_id', context.node_id)}.",
-                    f"Candidate: {node.get('candidate_id', '')}",
+                    f"Candidate: {_candidate_id_for_verifier(context)}",
                     f"Rubric: {_bounded_json(rubric or [])}",
                     "",
                     "Verifier context packet:",
@@ -1082,6 +1116,7 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
                     "- Read frontier, evidence, open_planner_proposals, accepted_planner_patches, and patch_rejections before proposing.",
                     "- If dynamic_feature is present, ground generated worker, verifier, gap-analysis, corrective-work, and final invariant regions in those feature inputs.",
                     "- Check nodes must include command_definition or command_binding; for dynamic_feature final invariant checks, use command_binding='dynamic_feature_hidden_oracle'.",
+                    "- Every required check, including final invariant checks, must have a failure continuation: bind failed check_result evidence into a gap planner or corrective-work path so a failed check cannot leave the graph quiescent with no schedulable recovery node.",
                     "- For gap planners, follow gap_analysis_contract and prefer corrective_work_region for corrective worker/verifier patches.",
                     "- For gap planners, gap_analysis_obligations are blocking; do not submit a no-op patch while any obligation is present.",
                     "- Gap planners must call submit_graph_patch even when no corrective mutation is safe; use a no-op patch with ops: [] for no-gap decisions.",
@@ -1428,7 +1463,10 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
             ),
             "no_gap_no_op_patch": {
                 "ops": [],
-                "meaning": "no safe corrective mutation is available from bound evidence",
+                "meaning": (
+                    "bound evidence shows no corrective work is needed; accepted no-op "
+                    "emits a no_gap classified_gap record on submit"
+                ),
             },
             "corrective_region": "corrective_work_region",
             "repository_edits": "forbidden",
@@ -1531,8 +1569,9 @@ def _gap_analysis_obligations(
                 "to_node_id": to_node_id,
                 "to_port": to_port,
                 "reason": (
-                    "required classified_gap successor is waiting; no-op patch will be "
-                    "rejected until this planner classifies a gap or creates corrective work"
+                    "required classified_gap successor is waiting; submit a no_gap no-op "
+                    "patch or create corrective work so the successor can receive a "
+                    "durable gap classification"
                 ),
             }
         )
@@ -1905,7 +1944,6 @@ def _planner_patch_examples(
                             "role": "verifier",
                             "state": "planned",
                             "task_region_id": region_id,
-                            "candidate_id": "candidate-example",
                             "rubric": ["candidate satisfies the bound requirements"],
                         },
                     },
@@ -2103,6 +2141,23 @@ def _graph_patch_feedback_accepted(feedback: str) -> bool:
     return " accepted" in feedback and " rejected" not in feedback
 
 
+def _candidate_id_for_verifier(context: GraphDispatchContext) -> str:
+    bound_candidate_ids = _bound_record_ids_for_ports(
+        context,
+        ("candidate_under_test", "candidate"),
+    )
+    if bound_candidate_ids:
+        return bound_candidate_ids[0]
+    return str(context.node_payload.get("candidate_id") or f"candidate-{context.node_id}")
+
+
+def _candidate_id_for_check(context: GraphDispatchContext) -> str:
+    candidate_ids = _evaluated_record_citations(context).get("candidate_record_ids", [])
+    if candidate_ids:
+        return candidate_ids[0]
+    return str(context.node_payload.get("candidate_id") or f"candidate-{context.node_id}")
+
+
 def _patch_payload_has_ops(patch_payload: dict[str, Any]) -> bool:
     raw_patch = patch_payload.get("patch")
     payload = cast(dict[str, Any], raw_patch) if isinstance(raw_patch, dict) else patch_payload
@@ -2276,11 +2331,16 @@ def _output_records_for_submit(
     attempt_number = int(node.get("attempt_number", 0))
     if context.node_kind == "planner":
         role = context.node_role
-        if role == "gap_planner" and node.get("_accepted_graph_patch_had_ops") is True:
+        if role == "gap_planner" and "_accepted_gap_planner_patch_had_ops" in node:
+            patch_had_ops = node.get("_accepted_gap_planner_patch_had_ops") is True
             gap_value = {
                 "milestone_kind": "gap_analysis",
-                "classification": "corrective_work_required",
-                "source": "accepted_gap_planner_patch",
+                "classification": "corrective_work_required" if patch_had_ops else "no_gap",
+                "source": (
+                    "accepted_gap_planner_patch"
+                    if patch_had_ops
+                    else "accepted_gap_planner_no_op_patch"
+                ),
                 "task_region_id": task_region_id,
                 "attempt_number": attempt_number,
             }
@@ -2336,6 +2396,7 @@ def _output_records_for_submit(
     if context.node_kind == "check":
         return []
     if context.node_kind == "verifier":
+        candidate_id = _candidate_id_for_verifier(context)
         verdict = "passed" if _grades_pass(grades) else "failed"
         citations = _evaluated_record_citations(context)
         return [
@@ -2444,6 +2505,12 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
     invocation, command_text, shell = _check_invocation(command_definition)
     timeout_seconds = _check_timeout_seconds(command_definition)
     execution_worktree = await asyncio.to_thread(_prepare_check_execution_worktree, context)
+    dependency_provisioning = await asyncio.to_thread(
+        _provision_check_dependencies,
+        context,
+        execution_worktree,
+        command_text,
+    )
     started = perf_counter()
     stdout = ""
     stderr = ""
@@ -2485,13 +2552,20 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
 
     duration_ms = int((perf_counter() - started) * 1000)
     status = "timeout" if timed_out else "passed" if exit_code == 0 else "failed"
-    candidate_id = str(context.node_payload.get("candidate_id") or f"candidate-{context.node_id}")
+    classification = _classify_check_result(
+        status=status,
+        exit_code=exit_code,
+        stdout=stdout,
+        stderr=stderr,
+        dependency_provisioning=dependency_provisioning,
+    )
+    candidate_id = _candidate_id_for_check(context)
     task_region_id = str(context.node_payload.get("task_region_id") or context.node_id)
     attempt_number = int(context.node_payload.get("attempt_number", 0))
     command_id = str(command_definition.get("id") or context.node_id)
     value = {
         "status": status,
-        "classification": status,
+        "classification": classification,
         "command_id": command_id,
         "command_binding": command_definition.get("command_binding")
         or context.node_payload.get("command_binding"),
@@ -2517,6 +2591,15 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
             "shell": shell,
             "source_worktree_path": context.worktree_path,
             "snapshot_id": execution_worktree.snapshot_id,
+            "dependency_provisioning": [
+                {
+                    "package_dir": result.package_dir,
+                    "strategy": result.strategy,
+                    "status": result.status,
+                    "detail": result.detail,
+                }
+                for result in dependency_provisioning
+            ],
         },
     }
     record_payload = _add_evaluated_record_citations(
@@ -2585,6 +2668,157 @@ def _cleanup_check_execution_worktree(
         check=False,
     )
     shutil.rmtree(tempdir, ignore_errors=True)
+
+
+def _provision_check_dependencies(
+    context: GraphDispatchContext,
+    execution_worktree: CheckExecutionWorktree,
+    command_text: str,
+) -> list[DependencyProvisionResult]:
+    if execution_worktree.temporary_path is None:
+        return []
+    if not _command_needs_node_dependencies(command_text):
+        return []
+
+    source_root = Path(context.worktree_path)
+    execution_root = Path(execution_worktree.path)
+    results: list[DependencyProvisionResult] = []
+    for package_dir in _node_package_dirs(execution_root, command_text):
+        source_package_dir = source_root / package_dir
+        execution_package_dir = execution_root / package_dir
+        node_modules = execution_package_dir / "node_modules"
+        if node_modules.exists():
+            results.append(
+                DependencyProvisionResult(
+                    package_dir=package_dir,
+                    strategy="existing_node_modules",
+                    status="skipped",
+                    detail="node_modules already exists in check worktree",
+                )
+            )
+            continue
+
+        source_node_modules = source_package_dir / "node_modules"
+        if source_node_modules.exists():
+            try:
+                os.symlink(source_node_modules, node_modules, target_is_directory=True)
+            except OSError as exc:
+                results.append(
+                    DependencyProvisionResult(
+                        package_dir=package_dir,
+                        strategy="symlink_source_node_modules",
+                        status="failed",
+                        detail=str(exc),
+                    )
+                )
+            else:
+                results.append(
+                    DependencyProvisionResult(
+                        package_dir=package_dir,
+                        strategy="symlink_source_node_modules",
+                        status="provisioned",
+                        detail=f"linked {source_node_modules}",
+                    )
+                )
+            continue
+
+        lockfile = execution_package_dir / "package-lock.json"
+        if lockfile.exists():
+            result = subprocess.run(
+                ["npm", "ci", "--prefer-offline", "--no-audit", "--no-fund"],
+                cwd=execution_package_dir,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+            if result.returncode == 0:
+                results.append(
+                    DependencyProvisionResult(
+                        package_dir=package_dir,
+                        strategy="npm_ci",
+                        status="provisioned",
+                        detail="npm ci completed",
+                    )
+                )
+            else:
+                detail = _trim_check_output(result.stderr or result.stdout)
+                results.append(
+                    DependencyProvisionResult(
+                        package_dir=package_dir,
+                        strategy="npm_ci",
+                        status="failed",
+                        detail=detail,
+                    )
+                )
+            continue
+
+        results.append(
+            DependencyProvisionResult(
+                package_dir=package_dir,
+                strategy="node_modules_unavailable",
+                status="failed",
+                detail="no source node_modules or package-lock.json available",
+            )
+        )
+    return results
+
+
+def _command_needs_node_dependencies(command_text: str) -> bool:
+    lowered = command_text.lower()
+    return any(
+        token in lowered for token in ("npm", "npx", "vitest", "vite", "tsx", "node_modules")
+    )
+
+
+def _node_package_dirs(execution_root: Path, command_text: str) -> list[str]:
+    candidates: list[str] = []
+    if (execution_root / "package.json").exists():
+        candidates.append(".")
+    for match in re.finditer(r"(?:--prefix|-C)\s+([^\s;&|]+)", command_text):
+        raw_path = match.group(1).strip("'\"")
+        if raw_path and not raw_path.startswith(("/", "..")):
+            candidates.append(raw_path)
+    if " ui " in f" {command_text} " or "--prefix ui" in command_text or "ui/" in command_text:
+        candidates.append("ui")
+    if not candidates and (execution_root / "ui" / "package.json").exists():
+        candidates.append("ui")
+
+    output: list[str] = []
+    for candidate in candidates:
+        normalized = candidate.rstrip("/") or "."
+        if normalized not in output and (execution_root / normalized / "package.json").exists():
+            output.append(normalized)
+    return output
+
+
+def _classify_check_result(
+    *,
+    status: str,
+    exit_code: int | None,
+    stdout: str,
+    stderr: str,
+    dependency_provisioning: list[DependencyProvisionResult],
+) -> str:
+    if status in {"passed", "timeout"}:
+        return status
+    if any(result.status == "failed" for result in dependency_provisioning):
+        return "environment_error"
+    combined = f"{stdout}\n{stderr}".lower()
+    if exit_code == 127 or any(
+        phrase in combined
+        for phrase in (
+            "command not found",
+            "no such file or directory",
+            "could not determine executable to run",
+            "sh: vitest:",
+            "vitest: not found",
+        )
+    ):
+        return "tool_unavailable"
+    if "enoent" in combined or "cannot find module" in combined:
+        return "tool_error"
+    return "failed"
 
 
 def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str] | None:

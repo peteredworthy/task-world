@@ -52,6 +52,7 @@ SUMMARY_PAYLOAD_FIELDS = (
     "allowed_actions",
     "authority",
     "blocker",
+    "command_binding",
     "command_definition",
     "command_type",
     "execution_id",
@@ -102,6 +103,7 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "candidate_id",
     "classification",
     "cleanup_id",
+    "command_binding",
     "command_definition",
     "command_definition_id",
     "confidence",
@@ -223,6 +225,7 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "attempt_number",
     "base_snapshot_id",
     "candidate_id",
+    "command_binding",
     "execution_id",
     "expires_at",
     "failed_candidate_id",
@@ -239,6 +242,7 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "role",
     "session_id",
     "state",
+    "status",
     "task_region_id",
     "to_state",
 )
@@ -251,6 +255,7 @@ NODE_DETAIL_PAYLOAD_FIELDS = (
     "candidate_record_id",
     "candidate_record_ids",
     "candidate_id",
+    "command_binding",
     "command_definition",
     "edge_id",
     "evaluated_record_ids",
@@ -520,6 +525,29 @@ class GraphEventStore:
             select(EventV2Model)
             .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
             .where(EventV2Model.version >= from_position)
+            .order_by(EventV2Model.version)
+        )
+        events: list[EventEnvelope] = []
+        for row in result.scalars():
+            payload = json.loads(row.payload)
+            events.append(EventEnvelope.model_validate(payload))
+        return events
+
+    async def read_run_positions(
+        self,
+        run_id: str,
+        positions: list[int],
+    ) -> list[EventEnvelope]:
+        """Read full graph events for exact run-local positions."""
+        unique_positions = sorted(
+            {position for position in positions if position > 0 and not isinstance(position, bool)}
+        )
+        if not unique_positions:
+            return []
+        result = await self._session.execute(
+            select(EventV2Model)
+            .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
+            .where(EventV2Model.version.in_(unique_positions))
             .order_by(EventV2Model.version)
         )
         events: list[EventEnvelope] = []

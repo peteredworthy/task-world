@@ -366,9 +366,9 @@ def test_authority_request_edge_to_worker_authority_port_is_valid() -> None:
     assert result.accepted is True, result.rejection_reason
 
 
-def test_gap_planner_no_op_rejected_when_classified_gap_successor_unsatisfied() -> None:
-    """§4: an empty gap-planner patch is rejected while a required classified_gap
-    successor edge from the gap planner is unsatisfied."""
+def test_gap_planner_no_op_allowed_when_classified_gap_successor_unsatisfied() -> None:
+    """A no-gap gap-planner decision may use an empty patch; submit emits the
+    durable classified_gap record that releases matching successors."""
 
     result = validate_patch(
         _patch([], proposed_by="planner-gap"),
@@ -377,9 +377,7 @@ def test_gap_planner_no_op_rejected_when_classified_gap_successor_unsatisfied() 
         projection=_projection_with_classified_gap_successor("planner-gap"),
         actor_role="gap_planner",
     )
-    assert result.accepted is False
-    assert result.rejection_reason is not None
-    assert "classified_gap" in result.rejection_reason
+    assert result.accepted is True, result.rejection_reason
 
 
 def test_gap_planner_no_op_allowed_without_open_classified_gap_successor() -> None:

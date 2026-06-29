@@ -59,6 +59,9 @@ def test_create_work_region_macro_expands_to_valid_patch() -> None:
     assert worker["authority"]["resource_claims"] == [
         {"mode": "write", "scope": "repo", "paths": ["."]}
     ]
+    verifier = patch.ops[1].node
+    assert verifier is not None
+    assert "candidate_id" not in verifier
 
 
 def test_gap_planner_corrective_region_macro_expands_to_valid_patch() -> None:
@@ -272,6 +275,55 @@ def test_macro_invocations_reject_invalid_invocation_shape() -> None:
     except ValueError as exc:
         assert "create_join args invalid" in str(exc)
         assert "sources.0.node_id" in str(exc)
+    else:  # pragma: no cover - defensive
+        raise AssertionError("expected ValueError")
+
+
+def test_attach_check_macro_rejects_planner_authored_candidate_id() -> None:
+    payload = {
+        "patch_id": "macro-invalid-check-candidate",
+        "base_graph_position": 0,
+        "macro_invocations": [
+            {
+                "macro": "attach_check",
+                "args": {
+                    "region_id": "feature-region",
+                    "candidate_id": "candidate-llm-authored",
+                    "command_definition": {"id": "unit-check", "argv": ["true"]},
+                },
+            }
+        ],
+    }
+
+    try:
+        expand_patch_macros(payload)
+    except ValueError as exc:
+        assert "attach_check args invalid" in str(exc)
+        assert "candidate_id" in str(exc)
+    else:  # pragma: no cover - defensive
+        raise AssertionError("expected ValueError")
+
+
+def test_attach_verifier_macro_rejects_planner_authored_candidate_id() -> None:
+    payload = {
+        "patch_id": "macro-invalid-verifier-candidate",
+        "base_graph_position": 0,
+        "macro_invocations": [
+            {
+                "macro": "attach_verifier",
+                "args": {
+                    "region_id": "feature-region",
+                    "candidate_id": "candidate-llm-authored",
+                },
+            }
+        ],
+    }
+
+    try:
+        expand_patch_macros(payload)
+    except ValueError as exc:
+        assert "attach_verifier args invalid" in str(exc)
+        assert "candidate_id" in str(exc)
     else:  # pragma: no cover - defensive
         raise AssertionError("expected ValueError")
 

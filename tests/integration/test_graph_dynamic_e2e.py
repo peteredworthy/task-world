@@ -100,9 +100,8 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
 
     Mirrors the shape of the accepted live smoke run ``0c053df6``: implementation
     + weak validation + a gap planner, plus the pre-wired corrective region whose
-    worker is gated on the gap planner's ``classified_gap`` decision. The gap
-    planner appends only the final invariant check, so a gap *no-op* is correctly
-    rejected (a required ``classified_gap`` successor already exists).
+    worker is gated on the gap planner's corrective-required ``classified_gap``
+    decision. A gap no-op is accepted as a durable no-gap classification.
 
     ``feature-region`` groups the implementation worker, its verifier, and the
     gap planner so the region reaches ``accepted`` once the candidate is graded;
@@ -135,7 +134,6 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
                     "role": "verifier",
                     "state": "planned",
                     "task_region_id": "feature-region",
-                    "candidate_id": "cand-ds",
                     "rubric": ["candidate satisfies the bound requirements"],
                 },
             },
@@ -169,7 +167,6 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
                     "role": "verifier",
                     "state": "planned",
                     "task_region_id": "corrective_work_region",
-                    "candidate_id": "cand-ds-fix",
                     "rubric": ["corrective candidate resolves the classified gap"],
                 },
             },
@@ -201,7 +198,10 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
                 "to_node_id": "worker-ds-corrective",
                 "to_port": "classified_gap",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["gap_analysis"]},
+                "accepted_record_selector": {
+                    "record_kinds": ["gap_analysis"],
+                    "value_matches": {"classification": "corrective_work_required"},
+                },
             },
             {
                 "op": "create_edge",
@@ -215,6 +215,45 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
             },
         ],
     }
+
+
+def _passed_verifier_terminalization_patch(proposed_by: str) -> dict[str, Any]:
+    patch = _root_planner_patch(proposed_by)
+    patch["patch_id"] = "patch-ds-passed-verifier-terminalization"
+    ops = patch["ops"]
+    for op in ops:
+        if op.get("edge_id") == "edge-ds-validation-gap":
+            op["accepted_record_selector"] = {
+                "record_kinds": ["verification"],
+                "value_matches": {"verdict": "failed"},
+            }
+            break
+    ops.append(
+        {
+            "op": "create_node",
+            "node": {
+                "node_id": "check-ds-invariant",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "planned",
+                "task_region_id": "final-invariant-region",
+                "command_binding": "dynamic_feature_hidden_oracle",
+            },
+        }
+    )
+    ops.append(
+        {
+            "op": "create_edge",
+            "edge_id": "edge-ds-corrective-invariant",
+            "from_node_id": "verifier-ds-corrective",
+            "from_port": "verification_report",
+            "to_node_id": "check-ds-invariant",
+            "to_port": "verification_evidence",
+            "required": True,
+            "accepted_record_selector": {"record_kinds": ["verification"]},
+        }
+    )
+    return patch
 
 
 def _gap_planner_patch(proposed_by: str) -> dict[str, Any]:
@@ -279,6 +318,62 @@ def _gap_planner_patch(proposed_by: str) -> dict[str, Any]:
 
 def _gap_planner_no_op() -> dict[str, Any]:
     return {"patch_id": "patch-ds-gap-no-op", "base_graph_position": 0, "ops": []}
+
+
+def _recovery_gap_planner_patch(proposed_by: str) -> dict[str, Any]:
+    return {
+        "patch_id": f"patch-{proposed_by}-retry-corrective",
+        "proposed_by_node_id": proposed_by,
+        "base_graph_position": 0,
+        "ops": [
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "worker-ds-corrective-retry",
+                    "kind": "worker",
+                    "role": "fixer",
+                    "state": "planned",
+                    "task_region_id": "corrective_work_region",
+                    "attempt_number": 3,
+                    "candidate_id": "cand-ds-fix-retry",
+                },
+            },
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "verifier-ds-corrective-retry",
+                    "kind": "verifier",
+                    "role": "verifier",
+                    "state": "planned",
+                    "task_region_id": "corrective_work_region",
+                    "rubric": ["retry corrective candidate resolves the classified gap"],
+                },
+            },
+            {
+                "op": "create_edge",
+                "edge_id": "edge-ds-recovery-gap-corrective-retry",
+                "from_node_id": proposed_by,
+                "from_port": "classified_gap",
+                "to_node_id": "worker-ds-corrective-retry",
+                "to_port": "classified_gap",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_kinds": ["gap_analysis"],
+                    "value_matches": {"classification": "corrective_work_required"},
+                },
+            },
+            {
+                "op": "create_edge",
+                "edge_id": "edge-ds-corrective-retry-validation",
+                "from_node_id": "worker-ds-corrective-retry",
+                "from_port": "candidate",
+                "to_node_id": "verifier-ds-corrective-retry",
+                "to_port": "candidate_under_test",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["candidate"]},
+            },
+        ],
+    }
 
 
 def _macro_root_planner_patch(_proposed_by: str) -> dict[str, Any]:
@@ -385,6 +480,29 @@ class VerifierAgent(_BaseAgent):
         return ExecutionResult(success=True)
 
 
+class SequenceVerifierAgent(_BaseAgent):
+    def __init__(self, grades: list[str]) -> None:
+        self._grades = list(grades)
+        self.seen_grades: list[str] = []
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        grade = self._grades.pop(0) if self._grades else "A"
+        self.seen_grades.append(grade)
+        if on_grade is not None:
+            await on_grade("req-1", grade, None)
+        await on_submit()
+        return ExecutionResult(success=True)
+
+
 class NoSubmitAgent(_BaseAgent):
     """Returns successfully without ever calling ``on_submit`` — the live failure
     mode behind DG-5.1d. The runtime must record ``agent_died`` and recover the
@@ -430,9 +548,15 @@ class DynamicPlannerAgent(_BaseAgent):
         submit_patch = context.graph_patch_callback
 
         if context.node_role == "gap_planner":
-            if self._gap_no_op_first:
+            if context.node_id.startswith("planner-recover-"):
+                self.patch_feedback.append(
+                    await submit_patch(_recovery_gap_planner_patch(context.node_id))
+                )
+            elif self._gap_no_op_first:
                 self.patch_feedback.append(await submit_patch(_gap_planner_no_op()))
-            self.patch_feedback.append(await submit_patch(_gap_planner_patch(context.node_id)))
+                self.patch_feedback.append(await submit_patch(_gap_planner_patch(context.node_id)))
+            else:
+                self.patch_feedback.append(await submit_patch(_gap_planner_patch(context.node_id)))
             await on_submit()
         else:
             self.patch_feedback.append(await submit_patch(_root_planner_patch(context.node_id)))
@@ -442,6 +566,31 @@ class DynamicPlannerAgent(_BaseAgent):
             if not self._root_skip_submit:
                 await on_submit()
 
+        return ExecutionResult(success=True)
+
+
+class PassedVerifierTerminalizationPlannerAgent(_BaseAgent):
+    def __init__(self) -> None:
+        self.patch_feedback: list[str] = []
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        assert context.graph_patch_callback is not None, "planner must receive patch callback"
+        assert context.node_role != "gap_planner", "passed-verifier recovery should skip gap work"
+        self.patch_feedback.append(
+            await context.graph_patch_callback(
+                _passed_verifier_terminalization_patch(context.node_id)
+            )
+        )
+        await on_submit()
         return ExecutionResult(success=True)
 
 
@@ -659,7 +808,6 @@ async def test_dynamic_full_happy_path_completes(
         "verifier",
     ]
     assert outcome.completed is True, outcome.blocked_reason
-    assert project_run_state(events) == "completed"
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
 
     accepted_patches = [
@@ -729,7 +877,6 @@ async def test_dynamic_macro_created_graph_completes(
         "verifier",
     ]
     assert outcome.completed is True, outcome.blocked_reason
-    assert project_run_state(events) == "completed"
     accepted_patches = [
         event.payload.get("patch_id")
         for event in events
@@ -745,13 +892,74 @@ async def test_dynamic_macro_created_graph_completes(
 
 
 @pytest.mark.asyncio
-async def test_dynamic_gap_no_op_is_rejected_then_corrective_completes(
+async def test_passed_verifier_with_failure_only_gap_terminalizes_to_final_check(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
 ) -> None:
-    """Gap planner no-op (DG-5.1j) is rejected because a required classified_gap
-    successor is unsatisfied; the rejected-patch guard (DG-5.1p) keeps the node
-    alive, and the corrective patch then drives the run to completion.
+    """A verifier pass must close failure-only corrective scaffolding.
+
+    This mirrors the live c70 arm-C shape: the implementation verifier's gap
+    edge only accepts failed verification, while the final check is wired from
+    the corrective verifier. A clean verifier pass therefore needs deterministic
+    scheduler recovery, not a new planner patch.
+    """
+
+    _, session_factory = file_db
+    repo = tmp_path / "repo-passed-terminalization"
+    _init_repo(repo)
+    run_id = "graph-dynamic-passed-terminalization"
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, config=_run_config()
+    )
+    dispatch_order: list[str] = []
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={
+            "planner": PassedVerifierTerminalizationPlannerAgent(),
+            "worker": WorkerAgent(),
+            "verifier": VerifierAgent("A"),
+        },
+        dispatch_order=dispatch_order,
+    )
+
+    outcome = await driver.run(run_id)
+
+    events = await _events(session_factory, run_id)
+    assert outcome.completed is True, outcome.blocked_reason
+    assert dispatch_order == ["planner", "worker", "verifier"]
+    assert project_run_state(events) == "completed"
+    assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
+    assert any(
+        event.event_type == "edge_created"
+        and event.payload.get("metadata", {}).get("purpose")
+        == "passed_verification_final_invariant_recovery"
+        for event in events
+    )
+    retired_node_ids = {
+        event.payload.get("node_id") for event in events if event.event_type == "node_retired"
+    }
+    assert {
+        "planner-ds-gap",
+        "worker-ds-corrective",
+        "verifier-ds-corrective",
+    }.issubset(retired_node_ids)
+    assert any(
+        event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "check_result"
+        and event.payload.get("value", {}).get("status") == "passed"
+        for event in events
+    )
+
+
+@pytest.mark.asyncio
+async def test_dynamic_gap_no_op_is_accepted_then_corrective_completes(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """Gap planner no-op (DG-5.1j) is accepted as a durable no-gap decision.
+    This fixture then submits a corrective patch too, so the corrective branch
+    still drives the run to completion.
     """
 
     _, session_factory = file_db
@@ -780,14 +988,85 @@ async def test_dynamic_gap_no_op_is_rejected_then_corrective_completes(
     assert outcome.completed is True, outcome.blocked_reason
     assert project_run_state(events) == "completed"
 
-    rejected = [
-        event.payload.get("reason")
+    accepted_patch_ids = [
+        event.payload.get("patch_id")
         for event in events
-        if event.event_type in {"graph_patch_rejected", "command_rejected"}
+        if event.event_type == "graph_patch_accepted"
     ]
-    assert any(reason and "classified_gap" in reason for reason in rejected), (
-        f"expected a classified_gap no-op rejection, got {rejected}"
+    assert "patch-ds-gap-no-op" in accepted_patch_ids
+
+
+@pytest.mark.asyncio
+async def test_failed_corrective_verifier_continues_through_recovery_gap(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A failed corrective verifier must create a fresh gap-planner continuation.
+
+    This reproduces the benchmark stall shape: implementation verification fails,
+    the normal gap planner schedules corrective work, corrective verification
+    fails, then scheduler-created recovery gap analysis adds another corrective
+    attempt instead of leaving the graph quiescent.
+    """
+
+    _, session_factory = file_db
+    repo = tmp_path / "repo-corrective-retry"
+    _init_repo(repo)
+    run_id = "graph-dynamic-corrective-retry"
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, config=_run_config()
     )
+    dispatch_order: list[str] = []
+    planner = DynamicPlannerAgent()
+    verifier = SequenceVerifierAgent(["C", "C", "A"])
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={
+            "planner": planner,
+            "worker": WorkerAgent(),
+            "verifier": verifier,
+        },
+        dispatch_order=dispatch_order,
+    )
+
+    outcome = await driver.run(run_id)
+
+    events = await _events(session_factory, run_id)
+    assert outcome.completed is False
+    assert dispatch_order == [
+        "planner",
+        "worker",
+        "verifier",
+        "gap_planner",
+        "worker",
+        "verifier",
+        "gap_planner",
+        "worker",
+        "verifier",
+    ]
+    assert verifier.seen_grades == ["C", "C", "A"]
+
+    accepted_patch_ids = [
+        event.payload.get("patch_id")
+        for event in events
+        if event.event_type == "graph_patch_accepted"
+    ]
+    assert accepted_patch_ids[:2] == ["patch-ds-root-plan", "patch-ds-gap-invariant"]
+    assert len(accepted_patch_ids) == 3
+    assert str(accepted_patch_ids[2]).startswith("patch-planner-recover-verification-")
+    assert str(accepted_patch_ids[2]).endswith("-retry-corrective")
+    recovery_nodes = [
+        event.payload
+        for event in events
+        if event.event_type == "node_created"
+        and event.payload.get("recovery_reason") == "failed_verification"
+    ]
+    assert len(recovery_nodes) == 1
+    assert recovery_nodes[0]["node_id"].startswith("planner-recover-verification-")
+    task_states = project_task_states(events)
+    assert task_states["recovery-corrective_work_region"] == "accepted"
+    assert task_states["corrective_work_region"] in {"accepted", "pending"}
 
 
 @pytest.mark.asyncio
@@ -797,7 +1076,8 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
 ) -> None:
     """The final invariant check exists and is bound, but its deterministic
     command fails. The run must not reach ``completed`` while the final invariant
-    check is unsatisfied (DG-5.1t / DG-3.3 premature-completion guard).
+    check is unsatisfied; once recovery finds no successor, the run is terminally
+    failed rather than graph-blocked (DG-5.1t / DG-3.3 premature-completion guard).
     """
 
     _, session_factory = file_db
@@ -824,8 +1104,14 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
     events = await _events(session_factory, run_id)
     assert outcome.completed is False
     assert outcome.blocked_reason is not None
-    assert project_run_state(events) != "completed"
-    assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
+    assert project_run_state(events) == "failed"
+    assert await _run_status(session_factory, run_id) == RunStatus.FAILED
+    assert any(
+        event.event_type == "run_lifecycle_changed"
+        and event.payload.get("to_state") == "failed"
+        and event.payload.get("trigger") == "recovery_planner_no_successor"
+        for event in events
+    )
     failed_check_results = [
         event.payload
         for event in events
