@@ -16,6 +16,7 @@ from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import RunStatus
 from orchestrator.graph import (
     EventEnvelope,
+    build_projection,
     check_command_reference,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
@@ -473,14 +474,17 @@ def build_graph_projection_response(
             ready_nodes=[],
         )
 
+    # Fold once and reuse across every view below, instead of each project_*
+    # call re-folding the full event stream from scratch.
+    projection = build_projection(events)
     return GraphProjectionResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
-        run_state=project_run_state(events),
-        node_states=project_node_states(events),
-        task_states=project_task_states(events),
-        leases=project_leases(events),
-        ready_nodes=project_ready_nodes(events),
+        run_state=project_run_state(events, projection=projection),
+        node_states=project_node_states(events, projection=projection),
+        task_states=project_task_states(events, projection=projection),
+        leases=project_leases(events, projection=projection),
+        ready_nodes=project_ready_nodes(events, projection=projection),
     )
 
 
@@ -627,8 +631,10 @@ def build_scheduler_view_response(
             leases=LeaseViewResponse(active=[], suspended=[]),
         )
 
-    scheduler_view = project_scheduler_view(events)
-    lease_view = project_lease_view(events)
+    # Fold once and reuse across both views below.
+    projection = build_projection(events)
+    scheduler_view = project_scheduler_view(events, projection=projection)
+    lease_view = project_lease_view(events, projection=projection)
     return SchedulerViewResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
