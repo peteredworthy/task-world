@@ -1295,12 +1295,21 @@ def project_planner_session(events: list[EventEnvelope]) -> dict[str, Any]:
     }
 
 
-def project_node_states(events: list[EventEnvelope]) -> dict[str, str]:
-    return _project(events)["node_states"]
+def project_node_states(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> dict[str, str]:
+    proj = projection if projection is not None else _project(events)
+    return proj["node_states"]
 
 
-def project_node_metadata(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
-    projection = _project(events)
+def project_node_metadata(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> dict[str, dict[str, Any]]:
+    projection = projection if projection is not None else _project(events)
     metadata: dict[str, dict[str, Any]] = {}
     for node_id in projection["node_states"]:
         kind = projection["node_kinds"].get(node_id)
@@ -1584,23 +1593,38 @@ def project_planner_freshness_packet(events: list[EventEnvelope]) -> dict[str, A
     }
 
 
-def project_leases(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
-    return _project(events)["leases"]
+def project_leases(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> dict[str, dict[str, Any]]:
+    proj = projection if projection is not None else _project(events)
+    return proj["leases"]
 
 
-def project_ready_nodes(events: list[EventEnvelope]) -> list[str]:
-    return _project(events)["ready_nodes"]
+def project_ready_nodes(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> list[str]:
+    proj = projection if projection is not None else _project(events)
+    return proj["ready_nodes"]
 
 
-def project_scheduler_view(events: list[EventEnvelope]) -> SchedulerView:
+def project_scheduler_view(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> SchedulerView:
     """Project ready/deferred scheduler buckets from graph events.
 
     Readiness remains governed by node_state_changed facts. Deferred scheduler
     events are audit facts, so this view uses only the latest deferral reason
     for nodes that are not currently ready.
     """
-    node_states = project_node_states(events)
-    ready = sorted(project_ready_nodes(events))
+    proj = projection if projection is not None else _project(events)
+    node_states = project_node_states(events, projection=proj)
+    ready = sorted(project_ready_nodes(events, projection=proj))
     latest_deferrals = _latest_node_deferrals(events)
     view: SchedulerView = {
         "ready": ready,
@@ -1630,8 +1654,12 @@ def project_scheduler_view(events: list[EventEnvelope]) -> SchedulerView:
     return view
 
 
-def project_lease_view(events: list[EventEnvelope]) -> LeaseView:
-    leases = project_leases(events)
+def project_lease_view(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> LeaseView:
+    leases = project_leases(events, projection=projection)
     view: LeaseView = {"active": [], "suspended": []}
     for lease_id in sorted(leases):
         lease = leases[lease_id]
@@ -1656,9 +1684,13 @@ def project_lease_view(events: list[EventEnvelope]) -> LeaseView:
     return view
 
 
-def project_decision_view(events: list[EventEnvelope]) -> DecisionView:
+def project_decision_view(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> DecisionView:
     """Project human decisions, appeal outcomes, and review readiness."""
-    projection = _project(events)
+    projection = projection if projection is not None else _project(events)
     latest_node_payloads = _latest_node_creation_payloads(events)
     approval_decisions = _latest_decisions(events, "approval_decision_recorded")
     authority_decisions = _latest_decisions(events, "authority_decision_recorded")
@@ -2094,6 +2126,17 @@ def _project(events: list[EventEnvelope]) -> GraphProjection:
     for event in events:
         projection = reduce_event(projection, event)
     return projection
+
+
+def build_projection(events: list[EventEnvelope]) -> GraphProjection:
+    """Fold *events* into a full :class:`GraphProjection`.
+
+    Public entry point for callers (e.g. read-model presenters) that need to
+    fold the event stream once and pass the result into the various
+    ``project_*`` view functions via their ``projection=`` argument, avoiding
+    a full re-fold per view.
+    """
+    return _project(events)
 
 
 _PENDING_DECISION_STATES = {"planned", "blocked", "ready", "leased", "running", "suspended"}

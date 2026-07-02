@@ -16,7 +16,9 @@ from orchestrator.api.schemas.runs import (
 )
 from orchestrator.graph import (
     EventEnvelope,
+    GraphProjection,
     SchedulerView,
+    build_projection,
     project_decision_view,
     project_lease_view,
     project_node_metadata,
@@ -75,9 +77,14 @@ def _node_evidence_summary(node_id: str, events: list[EventEnvelope], state: str
 
     for event in events:
         payload = event.payload
-        if event.event_type == "output_record_accepted" and payload.get("producer_node_id") == node_id:
+        if (
+            event.event_type == "output_record_accepted"
+            and payload.get("producer_node_id") == node_id
+        ):
             output_records += 1
-        elif event.event_type == "file_state_accepted" and payload.get("producer_node_id") == node_id:
+        elif (
+            event.event_type == "file_state_accepted" and payload.get("producer_node_id") == node_id
+        ):
             file_state_records += 1
         elif event.event_type == "node_state_changed" and payload.get("node_id") == node_id:
             state_changes += 1
@@ -124,19 +131,20 @@ def _node_blockers(
 def _representative_nodes(
     events: list[EventEnvelope],
     *,
+    projection: GraphProjection,
+    scheduler_view: SchedulerView,
+    decision_blockers: list[str],
     max_nodes: int,
     include_node_evidence: bool,
 ) -> list[RepresentativeNodeEvidence]:
     if not events:
         return []
 
-    node_states = project_node_states(events)
+    node_states = project_node_states(events, projection=projection)
     if not node_states:
         return []
 
-    node_metadata = project_node_metadata(events)
-    scheduler_view = project_scheduler_view(events)
-    decision_view = project_decision_view(events)
+    node_metadata = project_node_metadata(events, projection=projection)
     creation_payloads = _node_creation_payloads(events)
 
     entries: list[RepresentativeNodeEvidence] = []
@@ -150,7 +158,7 @@ def _representative_nodes(
         blockers = _node_blockers(
             node_id,
             scheduler_view,
-            decision_view["review"]["blockers"],
+            decision_blockers,
         )
         entries.append(
             RepresentativeNodeEvidence(
@@ -198,9 +206,13 @@ def build_run_evidence_digest_response(
     representative_nodes: list[RepresentativeNodeEvidence] = []
 
     if is_graph_backed:
-        scheduler_view = project_scheduler_view(events)
-        lease_view = project_lease_view(events)
-        decision_view = project_decision_view(events)
+        # Fold the event stream a single time and reuse the projection across
+        # every view below, instead of each project_* call re-folding from
+        # scratch (an O(n^2) full replay per call).
+        projection = build_projection(events)
+        scheduler_view = project_scheduler_view(events, projection=projection)
+        lease_view = project_lease_view(events, projection=projection)
+        decision_view = project_decision_view(events, projection=projection)
         scheduler = RunEvidenceDigestScheduler(
             graph_event_count=graph_event_count,
             ready_count=len(scheduler_view["ready"]),
@@ -220,10 +232,15 @@ def build_run_evidence_digest_response(
             for bucket in ("blocked", "waiting_resources", "waiting_gates")
             for entry in scheduler_view[bucket]
         )
-        blockers.extend(f"graph_review:{blocker}" for blocker in decision_view["review"]["blockers"])
+        blockers.extend(
+            f"graph_review:{blocker}" for blocker in decision_view["review"]["blockers"]
+        )
 
         representative_nodes = _representative_nodes(
             events,
+            projection=projection,
+            scheduler_view=scheduler_view,
+            decision_blockers=decision_view["review"]["blockers"],
             max_nodes=max_nodes,
             include_node_evidence=include_node_evidence,
         )
