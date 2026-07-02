@@ -581,8 +581,12 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
     return next_state
 
 
-def project_run_state(events: list[EventEnvelope]) -> str | None:
-    projection = _project(events)
+def project_run_state(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> str | None:
+    projection = projection if projection is not None else _project(events)
     run_state = projection["run_state"]
     blockers = final_invariant_blockers_for_events(events, projection)
     if run_state == "completed":
@@ -1490,8 +1494,13 @@ def _patch_id(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def project_task_states(events: list[EventEnvelope]) -> dict[str, str]:
-    return _project(events)["task_states"]
+def project_task_states(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> dict[str, str]:
+    proj = projection if projection is not None else _project(events)
+    return proj["task_states"]
 
 
 def project_requirement_revisions(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
