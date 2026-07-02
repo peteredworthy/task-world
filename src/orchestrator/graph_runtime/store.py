@@ -23,6 +23,7 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
+    build_projection,
     merge_bound_record_ids,
     project_decision_view,
     project_leases,
@@ -1151,17 +1152,20 @@ def _projection_snapshot_from_events(
     run_id: str,
     events: list[EventEnvelope],
 ) -> GraphProjectionSnapshotModel:
+    # Fold once and reuse across every view below, instead of each project_*
+    # call re-folding the full event stream from scratch.
+    projection = build_projection(events)
     return GraphProjectionSnapshotModel(
         run_id=run_id,
         position=max(event.position for event in events),
-        run_state=project_run_state(events),
-        node_states=project_node_states(events),
-        task_states=project_task_states(events),
-        leases=project_leases(events),
-        ready_nodes=project_ready_nodes(events),
-        scheduler=project_scheduler_view(events),
-        lease_view=project_lease_view(events),
-        decisions=project_decision_view(events),
+        run_state=project_run_state(events, projection=projection),
+        node_states=project_node_states(events, projection=projection),
+        task_states=project_task_states(events, projection=projection),
+        leases=project_leases(events, projection=projection),
+        ready_nodes=project_ready_nodes(events, projection=projection),
+        scheduler=project_scheduler_view(events, projection=projection),
+        lease_view=project_lease_view(events, projection=projection),
+        decisions=project_decision_view(events, projection=projection),
     )
 
 

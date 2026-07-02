@@ -603,8 +603,13 @@ def project_run_state(
     return run_state
 
 
-def project_final_invariant_blockers(events: list[EventEnvelope]) -> list[FinalInvariantBlocker]:
-    return final_invariant_blockers_for_events(events, _project(events))
+def project_final_invariant_blockers(
+    events: list[EventEnvelope],
+    *,
+    projection: GraphProjection | None = None,
+) -> list[FinalInvariantBlocker]:
+    proj = projection if projection is not None else _project(events)
+    return final_invariant_blockers_for_events(events, proj)
 
 
 def final_invariant_blockers_for_events(

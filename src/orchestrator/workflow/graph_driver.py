@@ -19,13 +19,12 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktree
 from orchestrator.graph import (
     EventEnvelope,
-    initial_projection,
+    build_projection,
     project_leases,
     project_node_states,
     project_ready_nodes,
     project_run_state,
     project_task_states,
-    reduce_event,
 )
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime import (
@@ -705,24 +704,24 @@ def _progress_signature(projection: GraphProjectionSnapshot) -> tuple[Any, ...]:
 
 
 def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapshot:
-    leases = project_leases(events)
-    node_states = project_node_states(events)
-    projection = initial_projection()
-    for event in events:
-        projection = reduce_event(projection, event)
+    # Fold once and reuse across every view below, instead of each project_*
+    # call (plus a separate inline fold) re-folding the full event stream.
+    projection = build_projection(events)
+    leases = project_leases(events, projection=projection)
+    node_states = project_node_states(events, projection=projection)
     active_leases = {
         lease_id: lease for lease_id, lease in leases.items() if lease.get("state") == "active"
     }
     return GraphProjectionSnapshot(
-        run_state=project_run_state(events),
-        ready_nodes=project_ready_nodes(events),
+        run_state=project_run_state(events, projection=projection),
+        ready_nodes=project_ready_nodes(events, projection=projection),
         active_leases=active_leases,
         schedulable_nodes=[
             node_id
             for node_id, state in node_states.items()
             if state in {"planned", "blocked", "ready"}
         ],
-        task_states=project_task_states(events),
+        task_states=project_task_states(events, projection=projection),
         node_states=node_states,
         failed_node_reasons=_failed_node_reasons(events),
         environment_failures={
