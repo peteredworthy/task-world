@@ -42,6 +42,13 @@ CODEX_SERVER_CONFIG: list[AgentConfigField] = [
         ),
         options=["none", "managed", "use-local"],
     ),
+    AgentConfigField(
+        name="reasoning_effort",
+        field_type="select",
+        default="high",
+        description="Reasoning effort for Codex model turns",
+        options=["low", "medium", "high"],
+    ),
 ]
 
 

@@ -900,21 +900,48 @@ def _dynamic_feature_acceptance_requirement(
     return f"dynamic_feature_acceptance: {' '.join(parts)}"
 
 
+_CALLBACK_REJECTION_EVENT_TYPES = {"callback_rejected_conflict", "callback_rejected_stale"}
+
+
 def _callback_conflict_reason(events: list[EventEnvelope]) -> str | None:
-    conflict = next(
-        (
-            event
-            for event in events
-            if event.event_type in {"callback_rejected_conflict", "command_rejected"}
-        ),
-        None,
-    )
-    if conflict is None:
+    # A ``callback_duplicate_returned`` event only means "we've seen this
+    # idempotency key before" — the prior result it replays may itself have
+    # been a rejection (historic event logs can contain duplicate-of-rejection
+    # events even though current validation no longer produces them). Treating
+    # a duplicate-of-rejection as success would silently swallow the original
+    # conflict/staleness, so its prior_result must be inspected rather than
+    # assumed to be an acceptance.
+    for event in events:
+        if (
+            event.event_type in _CALLBACK_REJECTION_EVENT_TYPES
+            or event.event_type == "command_rejected"
+        ):
+            reason = event.payload.get("reason")
+            return (
+                str(reason) if isinstance(reason, str) and reason else "unknown callback conflict"
+            )
+        if event.event_type == "callback_duplicate_returned":
+            duplicate_reason = _duplicate_of_rejection_reason(event.payload)
+            if duplicate_reason is not None:
+                return duplicate_reason
+    return None
+
+
+def _duplicate_of_rejection_reason(payload: dict[str, Any]) -> str | None:
+    prior_result = payload.get("prior_result")
+    if not isinstance(prior_result, dict):
         return None
-    reason = conflict.payload.get("reason")
-    if isinstance(reason, str) and reason:
-        return reason
-    return "unknown callback conflict"
+    prior = cast(dict[str, Any], prior_result)
+    prior_outcome = prior.get("outcome")
+    if prior_outcome not in _CALLBACK_REJECTION_EVENT_TYPES:
+        return None
+    prior_payload = prior.get("payload")
+    reason = (
+        cast(dict[str, Any], prior_payload).get("reason")
+        if isinstance(prior_payload, dict)
+        else None
+    )
+    return str(reason) if isinstance(reason, str) and reason else f"duplicate of {prior_outcome}"
 
 
 def _guard_no_pending_compromised_file_state_bindings(
@@ -2092,7 +2119,14 @@ def _planner_patch_examples(
                     {
                         "op": "set_resource_claims",
                         "node_id": "worker-example",
-                        "resource_claims": [{"mode": "read", "scope": "repo"}],
+                        "resource_claims": [
+                            {"mode": "read", "scope": "repo"},
+                            {
+                                "mode": "write",
+                                "scope": "repo",
+                                "paths": ["src/example_pkg", "tests/unit"],
+                            },
+                        ],
                     }
                 ],
             }

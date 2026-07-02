@@ -4903,12 +4903,29 @@ def _callback_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _claim_from_dict(claim: dict[str, Any]) -> ResourceClaim:
-    return ResourceClaim(
-        mode=str(claim.get("mode", "read")),
-        scope=str(claim.get("scope", "repo")),
-        paths=[str(path) for path in claim.get("paths", [])]
+    mode = str(claim.get("mode", "read"))
+    scope = str(claim.get("scope", "repo"))
+    paths = (
+        [str(path) for path in claim.get("paths", [])]
         if isinstance(claim.get("paths"), list)
-        else [],
+        else []
+    )
+    # Self-healing normalization (also applied on replay of historic events): planners
+    # sometimes put a repo-relative path prefix directly in `scope` instead of the
+    # canonical scope="repo" + paths=[...] shape. For read/write claims (the only modes
+    # whose scheduling/authority semantics key off `scope == "repo"`), fold a
+    # path-shaped scope into `paths` so both the scheduler-conflict check and the
+    # write-authority check (`_claim_is_repo_write`) see identical, correct semantics.
+    # external/graph_write/review_write claims use `scope` for other purposes (or not at
+    # all) and are left untouched.
+    if mode in {"read", "write"} and scope not in ("repo", ""):
+        if scope not in paths:
+            paths = [*paths, scope]
+        scope = "repo"
+    return ResourceClaim(
+        mode=mode,
+        scope=scope,
+        paths=paths,
         snapshot_id=cast(str | None, claim.get("snapshot_id")),
         external_resource_key=cast(str | None, claim.get("external_resource_key")),
         exclusive=bool(claim.get("exclusive", False)),

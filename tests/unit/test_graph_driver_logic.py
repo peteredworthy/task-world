@@ -10,10 +10,26 @@ from orchestrator.workflow.graph_driver import (
     ActiveLeaseWaitPlan,
     GraphProjectionSnapshot,
     GraphRunDriver,
+    MAX_NODE_RECOVERIES_PER_DRIVE,
     _active_lease_wait_plan,
     _graph_seed_run_config,
+    _node_max_attempts,
     classify_graph_outcome,
 )
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+
+
+def _event(event_type: str, payload: dict[str, object], position: int = -1) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=f"{event_type}-{position}",
+        run_id="run-1",
+        position=position,
+        event_type=event_type,
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=FakeClock().now(),
+        payload=payload,
+    )
 
 
 class RecordingController:
@@ -75,12 +91,70 @@ class RecordingExecutor:
 class ScriptedProjectionReader:
     snapshots: list[GraphProjectionSnapshot]
     index: int = 0
+    # Repeating the last snapshot forever lets tests express "state never
+    # changes"; cap total calls so a driver bug that spins forever fails the
+    # test with a clear error instead of hanging until the suite times out.
+    max_calls: int = 50
+    calls: int = 0
 
     async def read(self, run_id: str) -> GraphProjectionSnapshot:
+        self.calls += 1
+        assert self.calls <= self.max_calls, (
+            "ScriptedProjectionReader.read exceeded max_calls — drive loop "
+            "likely spinning without bound"
+        )
         snapshot = self.snapshots[min(self.index, len(self.snapshots) - 1)]
         if self.index < len(self.snapshots) - 1:
             self.index += 1
         return snapshot
+
+
+class AgentDiedRecordingController(RecordingController):
+    """RecordingController that also answers ``agent_died`` commands.
+
+    ``reject_lease_ids`` names leases for which the fake kernel refuses to
+    revoke the lease (command_rejected), modeling a race where the lease was
+    already resolved another way. Anything else is accepted.
+    """
+
+    def __init__(self, reject_lease_ids: set[str] | None = None) -> None:
+        super().__init__()
+        self.agent_died_payloads: list[dict[str, object]] = []
+        self._reject_lease_ids = reject_lease_ids or set()
+
+    async def handle_command(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, object] | None = None,
+    ) -> object:
+        if command_type != "agent_died":
+            return await super().handle_command(run_id, expected_position, command_type, payload)
+        self.commands.append(command_type)
+        payload = dict(payload or {})
+        self.agent_died_payloads.append(payload)
+        lease_id = payload.get("lease_id")
+        if lease_id in self._reject_lease_ids:
+            events: list[object] = [
+                type(
+                    "Event",
+                    (),
+                    {
+                        "event_type": "command_rejected",
+                        "payload": {"command_type": "agent_died", "reason": "lease not active"},
+                    },
+                )()
+            ]
+        else:
+            events = [
+                type(
+                    "Event",
+                    (),
+                    {"event_type": "agent_died", "payload": dict(payload)},
+                )()
+            ]
+        return type("Result", (), {"events": events})()
 
 
 @pytest.mark.asyncio
@@ -367,6 +441,259 @@ async def test_driver_runs_recovery_tick_before_quiescent_classification() -> No
     assert dispatcher.calls == 2
     assert executor.calls == 2
     assert outcome.completed is True
+
+
+@pytest.mark.asyncio
+async def test_driver_recovers_orphaned_lease_and_reschedules_node() -> None:
+    """Regression test for run 8feabee5: an execution finished without an
+    accepted callback (e.g. its submit was rejected), leaving an active lease
+    on a "running" node with nothing schedulable. The driver must emit
+    agent_died for that lease itself — recovering the run — instead of
+    pausing graph_blocked with a lease that only clears if an operator
+    manually resumes it later."""
+    controller = AgentDiedRecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()  # no execution ids reported running
+
+    orphaned_lease_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={
+            "lease-1": {
+                "lease_id": "lease-1",
+                "state": "active",
+                "node_id": "worker-1",
+                "execution_id": "exec-1",
+                "generation": 1,
+            }
+        },
+        schedulable_nodes=[],
+        task_states={"s/t": "in_progress"},
+        node_states={"worker-1": "running"},
+    )
+    rescheduled_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=["worker-1"],
+        active_leases={},
+        schedulable_nodes=["worker-1"],
+        task_states={"s/t": "in_progress"},
+        node_states={"worker-1": "ready"},
+    )
+    completed_snapshot = GraphProjectionSnapshot(
+        run_state="completed",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"s/t": "accepted"},
+    )
+    reader = ScriptedProjectionReader(
+        [
+            orphaned_lease_snapshot,
+            orphaned_lease_snapshot,
+            orphaned_lease_snapshot,
+            orphaned_lease_snapshot,
+            rescheduled_snapshot,
+            rescheduled_snapshot,
+            completed_snapshot,
+        ]
+    )
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert controller.commands.count("agent_died") == 1
+    assert controller.agent_died_payloads == [
+        {
+            "lease_id": "lease-1",
+            "reason": "runtime_execution_missing_no_callback",
+            "execution_id": "exec-1",
+        }
+    ]
+    assert outcome.completed is True
+
+
+@pytest.mark.asyncio
+async def test_driver_blocks_without_recovery_when_no_active_leases() -> None:
+    """A genuine block (ready node the scheduler can't dispatch, e.g. a
+    resource/gate wait, and no active leases) must still return blocked with
+    no behavior change — there is nothing for lease recovery to do."""
+    controller = AgentDiedRecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+
+    stuck_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=["planner-gap"],
+        active_leases={},
+        schedulable_nodes=["planner-gap"],
+        task_states={"s/t": "pending"},
+    )
+    reader = ScriptedProjectionReader([stuck_snapshot])
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert "agent_died" not in controller.commands
+    assert controller.agent_died_payloads == []
+    assert outcome.completed is False
+    assert outcome.blocked_reason == "graph has ready node(s) not dispatched: planner-gap"
+
+
+@pytest.mark.asyncio
+async def test_driver_stops_retrying_a_lease_that_never_clears() -> None:
+    """A lease the driver has already tried to recover must not be retried
+    forever: if the projection keeps showing the same orphaned lease_id after
+    a recovery attempt (e.g. the kernel's retry policy keeps requeuing under
+    conditions the fake never resolves), the per-lease_id dedup bounds the
+    loop so it terminates instead of alternating recover/no-progress forever."""
+    controller = AgentDiedRecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+
+    # Every read returns the exact same orphaned lease — the fake kernel
+    # "accepts" the agent_died but nothing about the projection ever changes,
+    # standing in for a node that keeps dying under conditions this fixture
+    # doesn't clear (in production, the kernel's own max_attempts budget in
+    # _apply_agent_died is what eventually stops requeuing a real node and
+    # moves it to a terminal "failed" state).
+    stuck_lease_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={
+            "lease-1": {
+                "lease_id": "lease-1",
+                "state": "active",
+                "node_id": "worker-1",
+                "execution_id": "exec-1",
+                "generation": 1,
+            }
+        },
+        schedulable_nodes=[],
+        task_states={"s/t": "in_progress"},
+        node_states={"worker-1": "running"},
+    )
+    reader = ScriptedProjectionReader([stuck_lease_snapshot])
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    # The loop terminated at all (no ScriptedProjectionReader.max_calls
+    # assertion failure) and only ever attempted recovery once for lease-1,
+    # despite the identical orphaned lease reappearing on every subsequent
+    # read — proof the per-lease_id dedup, not luck, bounded the loop.
+    assert controller.commands.count("agent_died") == 1
+    assert len(controller.agent_died_payloads) == 1
+    assert outcome.completed is False
+
+
+@pytest.mark.asyncio
+async def test_driver_stops_recovering_node_when_fresh_lease_ids_keep_orphaning() -> None:
+    """Per-node recovery budget bounds dynamic nodes with no max_attempts.
+
+    The kernel grants a fresh lease_id after each accepted agent_died when a node
+    has no retry budget. A lease_id-only dedup would therefore keep recovering the
+    same chronically orphaned node forever. The driver must stop after the node
+    budget and return graph_blocked.
+    """
+    controller = AgentDiedRecordingController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+
+    def snapshot(lease_id: str, execution_id: str) -> GraphProjectionSnapshot:
+        return GraphProjectionSnapshot(
+            run_state="active",
+            ready_nodes=[],
+            active_leases={
+                lease_id: {
+                    "lease_id": lease_id,
+                    "state": "active",
+                    "node_id": "dynamic-worker-1",
+                    "execution_id": execution_id,
+                    "generation": 1,
+                }
+            },
+            schedulable_nodes=[],
+            task_states={"s/t": "in_progress"},
+            node_states={"dynamic-worker-1": "running"},
+        )
+
+    snapshots: list[GraphProjectionSnapshot] = []
+    for index in range(MAX_NODE_RECOVERIES_PER_DRIVE + 1):
+        current = snapshot(f"lease-{index}", f"exec-{index}")
+        # Each drive iteration reads a wait projection and then the projection
+        # used for progress comparison. Keep the same lease visible across two
+        # full iterations so the no-progress recovery branch is exercised.
+        snapshots.extend([current, current, current, current])
+    reader = ScriptedProjectionReader(snapshots, max_calls=len(snapshots) + 2)
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert controller.commands.count("agent_died") == MAX_NODE_RECOVERIES_PER_DRIVE
+    assert len(controller.agent_died_payloads) == MAX_NODE_RECOVERIES_PER_DRIVE
+    assert {payload["lease_id"] for payload in controller.agent_died_payloads} == {
+        f"lease-{index}" for index in range(MAX_NODE_RECOVERIES_PER_DRIVE)
+    }
+    assert outcome.completed is False
+    assert outcome.blocked_reason == "graph has active lease(s) without callback: dynamic-worker-1"
+
+
+def test_node_max_attempts_matches_dispatch_first_node_created_lookup() -> None:
+    attempts = _node_max_attempts(
+        [
+            _event(
+                "node_created",
+                {"node_id": "worker-1", "max_attempts": 2},
+                position=1,
+            ),
+            _event(
+                "node_created",
+                {"node_id": "worker-1", "max_attempts": 7},
+                position=2,
+            ),
+            _event(
+                "node_created",
+                {"node_id": "worker-2", "max_attempts": True},
+                position=3,
+            ),
+            _event(
+                "node_created",
+                {"node_id": "worker-3"},
+                position=4,
+            ),
+            _event(
+                "node_created",
+                {"node_id": "worker-3", "max_attempts": 4},
+                position=5,
+            ),
+        ]
+    )
+
+    assert attempts == {"worker-1": 2, "worker-3": 4}
 
 
 def test_outcome_classification() -> None:

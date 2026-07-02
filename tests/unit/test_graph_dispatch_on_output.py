@@ -450,6 +450,68 @@ def test_callback_conflict_reason_reports_submit_rejection() -> None:
     assert _callback_conflict_reason(events) == "verification record at index 0 missing grades"
 
 
+def test_callback_conflict_reason_reports_stale_rejection() -> None:
+    events = [
+        _event("callback_rejected_stale", {"reason": "lease revoked"}, 1),
+    ]
+
+    assert _callback_conflict_reason(events) == "lease revoked"
+
+
+def test_callback_conflict_reason_raises_on_duplicate_of_conflict_rejection() -> None:
+    events = [
+        _event(
+            "callback_duplicate_returned",
+            {
+                "reason": "duplicate idempotency key",
+                "prior_result": {
+                    "outcome": "callback_rejected_conflict",
+                    "payload": {"reason": "node not running: completed"},
+                },
+            },
+            1,
+        )
+    ]
+
+    assert _callback_conflict_reason(events) == "node not running: completed"
+
+
+def test_callback_conflict_reason_raises_on_duplicate_of_stale_rejection() -> None:
+    events = [
+        _event(
+            "callback_duplicate_returned",
+            {
+                "reason": "duplicate idempotency key",
+                "prior_result": {
+                    "outcome": "callback_rejected_stale",
+                    "payload": {"reason": "lease revoked"},
+                },
+            },
+            1,
+        )
+    ]
+
+    assert _callback_conflict_reason(events) == "lease revoked"
+
+
+def test_callback_conflict_reason_ignores_duplicate_of_accepted_callback() -> None:
+    events = [
+        _event(
+            "callback_duplicate_returned",
+            {
+                "reason": "duplicate idempotency key",
+                "prior_result": {
+                    "outcome": "callback_accepted",
+                    "payload": {"node_id": "worker-1"},
+                },
+            },
+            1,
+        )
+    ]
+
+    assert _callback_conflict_reason(events) is None
+
+
 class OutputAgent:
     def __init__(self, lines: list[str]) -> None:
         self._lines = lines

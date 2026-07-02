@@ -250,12 +250,18 @@ class CodexServerAgent:
         callback_channel: str = "rest",
         api_key: str | None = None,
         restrictions: str = "managed",
+        reasoning_effort: str = "high",
         *,
         _transport: JsonRpcTransport | None = None,
         _environ: dict[str, str] | None = None,
     ) -> None:
         self._model = model
         self._callback_channel = callback_channel
+        # Reasoning effort for Codex model turns. Falls back to "medium" for any
+        # value outside the supported set.
+        self._reasoning_effort = (
+            reasoning_effort if reasoning_effort in ("low", "medium", "high") else "medium"
+        )
         # restrictions controls how aggressively we override Codex sandbox/config behaviour.
         # Supported values:
         # - "none":     Do not override sandbox/network; honour Codex defaults and local config.
@@ -570,7 +576,7 @@ class CodexServerAgent:
                 "input": [{"type": "text", "text": full_prompt}],
                 "cwd": context.working_dir,
                 "approvalPolicy": "never",
-                "effort": "medium",
+                "effort": self._reasoning_effort,
             }
             if model:
                 turn_params["model"] = model

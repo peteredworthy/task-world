@@ -875,6 +875,193 @@ def test_set_resource_claims_narrowing_accepted() -> None:
     assert result.accepted
 
 
+def test_set_resource_claims_unknown_mode_rejected() -> None:
+    patch = _patch(
+        [
+            {
+                "op": "set_resource_claims",
+                "node_id": "worker-1",
+                "resource_claims": [{"mode": "delete", "scope": "repo"}],
+            }
+        ]
+    )
+
+    result = _validate(patch)
+
+    assert not result.accepted
+    assert result.rejection_reason is not None
+    assert "resource_claims mode must be one of" in result.rejection_reason
+
+
+def test_set_resource_claims_absolute_path_in_scope_rejected() -> None:
+    patch = _patch(
+        [
+            {
+                "op": "set_resource_claims",
+                "node_id": "worker-1",
+                "resource_claims": [{"mode": "write", "scope": "/etc/passwd"}],
+            }
+        ]
+    )
+
+    result = _validate(patch)
+
+    assert not result.accepted
+    assert result.rejection_reason is not None
+    assert 'scope="repo" with paths=[...]' in result.rejection_reason
+
+
+def test_set_resource_claims_dotdot_escaping_path_in_scope_rejected() -> None:
+    patch = _patch(
+        [
+            {
+                "op": "set_resource_claims",
+                "node_id": "worker-1",
+                "resource_claims": [{"mode": "write", "scope": "../outside"}],
+            }
+        ]
+    )
+
+    result = _validate(patch)
+
+    assert not result.accepted
+    assert result.rejection_reason is not None
+    assert 'scope="repo" with paths=[...]' in result.rejection_reason
+
+
+def test_create_node_authority_non_string_paths_entry_rejected() -> None:
+    # `node` is untyped (dict[str, Any]) on PatchOp, unlike the top-level
+    # `set_resource_claims.resource_claims` field, which pydantic already type-checks
+    # to list[str] before validate_patch ever runs. Malformed paths embedded in a
+    # node's authority therefore need their own shape check here.
+    patch = _patch(
+        [
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "worker-1",
+                    "kind": "worker",
+                    "role": "builder",
+                    "state": "planned",
+                    "authority": {
+                        "resource_claims": [{"mode": "write", "scope": "repo", "paths": [1, 2]}],
+                    },
+                },
+            }
+        ]
+    )
+
+    result = _validate(patch)
+
+    assert not result.accepted
+    assert result.rejection_reason is not None
+    assert "resource_claims paths must be a list of strings" in result.rejection_reason
+
+
+def test_set_resource_claims_empty_string_path_entry_rejected() -> None:
+    """`paths: [""]` is rejected; canonical whole-repo spellings pass."""
+    rejected = _validate(
+        _patch(
+            [
+                {
+                    "op": "set_resource_claims",
+                    "node_id": "worker-1",
+                    "resource_claims": [{"mode": "write", "scope": "repo", "paths": [""]}],
+                }
+            ]
+        )
+    )
+
+    assert not rejected.accepted
+    assert rejected.rejection_reason is not None
+    assert "must be repo-relative paths" in rejected.rejection_reason
+
+    accepted = _validate(
+        _patch(
+            [
+                {
+                    "op": "set_resource_claims",
+                    "node_id": "worker-1",
+                    "resource_claims": [
+                        {"mode": "write", "scope": "repo", "paths": ["."]},
+                        {"mode": "write", "scope": "repo", "paths": []},
+                        {"mode": "read", "scope": ""},
+                    ],
+                }
+            ]
+        )
+    )
+
+    assert accepted.accepted
+
+
+def test_set_resource_claims_path_in_scope_is_accepted_not_rejected() -> None:
+    """The incident shape is accepted here; normalization (Part A) fixes it up later.
+
+    Validation only rejects shapes normalization cannot make sense of. A repo-relative
+    path stuffed into `scope` is exactly the shape `_claim_from_dict` normalizes at
+    event-application time, so it must be accepted at patch-validation time.
+    """
+    patch = _patch(
+        [
+            {
+                "op": "set_resource_claims",
+                "node_id": "worker-1",
+                "resource_claims": [{"mode": "write", "scope": "src/orchestrator/graph"}],
+            }
+        ]
+    )
+
+    result = _validate(patch)
+
+    assert result.accepted
+
+
+def test_set_resource_claims_external_and_graph_write_scope_untouched() -> None:
+    """external/graph_write claims don't use scope as a path and must not be rejected."""
+    patch = _patch(
+        [
+            {
+                "op": "set_resource_claims",
+                "node_id": "worker-1",
+                "resource_claims": [
+                    {"mode": "external", "scope": "external", "external_resource_key": "k"},
+                    {"mode": "graph_write", "scope": "graph"},
+                ],
+            }
+        ]
+    )
+
+    result = _validate(patch)
+
+    assert result.accepted
+
+
+def test_create_node_authority_resource_claims_shape_validated() -> None:
+    patch = _patch(
+        [
+            {
+                "op": "create_node",
+                "node": {
+                    "node_id": "worker-1",
+                    "kind": "worker",
+                    "role": "builder",
+                    "state": "planned",
+                    "authority": {
+                        "resource_claims": [{"mode": "bogus", "scope": "repo"}],
+                    },
+                },
+            }
+        ]
+    )
+
+    result = _validate(patch)
+
+    assert not result.accepted
+    assert result.rejection_reason is not None
+    assert "resource_claims mode must be one of" in result.rejection_reason
+
+
 def test_retire_running_node_rejected() -> None:
     result = _validate(
         _patch([{"op": "retire_node", "node_id": "worker-1"}]),

@@ -48,6 +48,14 @@ logger = logging.getLogger(__name__)
 
 TERMINAL_GRAPH_NODE_STATES = frozenset({"completed", "failed", "cancelled", "retired"})
 
+# How many times one drive_to_quiescence call will agent_died-recover the same
+# node before giving up and letting the run pause graph_blocked. Small on
+# purpose: a transient orphaning cause (e.g. a one-off rejected submit)
+# resolves on the first re-dispatch, while a persistent cause fails the same
+# way every time — 3 attempts distinguishes the two without burning agent
+# spend on a node the kernel will not bound itself (no max_attempts).
+MAX_NODE_RECOVERIES_PER_DRIVE = 3
+
 
 SUPPORTED_GRAPH_RUNNER_TYPES = frozenset(
     {
@@ -141,6 +149,10 @@ def _empty_environment_failures() -> dict[str, dict[str, Any]]:
     return {}
 
 
+def _empty_int_dict() -> dict[str, int]:
+    return {}
+
+
 @dataclass(frozen=True)
 class GraphProjectionSnapshot:
     run_state: str | None
@@ -153,6 +165,14 @@ class GraphProjectionSnapshot:
     environment_failures: dict[str, dict[str, Any]] = field(
         default_factory=_empty_environment_failures
     )
+    # Each executable node's compiled retry budget (RoutineConfig retry.max_attempts,
+    # default 3), keyed by node_id. Needed so a driver-synthesized agent_died (see
+    # _recover_orphaned_active_leases) passes the same max_attempts the kernel's
+    # normal death path (graph_runtime.dispatch._agent_died) would have passed —
+    # without it, _apply_agent_died's v1 requeue-on-death policy never exhausts,
+    # and a chronically-orphaned node (new lease_id each retry) would defeat the
+    # per-lease_id dedup and retry forever.
+    node_max_attempts: dict[str, int] = field(default_factory=_empty_int_dict)
 
 
 async def _graph_seed_run_config(
@@ -444,6 +464,24 @@ class GraphRunDriver:
         should_continue: Callable[[], Awaitable[bool]] | None = None,
     ) -> GraphRunOutcome:
         previous_signature: tuple[Any, ...] | None = None
+        # Lease ids the driver has already attempted to revoke via a
+        # synthesized agent_died during this call. Bounds the recovery below:
+        # a lease that the kernel refuses to revoke (command_rejected, or a
+        # race that already resolved it) is never retried, so this loop
+        # cannot live-lock on one stuck lease even if state never changes.
+        recovered_lease_ids: set[str] = set()
+        # Per-node recovery budget, the fail-safe backstop behind the two
+        # bounds above. The kernel's max_attempts is the primary bound when
+        # present, but it is opportunistic: dynamically-created nodes (planner
+        # create_node/create_gate/... patch ops) carry no max_attempts, and
+        # without one the kernel's v1 policy requeues the node with a FRESH
+        # lease_id on every agent_died — defeating the lease_id dedup and,
+        # for a persistent orphaning cause, spinning this loop hot forever.
+        # Counting recoveries per node_id is immune to lease_id churn: once a
+        # node exceeds the budget the driver stops recovering it and the
+        # existing blocked-outcome return fires, restoring the pre-fix
+        # fail-safe (pause graph_blocked for an operator).
+        node_recovery_counts: dict[str, int] = {}
         while True:
             # Stop driving if the run was cancelled/paused/failed externally, so
             # an operator action (or a failed bridge) halts the agent-dispatch
@@ -511,11 +549,24 @@ class GraphRunDriver:
             # blocks while an agent is genuinely running, so reaching here with
             # an unchanged signature means a dispatched execution finished
             # without producing a callback or agent_died, leaving a lease held
-            # with nothing schedulable. Repeating cannot help — return a blocked
-            # outcome so the run pauses (and can be recovered) rather than
-            # spinning a core.
+            # with nothing schedulable. Before giving up, try to recover any
+            # such orphaned lease ourselves (emit agent_died so the kernel
+            # revokes it and reschedules the node) rather than pausing the run
+            # graph_blocked with a lease that will only be revoked if an
+            # operator manually resumes it later. Only return blocked once
+            # recovery has nothing left to try.
             signature = _progress_signature(projection)
             if signature == previous_signature:
+                if await _recover_orphaned_active_leases(
+                    run_id,
+                    controller,
+                    executor,
+                    projection,
+                    recovered_lease_ids,
+                    node_recovery_counts,
+                ):
+                    previous_signature = None
+                    continue
                 return classify_graph_outcome(run_id, projection)
             previous_signature = signature
 
@@ -668,6 +719,101 @@ async def _renew_running_expired_leases(
     return renewed
 
 
+async def _recover_orphaned_active_leases(
+    run_id: str,
+    controller: GraphLoopController,
+    executor: GraphLoopExecutor,
+    projection: GraphProjectionSnapshot,
+    recovered_lease_ids: set[str],
+    node_recovery_counts: dict[str, int],
+) -> bool:
+    """Revoke active leases whose dispatched execution is no longer live on
+    THIS executor, so the kernel reschedules (or, once retries are exhausted,
+    fails) the node instead of the run staying wedged on a dead lease.
+
+    Mirrors ``graph_runtime.dispatch.reconcile_runtime``'s startup recovery
+    (leases with a gone execution become ``agent_died``) for the analogous
+    mid-run case: a dispatched execution can finish without an accepted
+    callback or an explicit agent_died — e.g. its submit was rejected — and
+    the driver's own executor is the only thing that can say the execution
+    is no longer live, since a single executor instance spans recovery and
+    the drive loop.
+
+    Three bounds keep this from spinning the drive loop forever:
+
+    1. Each lease_id is attempted at most once per drive call
+       (``recovered_lease_ids``, owned by the caller and shared across
+       iterations): a lease the kernel refuses to revoke (command_rejected —
+       e.g. a race already resolved it) is never retried.
+    2. Passing ``max_attempts`` (the node's compiled retry budget, when the
+       node has one) lets the kernel's own agent_died-retry budget in
+       ``_apply_agent_died`` fail the node terminally — same as the runtime's
+       normal death path in ``graph_runtime.dispatch._agent_died``. This is
+       the primary bound for compiled nodes.
+    3. ``node_recovery_counts`` (per node_id, owned by the caller) caps
+       recoveries at ``MAX_NODE_RECOVERIES_PER_DRIVE`` regardless of the
+       other two. Required because bound 2 is opportunistic — dynamically
+       created nodes (planner patch ops) carry no max_attempts, so the
+       kernel's v1 policy requeues them with a FRESH lease_id every time,
+       defeating bound 1. Once a node exhausts this budget the driver stops
+       recovering it and the drive loop's blocked-outcome return fires,
+       restoring the pre-recovery fail-safe (pause graph_blocked).
+    """
+    recovered = False
+    for lease in projection.active_leases.values():
+        lease_id = lease.get("lease_id")
+        if not isinstance(lease_id, str) or lease_id in recovered_lease_ids:
+            continue
+        node_id = lease.get("node_id")
+        node_state = projection.node_states.get(node_id) if isinstance(node_id, str) else None
+        if node_state != "running":
+            # Deliberately narrower than reconcile_runtime's startup check
+            # (which also treats "leased" as orphaned — safe there because a
+            # freshly restarted process hasn't dispatched anything yet). Mid
+            # drive-loop, "leased" is an ordinary transient state between a
+            # lease grant and dispatch_pending() actually starting it (or,
+            # for a kind with no matching agent, a real "nothing can ever
+            # dispatch this" block that the existing active-lease-without-
+            # callback classification already reports correctly). Only a
+            # node already "running" matches the incident this recovers: a
+            # dispatched execution that finished without producing a
+            # callback or agent_died.
+            continue
+        execution_id = lease.get("execution_id")
+        if isinstance(execution_id, str) and execution_id and executor.is_running(execution_id):
+            # Still genuinely running on this executor — not orphaned.
+            continue
+
+        if isinstance(node_id, str):
+            if node_recovery_counts.get(node_id, 0) >= MAX_NODE_RECOVERIES_PER_DRIVE:
+                continue
+            node_recovery_counts[node_id] = node_recovery_counts.get(node_id, 0) + 1
+        recovered_lease_ids.add(lease_id)
+        payload: dict[str, object] = {
+            "lease_id": lease_id,
+            "reason": "runtime_execution_missing_no_callback",
+        }
+        max_attempts = (
+            projection.node_max_attempts.get(node_id) if isinstance(node_id, str) else None
+        )
+        if isinstance(max_attempts, int):
+            payload["max_attempts"] = max_attempts
+        if isinstance(execution_id, str) and execution_id:
+            payload["execution_id"] = execution_id
+        try:
+            result = await controller.handle_command(
+                run_id,
+                await controller.current_position(run_id),
+                "agent_died",
+                payload,
+            )
+        except StaleProjectionError:
+            continue
+        if any(event.event_type == "agent_died" for event in result.events):
+            recovered = True
+    return recovered
+
+
 def _active_lease_expired(lease: dict[str, Any], now: datetime) -> bool:
     expires_at = lease.get("expires_at")
     if not isinstance(expires_at, str):
@@ -728,6 +874,7 @@ def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapsho
             task_region_id: dict(failure)
             for task_region_id, failure in projection["environment_failures"].items()
         },
+        node_max_attempts=_node_max_attempts(events),
     )
 
 
@@ -748,6 +895,26 @@ def _failed_node_reasons(events: list[EventEnvelope]) -> dict[str, str]:
             if isinstance(reason, str):
                 reasons[node_id] = reason
     return reasons
+
+
+def _node_max_attempts(events: list[EventEnvelope]) -> dict[str, int]:
+    """Each executable node's compiled retry budget, from its node_created event.
+
+    Mirrors ``graph_runtime.dispatch._node_payload``'s lookup (first writer for
+    a given node_id wins, matching that helper) without importing a private
+    symbol from a module this driver must not modify.
+    """
+    max_attempts: dict[str, int] = {}
+    for event in events:
+        if event.event_type != "node_created":
+            continue
+        node_id = event.payload.get("node_id")
+        if not isinstance(node_id, str) or node_id in max_attempts:
+            continue
+        value = event.payload.get("max_attempts")
+        if isinstance(value, int) and not isinstance(value, bool):
+            max_attempts[node_id] = value
+    return max_attempts
 
 
 def _should_complete_graph(projection: GraphProjectionSnapshot) -> bool:

@@ -28,10 +28,12 @@ def create_codex_agent(
     callback_channel = agent_runner_config.get("callback_channel", "rest")
     api_key = agent_runner_config.get("api_key")
     restrictions = agent_runner_config.get("restrictions", "managed")
+    reasoning_effort = agent_runner_config.get("reasoning_effort", "high")
 
     return CodexServerAgent(
         model=model,
         callback_channel=callback_channel,
         api_key=api_key,
         restrictions=str(restrictions),
+        reasoning_effort=str(reasoning_effort),
     )

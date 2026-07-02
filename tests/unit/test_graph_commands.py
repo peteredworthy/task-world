@@ -2813,6 +2813,103 @@ def test_callback_rejects_file_state_path_with_only_read_authority() -> None:
     )
 
 
+def test_callback_accepts_file_state_path_under_path_in_scope_write_claim() -> None:
+    """Regression test for run 8feabee5.
+
+    A planner-issued claim shaped like ``{"mode": "write", "scope": "src/orchestrator/graph"}``
+    (path prefix stuffed into ``scope`` with no ``paths`` list) must still grant write
+    authority over files beneath that path, via normalization in ``_claim_from_dict``.
+    Before the fix this was rejected with "file_state path outside lease write authority".
+    """
+    output = _apply(
+        _active_lease_events_with_resource_claims(
+            [{"mode": "write", "scope": "src/orchestrator/graph"}]
+        ),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-file-state-path-in-scope",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "graph module updated"},
+                    },
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                        "tracked": [
+                            {"path": "src/orchestrator/graph/commands.py", "status": "modified"}
+                        ],
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "output_record_accepted",
+        "file_state_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+
+
+def test_callback_rejects_file_state_path_outside_path_in_scope_write_claim() -> None:
+    """A path-in-scope write claim only authorizes paths beneath that prefix."""
+    output = _apply(
+        _active_lease_events_with_resource_claims(
+            [{"mode": "write", "scope": "src/orchestrator/graph"}]
+        ),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-file-state-path-in-scope-outside",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "unrelated module touched"},
+                    },
+                    {
+                        "record_id": "file-state-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-1",
+                        "base_snapshot_id": "S0",
+                        "verdict": "captured",
+                        "tracked": [
+                            {"path": "src/orchestrator/api/routers/graph.py", "status": "modified"}
+                        ],
+                    },
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert output[0].payload["reason"] == (
+        "file_state path outside lease write authority at index 1: "
+        "src/orchestrator/api/routers/graph.py"
+    )
+
+
 def test_callback_rejects_forged_file_state_rejected_node_id() -> None:
     output = _apply(
         _active_lease_events(),
@@ -3702,6 +3799,70 @@ def test_schedule_tick_grants_leases() -> None:
         "node_state_changed",
     ]
     assert output[1].payload["node_id"] == "worker-1"
+
+
+def test_schedule_tick_path_in_scope_write_claim_blocks_overlapping_path() -> None:
+    """A normalized path-in-scope write claim still conflicts with overlapping requests.
+
+    Regression coverage for the Part A normalization changing scheduling-conflict
+    semantics: before the fix, a claim shaped ``{"mode": "write", "scope": "<path>"}``
+    with no ``paths`` was treated by ``_paths_overlap`` as conflicting with *everything*
+    (empty paths list = overlaps all). After normalization it has a real paths entry, so
+    it must still conflict with genuinely overlapping paths...
+    """
+    events = [
+        *_active_lease_events_with_resource_claims(
+            [{"mode": "write", "scope": "src/orchestrator/graph"}]
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-2",
+                "kind": "worker",
+                "state": "ready",
+                "resource_claims": [
+                    {
+                        "mode": "write",
+                        "scope": "repo",
+                        "paths": ["src/orchestrator/graph/scheduler.py"],
+                    }
+                ],
+            },
+            3,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    assert "lease_granted" not in [event.event_type for event in output]
+
+
+def test_schedule_tick_path_in_scope_write_claim_allows_disjoint_path() -> None:
+    """...but must no longer conflict with genuinely disjoint paths."""
+    events = [
+        *_active_lease_events_with_resource_claims(
+            [{"mode": "write", "scope": "src/orchestrator/graph"}]
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-2",
+                "kind": "worker",
+                "state": "ready",
+                "resource_claims": [
+                    {"mode": "write", "scope": "repo", "paths": ["docs/readme.md"]}
+                ],
+            },
+            3,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    granted_node_ids = [
+        event.payload["node_id"] for event in output if event.event_type == "lease_granted"
+    ]
+    assert granted_node_ids == ["worker-2"]
 
 
 def test_schedule_tick_recovers_quiescent_graph_after_failed_required_check() -> None:

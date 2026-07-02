@@ -1,6 +1,7 @@
 """Pure graph patch validation helpers."""
 
 from dataclasses import dataclass, field
+import posixpath
 from typing import Any, cast
 
 from orchestrator.graph.command_bindings import is_known_check_command_binding
@@ -48,6 +49,7 @@ ALLOWED_BY_ROLE = {
     "controller": KNOWN_OPS,
 }
 MODE_RANK = {"read": 0, "write": 1, "graph_write": 2, "review_write": 3}
+RESOURCE_CLAIM_MODES = {"read", "write", "external", "graph_write", "review_write"}
 RUNNING_STATES = {"running", "leased"}
 EXECUTABLE_NODE_KINDS = {"worker", "verifier", "check", "planner"}
 PLANNER_SUCCESSOR_PORTS = {
@@ -124,6 +126,10 @@ def validate_patch(
 
     for op in ops:
         op_name = op["op"]
+        for claim in _op_resource_claim_dicts(op):
+            shape_error = _resource_claim_shape_error(claim)
+            if shape_error is not None:
+                return PatchValidationResult(accepted=False, rejection_reason=shape_error)
         if op_name == "set_resource_claims":
             escalation_reason = _resource_claim_escalation_reason(op, projection)
             if escalation_reason is not None:
@@ -553,6 +559,84 @@ def _event_touches_read_set(event: EventEnvelope, read_set: set[str]) -> bool:
 
     region_node_ids = event.payload.get("region_node_ids")
     return bool(_string_values_from_iterable(region_node_ids) & read_set)
+
+
+def _op_resource_claim_dicts(op: dict[str, Any]) -> list[dict[str, Any]]:
+    """Collect every resource-claim dict a patch op could introduce.
+
+    Claims arrive either directly on ``set_resource_claims`` ops, or nested inside a
+    node payload's ``authority.resource_claims`` on node-creation ops (``create_node``,
+    ``create_gate``, ``create_appeal`` via ``node``; ``create_revision_attempt`` via
+    ``worker_node``/``verifier_node``).
+    """
+    claims = list(_resource_claim_dicts(op.get("resource_claims")))
+    for node_key in ("node", "worker_node", "verifier_node"):
+        node = op.get(node_key)
+        if not isinstance(node, dict):
+            continue
+        authority = cast(dict[str, Any], node).get("authority")
+        if isinstance(authority, dict):
+            claims.extend(
+                _resource_claim_dicts(cast(dict[str, Any], authority).get("resource_claims"))
+            )
+    return claims
+
+
+def _is_repo_relative_claim_path(path: str) -> bool:
+    if path == "":
+        return False
+    if path.startswith("/"):
+        return False
+    normalized = posixpath.normpath(path)
+    return normalized != ".." and not normalized.startswith("../")
+
+
+def _resource_claim_shape_error(claim: dict[str, Any]) -> str | None:
+    """Reject claim shapes normalization cannot make sense of.
+
+    Path-in-scope claims (``scope`` set to a repo-relative path instead of the
+    canonical ``"repo"``) are intentionally NOT rejected here: they are accepted and
+    normalized to ``scope="repo"`` with the path folded into ``paths`` when the event is
+    applied (see ``_claim_from_dict`` in commands.py). Only shapes that normalization
+    cannot safely interpret — unknown modes, wrong-typed fields, or scope/paths values
+    that escape the repo (absolute paths, ``..`` segments) — are rejected here, with a
+    message that spells out the canonical shape for the planner.
+    """
+    mode = claim.get("mode")
+    if not isinstance(mode, str) or mode not in RESOURCE_CLAIM_MODES:
+        return (
+            f"resource_claims mode must be one of {sorted(RESOURCE_CLAIM_MODES)}; got mode={mode!r}"
+        )
+    scope = claim.get("scope")
+    if scope is not None and not isinstance(scope, str):
+        return f"resource_claims scope must be a string; got scope={scope!r}"
+    raw_paths = claim.get("paths")
+    if raw_paths is not None:
+        if not isinstance(raw_paths, list) or not all(
+            isinstance(path, str) for path in cast(list[Any], raw_paths)
+        ):
+            return f"resource_claims paths must be a list of strings; got paths={raw_paths!r}"
+    if (
+        mode in {"read", "write"}
+        and isinstance(scope, str)
+        and scope not in ("repo", "")
+        and not _is_repo_relative_claim_path(scope)
+    ):
+        return (
+            'resource_claims must use scope="repo" with paths=[...]; '
+            f"got scope={scope!r} — path prefixes belong in paths, not scope, and must "
+            'be repo-relative (no leading "/" and no ".." segments)'
+        )
+    if isinstance(raw_paths, list):
+        for path in cast(list[str], raw_paths):
+            # Empty-string path entries are deliberately rejected here in favor of the
+            # canonical whole-repo spellings (paths=["."], empty paths, or scope="").
+            if not _is_repo_relative_claim_path(path):
+                return (
+                    "resource_claims paths entries must be repo-relative paths "
+                    f'(no leading "/" and no ".." segments): {path!r}'
+                )
+    return None
 
 
 def _resource_claim_escalation_reason(

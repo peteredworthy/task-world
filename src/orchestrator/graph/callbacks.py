@@ -36,11 +36,18 @@ class CallbackValidationResult:
     prior_result: dict[str, Any] | None = None
 
 
+# Only a prior ACCEPTED callback may short-circuit idempotency validation.
+# Rejection events (stale/conflict) must never poison the idempotency key: the
+# dispatch layer reuses a fixed key per execution, so if a rejection were
+# eligible to match here, a corrected retry would be permanently blocked
+# (matching payload -> replayed as a "duplicate" of the rejection; corrected
+# payload -> rejected as a conflict). `callback_duplicate_returned` is also
+# excluded: it merely records a replay of some prior event, so a genuine
+# duplicate-of-a-duplicate still finds the original `callback_accepted` event
+# via this same lookup, and a duplicate-of-a-rejection correctly falls through
+# to fresh validation instead of re-replaying the rejection.
 _IDEMPOTENCY_EVENT_TYPES = {
     "callback_accepted",
-    "callback_rejected_stale",
-    "callback_rejected_conflict",
-    "callback_duplicate_returned",
 }
 
 _STALE_LEASE_STATES = {"revoked", "expired"}

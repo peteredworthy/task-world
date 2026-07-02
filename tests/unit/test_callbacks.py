@@ -301,6 +301,74 @@ def test_nonmutating_on_completed_node_accepted() -> None:
     assert result.outcome == CallbackOutcome.ACCEPTED
 
 
+def test_rejected_conflict_then_retry_same_payload_validates_fresh() -> None:
+    """A prior rejection must not poison the idempotency key (see prod run 8feabee5).
+
+    Retrying with the same payload after a rejection should run full
+    validation, not replay the rejection as a duplicate result.
+    """
+    event = _event(
+        "callback_rejected_conflict",
+        {
+            "node_id": "worker-1",
+            "idempotency_key": "key-1",
+            "payload": {"payload_hash": "hash-a"},
+        },
+    )
+
+    result = validate_callback(_request(), _projection(), [event])
+
+    assert result.outcome == CallbackOutcome.ACCEPTED
+
+
+def test_rejected_conflict_then_retry_different_payload_validates_fresh() -> None:
+    """A prior rejection must not cause a differently-payloaded retry to be
+    treated as an idempotency conflict either -- it should validate fresh."""
+    event = _event(
+        "callback_rejected_conflict",
+        {
+            "node_id": "worker-1",
+            "idempotency_key": "key-1",
+            "payload": {"payload_hash": "hash-a"},
+        },
+    )
+
+    result = validate_callback(_request(payload={"payload_hash": "hash-b"}), _projection(), [event])
+
+    assert result.outcome != CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT
+    assert result.outcome == CallbackOutcome.ACCEPTED
+
+
+def test_accepted_then_retry_same_payload_is_duplicate() -> None:
+    event = _event(
+        "callback_accepted",
+        {
+            "node_id": "worker-1",
+            "idempotency_key": "key-1",
+            "payload": {"payload_hash": "hash-a"},
+        },
+    )
+
+    result = validate_callback(_request(), _projection(), [event])
+
+    assert result.outcome == CallbackOutcome.DUPLICATE_IDEMPOTENT
+
+
+def test_accepted_then_retry_different_payload_is_conflict() -> None:
+    event = _event(
+        "callback_accepted",
+        {
+            "node_id": "worker-1",
+            "idempotency_key": "key-1",
+            "payload": {"payload_hash": "hash-a"},
+        },
+    )
+
+    result = validate_callback(_request(payload={"payload_hash": "hash-b"}), _projection(), [event])
+
+    assert result.outcome == CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT
+
+
 def test_pause_before_callback_stale() -> None:
     result = validate_callback(
         _request(),
