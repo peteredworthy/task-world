@@ -589,8 +589,10 @@ def build_graph_regions_response(
 ) -> GraphRegionsResponse:
     if not events:
         return GraphRegionsResponse(run_id=run_id, event_count=0, regions=[])
-    task_states = project_task_states(events)
-    blockers = project_final_invariant_blockers(events)
+    # Fold once and reuse across both views below.
+    projection = build_projection(events)
+    task_states = project_task_states(events, projection=projection)
+    blockers = project_final_invariant_blockers(events, projection=projection)
     blockers_by_region: dict[str, list[FinalInvariantBlockerResponse]] = {}
     for blocker in blockers:
         task_region_id = blocker.get("task_region_id")
@@ -1097,9 +1099,11 @@ def build_node_detail_response(
     if not node_events:
         return None
 
-    node_states = project_node_states(events)
-    node_metadata = project_node_metadata(events)
-    leases = project_leases(events)
+    # Fold once and reuse across every view below.
+    projection = build_projection(events)
+    node_states = project_node_states(events, projection=projection)
+    node_metadata = project_node_metadata(events, projection=projection)
+    leases = project_leases(events, projection=projection)
     state = node_states.get(node_id)
     metadata = node_metadata.get(node_id, {})
     output_records = _pick_output_records(events, node_id)
