@@ -141,7 +141,7 @@ def test_edge_model_round_trips() -> None:
             "to_port": "candidate_under_test",
             "required": True,
             "accepted_record_selector": {
-                "record_kinds": ["output", "file_state"],
+                "record_type": "candidate",
                 "schema": "ImplementationCandidate",
             },
         },
@@ -365,6 +365,7 @@ def test_verification_report_record_round_trips() -> None:
             "port": "verification_report",
             "schema": "VerificationReport",
             "candidate_id": "candidate-A-1",
+            "outcome": "passed",
             "verdict": "passed",
             "candidate_record_ids": ["candidate-A-1"],
             "file_state_record_ids": ["file-state-A-1"],
@@ -380,16 +381,130 @@ def test_verification_report_record_round_trips() -> None:
                 "evaluated_record_ids": ["candidate-A-1", "file-state-A-1"],
             },
             "value": {
+                "outcome": "passed",
                 "grades": [
                     {
                         "requirement_id": "R-1",
                         "grade": "A",
                         "reason": "satisfied",
                     }
-                ]
+                ],
             },
         },
     )
+
+
+def test_verification_report_record_populates_failed_outcome_from_legacy_verdict() -> None:
+    record = VerificationReportRecord.model_validate(
+        {
+            "record_id": "verification-1",
+            "record_kind": "verification",
+            "record_type": "verification_report",
+            "producer_node_id": "verify-A-1",
+            "port": "verification_report",
+            "schema": "VerificationReport",
+            "candidate_id": "candidate-A-1",
+            "verdict": "failed",
+            "value": {
+                "grades": [
+                    {
+                        "requirement_id": "R-1",
+                        "grade": "C",
+                        "reason": "missing coverage",
+                    }
+                ]
+            },
+        }
+    )
+
+    dumped = record.model_dump(mode="json")
+
+    assert dumped["outcome"] == "failed"
+    assert dumped["value"]["outcome"] == "failed"
+    assert dumped["value"]["grades"][0]["reason"] == "missing coverage"
+
+
+def test_verification_report_record_rejects_top_level_status() -> None:
+    with pytest.raises(ValueError, match="uses outcome, not status"):
+        VerificationReportRecord.model_validate(
+            {
+                "record_id": "verification-1",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verify-A-1",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-A-1",
+                "outcome": "passed",
+                "status": "passed",
+                "value": {
+                    "outcome": "passed",
+                    "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                },
+            }
+        )
+
+
+def test_verification_report_record_rejects_value_status() -> None:
+    with pytest.raises(ValueError, match="value uses outcome, not status"):
+        VerificationReportRecord.model_validate(
+            {
+                "record_id": "verification-1",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verify-A-1",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-A-1",
+                "outcome": "passed",
+                "value": {
+                    "outcome": "passed",
+                    "status": "passed",
+                    "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                },
+            }
+        )
+
+
+def test_verification_report_selector_rejects_status_field() -> None:
+    with pytest.raises(ValueError, match="status"):
+        RecordSelector.model_validate(
+            {
+                "record_type": "verification_report",
+                "schema": "VerificationReport",
+                "status": "failed",
+            }
+        )
+
+
+def test_legacy_verification_selector_rejects_value_status_match() -> None:
+    with pytest.raises(ValueError, match="unsupported selector value match: status"):
+        RecordSelector.model_validate(
+            {
+                "record_kinds": ["verification"],
+                "value_matches": {"status": "failed"},
+            }
+        )
+
+
+def test_legacy_selector_rejects_mixed_unknown_record_kind() -> None:
+    with pytest.raises(ValueError, match="unknown selector record_kinds: bogus"):
+        RecordSelector.model_validate({"record_kinds": ["verification", "bogus"]})
+
+
+def test_legacy_verification_selector_normalizes_verdict_to_outcome() -> None:
+    selector = RecordSelector.model_validate(
+        {
+            "record_kinds": ["verification"],
+            "value_matches": {"verdict": "failed"},
+        }
+    )
+
+    assert selector.model_dump(mode="json") == {
+        "record_type": "verification_report",
+        "schema": "VerificationReport",
+        "outcome": "failed",
+    }
 
 
 def test_completion_decision_record_round_trips() -> None:
@@ -1429,7 +1544,11 @@ def test_all_models_import_and_enums_cover_prd_values() -> None:
     assert PatchOp.model_validate({"op": "retire_node", "node_id": "build-A-1"}).op
     assert ResourceClaim.model_validate({"mode": "read", "scope": "repo"}).mode == "read"
     assert Authority.model_validate({"allowed_actions": []}).allowed_actions == []
-    assert RecordSelector.model_validate({"record_kinds": ["output"]}).record_kinds == ["output"]
+    selector = RecordSelector.model_validate({"record_kinds": ["output"]})
+    assert selector.model_dump(mode="json") == {
+        "record_type": "candidate",
+        "schema": "ImplementationCandidate",
+    }
 
 
 def test_external_resource_claim_requires_key() -> None:

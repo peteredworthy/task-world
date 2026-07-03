@@ -75,7 +75,9 @@ def test_gap_template_names_canonical_verifier_evidence_port() -> None:
     evidence_input = template["canonical_inputs"]["verification_evidence"]
     assert evidence_input["from_port"] == "verification_report"
     assert evidence_input["accepted_record_selector"] == {
-        "record_kinds": ["verification", "check_result"]
+        "record_type": "verification_report",
+        "schema": "VerificationReport",
+        "outcome": "failed",
     }
 
 
@@ -88,8 +90,9 @@ def test_corrective_template_selects_only_corrective_required_gap() -> None:
         if op.get("op") == "create_edge" and op.get("to_port") == "classified_gap"
     )
     assert gap_edge["accepted_record_selector"] == {
-        "record_kinds": ["gap_analysis"],
-        "value_matches": {"classification": "corrective_work_required"},
+        "record_type": "gap_classification",
+        "schema": "GapClassification",
+        "classification": "corrective_work_required",
     }
 
 
@@ -106,6 +109,12 @@ def test_final_invariant_template_declares_runtime_command_binding() -> None:
     }
     check_node = next(op["node"] for op in template["ops"] if op.get("op") == "create_node")
     assert check_node["command_binding"] == "dynamic_feature_hidden_oracle"
+    evidence_edge = next(op for op in template["ops"] if op.get("op") == "create_edge")
+    assert evidence_edge["accepted_record_selector"] == {
+        "record_type": "verification_report",
+        "schema": "VerificationReport",
+        "outcome": "passed",
+    }
 
 
 def _planner_envelope(purpose: str, ops: list[dict[str, Any]]) -> PatchEnvelope:

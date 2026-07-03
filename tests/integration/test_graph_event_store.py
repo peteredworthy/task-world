@@ -141,6 +141,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
                 "port": "verification_report",
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-1",
+                "outcome": "passed",
                 "verdict": "passed",
                 "value": {
                     "grades": [
@@ -335,7 +336,8 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert verification["created_at"] == "2026-01-01T00:00:00+00:00"
     assert verification["graph_position"] == 3
     assert verification["payload"] == {
-        "grades": [{"requirement_id": "R-1", "grade": "A", "reason": "satisfied"}]
+        "outcome": "passed",
+        "grades": [{"requirement_id": "R-1", "grade": "A", "reason": "satisfied"}],
     }
 
     check_result = stored[3].payload
@@ -728,19 +730,75 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
                             "large_irrelevant_field": large_payload,
                         },
                     ),
+                    _event(
+                        "evt-summary-3",
+                        run_id,
+                        "output_record_accepted",
+                        {
+                            "record_id": "verification-1",
+                            "record_kind": "verification",
+                            "record_type": "verification_report",
+                            "producer_node_id": "verifier-1",
+                            "port": "verification_report",
+                            "schema": "VerificationReport",
+                            "candidate_id": "candidate-1",
+                            "outcome": "passed",
+                            "verdict": "passed",
+                            "value": {
+                                "outcome": "passed",
+                                "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                            },
+                        },
+                    ),
                 ],
             )
 
     async with session_factory() as session:
         summaries = await GraphEventStore(session).read_run_summaries(run_id)
+        verifier_detail = await GraphEventStore(session).read_node_detail_summary(
+            run_id,
+            "verifier-1",
+        )
 
-    assert [summary.event_id for summary in summaries] == ["evt-summary-1", "evt-summary-2"]
+    assert [summary.event_id for summary in summaries] == [
+        "evt-summary-1",
+        "evt-summary-2",
+        "evt-summary-3",
+    ]
     assert summaries[0].payload == {"lease_id": "lease-1", "node_id": "worker-1"}
     assert summaries[1].payload == {
         "kind": "worker",
         "node_id": "worker-1",
         "state": "planned",
     }
+    assert summaries[2].payload == {
+        "outcome": "passed",
+        "port": "verification_report",
+        "producer_node_id": "verifier-1",
+        "record_id": "verification-1",
+        "record_kind": "verification",
+        "value": {
+            "outcome": "passed",
+            "grades": [{"requirement_id": "R-1", "grade": "A"}],
+        },
+    }
+    assert verifier_detail is not None
+    assert verifier_detail.output_records == [
+        {
+            "candidate_id": "candidate-1",
+            "outcome": "passed",
+            "port": "verification_report",
+            "producer_node_id": "verifier-1",
+            "record_id": "verification-1",
+            "record_kind": "verification",
+            "schema": "VerificationReport",
+            "verdict": "passed",
+            "value": {
+                "outcome": "passed",
+                "grades": [{"requirement_id": "R-1", "grade": "A"}],
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio

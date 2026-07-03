@@ -178,7 +178,10 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
                 "to_node_id": "verifier-ds-initial",
                 "to_port": "candidate_under_test",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["candidate"]},
+                "accepted_record_selector": {
+                    "record_type": "candidate",
+                    "schema": "ImplementationCandidate",
+                },
             },
             {
                 "op": "create_edge",
@@ -188,7 +191,11 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
                 "to_node_id": "planner-ds-gap",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "outcome": "failed",
+                },
             },
             {
                 "op": "create_edge",
@@ -199,8 +206,9 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
                 "to_port": "classified_gap",
                 "required": True,
                 "accepted_record_selector": {
-                    "record_kinds": ["gap_analysis"],
-                    "value_matches": {"classification": "corrective_work_required"},
+                    "record_type": "gap_classification",
+                    "schema": "GapClassification",
+                    "classification": "corrective_work_required",
                 },
             },
             {
@@ -211,7 +219,10 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
                 "to_node_id": "verifier-ds-corrective",
                 "to_port": "candidate_under_test",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["candidate"]},
+                "accepted_record_selector": {
+                    "record_type": "candidate",
+                    "schema": "ImplementationCandidate",
+                },
             },
         ],
     }
@@ -224,8 +235,9 @@ def _passed_verifier_terminalization_patch(proposed_by: str) -> dict[str, Any]:
     for op in ops:
         if op.get("edge_id") == "edge-ds-validation-gap":
             op["accepted_record_selector"] = {
-                "record_kinds": ["verification"],
-                "value_matches": {"verdict": "failed"},
+                "record_type": "verification_report",
+                "schema": "VerificationReport",
+                "outcome": "failed",
             }
             break
     ops.append(
@@ -250,7 +262,11 @@ def _passed_verifier_terminalization_patch(proposed_by: str) -> dict[str, Any]:
             "to_node_id": "check-ds-invariant",
             "to_port": "verification_evidence",
             "required": True,
-            "accepted_record_selector": {"record_kinds": ["verification"]},
+            "accepted_record_selector": {
+                "record_type": "verification_report",
+                "schema": "VerificationReport",
+                "outcome": "passed",
+            },
         }
     )
     return patch
@@ -290,7 +306,11 @@ def _gap_planner_patch(proposed_by: str) -> dict[str, Any]:
                 "to_node_id": "check-ds-invariant",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "outcome": "passed",
+                },
             },
             {
                 "op": "create_node",
@@ -310,7 +330,11 @@ def _gap_planner_patch(proposed_by: str) -> dict[str, Any]:
                 "to_node_id": "final-gate-ds",
                 "to_port": "check_result",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["check_result"]},
+                "accepted_record_selector": {
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                    "status": "passed",
+                },
             },
         ],
     }
@@ -358,8 +382,9 @@ def _recovery_gap_planner_patch(proposed_by: str) -> dict[str, Any]:
                 "to_port": "classified_gap",
                 "required": True,
                 "accepted_record_selector": {
-                    "record_kinds": ["gap_analysis"],
-                    "value_matches": {"classification": "corrective_work_required"},
+                    "record_type": "gap_classification",
+                    "schema": "GapClassification",
+                    "classification": "corrective_work_required",
                 },
             },
             {
@@ -370,7 +395,10 @@ def _recovery_gap_planner_patch(proposed_by: str) -> dict[str, Any]:
                 "to_node_id": "verifier-ds-corrective-retry",
                 "to_port": "candidate_under_test",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["candidate"]},
+                "accepted_record_selector": {
+                    "record_type": "candidate",
+                    "schema": "ImplementationCandidate",
+                },
             },
         ],
     }
@@ -770,9 +798,9 @@ async def test_dynamic_full_happy_path_completes(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
 ) -> None:
-    """End-to-end: planner -> builder -> verifier -> gap -> corrective -> check.
+    """End-to-end: planner -> builder -> verifier pass.
 
-    Proves the entire dynamic carrier closes the loop deterministically, with no
+    Proves the pass carrier closes the loop deterministically, with no
     real runner and no manual graph mutation. This is the regression net the
     DG-5.1 saga lacked.
     """
@@ -803,9 +831,6 @@ async def test_dynamic_full_happy_path_completes(
         "planner",
         "worker",
         "verifier",
-        "gap_planner",
-        "worker",
-        "verifier",
     ]
     assert outcome.completed is True, outcome.blocked_reason
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
@@ -815,36 +840,39 @@ async def test_dynamic_full_happy_path_completes(
         for event in events
         if event.event_type == "graph_patch_accepted"
     ]
-    assert accepted_patches == ["patch-ds-root-plan", "patch-ds-gap-invariant"]
+    assert accepted_patches == ["patch-ds-root-plan"]
 
     task_states = project_task_states(events)
     assert task_states, "expected dynamic task regions to be projected"
     assert all(state == "accepted" for state in task_states.values()), task_states
-    passed_check_results = [
+    passed_reports = [
         event.payload
         for event in events
         if event.event_type == "output_record_accepted"
+        and event.payload.get("record_type") == "verification_report"
+        and event.payload.get("value", {}).get("outcome") == "passed"
+    ]
+    assert passed_reports, "expected explicit passed verification_report outcome"
+    assert any(
+        event.event_type == "edge_created"
+        and event.payload.get("metadata", {}).get("purpose")
+        == "passed_verification_final_invariant_recovery"
+        for event in events
+    )
+    assert any(
+        event.event_type == "output_record_accepted"
         and event.payload.get("record_type") == "check_result"
         and event.payload.get("value", {}).get("status") == "passed"
-    ]
-    assert passed_check_results, "expected final invariant check_result to pass"
-    completion_decisions = [
-        event.payload
         for event in events
-        if event.event_type == "output_record_accepted"
-        and event.payload.get("record_type") == "completion_decision"
-    ]
-    assert any(
-        decision.get("value", {}).get("status") == "passed" for decision in completion_decisions
-    ), "expected final_gate completion_decision to pass"
+    ), "expected final invariant check_result before completion"
 
 
 @pytest.mark.asyncio
-async def test_dynamic_macro_created_graph_completes(
+async def test_dynamic_macro_created_graph_skips_failure_branch_on_pass(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
 ) -> None:
-    """End-to-end proof that planner-facing macros expand to a completable graph."""
+    """Planner-facing macros emit a failure branch that passed verification does not enter."""
 
     _, session_factory = file_db
     repo = tmp_path / "repo-macro"
@@ -872,23 +900,17 @@ async def test_dynamic_macro_created_graph_completes(
         "planner",
         "worker",
         "verifier",
-        "gap_planner",
-        "worker",
-        "verifier",
     ]
-    assert outcome.completed is True, outcome.blocked_reason
+    assert outcome.completed is False
+    assert outcome.blocked_reason is not None
+    assert "non-terminal node(s)" in outcome.blocked_reason
     accepted_patches = [
         event.payload.get("patch_id")
         for event in events
         if event.event_type == "graph_patch_accepted"
     ]
-    assert accepted_patches == ["patch-macro-root-plan", "patch-macro-gap-invariant"]
-    assert any(
-        event.event_type == "output_record_accepted"
-        and event.payload.get("record_type") == "check_result"
-        and event.payload.get("value", {}).get("status") == "passed"
-        for event in events
-    )
+    assert accepted_patches == ["patch-macro-root-plan"]
+    assert project_run_state(events) == "active"
 
 
 @pytest.mark.asyncio
@@ -953,14 +975,11 @@ async def test_passed_verifier_with_failure_only_gap_terminalizes_to_final_check
 
 
 @pytest.mark.asyncio
-async def test_dynamic_gap_no_op_is_accepted_then_corrective_completes(
+async def test_passed_verification_skips_gap_no_op_branch(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
 ) -> None:
-    """Gap planner no-op (DG-5.1j) is accepted as a durable no-gap decision.
-    This fixture then submits a corrective patch too, so the corrective branch
-    still drives the run to completion.
-    """
+    """A passed verification report must not enter the no-op gap branch."""
 
     _, session_factory = file_db
     repo = tmp_path / "repo-gap-noop"
@@ -993,7 +1012,7 @@ async def test_dynamic_gap_no_op_is_accepted_then_corrective_completes(
         for event in events
         if event.event_type == "graph_patch_accepted"
     ]
-    assert "patch-ds-gap-no-op" in accepted_patch_ids
+    assert accepted_patch_ids == ["patch-ds-root-plan"]
 
 
 @pytest.mark.asyncio
@@ -1092,7 +1111,7 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
         session_factory,
         repo=repo,
         agents={
-            "planner": DynamicPlannerAgent(),
+            "planner": PassedVerifierTerminalizationPlannerAgent(),
             "worker": WorkerAgent(),
             "verifier": VerifierAgent("A"),
         },
@@ -1104,14 +1123,8 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
     events = await _events(session_factory, run_id)
     assert outcome.completed is False
     assert outcome.blocked_reason is not None
-    assert project_run_state(events) == "failed"
-    assert await _run_status(session_factory, run_id) == RunStatus.FAILED
-    assert any(
-        event.event_type == "run_lifecycle_changed"
-        and event.payload.get("to_state") == "failed"
-        and event.payload.get("trigger") == "recovery_planner_no_successor"
-        for event in events
-    )
+    assert project_run_state(events) == "active"
+    assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
     failed_check_results = [
         event.payload
         for event in events

@@ -259,6 +259,11 @@ def _create_work_region(
                     worker_id,
                     "classified_gap",
                     ("gap_analysis",),
+                    selector={
+                        "record_type": "gap_classification",
+                        "schema": "GapClassification",
+                        "classification": "corrective_work_required",
+                    },
                 ),
             )
     for check_args in _checks(args):
@@ -311,6 +316,21 @@ def _attach_check(args: dict[str, Any]) -> list[dict[str, Any]]:
             check_id,
             "verification_evidence",
             ("verification", "check_result"),
+            selector={
+                "record_type": "any_of",
+                "selectors": [
+                    {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "passed",
+                    },
+                    {
+                        "record_type": "check_result",
+                        "schema": "CheckResult",
+                        "status": "passed",
+                    },
+                ],
+            },
         ),
     ]
 
@@ -341,6 +361,21 @@ def _create_gap_planner(args: dict[str, Any]) -> list[dict[str, Any]]:
             node_id,
             "verification_evidence",
             ("verification", "check_result"),
+            selector={
+                "record_type": "any_of",
+                "selectors": [
+                    {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "failed",
+                    },
+                    {
+                        "record_type": "check_result",
+                        "schema": "CheckResult",
+                        "status": "failed",
+                    },
+                ],
+            },
         ),
     ]
 
@@ -501,6 +536,8 @@ def _edge(
     to_node_id: str,
     to_port: str,
     selector_kinds: tuple[str, ...],
+    *,
+    selector: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     return {
         "op": "create_edge",
@@ -510,8 +547,29 @@ def _edge(
         "to_node_id": to_node_id,
         "to_port": to_port,
         "required": True,
-        "accepted_record_selector": {"record_kinds": list(selector_kinds)},
+        "accepted_record_selector": selector or _selector_for_kinds(selector_kinds),
     }
+
+
+def _selector_for_kinds(selector_kinds: tuple[str, ...]) -> dict[str, Any]:
+    selectors = [_selector_for_kind(kind) for kind in selector_kinds]
+    if len(selectors) == 1:
+        return selectors[0]
+    return {"record_type": "any_of", "selectors": selectors}
+
+
+def _selector_for_kind(kind: str) -> dict[str, Any]:
+    if kind == "candidate":
+        return {"record_type": "candidate", "schema": "ImplementationCandidate"}
+    if kind in {"verification", "verification_report", "verification_result"}:
+        return {"record_type": "verification_report", "schema": "VerificationReport"}
+    if kind == "check_result":
+        return {"record_type": "check_result", "schema": "CheckResult"}
+    if kind in {"gap_analysis", "gap_plan", "classified_gap"}:
+        return {"record_type": "gap_classification", "schema": "GapClassification"}
+    if kind == "file_state":
+        return {"record_type": "file_state", "schema": "FileStateRecord"}
+    return {"record_type": kind}
 
 
 def _copy_command(source: dict[str, Any], target: dict[str, Any]) -> None:

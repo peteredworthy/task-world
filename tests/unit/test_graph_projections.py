@@ -179,6 +179,29 @@ def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
     assert binding["record_bound_positions"] == {"candidate-1": 4, "candidate-2": 5}
 
 
+def test_invalid_persisted_edge_selector_raises_projection_error() -> None:
+    projection = initial_projection()
+    event = _event(
+        "edge_created",
+        {
+            "edge_id": "edge-invalid-selector",
+            "from_node_id": "verifier-1",
+            "from_port": "verification_report",
+            "to_node_id": "planner-gap",
+            "to_port": "verification_evidence",
+            "required": True,
+            "accepted_record_selector": {
+                "record_type": "verification_report",
+                "schema": "VerificationReport",
+                "status": "failed",
+            },
+        },
+    )
+
+    with pytest.raises(ValueError, match="status"):
+        reduce_event(projection, event)
+
+
 def test_replay_determinism() -> None:
     events = [
         _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),

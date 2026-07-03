@@ -14,6 +14,7 @@ from orchestrator.graph.contracts import (
     port_contract_summary,
 )
 from orchestrator.graph.models import EventEnvelope, GraphPatchResultRecord
+from orchestrator.graph.models import normalize_record_selector
 
 
 _EDGE_METADATA_KEYS = (
@@ -1838,7 +1839,7 @@ def _topology_edge(
     }
     selector = edge.get("accepted_record_selector")
     if isinstance(selector, dict):
-        topology_edge["accepted_record_selector"] = dict(cast(dict[str, Any], selector))
+        topology_edge["accepted_record_selector"] = normalize_record_selector(selector)
     if source_contract is not None:
         topology_edge["source_port_contract"] = port_contract_summary(source_contract)
     if target_contract is not None:
@@ -2637,7 +2638,7 @@ def _record_edge(state: GraphProjection, event: EventEnvelope) -> None:
     }
     selector = event.payload.get("accepted_record_selector")
     if isinstance(selector, dict):
-        state["edges"][edge_id]["accepted_record_selector"] = dict(cast(dict[str, Any], selector))
+        state["edges"][edge_id]["accepted_record_selector"] = normalize_record_selector(selector)
     for key in _EDGE_METADATA_KEYS:
         if key not in event.payload:
             continue

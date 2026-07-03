@@ -2,9 +2,9 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 
 class GraphBaseModel(BaseModel):
@@ -161,10 +161,371 @@ class NodeModel(GraphBaseModel):
     membership: NodeMembership | None = None
 
 
-class RecordSelector(GraphBaseModel):
-    record_kinds: list[str]
+class SelectorBaseModel(BaseModel):
+    """Strict base for schema-aware edge selectors."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        kwargs.setdefault("by_alias", True)
+        kwargs.setdefault("exclude_none", True)
+        return super().model_dump(*args, **kwargs)
+
+
+class CandidateRecordSelector(SelectorBaseModel):
+    record_type: Literal["candidate"]
+    schema_: Literal["ImplementationCandidate"] = Field(
+        default="ImplementationCandidate",
+        alias="schema",
+    )
+
+
+class CheckResultSelector(SelectorBaseModel):
+    record_type: Literal["check_result"]
+    schema_: Literal["CheckResult"] = Field(default="CheckResult", alias="schema")
+    status: Literal["passed", "failed", "timeout"] | None = None
+
+
+class VerificationReportSelector(SelectorBaseModel):
+    record_type: Literal["verification_report"]
+    schema_: Literal["VerificationReport"] = Field(default="VerificationReport", alias="schema")
+    outcome: Literal["passed", "failed"] | None = None
+
+
+class GapClassificationSelector(SelectorBaseModel):
+    record_type: Literal["gap_classification"]
+    schema_: Literal["GapClassification"] = Field(default="GapClassification", alias="schema")
+    classification: (
+        Literal[
+            "corrective_work_required",
+            "no_gap",
+            "human_decision_required",
+            "graph_mutation_required",
+        ]
+        | None
+    ) = None
+
+
+class SimpleRecordSelector(SelectorBaseModel):
+    record_type: Literal[
+        "analysis_summary",
+        "artifact_reference",
+        "authority_decision",
+        "completion_decision",
+        "decision_record",
+        "failure_record",
+        "file_state",
+        "graph_patch_proposal",
+        "requirement_record",
+        "routine_snapshot",
+        "run_context",
+    ]
     schema_: str | None = Field(default=None, alias="schema")
-    value_matches: dict[str, Any] | None = None
+
+
+class AnyOfRecordSelector(SelectorBaseModel):
+    record_type: Literal["any_of"]
+    selectors: list[
+        Annotated[
+            CandidateRecordSelector
+            | CheckResultSelector
+            | VerificationReportSelector
+            | GapClassificationSelector
+            | SimpleRecordSelector,
+            Field(discriminator="record_type"),
+        ]
+    ] = Field(min_length=1)
+
+
+AcceptedRecordSelector = Annotated[
+    CandidateRecordSelector
+    | CheckResultSelector
+    | VerificationReportSelector
+    | GapClassificationSelector
+    | SimpleRecordSelector
+    | AnyOfRecordSelector,
+    Field(discriminator="record_type"),
+]
+
+_LEGACY_SELECTOR_KIND_MAP: dict[str, dict[str, Any]] = {
+    "accepted_file_state": {"record_type": "file_state", "schema": "FileStateRecord"},
+    "accepted_candidate": {"record_type": "candidate", "schema": "ImplementationCandidate"},
+    "artifact": {"record_type": "artifact_reference", "schema": "ContextArtifact"},
+    "artifact_reference": {"record_type": "artifact_reference", "schema": "ArtifactReference"},
+    "authority_decision": {"record_type": "authority_decision", "schema": "AuthorityDecision"},
+    "candidate": {"record_type": "candidate", "schema": "ImplementationCandidate"},
+    "candidate_under_test": {"record_type": "candidate", "schema": "ImplementationCandidate"},
+    "check_result": {"record_type": "check_result", "schema": "CheckResult"},
+    "classified_gap": {"record_type": "gap_classification", "schema": "GapClassification"},
+    "completion_decision": {"record_type": "completion_decision", "schema": "CompletionDecision"},
+    "decision_record": {"record_type": "decision_record", "schema": "DecisionRecord"},
+    "failure_record": {"record_type": "failure_record", "schema": "FailureRecord"},
+    "file_state": {"record_type": "file_state", "schema": "FileStateRecord"},
+    "gap_analysis": {"record_type": "gap_classification", "schema": "GapClassification"},
+    "gap_classification": {"record_type": "gap_classification", "schema": "GapClassification"},
+    "gap_plan": {"record_type": "gap_classification", "schema": "GapClassification"},
+    "graph_patch": {"record_type": "graph_patch_proposal", "schema": "GraphPatch"},
+    "graph_patch_proposal": {"record_type": "graph_patch_proposal", "schema": "GraphPatch"},
+    "output": {"record_type": "candidate", "schema": "ImplementationCandidate"},
+    "region_summary": {"record_type": "analysis_summary"},
+    "requirement": {"record_type": "requirement_record", "schema": "RequirementRecord"},
+    "requirement_record": {"record_type": "requirement_record", "schema": "RequirementRecord"},
+    "routine_snapshot": {"record_type": "routine_snapshot", "schema": "RoutineSnapshot"},
+    "run_context": {"record_type": "run_context", "schema": "RunContext"},
+    "snapshot": {"record_type": "routine_snapshot", "schema": "RoutineSnapshot"},
+    "verification": {"record_type": "verification_report", "schema": "VerificationReport"},
+    "verification_evidence": {"record_type": "verification_report", "schema": "VerificationReport"},
+    "verification_report": {"record_type": "verification_report", "schema": "VerificationReport"},
+    "verification_result": {"record_type": "verification_report", "schema": "VerificationReport"},
+}
+
+
+def _normalize_legacy_selector(value: Any) -> Any:
+    if isinstance(value, RecordSelector):
+        return value.root.model_dump(mode="json")
+    if not isinstance(value, dict):
+        return value
+    selector = dict(cast(dict[str, Any], value))
+    if isinstance(selector.get("record_type"), str):
+        _reject_legacy_value_paths(selector)
+        return selector
+
+    raw_kinds = selector.get("record_kinds")
+    if not isinstance(raw_kinds, list):
+        _reject_legacy_value_paths(selector)
+        return selector
+    normalized_parts: list[dict[str, Any]] = []
+    unknown_kinds: list[str] = []
+    for raw_kind in cast(list[Any], raw_kinds):
+        if not isinstance(raw_kind, str) or raw_kind not in _LEGACY_SELECTOR_KIND_MAP:
+            unknown_kinds.append(str(raw_kind))
+            continue
+        normalized_parts.append(dict(_LEGACY_SELECTOR_KIND_MAP[raw_kind]))
+    if unknown_kinds:
+        msg = f"unknown selector record_kinds: {', '.join(unknown_kinds)}"
+        raise ValueError(msg)
+    if not normalized_parts:
+        return selector
+    schema = selector.get("schema")
+    if isinstance(schema, str) and len(normalized_parts) == 1:
+        normalized_parts[0]["schema"] = schema
+    value_matches = selector.get("value_matches")
+    if isinstance(value_matches, dict):
+        _apply_legacy_value_matches(normalized_parts, cast(dict[str, Any], value_matches))
+    if len(normalized_parts) == 1:
+        return normalized_parts[0]
+    return {"record_type": "any_of", "selectors": normalized_parts}
+
+
+def _reject_legacy_value_paths(selector: dict[str, Any]) -> None:
+    value_matches = selector.get("value_matches")
+    if value_matches is not None:
+        msg = "typed selectors must use schema fields, not value_matches"
+        raise ValueError(msg)
+
+
+def _apply_legacy_value_matches(
+    parts: list[dict[str, Any]],
+    value_matches: dict[str, Any],
+) -> None:
+    for key, expected in value_matches.items():
+        applied = False
+        for part in parts:
+            record_type = part.get("record_type")
+            if record_type == "verification_report" and key in {"verdict", "outcome"}:
+                if expected in {"pass", "passed"}:
+                    part["outcome"] = "passed"
+                    applied = True
+                    continue
+                if expected in {"fail", "failed"}:
+                    part["outcome"] = "failed"
+                    applied = True
+                    continue
+            if record_type == "check_result" and key == "status":
+                part["status"] = expected
+                applied = True
+                continue
+            if record_type == "gap_classification" and key == "classification":
+                part["classification"] = expected
+                applied = True
+                continue
+        if not applied:
+            msg = f"unsupported selector value match: {key}"
+            raise ValueError(msg)
+
+
+class RecordSelector(RootModel[AcceptedRecordSelector]):
+    """Schema-aware selector wrapper for accepted graph edge records."""
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_shape(cls, value: Any) -> Any:
+        return _normalize_legacy_selector(value)
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> Any:
+        kwargs.setdefault("by_alias", True)
+        kwargs.setdefault("exclude_none", True)
+        return self.root.model_dump(*args, **kwargs)
+
+    @property
+    def record_type(self) -> str:
+        return self.root.record_type
+
+    def matches(self, record_payload: dict[str, Any], aliases: set[str] | None = None) -> bool:
+        return _selector_matches_payload(self.root, record_payload, aliases or set())
+
+
+def normalize_record_selector(value: Any) -> dict[str, Any]:
+    """Normalize persisted or incoming selector shapes to the typed JSON form."""
+    selector = RecordSelector.model_validate(value)
+    return cast(dict[str, Any], selector.model_dump(mode="json"))
+
+
+def record_selector_matches(
+    selector: Any,
+    record_payload: dict[str, Any],
+    aliases: set[str] | None = None,
+) -> bool:
+    if selector is None:
+        return True
+    return RecordSelector.model_validate(selector).matches(record_payload, aliases)
+
+
+def _selector_matches_payload(
+    selector: AcceptedRecordSelector,
+    record_payload: dict[str, Any],
+    aliases: set[str],
+) -> bool:
+    if isinstance(selector, AnyOfRecordSelector):
+        return any(
+            _selector_matches_payload(part, record_payload, aliases) for part in selector.selectors
+        )
+
+    record_types = _payload_record_types(record_payload, aliases)
+    if selector.record_type not in record_types:
+        return False
+    schema = getattr(selector, "schema_", None)
+    payload_schema = record_payload.get("schema")
+    if isinstance(schema, str) and isinstance(payload_schema, str) and schema != payload_schema:
+        return False
+    if isinstance(selector, VerificationReportSelector):
+        return (
+            selector.outcome is None
+            or _verification_payload_outcome(record_payload) == selector.outcome
+        )
+    if isinstance(selector, CheckResultSelector):
+        return (
+            selector.status is None
+            or _check_result_payload_status(record_payload) == selector.status
+        )
+    if isinstance(selector, GapClassificationSelector):
+        return (
+            selector.classification is None
+            or _gap_classification_payload_classification(record_payload) == selector.classification
+        )
+    return True
+
+
+def _payload_record_types(record_payload: dict[str, Any], aliases: set[str]) -> set[str]:
+    candidates = {
+        value
+        for value in (
+            record_payload.get("record_type"),
+            record_payload.get("port"),
+            record_payload.get("schema"),
+            record_payload.get("record_kind"),
+        )
+        if isinstance(value, str)
+    }
+    candidates.update(aliases)
+    value = record_payload.get("value")
+    if isinstance(value, dict):
+        milestone_kind = cast(dict[str, Any], value).get("milestone_kind")
+        if isinstance(milestone_kind, str):
+            candidates.add(milestone_kind)
+    normalized_candidates: set[str] = set()
+    for candidate in candidates:
+        normalized = _LEGACY_SELECTOR_KIND_MAP.get(candidate)
+        if normalized is not None:
+            record_type = normalized.get("record_type")
+            if isinstance(record_type, str):
+                normalized_candidates.add(record_type)
+    candidates.update(normalized_candidates)
+    output: set[str] = set()
+    for candidate in candidates:
+        normalized = _LEGACY_SELECTOR_KIND_MAP.get(candidate)
+        if normalized is not None:
+            record_type = normalized.get("record_type")
+            if isinstance(record_type, str):
+                output.add(record_type)
+            continue
+        if candidate in {
+            "analysis_summary",
+            "artifact_reference",
+            "authority_decision",
+            "candidate",
+            "check_result",
+            "completion_decision",
+            "decision_record",
+            "failure_record",
+            "file_state",
+            "gap_classification",
+            "graph_patch_proposal",
+            "requirement_record",
+            "routine_snapshot",
+            "run_context",
+            "verification_report",
+        }:
+            output.add(candidate)
+    return output
+
+
+def _verification_payload_outcome(record_payload: dict[str, Any]) -> str | None:
+    outcome = record_payload.get("outcome")
+    if isinstance(outcome, str):
+        if outcome in {"passed", "failed"}:
+            return outcome
+    value = record_payload.get("value")
+    if isinstance(value, dict):
+        value_outcome = cast(dict[str, Any], value).get("outcome")
+        if value_outcome in {"passed", "failed"}:
+            return cast(str, value_outcome)
+    verdict = record_payload.get("verdict")
+    if verdict in {"passed", "pass"}:
+        return "passed"
+    if verdict in {"failed", "fail"}:
+        return "failed"
+    if isinstance(value, dict):
+        value_verdict = cast(dict[str, Any], value).get("verdict")
+        if value_verdict in {"passed", "pass"}:
+            return "passed"
+        if value_verdict in {"failed", "fail"}:
+            return "failed"
+    return None
+
+
+def _check_result_payload_status(record_payload: dict[str, Any]) -> str | None:
+    status = record_payload.get("status")
+    if isinstance(status, str):
+        return status
+    value = record_payload.get("value")
+    if isinstance(value, dict):
+        value_status = cast(dict[str, Any], value).get("status")
+        if isinstance(value_status, str):
+            return value_status
+    return None
+
+
+def _gap_classification_payload_classification(record_payload: dict[str, Any]) -> str | None:
+    classification = record_payload.get("classification")
+    if isinstance(classification, str):
+        return classification
+    value = record_payload.get("value")
+    if isinstance(value, dict):
+        value_classification = cast(dict[str, Any], value).get("classification")
+        if isinstance(value_classification, str):
+            return value_classification
+    return None
 
 
 class EdgeModel(GraphBaseModel):
@@ -271,6 +632,16 @@ class ArtifactReferenceRecord(TypedRecordBase):
         return self
 
 
+def _empty_verification_grades() -> list[dict[str, Any]]:
+    return []
+
+
+class VerificationReportValue(GraphBaseModel):
+    outcome: Literal["passed", "failed"]
+    grades: list[dict[str, Any]] = Field(default_factory=_empty_verification_grades)
+    reason: str | None = None
+
+
 class VerificationReportRecord(TypedRecordBase):
     record_id: str
     record_kind: Literal["verification"]
@@ -278,9 +649,62 @@ class VerificationReportRecord(TypedRecordBase):
     port: Literal["verification_report", "verification_result"] = "verification_report"
     schema_: Literal["VerificationReport"] = Field(default="VerificationReport", alias="schema")
     candidate_id: str
-    verdict: Literal["passed", "failed", "pass", "fail"]
-    value: dict[str, Any] | None = None
+    outcome: Literal["passed", "failed"] | None = None
+    verdict: Literal["passed", "failed", "pass", "fail"] | None = None
+    value: VerificationReportValue
     evidence: Any | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def populate_explicit_outcome(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(cast(dict[str, Any], value))
+        if "status" in payload:
+            msg = "VerificationReport uses outcome, not status"
+            raise ValueError(msg)
+        raw_value = payload.get("value")
+        value_payload = dict(cast(dict[str, Any], raw_value)) if isinstance(raw_value, dict) else {}
+        if "status" in value_payload:
+            msg = "VerificationReport value uses outcome, not status"
+            raise ValueError(msg)
+        outcome = payload.get("outcome") or value_payload.get("outcome")
+        verdict = payload.get("verdict") or value_payload.get("verdict")
+        normalized = _normalize_verification_outcome(outcome)
+        if normalized is None:
+            normalized = _normalize_verification_outcome(verdict)
+        if normalized is not None:
+            payload["outcome"] = normalized
+            value_payload["outcome"] = normalized
+        if "grades" in payload and "grades" not in value_payload:
+            value_payload["grades"] = payload["grades"]
+        if "reason" in payload and "reason" not in value_payload:
+            value_payload["reason"] = payload["reason"]
+        payload["value"] = value_payload
+        return payload
+
+    @model_validator(mode="after")
+    def verification_report_fields_are_consistent(self) -> "VerificationReportRecord":
+        if self.record_type not in {None, "verification_report"}:
+            msg = "record_type must be verification_report"
+            raise ValueError(msg)
+        if self.outcome != self.value.outcome:
+            msg = "outcome must match value.outcome"
+            raise ValueError(msg)
+        if self.verdict is not None:
+            verdict_outcome = _normalize_verification_outcome(self.verdict)
+            if verdict_outcome != self.outcome:
+                msg = "verdict must match outcome"
+                raise ValueError(msg)
+        return self
+
+
+def _normalize_verification_outcome(value: Any) -> Literal["passed", "failed"] | None:
+    if value in {"passed", "pass"}:
+        return "passed"
+    if value in {"failed", "fail"}:
+        return "failed"
+    return None
 
 
 def _empty_completion_blockers() -> list[dict[str, Any]]:
@@ -938,11 +1362,22 @@ class EventEnvelope(GraphBaseModel):
 
 class PatchOp(GraphBaseModel):
     op: str
+    edge_id: str | None = None
     node: dict[str, Any] | None = None
     from_node_id: str | None = None
     from_port: str | None = None
     to_node_id: str | None = None
     to_port: str | None = None
+    required: bool | None = None
+    dependency_type: Literal["input_binding", "state_dependency"] | None = None
+    accepted_record_selector: RecordSelector | None = None
+    binding_policy: str | None = None
+    prompt_hydration_policy: str | None = None
+    freshness_policy: str | None = None
+    purpose: str | None = None
+    description: str | None = None
+    selection: dict[str, Any] | None = None
+    metadata: dict[str, Any] | None = None
     node_id: str | None = None
     resource_claims: list[ResourceClaim] | None = None
     allowed_actions: list[str] | None = None

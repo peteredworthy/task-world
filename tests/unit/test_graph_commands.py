@@ -1432,7 +1432,10 @@ def test_callback_accepts_gap_analysis_output_and_binds_classified_gap() -> None
                 "to_node_id": "worker-2",
                 "to_port": "classified_gap",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["gap_analysis"]},
+                "accepted_record_selector": {
+                    "record_type": "gap_classification",
+                    "schema": "GapClassification",
+                },
             },
             4,
         ),
@@ -1493,7 +1496,10 @@ def test_callback_accepts_classified_gap_port_and_binds_classified_gap() -> None
                 "to_node_id": "worker-2",
                 "to_port": "classified_gap",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["gap_analysis"]},
+                "accepted_record_selector": {
+                    "record_type": "gap_classification",
+                    "schema": "GapClassification",
+                },
             },
             4,
         ),
@@ -1555,8 +1561,9 @@ def test_callback_value_selector_blocks_no_gap_from_corrective_worker() -> None:
                 "to_port": "classified_gap",
                 "required": True,
                 "accepted_record_selector": {
-                    "record_kinds": ["gap_analysis"],
-                    "value_matches": {"classification": "corrective_work_required"},
+                    "record_type": "gap_classification",
+                    "schema": "GapClassification",
+                    "classification": "corrective_work_required",
                 },
             },
             4,
@@ -1662,7 +1669,10 @@ def test_patch_create_edge_backfills_existing_verification_record() -> None:
                     "to_node_id": "check-final",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 }
             ],
         },
@@ -1778,7 +1788,10 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                 "to_node_id": "planner-gap",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["verification"]},
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                },
             },
             8,
         ),
@@ -1838,6 +1851,8 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         "lease_released",
     ]
     accepted_record = output[1].payload
+    assert accepted_record["outcome"] == "passed"
+    assert accepted_record["value"]["outcome"] == "passed"
     assert accepted_record["candidate_record_id"] == "candidate-1"
     assert accepted_record["candidate_record_ids"] == ["candidate-1"]
     assert accepted_record["file_state_record_ids"] == ["file-state-1"]
@@ -1848,6 +1863,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
     ]
     assert accepted_record["evidence"]["file_state_record_ids"] == ["file-state-1"]
     assert output[2].payload["candidate_id"] == "candidate-1"
+    assert output[2].payload["outcome"] == "passed"
     assert output[2].payload["evidence"]["evaluated_record_ids"] == [
         "candidate-1",
         "file-state-1",
@@ -1873,6 +1889,97 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         event.event_type == "lease_granted" and event.payload["node_id"] == "planner-gap"
         for event in schedule_output
     )
+
+
+def test_verifier_callback_failed_output_has_explicit_failed_outcome() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "completed"}, 1),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "value": {"summary": "candidate"},
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {"node_id": "verifier-1", "kind": "verifier", "role": "verifier", "state": "running"},
+            3,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            4,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-v",
+                "generation": 1,
+                "execution_id": "exec-v",
+                "base_snapshot_id": "S0",
+            },
+            5,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-1",
+            lease_id="lease-v",
+            execution_id="exec-v",
+            idempotency_key="verify-failed",
+            payload={
+                "payload_hash": "hash-v",
+                "output_records": [
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "verdict": "failed",
+                        "value": {
+                            "grades": [
+                                {
+                                    "requirement_id": "R-1",
+                                    "grade": "C",
+                                    "reason": "missing regression evidence",
+                                }
+                            ]
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    accepted_record = next(
+        event.payload for event in output if event.event_type == "output_record_accepted"
+    )
+    failed_event = next(
+        event.payload for event in output if event.event_type == "verification_failed"
+    )
+    assert accepted_record["outcome"] == "failed"
+    assert accepted_record["value"]["outcome"] == "failed"
+    assert accepted_record["value"]["grades"][0]["reason"] == "missing regression evidence"
+    assert failed_event["outcome"] == "failed"
 
 
 def test_verifier_callback_rejects_completion_without_grades() -> None:
@@ -1954,6 +2061,171 @@ def test_verifier_callback_rejects_completion_without_grades() -> None:
     assert output[0].payload["reason"] == "verification record at index 0 missing grades"
 
 
+def test_verifier_callback_rejects_stale_status_with_outcome() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "value": {"summary": "done"},
+            },
+            1,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-1",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "running",
+                "candidate_id": "candidate-1",
+            },
+            2,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            3,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-v",
+                "generation": 1,
+                "execution_id": "exec-v",
+                "base_snapshot_id": "S0",
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-1",
+            lease_id="lease-v",
+            execution_id="exec-v",
+            idempotency_key="verify-status",
+            payload={
+                "payload_hash": "hash-v",
+                "output_records": [
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "outcome": "passed",
+                        "status": "passed",
+                        "value": {
+                            "outcome": "passed",
+                            "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "uses outcome, not status" in output[0].payload["reason"]
+
+
+def test_verifier_callback_rejects_report_shaped_output_with_value_status() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "value": {"summary": "done"},
+            },
+            1,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-1",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "running",
+                "candidate_id": "candidate-1",
+            },
+            2,
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            3,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-v",
+                "generation": 1,
+                "execution_id": "exec-v",
+                "base_snapshot_id": "S0",
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-1",
+            lease_id="lease-v",
+            execution_id="exec-v",
+            idempotency_key="verify-output-status",
+            payload={
+                "payload_hash": "hash-v",
+                "output_records": [
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "output",
+                        "record_type": "verification_report",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "outcome": "passed",
+                        "value": {
+                            "outcome": "passed",
+                            "status": "passed",
+                            "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "value uses outcome, not status" in output[0].payload["reason"]
+
+
 def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -2025,7 +2297,16 @@ def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding
                 "to_node_id": "check-final",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+                "accepted_record_selector": {
+                    "record_type": "any_of",
+                    "selectors": [
+                        {
+                            "record_type": "verification_report",
+                            "schema": "VerificationReport",
+                        },
+                        {"record_type": "check_result", "schema": "CheckResult"},
+                    ],
+                },
             },
             6,
         ),
@@ -3156,6 +3437,211 @@ def test_patch_accept_emits_graph_events() -> None:
     assert output[0].payload["base_graph_position"] == -1
 
 
+def test_submit_patch_rejects_verification_selector_with_status_before_acceptance() -> None:
+    output = _apply(
+        [
+            _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+            _event(
+                "node_created",
+                {
+                    "node_id": "verifier-1",
+                    "kind": "verifier",
+                    "role": "verifier",
+                    "state": "completed",
+                },
+                1,
+            ),
+            _event(
+                "node_created",
+                {
+                    "node_id": "planner-gap",
+                    "kind": "planner",
+                    "role": "gap_planner",
+                    "state": "planned",
+                },
+                2,
+            ),
+        ],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-invalid-selector",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": 2,
+            "ops": [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-invalid-selector",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "planner-gap",
+                    "to_port": "verification_evidence",
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "status": "failed",
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload["command_type"] == "submit_patch"
+    assert "accepted_record_selector" in output[0].payload["reason"]
+    assert "status" in output[0].payload["reason"]
+
+
+def test_submit_patch_rejects_legacy_verification_selector_value_status() -> None:
+    output = _apply(
+        [
+            _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+            _event(
+                "node_created",
+                {
+                    "node_id": "verifier-1",
+                    "kind": "verifier",
+                    "role": "verifier",
+                    "state": "completed",
+                },
+                1,
+            ),
+            _event(
+                "node_created",
+                {
+                    "node_id": "planner-gap",
+                    "kind": "planner",
+                    "role": "gap_planner",
+                    "state": "planned",
+                },
+                2,
+            ),
+        ],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-invalid-legacy-selector",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "planner",
+            "base_graph_position": 2,
+            "ops": [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-invalid-legacy-selector",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "planner-gap",
+                    "to_port": "verification_evidence",
+                    "accepted_record_selector": {
+                        "record_kinds": ["verification"],
+                        "value_matches": {"status": "failed"},
+                    },
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert "unsupported selector value match: status" in output[0].payload["reason"]
+
+
+def test_seed_compiled_events_rejects_invalid_edge_selector() -> None:
+    output = _apply(
+        [],
+        "seed_compiled_events",
+        {
+            "run_id": "run-1",
+            "events": [
+                _event(
+                    "edge_created",
+                    {
+                        "edge_id": "edge-invalid-selector",
+                        "from_node_id": "verifier-1",
+                        "from_port": "verification_report",
+                        "to_node_id": "planner-gap",
+                        "to_port": "verification_evidence",
+                        "accepted_record_selector": {
+                            "record_type": "verification_report",
+                            "schema": "VerificationReport",
+                            "status": "failed",
+                        },
+                    },
+                    1,
+                )
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload["command_type"] == "seed_compiled_events"
+    assert "status" in output[0].payload["reason"]
+
+
+def test_seed_compiled_events_rejects_invalid_verification_report_record() -> None:
+    output = _apply(
+        [],
+        "seed_compiled_events",
+        {
+            "run_id": "run-1",
+            "events": [
+                _event(
+                    "output_record_accepted",
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "outcome": "failed",
+                        "status": "failed",
+                        "value": {
+                            "outcome": "failed",
+                            "grades": [{"requirement_id": "R-1", "grade": "F"}],
+                        },
+                    },
+                    1,
+                )
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload["command_type"] == "seed_compiled_events"
+    assert "uses outcome, not status" in output[0].payload["reason"]
+
+
+def test_seed_compiled_events_rejects_mixed_invalid_legacy_selector_kind() -> None:
+    output = _apply(
+        [],
+        "seed_compiled_events",
+        {
+            "run_id": "run-1",
+            "events": [
+                _event(
+                    "edge_created",
+                    {
+                        "edge_id": "edge-invalid-selector",
+                        "from_node_id": "verifier-1",
+                        "from_port": "verification_report",
+                        "to_node_id": "planner-gap",
+                        "to_port": "verification_evidence",
+                        "accepted_record_selector": {
+                            "record_kinds": ["verification", "bogus"],
+                        },
+                    },
+                    1,
+                )
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload["command_type"] == "seed_compiled_events"
+    assert "unknown selector record_kinds: bogus" in output[0].payload["reason"]
+
+
 def test_patch_rejects_planner_authored_verifier_candidate_id() -> None:
     output = _apply(
         [],
@@ -3494,7 +3980,10 @@ def test_patch_accepts_authority_request_edge_to_worker_authority_input() -> Non
                     "to_node_id": "worker-docs-authorized",
                     "to_port": "authority",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["authority_decision"]},
+                    "accepted_record_selector": {
+                        "record_type": "authority_decision",
+                        "schema": "AuthorityDecision",
+                    },
                 },
             ],
         },
@@ -4020,7 +4509,10 @@ def test_schedule_tick_does_not_duplicate_existing_failed_check_recovery() -> No
                 "to_node_id": "planner-gap-existing",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["check_result"]},
+                "accepted_record_selector": {
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                },
             },
             6,
         ),
@@ -4231,7 +4723,10 @@ def test_schedule_tick_ignores_retired_failed_check_recovery_target() -> None:
                 "to_node_id": "planner-gap-retired",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["check_result"]},
+                "accepted_record_selector": {
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                },
             },
             6,
         ),
@@ -4378,6 +4873,11 @@ def test_schedule_tick_creates_gap_planner_for_failed_corrective_verifier() -> N
     assert recovery_node["node_id"] == "planner-recover-verification-fix-failed"
     assert recovery_node["role"] == "gap_planner"
     assert recovery_node["recovery_reason"] == "failed_verification"
+    assert output[1].payload["accepted_record_selector"] == {
+        "record_type": "verification_report",
+        "schema": "VerificationReport",
+        "outcome": "failed",
+    }
     assert output[2].payload["to_port"] == "verification_evidence"
     assert output[2].payload["record_ids"] == ["verification-fix-failed"]
     assert output[4].payload["to_port"] == "routine_snapshot"
@@ -4501,7 +5001,10 @@ def test_schedule_tick_does_not_duplicate_existing_failed_verification_recovery(
                 "to_node_id": "planner-gap-existing",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["verification"]},
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                },
             },
             9,
         ),
@@ -4596,7 +5099,10 @@ def test_passed_corrective_verifier_releases_final_check_without_recovery() -> N
                 "to_node_id": "check-final",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["verification"]},
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                },
             },
             7,
         ),
@@ -4778,8 +5284,9 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
                 "to_port": "verification_evidence",
                 "required": True,
                 "accepted_record_selector": {
-                    "record_kinds": ["verification"],
-                    "value_matches": {"verdict": "failed"},
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "outcome": "failed",
                 },
             },
             10,
@@ -4794,8 +5301,9 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
                 "to_port": "classified_gap",
                 "required": True,
                 "accepted_record_selector": {
-                    "record_kinds": ["gap_analysis"],
-                    "value_matches": {"classification": "corrective_work_required"},
+                    "record_type": "gap_classification",
+                    "schema": "GapClassification",
+                    "classification": "corrective_work_required",
                 },
             },
             11,
@@ -4809,7 +5317,10 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
                 "to_node_id": "verifier-corrective",
                 "to_port": "candidate_under_test",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["candidate"]},
+                "accepted_record_selector": {
+                    "record_type": "candidate",
+                    "schema": "ImplementationCandidate",
+                },
             },
             12,
         ),
@@ -4822,7 +5333,10 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
                 "to_node_id": "check-final",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["verification"]},
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                },
             },
             13,
         ),
@@ -4840,8 +5354,9 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
     assert recovery_edge.payload["from_node_id"] == "verifier-implementation"
     assert recovery_edge.payload["to_node_id"] == "check-final"
     assert recovery_edge.payload["accepted_record_selector"] == {
-        "record_kinds": ["verification"],
-        "value_matches": {"verdict": "passed"},
+        "record_type": "verification_report",
+        "schema": "VerificationReport",
+        "outcome": "passed",
     }
     assert any(
         event.event_type == "input_bound"
@@ -4918,7 +5433,10 @@ def test_passed_final_check_retires_failure_continuation() -> None:
                 "to_node_id": "planner-gap-final",
                 "to_port": "verification_evidence",
                 "required": False,
-                "accepted_record_selector": {"record_kinds": ["check_result"]},
+                "accepted_record_selector": {
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                },
             },
             4,
         ),
@@ -6047,7 +6565,10 @@ def test_record_decision_binds_authority_decision_to_worker_input() -> None:
                 "to_node_id": "worker-1",
                 "to_port": "authority",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["authority_decision"]},
+                "accepted_record_selector": {
+                    "record_type": "authority_decision",
+                    "schema": "AuthorityDecision",
+                },
             },
             4,
         ),

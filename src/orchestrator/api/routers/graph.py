@@ -16,6 +16,7 @@ from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import RunStatus
 from orchestrator.graph import (
     EventEnvelope,
+    RecordSelector,
     build_projection,
     check_command_reference,
     project_final_invariant_blockers,
@@ -114,7 +115,7 @@ class GraphTopologyEdgeResponse(ApiModel):
     to_port: str
     required: bool
     dependency_type: str
-    accepted_record_selector: dict[str, Any] | None = None
+    accepted_record_selector: RecordSelector | None = None
     metadata: dict[str, Any]
     source_port_contract: dict[str, Any] | None = None
     target_port_contract: dict[str, Any] | None = None
@@ -422,6 +423,7 @@ def _summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
         "new_state",
         "node_id",
         "node_kind",
+        "outcome",
         "patch_id",
         "patch_ops",
         "patch_rejection_reasons",
@@ -452,7 +454,11 @@ def _summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
         typed_value = cast(dict[str, Any], value)
         grades = typed_value.get("grades")
         if grades is not None:
-            summarized["value"] = {"grades": grades}
+            value_summary: dict[str, Any] = {"grades": grades}
+            outcome = typed_value.get("outcome")
+            if isinstance(outcome, str):
+                value_summary["outcome"] = outcome
+            summarized["value"] = value_summary
     grades = payload.get("grades")
     if grades is not None:
         summarized["grades"] = grades
@@ -1287,6 +1293,7 @@ def _compact_node_detail_record_payload(payload: dict[str, Any]) -> dict[str, An
         "new_state",
         "node_id",
         "observed_graph_position",
+        "outcome",
         "payload_hash",
         "port",
         "producer_node_id",
@@ -1319,9 +1326,15 @@ def _compact_node_detail_record_payload(payload: dict[str, Any]) -> dict[str, An
         compact["payload"] = _compact_node_detail_record_payload(
             cast(dict[str, Any], nested_payload)
         )
-    if "value" in payload and _node_detail_record_value_is_small_control_payload(payload):
+    if "value" in payload and _node_detail_record_value_should_be_included(payload):
         compact["value"] = _bounded_node_detail_value(payload["value"])
     return compact
+
+
+def _node_detail_record_value_should_be_included(payload: dict[str, Any]) -> bool:
+    return _node_detail_record_value_is_small_control_payload(
+        payload
+    ) or _is_verification_report_record_payload(payload)
 
 
 def _node_detail_record_value_is_small_control_payload(payload: dict[str, Any]) -> bool:
@@ -1332,6 +1345,15 @@ def _node_detail_record_value_is_small_control_payload(payload: dict[str, Any]) 
         "authority_request_record",
         "decision_request",
     }
+
+
+def _is_verification_report_record_payload(payload: dict[str, Any]) -> bool:
+    return (
+        payload.get("record_type") == "verification_report"
+        or payload.get("record_kind") == "verification"
+        or payload.get("port") in {"verification_report", "verification_result"}
+        or payload.get("schema") == "VerificationReport"
+    )
 
 
 def _compact_event_positions(events: list[dict[str, Any]]) -> list[int]:

@@ -10,6 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
+from orchestrator.graph.models import normalize_record_selector
+
 
 HandlerType = Literal["controller", "agent", "human", "deterministic_command"]
 FulfillmentContribution = Literal[
@@ -375,17 +377,51 @@ def _selector_compatibility_error(
     selector = edge.get("accepted_record_selector")
     if not isinstance(selector, dict):
         return None
-    typed_selector = cast(dict[str, Any], selector)
-    raw_record_kinds = typed_selector.get("record_kinds")
-    if isinstance(raw_record_kinds, list):
-        selected = {value for value in cast(list[Any], raw_record_kinds) if isinstance(value, str)}
-        accepted = source.record_types | source.schemas | source.selector_aliases
-        if selected and selected.isdisjoint(accepted):
-            return f"edge {edge_id} selector is incompatible with source output port"
-    schema = typed_selector.get("schema")
-    if isinstance(schema, str) and source.schemas and schema not in source.schemas:
+    try:
+        typed_selector = normalize_record_selector(selector)
+    except ValueError as exc:
+        return f"edge {edge_id} selector is invalid: {exc}"
+    accepted = source.record_types | source.schemas | source.selector_aliases
+    selected = _selector_record_facts(typed_selector)
+    if selected and selected.isdisjoint(accepted):
+        return f"edge {edge_id} selector is incompatible with source output port"
+    schemas = _selector_schemas(typed_selector)
+    if schemas and source.schemas and schemas.isdisjoint(source.schemas):
         return f"edge {edge_id} schema selector is incompatible with source output port"
     return None
+
+
+def _selector_record_facts(selector: dict[str, Any]) -> set[str]:
+    record_type = selector.get("record_type")
+    if record_type == "any_of":
+        raw_selectors = selector.get("selectors")
+        if not isinstance(raw_selectors, list):
+            return set()
+        facts: set[str] = set()
+        for raw_selector in cast(list[Any], raw_selectors):
+            if isinstance(raw_selector, dict):
+                facts.update(_selector_record_facts(cast(dict[str, Any], raw_selector)))
+        return facts
+    facts: set[str] = {record_type} if isinstance(record_type, str) else set()
+    schema = selector.get("schema")
+    if isinstance(schema, str):
+        facts.add(schema)
+    return facts
+
+
+def _selector_schemas(selector: dict[str, Any]) -> set[str]:
+    record_type = selector.get("record_type")
+    if record_type == "any_of":
+        raw_selectors = selector.get("selectors")
+        if not isinstance(raw_selectors, list):
+            return set()
+        schemas: set[str] = set()
+        for raw_selector in cast(list[Any], raw_selectors):
+            if isinstance(raw_selector, dict):
+                schemas.update(_selector_schemas(cast(dict[str, Any], raw_selector)))
+        return schemas
+    schema = selector.get("schema")
+    return {schema} if isinstance(schema, str) else set()
 
 
 def _binding_policy_error(

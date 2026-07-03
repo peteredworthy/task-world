@@ -65,6 +65,7 @@ SUMMARY_PAYLOAD_FIELDS = (
     "new_state",
     "node_id",
     "node_kind",
+    "outcome",
     "patch_id",
     "port",
     "producer_node_id",
@@ -236,6 +237,7 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "lease_id",
     "new_state",
     "node_id",
+    "outcome",
     "port",
     "producer_node_id",
     "record_id",
@@ -272,6 +274,7 @@ NODE_DETAIL_PAYLOAD_FIELDS = (
     "lease_id",
     "new_state",
     "node_id",
+    "outcome",
     "port",
     "producer_node_id",
     "prompt_summary",
@@ -412,12 +415,26 @@ def _record_type_for_port(port: str, payload: dict[str, Any]) -> str:
 def _typed_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
     value = payload.get("value")
     if isinstance(value, dict):
-        return dict(cast(dict[str, Any], value))
+        typed_value = dict(cast(dict[str, Any], value))
+        if _is_verification_report_payload(payload):
+            outcome = payload.get("outcome")
+            if isinstance(outcome, str):
+                typed_value.setdefault("outcome", outcome)
+        return typed_value
     return {
         key: value
         for key, value in payload.items()
         if key not in _RECORD_PAYLOAD_BASE_FIELDS and key not in _LEGACY_RECORD_METADATA_FIELDS
     }
+
+
+def _is_verification_report_payload(payload: dict[str, Any]) -> bool:
+    return (
+        payload.get("record_type") == "verification_report"
+        or payload.get("record_kind") == "verification"
+        or payload.get("port") in {"verification_report", "verification_result"}
+        or payload.get("schema") == "VerificationReport"
+    )
 
 
 @dataclass(frozen=True)
@@ -623,6 +640,12 @@ class GraphEventStore:
             func.json_extract(EventV2Model.payload, "$.payload.value.classification").label(
                 "__value_classification"
             ),
+            func.json_extract(EventV2Model.payload, "$.payload.value.outcome").label(
+                "__value_outcome"
+            ),
+            func.json_extract(EventV2Model.payload, "$.payload.value.grades").label(
+                "__value_grades"
+            ),
             *[
                 func.json_extract(EventV2Model.payload, f"$.payload.value.{field}").label(
                     f"__decision_value_{field}"
@@ -661,6 +684,16 @@ class GraphEventStore:
                 and row.get("__value_classification")
             ):
                 payload["classification"] = _json_extract_value(row["__value_classification"])
+            if _is_verification_report_payload(payload):
+                value_payload: dict[str, Any] = {}
+                value_outcome = row.get("__value_outcome")
+                if value_outcome is not None:
+                    value_payload["outcome"] = _json_extract_value(value_outcome)
+                value_grades = row.get("__value_grades")
+                if value_grades is not None:
+                    value_payload["grades"] = _json_extract_value(value_grades)
+                if value_payload:
+                    payload["value"] = value_payload
             record_type = payload.get("record_type")
             port = payload.get("port")
             if record_type in {"decision_request", "authority_request_record"} or port in {
@@ -1130,7 +1163,11 @@ def summarize_graph_event(event: EventEnvelope) -> GraphEventSummary:
         typed_value = cast(dict[str, Any], value)
         grades = typed_value.get("grades")
         if grades is not None:
-            payload["value"] = {"grades": grades}
+            value_summary: dict[str, Any] = {"grades": grades}
+            outcome = typed_value.get("outcome")
+            if isinstance(outcome, str):
+                value_summary["outcome"] = outcome
+            payload["value"] = value_summary
     grades = event.payload.get("grades")
     if grades is not None:
         payload["grades"] = grades
@@ -1503,6 +1540,18 @@ def _node_detail_light_event(event: EventEnvelope) -> EventEnvelope:
     payload = {
         key: value for key, value in event.payload.items() if key in NODE_DETAIL_PAYLOAD_FIELDS
     }
+    value = event.payload.get("value")
+    if _is_verification_report_payload(event.payload) and isinstance(value, dict):
+        typed_value = cast(dict[str, Any], value)
+        compact_value: dict[str, Any] = {}
+        outcome = typed_value.get("outcome")
+        if isinstance(outcome, str):
+            compact_value["outcome"] = outcome
+        grades = typed_value.get("grades")
+        if grades is not None:
+            compact_value["grades"] = grades
+        if compact_value:
+            payload["value"] = compact_value
     return event.model_copy(update={"payload": payload})
 
 

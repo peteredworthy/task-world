@@ -903,19 +903,20 @@ class _Compiler:
         edge_id = (
             f"edge-{_slug(from_node_id)}-{_slug(from_port)}-to-{_slug(to_node_id)}-{_slug(to_port)}"
         )
-        self._event(
-            "edge_created",
-            {
-                "edge_id": edge_id,
-                "from_node_id": from_node_id,
-                "from_port": from_port,
-                "to_node_id": to_node_id,
-                "to_port": to_port,
-                "required": required,
-                "purpose": purpose,
-                "dependency_type": dependency_type,
-            },
-        )
+        payload: dict[str, Any] = {
+            "edge_id": edge_id,
+            "from_node_id": from_node_id,
+            "from_port": from_port,
+            "to_node_id": to_node_id,
+            "to_port": to_port,
+            "required": required,
+            "purpose": purpose,
+            "dependency_type": dependency_type,
+        }
+        selector = _selector_for_edge_port(from_port)
+        if dependency_type == "input_binding" and selector is not None:
+            payload["accepted_record_selector"] = selector
+        self._event("edge_created", payload)
         return edge_id
 
     def _bind(
@@ -1032,6 +1033,26 @@ def _worker_write_paths(task: TaskConfig) -> list[str]:
         if normalized is not None and normalized not in paths:
             paths.append(normalized)
     return paths or ["."]
+
+
+def _selector_for_edge_port(port: str) -> dict[str, Any] | None:
+    if port in {"snapshot", "routine_snapshot"}:
+        return {"record_type": "routine_snapshot", "schema": "RoutineSnapshot"}
+    if port == "run_context":
+        return {"record_type": "run_context", "schema": "RunContext"}
+    if port == "candidate":
+        return {"record_type": "candidate", "schema": "ImplementationCandidate"}
+    if port == "file_state":
+        return {"record_type": "file_state", "schema": "FileStateRecord"}
+    if port == "approval":
+        return {"record_type": "decision_record", "schema": "DecisionRecord"}
+    if port in {"requirement", "requirement_record"}:
+        return {"record_type": "requirement_record", "schema": "RequirementRecord"}
+    if port in {"artifact", "artifact_reference"}:
+        return {"record_type": "artifact_reference", "schema": "ContextArtifact"}
+    if port in {"reader_output", "fan_out_inputs"}:
+        return None
+    return None
 
 
 def _repo_relative_path(path: str) -> str | None:

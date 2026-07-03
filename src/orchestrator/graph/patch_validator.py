@@ -6,7 +6,7 @@ from typing import Any, cast
 
 from orchestrator.graph.command_bindings import is_known_check_command_binding
 from orchestrator.graph.contracts import validate_edge_payload, validate_node_payload
-from orchestrator.graph.models import EventEnvelope, PatchEnvelope
+from orchestrator.graph.models import EventEnvelope, PatchEnvelope, normalize_record_selector
 from orchestrator.graph.projections import GraphProjection
 
 
@@ -503,11 +503,35 @@ def _has_selector_for_port(op: dict[str, Any], port: str) -> bool:
     selector = op.get("accepted_record_selector")
     if not isinstance(selector, dict):
         return False
-    typed_selector = cast(dict[str, Any], selector)
-    record_kinds = typed_selector.get("record_kinds")
-    if not isinstance(record_kinds, list):
+    try:
+        typed_selector = normalize_record_selector(selector)
+    except ValueError:
         return False
-    return port in {kind for kind in cast(list[Any], record_kinds) if isinstance(kind, str)}
+    return _selector_accepts_port(typed_selector, port)
+
+
+def _selector_accepts_port(selector: dict[str, Any], port: str) -> bool:
+    record_type = selector.get("record_type")
+    if record_type == "any_of":
+        raw_selectors = selector.get("selectors")
+        if not isinstance(raw_selectors, list):
+            return False
+        for raw_selector in cast(list[Any], raw_selectors):
+            if isinstance(raw_selector, dict) and _selector_accepts_port(
+                cast(dict[str, Any], raw_selector),
+                port,
+            ):
+                return True
+        return False
+    if port == "accepted_file_state":
+        return record_type == "file_state"
+    if port in {"verification_evidence", "verification_report"}:
+        return record_type in {"verification_report", "check_result"}
+    if port == "outstanding_failures":
+        return record_type == "failure_record"
+    if port == "region_summary":
+        return record_type == "analysis_summary"
+    return record_type == port
 
 
 def _port_dicts(raw_ports: Any) -> list[dict[str, Any]]:

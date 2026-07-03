@@ -1060,11 +1060,13 @@ def _verifier_packet(context: GraphDispatchContext) -> dict[str, Any]:
             "schema": "VerificationReport",
             "required_fields": [
                 "candidate_id",
-                "verdict",
+                "outcome",
+                "value.outcome",
                 "value.grades",
                 "evidence.evaluated_record_ids",
             ],
-            "verdict_values": ["passed", "failed"],
+            "outcome_values": ["passed", "failed"],
+            "compatibility_alias": "verdict may mirror outcome for legacy readers",
         },
     }
 
@@ -1982,7 +1984,10 @@ def _planner_patch_examples(
                         "to_node_id": "verifier-example",
                         "to_port": "candidate_under_test",
                         "required": True,
-                        "accepted_record_selector": {"record_kinds": ["candidate"]},
+                        "accepted_record_selector": {
+                            "record_type": "candidate",
+                            "schema": "ImplementationCandidate",
+                        },
                     },
                 ],
             }
@@ -2047,7 +2052,9 @@ def _planner_patch_examples(
                         "to_port": "verification_evidence",
                         "required": True,
                         "accepted_record_selector": {
-                            "record_kinds": ["verification", "check_result"]
+                            "record_type": "verification_report",
+                            "schema": "VerificationReport",
+                            "outcome": "failed",
                         },
                     },
                 ],
@@ -2080,7 +2087,9 @@ def _planner_patch_examples(
                         "to_port": "verification_evidence",
                         "required": True,
                         "accepted_record_selector": {
-                            "record_kinds": ["verification", "check_result"]
+                            "record_type": "verification_report",
+                            "schema": "VerificationReport",
+                            "outcome": "passed",
                         },
                     },
                 ],
@@ -2431,7 +2440,7 @@ def _output_records_for_submit(
         return []
     if context.node_kind == "verifier":
         candidate_id = _candidate_id_for_verifier(context)
-        verdict = "passed" if _grades_pass(grades) else "failed"
+        outcome = "passed" if _grades_pass(grades) else "failed"
         citations = _evaluated_record_citations(context)
         return [
             _add_evaluated_record_citations(
@@ -2443,12 +2452,14 @@ def _output_records_for_submit(
                     "schema": "VerificationReport",
                     "candidate_id": candidate_id,
                     "task_region_id": task_region_id,
-                    "verdict": verdict,
+                    "outcome": outcome,
+                    "verdict": outcome,
                     "value": {
+                        "outcome": outcome,
                         "grades": [
                             {"requirement_id": req_id, "grade": grade, "reason": reason}
                             for req_id, grade, reason in grades
-                        ]
+                        ],
                     },
                 },
                 citations,

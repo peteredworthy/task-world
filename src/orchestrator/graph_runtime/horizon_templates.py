@@ -102,7 +102,10 @@ def instantiate_horizon_template(
                     "to_node_id": f"verifier-validation-{region_id}",
                     "to_port": "candidate_under_test",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["candidate"]},
+                    "accepted_record_selector": {
+                        "record_type": "candidate",
+                        "schema": "ImplementationCandidate",
+                    },
                 },
             ],
         }
@@ -118,7 +121,11 @@ def instantiate_horizon_template(
             "canonical_inputs": {
                 "verification_evidence": {
                     "from_port": "verification_report",
-                    "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "failed",
+                    },
                 }
             },
             "ops": [
@@ -140,7 +147,11 @@ def instantiate_horizon_template(
                     "to_node_id": f"planner-gap-{region_id}",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "failed",
+                    },
                 },
             ],
         }
@@ -185,8 +196,9 @@ def instantiate_horizon_template(
                     "to_port": "classified_gap",
                     "required": True,
                     "accepted_record_selector": {
-                        "record_kinds": ["gap_analysis"],
-                        "value_matches": {"classification": "corrective_work_required"},
+                        "record_type": "gap_classification",
+                        "schema": "GapClassification",
+                        "classification": "corrective_work_required",
                     },
                 },
                 {
@@ -197,7 +209,10 @@ def instantiate_horizon_template(
                     "to_node_id": f"verifier-corrective-{region_id}",
                     "to_port": "candidate_under_test",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["candidate"]},
+                    "accepted_record_selector": {
+                        "record_type": "candidate",
+                        "schema": "ImplementationCandidate",
+                    },
                 },
             ],
         }
@@ -238,7 +253,11 @@ def instantiate_horizon_template(
                     "to_node_id": f"check-final-invariant-{region_id}",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "passed",
+                    },
                 },
             ],
         }
