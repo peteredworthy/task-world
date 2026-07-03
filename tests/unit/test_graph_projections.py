@@ -16,6 +16,7 @@ from orchestrator.graph import (
     GraphProjection,
     InMemoryEventStore,
     SequentialIdGenerator,
+    apply_command,
     initial_projection,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
@@ -102,12 +103,17 @@ def test_empty_projection() -> None:
         "node_preconditions": {},
         "node_command_definitions": {},
         "node_output_ports": {},
+        "accepted_output_records_by_node_port": {},
+        "accepted_record_summaries_by_id": {},
         "edges": {},
         "input_bindings": {},
         "node_pending_appeals": {},
         "node_gate_decisions": {},
         "task_candidates": {},
         "verifier_verdicts": {},
+        "failed_verification_results_by_record_id": {},
+        "passed_verification_candidate_ids": [],
+        "recovery_nodes_by_record_id": {},
         "check_results": {},
         "invalid_test_blocks": {},
         "configured_gates": {},
@@ -117,6 +123,7 @@ def test_empty_projection() -> None:
         "planner_generation_budget": 8,
         "planner_successors": {},
         "accepted_graph_patches_by_node": {},
+        "accepted_no_successor_patches_by_node": {},
         "planner_generations": {},
         "planner_sessions": {},
         "planner_session_states": {},
@@ -227,6 +234,267 @@ def test_replay_determinism() -> None:
             "state": "active",
         }
     }
+
+
+def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
+    def legacy_indexes(
+        stream: list[EventEnvelope],
+    ) -> tuple[
+        dict[str, dict[str, list[dict[str, Any]]]],
+        dict[str, dict[str, str]],
+        dict[str, list[dict[str, str]]],
+    ]:
+        accepted_by_port: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        failed_by_record_id: dict[str, dict[str, str]] = {}
+        passed_candidates: set[str] = set()
+        recovery_by_record_id: dict[str, list[dict[str, str]]] = {}
+        for graph_event in stream:
+            if graph_event.event_type == "output_record_accepted":
+                node_id = graph_event.payload.get("producer_node_id") or graph_event.payload.get(
+                    "node_id"
+                )
+                port = graph_event.payload.get("port")
+                record_id = graph_event.payload.get("record_id")
+                if all(isinstance(value, str) and value for value in (node_id, port, record_id)):
+                    accepted_by_port.setdefault(cast(str, node_id), {}).setdefault(
+                        cast(str, port), []
+                    ).append(
+                        {
+                            "record_id": cast(str, record_id),
+                            "payload": graph_event.payload,
+                        }
+                    )
+            elif graph_event.event_type in {"verification_passed", "verification_failed"}:
+                candidate_id = graph_event.payload.get("candidate_id")
+                if (
+                    isinstance(candidate_id, str)
+                    and graph_event.event_type == "verification_passed"
+                ):
+                    passed_candidates.add(candidate_id)
+                if graph_event.event_type != "verification_failed":
+                    continue
+                node_id = graph_event.payload.get("verifier_node_id") or graph_event.payload.get(
+                    "node_id"
+                )
+                record_id = graph_event.payload.get("record_id")
+                if not isinstance(node_id, str) or not isinstance(record_id, str):
+                    continue
+                failed = {"node_id": node_id, "record_id": record_id}
+                if isinstance(candidate_id, str) and candidate_id:
+                    failed["candidate_id"] = candidate_id
+                task_region_id = graph_event.payload.get("task_region_id")
+                if isinstance(task_region_id, str) and task_region_id:
+                    failed["task_region_id"] = task_region_id
+                failed_by_record_id[record_id] = failed
+            elif graph_event.event_type == "node_created":
+                node_id = graph_event.payload.get("node_id")
+                recovery_reason = graph_event.payload.get("recovery_reason")
+                record_id = graph_event.payload.get("recovery_of_record_id")
+                if not all(
+                    isinstance(value, str) and value
+                    for value in (node_id, recovery_reason, record_id)
+                ):
+                    continue
+                if recovery_reason not in {"failed_required_check", "failed_verification"}:
+                    continue
+                recovery_by_record_id.setdefault(cast(str, record_id), []).append(
+                    {
+                        "node_id": cast(str, node_id),
+                        "recovery_reason": cast(str, recovery_reason),
+                    }
+                )
+        current_failed = {
+            record_id: failed
+            for record_id, failed in failed_by_record_id.items()
+            if failed.get("candidate_id") not in passed_candidates
+        }
+        return accepted_by_port, current_failed, recovery_by_record_id
+
+    store = InMemoryEventStore()
+    clock = FakeClock()
+    id_gen = SequentialIdGenerator()
+
+    def append_event(event_type: str, payload: dict[str, Any]) -> None:
+        store.append(_event(event_type, payload))
+
+    def append_command(command_type: str, payload: dict[str, Any]) -> None:
+        events_before = store.read_from("run-1")
+        command_projection = initial_projection()
+        for graph_event in events_before:
+            command_projection = reduce_event(command_projection, graph_event)
+        for graph_event in apply_command(
+            command_projection,
+            events_before,
+            command_type,
+            payload,
+            clock,
+            id_gen,
+        ):
+            store.append(graph_event)
+
+    append_event("run_lifecycle_changed", {"to_state": "active"})
+    append_event(
+        "node_created",
+        {
+            "node_id": "routine-snapshot",
+            "kind": "root",
+            "state": "completed",
+        },
+    )
+    append_event(
+        "output_record_accepted",
+        {
+            "record_id": "routine-snapshot-record",
+            "record_kind": "graph_record",
+            "record_type": "routine_snapshot",
+            "producer_node_id": "routine-snapshot",
+            "port": "snapshot",
+            "schema": "RoutineSnapshot",
+        },
+    )
+    append_event(
+        "node_created",
+        {
+            "node_id": "worker-1",
+            "kind": "worker",
+            "state": "running",
+            "task_region_id": "task-1",
+            "candidate_id": "candidate-1",
+        },
+    )
+    append_event(
+        "node_created",
+        {
+            "node_id": "verifier-1",
+            "kind": "verifier",
+            "state": "planned",
+            "task_region_id": "task-1",
+        },
+    )
+    append_event(
+        "edge_created",
+        {
+            "edge_id": "edge-worker-verifier",
+            "from_node_id": "worker-1",
+            "from_port": "candidate",
+            "to_node_id": "verifier-1",
+            "to_port": "candidate_under_test",
+            "required": True,
+            "accepted_record_selector": {"record_kinds": ["candidate"]},
+        },
+    )
+    append_event(
+        "lease_granted",
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-worker",
+            "generation": 1,
+            "execution_id": "exec-worker",
+            "base_snapshot_id": "S0",
+        },
+    )
+    append_command(
+        "submit_callback",
+        {
+            "run_id": "run-1",
+            "node_id": "worker-1",
+            "execution_id": "exec-worker",
+            "lease_id": "lease-worker",
+            "lease_generation": 1,
+            "base_snapshot_id": "S0",
+            "observed_graph_position": store.snapshot_position("run-1"),
+            "idempotency_key": "worker-submit",
+            "payload_hash": "hash-worker",
+            "payload": {
+                "payload_hash": "hash-worker",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "done"},
+                    }
+                ],
+            },
+        },
+    )
+    append_event(
+        "node_state_changed",
+        {
+            "node_id": "verifier-1",
+            "new_state": "running",
+            "trigger": "test_dispatch",
+        },
+    )
+    append_event(
+        "lease_granted",
+        {
+            "node_id": "verifier-1",
+            "lease_id": "lease-verifier",
+            "generation": 1,
+            "execution_id": "exec-verifier",
+            "base_snapshot_id": "S0",
+        },
+    )
+    append_command(
+        "submit_callback",
+        {
+            "run_id": "run-1",
+            "node_id": "verifier-1",
+            "execution_id": "exec-verifier",
+            "lease_id": "lease-verifier",
+            "lease_generation": 1,
+            "base_snapshot_id": "S0",
+            "observed_graph_position": store.snapshot_position("run-1"),
+            "idempotency_key": "verifier-submit",
+            "payload_hash": "hash-verifier",
+            "payload": {
+                "payload_hash": "hash-verifier",
+                "output_records": [
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "record_type": "verification",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "candidate_id": "candidate-1",
+                        "verdict": "failed",
+                        "grades": [{"requirement_id": "req-1", "grade": "C"}],
+                        "value": {
+                            "verdict": "failed",
+                            "grades": [{"requirement_id": "req-1", "grade": "C"}],
+                        },
+                    }
+                ],
+            },
+        },
+    )
+    append_command(
+        "schedule_tick",
+        {
+            "run_id": "run-1",
+            "lease_seconds": 300,
+            "max_grants": 0,
+            "base_snapshot_id": "S0",
+        },
+    )
+
+    events = store.read_from("run-1")
+
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+
+    legacy_accepted_by_port, legacy_failed_verifications, legacy_recovery_nodes = legacy_indexes(
+        events
+    )
+
+    assert projection["accepted_output_records_by_node_port"] == legacy_accepted_by_port
+    assert projection["failed_verification_results_by_record_id"] == legacy_failed_verifications
+    assert projection["recovery_nodes_by_record_id"] == legacy_recovery_nodes
 
 
 def test_requirement_revisions_replay_active_versions() -> None:

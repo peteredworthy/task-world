@@ -28,6 +28,33 @@ _EDGE_METADATA_KEYS = (
 )
 
 
+class GraphRecordSummary(TypedDict, total=False):
+    record_id: str
+    record_type: str
+    record_kind: str
+    schema: str
+    producer_node_id: str
+    producer_port: str
+    position: int
+
+
+class AcceptedOutputRecord(TypedDict):
+    record_id: str
+    payload: dict[str, Any]
+
+
+class FailedVerificationResult(TypedDict, total=False):
+    node_id: str
+    record_id: str
+    candidate_id: str
+    task_region_id: str
+
+
+class RecoveryNodeIndexEntry(TypedDict):
+    node_id: str
+    recovery_reason: str
+
+
 class GraphProjection(TypedDict):
     run_state: str | None
     node_states: dict[str, str]
@@ -45,12 +72,17 @@ class GraphProjection(TypedDict):
     node_preconditions: dict[str, list[str]]
     node_command_definitions: dict[str, Any]
     node_output_ports: dict[str, dict[str, list[str]]]
+    accepted_output_records_by_node_port: dict[str, dict[str, list[AcceptedOutputRecord]]]
+    accepted_record_summaries_by_id: dict[str, GraphRecordSummary]
     edges: dict[str, dict[str, Any]]
     input_bindings: dict[str, dict[str, dict[str, Any]]]
     node_pending_appeals: dict[str, bool]
     node_gate_decisions: dict[str, bool]
     task_candidates: dict[str, list[dict[str, Any]]]
     verifier_verdicts: dict[str, dict[str, Any]]
+    failed_verification_results_by_record_id: dict[str, FailedVerificationResult]
+    passed_verification_candidate_ids: list[str]
+    recovery_nodes_by_record_id: dict[str, list[RecoveryNodeIndexEntry]]
     check_results: dict[str, dict[str, Any]]
     invalid_test_blocks: dict[str, dict[str, Any]]
     configured_gates: dict[str, dict[str, bool]]
@@ -60,6 +92,7 @@ class GraphProjection(TypedDict):
     planner_generation_budget: int
     planner_successors: dict[str, str]
     accepted_graph_patches_by_node: dict[str, list[str]]
+    accepted_no_successor_patches_by_node: dict[str, list[str]]
     planner_generations: dict[str, int]
     planner_sessions: dict[str, str]
     planner_session_states: dict[str, str]
@@ -69,16 +102,6 @@ class GraphProjection(TypedDict):
     requirement_revisions: dict[str, dict[str, Any]]
     active_requirement_versions: dict[str, str]
     support_evidence: dict[str, dict[str, Any]]
-
-
-class GraphRecordSummary(TypedDict, total=False):
-    record_id: str
-    record_type: str
-    record_kind: str
-    schema: str
-    producer_node_id: str
-    producer_port: str
-    position: int
 
 
 class GraphTopologyBinding(TypedDict, total=False):
@@ -258,12 +281,17 @@ def initial_projection() -> GraphProjection:
         "node_preconditions": {},
         "node_command_definitions": {},
         "node_output_ports": {},
+        "accepted_output_records_by_node_port": {},
+        "accepted_record_summaries_by_id": {},
         "edges": {},
         "input_bindings": {},
         "node_pending_appeals": {},
         "node_gate_decisions": {},
         "task_candidates": {},
         "verifier_verdicts": {},
+        "failed_verification_results_by_record_id": {},
+        "passed_verification_candidate_ids": [],
+        "recovery_nodes_by_record_id": {},
         "check_results": {},
         "invalid_test_blocks": {},
         "configured_gates": {},
@@ -273,6 +301,7 @@ def initial_projection() -> GraphProjection:
         "planner_generation_budget": 8,
         "planner_successors": {},
         "accepted_graph_patches_by_node": {},
+        "accepted_no_successor_patches_by_node": {},
         "planner_generations": {},
         "planner_sessions": {},
         "planner_session_states": {},
@@ -314,6 +343,23 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             node_id: {port: list(record_ids) for port, record_ids in ports.items()}
             for node_id, ports in state.get("node_output_ports", {}).items()
         },
+        "accepted_output_records_by_node_port": {
+            node_id: {
+                port: [
+                    {
+                        "record_id": record["record_id"],
+                        "payload": dict(record["payload"]),
+                    }
+                    for record in records
+                ]
+                for port, records in ports.items()
+            }
+            for node_id, ports in state.get("accepted_output_records_by_node_port", {}).items()
+        },
+        "accepted_record_summaries_by_id": {
+            record_id: cast(GraphRecordSummary, dict(summary))
+            for record_id, summary in state.get("accepted_record_summaries_by_id", {}).items()
+        },
         "edges": {edge_id: dict(edge) for edge_id, edge in state["edges"].items()},
         "input_bindings": {
             node_id: {port: dict(binding) for port, binding in ports.items()}
@@ -328,6 +374,19 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "verifier_verdicts": {
             candidate_id: dict(verdict)
             for candidate_id, verdict in state["verifier_verdicts"].items()
+        },
+        "failed_verification_results_by_record_id": {
+            record_id: cast(FailedVerificationResult, dict(result))
+            for record_id, result in state.get(
+                "failed_verification_results_by_record_id", {}
+            ).items()
+        },
+        "passed_verification_candidate_ids": list(
+            state.get("passed_verification_candidate_ids", [])
+        ),
+        "recovery_nodes_by_record_id": {
+            record_id: [cast(RecoveryNodeIndexEntry, dict(recovery)) for recovery in recoveries]
+            for record_id, recoveries in state.get("recovery_nodes_by_record_id", {}).items()
         },
         "check_results": {
             node_id: dict(result) for node_id, result in state.get("check_results", {}).items()
@@ -357,6 +416,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "accepted_graph_patches_by_node": {
             node_id: list(patch_ids)
             for node_id, patch_ids in state.get("accepted_graph_patches_by_node", {}).items()
+        },
+        "accepted_no_successor_patches_by_node": {
+            node_id: list(patch_ids)
+            for node_id, patch_ids in state.get("accepted_no_successor_patches_by_node", {}).items()
         },
         "planner_generations": dict(state.get("planner_generations", {})),
         "planner_sessions": dict(state.get("planner_sessions", {})),
@@ -435,6 +498,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 next_state["node_command_definitions"][node_id] = command_definition
             if kind == "gate" and task_region_id is not None:
                 next_state["configured_gates"].setdefault(task_region_id, {})[node_id] = True
+            _record_recovery_node(next_state, event)
     elif event.event_type == "node_state_changed":
         node_id = event.payload.get("node_id")
         new_state = event.payload.get("new_state")
@@ -530,11 +594,14 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             next_state["leases"][lease_id] = lease
     elif event.event_type == "output_record_accepted":
         _record_node_output_port(next_state, event)
+        _record_accepted_output_record(next_state, event)
+        _record_accepted_record_summary(next_state, event)
         _record_candidate(next_state, event)
         _record_check_result(next_state, event)
         _record_environment_failure(next_state, event)
     elif event.event_type in {"verification_passed", "verification_failed"}:
         _record_verdict(next_state, event)
+        _record_failed_verification_result(next_state, event)
     elif event.event_type == "appeal_opened":
         _record_open_appeal(next_state, event)
     elif event.event_type == "oversight_decision_recorded":
@@ -549,6 +616,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_environment_failure(next_state, event)
     elif event.event_type == "file_state_accepted":
         _record_node_output_port(next_state, event)
+        _record_accepted_record_summary(next_state, event)
         _record_file_state(next_state, event)
     elif event.event_type == "graph_patch_accepted":
         planner_node_id = event.payload.get("proposed_by_node_id")
@@ -557,6 +625,20 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             accepted = list(next_state["accepted_graph_patches_by_node"].get(planner_node_id, []))
             accepted.append(patch_id)
             next_state["accepted_graph_patches_by_node"][planner_node_id] = accepted
+            successor_node_ids = event.payload.get("successor_planner_node_ids")
+            has_successor = isinstance(successor_node_ids, list) and any(
+                isinstance(item, str) for item in cast(list[Any], successor_node_ids)
+            )
+            if not has_successor:
+                no_successor_patches = list(
+                    next_state["accepted_no_successor_patches_by_node"].get(planner_node_id, [])
+                )
+                no_successor_patches.append(patch_id)
+                next_state["accepted_no_successor_patches_by_node"][planner_node_id] = (
+                    no_successor_patches
+                )
+            else:
+                next_state["accepted_no_successor_patches_by_node"][planner_node_id] = []
         successor_node_ids = event.payload.get("successor_planner_node_ids")
         if isinstance(planner_node_id, str) and isinstance(successor_node_ids, list):
             for successor_node_id in cast(list[Any], successor_node_ids):
@@ -1348,7 +1430,8 @@ def project_node_metadata(
 
 def project_graph_topology(events: list[EventEnvelope]) -> GraphTopologyView:
     projection = _project(events)
-    record_summaries = _record_summaries_by_id(events, projection)
+    record_summaries = _record_summaries_by_id(projection)
+    _add_record_summary_positions(record_summaries, events)
     nodes: list[GraphTopologyNode] = []
     for node_id in sorted(projection["node_states"]):
         kind = projection["node_kinds"].get(node_id)
@@ -1949,35 +2032,26 @@ def _topology_binding(binding: dict[str, Any]) -> GraphTopologyBinding:
     return summary
 
 
-def _record_summaries_by_id(
+def _record_summaries_by_id(projection: GraphProjection) -> dict[str, GraphRecordSummary]:
+    return {
+        record_id: cast(GraphRecordSummary, dict(summary))
+        for record_id, summary in projection["accepted_record_summaries_by_id"].items()
+    }
+
+
+def _add_record_summary_positions(
+    summaries: dict[str, GraphRecordSummary],
     events: list[EventEnvelope],
-    projection: GraphProjection,
-) -> dict[str, GraphRecordSummary]:
-    records: dict[str, GraphRecordSummary] = {}
+) -> None:
     for event in events:
         if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
             continue
         record_id = event.payload.get("record_id")
         if not isinstance(record_id, str):
             continue
-        summary: GraphRecordSummary = {"record_id": record_id, "position": event.position}
-        record_kind = event.payload.get("record_kind")
-        if isinstance(record_kind, str):
-            summary["record_kind"] = record_kind
-        schema = event.payload.get("schema")
-        if isinstance(schema, str):
-            summary["schema"] = schema
-        producer_node_id = event.payload.get("producer_node_id")
-        if isinstance(producer_node_id, str):
-            summary["producer_node_id"] = producer_node_id
-        producer_port = event.payload.get("port")
-        if isinstance(producer_port, str):
-            summary["producer_port"] = producer_port
-        record_type = _record_type_for_summary(event.payload, projection)
-        if record_type is not None:
-            summary["record_type"] = record_type
-        records[record_id] = summary
-    return records
+        summary = summaries.get(record_id)
+        if summary is not None:
+            summary["position"] = event.position
 
 
 def _record_type_for_summary(
@@ -2531,6 +2605,117 @@ def _record_node_output_port(state: GraphProjection, event: EventEnvelope) -> No
     records = ports.setdefault(port, [])
     if record_id not in records:
         records.append(record_id)
+
+
+def _record_accepted_output_record(state: GraphProjection, event: EventEnvelope) -> None:
+    node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
+    port = event.payload.get("port")
+    record_id = event.payload.get("record_id")
+    if not all(isinstance(value, str) and value for value in (node_id, port, record_id)):
+        return
+    ports = state["accepted_output_records_by_node_port"].setdefault(cast(str, node_id), {})
+    records = ports.setdefault(cast(str, port), [])
+    records.append(
+        {
+            "record_id": cast(str, record_id),
+            "payload": _stable_accepted_record_payload(event.payload),
+        }
+    )
+
+
+def _record_accepted_record_summary(state: GraphProjection, event: EventEnvelope) -> None:
+    record_id = event.payload.get("record_id")
+    if not isinstance(record_id, str):
+        return
+    payload = _stable_accepted_record_payload(event.payload)
+    summary: GraphRecordSummary = {"record_id": record_id}
+    record_kind = payload.get("record_kind")
+    if isinstance(record_kind, str):
+        summary["record_kind"] = record_kind
+    schema = payload.get("schema")
+    if isinstance(schema, str):
+        summary["schema"] = schema
+    producer_node_id = payload.get("producer_node_id")
+    if isinstance(producer_node_id, str):
+        summary["producer_node_id"] = producer_node_id
+    producer_port = payload.get("port")
+    if isinstance(producer_port, str):
+        summary["producer_port"] = producer_port
+    record_type = _record_type_for_summary(payload, state)
+    if record_type is not None:
+        summary["record_type"] = record_type
+    state["accepted_record_summaries_by_id"][record_id] = summary
+
+
+_DURABLE_RECORD_DECORATION_FIELDS = frozenset(
+    {
+        "created_at",
+        "graph_position",
+        "payload",
+        "producer_port",
+        "provenance",
+        "run_id",
+        "schema_version",
+    }
+)
+
+
+def _stable_accepted_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value for key, value in payload.items() if key not in _DURABLE_RECORD_DECORATION_FIELDS
+    }
+
+
+def _record_failed_verification_result(state: GraphProjection, event: EventEnvelope) -> None:
+    candidate_id = event.payload.get("candidate_id")
+    if isinstance(candidate_id, str) and event.event_type == "verification_passed":
+        if candidate_id not in state["passed_verification_candidate_ids"]:
+            state["passed_verification_candidate_ids"].append(candidate_id)
+        stale_record_ids = [
+            record_id
+            for record_id, result in state["failed_verification_results_by_record_id"].items()
+            if result.get("candidate_id") == candidate_id
+        ]
+        for record_id in stale_record_ids:
+            state["failed_verification_results_by_record_id"].pop(record_id, None)
+        return
+    if event.event_type != "verification_failed":
+        return
+    node_id = event.payload.get("verifier_node_id") or event.payload.get("node_id")
+    record_id = event.payload.get("record_id")
+    if not isinstance(node_id, str) or not node_id:
+        return
+    if not isinstance(record_id, str) or not record_id:
+        return
+    if isinstance(candidate_id, str) and candidate_id in state["passed_verification_candidate_ids"]:
+        state["failed_verification_results_by_record_id"].pop(record_id, None)
+        return
+    failed: FailedVerificationResult = {
+        "node_id": node_id,
+        "record_id": record_id,
+    }
+    if isinstance(candidate_id, str) and candidate_id:
+        failed["candidate_id"] = candidate_id
+    task_region_id = event.payload.get("task_region_id")
+    if isinstance(task_region_id, str) and task_region_id:
+        failed["task_region_id"] = task_region_id
+    state["failed_verification_results_by_record_id"][record_id] = failed
+
+
+def _record_recovery_node(state: GraphProjection, event: EventEnvelope) -> None:
+    node_id = event.payload.get("node_id")
+    recovery_reason = event.payload.get("recovery_reason")
+    record_id = event.payload.get("recovery_of_record_id")
+    if not all(isinstance(value, str) and value for value in (node_id, recovery_reason, record_id)):
+        return
+    if recovery_reason not in {"failed_required_check", "failed_verification"}:
+        return
+    state["recovery_nodes_by_record_id"].setdefault(cast(str, record_id), []).append(
+        {
+            "node_id": cast(str, node_id),
+            "recovery_reason": cast(str, recovery_reason),
+        }
+    )
 
 
 def _record_open_appeal(state: GraphProjection, event: EventEnvelope) -> None:
