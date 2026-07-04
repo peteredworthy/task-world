@@ -334,6 +334,28 @@ class GraphPatchAttemptsResponse(ApiModel):
     attempts: list[GraphPatchAttemptResponse]
 
 
+class SubmitGraphPatchRequest(ApiModel):
+    patch_id: str | None = Field(
+        default=None, min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"
+    )
+    base_graph_position: int | None = Field(default=None, ge=0)
+    ops: list[dict[str, Any]]
+    rationale_record_id: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=200,
+        pattern=r"^[A-Za-z0-9_.:-]+$",
+    )
+
+
+class SubmitGraphPatchResponse(ApiModel):
+    run_id: str
+    graph_position: int
+    accepted: bool
+    patch_id: str
+    events: list[GraphEventResponse]
+
+
 class FinalInvariantBlockerResponse(ApiModel):
     kind: str
     reason: str
@@ -1508,6 +1530,71 @@ async def get_graph_patch_attempts(
         run_id,
         events,
         current_graph_position=current_graph_position,
+    )
+
+
+@router.post(
+    "/{run_id}/graph/patch",
+    response_model=SubmitGraphPatchResponse,
+    response_model_exclude_none=True,
+)
+async def submit_operator_graph_patch(
+    run_id: str,
+    request: SubmitGraphPatchRequest,
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+    graph_store: GraphEventStore = Depends(get_graph_store),
+) -> SubmitGraphPatchResponse:
+    current_position = await graph_store.current_position(run_id)
+    if current_position == 0:
+        raise HTTPException(status_code=404, detail="Graph not found for run")
+
+    patch_id = request.patch_id or f"operator-patch-{uuid4().hex}"
+    payload = request.model_dump(exclude_none=True)
+    payload.update(
+        {
+            "run_id": run_id,
+            "patch_id": patch_id,
+            "base_graph_position": request.base_graph_position
+            if request.base_graph_position is not None
+            else current_position,
+            "actor_role": "human",
+            "proposed_by_node_id": "human-operator",
+        }
+    )
+    controller = GraphController(
+        session_factory,
+        _ApiGraphClock(),
+        _ApiGraphIdGenerator(),
+        auto_dispatch=False,
+    )
+    try:
+        result = await controller.handle_command(
+            run_id,
+            current_position,
+            "submit_patch",
+            payload,
+        )
+    except StaleProjectionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    rejection = next(
+        (
+            event
+            for event in result.events
+            if event.event_type in {"graph_patch_rejected", "command_rejected"}
+        ),
+        None,
+    )
+    if rejection is not None:
+        reason = rejection.payload.get("reason", "graph patch rejected")
+        raise HTTPException(status_code=409, detail=str(reason))
+
+    return SubmitGraphPatchResponse(
+        run_id=run_id,
+        graph_position=result.projection_position,
+        accepted=True,
+        patch_id=patch_id,
+        events=[_event_to_response(event) for event in result.events],
     )
 
 

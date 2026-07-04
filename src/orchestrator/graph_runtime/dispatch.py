@@ -27,6 +27,7 @@ from orchestrator.graph import (
     GraphProjection,
     PLANNER_OPS,
     RequirementRecord,
+    check_command_uses_acceptance_fallback,
     initial_projection,
     project_planner_freshness_packet,
     resolve_check_command_definition,
@@ -2238,6 +2239,9 @@ def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list
         citations["candidate_record_ids"] = unique_candidate_record_ids
     if unique_file_state_record_ids:
         citations["file_state_record_ids"] = unique_file_state_record_ids
+    unique_evidence_record_ids = _unique_record_ids(evidence_record_ids)
+    if unique_evidence_record_ids:
+        citations["verification_report_record_ids"] = unique_evidence_record_ids
     evaluated_record_ids = _unique_record_ids(
         [*evidence_record_ids, *unique_candidate_record_ids, *unique_file_state_record_ids]
     )
@@ -2547,6 +2551,12 @@ def _grades_pass(grades: list[tuple[str, str, str | None]]) -> bool:
 
 async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any]:
     command_definition = _check_command_definition(context.node_payload, context.graph_events)
+    cited_record = _check_result_from_bound_verification_if_redundant(
+        context,
+        command_definition,
+    )
+    if cited_record is not None:
+        return cited_record
     invocation, command_text, shell = _check_invocation(command_definition)
     timeout_seconds = _check_timeout_seconds(command_definition)
     execution_worktree = await asyncio.to_thread(_prepare_check_execution_worktree, context)
@@ -2608,7 +2618,7 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
     task_region_id = str(context.node_payload.get("task_region_id") or context.node_id)
     attempt_number = int(context.node_payload.get("attempt_number", 0))
     command_id = str(command_definition.get("id") or context.node_id)
-    value = {
+    value: dict[str, Any] = {
         "status": status,
         "classification": classification,
         "command_id": command_id,
@@ -2664,6 +2674,93 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
         value=True,
     )
     return CheckResultRecord.model_validate(record_payload).model_dump(mode="json")
+
+
+def _check_result_from_bound_verification_if_redundant(
+    context: GraphDispatchContext,
+    command_definition: dict[str, Any],
+) -> dict[str, Any] | None:
+    if command_definition.get("source") != "dynamic_feature_hidden_oracle_binding":
+        return None
+    if not check_command_uses_acceptance_fallback(context.node_payload, context.graph_events):
+        return None
+    citations = _evaluated_record_citations(context)
+    verification_record = _latest_passed_verification_citation(
+        context.graph_events,
+        citations.get("verification_report_record_ids", []),
+    )
+    if verification_record is None:
+        return None
+    candidate_id = _candidate_id_for_check(context)
+    task_region_id = str(context.node_payload.get("task_region_id") or context.node_id)
+    attempt_number = int(context.node_payload.get("attempt_number", 0))
+    value: dict[str, Any] = {
+        "status": "passed",
+        "classification": "passed",
+        "command_id": str(command_definition.get("id") or context.node_id),
+        "command_binding": "dynamic_feature_hidden_oracle",
+        "command_text": command_definition.get("cmd"),
+        "command": command_definition,
+        "citation_mode": "verification_report_reused",
+        "reused_verification_record_id": verification_record["record_id"],
+        "worktree_path": context.worktree_path,
+        "source_worktree_path": context.worktree_path,
+        "execution_id": context.execution_id,
+        "base_snapshot_id": context.base_snapshot_id,
+        "duration_ms": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_truncated": False,
+        "stderr_truncated": False,
+        "timeout_seconds": 1,
+        "environment_policy": {
+            "cwd": context.worktree_path,
+            "env": "inherited",
+            "source_worktree_path": context.worktree_path,
+            "dependency_provisioning": [],
+        },
+    }
+    record_payload = _add_evaluated_record_citations(
+        {
+            "record_id": f"check-{context.execution_id}",
+            "record_kind": "output",
+            "record_type": "check_result",
+            "producer_node_id": context.node_id,
+            "port": "check_result",
+            "schema": "CheckResult",
+            "candidate_id": candidate_id,
+            "task_region_id": task_region_id,
+            "attempt_number": attempt_number,
+            "value": value,
+        },
+        citations,
+        value=True,
+    )
+    return CheckResultRecord.model_validate(record_payload).model_dump(mode="json")
+
+
+def _latest_passed_verification_citation(
+    events: list[EventEnvelope],
+    record_ids: list[str],
+) -> dict[str, Any] | None:
+    wanted = set(record_ids)
+    latest: dict[str, Any] | None = None
+    for event in events:
+        if event.event_type != "output_record_accepted":
+            continue
+        payload = event.payload
+        if payload.get("record_id") not in wanted:
+            continue
+        if payload.get("record_type") != "verification_report":
+            continue
+        outcome = payload.get("outcome") or payload.get("verdict")
+        value = payload.get("value")
+        if outcome is None and isinstance(value, dict):
+            outcome = cast(dict[str, Any], value).get("outcome")
+        if outcome not in {"passed", "pass"}:
+            continue
+        latest = dict(payload)
+    return latest
 
 
 def _prepare_check_execution_worktree(context: GraphDispatchContext) -> CheckExecutionWorktree:

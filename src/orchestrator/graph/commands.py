@@ -2625,20 +2625,24 @@ def _passed_verification_terminalization_events(
         return []
 
     output: list[EventEnvelope] = []
-    for verification in _current_passed_verification_results(projection):
+    passed_verifications = _current_passed_verification_results(projection)
+    latest_passed_verification = passed_verifications[-1] if passed_verifications else None
+    for verification in passed_verifications:
         retirable_node_ids = _unreachable_failure_branch_node_ids(
             projection,
             verification["node_id"],
         )
+        if verification == latest_passed_verification:
+            output.extend(
+                _passed_verification_final_check_edges(
+                    projection,
+                    verification,
+                    make_event,
+                    allow_create=bool(retirable_node_ids),
+                )
+            )
         if not retirable_node_ids:
             continue
-        output.extend(
-            _passed_verification_final_check_edges(
-                projection,
-                verification,
-                make_event,
-            )
-        )
         for node_id in retirable_node_ids:
             output.extend(_retire_node_events(projection, node_id, make_event))
     return output
@@ -2749,12 +2753,14 @@ def _passed_verification_final_check_edges(
     projection: GraphProjection,
     verification: dict[str, str],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    *,
+    allow_create: bool = True,
 ) -> list[EventEnvelope]:
     verifier_node_id = verification["node_id"]
     record_id = verification["record_id"]
     output: list[EventEnvelope] = []
     check_node_ids = _final_checks_waiting_for_verification_evidence(projection)
-    if not check_node_ids and not _has_final_invariant_check(projection):
+    if allow_create and not check_node_ids and not _has_final_invariant_check(projection):
         check_node_id = f"check-final-invariant-{_stable_graph_id_part(record_id)}"
         if _would_create_directed_cycle(projection, verifier_node_id, check_node_id):
             return output

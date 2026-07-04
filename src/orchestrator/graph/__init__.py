@@ -10,6 +10,7 @@ from orchestrator.graph.callbacks import (
 from orchestrator.graph.command_bindings import (
     KNOWN_CHECK_COMMAND_BINDINGS,
     canonicalize_check_command_definition,
+    check_command_uses_acceptance_fallback,
     check_command_reference,
     is_known_check_command_binding,
     resolve_check_command_definition,
@@ -315,6 +316,7 @@ __all__ = [
     "binding_policy_for_edge",
     "canonicalize_check_command_definition",
     "check_command_reference",
+    "check_command_uses_acceptance_fallback",
     "claims_conflict",
     "classify_event",
     "classify_file_state",

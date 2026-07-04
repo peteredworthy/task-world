@@ -87,6 +87,25 @@ def resolve_check_command_definition(
     return None
 
 
+def check_command_uses_acceptance_fallback(
+    node_payload: dict[str, Any],
+    events: list[EventEnvelope],
+) -> bool:
+    """Return True when dynamic oracle binding resolves to acceptance_command."""
+
+    if node_payload.get("command_binding") != "dynamic_feature_hidden_oracle":
+        return False
+    for event in reversed(events):
+        snapshot = event.payload.get("snapshot")
+        if isinstance(snapshot, dict):
+            dynamic_feature = cast(dict[str, Any], snapshot).get("dynamic_feature")
+            if _dynamic_feature_uses_acceptance_fallback(dynamic_feature):
+                return True
+        if _dynamic_feature_uses_acceptance_fallback(event.payload.get("dynamic_feature")):
+            return True
+    return False
+
+
 def _shell_command_definition(
     node_payload: dict[str, Any],
     command: str,
@@ -131,3 +150,14 @@ def _hidden_oracle_from_dynamic_feature(dynamic_feature: Any) -> str | None:
     if isinstance(fallback, str) and fallback.strip():
         return fallback
     return None
+
+
+def _dynamic_feature_uses_acceptance_fallback(dynamic_feature: Any) -> bool:
+    if not isinstance(dynamic_feature, dict):
+        return False
+    typed = cast(dict[str, Any], dynamic_feature)
+    hidden = typed.get("hidden_oracle_command")
+    if isinstance(hidden, str) and hidden.strip():
+        return False
+    fallback = typed.get("acceptance_command")
+    return isinstance(fallback, str) and bool(fallback.strip())

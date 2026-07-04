@@ -3,8 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+import sqlite3
 
 import pytest
+from sqlalchemy.exc import OperationalError
 
 from orchestrator.workflow.graph_driver import (
     ActiveLeaseWaitPlan,
@@ -12,8 +14,10 @@ from orchestrator.workflow.graph_driver import (
     GraphRunDriver,
     MAX_NODE_RECOVERIES_PER_DRIVE,
     _active_lease_wait_plan,
+    _drive_with_transient_retries,
     _graph_seed_run_config,
     _node_max_attempts,
+    _renew_running_expired_leases,
     classify_graph_outcome,
 )
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
@@ -53,6 +57,29 @@ class RecordingController:
         if command_type == "record_heartbeat":
             events = [type("Event", (), {"event_type": "lease_renewed"})()]
         return type("Result", (), {"events": events})()
+
+
+class LockedOnceController(RecordingController):
+    def __init__(self, command_to_lock: str) -> None:
+        super().__init__()
+        self._command_to_lock = command_to_lock
+        self._raised = False
+
+    async def handle_command(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, object] | None = None,
+    ) -> object:
+        if command_type == self._command_to_lock and not self._raised:
+            self._raised = True
+            raise OperationalError(
+                "INSERT INTO events_v2 ...",
+                {},
+                sqlite3.OperationalError("database is locked"),
+            )
+        return await super().handle_command(run_id, expected_position, command_type, payload)
 
 
 class RecordingDispatcher:
@@ -234,6 +261,31 @@ async def test_loop_terminates_on_quiescence() -> None:
     assert outcome.completed is True
 
 
+@pytest.mark.asyncio
+async def test_drive_with_transient_retries_retries_sqlite_locked_error() -> None:
+    calls = 0
+
+    async def operation() -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise OperationalError(
+                "INSERT INTO events_v2 ...",
+                {},
+                sqlite3.OperationalError("database is busy"),
+            )
+        return "ok"
+
+    result = await _drive_with_transient_retries(operation, sleep=lambda _delay: _noop_sleep())
+
+    assert result == "ok"
+    assert calls == 2
+
+
+async def _noop_sleep() -> None:
+    return None
+
+
 def test_active_lease_wait_plan_uses_nearest_deadline() -> None:
     now = datetime.fromisoformat("2026-06-27T19:30:00+00:00")
 
@@ -380,6 +432,79 @@ async def test_driver_renews_expired_lease_when_execution_is_still_running() -> 
     assert controller.commands == ["schedule_tick", "record_heartbeat", "schedule_tick"]
     assert executor.waits[0] == (0.0, {"exec-live"})
     assert outcome.completed is True
+
+
+@pytest.mark.asyncio
+async def test_driver_retries_locked_schedule_tick_at_new_head() -> None:
+    controller = LockedOnceController(command_to_lock="schedule_tick")
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+    reader = ScriptedProjectionReader(
+        [
+            GraphProjectionSnapshot(
+                run_state="completed",
+                ready_nodes=[],
+                active_leases={},
+                schedulable_nodes=[],
+                task_states={},
+            )
+        ]
+    )
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert controller.commands == ["schedule_tick"]
+    assert controller.positions == [0, 1]
+    assert outcome.completed is True
+
+
+@pytest.mark.asyncio
+async def test_driver_retries_locked_heartbeat_renewal_at_new_head() -> None:
+    controller = LockedOnceController(command_to_lock="record_heartbeat")
+    executor = RecordingExecutor(running_execution_ids={"exec-live"})
+    expired_lease_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={
+            "lease-live": {
+                "lease_id": "lease-live",
+                "state": "active",
+                "node_id": "planner-s-01",
+                "generation": 1,
+                "execution_id": "exec-live",
+                "expires_at": "2026-06-27T19:29:59+00:00",
+            }
+        },
+        schedulable_nodes=[],
+        task_states={"S-01": "pending"},
+    )
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    driver._clock = type(
+        "FixedDriverClock",
+        (),
+        {"now": lambda self: datetime.fromisoformat("2026-06-27T19:30:00+00:00")},
+    )()
+
+    renewed = await _renew_running_expired_leases(
+        "run-1",
+        controller,
+        executor,
+        expired_lease_snapshot,
+        driver._clock.now(),
+    )
+
+    assert renewed is True
+    assert controller.commands == ["record_heartbeat"]
+    assert controller.positions == [0, 1]
 
 
 @pytest.mark.asyncio
@@ -825,6 +950,29 @@ def test_outcome_classification() -> None:
     assert nonterminal_nodes_blocked.blocked_reason == (
         "graph quiescent with non-terminal node(s): "
         "check-1=blocked, planner-1=planned, verifier-1=suspended (+1 more)"
+    )
+
+    missing_input_blocked = classify_graph_outcome(
+        "run-missing-input",
+        GraphProjectionSnapshot(
+            run_state="active",
+            ready_nodes=[],
+            active_leases={},
+            schedulable_nodes=[],
+            task_states={},
+            node_states={"check-final": "planned", "verifier-primary": "failed"},
+            node_deferral_reasons={"check-final": "missing_required_input:verification_evidence"},
+            missing_input_sources={
+                "check-final": ["verification_evidence from verifier-primary=failed"],
+            },
+        ),
+    )
+
+    assert missing_input_blocked.completed is False
+    assert missing_input_blocked.blocked_reason == (
+        "graph quiescent with non-terminal node(s): "
+        "check-final=planned: missing_required_input:verification_evidence "
+        "(verification_evidence from verifier-primary=failed)"
     )
 
     environment_blocked = classify_graph_outcome(

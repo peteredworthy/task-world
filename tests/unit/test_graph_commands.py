@@ -5731,6 +5731,145 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
     )
 
 
+def test_corrective_passed_verification_repoints_stranded_final_check() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-primary",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "failed",
+                "task_region_id": "primary-region",
+                "candidate_id": "candidate-primary",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-primary-failed",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-primary",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-primary",
+                "task_region_id": "primary-region",
+                "outcome": "failed",
+                "value": {"outcome": "failed"},
+            },
+            2,
+        ),
+        _event(
+            "verification_failed",
+            {
+                "node_id": "verifier-primary",
+                "verifier_node_id": "verifier-primary",
+                "candidate_id": "candidate-primary",
+                "outcome": "failed",
+                "record_id": "verification-primary-failed",
+                "task_region_id": "primary-region",
+            },
+            3,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "planned",
+                "task_region_id": "final-region",
+                "command_definition": {"id": "hidden-oracle", "cmd": "true", "must": True},
+            },
+            4,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-primary-pass-final",
+                "from_node_id": "verifier-primary",
+                "from_port": "verification_report",
+                "to_node_id": "check-final",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "outcome": "passed",
+                },
+            },
+            5,
+        ),
+        _event(
+            "node_deferred",
+            {"node_id": "check-final", "reason": "missing_required_input:verification_evidence"},
+            6,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-corrective",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "corrective-region",
+                "candidate_id": "candidate-corrective",
+            },
+            7,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-corrective-passed",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-corrective",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-corrective",
+                "task_region_id": "corrective-region",
+                "outcome": "passed",
+                "value": {"outcome": "passed"},
+            },
+            8,
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-corrective",
+                "verifier_node_id": "verifier-corrective",
+                "candidate_id": "candidate-corrective",
+                "outcome": "passed",
+                "record_id": "verification-corrective-passed",
+                "task_region_id": "corrective-region",
+            },
+            9,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    recovery_edges = [
+        event
+        for event in output
+        if event.event_type == "edge_created"
+        and event.payload.get("metadata", {}).get("purpose")
+        == "passed_verification_final_invariant_recovery"
+    ]
+    assert len(recovery_edges) == 1
+    assert recovery_edges[0].payload["from_node_id"] == "verifier-corrective"
+    assert recovery_edges[0].payload["to_node_id"] == "check-final"
+    assert any(
+        event.event_type == "input_bound"
+        and event.payload["to_node_id"] == "check-final"
+        and event.payload["record_ids"] == ["verification-corrective-passed"]
+        for event in output
+    )
+
+
 def test_passed_final_check_retires_failure_continuation() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),

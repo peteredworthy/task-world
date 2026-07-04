@@ -34,6 +34,7 @@ from orchestrator.db.access.connection import (
     create_session_factory,
     init_db,
 )
+from orchestrator.db.access.concurrency import is_retriable_sqlite_write_conflict
 
 # JSONL outbox: path helpers + observer
 from orchestrator.db.access.jsonl_outbox import (
@@ -196,6 +197,7 @@ __all__ = [
     "EventOutboxBatch",
     "EventOutboxObserver",
     "RetryWithBackoff",
+    "is_retriable_sqlite_write_conflict",
     "ProjectionRegistry",
     "RunLifecycleProjector",
     "RunStateProjector",

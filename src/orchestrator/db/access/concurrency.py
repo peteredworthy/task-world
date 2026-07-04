@@ -47,7 +47,7 @@ class RetryWithBackoff(ConcurrencyStrategy):
             try:
                 return await operation()
             except Exception as exc:
-                if not _is_version_conflict(exc):
+                if not is_retriable_sqlite_write_conflict(exc):
                     raise  # re-raise original — not a concurrency conflict; do NOT wrap in ConcurrencyConflictError
                 if attempt == self.max_attempts:
                     raise ConcurrencyConflictError(
@@ -58,16 +58,17 @@ class RetryWithBackoff(ConcurrencyStrategy):
         raise ConcurrencyConflictError("unreachable")  # pragma: no cover
 
 
-def _is_version_conflict(exc: Exception) -> bool:
+def is_retriable_sqlite_write_conflict(exc: Exception) -> bool:
     """Return True if the exception is a retriable SQLite write conflict.
 
     Handles both UNIQUE constraint violations (two sessions assigned the same
     optimistic version) and SQLITE_BUSY "database is locked" errors (a session
     couldn't acquire the write lock within SQLite's built-in timeout).
     """
-    msg = str(exc).lower()
+    orig = getattr(exc, "orig", None)
+    msg = f"{exc} {orig}".lower()
     if "unique" in msg and ("aggregate_id" in msg or "uq_events_v2" in msg):
         return True
-    if "database is locked" in msg:
+    if "database is locked" in msg or "database is busy" in msg:
         return True
     return False

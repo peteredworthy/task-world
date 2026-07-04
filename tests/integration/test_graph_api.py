@@ -554,6 +554,45 @@ async def test_graph_projection_reflects_seeded_events(
     assert not_found.status_code == 404
 
 
+async def test_operator_graph_patch_endpoint_accepts_human_patch(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-operator-patch-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [_event("run_lifecycle_changed", {"to_state": "active"})],
+        )
+        await session.commit()
+
+    response = await client.post(
+        f"/api/runs/{run_id}/graph/patch",
+        json={
+            "patch_id": "operator-patch-1",
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {"node_id": "operator-note", "kind": "artifact"},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run_id"] == run_id
+    assert body["accepted"] is True
+    assert any(event["event_type"] == "graph_patch_accepted" for event in body["events"])
+    assert any(
+        event["event_type"] == "node_created" and event["payload"]["node_id"] == "operator-note"
+        for event in body["events"]
+    )
+
+
 async def test_graph_projection_uses_paused_run_row_as_effective_state(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:

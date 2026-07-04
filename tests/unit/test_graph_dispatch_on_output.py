@@ -1444,6 +1444,74 @@ async def test_execute_check_command_resolves_bound_dynamic_feature_oracle(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_execute_check_command_cites_verification_when_oracle_falls_back_to_acceptance(
+    tmp_path: Path,
+) -> None:
+    graph_events = [
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "routine_snapshot",
+                "state": "completed",
+                "snapshot": {
+                    "dynamic_feature": {
+                        "acceptance_command": "definitely_missing_duplicate_acceptance_tool",
+                        "hidden_oracle_command": "",
+                    }
+                },
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-1",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-1",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-1",
+                "candidate_record_ids": ["candidate-1"],
+                "task_region_id": "task-1",
+                "outcome": "passed",
+                "value": {"outcome": "passed"},
+            },
+            2,
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-verification-check",
+                "to_node_id": "check-1",
+                "to_port": "verification_evidence",
+                "record_ids": ["verification-1"],
+            },
+            3,
+        ),
+    ]
+    context = _context(
+        node_id="check-1",
+        node_kind="check",
+        worktree_path=str(tmp_path),
+        graph_events=graph_events,
+        node_payload={
+            "task_region_id": "task-1",
+            "command_binding": "dynamic_feature_hidden_oracle",
+        },
+    )
+
+    record = await _execute_check_command(context)
+
+    value = cast(dict[str, Any], record["value"])
+    assert value["status"] == "passed"
+    assert value["classification"] == "passed"
+    assert value["citation_mode"] == "verification_report_reused"
+    assert record["evaluated_record_ids"] == ["verification-1", "candidate-1"]
+
+
+@pytest.mark.asyncio
 async def test_execute_check_command_cites_bound_verification_and_region_file_state(
     tmp_path: Path,
 ) -> None:

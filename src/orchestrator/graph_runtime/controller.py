@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.graph import (
@@ -57,7 +58,8 @@ class GraphController:
         command_payload = dict(payload or {})
         command_payload["run_id"] = run_id
         async with self._session_factory() as session:
-            async with session.begin():
+            await session.execute(text("BEGIN IMMEDIATE"))
+            try:
                 store = GraphEventStore(session)
                 existing_events = await store.read_run(run_id)
                 current_position = _projection_position(existing_events)
@@ -88,6 +90,10 @@ class GraphController:
                     planned_events,
                 )
                 outbox_items = await append_outbox_rows(session, stored_events, self._clock)
+                await session.commit()
+            except Exception:
+                await session.rollback()
+                raise
 
         if self._dispatcher is not None and self._auto_dispatch and outbox_items:
             await self._dispatcher.dispatch_pending()

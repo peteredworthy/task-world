@@ -94,6 +94,75 @@ def test_patch_at_current_position_accepted() -> None:
     assert result.accepted
 
 
+def test_required_pass_gated_final_check_from_recoverable_verifier_rejected() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "check-final",
+                        "kind": "check",
+                        "role": "invariant_gate",
+                        "state": "planned",
+                        "task_region_id": "final-region",
+                        "command_definition": {"id": "hidden-oracle", "cmd": "true"},
+                    },
+                },
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "planner-gap",
+                        "kind": "planner",
+                        "role": "gap_planner",
+                        "state": "planned",
+                        "task_region_id": "gap-region",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-pass-final",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-final",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "passed",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-failed-gap",
+                    "from_node_id": "verifier-1",
+                    "from_port": "verification_report",
+                    "to_node_id": "planner-gap",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "failed",
+                    },
+                },
+            ]
+        ),
+        projection=_projection(
+            node_states={"verifier-1": "planned"},
+            node_kinds={"verifier-1": "verifier"},
+            node_roles={"verifier-1": "verifier"},
+        ),
+    )
+
+    assert not result.accepted
+    assert result.rejection_reason == (
+        "required pass-gated final invariant edge from verifier verifier-1 "
+        "is poisoned by a failure continuation"
+    )
+
+
 def test_patch_stale_neutral_events_only_accepted() -> None:
     patch = _patch([{"op": "retire_node", "node_id": "worker-1"}], base_graph_position=10)
     events = [

@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config.enums import AgentRunnerType, RunStatus
@@ -16,6 +17,7 @@ from datetime import UTC, datetime
 from uuid import uuid4
 
 from orchestrator.config.models import RoutineConfig
+from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktree
 from orchestrator.graph import (
     EventEnvelope,
@@ -153,6 +155,10 @@ def _empty_int_dict() -> dict[str, int]:
     return {}
 
 
+def _empty_str_list_dict() -> dict[str, list[str]]:
+    return {}
+
+
 @dataclass(frozen=True)
 class GraphProjectionSnapshot:
     run_state: str | None
@@ -162,6 +168,8 @@ class GraphProjectionSnapshot:
     task_states: dict[str, str]
     node_states: dict[str, str] = field(default_factory=_empty_str_dict)
     failed_node_reasons: dict[str, str] = field(default_factory=_empty_str_dict)
+    node_deferral_reasons: dict[str, str] = field(default_factory=_empty_str_dict)
+    missing_input_sources: dict[str, list[str]] = field(default_factory=_empty_str_list_dict)
     environment_failures: dict[str, dict[str, Any]] = field(
         default_factory=_empty_environment_failures
     )
@@ -251,6 +259,24 @@ class GraphLoopExecutor(Protocol):
         timeout_seconds: float | None = None,
         active_execution_ids: set[str] | None = None,
     ) -> None: ...
+
+
+async def _drive_with_transient_retries(
+    operation: Callable[[], Awaitable[Any]],
+    *,
+    attempts: int = 3,
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+) -> Any:
+    delay_seconds = 0.05
+    for attempt in range(attempts):
+        try:
+            return await operation()
+        except OperationalError as exc:
+            if not is_retriable_sqlite_write_conflict(exc) or attempt == attempts - 1:
+                raise
+            await sleep(delay_seconds)
+            delay_seconds *= 2
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 class GraphRunDriver:
@@ -418,13 +444,15 @@ class GraphRunDriver:
             return current.status == RunStatus.ACTIVE
 
         try:
-            outcome = await self.drive_to_quiescence(
-                run_id,
-                controller=controller,
-                dispatcher=dispatcher,
-                executor=executor,
-                read_projection=self._read_projection,
-                should_continue=_still_active,
+            outcome = await _drive_with_transient_retries(
+                lambda: self.drive_to_quiescence(
+                    run_id,
+                    controller=controller,
+                    dispatcher=dispatcher,
+                    executor=executor,
+                    read_projection=self._read_projection,
+                    should_continue=_still_active,
+                )
             )
         except asyncio.CancelledError:
             raise
@@ -487,13 +515,20 @@ class GraphRunDriver:
         complete) are safe to re-issue at the new head, so re-read and retry
         instead of letting the race kill the driver.
         """
+        delay_seconds = 0.01
         for attempt in range(attempts):
             position = await controller.current_position(run_id)
             try:
                 return await controller.handle_command(run_id, position, command_type, payload)
-            except StaleProjectionError:
+            except (OperationalError, StaleProjectionError) as exc:
+                if not isinstance(
+                    exc, StaleProjectionError
+                ) and not is_retriable_sqlite_write_conflict(exc):
+                    raise
                 if attempt == attempts - 1:
                     raise
+                await asyncio.sleep(delay_seconds)
+                delay_seconds *= 2
         raise AssertionError("unreachable")  # pragma: no cover
 
     async def drive_to_quiescence(
@@ -742,6 +777,7 @@ async def _renew_running_expired_leases(
         generation = lease.get("generation")
         if isinstance(generation, int) and not isinstance(generation, bool):
             payload["generation"] = generation
+        delay_seconds = 0.01
         for attempt in range(5):
             try:
                 result = await controller.handle_command(
@@ -750,9 +786,15 @@ async def _renew_running_expired_leases(
                     "record_heartbeat",
                     payload,
                 )
-            except StaleProjectionError:
+            except (OperationalError, StaleProjectionError) as exc:
+                if not isinstance(
+                    exc, StaleProjectionError
+                ) and not is_retriable_sqlite_write_conflict(exc):
+                    raise
                 if attempt == 4:
                     raise
+                await asyncio.sleep(delay_seconds)
+                delay_seconds *= 2
                 continue
             renewed = renewed or any(event.event_type == "lease_renewed" for event in result.events)
             break
@@ -910,6 +952,8 @@ def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapsho
         task_states=project_task_states(events, projection=projection),
         node_states=node_states,
         failed_node_reasons=_failed_node_reasons(events),
+        node_deferral_reasons=_node_deferral_reasons(events),
+        missing_input_sources=_missing_input_sources(projection, events),
         environment_failures={
             task_region_id: dict(failure)
             for task_region_id, failure in projection["environment_failures"].items()
@@ -935,6 +979,45 @@ def _failed_node_reasons(events: list[EventEnvelope]) -> dict[str, str]:
             if isinstance(reason, str):
                 reasons[node_id] = reason
     return reasons
+
+
+def _node_deferral_reasons(events: list[EventEnvelope]) -> dict[str, str]:
+    reasons: dict[str, str] = {}
+    for event in events:
+        if event.event_type != "node_deferred":
+            continue
+        node_id = event.payload.get("node_id")
+        reason = event.payload.get("reason")
+        if isinstance(node_id, str) and isinstance(reason, str):
+            reasons[node_id] = reason
+    return reasons
+
+
+def _missing_input_sources(
+    projection: Any,
+    events: list[EventEnvelope],
+) -> dict[str, list[str]]:
+    details: dict[str, list[str]] = {}
+    reasons = _node_deferral_reasons(events)
+    node_states = cast(dict[str, str], projection["node_states"])
+    edges = cast(dict[str, dict[str, Any]], projection["edges"])
+    for node_id, reason in reasons.items():
+        prefix = "missing_required_input:"
+        if not reason.startswith(prefix):
+            continue
+        missing_port = reason.removeprefix(prefix)
+        sources: list[str] = []
+        for edge in edges.values():
+            if edge.get("to_node_id") != node_id or edge.get("to_port") != missing_port:
+                continue
+            from_node_id = edge.get("from_node_id")
+            if not isinstance(from_node_id, str):
+                continue
+            source_state = node_states.get(from_node_id, "unknown")
+            sources.append(f"{missing_port} from {from_node_id}={source_state}")
+        if sources:
+            details[node_id] = sorted(sources)
+    return details
 
 
 def _node_max_attempts(events: list[EventEnvelope]) -> dict[str, int]:
@@ -996,6 +1079,16 @@ def _blocked_reason(projection: GraphProjectionSnapshot) -> str:
         )
         if leased_nodes:
             return f"graph has active lease(s) without callback: {', '.join(leased_nodes[:3])}"
+    missing_input_nodes = _nonterminal_node_details(
+        projection,
+        require_missing_input=True,
+    )
+    if missing_input_nodes:
+        suffix = "" if len(missing_input_nodes) <= 3 else f" (+{len(missing_input_nodes) - 3} more)"
+        return (
+            "graph quiescent with non-terminal node(s): "
+            f"{', '.join(missing_input_nodes[:3])}{suffix}"
+        )
     failed_nodes = sorted(
         node_id for node_id, state in projection.node_states.items() if state == "failed"
     )
@@ -1006,11 +1099,7 @@ def _blocked_reason(projection: GraphProjectionSnapshot) -> str:
             details.append(f"{node_id}: {reason}" if reason else node_id)
         suffix = "" if len(failed_nodes) <= 3 else f" (+{len(failed_nodes) - 3} more)"
         return f"graph has failed node(s): {', '.join(details)}{suffix}"
-    nonterminal_nodes = sorted(
-        f"{node_id}={state}"
-        for node_id, state in projection.node_states.items()
-        if state not in TERMINAL_GRAPH_NODE_STATES
-    )
+    nonterminal_nodes = _nonterminal_node_details(projection)
     if nonterminal_nodes:
         suffix = "" if len(nonterminal_nodes) <= 3 else f" (+{len(nonterminal_nodes) - 3} more)"
         return (
@@ -1042,3 +1131,36 @@ def _blocked_reason(projection: GraphProjectionSnapshot) -> str:
         suffix = "" if len(blocked_tasks) <= 3 else f" (+{len(blocked_tasks) - 3} more)"
         return f"graph quiescent with non-accepted task(s): {', '.join(blocked_tasks[:3])}{suffix}"
     return "graph quiescent without completion"
+
+
+def _nonterminal_node_details(
+    projection: GraphProjectionSnapshot,
+    *,
+    require_missing_input: bool = False,
+) -> list[str]:
+    details: list[str] = []
+    for node_id, state in projection.node_states.items():
+        if state in TERMINAL_GRAPH_NODE_STATES:
+            continue
+        reason = projection.node_deferral_reasons.get(node_id)
+        if require_missing_input and not (
+            isinstance(reason, str) and reason.startswith("missing_required_input:")
+        ):
+            continue
+        details.append(_nonterminal_node_detail(projection, node_id, state))
+    return sorted(details)
+
+
+def _nonterminal_node_detail(
+    projection: GraphProjectionSnapshot,
+    node_id: str,
+    state: str,
+) -> str:
+    detail = f"{node_id}={state}"
+    reason = projection.node_deferral_reasons.get(node_id)
+    if reason is not None:
+        detail = f"{detail}: {reason}"
+    sources = projection.missing_input_sources.get(node_id)
+    if sources:
+        detail = f"{detail} ({'; '.join(sources[:3])})"
+    return detail

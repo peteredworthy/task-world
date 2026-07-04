@@ -193,6 +193,10 @@ def validate_patch(
     if cycle_error is not None:
         return PatchValidationResult(accepted=False, rejection_reason=cycle_error)
 
+    poison_error = _validate_no_poisoned_final_invariant_edges(ops, projection)
+    if poison_error is not None:
+        return PatchValidationResult(accepted=False, rejection_reason=poison_error)
+
     planner_successor_error = _validate_planner_successor_bindings(ops)
     if planner_successor_error is not None:
         return PatchValidationResult(accepted=False, rejection_reason=planner_successor_error)
@@ -426,17 +430,7 @@ def _validate_dynamic_region_dependencies(
     ops: list[dict[str, Any]],
     actor_role: str,
 ) -> str | None:
-    created_nodes: dict[str, dict[str, Any]] = {}
-    for op in ops:
-        if op.get("op") != "create_node":
-            continue
-        node = op.get("node")
-        if not isinstance(node, dict):
-            continue
-        typed_node = cast(dict[str, Any], node)
-        node_id = typed_node.get("node_id")
-        if isinstance(node_id, str):
-            created_nodes[node_id] = typed_node
+    created_nodes = _created_nodes_by_id(ops)
 
     if not created_nodes:
         return None
@@ -465,6 +459,98 @@ def _validate_dynamic_region_dependencies(
         ):
             return "invariant check requires verification input edge"
     return None
+
+
+def _validate_no_poisoned_final_invariant_edges(
+    ops: list[dict[str, Any]],
+    projection: GraphProjection,
+) -> str | None:
+    created_nodes = _created_nodes_by_id(ops)
+    edge_ops = [op for op in ops if op.get("op") == "create_edge"]
+    all_edges = [*projection["edges"].values(), *edge_ops]
+
+    for edge in edge_ops:
+        if not _is_required_passed_verification_edge(edge):
+            continue
+        from_node_id = edge.get("from_node_id")
+        to_node_id = edge.get("to_node_id")
+        if not isinstance(from_node_id, str) or not isinstance(to_node_id, str):
+            continue
+        from_kind, _from_role = _node_kind_role(from_node_id, created_nodes, projection)
+        to_kind, to_role = _node_kind_role(to_node_id, created_nodes, projection)
+        if from_kind != "verifier" or to_kind != "check" or to_role != "invariant_gate":
+            continue
+        if any(
+            _is_failed_verification_continuation(candidate, from_node_id) for candidate in all_edges
+        ):
+            return (
+                f"required pass-gated final invariant edge from verifier {from_node_id} "
+                "is poisoned by a failure continuation"
+            )
+    return None
+
+
+def _created_nodes_by_id(ops: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    created_nodes: dict[str, dict[str, Any]] = {}
+    for op in ops:
+        if op.get("op") != "create_node":
+            continue
+        node = op.get("node")
+        if not isinstance(node, dict):
+            continue
+        typed_node = cast(dict[str, Any], node)
+        node_id = typed_node.get("node_id")
+        if isinstance(node_id, str):
+            created_nodes[node_id] = typed_node
+    return created_nodes
+
+
+def _node_kind_role(
+    node_id: str,
+    created_nodes: dict[str, dict[str, Any]],
+    projection: GraphProjection,
+) -> tuple[str | None, str | None]:
+    created = created_nodes.get(node_id)
+    if created is not None:
+        kind = created.get("kind")
+        role = created.get("role")
+        return (
+            kind if isinstance(kind, str) else None,
+            role if isinstance(role, str) else None,
+        )
+    return projection["node_kinds"].get(node_id), projection["node_roles"].get(node_id)
+
+
+def _is_required_passed_verification_edge(edge: dict[str, Any]) -> bool:
+    if edge.get("from_port") != "verification_report":
+        return False
+    if edge.get("to_port") not in {"verification_evidence", "verification_report"}:
+        return False
+    if edge.get("required") is False:
+        return False
+    return _selector_outcome(edge) == "passed"
+
+
+def _is_failed_verification_continuation(edge: dict[str, Any], verifier_node_id: str) -> bool:
+    if edge.get("from_node_id") != verifier_node_id:
+        return False
+    if edge.get("from_port") != "verification_report":
+        return False
+    return _selector_outcome(edge) == "failed"
+
+
+def _selector_outcome(edge: dict[str, Any]) -> str | None:
+    selector = edge.get("accepted_record_selector")
+    if not isinstance(selector, dict):
+        return None
+    try:
+        typed_selector = normalize_record_selector(selector)
+    except ValueError:
+        return None
+    if typed_selector.get("record_type") != "verification_report":
+        return None
+    outcome = typed_selector.get("outcome")
+    return outcome if isinstance(outcome, str) else None
 
 
 def _required_incoming_ports_by_node(
