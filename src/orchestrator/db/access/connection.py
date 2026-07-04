@@ -3,8 +3,9 @@
 import asyncio
 import logging
 from pathlib import Path
+from typing import Any
 
-from sqlalchemy import Connection
+from sqlalchemy import Connection, event
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -42,11 +43,40 @@ def create_engine(db_path: Path | str = ":memory:") -> AsyncEngine:
     # after use.  SQLite is a local file — there is no network round-trip cost
     # to reconnecting — and pooling causes stale-connection errors
     # ("no active connection") on shutdown and after external DB writes.
-    return create_async_engine(
+    engine = create_async_engine(
         f"sqlite+aiosqlite:///{db_path_str}",
         echo=False,
         poolclass=NullPool,
     )
+    _harden_sqlite_connection(engine)
+    return engine
+
+
+# Write concurrency mitigations for the file-backed engine. Multiple writers —
+# the graph drive loop, agent REST callbacks, heartbeat renewals — contend on
+# one database file. Without these, a concurrent writer raises
+# ``sqlite3.OperationalError: database is locked`` immediately, which (see the
+# db-locked driver-crash incident) killed the drive loop.
+#   * WAL journal mode lets readers run concurrently with a writer and reduces
+#     writer-vs-writer contention.
+#   * busy_timeout makes a blocked writer wait (retrying internally) up to the
+#     timeout for the lock instead of failing instantly.
+_SQLITE_BUSY_TIMEOUT_MS = 5000
+
+
+def _harden_sqlite_connection(engine: AsyncEngine) -> None:
+    """Set WAL + busy_timeout on every new connection of a file-backed engine."""
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragmas(  # pyright: ignore[reportUnusedFunction]
+        dbapi_connection: Any, _record: object
+    ) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.execute(f"PRAGMA busy_timeout={_SQLITE_BUSY_TIMEOUT_MS}")
+        finally:
+            cursor.close()
 
 
 class _ResilientAsyncSession(AsyncSession):

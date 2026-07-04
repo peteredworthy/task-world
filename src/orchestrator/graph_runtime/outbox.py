@@ -2,22 +2,35 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, TypeVar
 
 from sqlalchemy import select, update
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.db import GraphOutboxModel
 from orchestrator.graph import EventEnvelope
 from orchestrator.graph_runtime.errors import OutboxAppendError
 
+logger = logging.getLogger(__name__)
+
 OUTBOX_PENDING = "pending"
 OUTBOX_DISPATCHING = "dispatching"
 OUTBOX_COMPLETED = "completed"
 OUTBOX_FAILED = "failed"
+
+_T = TypeVar("_T")
+
+
+def _is_sqlite_locked(exc: OperationalError) -> bool:
+    """True for transient SQLite write-contention errors worth retrying."""
+    message = str(getattr(exc, "orig", exc)).lower()
+    return "database is locked" in message or "database is busy" in message
 
 
 @dataclass(frozen=True)
@@ -156,18 +169,22 @@ class OutboxDispatcher:
 
     async def reset_dispatching_to_pending(self, *, run_id: str | None = None) -> int:
         """Treat startup ``dispatching`` rows as pending for at-least-once retry."""
-        async with self._session_factory() as session:
-            async with session.begin():
-                stmt = (
-                    update(GraphOutboxModel)
-                    .where(GraphOutboxModel.status == OUTBOX_DISPATCHING)
-                    .values(status=OUTBOX_PENDING, updated_at=self._clock.now())
-                    .returning(GraphOutboxModel.outbox_id)
-                )
-                if run_id is not None:
-                    stmt = stmt.where(GraphOutboxModel.run_id == run_id)
-                result = await session.execute(stmt)
-                return len(result.scalars().all())
+
+        async def _op() -> int:
+            async with self._session_factory() as session:
+                async with session.begin():
+                    stmt = (
+                        update(GraphOutboxModel)
+                        .where(GraphOutboxModel.status == OUTBOX_DISPATCHING)
+                        .values(status=OUTBOX_PENDING, updated_at=self._clock.now())
+                        .returning(GraphOutboxModel.outbox_id)
+                    )
+                    if run_id is not None:
+                        stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+                    result = await session.execute(stmt)
+                    return len(result.scalars().all())
+
+        return await self._retry_locked(_op)
 
     async def pending_items(self, *, run_id: str | None = None) -> list[OutboxItem]:
         async with self._session_factory() as session:
@@ -187,52 +204,98 @@ class OutboxDispatcher:
         *,
         run_id: str | None = None,
     ) -> OutboxItem | None:
-        async with self._session_factory() as session:
-            async with session.begin():
-                stmt = (
-                    select(GraphOutboxModel)
-                    .where(GraphOutboxModel.status == OUTBOX_PENDING)
-                    .order_by(GraphOutboxModel.outbox_id)
-                    .limit(1)
+        # Safe to retry on a lock: the claim transaction rolls back whole, so a
+        # retried attempt re-selects the same still-pending row (at-least-once).
+        async def _op() -> OutboxItem | None:
+            async with self._session_factory() as session:
+                async with session.begin():
+                    stmt = (
+                        select(GraphOutboxModel)
+                        .where(GraphOutboxModel.status == OUTBOX_PENDING)
+                        .order_by(GraphOutboxModel.outbox_id)
+                        .limit(1)
+                    )
+                    if run_id is not None:
+                        stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+                    if limit is not None and limit <= 0:
+                        return None
+                    result = await session.execute(stmt)
+                    row = result.scalar_one_or_none()
+                    if row is None:
+                        return None
+                    row.status = OUTBOX_DISPATCHING
+                    row.attempts += 1
+                    row.updated_at = self._clock.now()
+                    row.last_error = None
+                    await session.flush()
+                    return _to_item(row)
+
+        return await self._retry_locked(_op)
+
+    async def _retry_locked(
+        self,
+        op: Callable[[], Awaitable[_T]],
+        *,
+        attempts: int = 5,
+        base_delay: float = 0.05,
+    ) -> _T:
+        """Retry a bookkeeping transaction on transient SQLite lock errors.
+
+        Success-path bookkeeping (``_mark_completed``) commits outside the
+        dispatch try/except, so a transient ``database is locked`` here would
+        otherwise escape ``dispatch_pending`` and kill the whole drive loop.
+        WAL + ``busy_timeout`` on the engine make locks rare and mostly
+        self-resolving; this exponential-backoff retry absorbs the residue so a
+        write-contention blip does not strand the run.
+        """
+        for attempt in range(attempts):
+            try:
+                return await op()
+            except OperationalError as exc:
+                if not _is_sqlite_locked(exc) or attempt == attempts - 1:
+                    raise
+                delay = base_delay * (2**attempt)
+                logger.warning(
+                    "OutboxDispatcher: transient DB lock during bookkeeping, "
+                    "retrying in %.2fs (attempt %d/%d)",
+                    delay,
+                    attempt + 1,
+                    attempts,
                 )
-                if run_id is not None:
-                    stmt = stmt.where(GraphOutboxModel.run_id == run_id)
-                if limit is not None and limit <= 0:
-                    return None
-                result = await session.execute(stmt)
-                row = result.scalar_one_or_none()
-                if row is None:
-                    return None
-                row.status = OUTBOX_DISPATCHING
-                row.attempts += 1
-                row.updated_at = self._clock.now()
-                row.last_error = None
-                await session.flush()
-                return _to_item(row)
+                await asyncio.sleep(delay)
+        raise AssertionError("unreachable")  # pragma: no cover
 
     async def _mark_completed(self, item: OutboxItem) -> OutboxItem:
-        async with self._session_factory() as session:
-            async with session.begin():
-                row = await session.get(GraphOutboxModel, item.outbox_id)
-                if row is None:
-                    return item
-                if row.status == OUTBOX_COMPLETED:
+        async def _op() -> OutboxItem:
+            async with self._session_factory() as session:
+                async with session.begin():
+                    row = await session.get(GraphOutboxModel, item.outbox_id)
+                    if row is None:
+                        return item
+                    if row.status == OUTBOX_COMPLETED:
+                        return _to_item(row)
+                    row.status = OUTBOX_COMPLETED
+                    row.updated_at = self._clock.now()
+                    row.last_error = None
+                    await session.flush()
                     return _to_item(row)
-                row.status = OUTBOX_COMPLETED
-                row.updated_at = self._clock.now()
-                row.last_error = None
-                await session.flush()
-                return _to_item(row)
+
+        return await self._retry_locked(_op)
 
     async def _mark_failed_attempt(self, item: OutboxItem, exc: Exception) -> None:
-        async with self._session_factory() as session:
-            async with session.begin():
-                row = await session.get(GraphOutboxModel, item.outbox_id)
-                if row is None or row.status == OUTBOX_COMPLETED:
-                    return
-                row.status = OUTBOX_FAILED if row.attempts >= self._max_attempts else OUTBOX_PENDING
-                row.updated_at = self._clock.now()
-                row.last_error = str(exc)
+        async def _op() -> None:
+            async with self._session_factory() as session:
+                async with session.begin():
+                    row = await session.get(GraphOutboxModel, item.outbox_id)
+                    if row is None or row.status == OUTBOX_COMPLETED:
+                        return
+                    row.status = (
+                        OUTBOX_FAILED if row.attempts >= self._max_attempts else OUTBOX_PENDING
+                    )
+                    row.updated_at = self._clock.now()
+                    row.last_error = str(exc)
+
+        await self._retry_locked(_op)
 
 
 def _to_item(row: GraphOutboxModel) -> OutboxItem:

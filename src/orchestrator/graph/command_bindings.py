@@ -118,7 +118,16 @@ def _dynamic_feature_hidden_oracle_command(events: list[EventEnvelope]) -> str |
 def _hidden_oracle_from_dynamic_feature(dynamic_feature: Any) -> str | None:
     if not isinstance(dynamic_feature, dict):
         return None
-    command = cast(dict[str, Any], dynamic_feature).get("hidden_oracle_command")
+    typed = cast(dict[str, Any], dynamic_feature)
+    command = typed.get("hidden_oracle_command")
     if isinstance(command, str) and command.strip():
         return command
+    # hidden_oracle_command is an optional routine input (defaults to "").
+    # Planners are instructed to bind final-invariant checks to this binding,
+    # so when no hidden oracle is configured the check must still resolve —
+    # fall back to the run's acceptance command rather than leaving the node
+    # unresolvable (a non-retryable runtime failure at dispatch).
+    fallback = typed.get("acceptance_command")
+    if isinstance(fallback, str) and fallback.strip():
+        return fallback
     return None

@@ -417,14 +417,30 @@ class GraphRunDriver:
             current = await self._get_run(run_id)
             return current.status == RunStatus.ACTIVE
 
-        outcome = await self.drive_to_quiescence(
-            run_id,
-            controller=controller,
-            dispatcher=dispatcher,
-            executor=executor,
-            read_projection=self._read_projection,
-            should_continue=_still_active,
-        )
+        try:
+            outcome = await self.drive_to_quiescence(
+                run_id,
+                controller=controller,
+                dispatcher=dispatcher,
+                executor=executor,
+                read_projection=self._read_projection,
+                should_continue=_still_active,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            # Crash-path bridge. A driver-loop exception (e.g. a transient
+            # "database is locked" escaping outbox bookkeeping) would otherwise
+            # propagate to _safe_run_graph_driver, which logs and DISCARDS it —
+            # leaving the run ACTIVE with no driver, no pause_reason, and no
+            # re-arm (the stranded-ACTIVE incident). Pause the run
+            # graph_driver_crashed so the stall is visible and resumable,
+            # mirroring the graph_blocked bridge below; a later resume re-arms
+            # the driver and dispatches bound-and-ready nodes on the first tick.
+            # Re-raise so _safe_run_graph_driver still logs the failure.
+            logger.exception("GraphRunDriver: drive loop for %s crashed; pausing run", run_id)
+            await self._apply_pause(run_id, "graph_driver_crashed", str(exc))
+            raise
         # Only bridge graph state onto a run that is still ACTIVE. If the run was
         # cancelled/paused/failed out from under the driver, leave its status as
         # the operator/other path set it.
@@ -452,6 +468,33 @@ class GraphRunDriver:
                     sorted(leaked)[:20],
                 )
         return outcome
+
+    async def _handle_command_at_head(
+        self,
+        controller: GraphLoopController,
+        run_id: str,
+        command_type: str,
+        payload: dict[str, object] | None = None,
+        *,
+        attempts: int = 5,
+    ) -> Any:
+        """Issue a driver command at the current event-log head, retrying stale races.
+
+        The loop reads the head position and then appends, while agent REST
+        callbacks append concurrently — so the read position can be stale by
+        the time the command lands (UNIQUE violation on events_v2 surfaced as
+        StaleProjectionError). The loop's own commands (schedule_tick,
+        complete) are safe to re-issue at the new head, so re-read and retry
+        instead of letting the race kill the driver.
+        """
+        for attempt in range(attempts):
+            position = await controller.current_position(run_id)
+            try:
+                return await controller.handle_command(run_id, position, command_type, payload)
+            except StaleProjectionError:
+                if attempt == attempts - 1:
+                    raise
+        raise AssertionError("unreachable")  # pragma: no cover
 
     async def drive_to_quiescence(
         self,
@@ -488,10 +531,9 @@ class GraphRunDriver:
             # loop instead of retrying dead agents indefinitely.
             if should_continue is not None and not await should_continue():
                 return classify_graph_outcome(run_id, await read_projection(run_id))
-            position = await controller.current_position(run_id)
-            await controller.handle_command(
+            await self._handle_command_at_head(
+                controller,
                 run_id,
-                position,
                 "schedule_tick",
                 {
                     "lease_seconds": 300,
@@ -523,14 +565,12 @@ class GraphRunDriver:
                 and not projection.schedulable_nodes
             ):
                 if _should_complete_graph(projection):
-                    position = await controller.current_position(run_id)
-                    await controller.handle_command(run_id, position, "complete")
+                    await self._handle_command_at_head(controller, run_id, "complete")
                     projection = await read_projection(run_id)
                 elif projection.run_state == "active":
-                    recovery_position = await controller.current_position(run_id)
-                    await controller.handle_command(
+                    await self._handle_command_at_head(
+                        controller,
                         run_id,
-                        recovery_position,
                         "schedule_tick",
                         {
                             "lease_seconds": 300,
