@@ -1,6 +1,7 @@
 """Unit tests for the pure graph command applier."""
 
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from orchestrator.graph import (
@@ -35,6 +36,32 @@ def _project(events: list[EventEnvelope]):
     for event in events:
         projection = reduce_event(projection, event)
     return projection
+
+
+def _legacy_has_passed_completion_decision(events: list[EventEnvelope]) -> bool:
+    for event in events:
+        if event.event_type != "output_record_accepted":
+            continue
+        if event.payload.get("record_type") != "completion_decision":
+            continue
+        if event.payload.get("port") != "completion_decision":
+            continue
+        value = event.payload.get("value")
+        if isinstance(value, dict) and value.get("status") == "passed":
+            return True
+    return False
+
+
+def _legacy_retry_not_before(events: list[EventEnvelope], node_id: str) -> str | None:
+    retry_not_before: str | None = None
+    for event in events:
+        if event.event_type != "runtime_retry_scheduled":
+            continue
+        if event.payload.get("node_id") != node_id:
+            continue
+        value = event.payload.get("retry_not_before")
+        retry_not_before = value if isinstance(value, str) and value else None
+    return retry_not_before
 
 
 def _apply(
@@ -90,6 +117,71 @@ def _callback_payload(**overrides: Any) -> dict[str, Any]:
     }
     payload.update(overrides)
     return payload
+
+
+def test_command_raw_event_scan_count_is_bounded() -> None:
+    commands_source = (
+        Path(__file__).resolve().parents[2] / "src" / "orchestrator" / "graph" / "commands.py"
+    ).read_text()
+
+    assert commands_source.count("for event in events") <= 2
+
+
+def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None:
+    completion_events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created", {"node_id": "gate-final", "kind": "final_gate", "state": "ready"}, 1
+        ),
+    ]
+    decision_events = _apply(
+        completion_events,
+        "evaluate_final_gate",
+        {"run_id": "run-1", "node_id": "gate-final", "record_id": "decision-1"},
+    )
+    completion_stream = [*completion_events, *decision_events]
+    completion_projection = _project(completion_stream)
+
+    assert completion_projection["completion_decision_passed"] is True
+    assert completion_projection[
+        "completion_decision_passed"
+    ] == _legacy_has_passed_completion_decision(completion_stream)
+
+    retry_events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+    clock = FakeClock()
+    retry_output = apply_command(
+        _project(retry_events),
+        retry_events,
+        "agent_died",
+        {
+            "run_id": "run-1",
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+            "retry_backoff_seconds": 60,
+        },
+        clock,
+        SequentialIdGenerator(),
+    )
+    retry_stream = [*retry_events, *retry_output]
+    retry_projection = _project(retry_stream)
+
+    assert retry_projection["retry_not_before_by_node"]["worker-1"] == _legacy_retry_not_before(
+        retry_stream, "worker-1"
+    )
 
 
 def _active_lease_events() -> list[EventEnvelope]:
@@ -4439,6 +4531,129 @@ def test_schedule_tick_recovers_quiescent_graph_after_failed_required_check() ->
     )
 
 
+def test_schedule_tick_recovers_runtime_failed_check_without_check_result() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-runtime-failed",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "failed",
+                "task_region_id": "region-r1-final",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "failure-check-runtime-failed",
+                "record_type": "failure_record",
+                "record_kind": "failure_record",
+                "schema": "FailureRecord",
+                "producer_node_id": "check-runtime-failed",
+                "port": "failure_record",
+                "task_region_id": "region-r1-final",
+                "value": {
+                    "failed_node_id": "check-runtime-failed",
+                    "phase": "runtime",
+                    "error_class": "runtime_configuration_error",
+                    "retryable": False,
+                    "reason": "check node missing command_definition",
+                },
+            },
+            4,
+        ),
+    ]
+
+    assert project_task_states(events) == {"region-r1-final": "pending"}
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert [event.event_type for event in output] == [
+        "node_created",
+        "edge_created",
+        "input_bound",
+        "edge_created",
+        "input_bound",
+    ]
+    recovery_node = output[0].payload
+    assert recovery_node["node_id"] == "planner-recover-failure-check-runtime-failed"
+    assert recovery_node["recovery_reason"] == "failed_required_check"
+    evidence_edge = output[1].payload
+    assert evidence_edge["from_node_id"] == "check-runtime-failed"
+    assert evidence_edge["from_port"] == "failure_record"
+    assert evidence_edge["accepted_record_selector"] == {
+        "record_type": "failure_record",
+        "schema": "FailureRecord",
+    }
+    assert output[2].payload["to_port"] == "verification_evidence"
+    assert output[2].payload["record_ids"] == ["failure-check-runtime-failed"]
+
+    recovered_events = [
+        *events,
+        *output,
+        _event(
+            "node_retired",
+            {"node_id": "check-runtime-failed", "reason": "recovered_runtime_failure"},
+            5,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-runtime-failed-retry",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+                "command_definition": {"id": "hidden-oracle", "cmd": "true", "must": True},
+            },
+            6,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-runtime-failed-retry",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-runtime-failed-retry",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "status": "passed",
+                "value": {"status": "passed"},
+            },
+            7,
+        ),
+    ]
+
+    recovered_task_states = project_task_states(recovered_events)
+    assert recovered_task_states["region-r1-final"] == "accepted"
+
+
 def test_schedule_tick_does_not_duplicate_existing_failed_check_recovery() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -5382,6 +5597,138 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
     task_states = project_task_states([*events, *output])
     assert task_states["gap-region"] == "accepted"
     assert task_states["corrective-region"] == "accepted"
+
+
+def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-implementation",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "implementation-region",
+                "candidate_id": "candidate-1",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "verification-implementation-passed",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verifier-implementation",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-1",
+                "task_region_id": "implementation-region",
+                "verdict": "passed",
+            },
+            2,
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-implementation",
+                "verifier_node_id": "verifier-implementation",
+                "candidate_id": "candidate-1",
+                "verdict": "passed",
+                "record_id": "verification-implementation-passed",
+                "task_region_id": "implementation-region",
+            },
+            3,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-gap",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "planned",
+                "task_region_id": "gap-region",
+            },
+            4,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-verifier-gap",
+                "from_node_id": "verifier-implementation",
+                "from_port": "verification_report",
+                "to_node_id": "planner-gap",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "outcome": "failed",
+                },
+            },
+            5,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "planned",
+                "task_region_id": "final-region",
+                "command_definition": {"id": "hidden-oracle", "cmd": "true", "must": True},
+            },
+            6,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-check-back-to-verifier",
+                "from_node_id": "check-final",
+                "from_port": "check_result",
+                "to_node_id": "verifier-implementation",
+                "to_port": "verification_evidence",
+                "required": False,
+                "accepted_record_selector": {
+                    "record_type": "check_result",
+                    "schema": "CheckResult",
+                },
+            },
+            7,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    assert not any(
+        event.event_type == "edge_created"
+        and event.payload.get("from_node_id") == "verifier-implementation"
+        and event.payload.get("to_node_id") == "check-final"
+        for event in output
+    )
+    assert any(
+        event.event_type == "node_retired" and event.payload["node_id"] == "planner-gap"
+        for event in output
+    )
+
+    valid_output = _apply(
+        events[:-1],
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0"},
+    )
+    assert any(
+        event.event_type == "edge_created"
+        and event.payload.get("metadata", {}).get("purpose")
+        == "passed_verification_final_invariant_recovery"
+        for event in valid_output
+    )
+    valid_projection = _project([*events[:-1], *valid_output])
+    assert any(
+        edge.get("from_node_id") == "verifier-implementation"
+        and edge.get("to_node_id") == "check-final"
+        for edge in valid_projection["edges"].values()
+    )
 
 
 def test_passed_final_check_retires_failure_continuation() -> None:

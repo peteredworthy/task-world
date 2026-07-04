@@ -63,6 +63,7 @@ class GraphProjection(TypedDict):
     ready_nodes: list[str]
     node_kinds: dict[str, str]
     node_roles: dict[str, str]
+    node_creation_positions: dict[str, int]
     node_task_regions: dict[str, str]
     node_attempts: dict[str, int]
     node_candidates: dict[str, str]
@@ -74,14 +75,18 @@ class GraphProjection(TypedDict):
     node_output_ports: dict[str, dict[str, list[str]]]
     accepted_output_records_by_node_port: dict[str, dict[str, list[AcceptedOutputRecord]]]
     accepted_record_summaries_by_id: dict[str, GraphRecordSummary]
+    output_records_by_node_port: dict[str, dict[str, list[dict[str, Any]]]]
     edges: dict[str, dict[str, Any]]
     input_bindings: dict[str, dict[str, dict[str, Any]]]
     node_pending_appeals: dict[str, bool]
     node_gate_decisions: dict[str, bool]
     task_candidates: dict[str, list[dict[str, Any]]]
     verifier_verdicts: dict[str, dict[str, Any]]
+    completion_decision_passed: bool
+    passed_verification_results_by_record_id: dict[str, dict[str, str]]
     failed_verification_results_by_record_id: dict[str, FailedVerificationResult]
     passed_verification_candidate_ids: list[str]
+    failed_verification_candidate_ids: dict[str, bool]
     recovery_nodes_by_record_id: dict[str, list[RecoveryNodeIndexEntry]]
     check_results: dict[str, dict[str, Any]]
     invalid_test_blocks: dict[str, dict[str, Any]]
@@ -93,6 +98,8 @@ class GraphProjection(TypedDict):
     planner_successors: dict[str, str]
     accepted_graph_patches_by_node: dict[str, list[str]]
     accepted_no_successor_patches_by_node: dict[str, list[str]]
+    accepted_no_successor_patch_ids_by_node: dict[str, str]
+    latest_routine_snapshot_record: dict[str, str] | None
     planner_generations: dict[str, int]
     planner_sessions: dict[str, str]
     planner_session_states: dict[str, str]
@@ -102,6 +109,9 @@ class GraphProjection(TypedDict):
     requirement_revisions: dict[str, dict[str, Any]]
     active_requirement_versions: dict[str, str]
     support_evidence: dict[str, dict[str, Any]]
+    retry_not_before_by_node: dict[str, str | None]
+    cleanup_requested_events: dict[str, dict[str, Any]]
+    cleanup_applied_ids: dict[str, bool]
 
 
 class GraphTopologyBinding(TypedDict, total=False):
@@ -272,6 +282,7 @@ def initial_projection() -> GraphProjection:
         "ready_nodes": [],
         "node_kinds": {},
         "node_roles": {},
+        "node_creation_positions": {},
         "node_task_regions": {},
         "node_attempts": {},
         "node_candidates": {},
@@ -283,14 +294,18 @@ def initial_projection() -> GraphProjection:
         "node_output_ports": {},
         "accepted_output_records_by_node_port": {},
         "accepted_record_summaries_by_id": {},
+        "output_records_by_node_port": {},
         "edges": {},
         "input_bindings": {},
         "node_pending_appeals": {},
         "node_gate_decisions": {},
         "task_candidates": {},
         "verifier_verdicts": {},
+        "completion_decision_passed": False,
+        "passed_verification_results_by_record_id": {},
         "failed_verification_results_by_record_id": {},
         "passed_verification_candidate_ids": [],
+        "failed_verification_candidate_ids": {},
         "recovery_nodes_by_record_id": {},
         "check_results": {},
         "invalid_test_blocks": {},
@@ -302,6 +317,8 @@ def initial_projection() -> GraphProjection:
         "planner_successors": {},
         "accepted_graph_patches_by_node": {},
         "accepted_no_successor_patches_by_node": {},
+        "accepted_no_successor_patch_ids_by_node": {},
+        "latest_routine_snapshot_record": None,
         "planner_generations": {},
         "planner_sessions": {},
         "planner_session_states": {},
@@ -311,6 +328,9 @@ def initial_projection() -> GraphProjection:
         "requirement_revisions": {},
         "active_requirement_versions": {},
         "support_evidence": {},
+        "retry_not_before_by_node": {},
+        "cleanup_requested_events": {},
+        "cleanup_applied_ids": {},
     }
 
 
@@ -323,6 +343,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "ready_nodes": list(state["ready_nodes"]),
         "node_kinds": dict(state["node_kinds"]),
         "node_roles": dict(state.get("node_roles", {})),
+        "node_creation_positions": dict(state.get("node_creation_positions", {})),
         "node_task_regions": dict(state["node_task_regions"]),
         "node_attempts": dict(state["node_attempts"]),
         "node_candidates": dict(state["node_candidates"]),
@@ -360,6 +381,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             record_id: cast(GraphRecordSummary, dict(summary))
             for record_id, summary in state.get("accepted_record_summaries_by_id", {}).items()
         },
+        "output_records_by_node_port": {
+            node_id: {port: [dict(record) for record in records] for port, records in ports.items()}
+            for node_id, ports in state.get("output_records_by_node_port", {}).items()
+        },
         "edges": {edge_id: dict(edge) for edge_id, edge in state["edges"].items()},
         "input_bindings": {
             node_id: {port: dict(binding) for port, binding in ports.items()}
@@ -375,12 +400,23 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             candidate_id: dict(verdict)
             for candidate_id, verdict in state["verifier_verdicts"].items()
         },
+        "completion_decision_passed": state.get("completion_decision_passed", False),
+        "passed_verification_results_by_record_id": {
+            record_id: dict(result)
+            for record_id, result in state.get(
+                "passed_verification_results_by_record_id",
+                {},
+            ).items()
+        },
         "failed_verification_results_by_record_id": {
             record_id: cast(FailedVerificationResult, dict(result))
             for record_id, result in state.get(
                 "failed_verification_results_by_record_id", {}
             ).items()
         },
+        "failed_verification_candidate_ids": dict(
+            state.get("failed_verification_candidate_ids", {})
+        ),
         "passed_verification_candidate_ids": list(
             state.get("passed_verification_candidate_ids", [])
         ),
@@ -421,6 +457,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             node_id: list(patch_ids)
             for node_id, patch_ids in state.get("accepted_no_successor_patches_by_node", {}).items()
         },
+        "accepted_no_successor_patch_ids_by_node": dict(
+            state.get("accepted_no_successor_patch_ids_by_node", {})
+        ),
+        "latest_routine_snapshot_record": _copy_latest_routine_snapshot_record(state),
         "planner_generations": dict(state.get("planner_generations", {})),
         "planner_sessions": dict(state.get("planner_sessions", {})),
         "planner_session_states": dict(state.get("planner_session_states", {})),
@@ -436,6 +476,12 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             support_id: dict(support)
             for support_id, support in state.get("support_evidence", {}).items()
         },
+        "retry_not_before_by_node": dict(state.get("retry_not_before_by_node", {})),
+        "cleanup_requested_events": {
+            cleanup_id: dict(cleanup_event)
+            for cleanup_id, cleanup_event in state.get("cleanup_requested_events", {}).items()
+        },
+        "cleanup_applied_ids": dict(state.get("cleanup_applied_ids", {})),
     }
 
     if event.event_type == "run_lifecycle_changed":
@@ -453,6 +499,8 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         if isinstance(node_id, str) and isinstance(node_state, str):
             next_state["node_states"][node_id] = node_state
         if isinstance(node_id, str):
+            next_state["node_creation_positions"].setdefault(node_id, event.position)
+            _record_recovery_node(next_state, event)
             if kind == "root":
                 budget = event.payload.get("planner_generation_budget")
                 if isinstance(budget, int) and not isinstance(budget, bool) and budget >= 0:
@@ -593,15 +641,18 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                     lease[key] = value
             next_state["leases"][lease_id] = lease
     elif event.event_type == "output_record_accepted":
+        _record_output_record(next_state, event)
         _record_node_output_port(next_state, event)
         _record_accepted_output_record(next_state, event)
         _record_accepted_record_summary(next_state, event)
+        _record_latest_routine_snapshot(next_state, event)
+        _record_completion_decision(next_state, event)
         _record_candidate(next_state, event)
         _record_check_result(next_state, event)
         _record_environment_failure(next_state, event)
     elif event.event_type in {"verification_passed", "verification_failed"}:
         _record_verdict(next_state, event)
-        _record_failed_verification_result(next_state, event)
+        _record_verification_result(next_state, event)
     elif event.event_type == "appeal_opened":
         _record_open_appeal(next_state, event)
     elif event.event_type == "oversight_decision_recorded":
@@ -639,6 +690,16 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 )
             else:
                 next_state["accepted_no_successor_patches_by_node"][planner_node_id] = []
+            successors = event.payload.get("successor_planner_node_ids")
+            if isinstance(successors, list) and any(
+                isinstance(item, str) for item in cast(list[Any], successors)
+            ):
+                next_state["accepted_no_successor_patch_ids_by_node"].pop(
+                    planner_node_id,
+                    None,
+                )
+            else:
+                next_state["accepted_no_successor_patch_ids_by_node"][planner_node_id] = patch_id
         successor_node_ids = event.payload.get("successor_planner_node_ids")
         if isinstance(planner_node_id, str) and isinstance(successor_node_ids, list):
             for successor_node_id in cast(list[Any], successor_node_ids):
@@ -651,11 +712,13 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_cleanup_requested(next_state, event)
     elif event.event_type == "cleanup_applied":
         _record_cleanup_applied(next_state, event)
+    elif event.event_type == "runtime_retry_scheduled":
+        _record_runtime_retry_scheduled(next_state, event)
     elif event.event_type in {"requirement_revision_recorded", "requirement_amended"}:
         _record_requirement_revision(next_state, event)
     elif event.event_type in {"support_evidence_recorded", "support_edge_recorded"}:
         _record_support_evidence(next_state, event)
-    # node_ready/node_deferred and agent_died/runtime_retry_scheduled are
+    # node_ready/node_deferred and agent_died are
     # audit/policy facts. Projection facts are updated only by lease_* and
     # node_state_changed events so replay has a single state authority.
 
@@ -2493,6 +2556,11 @@ def _ready_nodes(node_states: dict[str, str]) -> list[str]:
     return [node_id for node_id, node_state in node_states.items() if node_state == "ready"]
 
 
+def _copy_latest_routine_snapshot_record(state: GraphProjection) -> dict[str, str] | None:
+    record = state.get("latest_routine_snapshot_record")
+    return dict(record) if record is not None else None
+
+
 def _record_candidate(state: GraphProjection, event: EventEnvelope) -> None:
     record_kind = event.payload.get("record_kind")
     if record_kind is not None and record_kind != "output":
@@ -2553,6 +2621,69 @@ def _record_verdict(state: GraphProjection, event: EventEnvelope) -> None:
         "verdict": "passed" if event.event_type == "verification_passed" else "failed",
         "position": event.position,
     }
+
+
+def _record_recovery_node(state: GraphProjection, event: EventEnvelope) -> None:
+    node_id = event.payload.get("node_id")
+    recovery_reason = event.payload.get("recovery_reason")
+    record_id = event.payload.get("recovery_of_record_id")
+    if not all(isinstance(value, str) and value for value in (node_id, recovery_reason, record_id)):
+        return
+    if recovery_reason not in {"failed_required_check", "failed_verification"}:
+        return
+    state["recovery_nodes_by_record_id"].setdefault(cast(str, record_id), []).append(
+        {
+            "node_id": cast(str, node_id),
+            "recovery_reason": cast(str, recovery_reason),
+        }
+    )
+
+
+def _record_completion_decision(state: GraphProjection, event: EventEnvelope) -> None:
+    if state["completion_decision_passed"]:
+        return
+    if event.payload.get("record_type") != "completion_decision":
+        return
+    if event.payload.get("port") != "completion_decision":
+        return
+    value = event.payload.get("value")
+    if isinstance(value, dict) and cast(dict[str, Any], value).get("status") == "passed":
+        state["completion_decision_passed"] = True
+
+
+def _record_verification_result(state: GraphProjection, event: EventEnvelope) -> None:
+    candidate_id = event.payload.get("candidate_id")
+    if isinstance(candidate_id, str) and event.event_type == "verification_passed":
+        if candidate_id not in state["passed_verification_candidate_ids"]:
+            state["passed_verification_candidate_ids"].append(candidate_id)
+    if isinstance(candidate_id, str) and event.event_type == "verification_failed":
+        state["failed_verification_candidate_ids"][candidate_id] = True
+    if event.event_type not in {"verification_passed", "verification_failed"}:
+        return
+
+    node_id = event.payload.get("verifier_node_id") or event.payload.get("node_id")
+    record_id = event.payload.get("record_id")
+    if not isinstance(node_id, str) or not node_id:
+        return
+    if not isinstance(record_id, str) or not record_id:
+        return
+
+    result: dict[str, str] = {
+        "node_id": node_id,
+        "record_id": record_id,
+    }
+    if isinstance(candidate_id, str) and candidate_id:
+        result["candidate_id"] = candidate_id
+    task_region_id = event.payload.get("task_region_id")
+    if isinstance(task_region_id, str) and task_region_id:
+        result["task_region_id"] = task_region_id
+    if event.event_type == "verification_passed":
+        state["passed_verification_results_by_record_id"][record_id] = result
+    else:
+        state["failed_verification_results_by_record_id"][record_id] = cast(
+            FailedVerificationResult,
+            dict(result),
+        )
 
 
 def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
@@ -2666,56 +2797,38 @@ def _stable_accepted_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _record_failed_verification_result(state: GraphProjection, event: EventEnvelope) -> None:
-    candidate_id = event.payload.get("candidate_id")
-    if isinstance(candidate_id, str) and event.event_type == "verification_passed":
-        if candidate_id not in state["passed_verification_candidate_ids"]:
-            state["passed_verification_candidate_ids"].append(candidate_id)
-        stale_record_ids = [
-            record_id
-            for record_id, result in state["failed_verification_results_by_record_id"].items()
-            if result.get("candidate_id") == candidate_id
-        ]
-        for record_id in stale_record_ids:
-            state["failed_verification_results_by_record_id"].pop(record_id, None)
+def _record_output_record(state: GraphProjection, event: EventEnvelope) -> None:
+    node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
+    port = event.payload.get("port")
+    if not isinstance(node_id, str) or not isinstance(port, str):
         return
-    if event.event_type != "verification_failed":
-        return
-    node_id = event.payload.get("verifier_node_id") or event.payload.get("node_id")
-    record_id = event.payload.get("record_id")
-    if not isinstance(node_id, str) or not node_id:
-        return
-    if not isinstance(record_id, str) or not record_id:
-        return
-    if isinstance(candidate_id, str) and candidate_id in state["passed_verification_candidate_ids"]:
-        state["failed_verification_results_by_record_id"].pop(record_id, None)
-        return
-    failed: FailedVerificationResult = {
-        "node_id": node_id,
-        "record_id": record_id,
-    }
-    if isinstance(candidate_id, str) and candidate_id:
-        failed["candidate_id"] = candidate_id
-    task_region_id = event.payload.get("task_region_id")
-    if isinstance(task_region_id, str) and task_region_id:
-        failed["task_region_id"] = task_region_id
-    state["failed_verification_results_by_record_id"][record_id] = failed
-
-
-def _record_recovery_node(state: GraphProjection, event: EventEnvelope) -> None:
-    node_id = event.payload.get("node_id")
-    recovery_reason = event.payload.get("recovery_reason")
-    record_id = event.payload.get("recovery_of_record_id")
-    if not all(isinstance(value, str) and value for value in (node_id, recovery_reason, record_id)):
-        return
-    if recovery_reason not in {"failed_required_check", "failed_verification"}:
-        return
-    state["recovery_nodes_by_record_id"].setdefault(cast(str, record_id), []).append(
-        {
-            "node_id": cast(str, node_id),
-            "recovery_reason": cast(str, recovery_reason),
-        }
+    # Strip durable decoration fields so the fold is deterministic across the
+    # in-command path and a rebuild from stored (decorated) events.
+    state["output_records_by_node_port"].setdefault(node_id, {}).setdefault(port, []).append(
+        _stable_accepted_record_payload(event.payload)
     )
+
+
+def _record_latest_routine_snapshot(state: GraphProjection, event: EventEnvelope) -> None:
+    payload = event.payload
+    record_id = payload.get("record_id")
+    producer_node_id = payload.get("producer_node_id")
+    port = payload.get("port")
+    if not all(isinstance(value, str) and value for value in (record_id, producer_node_id, port)):
+        return
+    is_routine_snapshot = (
+        payload.get("record_type") == "routine_snapshot"
+        or payload.get("record_kind") == "routine_snapshot"
+        or payload.get("schema") == "RoutineSnapshot"
+        or (producer_node_id == "routine-snapshot" and port in {"snapshot", "routine_snapshot"})
+    )
+    if not is_routine_snapshot:
+        return
+    state["latest_routine_snapshot_record"] = {
+        "record_id": cast(str, record_id),
+        "producer_node_id": cast(str, producer_node_id),
+        "port": cast(str, port),
+    }
 
 
 def _record_open_appeal(state: GraphProjection, event: EventEnvelope) -> None:
@@ -3249,6 +3362,10 @@ def _record_gatekeeper_verdicts(state: GraphProjection, event: EventEnvelope) ->
 
 
 def _record_cleanup_requested(state: GraphProjection, event: EventEnvelope) -> None:
+    cleanup_id = event.payload.get("cleanup_id")
+    if isinstance(cleanup_id, str) and cleanup_id:
+        state["cleanup_requested_events"].setdefault(cleanup_id, event.model_dump(mode="json"))
+
     record_id = event.payload.get("file_state_record_id")
     if not isinstance(record_id, str):
         return
@@ -3264,6 +3381,10 @@ def _record_cleanup_requested(state: GraphProjection, event: EventEnvelope) -> N
 
 
 def _record_cleanup_applied(state: GraphProjection, event: EventEnvelope) -> None:
+    cleanup_id = event.payload.get("cleanup_id")
+    if isinstance(cleanup_id, str) and cleanup_id:
+        state["cleanup_applied_ids"][cleanup_id] = True
+
     record_id = event.payload.get("file_state_record_id")
     if not isinstance(record_id, str):
         return
@@ -3275,6 +3396,14 @@ def _record_cleanup_applied(state: GraphProjection, event: EventEnvelope) -> Non
     record["superseded_by_record_id"] = event.payload.get("superseding_record_id")
     record["cleanup_applied_event_id"] = event.event_id
     record["compromised_snapshot_deleted"] = event.payload.get("deleted_snapshot_ref") is True
+
+
+def _record_runtime_retry_scheduled(state: GraphProjection, event: EventEnvelope) -> None:
+    node_id = event.payload.get("node_id")
+    if not isinstance(node_id, str) or not node_id:
+        return
+    value = event.payload.get("retry_not_before")
+    state["retry_not_before_by_node"][node_id] = value if isinstance(value, str) and value else None
 
 
 def _resolved_file_entry(

@@ -36,23 +36,6 @@ ROUTINE_PATHS = [
 DYNAMIC_FEATURE_ROUTINE_PATH = Path("routines/dynamic-graph-feature/routine.yaml")
 
 
-def _with_durable_input_bound_positions(events: list[EventEnvelope]) -> list[EventEnvelope]:
-    normalized: list[EventEnvelope] = []
-    for position, event in enumerate(events, start=1):
-        if event.event_type != "input_bound":
-            normalized.append(event)
-            continue
-        bound_at_position = event.payload.get("bound_at_position")
-        if isinstance(bound_at_position, int) and not isinstance(bound_at_position, bool):
-            if bound_at_position > 0:
-                normalized.append(event)
-                continue
-        normalized.append(
-            event.model_copy(update={"payload": {**event.payload, "bound_at_position": position}})
-        )
-    return normalized
-
-
 @pytest.mark.parametrize("routine_path", ROUTINE_PATHS, ids=lambda path: str(path))
 def test_routine_corpus_loads_and_compiles_cleanly(routine_path: Path) -> None:
     """Corpus scope is active top-level routines plus examples, not archived fragments."""
@@ -112,7 +95,6 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
         source_path="routines/demo-task.yaml",
         source_ref="test-ref",
     )
-    expected_projection = _project(_with_durable_input_bound_positions(expected_events))
     engine = create_engine(tmp_path / "seed-demo.db")
     await init_db(engine)
     session_factory = create_session_factory(engine)
@@ -135,7 +117,8 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
             outbox_count = int(outbox_count_result.scalar_one())
 
         assert result.projection_position == len(expected_events)
-        assert rebuild_projection(stored_events) == expected_projection
+        assert stored_events == result.events
+        assert rebuild_projection(stored_events) == rebuild_projection(result.events)
         snapshot = _node_event(stored_events, "routine-snapshot").payload["snapshot"]
         assert snapshot["source_path"] == "routines/demo-task.yaml"
         assert snapshot["source_ref"] == "test-ref"

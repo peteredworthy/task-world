@@ -137,7 +137,7 @@ def apply_command(
     if command_type == "evaluate_final_gate":
         return _apply_evaluate_final_gate(projection, events, payload, make_event, id_gen)
     if command_type == "record_cleanup_applied":
-        return _apply_record_cleanup_applied(projection, events, payload, make_event)
+        return _apply_record_cleanup_applied(projection, payload, make_event)
     if command_type == "record_heartbeat":
         return _apply_record_heartbeat(projection, payload, clock, make_event)
 
@@ -197,7 +197,7 @@ def _apply_lifecycle_command(
             ]
     trigger = payload.get("trigger", f"{command_type}_command_accepted")
     output: list[EventEnvelope] = []
-    if command_type == "complete" and not _has_passed_completion_decision(events):
+    if command_type == "complete" and not _has_passed_completion_decision(projection):
         output.append(_lifecycle_completion_decision_event(payload, make_event, id_gen))
     output.append(
         _lifecycle_event(
@@ -213,18 +213,8 @@ def _apply_lifecycle_command(
     return output
 
 
-def _has_passed_completion_decision(events: list[EventEnvelope]) -> bool:
-    for event in events:
-        if event.event_type != "output_record_accepted":
-            continue
-        if event.payload.get("record_type") != "completion_decision":
-            continue
-        if event.payload.get("port") != "completion_decision":
-            continue
-        value = event.payload.get("value")
-        if isinstance(value, dict) and cast(dict[str, Any], value).get("status") == "passed":
-            return True
-    return False
+def _has_passed_completion_decision(projection: GraphProjection) -> bool:
+    return projection["completion_decision_passed"]
 
 
 def _lifecycle_completion_decision_event(
@@ -2155,8 +2145,8 @@ def _apply_patch_command(
     for op in patch.ops:
         output.extend(
             _patch_op_events(
-                projection,
                 op,
+                projection,
                 events,
                 make_event,
                 inherited_session_id=parent_session_id,
@@ -2284,7 +2274,6 @@ def _apply_schedule_tick(
     output.extend(
         _passed_verification_terminalization_events(
             projection,
-            events,
             active_lease_node_ids,
             make_event,
         )
@@ -2316,8 +2305,8 @@ def _apply_schedule_tick(
             continue
         if node_state not in {"planned", "blocked", "ready"}:
             continue
-        node = _node_schedule_info(projection, events, payload, node_id)
-        backoff_reason = _retry_backoff_deferred_reason(events, node_id, clock.now())
+        node = _node_schedule_info(projection, payload, node_id)
+        backoff_reason = _retry_backoff_deferred_reason(projection, node_id, clock.now())
         if backoff_reason is not None:
             output.append(
                 make_event(
@@ -2459,16 +2448,22 @@ def _failed_check_recovery_events(
         return []
 
     output: list[EventEnvelope] = []
-    for check_result in _current_failed_check_results(projection):
-        recovery_node_id = _failed_check_recovery_node_id(check_result)
+    for failed_check in _current_failed_check_results(projection):
+        recovery_node_id = _failed_check_recovery_node_id(failed_check)
         if recovery_node_id in projection["node_states"]:
             continue
-        if _has_existing_failed_check_recovery(projection, check_result):
+        if _has_existing_failed_check_recovery(projection, failed_check):
             continue
-        node_id = check_result["node_id"]
-        record_id = check_result["record_id"]
-        task_region_id = check_result.get("task_region_id", node_id)
+        node_id = failed_check["node_id"]
+        record_id = failed_check["record_id"]
+        task_region_id = failed_check.get("task_region_id", node_id)
         recovery_region_id = f"recovery-{_stable_graph_id_part(task_region_id)}"
+        record_type = failed_check.get("record_type", "check_result")
+        source_port = "failure_record" if record_type == "failure_record" else "check_result"
+        source_schema = "FailureRecord" if record_type == "failure_record" else "CheckResult"
+        selector: dict[str, Any] = {"record_type": record_type, "schema": source_schema}
+        if record_type == "check_result":
+            selector["status"] = "failed"
         output.append(
             make_event(
                 "node_created",
@@ -2488,15 +2483,11 @@ def _failed_check_recovery_events(
             {
                 "edge_id": f"edge-{_stable_graph_id_part(record_id)}-recovery-evidence",
                 "from_node_id": node_id,
-                "from_port": "check_result",
+                "from_port": source_port,
                 "to_node_id": recovery_node_id,
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {
-                    "record_type": "check_result",
-                    "schema": "CheckResult",
-                    "status": "failed",
-                },
+                "accepted_record_selector": selector,
                 "metadata": {
                     "purpose": "failed_required_check_recovery",
                     "recovery_of_record_id": record_id,
@@ -2517,6 +2508,12 @@ def _failed_check_recovery_events(
             },
         ]
         for edge in recovery_edges:
+            if _would_create_directed_cycle(
+                projection,
+                cast(str, edge["from_node_id"]),
+                cast(str, edge["to_node_id"]),
+            ):
+                continue
             output.append(make_event("edge_created", edge))
             output.extend(_input_bound_events_for_edge(projection, edge, make_event))
     return output
@@ -2597,6 +2594,12 @@ def _failed_verification_recovery_events(
             },
         ]
         for edge in recovery_edges:
+            if _would_create_directed_cycle(
+                projection,
+                cast(str, edge["from_node_id"]),
+                cast(str, edge["to_node_id"]),
+            ):
+                continue
             output.append(make_event("edge_created", edge))
             output.extend(_input_bound_events_for_edge(projection, edge, make_event))
     return output
@@ -2613,7 +2616,6 @@ def _current_failed_verification_results(projection: GraphProjection) -> list[di
 
 def _passed_verification_terminalization_events(
     projection: GraphProjection,
-    events: list[EventEnvelope],
     active_lease_node_ids: list[str],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
@@ -2623,7 +2625,7 @@ def _passed_verification_terminalization_events(
         return []
 
     output: list[EventEnvelope] = []
-    for verification in _current_passed_verification_results(events):
+    for verification in _current_passed_verification_results(projection):
         retirable_node_ids = _unreachable_failure_branch_node_ids(
             projection,
             verification["node_id"],
@@ -2633,7 +2635,6 @@ def _passed_verification_terminalization_events(
         output.extend(
             _passed_verification_final_check_edges(
                 projection,
-                events,
                 verification,
                 make_event,
             )
@@ -2746,7 +2747,6 @@ def _accepted_no_successor_patch_id(projection: GraphProjection, node_id: str) -
 
 def _passed_verification_final_check_edges(
     projection: GraphProjection,
-    events: list[EventEnvelope],
     verification: dict[str, str],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
@@ -2756,6 +2756,8 @@ def _passed_verification_final_check_edges(
     check_node_ids = _final_checks_waiting_for_verification_evidence(projection)
     if not check_node_ids and not _has_final_invariant_check(projection):
         check_node_id = f"check-final-invariant-{_stable_graph_id_part(record_id)}"
+        if _would_create_directed_cycle(projection, verifier_node_id, check_node_id):
+            return output
         output.append(
             make_event(
                 "node_created",
@@ -2808,9 +2810,38 @@ def _passed_verification_final_check_edges(
                 "recovery_of_record_id": record_id,
             },
         }
+        if _would_create_directed_cycle(projection, verifier_node_id, check_node_id):
+            continue
         output.append(make_event("edge_created", edge))
         output.extend(_input_bound_events_for_edge(projection, edge, make_event))
     return output
+
+
+def _would_create_directed_cycle(
+    projection: GraphProjection,
+    from_node_id: str,
+    to_node_id: str,
+) -> bool:
+    if from_node_id == to_node_id:
+        return True
+    adjacency: dict[str, set[str]] = {}
+    for edge in projection["edges"].values():
+        source = edge.get("from_node_id")
+        target = edge.get("to_node_id")
+        if isinstance(source, str) and isinstance(target, str):
+            adjacency.setdefault(source, set()).add(target)
+
+    seen: set[str] = set()
+    stack = [to_node_id]
+    while stack:
+        node_id = stack.pop()
+        if node_id == from_node_id:
+            return True
+        if node_id in seen:
+            continue
+        seen.add(node_id)
+        stack.extend(sorted(adjacency.get(node_id, set()), reverse=True))
+    return False
 
 
 def _has_final_invariant_check(projection: GraphProjection) -> bool:
@@ -2820,36 +2851,11 @@ def _has_final_invariant_check(projection: GraphProjection) -> bool:
     )
 
 
-def _current_passed_verification_results(events: list[EventEnvelope]) -> list[dict[str, str]]:
-    latest_by_record_id: dict[str, dict[str, str]] = {}
-    failed_candidates: set[str] = set()
-    for event in events:
-        if event.event_type not in {"verification_passed", "verification_failed"}:
-            continue
-        candidate_id = event.payload.get("candidate_id")
-        if isinstance(candidate_id, str) and event.event_type == "verification_failed":
-            failed_candidates.add(candidate_id)
-        if event.event_type != "verification_passed":
-            continue
-        node_id = event.payload.get("verifier_node_id") or event.payload.get("node_id")
-        record_id = event.payload.get("record_id")
-        if not isinstance(node_id, str) or not node_id:
-            continue
-        if not isinstance(record_id, str) or not record_id:
-            continue
-        passed = {
-            "node_id": node_id,
-            "record_id": record_id,
-        }
-        if isinstance(candidate_id, str) and candidate_id:
-            passed["candidate_id"] = candidate_id
-        task_region_id = event.payload.get("task_region_id")
-        if isinstance(task_region_id, str) and task_region_id:
-            passed["task_region_id"] = task_region_id
-        latest_by_record_id[record_id] = passed
+def _current_passed_verification_results(projection: GraphProjection) -> list[dict[str, str]]:
+    failed_candidates = projection["failed_verification_candidate_ids"]
     return [
-        verification
-        for verification in latest_by_record_id.values()
+        dict(verification)
+        for verification in projection["passed_verification_results_by_record_id"].values()
         if verification.get("candidate_id") not in failed_candidates
     ]
 
@@ -3054,18 +3060,46 @@ def _current_failed_check_results(projection: GraphProjection) -> list[dict[str,
         if isinstance(task_region_id, str) and task_region_id:
             check_result["task_region_id"] = task_region_id
         failed.append(check_result)
+    for node_id, ports in sorted(projection["accepted_output_records_by_node_port"].items()):
+        if projection["node_kinds"].get(node_id) != "check":
+            continue
+        if projection["node_states"].get(node_id) in {"cancelled", "retired"}:
+            continue
+        if node_id in projection["check_results"]:
+            continue
+        for accepted_record in ports.get("failure_record", []):
+            record_id = accepted_record.get("record_id")
+            payload = accepted_record.get("payload")
+            if not record_id:
+                continue
+            if not payload:
+                continue
+            check_result = {
+                "node_id": node_id,
+                "record_id": record_id,
+                "record_type": "failure_record",
+            }
+            task_region_id = payload.get("task_region_id")
+            if not isinstance(task_region_id, str) or not task_region_id:
+                task_region_id = projection["node_task_regions"].get(node_id)
+            if isinstance(task_region_id, str) and task_region_id:
+                check_result["task_region_id"] = task_region_id
+            failed.append(check_result)
     return failed
 
 
 def _has_existing_failed_check_recovery(
     projection: GraphProjection,
-    check_result: dict[str, str],
+    failed_check: dict[str, str],
 ) -> bool:
-    node_id = check_result["node_id"]
+    node_id = failed_check["node_id"]
+    source_port = (
+        "failure_record" if failed_check.get("record_type") == "failure_record" else "check_result"
+    )
     for edge in projection["edges"].values():
         if edge.get("from_node_id") != node_id:
             continue
-        if edge.get("from_port") != "check_result":
+        if edge.get("from_port") != source_port:
             continue
         if edge.get("to_port") != "verification_evidence":
             continue
@@ -3082,6 +3116,9 @@ def _has_existing_failed_check_recovery(
 
 
 def _latest_routine_snapshot_record(projection: GraphProjection) -> dict[str, str] | None:
+    record = projection.get("latest_routine_snapshot_record")
+    if record is not None:
+        return dict(record)
     latest: dict[str, str] | None = None
     for summary in projection["accepted_record_summaries_by_id"].values():
         record_id = summary.get("record_id")
@@ -3149,18 +3186,11 @@ def _base_snapshot_id_for_node(
 
 
 def _retry_backoff_deferred_reason(
-    events: list[EventEnvelope],
+    projection: GraphProjection,
     node_id: str,
     now: datetime,
 ) -> str | None:
-    retry_not_before: str | None = None
-    for event in events:
-        if event.event_type != "runtime_retry_scheduled":
-            continue
-        if event.payload.get("node_id") != node_id:
-            continue
-        value = event.payload.get("retry_not_before")
-        retry_not_before = value if isinstance(value, str) and value else None
+    retry_not_before = projection["retry_not_before_by_node"].get(node_id)
     if retry_not_before is None:
         return None
     try:
@@ -3927,7 +3957,6 @@ def _apply_record_gatekeeper_verdicts(
 
 def _apply_record_cleanup_applied(
     projection: GraphProjection,
-    events: list[EventEnvelope],
     payload: dict[str, Any],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
@@ -3935,7 +3964,7 @@ def _apply_record_cleanup_applied(
     if not isinstance(cleanup_id, str) or not cleanup_id:
         return [_command_rejected(make_event, "record_cleanup_applied", "missing cleanup_id")]
 
-    requested = _cleanup_requested_event(events, cleanup_id)
+    requested = _cleanup_requested_event(projection, cleanup_id)
     if requested is None:
         return [
             _command_rejected(
@@ -3944,7 +3973,7 @@ def _apply_record_cleanup_applied(
                 f"unknown cleanup_requested: {cleanup_id}",
             )
         ]
-    if _cleanup_applied_exists(events, cleanup_id):
+    if _cleanup_applied_exists(projection, cleanup_id):
         return [
             _command_rejected(
                 make_event,
@@ -4129,22 +4158,17 @@ def _apply_record_support_evidence(
 
 
 def _cleanup_requested_event(
-    events: list[EventEnvelope],
+    projection: GraphProjection,
     cleanup_id: str,
 ) -> EventEnvelope | None:
-    for event in events:
-        if event.event_type != "cleanup_requested":
-            continue
-        if event.payload.get("cleanup_id") == cleanup_id:
-            return event
-    return None
+    raw_event = projection["cleanup_requested_events"].get(cleanup_id)
+    if raw_event is None:
+        return None
+    return EventEnvelope.model_validate(raw_event)
 
 
-def _cleanup_applied_exists(events: list[EventEnvelope], cleanup_id: str) -> bool:
-    return any(
-        event.event_type == "cleanup_applied" and event.payload.get("cleanup_id") == cleanup_id
-        for event in events
-    )
+def _cleanup_applied_exists(projection: GraphProjection, cleanup_id: str) -> bool:
+    return projection["cleanup_applied_ids"].get(cleanup_id) is True
 
 
 def _cleanup_secret_paths(payload: dict[str, Any]) -> set[str]:
@@ -4393,8 +4417,8 @@ def _request_payload_string(node_payload: dict[str, Any], key: str) -> str | Non
 
 
 def _patch_op_events(
-    projection: GraphProjection,
     op: PatchOp,
+    projection: GraphProjection,
     events: list[EventEnvelope],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     *,
@@ -4630,7 +4654,6 @@ def _lease_is_expired(lease: dict[str, Any], now: datetime) -> bool:
 
 def _node_schedule_info(
     projection: GraphProjection,
-    events: list[EventEnvelope],
     payload: dict[str, Any],
     node_id: str,
 ) -> NodeScheduleInfo:
@@ -4652,7 +4675,7 @@ def _node_schedule_info(
         state=projection["node_states"][node_id],
         priority=int(priorities.get(node_id, 0)),
         region_order=int(region_order.get(node_id, 0)),
-        creation_position=_node_creation_position(events, node_id),
+        creation_position=_node_creation_position(projection, node_id),
         resource_claims=[
             _claim_from_dict(claim) for claim in projection["node_resource_claims"].get(node_id, [])
         ],
@@ -4684,11 +4707,8 @@ def _node_schedule_info(
     )
 
 
-def _node_creation_position(events: list[EventEnvelope], node_id: str) -> int:
-    for event in events:
-        if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
-            return event.position
-    return 0
+def _node_creation_position(projection: GraphProjection, node_id: str) -> int:
+    return projection["node_creation_positions"].get(node_id, 0)
 
 
 def _required_edges_for_node(
@@ -4840,13 +4860,15 @@ def _input_bound_events_for_edge(
         isinstance(value, str) for value in (edge_id, from_node_id, from_port, to_node_id, to_port)
     ):
         return []
+    typed_edge_id = cast(str, edge_id)
+    typed_from_node_id = cast(str, from_node_id)
+    typed_from_port = cast(str, from_port)
+    typed_to_node_id = cast(str, to_node_id)
+    typed_to_port = cast(str, to_port)
 
     output: list[EventEnvelope] = []
-    source_node_id = cast(str, from_node_id)
-    source_port = cast(str, from_port)
-    records_by_port = projection["accepted_output_records_by_node_port"].get(source_node_id, {})
-    for accepted_record in records_by_port.get(source_port, []):
-        record_payload: dict[str, Any] = dict(accepted_record["payload"])
+    records_by_port = projection["output_records_by_node_port"].get(typed_from_node_id, {})
+    for record_payload in records_by_port.get(typed_from_port, []):
         record_id = record_payload.get("record_id")
         if not isinstance(record_id, str):
             continue
@@ -4857,9 +4879,9 @@ def _input_bound_events_for_edge(
         ):
             continue
         binding_payload: dict[str, Any] = {
-            "edge_id": edge_id,
-            "to_node_id": to_node_id,
-            "to_port": to_port,
+            "edge_id": typed_edge_id,
+            "to_node_id": typed_to_node_id,
+            "to_port": typed_to_port,
             "record_ids": [record_id],
             "bound_at_position": 0,
             "trigger": "edge_backfill",

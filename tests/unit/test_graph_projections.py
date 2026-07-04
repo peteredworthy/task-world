@@ -94,6 +94,7 @@ def test_empty_projection() -> None:
         "ready_nodes": [],
         "node_kinds": {},
         "node_roles": {},
+        "node_creation_positions": {},
         "node_task_regions": {},
         "node_attempts": {},
         "node_candidates": {},
@@ -105,14 +106,18 @@ def test_empty_projection() -> None:
         "node_output_ports": {},
         "accepted_output_records_by_node_port": {},
         "accepted_record_summaries_by_id": {},
+        "output_records_by_node_port": {},
         "edges": {},
         "input_bindings": {},
         "node_pending_appeals": {},
         "node_gate_decisions": {},
         "task_candidates": {},
         "verifier_verdicts": {},
+        "completion_decision_passed": False,
+        "passed_verification_results_by_record_id": {},
         "failed_verification_results_by_record_id": {},
         "passed_verification_candidate_ids": [],
+        "failed_verification_candidate_ids": {},
         "recovery_nodes_by_record_id": {},
         "check_results": {},
         "invalid_test_blocks": {},
@@ -124,6 +129,8 @@ def test_empty_projection() -> None:
         "planner_successors": {},
         "accepted_graph_patches_by_node": {},
         "accepted_no_successor_patches_by_node": {},
+        "accepted_no_successor_patch_ids_by_node": {},
+        "latest_routine_snapshot_record": None,
         "planner_generations": {},
         "planner_sessions": {},
         "planner_session_states": {},
@@ -133,6 +140,9 @@ def test_empty_projection() -> None:
         "requirement_revisions": {},
         "active_requirement_versions": {},
         "support_evidence": {},
+        "retry_not_before_by_node": {},
+        "cleanup_requested_events": {},
+        "cleanup_applied_ids": {},
     }
 
 
@@ -483,7 +493,6 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
     )
 
     events = store.read_from("run-1")
-
     projection = initial_projection()
     for event in events:
         projection = reduce_event(projection, event)
@@ -495,6 +504,80 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
     assert projection["accepted_output_records_by_node_port"] == legacy_accepted_by_port
     assert projection["failed_verification_results_by_record_id"] == legacy_failed_verifications
     assert projection["recovery_nodes_by_record_id"] == legacy_recovery_nodes
+
+
+def test_residual_command_projection_fields_fold_incrementally() -> None:
+    events = [
+        _event(
+            "node_created", {"node_id": "worker-1", "kind": "worker", "state": "planned"}
+        ).model_copy(update={"position": 3}),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "decision-1",
+                "record_type": "completion_decision",
+                "producer_node_id": "gate-final",
+                "port": "completion_decision",
+                "value": {"status": "passed"},
+            },
+        ).model_copy(update={"position": 4}),
+        _event(
+            "verification_passed",
+            {
+                "record_id": "verification-1",
+                "verifier_node_id": "verifier-1",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+            },
+        ).model_copy(update={"position": 5}),
+        _event(
+            "verification_failed",
+            {
+                "record_id": "verification-2",
+                "verifier_node_id": "verifier-2",
+                "candidate_id": "candidate-2",
+            },
+        ).model_copy(update={"position": 6}),
+        _event(
+            "runtime_retry_scheduled",
+            {
+                "node_id": "worker-1",
+                "retry_not_before": "2025-01-01T00:01:00+00:00",
+            },
+        ).model_copy(update={"position": 7}),
+        _event(
+            "cleanup_requested",
+            {"cleanup_id": "cleanup-1", "file_state_record_id": "file-state-1"},
+        ).model_copy(update={"position": 8}),
+        _event(
+            "cleanup_requested",
+            {"cleanup_id": "cleanup-1", "file_state_record_id": "file-state-2"},
+        ).model_copy(update={"position": 9}),
+        _event("cleanup_applied", {"cleanup_id": "cleanup-1"}).model_copy(update={"position": 10}),
+    ]
+
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+
+    assert projection["node_creation_positions"] == {"worker-1": 3}
+    assert projection["completion_decision_passed"] is True
+    assert projection["passed_verification_results_by_record_id"] == {
+        "verification-1": {
+            "node_id": "verifier-1",
+            "record_id": "verification-1",
+            "candidate_id": "candidate-1",
+            "task_region_id": "task-1",
+        }
+    }
+    assert projection["failed_verification_candidate_ids"] == {"candidate-2": True}
+    assert projection["retry_not_before_by_node"] == {"worker-1": "2025-01-01T00:01:00+00:00"}
+    assert projection["cleanup_requested_events"]["cleanup-1"]["position"] == 8
+    assert (
+        projection["cleanup_requested_events"]["cleanup-1"]["payload"]["file_state_record_id"]
+        == "file-state-1"
+    )
+    assert projection["cleanup_applied_ids"] == {"cleanup-1": True}
 
 
 def test_requirement_revisions_replay_active_versions() -> None:
@@ -749,6 +832,7 @@ def test_projection_immutability() -> None:
         "ready_nodes": ["worker-1"],
         "node_kinds": {},
         "node_roles": {},
+        "node_creation_positions": {},
         "node_task_regions": {},
         "node_attempts": {},
         "node_candidates": {},
@@ -763,6 +847,9 @@ def test_projection_immutability() -> None:
         "node_gate_decisions": {},
         "task_candidates": {},
         "verifier_verdicts": {},
+        "completion_decision_passed": False,
+        "passed_verification_results_by_record_id": {},
+        "failed_verification_candidate_ids": {},
         "invalid_test_blocks": {},
         "configured_gates": {},
         "gate_decisions": {},
@@ -771,6 +858,9 @@ def test_projection_immutability() -> None:
         "planner_generation_budget": 8,
         "planner_successors": {},
         "planner_generations": {},
+        "retry_not_before_by_node": {},
+        "cleanup_requested_events": {},
+        "cleanup_applied_ids": {},
     }
 
     next_state = reduce_event(
@@ -791,6 +881,7 @@ def test_projection_immutability() -> None:
         "ready_nodes": ["worker-1"],
         "node_kinds": {},
         "node_roles": {},
+        "node_creation_positions": {},
         "node_task_regions": {},
         "node_attempts": {},
         "node_candidates": {},
@@ -805,6 +896,9 @@ def test_projection_immutability() -> None:
         "node_gate_decisions": {},
         "task_candidates": {},
         "verifier_verdicts": {},
+        "completion_decision_passed": False,
+        "passed_verification_results_by_record_id": {},
+        "failed_verification_candidate_ids": {},
         "invalid_test_blocks": {},
         "configured_gates": {},
         "gate_decisions": {},
@@ -813,6 +907,9 @@ def test_projection_immutability() -> None:
         "planner_generation_budget": 8,
         "planner_successors": {},
         "planner_generations": {},
+        "retry_not_before_by_node": {},
+        "cleanup_requested_events": {},
+        "cleanup_applied_ids": {},
     }
     assert next_state["node_states"] == {"worker-1": "running"}
 
