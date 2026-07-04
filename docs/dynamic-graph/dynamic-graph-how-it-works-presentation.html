@@ -1,0 +1,1447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dynamic Graph - How It Works</title>
+<style>
+  :root {
+    --bg: #101215;
+    --surface: #171a1f;
+    --surface-2: #20242a;
+    --surface-3: #272c34;
+    --text: #eef1f5;
+    --muted: #aab2bd;
+    --faint: #78828f;
+    --line: #343a44;
+    --blue: #6bb7ff;
+    --green: #65d58a;
+    --amber: #f3bd62;
+    --rose: #ff7b8b;
+    --violet: #c8a2ff;
+    --cyan: #6ad9de;
+    --shadow: 0 20px 70px rgba(0, 0, 0, 0.28);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow: hidden;
+  }
+
+  body {
+    line-height: 1.48;
+  }
+
+  code,
+  pre,
+  .mono {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+
+  .deck {
+    position: relative;
+    width: 100%;
+    height: 100%;
+  }
+
+  .slide {
+    position: absolute;
+    inset: 0;
+    display: none;
+    flex-direction: column;
+    gap: 1.1rem;
+    padding: 3.4rem 4.2rem 4.6rem;
+    overflow-y: auto;
+  }
+
+  .slide.active {
+    display: flex;
+  }
+
+  .slide.title {
+    justify-content: center;
+  }
+
+  .kicker {
+    color: var(--blue);
+    font-size: 0.78rem;
+    font-weight: 750;
+    text-transform: uppercase;
+    letter-spacing: 0;
+  }
+
+  h1,
+  h2,
+  h3,
+  p {
+    margin: 0;
+  }
+
+  h1 {
+    max-width: 980px;
+    font-size: clamp(2.5rem, 6vw, 5rem);
+    line-height: 0.98;
+    font-weight: 780;
+    letter-spacing: 0;
+  }
+
+  h2 {
+    font-size: clamp(2rem, 4vw, 3.2rem);
+    line-height: 1.05;
+    font-weight: 760;
+    letter-spacing: 0;
+  }
+
+  h3 {
+    color: var(--text);
+    font-size: 1.02rem;
+    font-weight: 720;
+  }
+
+  .lead {
+    max-width: 980px;
+    color: var(--muted);
+    font-size: clamp(1.05rem, 1.8vw, 1.35rem);
+  }
+
+  .muted {
+    color: var(--muted);
+  }
+
+  .faint {
+    color: var(--faint);
+  }
+
+  .cols {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+
+  .cols.three {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .cols.four {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+    padding: 1rem 1.05rem;
+  }
+
+  .panel.alt {
+    background: var(--surface-2);
+  }
+
+  .panel h3 {
+    margin-bottom: 0.45rem;
+  }
+
+  .panel p,
+  .panel li {
+    color: var(--muted);
+  }
+
+  .compact {
+    font-size: 0.9rem;
+  }
+
+  ul,
+  ol {
+    margin: 0.45rem 0 0;
+    padding-left: 1.2rem;
+  }
+
+  li {
+    margin: 0.32rem 0;
+  }
+
+  .grid-flow {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 0.65rem;
+    align-items: stretch;
+  }
+
+  .flow-step {
+    min-height: 124px;
+    padding: 0.78rem;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+  }
+
+  .flow-step strong {
+    display: block;
+    margin: 0.25rem 0;
+  }
+
+  .flow-step span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.84rem;
+  }
+
+  .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    border-radius: 6px;
+    background: rgba(107, 183, 255, 0.18);
+    border: 1px solid rgba(107, 183, 255, 0.42);
+    color: var(--blue);
+    font-weight: 780;
+    font-size: 0.78rem;
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    height: 1.45rem;
+    padding: 0 0.48rem;
+    border-radius: 5px;
+    border: 1px solid var(--line);
+    background: var(--surface-3);
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 720;
+    text-transform: uppercase;
+    letter-spacing: 0;
+  }
+
+  .tag.blue { color: var(--blue); border-color: rgba(107, 183, 255, 0.44); background: rgba(107, 183, 255, 0.12); }
+  .tag.green { color: var(--green); border-color: rgba(101, 213, 138, 0.44); background: rgba(101, 213, 138, 0.12); }
+  .tag.amber { color: var(--amber); border-color: rgba(243, 189, 98, 0.44); background: rgba(243, 189, 98, 0.12); }
+  .tag.rose { color: var(--rose); border-color: rgba(255, 123, 139, 0.44); background: rgba(255, 123, 139, 0.12); }
+  .tag.violet { color: var(--violet); border-color: rgba(200, 162, 255, 0.44); background: rgba(200, 162, 255, 0.12); }
+  .tag.cyan { color: var(--cyan); border-color: rgba(106, 217, 222, 0.44); background: rgba(106, 217, 222, 0.12); }
+
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.45rem;
+    align-items: center;
+  }
+
+  .source {
+    margin-top: auto;
+    color: var(--faint);
+    font-size: 0.76rem;
+  }
+
+  .source code {
+    color: var(--muted);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.88rem;
+  }
+
+  th,
+  td {
+    padding: 0.58rem 0.68rem;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    text-align: left;
+  }
+
+  th {
+    color: var(--faint);
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0;
+  }
+
+  td {
+    color: var(--muted);
+  }
+
+  td:first-child {
+    color: var(--text);
+    font-weight: 680;
+  }
+
+  .diagram {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr;
+    gap: 0.7rem;
+    align-items: center;
+    margin-top: 0.2rem;
+  }
+
+  .diagram .box {
+    min-height: 96px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.85rem;
+  }
+
+  .graph-stage {
+    background: radial-gradient(circle at 18% 18%, rgba(107, 183, 255, 0.16), transparent 30%),
+      radial-gradient(circle at 86% 18%, rgba(101, 213, 138, 0.13), transparent 28%),
+      var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 1.1rem;
+    box-shadow: var(--shadow);
+  }
+
+  .graph-rail {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 0.62rem;
+    align-items: stretch;
+  }
+
+  .graph-node {
+    min-height: 112px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(16, 18, 21, 0.78);
+    padding: 0.75rem;
+    position: relative;
+  }
+
+  .graph-node::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    right: -0.54rem;
+    width: 0.46rem;
+    height: 2px;
+    background: var(--line);
+  }
+
+  .graph-node:last-child::after {
+    display: none;
+  }
+
+  .graph-node strong {
+    display: block;
+    color: var(--text);
+    font-size: 0.93rem;
+    margin-bottom: 0.35rem;
+  }
+
+  .graph-node span {
+    display: block;
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+
+  .graph-node.planner { border-color: rgba(200, 162, 255, 0.45); }
+  .graph-node.worker { border-color: rgba(107, 183, 255, 0.45); }
+  .graph-node.verifier { border-color: rgba(101, 213, 138, 0.45); }
+  .graph-node.check { border-color: rgba(243, 189, 98, 0.5); }
+  .graph-node.gap { border-color: rgba(255, 123, 139, 0.45); }
+
+  .record-pills {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.7rem;
+  }
+
+  .record-pill {
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.2rem 0.46rem;
+    background: var(--surface-2);
+    color: var(--muted);
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+
+  .swimlane {
+    display: grid;
+    grid-template-columns: 9rem repeat(6, minmax(0, 1fr));
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface);
+  }
+
+  .lane-label,
+  .lane-cell {
+    min-height: 4.6rem;
+    padding: 0.65rem;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .lane-label {
+    background: var(--surface-2);
+    color: var(--text);
+    font-weight: 720;
+  }
+
+  .lane-cell {
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+
+  .lane-cell.full {
+    background: rgba(107, 183, 255, 0.1);
+    color: var(--text);
+  }
+
+  .lane-cell.ok {
+    background: rgba(101, 213, 138, 0.1);
+  }
+
+  .lane-cell.warn {
+    background: rgba(243, 189, 98, 0.1);
+  }
+
+  .prompt-shell {
+    display: grid;
+    grid-template-columns: 1.1fr 0.9fr;
+    gap: 1rem;
+    min-height: 0;
+  }
+
+  .prompt-card {
+    background: #0b0d10;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.9rem;
+    overflow: auto;
+    max-height: 420px;
+  }
+
+  .prompt-card pre {
+    margin: 0;
+    color: #d8dee9;
+    white-space: pre-wrap;
+    font-size: 0.72rem;
+    line-height: 1.42;
+  }
+
+  .prompt-card .hl {
+    color: var(--amber);
+  }
+
+  .prompt-notes {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .prompt-note {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.78rem;
+  }
+
+  .prompt-note strong {
+    display: block;
+    margin-bottom: 0.28rem;
+  }
+
+  .prompt-note span {
+    color: var(--muted);
+    font-size: 0.86rem;
+  }
+
+  .evidence-flow {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+    gap: 0.45rem;
+    align-items: stretch;
+  }
+
+  .evidence-step {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.72rem;
+    min-height: 6.2rem;
+  }
+
+  .evidence-step strong {
+    display: block;
+    margin-bottom: 0.32rem;
+  }
+
+  .evidence-step span {
+    color: var(--muted);
+    font-size: 0.78rem;
+  }
+
+  .funnel {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 0.46rem;
+    max-width: 760px;
+  }
+
+  .funnel-step {
+    display: grid;
+    grid-template-columns: 11rem 1fr;
+    gap: 0.75rem;
+    align-items: center;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.62rem 0.76rem;
+  }
+
+  .funnel-step strong {
+    color: var(--text);
+  }
+
+  .funnel-step span {
+    color: var(--muted);
+    font-size: 0.86rem;
+  }
+
+  .arrow {
+    color: var(--faint);
+    font-size: 1.3rem;
+  }
+
+  .quote {
+    padding: 1rem 1.1rem;
+    border-left: 4px solid var(--blue);
+    background: var(--surface);
+    border-radius: 0 8px 8px 0;
+    color: var(--muted);
+  }
+
+  .codeblock {
+    margin: 0;
+    padding: 0.85rem;
+    background: #0b0d10;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    color: #d8dee9;
+    font-size: 0.78rem;
+    overflow: auto;
+    white-space: pre-wrap;
+  }
+
+  .footer {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.7rem 1.3rem;
+    background: rgba(16, 18, 21, 0.92);
+    border-top: 1px solid var(--line);
+    pointer-events: none;
+  }
+
+  .footer * {
+    pointer-events: auto;
+  }
+
+  .counter,
+  .hint {
+    color: var(--faint);
+    font-size: 0.78rem;
+  }
+
+  button {
+    border: 1px solid var(--line);
+    background: var(--surface-2);
+    color: var(--text);
+    border-radius: 7px;
+    padding: 0.45rem 0.75rem;
+    cursor: pointer;
+  }
+
+  button:hover {
+    background: var(--surface-3);
+  }
+
+  .progress {
+    position: fixed;
+    left: 0;
+    top: 0;
+    height: 4px;
+    background: var(--blue);
+    width: 0;
+    z-index: 5;
+  }
+
+  @media (max-width: 900px) {
+    body {
+      overflow: auto;
+    }
+
+    .deck {
+      height: auto;
+    }
+
+    .slide {
+      position: relative;
+      display: flex;
+      min-height: 100vh;
+      padding: 2rem 1.1rem 4.8rem;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .slide:not(.active) {
+      display: flex;
+    }
+
+    .cols,
+    .cols.three,
+    .cols.four,
+    .grid-flow,
+    .diagram,
+    .graph-rail,
+    .prompt-shell,
+    .evidence-flow {
+      grid-template-columns: 1fr;
+    }
+
+    .swimlane {
+      grid-template-columns: 1fr;
+    }
+
+    .lane-label,
+    .lane-cell {
+      border-right: 0;
+    }
+
+    .graph-node::after {
+      display: none;
+    }
+
+    .arrow {
+      display: none;
+    }
+
+    .footer,
+    .progress {
+      display: none;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+<main class="deck" id="deck">
+
+<section class="slide title active">
+  <div class="kicker">Task-World Dynamic Work Graph</div>
+  <h1>How the Dynamic Graph Gets Work Done</h1>
+  <p class="lead">A product-facing tour of graph-mode execution: which nodes exist, what agents are prompted with, how scheduling chooses work, how planners add new nodes, and how evidence moves from raw agent output to durable completion.</p>
+  <div class="row">
+    <span class="tag blue">event sourced</span>
+    <span class="tag green">typed contracts</span>
+    <span class="tag amber">lease scheduled</span>
+    <span class="tag violet">planner mutable</span>
+    <span class="tag cyan">evidence driven</span>
+  </div>
+  <p class="source">Primary code paths: <code>src/orchestrator/graph/</code>, <code>src/orchestrator/graph_runtime/</code>, <code>src/orchestrator/workflow/graph_driver.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Mental model</div>
+  <h2>The graph is a durable work ledger, not a prompt conversation</h2>
+  <div class="diagram">
+    <div class="box">
+      <h3>Events</h3>
+      <p class="muted compact">Every fact is appended as a graph event: nodes, edges, accepted records, leases, patch decisions, lifecycle transitions, and failures.</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box">
+      <h3>Projection</h3>
+      <p class="muted compact">Pure reducers derive run state, node state, input bindings, task acceptance, scheduler queues, leases, final blockers, and read models.</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box">
+      <h3>Runtime</h3>
+      <p class="muted compact">The controller applies commands, the outbox dispatches side effects, agents submit callbacks, and new events advance the graph.</p>
+    </div>
+  </div>
+  <div class="quote">The controller is the only accepted graph mutation path. Agents can propose work, but accepted events are produced by the kernel after validation.</div>
+  <p class="source">Sources: <code>graph_runtime/controller.py</code>, <code>graph/projections.py</code>, <code>graph/commands.py</code>, <code>graph_runtime/outbox.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Visual model</div>
+  <h2>The graph behaves like a typed evidence pipeline</h2>
+  <div class="graph-stage">
+    <div class="graph-rail">
+      <div class="graph-node planner">
+        <span class="tag violet">agent</span>
+        <strong>planner</strong>
+        <span>Reads graph state and proposes future nodes/edges through a patch.</span>
+        <div class="record-pills"><span class="record-pill">graph_patch</span><span class="record-pill">planning_summary</span></div>
+      </div>
+      <div class="graph-node worker">
+        <span class="tag blue">agent</span>
+        <strong>worker</strong>
+        <span>Uses repo tools inside a run worktree under explicit resource authority.</span>
+        <div class="record-pills"><span class="record-pill">candidate</span><span class="record-pill">file_state</span></div>
+      </div>
+      <div class="graph-node verifier">
+        <span class="tag green">agent</span>
+        <strong>verifier</strong>
+        <span>Consumes a bound candidate and emits requirement grades plus citations.</span>
+        <div class="record-pills"><span class="record-pill">verification_report</span></div>
+      </div>
+      <div class="graph-node gap">
+        <span class="tag rose">agent</span>
+        <strong>gap planner</strong>
+        <span>Classifies failed verifier/check evidence and proposes corrective work.</span>
+        <div class="record-pills"><span class="record-pill">classified_gap</span><span class="record-pill">patch</span></div>
+      </div>
+      <div class="graph-node worker">
+        <span class="tag blue">agent</span>
+        <strong>fixer</strong>
+        <span>Produces a corrective candidate bound back into the validation path.</span>
+        <div class="record-pills"><span class="record-pill">candidate</span><span class="record-pill">file_state</span></div>
+      </div>
+      <div class="graph-node check">
+        <span class="tag amber">runtime</span>
+        <strong>check / final gate</strong>
+        <span>Runs deterministic checks and blocks completion until invariants pass.</span>
+        <div class="record-pills"><span class="record-pill">check_result</span><span class="record-pill">completion_decision</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="quote">Edges do not carry informal context. They bind accepted records from specific output ports into downstream input ports, with selectors and hydration policy.</div>
+  <p class="source">Sources: <code>graph/contracts.py</code>, <code>graph_runtime/horizon_templates.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Lifecycle</div>
+  <h2>A graph run starts as compiled routine facts</h2>
+  <div class="grid-flow">
+    <div class="flow-step"><span class="num">1</span><strong>Run starts</strong><span>Graph driver sees <code>execution_mode=graph</code> and ensures the run row is active.</span></div>
+    <div class="flow-step"><span class="num">2</span><strong>Seed graph</strong><span>The embedded routine compiles to <code>root</code>, <code>routine-snapshot</code>, requirements, initial planner/task nodes, checks, and edges.</span></div>
+    <div class="flow-step"><span class="num">3</span><strong>Bootstrap lifecycle</strong><span>The graph accepts and starts itself through <code>accept_run</code> and <code>start</code> commands.</span></div>
+    <div class="flow-step"><span class="num">4</span><strong>Drive loop</strong><span>Repeated <code>schedule_tick</code>, outbox dispatch, wait for agents/checks, project state, and continue.</span></div>
+    <div class="flow-step"><span class="num">5</span><strong>Quiesce</strong><span>If no ready, active, or schedulable nodes remain, complete only if final invariants allow it; otherwise pause as <code>graph_blocked</code>.</span></div>
+  </div>
+  <p class="source">Sources: <code>workflow/graph_driver.py</code>, <code>graph/compiler.py</code>, <code>graph_runtime/seeding.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Node taxonomy</div>
+  <h2>Small set of node kinds, each with typed ports</h2>
+  <table>
+    <thead><tr><th>Node kind</th><th>Handler</th><th>Primary job</th><th>Key output evidence</th></tr></thead>
+    <tbody>
+      <tr><td><code>planner</code></td><td>Agent</td><td>Decompose intent and propose future graph structure.</td><td><code>graph_patch_proposal</code>, <code>planning_summary</code></td></tr>
+      <tr><td><code>planner</code> / <code>gap_planner</code></td><td>Agent</td><td>Classify failures and add corrective work or no-op gap decisions.</td><td><code>classified_gap</code>, <code>graph_patch_proposal</code></td></tr>
+      <tr><td><code>worker</code></td><td>Agent</td><td>Perform repository work under a lease and authority packet.</td><td><code>candidate</code>, <code>file_state</code></td></tr>
+      <tr><td><code>verifier</code></td><td>Agent</td><td>Evaluate a bound candidate against requirements and rubric.</td><td><code>verification_report</code></td></tr>
+      <tr><td><code>check</code></td><td>Runtime command</td><td>Run deterministic commands or hidden command bindings.</td><td><code>check_result</code></td></tr>
+      <tr><td><code>join</code>, <code>final_gate</code></td><td>Controller</td><td>Aggregate branches and decide graph completion.</td><td><code>join_result</code>, <code>completion_decision</code></td></tr>
+      <tr><td><code>human_gate</code>, <code>authority_request</code></td><td>Human/controller</td><td>Record decisions and expanded authority.</td><td><code>decision_record</code>, <code>authority_decision</code></td></tr>
+    </tbody>
+  </table>
+  <p class="source">Source: <code>graph/contracts.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Contracts</div>
+  <h2>Ports make evidence routable and prompts bounded</h2>
+  <div class="cols">
+    <div class="panel">
+      <h3>Node contracts define</h3>
+      <ul>
+        <li>handler type: controller, agent, human, or deterministic command;</li>
+        <li>allowed roles and graph tools;</li>
+        <li>input and output ports;</li>
+        <li>record types and schemas per port;</li>
+        <li>fulfillment contribution: task acceptance, control progress, final invariant, or none.</li>
+      </ul>
+    </div>
+    <div class="panel alt">
+      <h3>Edges define</h3>
+      <ul>
+        <li><code>from_port</code> and <code>to_port</code> compatibility;</li>
+        <li>whether the edge is required;</li>
+        <li>binding policy such as <code>bind_first</code>, <code>bind_latest</code>, or <code>bind_all</code>;</li>
+        <li>record selectors, for example only accepted <code>candidate</code> or failed <code>check_result</code> records;</li>
+        <li>prompt hydration policy: inline summary, structured JSON, artifact reference, or tool-only.</li>
+      </ul>
+    </div>
+  </div>
+  <p class="source">Sources: <code>graph/contracts.py</code>, <code>graph/commands.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Prompting</div>
+  <h2>The actual prompt has two layers</h2>
+  <div class="cols">
+    <div class="panel">
+      <h3>Graph-specific body</h3>
+      <p><code>_prompt_for_node()</code> builds a role-specific body from the current graph projection. This is where planners get frontier/evidence/patch contract, workers get authority and feature context, and verifiers get candidate/rubric/bound-record context.</p>
+    </div>
+    <div class="panel alt">
+      <h3>Runner wrapper</h3>
+      <p><code>build_codex_server_prompt()</code> wraps the graph body with requirements, callback-tool workflow, git rules, sandbox constraints, response style, and planner-specific tool instructions when the node is a planner.</p>
+    </div>
+  </div>
+  <div class="diagram">
+    <div class="box"><h3>Graph prompt body</h3><p class="muted compact"><code>context.prompt</code> from <code>graph_runtime/dispatch.py</code></p></div>
+    <div class="arrow">+</div>
+    <div class="box"><h3>Requirements</h3><p class="muted compact">Routine/graph requirements rendered as bullets.</p></div>
+    <div class="arrow">+</div>
+    <div class="box"><h3>Callback instructions</h3><p class="muted compact">Submit, grade, checklist, clarification, and graph patch tools.</p></div>
+  </div>
+  <p class="source">Sources: <code>graph_runtime/dispatch.py</code>, <code>runners/agents/codex/common.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Actual prompt: planner</div>
+  <h2>Planner nodes are explicitly told to mutate only through graph patches</h2>
+  <div class="prompt-shell">
+    <div class="prompt-card">
+<pre>Planner context packet:
+{bounded JSON packet with run_id, node_id, active_intent,
+ current_graph_position, planner_generation, bound_requirements,
+ frontier, evidence, freshness, open_planner_proposals,
+ accepted_planner_patches, patch_rejections, allowed_patch_operations,
+ horizon_region_templates, patch_examples, and dynamic_feature when present}
+
+Planner mutation contract:
+- Your job is to propose future graph structure, not edit repository files.
+- Prefer planner-facing graph macros; low-level ops are the internal expansion format.
+- Mutate the graph only through submit_graph_patch or macro-backed patch envelopes.
+- Use current_graph_position from the packet as base_graph_position.
+- Use node_id from the packet as planner identity; dispatch will bind proposer evidence.
+- When using raw fallback ops, choose only from allowed_patch_operations.
+- Use horizon_region_templates for standard discovery, implementation, validation,
+  gap-analysis, corrective-work, and final invariant regions.
+- Read frontier, evidence, open_planner_proposals, accepted_planner_patches,
+  and patch_rejections before proposing.
+- Check nodes must include command_definition or command_binding.
+- Every required check must have a failure continuation.
+- If feedback says the patch is stale, malformed, or rejected, submit a corrected patch.
+- Call plain submit only after submit_graph_patch feedback says the patch was accepted.
+- Do not append graph events directly and do not create source/test/doc edits from this planner node.
+
+Allowed patch operations:
+{bounded JSON}
+Standard horizon region templates:
+{bounded JSON}
+Compact patch examples:
+{bounded JSON}</pre>
+    </div>
+    <div class="prompt-notes">
+      <div class="prompt-note"><strong>Mutation authority</strong><span>Planner contract allows graph tools such as <code>create_work_region</code>, <code>attach_verifier</code>, <code>attach_check</code>, <code>create_gap_planner</code>, <code>create_join</code>, <code>request_gate</code>, <code>retire_or_supersede</code>, and <code>submit_graph_patch</code>.</span></div>
+      <div class="prompt-note"><strong>Feedback loop</strong><span>The prompt expects rejected patch feedback to be read and repaired before final submit.</span></div>
+      <div class="prompt-note"><strong>Completion guard</strong><span>Planner-created checks must include a failure continuation so failed evidence does not strand the graph.</span></div>
+    </div>
+  </div>
+  <p class="source">Source: <code>graph_runtime/dispatch.py::_prompt_for_node</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Actual prompt: Codex planner wrapper</div>
+  <h2>The runner adds the graph tool contract around the planner body</h2>
+  <div class="prompt-shell">
+    <div class="prompt-card">
+<pre>{graph-specific planner prompt}
+
+## Requirements
+- {requirement 1}
+- {requirement 2}
+
+## Orchestrator Integration
+You are connected to an orchestrator that tracks your progress. Use the callback tools below to report your work.
+
+### Required Workflow
+1. Read the requirements above carefully.
+2. Implement each requirement.
+3. After completing each requirement, call update_checklist to mark it 'done'.
+4. Once ALL requirements are addressed, call submit to submit.
+5. All CRITICAL requirements must be 'done' before submission succeeds.
+
+### Available Callback Tools
+- update_checklist(req_id, status, note?)
+- submit()
+- request_clarification(question)
+
+### Planner Graph-Mutation Tool
+- Prefer graph macros: create_work_region, attach_verifier, attach_check,
+  create_gap_planner, create_join, request_gate, and retire_or_supersede.
+  Gap planners use create_corrective_region, attach_verifier, attach_check,
+  and request_gate.
+- submit_graph_patch(patch) or submit_graph_patch(patch_id, base_graph_position, ops, rationale_record_id?)
+  - base_graph_position: Use current_graph_position from the planner packet.
+  - ops: Validated raw fallback list using only allowed_patch_operations;
+    gap planners may use [] for an explicit no-op decision.
+  If feedback says stale, malformed, or rejected, submit a corrected macro or patch.
+  Plain submit is only for finishing after at least one submit_graph_patch attempt.
+
+## Git Workflow
+Do not run git commit manually; the orchestrator auto-commits uncommitted changes when you submit.
+
+## Sandbox Constraints
+- You run in a workspace-write sandbox with network access disabled.
+- File operations are restricted to the working directory.</pre>
+    </div>
+    <div class="prompt-notes">
+      <div class="prompt-note"><strong>Important mismatch</strong><span>The generic wrapper still says "Implement each requirement"; the graph-specific planner body and registered tools narrow the actual behavior to graph mutation.</span></div>
+      <div class="prompt-note"><strong>Submit order</strong><span>The runtime enforces this: planner submit fails unless an accepted graph patch was submitted first.</span></div>
+    </div>
+  </div>
+  <p class="source">Source: <code>runners/agents/codex/common.py::build_codex_server_prompt</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Actual prompt: worker and fixer</div>
+  <h2>Worker nodes get a work packet plus authority, not graph-write instructions</h2>
+  <div class="prompt-shell">
+    <div class="prompt-card">
+<pre>{title or objective or node_id}
+{task_context if present}
+objective: {objective}
+corrective_requirement: {corrective_requirement}
+corrective_evidence_required: {corrective_evidence_required}
+expected_gap: {expected_gap}
+expected_artifact: {expected_artifact}
+feature_spec_path: {feature_spec_path}
+acceptance_command: {acceptance_command}
+expected_outputs: {bounded JSON list}
+invariants: {bounded JSON list}
+worker_authority: {
+  "node_id": "{node_id}",
+  "lease_id": "{lease_id}",
+  "lease_generation": {generation},
+  "worktree_path": "{run worktree}",
+  "allowed_actions": ["submit_records", "request_clarification", "raise_appeal"],
+  "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+  "available_tools": [...]
+}
+dynamic_feature_spec_path: {feature_spec_path}
+dynamic_feature_spec_content: {feature_spec_content}
+dynamic_acceptance_command: {acceptance_command}
+
+dynamic_worker_instruction: Create or update only the artifact described by
+dynamic_feature_spec_content, then use dynamic_acceptance_command when possible.
+Do not work on unrelated repository slices.</pre>
+    </div>
+    <div class="prompt-notes">
+      <div class="prompt-note"><strong>Fixer variant</strong><span>For fixer/corrective nodes, the final instruction changes to: "Correct the artifact described by dynamic_feature_spec_content so the final invariant oracle can pass."</span></div>
+      <div class="prompt-note"><strong>Default authority</strong><span>Worker patches get default write authority over repo path <code>.</code> unless the patch specifies narrower resource claims.</span></div>
+      <div class="prompt-note"><strong>No graph tools</strong><span>Workers complete by repository changes and output records; they do not mutate the graph topology.</span></div>
+    </div>
+  </div>
+  <p class="source">Sources: <code>graph_runtime/dispatch.py::_worker_like_prompt</code>, <code>graph/commands.py::_ensure_default_node_authority</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Actual prompt: verifier</div>
+  <h2>Verifier nodes get bound evidence and a required report schema</h2>
+  <div class="prompt-shell">
+    <div class="prompt-card">
+<pre>Verify task region {task_region_id}.
+Candidate: {candidate_id}
+Rubric: {bounded JSON rubric}
+
+Verifier context packet:
+{
+  "node_id": "{verifier_node_id}",
+  "task_region_id": "{task_region_id}",
+  "candidate_id": "{candidate_id}",
+  "requirements": [...],
+  "rubric": [...],
+  "bound_records": {
+    "candidate_under_test": [
+      {"record_kind": "output", "record_type": "candidate", "record_id": "..."}
+    ],
+    "file_state": [
+      {"record_kind": "file_state", "record_id": "...", "snapshot_id": "..."}
+    ]
+  },
+  "evaluated_record_citations": {
+    "candidate_record_ids": [...],
+    "file_state_record_ids": [...],
+    "evaluated_record_ids": [...]
+  },
+  "required_report_schema": {
+    "record_kind": "verification",
+    "port": "verification_report",
+    "schema": "VerificationReport",
+    "required_fields": [
+      "candidate_id",
+      "verdict",
+      "value.grades",
+      "evidence.evaluated_record_ids"
+    ],
+    "verdict_values": ["passed", "failed"]
+  }
+}
+
+## Orchestrator Integration (Verifier)
+1. Review the code changes made by the builder.
+2. Grade EVERY requirement using grade.
+3. After grading all requirements, call submit to complete verification.
+4. Grades: A, B, C, D, F.</pre>
+    </div>
+    <div class="prompt-notes">
+      <div class="prompt-note"><strong>Candidate identity</strong><span>The verifier does not declare <code>candidate_id</code> in its node payload; it derives the candidate from the required <code>candidate_under_test</code> input edge.</span></div>
+      <div class="prompt-note"><strong>Evidence citations</strong><span>The accepted verification report must cite the evaluated candidate/file-state records, so later checks and gates know exactly what was reviewed.</span></div>
+    </div>
+  </div>
+  <p class="source">Sources: <code>graph_runtime/dispatch.py::_verifier_packet</code>, <code>runners/agents/codex/common.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Actual prompt: non-worker nodes</div>
+  <h2>Summarizers are prompted; checks and gates are runtime-owned</h2>
+  <div class="cols">
+    <div class="prompt-card">
+<pre>Summarize source records for {task_region_id}.
+
+Summarizer context packet:
+{
+  "node_id": "{node_id}",
+  "task_region_id": "{task_region_id}",
+  "source_records": [...],
+  "required_summary_schema": {
+    "record_kind": "output",
+    "record_type": "analysis_summary",
+    "port": "analysis_summary",
+    "schema": "AnalysisSummary",
+    "required_fields": [
+      "summary",
+      "source_record_ids",
+      "lossiness",
+      "omitted_details"
+    ],
+    "lossiness_values": ["lossless", "lossy"]
+  }
+}</pre>
+    </div>
+    <div class="panel alt">
+      <h3>Check/final gate do not receive LLM prompts</h3>
+      <p><code>check</code> nodes dispatch to <code>_run_check()</code>, resolve <code>command_definition</code> or <code>command_binding</code>, run the command in the right worktree/snapshot, and submit a <code>check_result</code>.</p>
+      <p style="margin-top: 0.65rem;"><code>join</code> and <code>final_gate</code> nodes are evaluated by controller/runtime code and output deterministic records.</p>
+    </div>
+  </div>
+  <p class="source">Sources: <code>graph_runtime/dispatch.py::_summarizer_packet</code>, <code>graph_runtime/dispatch.py::_run_check</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Planner tools</div>
+  <h2>Planners add work by submitting patch envelopes</h2>
+  <div class="cols">
+    <div class="panel">
+      <h3>Preferred macro tools</h3>
+      <div class="row">
+        <span class="tag blue">create_work_region</span>
+        <span class="tag blue">attach_verifier</span>
+        <span class="tag blue">attach_check</span>
+        <span class="tag blue">create_gap_planner</span>
+        <span class="tag blue">create_join</span>
+        <span class="tag amber">request_gate</span>
+        <span class="tag rose">retire_or_supersede</span>
+      </div>
+      <p class="compact muted" style="margin-top: 0.8rem;">Gap planners get a narrower set centered on corrective work: <code>create_corrective_region</code>, verifier/check attachment, gates, and <code>submit_graph_patch</code>.</p>
+    </div>
+    <div class="panel alt">
+      <h3>Raw fallback operations</h3>
+      <div class="row">
+        <span class="tag violet">create_node</span>
+        <span class="tag violet">create_edge</span>
+        <span class="tag violet">retire_node</span>
+        <span class="tag violet">create_revision_attempt</span>
+        <span class="tag violet">create_appeal</span>
+        <span class="tag violet">set_resource_claims</span>
+        <span class="tag violet">set_allowed_actions</span>
+        <span class="tag violet">mark_plan_region_suspect</span>
+      </div>
+      <p class="compact muted" style="margin-top: 0.8rem;">Patch acceptance creates durable events such as <code>graph_patch_accepted</code>, <code>node_created</code>, <code>edge_created</code>, <code>input_bound</code>, and authority changes.</p>
+    </div>
+  </div>
+  <p class="source">Sources: <code>graph/patch_validator.py</code>, <code>graph/macros.py</code>, <code>runners/agents/codex/common.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Validation</div>
+  <h2>What causes nodes to be added?</h2>
+  <div class="cols">
+    <div class="funnel">
+      <div class="funnel-step"><strong>Planner lease</strong><span>Inputs and resources are ready, so scheduler grants a lease.</span></div>
+      <div class="funnel-step"><strong>Patch envelope</strong><span><code>patch_id</code>, <code>base_graph_position</code>, operations, proposer id, and optional rationale.</span></div>
+      <div class="funnel-step"><strong>Staleness check</strong><span>Reject if invalidating graph events happened after the observed base position.</span></div>
+      <div class="funnel-step"><strong>Authority check</strong><span>Reject operations outside the actor role, including active executable-node retirement by gap planners.</span></div>
+      <div class="funnel-step"><strong>Contract check</strong><span>Reject unknown node kinds, missing executable roles, bad ports, selector mismatches, cycles, or duplicate ids.</span></div>
+      <div class="funnel-step"><strong>Accepted events</strong><span>Only now emit <code>graph_patch_accepted</code>, <code>node_created</code>, <code>edge_created</code>, and <code>input_bound</code>.</span></div>
+    </div>
+    <div class="graph-stage">
+      <div class="graph-rail" style="grid-template-columns: 1fr; gap: 0.5rem;">
+        <div class="graph-node planner"><strong>Before</strong><span>planner-1 has current_graph_position=42 and sees no validation worker.</span></div>
+        <div class="graph-node worker"><strong>Patch ops</strong><span>create_node(worker), create_node(verifier), create_edge(worker.candidate -> verifier.candidate_under_test)</span></div>
+        <div class="graph-node verifier"><strong>After</strong><span>New nodes exist as durable graph facts and become schedulable when their required records bind.</span></div>
+      </div>
+    </div>
+  </div>
+  <div class="quote">A planner can ask for nodes to be added; the validator decides whether those nodes become graph facts.</div>
+  <p class="source">Sources: <code>graph/commands.py</code>, <code>graph/patch_validator.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Scheduling</div>
+  <h2>Readiness and selection are deterministic</h2>
+  <div class="swimlane">
+    <div class="lane-label">Tick</div>
+    <div class="lane-cell full">run must be active</div>
+    <div class="lane-cell full">planned/blocked nodes evaluated</div>
+    <div class="lane-cell full">ready nodes sorted</div>
+    <div class="lane-cell full">leases granted</div>
+    <div class="lane-cell full">outbox rows inserted</div>
+    <div class="lane-cell full">driver waits/repeats</div>
+    <div class="lane-label">Inputs</div>
+    <div class="lane-cell ok">required ports bound</div>
+    <div class="lane-cell ok">state dependencies completed</div>
+    <div class="lane-cell warn">gate decisions approved</div>
+    <div class="lane-cell warn">preconditions pass</div>
+    <div class="lane-cell">failed upstream blocks</div>
+    <div class="lane-cell">pending appeal blocks</div>
+    <div class="lane-label">Resources</div>
+    <div class="lane-cell">read/write path claims</div>
+    <div class="lane-cell">external resource keys</div>
+    <div class="lane-cell">graph_write special case</div>
+    <div class="lane-cell ok">non-conflicting selected</div>
+    <div class="lane-cell warn">conflicts deferred</div>
+    <div class="lane-cell">max_grants defers</div>
+    <div class="lane-label">Sort order</div>
+    <div class="lane-cell">priority desc</div>
+    <div class="lane-cell">kind order</div>
+    <div class="lane-cell"><code>check</code></div>
+    <div class="lane-cell"><code>final_gate</code> / <code>join</code></div>
+    <div class="lane-cell">region order</div>
+    <div class="lane-cell">creation position / id</div>
+  </div>
+  <div class="quote">The scheduler is deterministic because it is pure: the same projection and clock inputs produce the same ready/deferred/selected decision.</div>
+  <p class="source">Source: <code>graph/scheduler.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Leases and side effects</div>
+  <h2>Scheduling produces leases, not direct subprocesses</h2>
+  <div class="diagram">
+    <div class="box">
+      <h3><code>schedule_tick</code></h3>
+      <p class="muted compact">Expires old leases, evaluates readiness, marks nodes ready/running, grants leases, and records selected/deferred decisions.</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box">
+      <h3><code>agent_dispatch_requested</code></h3>
+      <p class="muted compact">Runtime expands each lease grant into an explicit side-effect-intent event.</p>
+    </div>
+    <div class="arrow">→</div>
+    <div class="box">
+      <h3>Outbox</h3>
+      <p class="muted compact">A durable row is inserted and dispatched at least once. Dispatch is idempotent by event id.</p>
+    </div>
+  </div>
+  <div class="cols three">
+    <div class="panel"><h3>Agent nodes</h3><p>Run through the configured runner with a graph dispatch context and callback tools.</p></div>
+    <div class="panel"><h3>Check nodes</h3><p>Run deterministic commands in the run worktree or a snapshot worktree and emit <code>check_result</code>.</p></div>
+    <div class="panel"><h3>Controller nodes</h3><p>Join/final gate are evaluated by runtime code and submit records without an LLM.</p></div>
+  </div>
+  <p class="source">Sources: <code>graph_runtime/controller.py</code>, <code>graph_runtime/outbox.py</code>, <code>graph_runtime/dispatch.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Evidence</div>
+  <h2>Evidence is immutable, typed, and cited through bindings</h2>
+  <div class="evidence-flow">
+    <div class="evidence-step"><strong>Callback</strong><span>Agent calls submit or runtime finishes a command.</span></div>
+    <div class="evidence-step"><strong>Boundary</strong><span>Runtime captures worktree status and classifies file state.</span></div>
+    <div class="evidence-step"><strong>Snapshot</strong><span>Accepted file state gets a git snapshot id.</span></div>
+    <div class="evidence-step"><strong>Record</strong><span>Candidate, verifier, check, gap, summary, failure, or decision record is validated.</span></div>
+    <div class="evidence-step"><strong>Accepted event</strong><span><code>output_record_accepted</code> and specialized events enter the log.</span></div>
+    <div class="evidence-step"><strong>Binding</strong><span>Edges whose selectors match emit <code>input_bound</code>.</span></div>
+    <div class="evidence-step"><strong>Hydration</strong><span>Downstream prompt packets receive structured JSON, summaries, references, or tool-only pointers.</span></div>
+  </div>
+  <pre class="codeblock">Record identity shape:
+record_id, record_type, schema_version, producer_node_id,
+producer_port/port, graph_position, payload/value, provenance</pre>
+  <p class="source">Sources: <code>graph/models.py</code>, <code>graph/commands.py</code>, <code>graph_runtime/dispatch.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">File state</div>
+  <h2>Repository changes become file-state evidence</h2>
+  <div class="grid-flow">
+    <div class="flow-step"><span class="num">1</span><strong>Agent finishes</strong><span>Worker/verifier submits or exits; runtime inspects the run worktree boundary.</span></div>
+    <div class="flow-step"><span class="num">2</span><strong>Classify paths</strong><span>File-state policy labels accepted paths, ignored residue, tool caches, rejected paths, and other boundary facts.</span></div>
+    <div class="flow-step"><span class="num">3</span><strong>Snapshot</strong><span>Accepted boundaries create a git snapshot ref for restorable evidence.</span></div>
+    <div class="flow-step"><span class="num">4</span><strong>Gatekeeper</strong><span>Sensitive or compromised file-state can be rejected or cleaned up through dedicated records.</span></div>
+    <div class="flow-step"><span class="num">5</span><strong>Bind downstream</strong><span>Candidate, verifier, check, artifact index, and final invariant logic can consume file-state records.</span></div>
+  </div>
+  <div class="quote">The run worktree is the working boundary. The driver also watches for leaked paths into the main worktree and logs an isolation breach if an agent escapes.</div>
+  <p class="source">Sources: <code>graph_runtime/file_state.py</code>, <code>graph/file_state.py</code>, <code>workflow/graph_driver.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Checks and completion</div>
+  <h2>Passing prompts is not enough; final invariants decide completion</h2>
+  <div class="cols">
+    <div class="panel">
+      <h3>Check nodes</h3>
+      <ul>
+        <li>must have <code>command_definition</code> or <code>command_binding</code>;</li>
+        <li>run in the correct worktree or snapshot context;</li>
+        <li>record command identity, stdout, stderr, exit code, duration, and evaluated evidence;</li>
+        <li>can use hidden command bindings such as <code>dynamic_feature_hidden_oracle</code> without exposing secrets in planner prompts.</li>
+      </ul>
+    </div>
+    <div class="panel alt">
+      <h3>Final blockers</h3>
+      <ul>
+        <li>run not active or terminal mismatch;</li>
+        <li>active leases or schedulable work remains;</li>
+        <li>task regions not accepted;</li>
+        <li>failed check results;</li>
+        <li>missing passed completion decision;</li>
+        <li>failed nodes, open gates, stale/suspect evidence, or unresolved recovery paths.</li>
+      </ul>
+    </div>
+  </div>
+  <p class="source">Sources: <code>graph_runtime/dispatch.py</code>, <code>graph/projections.py</code>, <code>graph/commands.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Recovery</div>
+  <h2>Failure is represented as more graph state</h2>
+  <div class="cols three">
+    <div class="panel">
+      <h3>Rejected patch</h3>
+      <p>Planner receives accepted/rejected feedback. It must repair stale, malformed, or unauthorized patches before plain submit.</p>
+    </div>
+    <div class="panel">
+      <h3>Agent failure</h3>
+      <p><code>agent_died</code>, lease release, failure records, and state changes let the scheduler or recovery logic continue without pretending the work passed.</p>
+    </div>
+    <div class="panel">
+      <h3>Failed verification/check</h3>
+      <p>Failure evidence is routed to a gap planner or corrective region. Required checks need an explicit failure continuation to avoid silent quiescence.</p>
+    </div>
+  </div>
+  <div class="cols">
+    <div class="panel alt">
+      <h3>Lease expiry</h3>
+      <p>Expired leases emit <code>lease_expired</code>, failure records, and failed node state. If the process is still running, the driver can renew with <code>record_heartbeat</code>.</p>
+    </div>
+    <div class="panel alt">
+      <h3>Human authority</h3>
+      <p>Human gates and authority requests block dependent nodes until a decision or authority record is accepted and bound to the waiting input port.</p>
+    </div>
+  </div>
+  <p class="source">Sources: <code>graph/commands.py</code>, <code>workflow/graph_driver.py</code>, <code>api/routers/graph.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Standard horizon</div>
+  <h2>Planners are guided toward known work patterns</h2>
+  <table>
+    <thead><tr><th>Template</th><th>What it creates</th><th>Why it matters</th></tr></thead>
+    <tbody>
+      <tr><td><code>discovery_region</code></td><td>Discovery worker</td><td>Gathers missing evidence before implementation.</td></tr>
+      <tr><td><code>implementation_region</code></td><td>Implementation worker</td><td>Produces a bounded candidate.</td></tr>
+      <tr><td><code>validation_region</code></td><td>Verifier plus candidate edge</td><td>Blocks until accepted candidate evidence exists.</td></tr>
+      <tr><td><code>gap_analysis_region</code></td><td>Gap planner plus failure evidence edge</td><td>Classifies failed verifier/check evidence.</td></tr>
+      <tr><td><code>corrective_work_region</code></td><td>Fixer worker, verifier, classified-gap edge</td><td>Turns gap classification into another candidate cycle.</td></tr>
+      <tr><td><code>final_invariant_region</code></td><td>Check node plus verification evidence edge</td><td>Guards final completion with deterministic evidence.</td></tr>
+    </tbody>
+  </table>
+  <p class="source">Source: <code>graph_runtime/horizon_templates.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Readbacks</div>
+  <h2>Operators debug the graph through projections and summaries</h2>
+  <div class="cols">
+    <div class="panel">
+      <h3>API surfaces</h3>
+      <ul>
+        <li><code>/api/runs/{id}/graph</code> for graph projection and run state;</li>
+        <li><code>/graph/topology</code> for nodes and edges;</li>
+        <li><code>/graph/scheduler</code> for ready, blocked, resource-waiting, gate-waiting, and leases;</li>
+        <li><code>/graph/events</code> for full or summary payloads;</li>
+        <li><code>/graph/nodes/{node_id}</code> for prompt summaries, controls, records, and callback history;</li>
+        <li><code>/graph/final-blockers</code>, <code>/graph/patches</code>, <code>/graph/file-state</code>, and <code>/graph/decisions</code> for targeted diagnosis.</li>
+      </ul>
+    </div>
+    <div class="panel alt">
+      <h3>Read-model strategy</h3>
+      <p>Heavy payloads such as callbacks, file-state, and output records are summarized. Node detail summaries preserve prompt sections, input ports, bound records, lease metadata, command preconditions, and output records without forcing every UI/API read to replay massive payloads.</p>
+    </div>
+  </div>
+  <p class="source">Sources: <code>api/routers/graph.py</code>, <code>graph_runtime/store.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">Critical invariants</div>
+  <h2>The important rules that keep the graph useful</h2>
+  <div class="cols">
+    <div class="panel">
+      <h3>Runtime invariants</h3>
+      <ul>
+        <li>graph mutations go through <code>GraphController</code>;</li>
+        <li>side effects are requested through the outbox;</li>
+        <li>leases must be active and generation-matched for callbacks;</li>
+        <li>resource claims prevent unsafe parallel writes;</li>
+        <li>completion is blocked by graph-wide invariants, not by agent confidence.</li>
+      </ul>
+    </div>
+    <div class="panel alt">
+      <h3>Prompt invariants</h3>
+      <ul>
+        <li>planner nodes plan graph structure and do not edit files;</li>
+        <li>workers edit only within their authority packet;</li>
+        <li>verifiers grade every requirement and cite evaluated evidence;</li>
+        <li>checks are deterministic and cannot fabricate pass/fail records;</li>
+        <li>summaries are prompt aids, not correctness authority.</li>
+      </ul>
+    </div>
+  </div>
+  <p class="source">Sources: <code>docs/dynamic-graph/typed-work-graph-requirements.md</code>, <code>graph/contracts.py</code>, <code>graph_runtime/dispatch.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">End-to-end example</div>
+  <h2>A typical dynamic feature run</h2>
+  <div class="grid-flow">
+    <div class="flow-step"><span class="num">1</span><strong>Initial planner</strong><span>Reads dynamic feature inputs and creates implementation, validation, gap, and final invariant regions.</span></div>
+    <div class="flow-step"><span class="num">2</span><strong>Worker</strong><span>Produces repository changes, candidate record, and file-state snapshot evidence.</span></div>
+    <div class="flow-step"><span class="num">3</span><strong>Verifier</strong><span>Consumes candidate/file evidence and emits per-requirement verdicts.</span></div>
+    <div class="flow-step"><span class="num">4</span><strong>Gap/corrective loop</strong><span>Failed evidence routes to gap planner; corrective worker/verifier produces a replacement candidate.</span></div>
+    <div class="flow-step"><span class="num">5</span><strong>Final check</strong><span>Hidden or explicit command records pass/fail evidence; final gate decides whether blockers are gone.</span></div>
+  </div>
+  <div class="quote">The graph keeps expanding only when accepted evidence says new work is needed. If the evidence is good and all invariants pass, the graph quiesces and completes.</div>
+  <p class="source">Sources: <code>docs/dynamic-graph/status.md</code>, <code>graph_runtime/horizon_templates.py</code>, <code>graph/projections.py</code></p>
+</section>
+
+<section class="slide">
+  <div class="kicker">What to watch</div>
+  <h2>Operational failure modes that matter</h2>
+  <div class="cols three">
+    <div class="panel">
+      <h3>Silent quiescence</h3>
+      <p>A graph with failed evidence but no recovery continuation will stop without useful work. The planner prompt now requires failed checks to route to gap/corrective nodes.</p>
+    </div>
+    <div class="panel">
+      <h3>Wrong acceptance region</h3>
+      <p>Control-only regions should contribute control progress, not task acceptance. Fulfillment is contract-driven to avoid treating planner/check-only regions as candidate regions.</p>
+    </div>
+    <div class="panel">
+      <h3>Stale patches</h3>
+      <p>Patch base positions protect planners from mutating a graph they no longer observed. Rejected feedback is part of the normal repair loop.</p>
+    </div>
+    <div class="panel">
+      <h3>Leaked file changes</h3>
+      <p>Workers operate in run worktrees. Boundary snapshots and main-worktree leak detection protect evidence integrity.</p>
+    </div>
+    <div class="panel">
+      <h3>Prompt overload</h3>
+      <p>Prompt text and JSON sections are bounded. Edges can hydrate by summaries or references so the scheduler remains record-authoritative.</p>
+    </div>
+    <div class="panel">
+      <h3>Outbox retry</h3>
+      <p>Side effects are at-least-once, so dispatch handlers must be idempotent and recovery must reconcile active leases with real executions.</p>
+    </div>
+  </div>
+  <p class="source">Sources: <code>docs/dynamic-graph/status.md</code>, <code>workflow/graph_driver.py</code>, <code>graph_runtime/outbox.py</code></p>
+</section>
+
+<section class="slide title">
+  <div class="kicker">Takeaway</div>
+  <h1>The dynamic graph is a controlled evidence machine</h1>
+  <p class="lead">Agents do narrow roles with role-specific prompts. Planners propose graph mutations. The controller validates and records them. Scheduling grants leases deterministically. Evidence is typed, bound, cited, snapshotted, and projected. Completion happens only when the graph proves that the remaining work is gone.</p>
+  <div class="row">
+    <span class="tag green">plan through patches</span>
+    <span class="tag blue">execute through leases</span>
+    <span class="tag cyan">route typed records</span>
+    <span class="tag amber">recover through graph state</span>
+    <span class="tag violet">finish through invariants</span>
+  </div>
+  <p class="source">Standalone deck: <code>docs/dynamic-graph/dynamic-graph-how-it-works-presentation.html</code></p>
+</section>
+
+</main>
+
+<div class="footer">
+  <div class="counter" id="counter">1 / 26</div>
+  <div class="hint">Use ← →, Space, Home, End</div>
+  <div>
+    <button type="button" id="prev">Previous</button>
+    <button type="button" id="next">Next</button>
+  </div>
+</div>
+
+<script>
+  const slides = Array.from(document.querySelectorAll(".slide"));
+  const counter = document.getElementById("counter");
+  const progress = document.getElementById("progress");
+  let index = 0;
+
+  function show(nextIndex) {
+    index = Math.max(0, Math.min(slides.length - 1, nextIndex));
+    slides.forEach((slide, i) => slide.classList.toggle("active", i === index));
+    counter.textContent = `${index + 1} / ${slides.length}`;
+    progress.style.width = `${((index + 1) / slides.length) * 100}%`;
+    window.location.hash = `slide-${index + 1}`;
+  }
+
+  document.getElementById("prev").addEventListener("click", () => show(index - 1));
+  document.getElementById("next").addEventListener("click", () => show(index + 1));
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "ArrowRight" || event.key === " " || event.key === "PageDown") {
+      event.preventDefault();
+      show(index + 1);
+    }
+    if (event.key === "ArrowLeft" || event.key === "PageUp") {
+      event.preventDefault();
+      show(index - 1);
+    }
+    if (event.key === "Home") {
+      event.preventDefault();
+      show(0);
+    }
+    if (event.key === "End") {
+      event.preventDefault();
+      show(slides.length - 1);
+    }
+  });
+
+  const match = window.location.hash.match(/^#slide-(\d+)$/);
+  if (match) {
+    show(Number(match[1]) - 1);
+  } else {
+    show(0);
+  }
+</script>
+</body>
+</html>

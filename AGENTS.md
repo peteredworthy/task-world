@@ -8,6 +8,18 @@ This file provides guidance to coding agents working with code in this repositor
 
 Design documentation lives in `docs/intent/`. Implementation follows the phased plan in the slice documents. Phases 1-8 are implemented.
 
+## Project-Local Superpowers Skills
+
+Superpowers is vendored in `vendor/superpowers` so project-local agents can use
+the same skill implementation without requiring a global install.
+
+- OpenCode loads the vendored plugin package through `opencode.json`.
+- Codex discovers the namespaced skills through `.agents/skills/superpowers`.
+- Claude Code discovers each skill through `.claude/skills/<skill-name>`.
+
+When updating Superpowers, replace the vendored copy and keep these discovery
+shims in sync with `vendor/superpowers/skills`.
+
 ## Run Execution Model (Worktrees + Agents)
 
 - Each run executes in its own git worktree under `worktrees/run-<run-id>/`.

@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dynamic Graph Implementation Review — 2026-07-01</title>
+<style>
+  :root {
+    --bg: #0f1117;
+    --panel: #171a23;
+    --panel2: #1d212d;
+    --text: #d7dce6;
+    --muted: #8b93a7;
+    --accent: #5eb1ef;
+    --good: #4ec98c;
+    --warn: #e0b354;
+    --bad: #e06c75;
+    --border: #2a2f3d;
+    --mono: "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 40px 28px 80px; }
+  header { border-bottom: 1px solid var(--border); padding-bottom: 24px; margin-bottom: 36px; }
+  h1 { font-size: 1.9rem; margin: 0 0 8px; }
+  .subtitle { color: var(--muted); font-size: 1rem; }
+  h2 {
+    font-size: 1.35rem; margin: 48px 0 16px;
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+  }
+  h3 { font-size: 1.05rem; margin: 24px 0 8px; }
+  p { margin: 10px 0; }
+  code {
+    font-family: var(--mono); font-size: 0.86em;
+    background: var(--panel2); padding: 2px 6px; border-radius: 4px;
+    color: #a8c7e8;
+  }
+  .card {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 18px 22px; margin: 14px 0;
+  }
+  .card h3 { margin-top: 0; }
+  .card .loc { font-family: var(--mono); font-size: 0.8rem; color: var(--muted); margin-bottom: 8px; }
+  .badge {
+    display: inline-block; font-size: 0.72rem; font-weight: 600;
+    padding: 2px 10px; border-radius: 20px; margin-right: 8px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+  }
+  .badge.high  { background: rgba(224,108,117,0.15); color: var(--bad); }
+  .badge.med   { background: rgba(224,179,84,0.15);  color: var(--warn); }
+  .badge.low   { background: rgba(139,147,167,0.15); color: var(--muted); }
+  .badge.str   { background: rgba(78,201,140,0.15);  color: var(--good); }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 0.92rem; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.04em; }
+  td code { white-space: nowrap; }
+  .flow {
+    font-family: var(--mono); font-size: 0.82rem; background: var(--panel);
+    border: 1px solid var(--border); border-radius: 10px;
+    padding: 18px 22px; overflow-x: auto; white-space: pre; line-height: 1.7;
+    color: #b9c2d4;
+  }
+  .flow .k { color: var(--accent); }
+  .flow .d { color: var(--muted); }
+  .toc { columns: 2; column-gap: 40px; font-size: 0.95rem; }
+  .toc a { color: var(--accent); text-decoration: none; }
+  .toc a:hover { text-decoration: underline; }
+  ul { padding-left: 22px; }
+  li { margin: 5px 0; }
+  .verdict {
+    background: linear-gradient(180deg, var(--panel), var(--panel2));
+    border: 1px solid var(--border); border-left: 4px solid var(--accent);
+    border-radius: 10px; padding: 20px 24px; margin: 20px 0;
+  }
+  .num { color: var(--accent); font-family: var(--mono); }
+  footer { margin-top: 60px; color: var(--muted); font-size: 0.85rem; border-top: 1px solid var(--border); padding-top: 16px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Dynamic Graph Implementation Review</h1>
+  <div class="subtitle">task-world · <code>src/orchestrator/graph/</code> + <code>src/orchestrator/graph_runtime/</code> + <code>src/orchestrator/workflow/graph_driver.py</code> · ~20,700 lines · reviewed 2026-07-01</div>
+</header>
+
+<div class="verdict">
+  <strong>Verdict.</strong> The dynamic graph is an architecturally serious event-sourced execution kernel: a pure command/event/projection core with an effectful shell, transactional outbox, optimistic concurrency, and an unusually disciplined validation culture (FR proof ledger, product-path evidence). Its main risks are internal, not conceptual: a handful of monolithic modules, a growing dual-source-of-truth pattern where command handlers rescan the raw event log instead of the projection, recovery logic accreting into <code>schedule_tick</code> as reactive patches for quiescence bugs, and full-replay costs that grow with every audit event the scheduler emits. All are fixable incrementally without changing the external contract.
+</div>
+
+<h2 id="toc">Contents</h2>
+<div class="toc">
+  <ol>
+    <li><a href="#arch">Architecture overview</a></li>
+    <li><a href="#strengths">Strengths</a></li>
+    <li><a href="#weaknesses">Weaknesses</a></li>
+    <li><a href="#improvements">Recommended improvements</a></li>
+    <li><a href="#evidence">Evidence &amp; provenance</a></li>
+  </ol>
+</div>
+
+<h2 id="arch">1. Architecture overview</h2>
+
+<p>The dynamic graph replaces the legacy parent/child oversight carrier with a typed work graph. A routine is compiled (<code>graph/compiler.py</code>) into nodes (worker, verifier, planner, check, gate, join, final_gate, recovery…) and typed edges with port contracts. Planner agents extend the graph at runtime by submitting validated patches, so the graph grows as the run discovers work — this is the "dynamic" part.</p>
+
+<div class="flow">
+<span class="d">── write path ──────────────────────────────────────────────────────────</span>
+routine ─▶ <span class="k">compile_routine</span> ─▶ seed events
+API / driver ─▶ <span class="k">GraphController.handle_command</span>(run_id, expected_position, cmd)
+   ├─ read_run(events_v2) ─▶ rebuild_projection (fold reduce_event)
+   ├─ <span class="k">apply_command</span>  <span class="d"># pure kernel: commands.py, no I/O</span>
+   ├─ append_events    <span class="d"># optimistic: StaleProjectionError on position race</span>
+   └─ append_outbox_rows  <span class="d"># same transaction — transactional outbox</span>
+<span class="k">OutboxDispatcher</span> ─▶ <span class="k">GraphDispatchExecutor</span> ─▶ agent runner / check / gate / join
+agent callbacks ─▶ submit_callback / submit_patch commands ─▶ new events
+<span class="d">── read path ───────────────────────────────────────────────────────────</span>
+events ─▶ projections.py (35+ project_* readbacks) ─▶ API /graph/* views
+<span class="d">── loop ────────────────────────────────────────────────────────────────</span>
+<span class="k">GraphRunDriver.drive_to_quiescence</span>: schedule_tick ─▶ dispatch ─▶ wait ─▶ repeat
+</div>
+
+<table>
+  <tr><th>Layer</th><th>Modules</th><th>Role</th></tr>
+  <tr><td>Pure kernel</td><td><code>graph/commands.py</code> (4,915), <code>graph/projections.py</code> (3,626), <code>scheduler.py</code>, <code>compiler.py</code>, <code>contracts.py</code>, <code>patch_validator.py</code>, <code>models.py</code>, <code>macros.py</code></td><td>Deterministic command→event application, readiness/scheduling, patch validation, node/port contracts. No I/O; injectable <code>Clock</code>/<code>IdGenerator</code>.</td></tr>
+  <tr><td>Effectful runtime</td><td><code>graph_runtime/controller.py</code>, <code>store.py</code> (1,744), <code>outbox.py</code>, <code>dispatch.py</code> (2,917), <code>recovery.py</code>, <code>gatekeeper.py</code>, <code>file_state.py</code>, <code>horizon_templates.py</code></td><td>Durable event store (<code>events_v2</code>), transactional outbox, agent dispatch + prompt packet assembly, startup recovery, file-state boundary capture, residue gatekeeper.</td></tr>
+  <tr><td>Driver</td><td><code>workflow/graph_driver.py</code> (838)</td><td>Run lifecycle bridge, seed-on-first-run, drive loop with lease renewal, no-progress guard, worktree-contamination guard.</td></tr>
+</table>
+
+<h2 id="strengths">2. Strengths</h2>
+
+<div class="card">
+  <span class="badge str">Strength</span><h3>Pure kernel / effectful shell separation is real, not aspirational</h3>
+  <div class="loc">graph/ vs graph_runtime/ · commands.py:89 apply_command · clock.py FakeClock, SequentialIdGenerator</div>
+  <p><code>apply_command</code> takes a projection, the event list, a payload, a clock, and an id generator, and returns events — nothing else. Time and identity are injected, so every scheduling, recovery, and validation decision is deterministic and replayable in-memory. This is what makes the 80 graph test files (including per-FR acceptance suites <code>test_graph_fr02…fr17</code> and <code>test_graph_outbox_crash_points.py</code>) possible and cheap. Rejections are themselves events (<code>command_rejected</code>, <code>patch_rejected</code>), so failed intent is auditable rather than lost in exceptions.</p>
+</div>
+
+<div class="card">
+  <span class="badge str">Strength</span><h3>Correct durability spine: optimistic concurrency + transactional outbox</h3>
+  <div class="loc">controller.py:49–99 · store.py:467–520 · outbox.py:79–113</div>
+  <p>Every command carries an <code>expected_position</code>; a race raises <code>StaleProjectionError</code>, with the DB unique constraint on <code>(aggregate_id, version)</code> as a second line of defense behind the pre-check. Side-effect intent (<code>agent_dispatch_requested</code>, <code>cleanup_requested</code>) is written to outbox rows <em>in the same transaction</em> as the events, and the executor protocol explicitly documents the at-least-once/idempotency contract. Startup recovery (<code>recovery.py</code> + <code>reconcile_runtime</code>) resets in-flight <code>dispatching</code> rows and converts leases whose processes are gone into <code>agent_died</code>. This is the textbook pattern, implemented with the crash points actually tested.</p>
+</div>
+
+<div class="card">
+  <span class="badge str">Strength</span><h3>Patch system treats planner agents as untrusted proposers</h3>
+  <div class="loc">patch_validator.py · macros.py · horizon_templates.py · commands.py:_apply_patch_command</div>
+  <p>Dynamic mutation goes through a validated <code>PatchEnvelope</code>: role-scoped allowed ops (<code>ALLOWED_BY_ROLE</code> — planners cannot create gates), a read-set staleness check that classifies intervening events as invalidating or neutral, planner budgets, and macro expansion. Horizon templates give planners canonical region shapes (discovery → implementation → validation → gap analysis → corrective → final invariant) instead of freeform topology. The design assumption — LLM output is a proposal to validate, not an instruction to execute — is the right one and is applied consistently.</p>
+</div>
+
+<div class="card">
+  <span class="badge str">Strength</span><h3>Resource claim model is unusually thorough</h3>
+  <div class="loc">scheduler.py:89–116 claims_conflict · :238–361 path/glob overlap</div>
+  <p>Claims distinguish read/write/graph_write/review_write/external modes, snapshot-scoped reads (a read pinned to a snapshot doesn't conflict with a write), external resource keys with exclusivity, and path overlap with glob handling and repo-relative normalization that rejects <code>../</code> escapes. Deterministic tie-ordering (priority, kind, region order, creation position, node id) makes scheduling reproducible, and every deferral records a machine-readable reason (<code>node_deferred</code> with <code>resource_conflict:write:write</code> etc.), which feeds directly into the observability story.</p>
+</div>
+
+<div class="card">
+  <span class="badge str">Strength</span><h3>Observability as projections, plus read models for cost</h3>
+  <div class="loc">projections.py: 35+ project_* functions · store.py: event summaries, node-detail read models, projection snapshots, field-extracted light reads</div>
+  <p><code>/graph/final-blockers</code>, scheduler view, lease view, decision view, planner freshness packet, residue report — the run's state is explainable from durable events, and the dogfood pause diagnosis in <code>status.md</code> shows these readbacks doing real diagnostic work. The store layer adds pragmatic performance escapes: JSON field extraction to avoid hydrating full payloads (<code>read_run_light</code>), persisted event summaries, and node-detail read models maintained incrementally on append.</p>
+</div>
+
+<div class="card">
+  <span class="badge str">Strength</span><h3>Operational defense in depth</h3>
+  <div class="loc">graph_driver.py:388–434, 509–521 · dispatch.py:_bounded_prompt · gatekeeper.py</div>
+  <p>The driver snapshots the main worktree's dirty set before driving and flags any leaked paths after (a direct response to the June worktree-escape incidents); prompts are size-bounded (the E2BIG fix); a signature-based no-progress guard converts silent stalls into a recoverable <code>graph_blocked</code> pause instead of a spinning loop; leases expire and renew; the gatekeeper classifies worktree residue against a taxonomy. Each guard traces to a real incident — the system is absorbing its operational history.</p>
+</div>
+
+<div class="card">
+  <span class="badge str">Strength</span><h3>Validation culture: proof ledger over test-passing</h3>
+  <div class="loc">docs/dynamic-graph/status.md · typed-work-graph-requirements.md · complete/true-comparison-results.md</div>
+  <p>FR-01…FR-18 were closed only with product-path evidence (real runs through the API/runtime surface with observable readbacks), tests explicitly demoted to regression evidence. The true-comparison study measured real cost (dynamic ≈ $0.77/run, ~3-agent-equivalent cost with structural correctness guarantees). This discipline is rare and is the reason the June dogfood found the task-region fulfillment bug at all.</p>
+</div>
+
+<h2 id="weaknesses">3. Weaknesses</h2>
+
+<p><em>Re-assessed 2026-07-03 at commit <code>c95793889</code>. W1 largely resolved; W3's read-side cost fixed by the fold-once series; W5 partially improved by typed edge selectors. W2, W4, W6, W7, W8 unchanged. Per-weakness implementation specs live alongside this file as <code>w*-spec.md</code>.</em></p>
+
+<div class="card">
+  <span class="badge str">Largely resolved</span><span class="badge low">Residual: Low</span><h3>W1 — Dual source of truth: handlers rescan raw events past the projection</h3>
+  <div class="loc">fixed in c95793889 "Make graph projection the single read path" · residual scans: commands.py _has_passed_completion_decision, _current_passed_verification_results, _retry_backoff_deferred_reason, _cleanup_requested_event / _cleanup_applied_exists, _node_creation_position</div>
+  <p><strong>Resolved for the named high-risk helpers.</strong> Accepted-output-record, failed-verification, and recovery-node lookups now read folded projection fields, with parity tests in <code>tests/unit/test_graph_projections.py</code> (per <code>w1-single-read-path-spec.md</code>). <strong>Residual:</strong> six small helpers still scan raw events, and command-handler signatures still accept the raw event list alongside the projection, so nothing structurally prevents the raw-scan idiom from returning. Finish per <code>w1b-residual-raw-scans-spec.md</code>: migrate the stragglers, then drop <code>events</code> from handler signatures so the type system enforces the discipline.</p>
+</div>
+
+<div class="card">
+  <span class="badge high">High</span><h3>W2 — Recovery logic is accreting into <code>schedule_tick</code> as reactive patches <em>(unchanged)</em></h3>
+  <div class="loc">commands.py:2244 _apply_schedule_tick → _failed_check_recovery_events (:2441), _failed_verification_recovery_events (:2525), _passed_verification_terminalization_events (:2614), _passed_check_terminalization_events (:2646), _no_successor_recovery_terminal_failure_events (:2665)</div>
+  <p><code>schedule_tick</code> is no longer a scheduler: before it schedules anything it runs five distinct repair passes that patch up states other commands should have settled. The commit history (<em>"Recover quiescent graphs after failed checks"</em>, <em>"Recover dynamic graph continuation after verifier failure"</em>, and post-review <code>5bacd79dd</code> <em>"fix graph runtime recovery edges"</em>) and the June dogfood pause (<code>graph_blocked</code>, <code>task_not_accepted</code> blockers on control regions) show the pattern: a lifecycle transition is missed at its source, the graph goes quiescent, and a new patch is bolted on reactively. The class of bug — "graph quiescent with non-accepted tasks" — keeps recurring because the root cause (transitions not emitted where the triggering event is applied) is untreated. All five sweeps remain as of <code>c95793889</code>. Spec: <code>w2-recovery-at-source-spec.md</code>.</p>
+</div>
+
+<div class="card">
+  <span class="badge high">High</span><h3>W3 — Full replay per command, and the scheduler inflates the log it must replay <em>(read side improved; write side unchanged)</em></h3>
+  <div class="loc">controller.py:62–71 read_run + rebuild_projection every command · store.py invalidate_projection_snapshot on append · commands.py:2324–2431 node_deferred per tick</div>
+  <p><strong>Partially improved:</strong> the fold-once series (<code>8892968a5</code>…<code>c11b04f95</code>) removed redundant re-folds on the read path — API views and the evidence digest now fold once (digest ~10s → ~1.8s). <strong>Unchanged:</strong> every <code>handle_command</code> still reads the full event stream and folds from scratch — O(n) per command, O(n²) over a run's life. The store <em>has</em> a projection snapshot read model, but the controller's write path never uses it, and appends invalidate the snapshot rather than folding new events into it. <code>schedule_tick</code> still persists <code>node_deferred</code> audit events on every tick for every ineligible node, so the polling drive loop grows the log even when nothing happens — inflating replay cost and forcing the driver's signature-based progress check because raw position always advances. Startup recovery still replays every run in the database. Spec: <code>w3-incremental-snapshots-spec.md</code>.</p>
+</div>
+
+<div class="card">
+  <span class="badge med">Medium</span><h3>W4 — Monolithic modules with an if-chain dispatcher <em>(unchanged — files grew)</em></h3>
+  <div class="loc">commands.py 4,962 lines (+47) · projections.py 3,869 (+243) · dispatch.py 2,962 (+45) · store.py 1,797 (+53) · commands.py:91 apply_command if-chain · graph/__init__.py 368-line re-export</div>
+  <p>Four files hold ~65% of the subsystem, and every file has grown since the original review — the W1 fix added projection fields into <code>projections.py</code> rather than splitting it. <code>commands.py</code> mixes lifecycle, callbacks, patches, scheduling, joins, gates, heartbeats, and five recovery sweeps; <code>dispatch.py</code> mixes outbox execution, process management, prompt/packet assembly for four node roles, and hydration policy. Helper counts (150+ private functions in <code>commands.py</code>) make ownership of any given invariant hard to locate, and the flat <code>__init__</code> re-export couples every consumer to one namespace. A small extraction has started (<code>graph/callbacks.py</code>, 153 lines) — the seam is viable. Spec: <code>w4-split-monoliths-spec.md</code>.</p>
+</div>
+
+<div class="card">
+  <span class="badge med">Medium</span><h3>W5 — Stringly-typed core despite the "typed work graph" goal <em>(edge layer improved)</em></h3>
+  <div class="loc">projections.py:58 GraphProjection = TypedDict of dict[str, Any] maps · pervasive payload.get()/isinstance guards (_payload_string_list, _payload_truthy, _candidate_id_from_payload…)</div>
+  <p><strong>Partially improved:</strong> <code>478055890</code> "Add typed graph edge selectors" put typed models on edges and selectors (<code>models.py</code> +449 lines), proving the incremental conversion path works. <strong>Unchanged elsewhere:</strong> records and node payloads have Pydantic models in <code>models.py</code> but are validated at the boundary and then handled as <code>dict[str, Any]</code> everywhere else — the projection, the reducers, and command helpers work on untyped dicts with defensive extraction helpers. Typos in payload keys, missing fields, and shape drift remain runtime phenomena discovered by tests or dogfood rather than by mypy. The <code>_is_*_record_payload</code> / <code>_*_payload_for_validation</code> shims are the visible cost. Spec: <code>w5-typed-payloads-spec.md</code>.</p>
+</div>
+
+<div class="card">
+  <span class="badge med">Medium</span><h3>W6 — Outbox dispatcher is serial, backoff-free, and dead-ends quietly <em>(unchanged)</em></h3>
+  <div class="loc">outbox.py:125 max_attempts=3 · :149 immediate re-pending · :227–233 _mark_failed_attempt → OUTBOX_FAILED dead-end · spec: w6-outbox-hardening-spec.md</div>
+  <p>Dispatch claims one row per DB transaction and executes side effects strictly sequentially — independent agent dispatches for parallel-safe nodes still serialize through the dispatcher (the executor tracks concurrent processes, but rows are dispatched one at a time). A failed attempt goes straight back to <code>pending</code> with no backoff, so a deterministic failure burns all 3 attempts in quick succession, after which the row sits in <code>failed</code> with no readback, alert, or requeue path surfaced in the graph API. Recovery redispatches <code>pending</code>/<code>dispatching</code> but not <code>failed</code>.</p>
+</div>
+
+<div class="card">
+  <span class="badge med">Medium</span><h3>W7 — Heuristic glob-overlap check can under-detect conflicts <em>(unchanged)</em></h3>
+  <div class="loc">scheduler.py:333–344 _literal_prefix_may_match_glob probes ("x", "x.py", "nested/x.py") · :339 _glob_prefixes_may_overlap static-prefix comparison · spec: w7-glob-overlap-spec.md</div>
+  <p>Whether a literal claim path sits "under" a glob claim is decided by probing three synthetic suffixes; a pattern whose match depth exceeds the probes (e.g. <code>src/*/*/gen/*.py</code> vs literal <code>src/a</code>) can be judged non-overlapping, letting two writers into overlapping paths — the exact safety property claims exist to enforce. Glob-vs-glob comparison falls back to static prefixes, which is conservative but returns <code>True</code> for any two rootless patterns, over-serializing. Empty path lists also conflict with everything, which is safe but silently defeats parallelism when a claim is sloppily specified.</p>
+</div>
+
+<div class="card">
+  <span class="badge low">Low</span><h3>W8 — Drive loop is a poll loop with embedded special cases; assorted dead code <em>(unchanged — driver grew)</em></h3>
+  <div class="loc">graph_driver.py now 1,004 lines (was 838; +173 in 5bacd79dd) · recovery.py:62–63 no-op <code>if not redispatched and pending_before: redispatched = []</code> still present</div>
+  <p><code>drive_to_quiescence</code> re-ticks, re-reads the projection multiple times per iteration, renews expired leases, retries one extra recovery tick on quiescence, and compares progress signatures — workable, but it is control flow compensating for the kernel not telling the runtime <em>when</em> to act (a consequence of W2/W3), and the recovery-edges fix added more driver special-casing rather than less. <code>recovery.py</code> still carries the self-cancelling statement. The single-writer, position-serialized design is fine for current scale but is a stated ceiling for multi-process deployment. Spec: <code>w8-drive-loop-cleanup-spec.md</code> (do after W2/W3).</p>
+</div>
+
+<h2 id="improvements">4. Recommended improvements</h2>
+
+<p>Ordered by leverage; 1–3 attack the recurring bug class, 4–6 are structural hygiene, 7–9 are hardening.</p>
+
+<table>
+  <tr><th>#</th><th>Improvement</th><th>Addresses</th><th>Sketch</th></tr>
+  <tr>
+    <td class="num">1</td>
+    <td><strong>Make <code>GraphProjection</code> the single read path</strong></td>
+    <td>W1, W2, W3</td>
+    <td>Inventory every raw-event scan in <code>commands.py</code>; for each, add the missing derived field to the projection and fold it in <code>reduce_event</code> (accepted records by port, failed verifications, recovery-node index already half-exist as helpers). Then change handler signatures to take projection only — the type system enforces the discipline permanently. This is the same refactor the project's event-driven-intent note has been pointing at.</td>
+  </tr>
+  <tr>
+    <td class="num">2</td>
+    <td><strong>Move state repair out of <code>schedule_tick</code> to the causing command</strong></td>
+    <td>W2</td>
+    <td>Each recovery sweep exists because a callback/check acceptance didn't emit its follow-up transitions. Emit terminalization and recovery-arming events where the triggering record is accepted (<code>_apply_callback_command</code>), keeping one idempotent <code>reconcile</code> command as an explicit escape hatch instead of five implicit sweeps per tick. Kills the "graph quiescent with non-accepted tasks" whack-a-mole class at the source.</td>
+  </tr>
+  <tr>
+    <td class="num">3</td>
+    <td><strong>Incremental projection snapshots on the write path</strong></td>
+    <td>W3</td>
+    <td>The fold is already incremental (<code>reduce_event</code>); persist the folded projection per append (snapshot + position) instead of invalidating it, and have <code>handle_command</code> load snapshot + tail. Raw-scan helpers block this today — do after #1. Startup recovery should replay only non-terminal runs.</td>
+  </tr>
+  <tr>
+    <td class="num">4</td>
+    <td><strong>Stop persisting per-tick <code>node_deferred</code> audit events</strong></td>
+    <td>W3, W8</td>
+    <td>Keep last-deferred-reason in a read model (or emit only on reason <em>change</em>). Log stops growing while idle, replay cost drops, and the driver's progress-signature workaround can shrink back to "did position advance".</td>
+  </tr>
+  <tr>
+    <td class="num">5</td>
+    <td><strong>Split the monoliths along command/role seams</strong></td>
+    <td>W4</td>
+    <td><code>graph/commands/</code> package: lifecycle, callbacks, patches, scheduling, recovery — with a registry dict replacing the if-chain in <code>apply_command</code>. <code>dispatch.py</code>: separate prompt/packet assembly (pure, ~1,200 lines of it) from process execution. Mechanical, low-risk, big review-cost payoff.</td>
+  </tr>
+  <tr>
+    <td class="num">6</td>
+    <td><strong>Typed event payloads end-to-end</strong></td>
+    <td>W5</td>
+    <td>Discriminated union on <code>event_type</code> for <code>EventEnvelope.payload</code>; typed dataclass fields in the projection. Do gradually — start with the record types that already have Pydantic models and delete the <code>_is_*_record_payload</code> shims as each converts.</td>
+  </tr>
+  <tr>
+    <td class="num">7</td>
+    <td><strong>Outbox hardening</strong></td>
+    <td>W6</td>
+    <td>Exponential backoff with jitter on failed attempts (add <code>next_attempt_at</code>); batch-claim rows for parallel-safe kinds; surface <code>failed</code> rows in a readback (e.g. <code>/graph/final-blockers</code> already has the shape) plus an operator requeue endpoint.</td>
+  </tr>
+  <tr>
+    <td class="num">8</td>
+    <td><strong>Replace the glob-probe heuristic with segment analysis</strong></td>
+    <td>W7</td>
+    <td>Compare claim paths segment-by-segment treating <code>*</code>/<code>?</code> segments as wildcards (and <code>**</code> as multi-segment); conservative-True only for genuinely undecidable cases. Add a Hypothesis property test: overlap(a,b) must be True whenever any concrete path matches both — the current probes would fail it immediately.</td>
+  </tr>
+  <tr>
+    <td class="num">9</td>
+    <td><strong>Event-triggered driving instead of pure polling</strong></td>
+    <td>W8</td>
+    <td>After #2, the drive loop can tick on completion signals (callback accepted, lease expired, patch applied) with a slow heartbeat fallback, instead of unconditional tick-and-diff. Also delete the <code>recovery.py</code> no-op and prune the 355-line <code>__init__</code> re-export to the actual public surface.</td>
+  </tr>
+</table>
+
+<h2 id="evidence">5. Evidence &amp; provenance</h2>
+<ul>
+  <li><strong>Code reviewed:</strong> <code>graph/</code> (<code>__init__</code>, <code>commands.py</code>, <code>scheduler.py</code>, <code>projections.py</code> outline, <code>patch_validator.py</code>), <code>graph_runtime/</code> (<code>controller.py</code>, <code>outbox.py</code>, <code>recovery.py</code>, <code>store.py</code>, <code>dispatch.py</code> outline, <code>horizon_templates.py</code>), <code>workflow/graph_driver.py</code>.</li>
+  <li><strong>Docs:</strong> <code>docs/dynamic-graph/status.md</code> (FR ledger, June dogfood pause + contract-driven fulfillment fix), <code>typed-work-graph-requirements.md</code>, <code>complete/true-comparison-results.md</code> (cost data).</li>
+  <li><strong>History:</strong> recent commits <code>a3c10f8df</code> "Recover quiescent graphs after failed checks", <code>e53072de8</code> "Recover dynamic graph continuation after verifier failure", <code>f526cd70a</code> "Merge failed check graph recovery" — the W2 accretion pattern.</li>
+  <li><strong>Tests:</strong> 80 graph-related test files including per-FR acceptance suites and outbox crash-point tests.</li>
+</ul>
+
+<footer>Generated by Claude Code · 2026-07-01 · review of working tree at commit <code>f526cd70a</code></footer>
+
+</div>
+</body>
+</html>
