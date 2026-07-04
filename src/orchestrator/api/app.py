@@ -273,7 +273,8 @@ async def _run_graph_startup_recovery(app: FastAPI) -> None:
     """
     import asyncio as _asyncio
     from orchestrator.db import RunRepository
-    from orchestrator.workflow.graph_recovery import select_graph_runs_to_recover
+    from orchestrator.graph_runtime import GraphEventStore
+    from orchestrator.workflow import select_graph_runs_to_rearm
 
     session_factory = app.state.session_factory
     consumer = getattr(app.state, "signal_consumer", None)
@@ -285,12 +286,16 @@ async def _run_graph_startup_recovery(app: FastAPI) -> None:
             repo = RunRepository(session)
             active = await repo.list_by_status(RunStatus.ACTIVE, include_action_logs=False)
             paused = await repo.list_by_status(RunStatus.PAUSED, include_action_logs=False)
+            store = GraphEventStore(session)
 
-        to_recover = select_graph_runs_to_recover(
-            [*active, *paused],
-            is_recoverable_pause=_is_startup_recoverable_pause_reason,
-        )
-        for run in to_recover:
+            to_rearm = await select_graph_runs_to_rearm(
+                active,
+                paused,
+                current_position_for_run=store.current_position,
+                is_recoverable_pause=_is_startup_recoverable_pause_reason,
+            )
+
+        for run in _topological_sort_children_first(to_rearm):
             if consumer.arm_graph_run(run.id):
                 logger.info("Graph startup recovery: re-armed graph run %s", run.id)
                 await _asyncio.sleep(_STARTUP_RECOVERY_RUN_STAGGER_SECONDS)

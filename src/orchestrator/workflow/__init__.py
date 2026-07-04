@@ -274,6 +274,10 @@ from orchestrator.workflow.legacy_run_facts import (
     SET_UNION_OVERSIGHT_LIST_KEYS,
     durable_parent_oversight_patch,
 )
+from orchestrator.workflow.graph_recovery import (
+    select_graph_runs_to_rearm,
+    select_graph_runs_to_recover,
+)
 from orchestrator.workflow.merge_readiness import (
     Gate,
     MergeReadiness,
@@ -523,6 +527,8 @@ __all__ = [
     "get_step_by_id",
     "handle_run_completion",
     "parse_dry_run_response",
+    "select_graph_runs_to_rearm",
+    "select_graph_runs_to_recover",
     # Delegation
     "DelegateCommand",
     "DelegateCommandKind",
