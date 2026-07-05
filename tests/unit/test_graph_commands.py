@@ -121,7 +121,7 @@ def _callback_payload(**overrides: Any) -> dict[str, Any]:
 
 def test_command_raw_event_scan_count_is_bounded() -> None:
     commands_source = (
-        Path(__file__).resolve().parents[2] / "src" / "orchestrator" / "graph" / "commands.py"
+        Path(__file__).resolve().parents[2] / "src" / "orchestrator" / "graph" / "_commands.py"
     ).read_text()
 
     assert commands_source.count("for event in events") <= 2
@@ -4530,6 +4530,7 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
         for event in next_output
     )
 
+
 def test_reconcile_recovers_runtime_failed_check_without_check_result() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -5103,6 +5104,7 @@ def test_reconcile_does_not_fail_after_environment_no_successor_recovery() -> No
         for event in output
     )
 
+
 def test_lifecycle_resume_reopens_failed_run_for_operator_only() -> None:
     failed_events = [_event("run_lifecycle_changed", {"to_state": "failed"}, 0)]
 
@@ -5530,6 +5532,7 @@ def test_reconcile_does_not_fail_recovered_run_w2_shape() -> None:
         event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
         for event in output
     )
+
 
 def test_reconcile_ignores_retired_failed_check_recovery_target() -> None:
     events = [
@@ -7366,7 +7369,9 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
 def test_agent_died_usage_limit_revokes_lease_and_fails_without_retry() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
-        _event("node_created", {"node_id": "verifier-1", "kind": "verifier", "state": "running"}, 1),
+        _event(
+            "node_created", {"node_id": "verifier-1", "kind": "verifier", "state": "running"}, 1
+        ),
         _event(
             "lease_granted",
             {

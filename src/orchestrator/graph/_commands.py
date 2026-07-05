@@ -5381,3 +5381,35 @@ def _claim_from_dict(claim: dict[str, Any]) -> ResourceClaim:
         external_resource_key=cast(str | None, claim.get("external_resource_key")),
         exclusive=bool(claim.get("exclusive", False)),
     )
+
+
+command_rejected = _command_rejected
+event_factory = _event_factory
+run_id = _run_id
+
+apply_lifecycle_command = _apply_lifecycle_command
+apply_record_heartbeat = _apply_record_heartbeat
+apply_seed_compiled_events = _apply_seed_compiled_events
+apply_callback_command = _apply_callback_command
+apply_patch_command = _apply_patch_command
+apply_schedule_tick = _apply_schedule_tick
+apply_reconcile = _apply_reconcile
+apply_acknowledge_start = _apply_acknowledge_start
+apply_agent_died = _apply_agent_died
+apply_raise_appeal = _apply_raise_appeal
+apply_record_decision = _apply_record_decision
+apply_record_gatekeeper_verdicts = _apply_record_gatekeeper_verdicts
+apply_record_requirement_revision = _apply_record_requirement_revision
+apply_record_support_evidence = _apply_record_support_evidence
+apply_evaluate_join = _apply_evaluate_join
+apply_evaluate_final_gate = _apply_evaluate_final_gate
+
+
+def apply_record_cleanup_applied(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    del events
+    return _apply_record_cleanup_applied(projection, payload, make_event)

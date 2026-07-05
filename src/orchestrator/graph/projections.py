@@ -362,7 +362,6 @@ def initial_projection() -> GraphProjection:
 
 
 def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
-    latest_routine_snapshot_record = state.get("latest_routine_snapshot_record")
     next_state: GraphProjection = {
         "run_state": state["run_state"],
         "node_states": dict(state["node_states"]),

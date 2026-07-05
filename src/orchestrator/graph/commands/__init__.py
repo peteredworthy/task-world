@@ -1,0 +1,120 @@
+"""Pure command applier for execution graph fixtures."""
+
+from collections.abc import Callable
+from typing import Any
+
+from orchestrator.graph._commands import (
+    Clock,
+    EventEnvelope,
+    GraphProjection,
+    IdGenerator,
+    NONTERMINAL_RUN_STATES,
+    RUN_LIFECYCLE_TRANSITIONS,
+    TERMINAL_RUN_STATES,
+    command_rejected,
+    event_factory,
+    run_id,
+)
+from orchestrator.graph.commands.callbacks import (
+    handle_acknowledge_start,
+    handle_raise_appeal,
+    handle_record_cleanup_applied,
+    handle_record_decision,
+    handle_record_gatekeeper_verdicts,
+    handle_record_requirement_revision,
+    handle_record_support_evidence,
+    handle_submit_callback,
+)
+from orchestrator.graph.commands.lifecycle import (
+    handle_lifecycle_command,
+    handle_record_heartbeat,
+)
+from orchestrator.graph.commands.patches import handle_submit_patch
+from orchestrator.graph.commands.records import (
+    handle_agent_died,
+    handle_evaluate_final_gate,
+    handle_evaluate_join,
+)
+from orchestrator.graph.commands.schedule import (
+    handle_reconcile,
+    handle_schedule_tick,
+    handle_seed_compiled_events,
+)
+
+
+ApplyCommandHandler = Callable[
+    [
+        GraphProjection,
+        list[EventEnvelope],
+        str,
+        dict[str, Any],
+        Callable[[str, dict[str, Any]], EventEnvelope],
+        Clock,
+        IdGenerator,
+    ],
+    list[EventEnvelope],
+]
+
+
+COMMAND_HANDLERS: dict[str, ApplyCommandHandler] = {
+    "accept_run": handle_lifecycle_command,
+    "start": handle_lifecycle_command,
+    "pause": handle_lifecycle_command,
+    "resume": handle_lifecycle_command,
+    "cancel": handle_lifecycle_command,
+    "complete": handle_lifecycle_command,
+    "fail": handle_lifecycle_command,
+    "seed_compiled_events": handle_seed_compiled_events,
+    "submit_callback": handle_submit_callback,
+    "submit_patch": handle_submit_patch,
+    "schedule_tick": handle_schedule_tick,
+    "reconcile": handle_reconcile,
+    "acknowledge_start": handle_acknowledge_start,
+    "agent_died": handle_agent_died,
+    "record_heartbeat": handle_record_heartbeat,
+    "raise_appeal": handle_raise_appeal,
+    "record_decision": handle_record_decision,
+    "record_gatekeeper_verdicts": handle_record_gatekeeper_verdicts,
+    "record_requirement_revision": handle_record_requirement_revision,
+    "record_support_evidence": handle_record_support_evidence,
+    "evaluate_join": handle_evaluate_join,
+    "evaluate_final_gate": handle_evaluate_final_gate,
+    "record_cleanup_applied": handle_record_cleanup_applied,
+}
+
+
+def apply_command(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: dict[str, Any],
+    clock: Clock,
+    id_gen: IdGenerator,
+) -> list[EventEnvelope]:
+    """Apply a pure graph command and return events a controller would append."""
+
+    run_id_value = run_id(events, payload)
+    make_event = event_factory(run_id_value, command_type, clock, id_gen)
+    handler = COMMAND_HANDLERS.get(command_type)
+    if handler is None:
+        return [
+            command_rejected(
+                make_event,
+                command_type,
+                f"unknown command: {command_type}",
+            )
+        ]
+    return handler(projection, events, command_type, payload, make_event, clock, id_gen)
+
+
+__all__ = [
+    "Clock",
+    "EventEnvelope",
+    "GraphProjection",
+    "IdGenerator",
+    "RUN_LIFECYCLE_TRANSITIONS",
+    "TERMINAL_RUN_STATES",
+    "NONTERMINAL_RUN_STATES",
+    "apply_command",
+    "COMMAND_HANDLERS",
+]
