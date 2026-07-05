@@ -32,6 +32,38 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/runs", tags=["clarifications"])
 
 
+# Pause reasons that mean a run is parked *specifically* to await a
+# clarification / user action. The clarification-response endpoint only
+# auto-resumes a PAUSED run when its pause_reason is one of these.
+#
+# The executor loop stamps ``awaiting_user_input`` whenever a task is
+# PENDING_USER_ACTION (i.e. a clarification is outstanding); ``awaiting_
+# clarification`` is the historical/legacy synonym. A fan-out child paused
+# because its parent is awaiting input carries the ``parent_`` prefix, which is
+# stripped before the membership check (mirrors _is_startup_recoverable_pause_
+# reason in api/app.py).
+_CLARIFICATION_PAUSE_REASONS = frozenset(
+    {
+        "awaiting_user_input",
+        "awaiting_clarification",
+    }
+)
+
+
+def _is_clarification_pause_reason(reason: str | None) -> bool:
+    """True when a PAUSED run was parked to await clarification / user action.
+
+    Resuming for any *other* pause reason from the clarification-response path
+    is unsafe: it un-pauses runs held for unrelated reasons (e.g. "recovered",
+    "manual_gate", "agent_execution_error") and — for graph runs — lets
+    ``apply_resume_run`` stamp the operator-reopen marker onto a still-failed
+    kernel, reopening it under a fabricated operator role.
+    """
+    if reason is None:
+        return False
+    return reason.removeprefix("parent_") in _CLARIFICATION_PAUSE_REASONS
+
+
 def _get_current_user() -> str:
     """Get the current user.
 
@@ -299,8 +331,12 @@ async def respond_to_clarification(
         raise HTTPException(status_code=409, detail="Concurrent modification — please retry")
     # Re-fetch run after clarification response to get up-to-date status
     run = await repo.get(run_id)
-    # If the run is paused, resume it before spawning the agent (direct apply)
-    if run.status == RunStatus.PAUSED:
+    # Resume before spawning the agent, but ONLY when the run was paused
+    # specifically to await this clarification / user action. Resuming for any
+    # other pause reason would un-pause runs held for unrelated reasons and, for
+    # graph runs, let apply_resume_run falsely stamp the operator-reopen marker
+    # on a still-failed kernel (reopening it under a fabricated operator role).
+    if run.status == RunStatus.PAUSED and _is_clarification_pause_reason(run.pause_reason):
         run = await service.apply_resume_run(run_id)
         logger.info(f"API: Resumed paused run {run_id} after clarification response")
     # Always re-spawn agent after a clarification response (run should now be ACTIVE)

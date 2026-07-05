@@ -1048,3 +1048,88 @@ async def test_recover_run_then_resume_reopens_failed_graph_run(
     async with session_factory() as session:
         after = await RunRepository(session).get(run_id)
     assert after.pause_reason != GRAPH_OPERATOR_REOPEN_PAUSE_REASON
+
+
+@pytest.mark.asyncio
+async def test_clarification_resume_does_not_reopen_recovered_failed_graph(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """A clarification response must NOT reopen a graph run parked for recovery.
+
+    The clarification-response endpoint only auto-resumes a PAUSED run when it
+    was paused *for* a clarification / user action. A graph run parked PAUSED
+    with pause_reason "recovered" while its durable kernel is still "failed" is
+    NOT such a run: resuming it here would drive apply_resume_run to stamp the
+    operator-reopen marker and reopen the failed kernel under a fabricated
+    operator role. The clarifications router guard
+    (_is_clarification_pause_reason) blocks that, so the run stays PAUSED and the
+    kernel stays failed with no reopen marker.
+    """
+    from orchestrator.api.routers.clarifications import _is_clarification_pause_reason
+
+    _, session_factory = file_db
+    repo = tmp_path / "repo-clarif-no-reopen"
+    _init_repo(repo)
+    run_id = "graph-clarif-no-reopen"
+    routine = _routine()
+    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+
+    clock = FixedClock()
+    ids = SequentialIds()
+    await _seed_and_force_failed_graph(
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+    )
+
+    # Drive the row to FAILED, then operator-recover it: FAILED -> PAUSED
+    # (pause_reason "recovered"), kernel untouched so run_state stays "failed".
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.apply_start_run(run_id)
+        await service.apply_cancel_run(run_id, reason="forced_for_test")
+    async with session_factory() as session:
+        target_task_id = (await RunRepository(session).get(run_id)).steps[0].tasks[0].id
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.recover_run(run_id, target_task_id=target_task_id, reset_branch=False)
+    async with session_factory() as session:
+        recovered = await RunRepository(session).get(run_id)
+    assert recovered.status == RunStatus.PAUSED
+    assert recovered.pause_reason == "recovered"
+    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+
+    # The clarification-response endpoint gates its auto-resume on this guard.
+    # "recovered" is not a clarification/user-action pause reason, so the resume
+    # branch is skipped entirely.
+    assert _is_clarification_pause_reason(recovered.pause_reason) is False
+
+    # Reproduce the exact router branch: because the guard is False, the resume
+    # is not issued. The run must remain PAUSED/"recovered" and the kernel must
+    # remain "failed" — no operator-reopen marker is stamped.
+    if recovered.status == RunStatus.PAUSED and _is_clarification_pause_reason(
+        recovered.pause_reason
+    ):  # pragma: no cover - guard is False in this scenario
+        async with session_factory() as session:
+            await WorkflowService(session).apply_resume_run(run_id, resume_strategy="continue")
+
+    async with session_factory() as session:
+        after = await RunRepository(session).get(run_id)
+    assert after.status == RunStatus.PAUSED
+    assert after.pause_reason == "recovered"
+    assert after.pause_reason != GRAPH_OPERATOR_REOPEN_PAUSE_REASON
+    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+
+
+def test_is_clarification_pause_reason_classification() -> None:
+    """The clarification-resume guard admits only user-action pause reasons."""
+    from orchestrator.api.routers.clarifications import _is_clarification_pause_reason
+
+    assert _is_clarification_pause_reason("awaiting_user_input") is True
+    assert _is_clarification_pause_reason("awaiting_clarification") is True
+    # Fan-out children carry a parent_ prefix over the underlying reason.
+    assert _is_clarification_pause_reason("parent_awaiting_user_input") is True
+    # Unrelated pause reasons must not trigger an auto-resume.
+    assert _is_clarification_pause_reason("recovered") is False
+    assert _is_clarification_pause_reason("manual_gate") is False
+    assert _is_clarification_pause_reason("agent_execution_error") is False
+    assert _is_clarification_pause_reason(None) is False
