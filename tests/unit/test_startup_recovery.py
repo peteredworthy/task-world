@@ -159,6 +159,9 @@ async def test_deferred_startup_recovery_resumes_restart_paused_run() -> None:
             source_branch="main",
         )
         run.routine_embedded = routine.model_dump(mode="json")
+        # Legacy-executor restart recovery is what this test exercises; graph-mode
+        # runs take a different recovery path (see app.py's execution_mode gate).
+        run.execution_mode = "legacy"
         run.agent_runner_type = AgentRunnerType.CODEX_SERVER
         run.agent_runner_config = {"model": "gpt-5.4-mini"}
         run.status = RunStatus.PAUSED
@@ -251,6 +254,9 @@ async def test_startup_recovery_resumes_cascade_child_before_parent() -> None:
             source_branch="main",
         )
         run.routine_embedded = routine.model_dump(mode="json")
+        # Legacy-executor cascade recovery is what this test exercises; graph-mode
+        # runs take a different recovery path (see app.py's execution_mode gate).
+        run.execution_mode = "legacy"
         run.agent_runner_type = AgentRunnerType.CODEX_SERVER
         run.agent_runner_config = {"model": "gpt-5.4-mini"}
         run.status = RunStatus.PAUSED

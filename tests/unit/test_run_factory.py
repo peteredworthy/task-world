@@ -117,6 +117,22 @@ def test_create_run_with_source(simple_routine: RoutineConfig) -> None:
     assert run.routine_sha == "abc123"
 
 
+def test_create_run_defaults_to_graph_execution_mode(simple_routine: RoutineConfig) -> None:
+    """A run created without an explicit execution_mode must default to graph.
+
+    Legacy is opt-in only; there is no wired-up legacy executor in the current
+    setup, so silently defaulting to "legacy" strands the run with
+    pause_reason="no_executor_running".
+    """
+    run = create_run_from_routine(
+        routine=simple_routine,
+        repo_name="proj-1",
+        source_branch="main",
+    )
+
+    assert run.execution_mode == "graph"
+
+
 def test_checklist_populated(simple_routine: RoutineConfig) -> None:
     run = create_run_from_routine(
         routine=simple_routine,

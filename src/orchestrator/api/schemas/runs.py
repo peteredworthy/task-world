@@ -202,7 +202,7 @@ class RunResponse(ApiModel):
     pause_reason: str | None = None
     last_error: str | None = None
     is_graph_backed: bool = False
-    execution_mode: str = "legacy"
+    execution_mode: str = "graph"
     routine_id: str | None = None
     routine_sha: str | None = None
     routine_source: str | None = None

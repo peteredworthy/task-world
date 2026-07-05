@@ -21,6 +21,7 @@ venv/
 *.db
 *.db-wal
 *.db-shm
+*.db.*
 *.bak
 
 # Test scratch directory (SQLite files for fan-out tests, etc.)

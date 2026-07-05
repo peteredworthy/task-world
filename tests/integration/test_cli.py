@@ -273,6 +273,83 @@ async def test_resume_with_agent_switch(test_app: FastAPI) -> None:
         ] == "cli_subprocess"
 
 
+def _write_minimal_routine(routines_dir: Path, routine_id: str) -> None:
+    (routines_dir / f"{routine_id}.yaml").write_text(
+        f"""id: {routine_id}
+name: {routine_id}
+steps:
+  - id: step-1
+    title: Step
+    tasks:
+      - id: task-1
+        title: Task
+""".strip()
+    )
+
+
+def test_runs_create_defaults_to_graph_execution_mode(runner: CliRunner) -> None:
+    """`orchestrator runs create` without --execution-mode must default to graph.
+
+    Regression test: run creation used to silently rely on the Run model's
+    "legacy" default here, since this CLI path builds and persists the Run
+    directly and never goes through the POST /api/runs precedence logic. A
+    legacy-mode run has no executor wired up and immediately pauses with
+    pause_reason="no_executor_running".
+    """
+    with runner.isolated_filesystem():
+        routines_dir = Path("routines")
+        routines_dir.mkdir()
+        _write_minimal_routine(routines_dir, "cli-default-mode")
+
+        result = runner.invoke(
+            cli,
+            [
+                "--db",
+                "test.db",
+                "--json",
+                "runs",
+                "create",
+                "cli-default-mode",
+                "--repo",
+                "some-repo",
+                "--branch",
+                "main",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["execution_mode"] == "graph"
+
+
+def test_runs_create_explicit_legacy_opt_in(runner: CliRunner) -> None:
+    """--execution-mode legacy remains available as an explicit opt-in."""
+    with runner.isolated_filesystem():
+        routines_dir = Path("routines")
+        routines_dir.mkdir()
+        _write_minimal_routine(routines_dir, "cli-legacy-mode")
+
+        result = runner.invoke(
+            cli,
+            [
+                "--db",
+                "test.db",
+                "--json",
+                "runs",
+                "create",
+                "cli-legacy-mode",
+                "--repo",
+                "some-repo",
+                "--branch",
+                "main",
+                "--execution-mode",
+                "legacy",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["execution_mode"] == "legacy"
+
+
 def test_routines_list(runner: CliRunner, tmp_path: Path) -> None:
     """Test routines list command."""
     # Run the list command

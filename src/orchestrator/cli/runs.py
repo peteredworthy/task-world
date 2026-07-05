@@ -12,6 +12,7 @@ import httpx
 import websockets
 
 from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
+from orchestrator.config.global_config import load_global_config
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import RunRepository
 from orchestrator.config import discover_routines
@@ -114,6 +115,17 @@ def list_runs(ctx: click.Context, repo: str | None, status: str | None) -> None:
     multiple=True,
     help="Agent runner config key=value pairs",
 )
+@click.option(
+    "--execution-mode",
+    "execution_mode",
+    type=click.Choice(["graph", "legacy"], case_sensitive=False),
+    default=None,
+    help=(
+        "Execution carrier for this run. Defaults to the routine's own"
+        " execution_mode if set, otherwise the configured default (graph)."
+        " Pass 'legacy' to explicitly opt into the legacy executor."
+    ),
+)
 @click.pass_context
 def create_run(
     ctx: click.Context,
@@ -123,6 +135,7 @@ def create_run(
     config: tuple[str, ...],
     agent: str | None,
     agent_runner_config: tuple[str, ...],
+    execution_mode: str | None,
 ) -> None:
     """Create a new run."""
 
@@ -181,6 +194,16 @@ def create_run(
                 config=cfg,
             )
 
+            # Resolve execution mode: explicit CLI flag wins, then the routine's
+            # own pinned execution_mode, then the global config default (graph).
+            # This mirrors the precedence used by POST /api/runs so the CLI
+            # never silently falls back to the legacy executor.
+            global_config = load_global_config()
+            routine_execution_mode = getattr(routine_config, "execution_mode", None)
+            run.execution_mode = (
+                execution_mode or routine_execution_mode or global_config.execution.default_execution_mode
+            )
+
             # Set agent if provided
             if agent:
                 try:
@@ -202,6 +225,7 @@ def create_run(
                 "routine_id": run.routine_id,
                 "repo_name": run.repo_name,
                 "status": run.status.value,
+                "execution_mode": run.execution_mode,
                 "agent_runner_type": run.agent_runner_type.value if run.agent_runner_type else None,
             }
             click.echo(json.dumps(result, indent=2))
@@ -209,7 +233,7 @@ def create_run(
             agent_str = (
                 f" with agent {run.agent_runner_type.value}" if run.agent_runner_type else ""
             )
-            click.echo(f"Created run {run.id}{agent_str}")
+            click.echo(f"Created run {run.id} ({run.execution_mode}){agent_str}")
 
     asyncio.run(_create())
 

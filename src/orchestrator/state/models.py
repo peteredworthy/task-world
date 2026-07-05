@@ -329,7 +329,7 @@ class Run(BaseModel):
     status: RunStatus = RunStatus.DRAFT
     pause_reason: str | None = None  # e.g., "agent_died", "manual_pause"
     last_error: str | None = None  # Human-readable error detail when paused due to error
-    execution_mode: str = "legacy"
+    execution_mode: str = "graph"
 
     # Routine reference
     routine_id: str | None = None

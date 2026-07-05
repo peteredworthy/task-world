@@ -37,8 +37,15 @@ def _create_test_run(
     run_id: str = "test-run",
     agent_runner_type: AgentRunnerType | None = None,
     agent_runner_config: dict[str, Any] | None = None,
+    execution_mode: str = "legacy",
 ) -> Run:
-    """Create a minimal test run."""
+    """Create a minimal test run.
+
+    Defaults to execution_mode="legacy" because this whole module exercises
+    the legacy AgentRunnerMonitor liveness/recovery path, which the monitor
+    explicitly skips for graph-mode runs (see runners/runtime/monitor.py).
+    Pass execution_mode="graph" explicitly to test that skip behavior.
+    """
     routine = RoutineConfig(
         id="test-routine",
         name="Test Routine",
@@ -66,6 +73,7 @@ def _create_test_run(
     )
     run.agent_runner_type = agent_runner_type
     run.agent_runner_config = agent_runner_config or {}
+    run.execution_mode = execution_mode
     return run
 
 

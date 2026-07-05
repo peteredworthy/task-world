@@ -109,7 +109,7 @@ class CreateRunCommand(BaseModel):
     status: RunStatus = RunStatus.DRAFT
     pause_reason: str | None = None
     last_error: str | None = None
-    execution_mode: str = "legacy"
+    execution_mode: str = "graph"
     config: dict[str, Any] = Field(default_factory=dict)
     parent_run_id: str | None = None
     parent_task_id: str | None = None
