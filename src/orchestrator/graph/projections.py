@@ -15,7 +15,31 @@ from orchestrator.graph.contracts import (
     output_port_contract,
     port_contract_summary,
 )
-from orchestrator.graph.models import EventEnvelope, GraphPatchResultRecord
+from orchestrator.graph.models import (
+    AnalysisSummaryRecord,
+    ArtifactReferenceRecord,
+    AuthorityDecisionRecord,
+    AuthorityRequestRecord,
+    CandidateRecord,
+    CheckResultRecord,
+    CompletionDecisionRecord,
+    DecisionRecord,
+    DecisionRequestRecord,
+    EventEnvelope,
+    FailureRecord,
+    GapClassificationRecord,
+    GraphBaseModel,
+    GraphPatchProposalRecord,
+    GraphPatchResultRecord,
+    LegacyOutputRecord,
+    JoinResultRecord,
+    OutputRecord,
+    OutputRecordPayload,
+    RecoveryPlanRecord,
+    RequirementRecord,
+    RoutineSnapshotRecord,
+    VerificationReportRecord,
+)
 from orchestrator.graph.models import normalize_record_selector
 
 
@@ -30,7 +54,7 @@ _EDGE_METADATA_KEYS = (
 )
 
 # Bump this whenever reduce_event semantics or GraphProjection shape changes.
-PROJECTION_SCHEMA_VERSION = 5
+PROJECTION_SCHEMA_VERSION = 6
 
 
 class GraphRecordSummary(TypedDict, total=False):
@@ -45,7 +69,7 @@ class GraphRecordSummary(TypedDict, total=False):
 
 class AcceptedOutputRecord(TypedDict):
     record_id: str
-    payload: dict[str, Any]
+    payload: OutputRecordPayload
 
 
 class FailedVerificationResult(TypedDict, total=False):
@@ -80,7 +104,7 @@ class GraphProjection(TypedDict):
     node_output_ports: dict[str, dict[str, list[str]]]
     accepted_output_records_by_node_port: dict[str, dict[str, list[AcceptedOutputRecord]]]
     accepted_record_summaries_by_id: dict[str, GraphRecordSummary]
-    output_records_by_node_port: dict[str, dict[str, list[dict[str, Any]]]]
+    output_records_by_node_port: dict[str, dict[str, list[OutputRecordPayload]]]
     edges: dict[str, dict[str, Any]]
     input_bindings: dict[str, dict[str, dict[str, Any]]]
     node_pending_appeals: dict[str, bool]
@@ -117,7 +141,7 @@ class GraphProjection(TypedDict):
     last_deferred_reasons: dict[str, str]
     retry_not_before_by_node: dict[str, str | None]
     node_creation_payloads: dict[str, dict[str, Any]]
-    output_record_payloads: dict[str, dict[str, Any]]
+    output_record_payloads: dict[str, OutputRecordPayload]
     approval_decisions: dict[str, dict[str, Any]]
     authority_decisions: dict[str, dict[str, Any]]
     oversight_decisions: dict[str, dict[str, Any]]
@@ -361,6 +385,123 @@ def initial_projection() -> GraphProjection:
     }
 
 
+def projection_to_checkpoint(projection: GraphProjection) -> dict[str, Any]:
+    checkpoint = dict(cast(dict[str, Any], projection))
+    checkpoint["accepted_output_records_by_node_port"] = {
+        node_id: {
+            port: [
+                {
+                    "record_id": record["record_id"],
+                    "payload": _output_record_payload_dict(record["payload"]),
+                }
+                for record in records
+            ]
+            for port, records in ports.items()
+        }
+        for node_id, ports in projection.get("accepted_output_records_by_node_port", {}).items()
+    }
+    checkpoint["output_records_by_node_port"] = {
+        node_id: {
+            port: [_output_record_payload_dict(record) for record in records]
+            for port, records in ports.items()
+        }
+        for node_id, ports in projection.get("output_records_by_node_port", {}).items()
+    }
+    checkpoint["output_record_payloads"] = {
+        record_id: _output_record_payload_dict(payload)
+        for record_id, payload in projection.get("output_record_payloads", {}).items()
+    }
+    return checkpoint
+
+
+def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjection:
+    projection = cast(GraphProjection, {**initial_projection(), **raw_projection})
+    projection["accepted_output_records_by_node_port"] = _accepted_output_records_from_checkpoint(
+        raw_projection.get("accepted_output_records_by_node_port"),
+    )
+    projection["output_records_by_node_port"] = _output_records_from_checkpoint(
+        raw_projection.get("output_records_by_node_port"),
+    )
+    projection["output_record_payloads"] = _output_payloads_from_checkpoint(
+        raw_projection.get("output_record_payloads"),
+    )
+    return projection
+
+
+def _accepted_output_records_from_checkpoint(
+    raw_ports_by_node: Any,
+) -> dict[str, dict[str, list[AcceptedOutputRecord]]]:
+    if not isinstance(raw_ports_by_node, dict):
+        return {}
+    typed: dict[str, dict[str, list[AcceptedOutputRecord]]] = {}
+    for node_id, raw_ports in cast(dict[Any, Any], raw_ports_by_node).items():
+        if not isinstance(node_id, str) or not isinstance(raw_ports, dict):
+            continue
+        ports: dict[str, list[AcceptedOutputRecord]] = {}
+        for port, raw_records in cast(dict[Any, Any], raw_ports).items():
+            if not isinstance(port, str) or not isinstance(raw_records, list):
+                continue
+            records: list[AcceptedOutputRecord] = []
+            for raw_record in cast(list[Any], raw_records):
+                if not isinstance(raw_record, dict):
+                    continue
+                record = cast(dict[str, Any], raw_record)
+                record_id = _checkpoint_record_id(record)
+                payload = _checkpoint_output_record_payload(record.get("payload"))
+                if record_id is not None and payload is not None:
+                    records.append({"record_id": record_id, "payload": payload})
+            ports[port] = records
+        typed[node_id] = ports
+    return typed
+
+
+def _output_records_from_checkpoint(
+    raw_ports_by_node: Any,
+) -> dict[str, dict[str, list[OutputRecordPayload]]]:
+    if not isinstance(raw_ports_by_node, dict):
+        return {}
+    typed: dict[str, dict[str, list[OutputRecordPayload]]] = {}
+    for node_id, raw_ports in cast(dict[Any, Any], raw_ports_by_node).items():
+        if not isinstance(node_id, str) or not isinstance(raw_ports, dict):
+            continue
+        ports: dict[str, list[OutputRecordPayload]] = {}
+        for port, raw_records in cast(dict[Any, Any], raw_ports).items():
+            if not isinstance(port, str) or not isinstance(raw_records, list):
+                continue
+            records = [
+                payload
+                for raw_payload in cast(list[Any], raw_records)
+                if (payload := _checkpoint_output_record_payload(raw_payload)) is not None
+            ]
+            ports[port] = records
+        typed[node_id] = ports
+    return typed
+
+
+def _output_payloads_from_checkpoint(raw_payloads: Any) -> dict[str, OutputRecordPayload]:
+    if not isinstance(raw_payloads, dict):
+        return {}
+    typed: dict[str, OutputRecordPayload] = {}
+    for record_id, raw_payload in cast(dict[Any, Any], raw_payloads).items():
+        if not isinstance(record_id, str):
+            continue
+        payload = _checkpoint_output_record_payload(raw_payload)
+        if payload is not None:
+            typed[record_id] = payload
+    return typed
+
+
+def _checkpoint_record_id(raw_record: dict[str, Any]) -> str | None:
+    record_id = raw_record.get("record_id")
+    return record_id if isinstance(record_id, str) else None
+
+
+def _checkpoint_output_record_payload(raw_payload: Any) -> OutputRecordPayload | None:
+    if not isinstance(raw_payload, dict):
+        return None
+    return _parse_output_record_payload(cast(dict[str, Any], raw_payload))
+
+
 def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
     next_state: GraphProjection = {
         "run_state": state["run_state"],
@@ -396,7 +537,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 port: [
                     {
                         "record_id": record["record_id"],
-                        "payload": dict(record["payload"]),
+                        "payload": _copy_output_record_payload(record["payload"]),
                     }
                     for record in records
                 ]
@@ -409,7 +550,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             for record_id, summary in state.get("accepted_record_summaries_by_id", {}).items()
         },
         "output_records_by_node_port": {
-            node_id: {port: [dict(record) for record in records] for port, records in ports.items()}
+            node_id: {
+                port: [_copy_output_record_payload(record) for record in records]
+                for port, records in ports.items()
+            }
             for node_id, ports in state.get("output_records_by_node_port", {}).items()
         },
         "edges": {edge_id: dict(edge) for edge_id, edge in state["edges"].items()},
@@ -510,7 +654,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             for node_id, payload in state.get("node_creation_payloads", {}).items()
         },
         "output_record_payloads": {
-            record_id: dict(payload)
+            record_id: _copy_output_record_payload(payload)
             for record_id, payload in state.get("output_record_payloads", {}).items()
         },
         "approval_decisions": {
@@ -707,11 +851,12 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                     lease[key] = value
             next_state["leases"][lease_id] = lease
     elif event.event_type == "output_record_accepted":
-        _record_output_record(next_state, event)
+        output_record_payload = _parse_output_record_payload(event.payload)
+        _record_output_record(next_state, output_record_payload)
         _record_node_output_port(next_state, event)
-        _record_accepted_output_record(next_state, event)
+        _record_accepted_output_record(next_state, output_record_payload)
         _record_accepted_record_summary(next_state, event)
-        _record_output_payload(next_state, event)
+        _record_output_payload(next_state, output_record_payload)
         _record_latest_routine_snapshot(next_state, event)
         _record_completion_decision(next_state, event)
         _record_decision_request_details(next_state, event)
@@ -1127,10 +1272,14 @@ def _failed_check_result_blockers_from_projection(
                 blocker["command_text"] = command_text
             if isinstance(stderr, str):
                 blocker["stderr"] = stderr
-            if isinstance(exit_code, int) and not isinstance(exit_code, bool) and (
-                isinstance(command_text, str)
-                or isinstance(stderr, str)
-                or isinstance(classification, str)
+            if (
+                isinstance(exit_code, int)
+                and not isinstance(exit_code, bool)
+                and (
+                    isinstance(command_text, str)
+                    or isinstance(stderr, str)
+                    or isinstance(classification, str)
+                )
             ):
                 blocker["exit_code"] = exit_code
             if classification in {"environment_error", "tool_error", "tool_unavailable"}:
@@ -1181,7 +1330,10 @@ def _completion_decision_blockers(
             event.payload for event in events if event.event_type == "output_record_accepted"
         ]
     else:
-        payloads = projection.get("output_record_payloads", {}).values()
+        payloads = [
+            _output_record_payload_dict(payload)
+            for payload in projection.get("output_record_payloads", {}).values()
+        ]
     for payload in payloads:
         node_id = payload.get("producer_node_id")
         if not isinstance(node_id, str) or node_id not in final_gate_node_ids:
@@ -2995,6 +3147,135 @@ def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
     state["check_results"][node_id] = result
 
 
+def _copy_output_record_payload(payload: OutputRecordPayload) -> OutputRecordPayload:
+    return payload.model_copy(deep=True)
+
+
+def _output_record_payload_dict(payload: OutputRecordPayload) -> dict[str, Any]:
+    return payload.model_dump(mode="json")
+
+
+def _parse_output_record_payload(payload: dict[str, Any]) -> OutputRecordPayload | None:
+    model = _output_record_model_for_payload(payload)
+    if model is None:
+        return None
+    normalized = _normalized_output_record_payload(payload, model)
+    try:
+        return cast(OutputRecordPayload, model.model_validate(normalized))
+    except ValueError:
+        if model is OutputRecord:
+            fallback = _legacy_output_record_payload(payload)
+        else:
+            fallback = _generic_output_record_payload(payload)
+            if fallback is None:
+                fallback = _legacy_output_record_payload(payload)
+        if fallback is None:
+            return None
+        try:
+            return LegacyOutputRecord.model_validate(fallback)
+        except ValueError:
+            return None
+
+
+def _output_record_model_for_payload(payload: dict[str, Any]) -> type[GraphBaseModel] | None:
+    record_kind = payload.get("record_kind")
+    record_type = payload.get("record_type")
+    schema = payload.get("schema")
+    port = payload.get("port")
+
+    if record_kind == "verification" or record_type in {"verification", "verification_report"}:
+        return VerificationReportRecord
+    if schema == "VerificationReport" or port in {"verification_report", "verification_result"}:
+        return VerificationReportRecord
+    if record_type == "completion_decision" or port == "completion_decision":
+        return CompletionDecisionRecord
+    if record_type == "join_result" or port == "join_result":
+        return JoinResultRecord
+    if record_type == "check_result" or port == "check_result" or schema == "CheckResult":
+        return CheckResultRecord
+    if record_type == "candidate" or port == "candidate" or schema == "ImplementationCandidate":
+        return CandidateRecord
+    if record_type in {"gap_plan", "gap_classification", "classified_gap"}:
+        return GapClassificationRecord
+    if port in {"gap_plan", "gap_classification", "classified_gap"}:
+        return GapClassificationRecord
+    if record_type == "decision_record" or port == "decision_record":
+        return DecisionRecord
+    if record_type == "authority_decision" or port == "authority_decision":
+        return AuthorityDecisionRecord
+    if record_type == "analysis_summary" or port in {
+        "analysis_summary",
+        "planning_summary",
+        "region_summary",
+    }:
+        return AnalysisSummaryRecord
+    if record_type == "graph_patch_proposal" or port in {"graph_patch_proposal", "graph_patch"}:
+        return GraphPatchProposalRecord
+    if record_type == "routine_snapshot" or schema == "RoutineSnapshot":
+        return RoutineSnapshotRecord
+    if record_type == "artifact_reference" or port in {"artifact_reference", "artifact"}:
+        return ArtifactReferenceRecord
+    if record_type == "requirement_record" or port == "requirement":
+        return RequirementRecord
+    if record_type == "decision_request" or port == "decision_request":
+        return DecisionRequestRecord
+    if record_type == "authority_request_record" or port == "authority_request_record":
+        return AuthorityRequestRecord
+    if record_type == "failure_record" or port == "failure_record":
+        return FailureRecord
+    if record_type == "recovery_plan" or port == "recovery_plan":
+        return RecoveryPlanRecord
+    if record_kind in {None, "output"}:
+        return OutputRecord
+    return None
+
+
+def _normalized_output_record_payload(
+    payload: dict[str, Any],
+    model: type[GraphBaseModel],
+) -> dict[str, Any]:
+    if model is OutputRecord:
+        generic = _generic_output_record_payload(payload)
+        return generic if generic is not None else dict(payload)
+    normalized = dict(payload)
+    if model is VerificationReportRecord and normalized.get("record_type") == "verification":
+        normalized["record_type"] = "verification_report"
+    return normalized
+
+
+def _generic_output_record_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    value = payload.get("value")
+    if not isinstance(value, dict):
+        return None
+    normalized = dict(payload)
+    normalized.setdefault("record_kind", "output")
+    schema = normalized.get("schema")
+    if not isinstance(schema, str) or not schema:
+        record_type = normalized.get("record_type")
+        port = normalized.get("port")
+        if isinstance(record_type, str) and record_type:
+            normalized["schema"] = record_type
+        elif isinstance(port, str) and port:
+            normalized["schema"] = port
+        else:
+            normalized["schema"] = "OutputRecord"
+    return normalized
+
+
+def _legacy_output_record_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    record_id = payload.get("record_id")
+    node_id = payload.get("producer_node_id") or payload.get("node_id")
+    port = payload.get("port")
+    if not all(isinstance(value, str) and value for value in (record_id, node_id, port)):
+        return None
+    normalized = dict(payload)
+    normalized["record_id"] = cast(str, record_id)
+    normalized["producer_node_id"] = cast(str, node_id)
+    normalized["port"] = cast(str, port)
+    normalized.setdefault("record_kind", "output")
+    return normalized
+
+
 def _record_node_output_port(state: GraphProjection, event: EventEnvelope) -> None:
     node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
     if not isinstance(node_id, str):
@@ -3014,18 +3295,23 @@ def _record_node_output_port(state: GraphProjection, event: EventEnvelope) -> No
         records.append(record_id)
 
 
-def _record_accepted_output_record(state: GraphProjection, event: EventEnvelope) -> None:
-    node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
-    port = event.payload.get("port")
-    record_id = event.payload.get("record_id")
-    if not all(isinstance(value, str) and value for value in (node_id, port, record_id)):
+def _record_accepted_output_record(
+    state: GraphProjection,
+    record: OutputRecordPayload | None,
+) -> None:
+    if record is None:
         return
-    ports = state["accepted_output_records_by_node_port"].setdefault(cast(str, node_id), {})
-    records = ports.setdefault(cast(str, port), [])
+    node_id = record.producer_node_id
+    port = record.port
+    record_id = record.record_id
+    if not node_id or not port or not record_id:
+        return
+    ports = state["accepted_output_records_by_node_port"].setdefault(node_id, {})
+    records = ports.setdefault(port, [])
     records.append(
         {
-            "record_id": cast(str, record_id),
-            "payload": _stable_accepted_record_payload(event.payload),
+            "record_id": record_id,
+            "payload": record,
         }
     )
 
@@ -3073,22 +3359,20 @@ def _stable_accepted_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _record_output_record(state: GraphProjection, event: EventEnvelope) -> None:
-    node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
-    port = event.payload.get("port")
-    if not isinstance(node_id, str) or not isinstance(port, str):
+def _record_output_record(state: GraphProjection, record: OutputRecordPayload | None) -> None:
+    if record is None:
         return
-    # Strip durable decoration fields so the fold is deterministic across the
-    # in-command path and a rebuild from stored (decorated) events.
-    state["output_records_by_node_port"].setdefault(node_id, {}).setdefault(port, []).append(
-        _stable_accepted_record_payload(event.payload)
-    )
+    state["output_records_by_node_port"].setdefault(record.producer_node_id, {}).setdefault(
+        record.port,
+        [],
+    ).append(record)
 
 
-def _record_output_payload(state: GraphProjection, event: EventEnvelope) -> None:
-    record_id = event.payload.get("record_id")
-    if isinstance(record_id, str) and record_id:
-        state["output_record_payloads"][record_id] = dict(event.payload)
+def _record_output_payload(state: GraphProjection, record: OutputRecordPayload | None) -> None:
+    if record is None:
+        return
+    if record.record_id:
+        state["output_record_payloads"][record.record_id] = record
 
 
 def _record_latest_routine_snapshot(state: GraphProjection, event: EventEnvelope) -> None:
@@ -3111,6 +3395,7 @@ def _record_latest_routine_snapshot(state: GraphProjection, event: EventEnvelope
         "producer_node_id": cast(str, producer_node_id),
         "port": cast(str, port),
     }
+
 
 def _record_open_appeal(state: GraphProjection, event: EventEnvelope) -> None:
     appealed_node_id = event.payload.get("appealed_node_id")
@@ -4116,7 +4401,7 @@ def _check_result_recovery_superseded(
         return False
     for recovery in state["recovery_nodes_by_record_id"].get(record_id, []):
         node_id = recovery.get("node_id")
-        if isinstance(node_id, str) and _recovery_lineage_passed(state, node_id):
+        if _recovery_lineage_passed(state, node_id):
             return True
     return False
 

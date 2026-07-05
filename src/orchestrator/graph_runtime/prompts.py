@@ -1559,3 +1559,19 @@ def _grades_pass(grades: list[tuple[str, str, str | None]]) -> bool:
         return True
     passing = {"a", "pass", "passed", "ok", "yes"}
     return all(grade.strip().lower() in passing for _, grade, _ in grades)
+
+
+prompt_for_node = _prompt_for_node
+prompt_summary_for_node = _prompt_summary_for_node
+planner_evidence = _planner_evidence
+planner_packet = _planner_packet
+can_submit_graph_patch = _can_submit_graph_patch
+requires_graph_patch_before_submit = _requires_graph_patch_before_submit
+graph_patch_feedback_accepted = _graph_patch_feedback_accepted
+node_role = _node_role
+available_tools_for_context = _available_tools_for_context
+patch_payload_has_ops = _patch_payload_has_ops
+output_records_for_submit = _output_records_for_submit
+candidate_id_for_check = _candidate_id_for_check
+evaluated_record_citations = _evaluated_record_citations
+add_evaluated_record_citations = _add_evaluated_record_citations

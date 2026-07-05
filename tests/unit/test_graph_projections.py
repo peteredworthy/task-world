@@ -15,6 +15,8 @@ from orchestrator.graph import (
     FinalInvariantBlocker,
     GraphProjection,
     InMemoryEventStore,
+    LegacyOutputRecord,
+    OutputRecord,
     SequentialIdGenerator,
     apply_command,
     initial_projection,
@@ -254,6 +256,89 @@ def test_replay_determinism() -> None:
             "kind": "worker",
             "state": "active",
         }
+    }
+
+
+def test_output_record_payloads_are_typed_at_fold() -> None:
+    event = _event(
+        "output_record_accepted",
+        {
+            "record_id": "summary-1",
+            "record_kind": "output",
+            "record_type": "opaque_summary",
+            "producer_node_id": "worker-1",
+            "port": "summary",
+            "schema": "OpaqueSummary",
+            "value": {"summary": "done"},
+        },
+    )
+
+    projection = reduce_event(initial_projection(), event)
+
+    payload = projection["output_record_payloads"]["summary-1"]
+    assert isinstance(payload, OutputRecord)
+    assert payload.record_id == "summary-1"
+    assert payload.producer_node_id == "worker-1"
+    assert payload.port == "summary"
+
+    by_port = projection["output_records_by_node_port"]["worker-1"]["summary"][0]
+    assert isinstance(by_port, OutputRecord)
+    assert by_port.value == {"summary": "done"}
+
+    accepted = projection["accepted_output_records_by_node_port"]["worker-1"]["summary"][0]
+    assert isinstance(accepted["payload"], OutputRecord)
+    assert accepted["payload"].schema_ == "OpaqueSummary"
+
+
+def test_malformed_output_record_payload_is_tolerated_without_raw_projection_entry() -> None:
+    event = _event(
+        "output_record_accepted",
+        {
+            "record_id": "legacy-malformed-1",
+            "record_kind": "output",
+            "record_type": "opaque_summary",
+            "producer_node_id": "worker-1",
+            "port": "summary",
+            "schema": "OpaqueSummary",
+            "value": "legacy-non-dict-value",
+        },
+    )
+
+    projection = reduce_event(initial_projection(), event)
+
+    payload = projection["output_record_payloads"]["legacy-malformed-1"]
+    assert isinstance(payload, LegacyOutputRecord)
+    assert payload.value == "legacy-non-dict-value"
+    assert projection["output_records_by_node_port"]["worker-1"]["summary"] == [payload]
+    assert projection["accepted_output_records_by_node_port"]["worker-1"]["summary"] == [
+        {"record_id": "legacy-malformed-1", "payload": payload}
+    ]
+    assert projection["node_output_ports"] == {"worker-1": {"summary": ["legacy-malformed-1"]}}
+    assert projection["accepted_record_summaries_by_id"]["legacy-malformed-1"] == {
+        "record_id": "legacy-malformed-1",
+        "record_kind": "output",
+        "schema": "OpaqueSummary",
+        "producer_node_id": "worker-1",
+        "producer_port": "summary",
+        "record_type": "opaque_summary",
+    }
+
+
+def _accepted_output_records_as_dicts(
+    records: dict[str, dict[str, list[Any]]],
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    return {
+        node_id: {
+            port: [
+                {
+                    "record_id": record["record_id"],
+                    "payload": record["payload"].model_dump(mode="json"),
+                }
+                for record in port_records
+            ]
+            for port, port_records in ports.items()
+        }
+        for node_id, ports in records.items()
     }
 
 
@@ -512,7 +597,10 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
         events
     )
 
-    assert projection["accepted_output_records_by_node_port"] == legacy_accepted_by_port
+    assert (
+        _accepted_output_records_as_dicts(projection["accepted_output_records_by_node_port"])
+        == legacy_accepted_by_port
+    )
     assert projection["failed_verification_results_by_record_id"] == legacy_failed_verifications
     assert projection["recovery_nodes_by_record_id"] == legacy_recovery_nodes
 
