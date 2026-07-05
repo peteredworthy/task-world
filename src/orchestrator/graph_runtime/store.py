@@ -23,19 +23,22 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
+    GraphProjection,
+    PROJECTION_SCHEMA_VERSION,
+    initial_projection,
     merge_bound_record_ids,
     project_decision_view,
-    project_leases,
+    project_decision_view_from_projection,
     project_lease_view,
-    project_node_states,
-    project_ready_nodes,
-    project_run_state,
     project_scheduler_view,
-    project_task_states,
+    reduce_event,
 )
 from orchestrator.graph_runtime.errors import StaleProjectionError
 
 GRAPH_AGGREGATE_PREFIX = "graph:"
+_CHECKPOINT_PROJECTION_KEY = "_projection_checkpoint"
+_CHECKPOINT_SCHEMA_VERSION_KEY = "_projection_schema_version"
+_CHECKPOINT_TERMINAL_KEY = "_projection_terminal"
 HEAVY_GRAPH_EVENT_TYPES = frozenset(
     {
         "callback_accepted",
@@ -448,6 +451,15 @@ class GraphNodeDetailSummary:
     prompt_summary: dict[str, Any] | None = None
 
 
+@dataclass(frozen=True)
+class GraphProjectionCheckpoint:
+    run_id: str
+    position: int
+    projection: GraphProjection
+    schema_version: int
+    terminal: bool
+
+
 class GraphEventStore:
     """Append-only graph event store backed by ``events_v2``.
 
@@ -516,7 +528,11 @@ class GraphEventStore:
             stored_events,
             expected_position=expected_position,
         )
-        await self.invalidate_projection_snapshot(run_id)
+        await self.advance_projection_snapshot(
+            run_id,
+            stored_events,
+            expected_position=expected_position,
+        )
         return stored_events
 
     async def read_run(self, run_id: str, from_position: int = 0) -> list[EventEnvelope]:
@@ -752,6 +768,53 @@ class GraphEventStore:
         await self.ensure_projection_snapshot(run_id)
         return await self._session.get(GraphProjectionSnapshotModel, run_id)
 
+    async def read_projection_checkpoint(
+        self,
+        run_id: str,
+    ) -> GraphProjectionCheckpoint | None:
+        """Read a valid full-projection checkpoint without forcing a rebuild."""
+        row = await self._session.get(GraphProjectionSnapshotModel, run_id)
+        schema_version = _projection_schema_version_from_snapshot_row(row)
+        if row is None or schema_version != PROJECTION_SCHEMA_VERSION:
+            return None
+        projection = _projection_from_snapshot_row(row)
+        if projection is None:
+            return None
+        return GraphProjectionCheckpoint(
+            run_id=run_id,
+            position=row.position,
+            projection=projection,
+            schema_version=schema_version,
+            terminal=_projection_terminal_from_snapshot_row(row),
+        )
+
+    async def load_projection_with_tail(
+        self,
+        run_id: str,
+    ) -> tuple[GraphProjection, list[EventEnvelope], int]:
+        """Load the latest valid snapshot and fold only events after it.
+
+        If the checkpoint is missing, version-mismatched, or malformed, rebuild
+        from the full event stream once and persist the fresh snapshot.
+        """
+        checkpoint = await self.read_projection_checkpoint(run_id)
+        if checkpoint is None:
+            events = await self.read_run(run_id)
+            projection = _projection_from_events(events)
+            position = _events_position(events)
+            if position > 0:
+                await self.persist_projection_snapshot(run_id, projection, position)
+            return projection, events, position
+
+        tail = await self.read_run(run_id, checkpoint.position + 1)
+        projection = checkpoint.projection
+        for event in tail:
+            projection = reduce_event(projection, event)
+        position = max(checkpoint.position, _events_position(tail))
+        if position != checkpoint.position:
+            await self.persist_projection_snapshot(run_id, projection, position)
+        return projection, tail, position
+
     async def ensure_read_models(self, run_id: str) -> None:
         """Rebuild disposable graph read models if missing or behind events_v2."""
         await self.ensure_event_summaries(run_id)
@@ -782,7 +845,12 @@ class GraphEventStore:
             if snapshot is not None:
                 await self.delete_read_models(run_id)
             return
-        if snapshot is None or snapshot.position != current:
+        if (
+            snapshot is None
+            or snapshot.position != current
+            or _projection_schema_version_from_snapshot_row(snapshot) != PROJECTION_SCHEMA_VERSION
+            or _projection_from_snapshot_row(snapshot) is None
+        ):
             await self.rebuild_read_models(run_id)
 
     async def ensure_node_detail_summaries(self, run_id: str) -> None:
@@ -874,14 +942,46 @@ class GraphEventStore:
         checkpoint.position = current_position
         await self._session.flush()
 
-    async def invalidate_projection_snapshot(self, run_id: str) -> None:
-        """Drop the disposable projection snapshot after appending new events."""
-        await self._session.execute(
-            delete(GraphProjectionSnapshotModel).where(
-                GraphProjectionSnapshotModel.run_id == run_id
-            )
-        )
+    async def advance_projection_snapshot(
+        self,
+        run_id: str,
+        events: list[EventEnvelope],
+        *,
+        expected_position: int,
+    ) -> None:
+        """Incrementally maintain the full projection checkpoint for appends."""
+        if not events:
+            return
+        row = await self._session.get(GraphProjectionSnapshotModel, run_id)
+        projection = _projection_from_snapshot_row(row)
+        if (
+            row is None
+            or row.position != expected_position
+            or _projection_schema_version_from_snapshot_row(row) != PROJECTION_SCHEMA_VERSION
+            or projection is None
+        ):
+            all_events = await self.read_run(run_id)
+            projection = _projection_from_events(all_events)
+            await self.persist_projection_snapshot(run_id, projection, _events_position(all_events))
+            return
+        for event in events:
+            projection = reduce_event(projection, event)
+        await self.persist_projection_snapshot(run_id, projection, _events_position(events))
+
+    async def persist_projection_snapshot(
+        self,
+        run_id: str,
+        projection: GraphProjection,
+        position: int,
+    ) -> GraphProjectionSnapshotModel:
+        """Persist a full projection checkpoint plus compact API columns."""
+        row = await self._session.get(GraphProjectionSnapshotModel, run_id)
+        if row is None:
+            row = GraphProjectionSnapshotModel(run_id=run_id)
+            self._session.add(row)
+        _assign_projection_snapshot(row, run_id, projection, position)
         await self._session.flush()
+        return row
 
     async def commit_read_model_changes(self) -> None:
         """Persist disposable read-model rebuilds performed during API reads."""
@@ -916,7 +1016,7 @@ class GraphEventStore:
     async def rebuild_read_models(self, run_id: str) -> GraphProjectionSnapshotModel | None:
         """Rebuild disposable graph read models for a run from events_v2."""
         await self.delete_read_models(run_id)
-        events = await self.read_run_summary_rebuild(run_id)
+        events = await self.read_run(run_id)
         if not events:
             return None
 
@@ -1151,18 +1251,149 @@ def _projection_snapshot_from_events(
     run_id: str,
     events: list[EventEnvelope],
 ) -> GraphProjectionSnapshotModel:
-    return GraphProjectionSnapshotModel(
-        run_id=run_id,
-        position=max(event.position for event in events),
-        run_state=project_run_state(events),
-        node_states=project_node_states(events),
-        task_states=project_task_states(events),
-        leases=project_leases(events),
-        ready_nodes=project_ready_nodes(events),
-        scheduler=project_scheduler_view(events),
-        lease_view=project_lease_view(events),
-        decisions=project_decision_view(events),
+    row = GraphProjectionSnapshotModel(run_id=run_id)
+    _assign_projection_snapshot(
+        row,
+        run_id,
+        _projection_from_events(events),
+        _events_position(events),
+        events=events,
     )
+    return row
+
+
+def _assign_projection_snapshot(
+    row: GraphProjectionSnapshotModel,
+    run_id: str,
+    projection: GraphProjection,
+    position: int,
+    *,
+    events: list[EventEnvelope] | None = None,
+) -> None:
+    row.run_id = run_id
+    row.position = position
+    row.run_state = projection["run_state"]
+    row.node_states = dict(projection["node_states"])
+    row.task_states = dict(projection["task_states"])
+    row.leases = {lease_id: dict(lease) for lease_id, lease in projection["leases"].items()}
+    row.ready_nodes = list(projection["ready_nodes"])
+    if events is None:
+        row.scheduler = _scheduler_view_from_projection(projection)
+        row.lease_view = _lease_view_from_projection(projection)
+        decisions = dict(project_decision_view_from_projection(projection))
+    else:
+        row.scheduler = dict(project_scheduler_view(events))
+        row.lease_view = dict(project_lease_view(events))
+        decisions = dict(project_decision_view(events))
+    row.decisions = _decisions_with_projection_checkpoint(decisions, projection)
+
+
+def _projection_from_events(events: list[EventEnvelope]) -> GraphProjection:
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+    return projection
+
+
+def _projection_from_snapshot_row(
+    row: GraphProjectionSnapshotModel | None,
+) -> GraphProjection | None:
+    if row is None:
+        return None
+    raw_projection = row.decisions.get(_CHECKPOINT_PROJECTION_KEY)
+    if not isinstance(raw_projection, dict):
+        return None
+    return cast(GraphProjection, {**initial_projection(), **raw_projection})
+
+
+def _projection_schema_version_from_snapshot_row(
+    row: GraphProjectionSnapshotModel | None,
+) -> int | None:
+    if row is None:
+        return None
+    schema_version = row.decisions.get(_CHECKPOINT_SCHEMA_VERSION_KEY)
+    if isinstance(schema_version, int) and not isinstance(schema_version, bool):
+        return schema_version
+    return None
+
+
+def _projection_terminal_from_snapshot_row(row: GraphProjectionSnapshotModel | None) -> bool:
+    if row is None:
+        return False
+    terminal = row.decisions.get(_CHECKPOINT_TERMINAL_KEY)
+    return bool(terminal) if isinstance(terminal, bool) else False
+
+
+def _decisions_with_projection_checkpoint(
+    decisions: dict[str, Any],
+    projection: GraphProjection,
+) -> dict[str, Any]:
+    return {
+        **decisions,
+        _CHECKPOINT_SCHEMA_VERSION_KEY: PROJECTION_SCHEMA_VERSION,
+        _CHECKPOINT_PROJECTION_KEY: cast(dict[str, Any], projection),
+        _CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(projection["run_state"]),
+    }
+
+
+def _events_position(events: list[EventEnvelope]) -> int:
+    if not events:
+        return 0
+    return max(event.position for event in events)
+
+
+def _is_terminal_run_state(run_state: str | None) -> bool:
+    return run_state in {"completed", "failed", "cancelled"}
+
+
+def _scheduler_view_from_projection(projection: GraphProjection) -> dict[str, Any]:
+    view: dict[str, Any] = {
+        "ready": sorted(projection["ready_nodes"]),
+        "blocked": [],
+        "waiting_resources": [],
+        "waiting_gates": [],
+    }
+    for node_id, state in sorted(projection["node_states"].items()):
+        reason = projection.get("last_deferred_reasons", {}).get(node_id)
+        if state == "ready" and reason is None:
+            continue
+        if state not in {"planned", "blocked"}:
+            if state != "ready":
+                continue
+        if reason is None and state != "blocked":
+            continue
+        if reason is None:
+            reason = "blocked"
+        entry = {"node_id": node_id, "reason": reason}
+        if reason.startswith("resource_") or reason.startswith("invalid_claim:"):
+            view["waiting_resources"].append(entry)
+        elif (
+            reason.startswith("gate_")
+            or reason.startswith("waiting_gate")
+            or reason.startswith("authority_")
+        ):
+            view["waiting_gates"].append(entry)
+        else:
+            view["blocked"].append(entry)
+    return view
+
+
+def _lease_view_from_projection(projection: GraphProjection) -> dict[str, Any]:
+    view: dict[str, Any] = {"active": [], "suspended": []}
+    for lease_id, lease in sorted(projection["leases"].items()):
+        state = lease.get("state")
+        if state not in {"active", "suspended"}:
+            continue
+        entry = {
+            "lease_id": lease_id,
+            "node_id": lease.get("node_id"),
+            "generation": lease.get("generation"),
+            "state": state,
+            "execution_id": lease.get("execution_id"),
+            "expires_at": lease.get("expires_at"),
+        }
+        view[state].append(entry)
+    return view
 
 
 def _add_node_detail_summaries(

@@ -55,7 +55,7 @@ def validate_callback(
 ) -> CallbackValidationResult:
     """Validate a callback against prior idempotency events and graph projection."""
 
-    idempotency_result = _validate_idempotency(request, events)
+    idempotency_result = _validate_idempotency(request, projection, events)
     if idempotency_result is not None:
         return idempotency_result
 
@@ -107,8 +107,29 @@ def validate_callback(
 
 def _validate_idempotency(
     request: CallbackRequest,
+    projection: GraphProjection,
     events: list[EventEnvelope],
 ) -> CallbackValidationResult | None:
+    if not _has_full_event_history(events):
+        projected = projection.get("callback_idempotency_events", {}).get(
+            _callback_idempotency_projection_key(request.node_id, request.idempotency_key)
+        )
+        if projected is not None:
+            stored_payload = projected.get("payload")
+            if isinstance(stored_payload, dict):
+                outcome = projected.get("outcome")
+                prior_outcome = outcome if isinstance(outcome, str) else "callback_accepted"
+                prior_payload = cast(dict[str, Any], stored_payload)
+                if _stored_callback_payload(prior_payload) == request.payload:
+                    return CallbackValidationResult(
+                        outcome=CallbackOutcome.DUPLICATE_IDEMPOTENT,
+                        reason="duplicate idempotency key",
+                        prior_result={"outcome": prior_outcome, "payload": prior_payload},
+                    )
+            return CallbackValidationResult(
+                outcome=CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT,
+                reason="idempotency payload conflict",
+            )
     for event in events:
         if event.event_type not in _IDEMPOTENCY_EVENT_TYPES:
             continue
@@ -128,6 +149,14 @@ def _validate_idempotency(
             reason="idempotency payload conflict",
         )
     return None
+
+
+def _has_full_event_history(events: list[EventEnvelope]) -> bool:
+    return bool(events) and events[0].position == 1
+
+
+def _callback_idempotency_projection_key(node_id: str, idempotency_key: str) -> str:
+    return f"{node_id}\0{idempotency_key}"
 
 
 def _stored_callback_payload(event_payload: dict[str, Any]) -> dict[str, Any] | None:

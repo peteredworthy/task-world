@@ -6,12 +6,33 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from orchestrator.db import EventV2Model, create_engine, create_session_factory, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
-from orchestrator.graph_runtime import GraphEventStore, StaleProjectionError
+from orchestrator.config.models import RoutineConfig
+from orchestrator.db import (
+    EventV2Model,
+    GraphProjectionSnapshotModel,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
+from orchestrator.graph import (
+    PROJECTION_SCHEMA_VERSION,
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FakeClock,
+    SequentialIdGenerator,
+    initial_projection,
+    reduce_event,
+)
+from orchestrator.graph_runtime import (
+    GraphController,
+    GraphEventStore,
+    StaleProjectionError,
+    seed_run,
+)
 from orchestrator.graph_runtime.store import graph_aggregate_id
 
 
@@ -42,6 +63,29 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
     )
 
 
+def _routine() -> RoutineConfig:
+    return RoutineConfig.model_validate(
+        {
+            "id": "snapshot-routine",
+            "name": "Snapshot Routine",
+            "steps": [
+                {
+                    "id": "step-1",
+                    "title": "Step 1",
+                    "tasks": [{"id": "task-1", "title": "Task 1"}],
+                }
+            ],
+        }
+    )
+
+
+def _rebuild_projection(events: list[EventEnvelope]) -> dict[str, Any]:
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+    return projection
+
+
 @pytest.mark.asyncio
 async def test_append_read_round_trip(
     session_factory: async_sessionmaker[AsyncSession],
@@ -61,6 +105,351 @@ async def test_append_read_round_trip(
 
     assert [event.position for event in stored] == [1, 2]
     assert read_back == stored
+
+
+@pytest.mark.asyncio
+async def test_projection_snapshot_tail_matches_full_rebuild(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-snapshot-tail-parity"
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+
+    seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
+    started = await controller.handle_command(run_id, accepted.projection_position, "start")
+    await controller.handle_command(
+        run_id,
+        started.projection_position,
+        "schedule_tick",
+        {"max_grants": 0, "base_snapshot_id": "S0"},
+    )
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        events = await store.read_run(run_id)
+        checkpoint = await store.read_projection_checkpoint(run_id)
+
+    assert checkpoint is not None
+    assert checkpoint.position == max(event.position for event in events)
+    assert checkpoint.schema_version == PROJECTION_SCHEMA_VERSION
+    assert checkpoint.projection == _rebuild_projection(events)
+
+
+@pytest.mark.asyncio
+async def test_handle_command_uses_valid_snapshot_without_parsing_old_events(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-command-valid-snapshot-no-replay"
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+
+    seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
+
+    async with session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                update(EventV2Model)
+                .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
+                .where(EventV2Model.version == 1)
+                .values(payload="{not valid event json")
+            )
+
+    result = await controller.handle_command(
+        run_id,
+        accepted.projection_position,
+        "record_requirement_revision",
+        {
+            "requirement_id": "R-1",
+            "version_id": "R-1.v1",
+            "classification": "copy",
+        },
+    )
+
+    assert [event.event_type for event in result.events] == ["requirement_revision_recorded"]
+
+
+@pytest.mark.asyncio
+async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-stale-patch-history"
+    controller = GraphController(
+        session_factory,
+        FakeClock(),
+        SequentialIdGenerator(),
+        auto_dispatch=False,
+    )
+    setup_events = [
+        _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
+        _event(
+            "evt-worker-stale",
+            run_id,
+            "node_created",
+            {"node_id": "worker-stale", "kind": "worker", "role": "builder", "state": "planned"},
+        ),
+        _event(
+            "evt-worker-stale-cancelled",
+            run_id,
+            "node_state_changed",
+            {
+                "node_id": "worker-stale",
+                "old_state": "planned",
+                "new_state": "cancelled",
+                "trigger": "test_conflict",
+            },
+        ),
+    ]
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, setup_events)
+
+    result = await controller.handle_command(
+        run_id,
+        3,
+        "submit_patch",
+        {
+            "patch_id": "patch-stale",
+            "proposed_by_node_id": "planner-1",
+            "base_graph_position": 2,
+            "ops": [{"op": "retire_node", "node_id": "worker-stale"}],
+        },
+    )
+
+    assert [event.event_type for event in result.events] == ["graph_patch_rejected"]
+    assert result.events[0].payload["reason"] == "stale patch conflicts with invalidating events"
+    assert result.events[0].payload["read_set_diff"]["conflicting_event_ids"] == [
+        "evt-worker-stale-cancelled"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_schedule_tick_uses_valid_snapshot_without_parsing_old_events(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-schedule-valid-snapshot-no-replay"
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+
+    seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
+    started = await controller.handle_command(run_id, accepted.projection_position, "start")
+
+    async with session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                update(EventV2Model)
+                .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
+                .where(EventV2Model.version == 1)
+                .values(payload="{not valid event json")
+            )
+
+    result = await controller.handle_command(
+        run_id,
+        started.projection_position,
+        "schedule_tick",
+        {"max_grants": 0, "base_snapshot_id": "S0"},
+    )
+
+    assert all(event.event_type != "command_rejected" for event in result.events)
+
+
+@pytest.mark.asyncio
+async def test_callback_idempotency_uses_valid_snapshot_without_replay(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-callback-idempotency-snapshot"
+    controller = GraphController(
+        session_factory,
+        FakeClock(),
+        SequentialIdGenerator(),
+        auto_dispatch=False,
+    )
+    setup_events = [
+        _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
+        _event(
+            "evt-worker",
+            run_id,
+            "node_created",
+            {"node_id": "planner-1", "kind": "planner", "role": "planner", "state": "running"},
+        ),
+        _event(
+            "evt-lease",
+            run_id,
+            "lease_granted",
+            {
+                "lease_id": "lease-1",
+                "node_id": "planner-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+            },
+        ),
+    ]
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, setup_events)
+
+    payload = {
+        "run_id": run_id,
+        "node_id": "planner-1",
+        "execution_id": "exec-1",
+        "lease_id": "lease-1",
+        "lease_generation": 1,
+        "base_snapshot_id": "S0",
+        "observed_graph_position": 3,
+        "idempotency_key": "callback-key-1",
+    }
+    first = await controller.handle_command(run_id, 3, "submit_callback", payload)
+    second = await controller.handle_command(
+        run_id,
+        first.projection_position,
+        "submit_callback",
+        payload,
+    )
+
+    assert [event.event_type for event in first.events] == [
+        "callback_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert [event.event_type for event in second.events] == ["callback_duplicate_returned"]
+    assert second.events[0].payload["prior_result"]["outcome"] == "callback_accepted"
+
+
+@pytest.mark.asyncio
+async def test_projection_snapshot_schema_mismatch_is_rebuilt(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-snapshot-version-rebuild"
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+
+    seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
+
+    async with session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                update(GraphProjectionSnapshotModel)
+                .where(GraphProjectionSnapshotModel.run_id == run_id)
+                .values(
+                    decisions={
+                        "_projection_schema_version": PROJECTION_SCHEMA_VERSION - 1,
+                        "_projection_checkpoint": {"bad": "data"},
+                        "_projection_terminal": False,
+                    }
+                )
+            )
+
+    await controller.handle_command(run_id, accepted.projection_position, "start")
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        events = await store.read_run(run_id)
+        checkpoint = await store.read_projection_checkpoint(run_id)
+
+    assert checkpoint is not None
+    assert checkpoint.schema_version == PROJECTION_SCHEMA_VERSION
+    assert checkpoint.projection == _rebuild_projection(events)
+
+
+@pytest.mark.asyncio
+async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-idle-deferral-dedup"
+    controller = GraphController(
+        session_factory,
+        FakeClock(),
+        SequentialIdGenerator(),
+        auto_dispatch=False,
+    )
+    setup_events = [
+        _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
+        _event(
+            "evt-worker",
+            run_id,
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "state": "planned"},
+        ),
+    ]
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, setup_events)
+
+    first = await controller.handle_command(
+        run_id,
+        2,
+        "schedule_tick",
+        {"max_grants": 0, "base_snapshot_id": "S0"},
+    )
+    second = await controller.handle_command(
+        run_id,
+        first.projection_position,
+        "schedule_tick",
+        {"max_grants": 0, "base_snapshot_id": "S0"},
+    )
+
+    first_deferrals = [event for event in first.events if event.event_type == "node_deferred"]
+    second_deferrals = [event for event in second.events if event.event_type == "node_deferred"]
+    assert len(first_deferrals) == 1
+    assert second_deferrals == []
+
+    async with session_factory() as session:
+        snapshot = await GraphEventStore(session).read_projection_snapshot(run_id)
+
+    assert snapshot is not None
+    assert snapshot.scheduler["blocked"] == [
+        {"node_id": "worker-1", "reason": first_deferrals[0].payload["reason"]}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_projection_checkpoint_records_terminal_flag(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    terminal_run_id = "store-terminal-recovery-skip"
+    active_run_id = "store-active-recovery-arm"
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            await store.append_events(
+                terminal_run_id,
+                0,
+                [
+                    _event(
+                        "evt-terminal",
+                        terminal_run_id,
+                        "run_lifecycle_changed",
+                        {"to_state": "completed"},
+                    )
+                ],
+            )
+            await store.append_events(
+                active_run_id,
+                0,
+                [
+                    _event(
+                        "evt-active",
+                        active_run_id,
+                        "run_lifecycle_changed",
+                        {"to_state": "active"},
+                    )
+                ],
+            )
+            terminal_checkpoint = await store.read_projection_checkpoint(terminal_run_id)
+            active_checkpoint = await store.read_projection_checkpoint(active_run_id)
+
+    assert terminal_checkpoint is not None
+    assert active_checkpoint is not None
+    assert terminal_checkpoint.terminal is True
+    assert active_checkpoint.terminal is False
 
 
 @pytest.mark.asyncio

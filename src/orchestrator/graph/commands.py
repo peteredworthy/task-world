@@ -1,6 +1,6 @@
 """Pure command applier for execution graph fixtures."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import replace
 from datetime import datetime, timedelta
 import posixpath
@@ -195,7 +195,7 @@ def _apply_lifecycle_command(
             ]
     trigger = payload.get("trigger", f"{command_type}_command_accepted")
     output: list[EventEnvelope] = []
-    if command_type == "complete" and not _has_passed_completion_decision(events):
+    if command_type == "complete" and not _has_passed_completion_decision(projection, events):
         output.append(_lifecycle_completion_decision_event(payload, make_event, id_gen))
     output.append(
         _lifecycle_event(
@@ -211,15 +211,23 @@ def _apply_lifecycle_command(
     return output
 
 
-def _has_passed_completion_decision(events: list[EventEnvelope]) -> bool:
-    for event in events:
-        if event.event_type != "output_record_accepted":
+def _has_passed_completion_decision(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+) -> bool:
+    payloads: Iterable[dict[str, Any]]
+    if _has_full_event_history(events):
+        payloads = [
+            event.payload for event in events if event.event_type == "output_record_accepted"
+        ]
+    else:
+        payloads = projection.get("output_record_payloads", {}).values()
+    for event_payload in payloads:
+        if event_payload.get("record_type") != "completion_decision":
             continue
-        if event.payload.get("record_type") != "completion_decision":
+        if event_payload.get("port") != "completion_decision":
             continue
-        if event.payload.get("port") != "completion_decision":
-            continue
-        value = event.payload.get("value")
+        value = event_payload.get("value")
         if isinstance(value, dict) and cast(dict[str, Any], value).get("status") == "passed":
             return True
     return False
@@ -2007,7 +2015,7 @@ def _apply_patch_command(
             )
         ]
 
-    current_position = _current_position(events)
+    current_position = _current_position(events, payload)
     events_since_base = [event for event in events if event.position > patch.base_graph_position]
     result = validate_patch(patch, current_position, events_since_base, projection, actor_role)
     if not result.accepted:
@@ -2278,16 +2286,14 @@ def _apply_schedule_tick(
         if node_state not in {"planned", "blocked", "ready"}:
             continue
         node = _node_schedule_info(projection, events, payload, node_id)
-        backoff_reason = _retry_backoff_deferred_reason(events, node_id, clock.now())
+        backoff_reason = _retry_backoff_deferred_reason(projection, events, node_id, clock.now())
         if backoff_reason is not None:
-            output.append(
-                make_event(
-                    "node_deferred",
-                    {
-                        "node_id": node_id,
-                        "reason": backoff_reason,
-                    },
-                )
+            _append_node_deferred_if_changed(
+                output,
+                projection,
+                node_id,
+                backoff_reason,
+                make_event,
             )
             continue
         readiness_node = replace(node, state="planned") if node_state == "ready" else node
@@ -2298,14 +2304,12 @@ def _apply_schedule_tick(
             active_claims,
         )
         if not ready:
-            output.append(
-                make_event(
-                    "node_deferred",
-                    {
-                        "node_id": node_id,
-                        "reason": reason,
-                    },
-                )
+            _append_node_deferred_if_changed(
+                output,
+                projection,
+                node_id,
+                reason,
+                make_event,
             )
             continue
         if node_state != "ready":
@@ -2326,7 +2330,7 @@ def _apply_schedule_tick(
         nodes,
         projection["run_state"] or "draft",
         active_claims,
-        _current_position(events),
+        _current_position(events, payload),
         max_grants=int(payload.get("max_grants", 10)),
     )
     lease_seconds = int(payload.get("lease_seconds", 300))
@@ -2339,11 +2343,12 @@ def _apply_schedule_tick(
         )
         base_snapshot_id = _base_snapshot_id_for_node(projection, payload, node_id)
         if base_snapshot_id is None:
-            output.append(
-                make_event(
-                    "node_deferred",
-                    {"node_id": node_id, "reason": "missing_base_snapshot"},
-                )
+            _append_node_deferred_if_changed(
+                output,
+                projection,
+                node_id,
+                "missing_base_snapshot",
+                make_event,
             )
             continue
         if node_id not in readied_node_ids:
@@ -2387,16 +2392,26 @@ def _apply_schedule_tick(
             )
         )
     for node_id in decision.deferred:
-        output.append(
-            make_event(
-                "node_deferred",
-                {
-                    "node_id": node_id,
-                    "reason": decision.deferred_reasons[node_id],
-                },
-            )
+        _append_node_deferred_if_changed(
+            output,
+            projection,
+            node_id,
+            decision.deferred_reasons[node_id],
+            make_event,
         )
     return output
+
+
+def _append_node_deferred_if_changed(
+    output: list[EventEnvelope],
+    projection: GraphProjection,
+    node_id: str,
+    reason: str,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> None:
+    if projection.get("last_deferred_reasons", {}).get(node_id) == reason:
+        return
+    output.append(make_event("node_deferred", {"node_id": node_id, "reason": reason}))
 
 
 def _failed_check_recovery_events(
@@ -2416,7 +2431,7 @@ def _failed_check_recovery_events(
     if not any(state != "accepted" for state in projection["task_states"].values()):
         return []
 
-    routine_snapshot = _latest_routine_snapshot_record(events)
+    routine_snapshot = _latest_routine_snapshot_record(projection, events)
     if routine_snapshot is None:
         return []
 
@@ -2473,7 +2488,7 @@ def _failed_check_recovery_events(
         ]
         for edge in recovery_edges:
             output.append(make_event("edge_created", edge))
-            output.extend(_input_bound_events_for_edge(events, edge, make_event))
+            output.extend(_input_bound_events_for_projected_edge(projection, edge, make_event))
     return output
 
 
@@ -2490,12 +2505,12 @@ def _failed_verification_recovery_events(
     if not any(state != "accepted" for state in projection["task_states"].values()):
         return []
 
-    routine_snapshot = _latest_routine_snapshot_record(events)
+    routine_snapshot = _latest_routine_snapshot_record(projection, events)
     if routine_snapshot is None:
         return []
 
     output: list[EventEnvelope] = []
-    for verification in _current_failed_verification_results(events):
+    for verification in _current_failed_verification_results(projection, events):
         recovery_node_id = _failed_verification_recovery_node_id(verification)
         if recovery_node_id in projection["node_states"]:
             continue
@@ -2550,11 +2565,16 @@ def _failed_verification_recovery_events(
         ]
         for edge in recovery_edges:
             output.append(make_event("edge_created", edge))
-            output.extend(_input_bound_events_for_edge(events, edge, make_event))
+            output.extend(_input_bound_events_for_projected_edge(projection, edge, make_event))
     return output
 
 
-def _current_failed_verification_results(events: list[EventEnvelope]) -> list[dict[str, str]]:
+def _current_failed_verification_results(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+) -> list[dict[str, str]]:
+    if not _has_full_event_history(events) and projection.get("failed_verification_results"):
+        return [dict(result) for result in projection["failed_verification_results"].values()]
     latest_by_record_id: dict[str, dict[str, str]] = {}
     passed_candidates: set[str] = set()
     for event in events:
@@ -2602,7 +2622,7 @@ def _passed_verification_terminalization_events(
         return []
 
     output: list[EventEnvelope] = []
-    for verification in _current_passed_verification_results(events):
+    for verification in _current_passed_verification_results(projection, events):
         retirable_node_ids = _unreachable_failure_branch_node_ids(
             projection,
             verification["node_id"],
@@ -2685,17 +2705,17 @@ def _completed_no_successor_recovery(
     projection: GraphProjection,
     events: list[EventEnvelope],
 ) -> dict[str, str] | None:
-    recovery_nodes = _recovery_nodes_by_record_id(events)
+    recovery_nodes = _recovery_nodes_by_record_id(projection, events)
     for failed in [
         *_current_failed_check_results(projection),
-        *_current_failed_verification_results(events),
+        *_current_failed_verification_results(projection, events),
     ]:
         record_id = failed["record_id"]
         for recovery in recovery_nodes.get(record_id, []):
             node_id = recovery["node_id"]
             if projection["node_states"].get(node_id) != "completed":
                 continue
-            patch_id = _accepted_no_successor_patch_id(events, node_id)
+            patch_id = _accepted_no_successor_patch_id(projection, events, node_id)
             if patch_id is None:
                 continue
             return {
@@ -2711,7 +2731,15 @@ def _completed_no_successor_recovery(
     return None
 
 
-def _recovery_nodes_by_record_id(events: list[EventEnvelope]) -> dict[str, list[dict[str, str]]]:
+def _recovery_nodes_by_record_id(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+) -> dict[str, list[dict[str, str]]]:
+    if not _has_full_event_history(events) and projection.get("recovery_nodes_by_record_id"):
+        return {
+            record_id: [dict(node) for node in nodes]
+            for record_id, nodes in projection["recovery_nodes_by_record_id"].items()
+        }
     output: dict[str, list[dict[str, str]]] = {}
     for event in events:
         if event.event_type != "node_created":
@@ -2734,7 +2762,13 @@ def _recovery_nodes_by_record_id(events: list[EventEnvelope]) -> dict[str, list[
     return output
 
 
-def _accepted_no_successor_patch_id(events: list[EventEnvelope], node_id: str) -> str | None:
+def _accepted_no_successor_patch_id(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    node_id: str,
+) -> str | None:
+    if not _has_full_event_history(events):
+        return projection.get("no_successor_patch_ids_by_node", {}).get(node_id)
     patch_id: str | None = None
     for event in events:
         if event.event_type != "graph_patch_accepted":
@@ -2786,11 +2820,16 @@ def _passed_verification_final_check_edges(
             },
         }
         output.append(make_event("edge_created", edge))
-        output.extend(_input_bound_events_for_edge(events, edge, make_event))
+        output.extend(_input_bound_events_for_projected_edge(projection, edge, make_event))
     return output
 
 
-def _current_passed_verification_results(events: list[EventEnvelope]) -> list[dict[str, str]]:
+def _current_passed_verification_results(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+) -> list[dict[str, str]]:
+    if not _has_full_event_history(events) and projection.get("passed_verification_results"):
+        return [dict(result) for result in projection["passed_verification_results"].values()]
     latest_by_record_id: dict[str, dict[str, str]] = {}
     failed_candidates: set[str] = set()
     for event in events:
@@ -3046,7 +3085,13 @@ def _has_existing_failed_check_recovery(
     return False
 
 
-def _latest_routine_snapshot_record(events: list[EventEnvelope]) -> dict[str, str] | None:
+def _latest_routine_snapshot_record(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+) -> dict[str, str] | None:
+    if not _has_full_event_history(events):
+        latest = projection.get("latest_routine_snapshot_record")
+        return dict(latest) if latest is not None else None
     latest: dict[str, str] | None = None
     for event in events:
         if event.event_type != "output_record_accepted":
@@ -3117,11 +3162,14 @@ def _base_snapshot_id_for_node(
 
 
 def _retry_backoff_deferred_reason(
+    projection: GraphProjection,
     events: list[EventEnvelope],
     node_id: str,
     now: datetime,
 ) -> str | None:
     retry_not_before: str | None = None
+    if not _has_full_event_history(events):
+        retry_not_before = projection.get("retry_not_before_by_node", {}).get(node_id)
     for event in events:
         if event.event_type != "runtime_retry_scheduled":
             continue
@@ -3903,8 +3951,8 @@ def _apply_record_cleanup_applied(
     if not isinstance(cleanup_id, str) or not cleanup_id:
         return [_command_rejected(make_event, "record_cleanup_applied", "missing cleanup_id")]
 
-    requested = _cleanup_requested_event(events, cleanup_id)
-    if requested is None:
+    requested_payload = _cleanup_requested_payload(projection, events, cleanup_id)
+    if requested_payload is None:
         return [
             _command_rejected(
                 make_event,
@@ -3912,7 +3960,7 @@ def _apply_record_cleanup_applied(
                 f"unknown cleanup_requested: {cleanup_id}",
             )
         ]
-    if _cleanup_applied_exists(events, cleanup_id):
+    if _cleanup_applied_exists(projection, events, cleanup_id):
         return [
             _command_rejected(
                 make_event,
@@ -3921,7 +3969,7 @@ def _apply_record_cleanup_applied(
             )
         ]
 
-    record_id = requested.payload.get("file_state_record_id")
+    record_id = requested_payload.get("file_state_record_id")
     if not isinstance(record_id, str) or record_id not in projection["file_state_records"]:
         return [
             _command_rejected(
@@ -3931,7 +3979,7 @@ def _apply_record_cleanup_applied(
             )
         ]
     compromised_record = projection["file_state_records"][record_id]
-    requested_snapshot_id = requested.payload.get("snapshot_id")
+    requested_snapshot_id = requested_payload.get("snapshot_id")
     compromised_snapshot_id = compromised_record.get("snapshot_id")
     if requested_snapshot_id != compromised_snapshot_id:
         return [
@@ -3978,7 +4026,7 @@ def _apply_record_cleanup_applied(
                 "superseding record must use a different snapshot_id",
             )
         ]
-    secret_paths = _cleanup_secret_paths(requested.payload)
+    secret_paths = _cleanup_secret_paths(requested_payload)
     retained_secret_path = _record_contains_any_path(record_payload, secret_paths)
     if retained_secret_path is not None:
         return [
@@ -4003,12 +4051,12 @@ def _apply_record_cleanup_applied(
         "cleanup_id": cleanup_id,
         "file_state_record_id": record_id,
         "superseding_record_id": record.record_id,
-        "old_snapshot_id": requested.payload.get("snapshot_id"),
+        "old_snapshot_id": requested_payload.get("snapshot_id"),
         "new_snapshot_id": record.snapshot_id,
-        "paths": requested.payload.get("paths", []),
-        "authority": requested.payload.get("authority", "gatekeeper"),
-        "reason": payload.get("reason", requested.payload.get("reason")),
-        "execution_id": requested.payload.get("execution_id"),
+        "paths": requested_payload.get("paths", []),
+        "authority": requested_payload.get("authority", "gatekeeper"),
+        "reason": payload.get("reason", requested_payload.get("reason")),
+        "execution_id": requested_payload.get("execution_id"),
         "deleted_snapshot_ref": payload.get("deleted_snapshot_ref") is True,
     }
     accepted_payload = record.model_dump(mode="json")
@@ -4096,19 +4144,43 @@ def _apply_record_support_evidence(
     return [make_event("support_evidence_recorded", event_payload)]
 
 
-def _cleanup_requested_event(
+def _cleanup_requested_payload(
+    projection: GraphProjection,
     events: list[EventEnvelope],
     cleanup_id: str,
-) -> EventEnvelope | None:
-    for event in events:
-        if event.event_type != "cleanup_requested":
+) -> dict[str, Any] | None:
+    if _has_full_event_history(events):
+        for event in events:
+            if event.event_type != "cleanup_requested":
+                continue
+            if event.payload.get("cleanup_id") == cleanup_id:
+                return event.payload
+        return None
+    for record_id, record in projection.get("file_state_records", {}).items():
+        if record.get("cleanup_id") != cleanup_id:
             continue
-        if event.payload.get("cleanup_id") == cleanup_id:
-            return event
+        return {
+            "cleanup_id": cleanup_id,
+            "file_state_record_id": record_id,
+            "snapshot_id": record.get("snapshot_id"),
+            "paths": record.get("compromised_paths", []),
+            "reason": record.get("cleanup_reason"),
+        }
     return None
 
 
-def _cleanup_applied_exists(events: list[EventEnvelope], cleanup_id: str) -> bool:
+def _cleanup_applied_exists(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    cleanup_id: str,
+) -> bool:
+    if not _has_full_event_history(events):
+        return any(
+            record.get("cleanup_id") == cleanup_id
+            and record.get("superseded_pending") is False
+            and record.get("superseded_by_record_id") is not None
+            for record in projection.get("file_state_records", {}).values()
+        )
     return any(
         event.event_type == "cleanup_applied" and event.payload.get("cleanup_id") == cleanup_id
         for event in events
@@ -4619,7 +4691,7 @@ def _node_schedule_info(
         state=projection["node_states"][node_id],
         priority=int(priorities.get(node_id, 0)),
         region_order=int(region_order.get(node_id, 0)),
-        creation_position=_node_creation_position(events, node_id),
+        creation_position=_node_creation_position(projection, events, node_id),
         resource_claims=[
             _claim_from_dict(claim) for claim in projection["node_resource_claims"].get(node_id, [])
         ],
@@ -4651,7 +4723,13 @@ def _node_schedule_info(
     )
 
 
-def _node_creation_position(events: list[EventEnvelope], node_id: str) -> int:
+def _node_creation_position(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    node_id: str,
+) -> int:
+    if not _has_full_event_history(events):
+        return projection.get("node_creation_positions", {}).get(node_id, 0)
     for event in events:
         if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
             return event.position
@@ -4844,6 +4922,60 @@ def _input_bound_events_for_edge(
     return output
 
 
+def _input_bound_events_for_projected_edge(
+    projection: GraphProjection,
+    edge_payload: dict[str, Any],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    if edge_payload.get("dependency_type", "input_binding") != "input_binding":
+        return []
+    edge_id = edge_payload.get("edge_id")
+    from_node_id = edge_payload.get("from_node_id")
+    from_port = edge_payload.get("from_port")
+    to_node_id = edge_payload.get("to_node_id")
+    to_port = edge_payload.get("to_port")
+    if not all(
+        isinstance(value, str) for value in (edge_id, from_node_id, from_port, to_node_id, to_port)
+    ):
+        return []
+
+    output: list[EventEnvelope] = []
+    record_ids = projection["node_output_ports"].get(cast(str, from_node_id), {}).get(
+        cast(str, from_port),
+        [],
+    )
+    for record_id in record_ids:
+        record_payload = projection.get("output_record_payloads", {}).get(record_id)
+        if record_payload is None:
+            continue
+        if not _record_matches_selector(
+            edge_payload.get("accepted_record_selector"),
+            record_payload,
+            _record_selector_aliases(record_payload),
+        ):
+            continue
+        binding_payload: dict[str, Any] = {
+            "edge_id": edge_id,
+            "to_node_id": to_node_id,
+            "to_port": to_port,
+            "record_ids": [record_id],
+            "bound_at_position": 0,
+            "trigger": "edge_backfill",
+        }
+        binding_policy = edge_payload.get("binding_policy")
+        if isinstance(binding_policy, str):
+            binding_payload["binding_policy"] = binding_policy
+        supersedes_record_id = record_payload.get("supersedes_record_id")
+        if isinstance(supersedes_record_id, str):
+            binding_payload["supersedes_record_id"] = supersedes_record_id
+        output.append(make_event("input_bound", binding_payload))
+    return output
+
+
+def _has_full_event_history(events: list[EventEnvelope]) -> bool:
+    return bool(events) and events[0].position == 1
+
+
 def _record_selector_aliases(record_payload: dict[str, Any]) -> set[str]:
     record_kind = record_payload.get("record_kind")
     if record_kind == "verification":
@@ -4884,8 +5016,14 @@ def _run_id(events: list[EventEnvelope], payload: dict[str, Any]) -> str:
     return "run-1"
 
 
-def _current_position(events: list[EventEnvelope]) -> int:
+def _current_position(
+    events: list[EventEnvelope],
+    payload: dict[str, Any] | None = None,
+) -> int:
     if not events:
+        current = (payload or {}).get("_current_graph_position")
+        if isinstance(current, int) and not isinstance(current, bool):
+            return current
         return -1
     return max(event.position for event in events)
 

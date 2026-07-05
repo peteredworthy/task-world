@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.db import (
@@ -507,6 +507,64 @@ async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_
     projection = rebuild_projection(await _read_events(session_factory, run_id))
     assert projection["leases"][lease_id]["state"] == "active"
     assert projection["node_states"]["worker-1"] == "leased"
+
+
+@pytest.mark.asyncio
+async def test_recover_without_run_id_skips_terminal_snapshot_without_replay(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, session_factory = file_db
+    terminal_run_id = "recover-skip-terminal"
+    active_run_id = "recover-reconcile-active"
+    clock = FixedClock()
+    ids = SequentialIds()
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(
+                terminal_run_id,
+                0,
+                [
+                    _event(
+                        "terminal-completed",
+                        terminal_run_id,
+                        "run_lifecycle_changed",
+                        {"from_state": "active", "to_state": "completed"},
+                    )
+                ],
+            )
+    await _seed_runnable_worker(session_factory, active_run_id)
+    await controller.handle_command(
+        active_run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0"},
+    )
+
+    async with session_factory() as session:
+        async with session.begin():
+            await session.execute(
+                update(EventV2Model)
+                .where(EventV2Model.aggregate_id == graph_aggregate_id(terminal_run_id))
+                .values(payload="{terminal event would fail if replayed")
+            )
+
+    call_log: list[str] = []
+    dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
+    report = await recover(session_factory, dispatcher)
+
+    assert report.awaiting_start_ack == [
+        {
+            "run_id": active_run_id,
+            "lease_id": "lease-3",
+            "node_id": "worker-1",
+            "generation": 1,
+            "execution_id": "exec-4",
+            "classification": "awaiting_start_ack",
+        }
+    ]
+    assert report.awaiting_callback == []
 
 
 @pytest.mark.asyncio
