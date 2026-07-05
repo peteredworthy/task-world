@@ -36,7 +36,7 @@ from orchestrator.graph_runtime.horizon_templates import (
     instantiate_horizon_template,
 )
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, SideEffectExecutor
-from orchestrator.graph_runtime.recovery import RecoveryReport, recover
+from orchestrator.graph_runtime.recovery import RecoveryReport, recover, reconcile_graph
 from orchestrator.graph_runtime.seeding import SeedRunResult, seed_run
 from orchestrator.graph_runtime.store import GraphEventStore
 
@@ -73,6 +73,7 @@ __all__ = [
     "metadata_from_file_state_record",
     "policy_with_pattern_library",
     "recover",
+    "reconcile_graph",
     "reconcile_runtime",
     "seed_run",
 ]

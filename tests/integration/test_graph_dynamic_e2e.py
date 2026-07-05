@@ -834,6 +834,7 @@ async def test_dynamic_full_happy_path_completes(
     ]
     assert outcome.completed is True, outcome.blocked_reason
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
+    assert not any(event.causation_id == "reconcile" for event in events)
 
     accepted_patches = [
         event.payload.get("patch_id")

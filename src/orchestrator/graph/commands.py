@@ -49,7 +49,11 @@ from orchestrator.graph.models import (
 )
 from orchestrator.graph.file_state import GATEKEEPER_TAXONOMY
 from orchestrator.graph.patch_validator import validate_patch
-from orchestrator.graph.projections import GraphProjection, final_invariant_blockers_for_events
+from orchestrator.graph.projections import (
+    GraphProjection,
+    final_invariant_blockers_for_events,
+    reduce_event,
+)
 from orchestrator.graph.scheduler import (
     InputEdgeInfo,
     NodeScheduleInfo,
@@ -125,6 +129,8 @@ def apply_command(
         return _apply_patch_command(projection, events, payload, make_event)
     if command_type == "schedule_tick":
         return _apply_schedule_tick(projection, events, payload, clock, id_gen, make_event)
+    if command_type == "reconcile":
+        return _apply_reconcile(projection, events, make_event)
     if command_type == "acknowledge_start":
         return _apply_acknowledge_start(projection, payload, make_event)
     if command_type == "agent_died":
@@ -799,6 +805,7 @@ def _apply_callback_command(
         )
         if session_event is not None:
             output.append(session_event)
+    output.extend(_source_repair_events(projection, events, output, make_event))
     return output
 
 
@@ -1542,6 +1549,18 @@ def _verification_report_record_payload_for_validation(
     return output
 
 
+def _check_result_status_value(payload: dict[str, Any]) -> str:
+    status = payload.get("status")
+    if isinstance(status, str):
+        return status
+    value = payload.get("value")
+    if isinstance(value, dict):
+        value_status = cast(dict[str, Any], value).get("status")
+        if isinstance(value_status, str):
+            return value_status
+    return "unknown"
+
+
 def _check_result_record_payload_for_validation(
     payload: dict[str, Any],
     expected_producer_node_id: str,
@@ -2184,6 +2203,7 @@ def _apply_patch_command(
                 },
             )
         )
+    output.extend(_source_repair_events(projection, events, output, make_event))
     return output
 
 
@@ -2275,42 +2295,6 @@ def _apply_schedule_tick(
         and lease.get("lease_id") not in expired_lease_ids
         and isinstance(lease.get("node_id"), str)
     ]
-    output.extend(
-        _failed_check_recovery_events(
-            projection,
-            active_lease_node_ids,
-            make_event,
-        )
-    )
-    output.extend(
-        _failed_verification_recovery_events(
-            projection,
-            active_lease_node_ids,
-            make_event,
-        )
-    )
-    output.extend(
-        _passed_verification_terminalization_events(
-            projection,
-            active_lease_node_ids,
-            make_event,
-        )
-    )
-    output.extend(
-        _passed_check_terminalization_events(
-            projection,
-            active_lease_node_ids,
-            make_event,
-        )
-    )
-    terminal_failure_events = _no_successor_recovery_terminal_failure_events(
-        projection,
-        active_lease_node_ids,
-        make_event,
-    )
-    if terminal_failure_events:
-        output.extend(terminal_failure_events)
-        return output
     retiring_node_ids = {
         event.payload["node_id"]
         for event in output
@@ -2445,10 +2429,196 @@ def _apply_schedule_tick(
     return output
 
 
+def _apply_reconcile(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    run_state = projection["run_state"]
+    if run_state in TERMINAL_RUN_STATES:
+        return [_command_rejected(make_event, "reconcile", f"terminal run: {run_state}")]
+    return _repair_events(projection, make_event)
+
+
+def _source_repair_events(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    source_events: list[EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    accepted_records = [
+        event.payload
+        for event in source_events
+        if event.event_type == "output_record_accepted"
+        and isinstance(event.payload.get("record_id"), str)
+    ]
+    repair_node_ids = {
+        node_id
+        for event in source_events
+        for node_id in (
+            event.payload.get("proposed_by_node_id"),
+            event.payload.get("node_id"),
+        )
+        if (
+            event.event_type == "graph_patch_accepted"
+            or (
+                event.event_type == "node_state_changed"
+                and event.payload.get("new_state") == "completed"
+            )
+        )
+        and isinstance(node_id, str)
+    }
+    patch_or_completion = bool(repair_node_ids)
+    if not accepted_records and not patch_or_completion:
+        return []
+
+    scoped_projection = _project_with_events(projection, source_events)
+    active_lease_node_ids = _active_lease_node_ids(scoped_projection)
+    output: list[EventEnvelope] = []
+    for record in accepted_records:
+        record_id = cast(str, record["record_id"])
+        producer_node_id = record.get("producer_node_id") or record.get("node_id")
+        if not isinstance(producer_node_id, str):
+            continue
+        if _is_check_result_record_payload(record):
+            status = _check_result_status_value(record)
+            if status in {"passed", "pass", "ok"}:
+                output.extend(
+                    _passed_check_terminalization_events(
+                        scoped_projection,
+                        active_lease_node_ids,
+                        make_event,
+                        check_node_ids={producer_node_id},
+                    )
+                )
+            else:
+                output.extend(
+                    _failed_check_recovery_events(
+                        scoped_projection,
+                        active_lease_node_ids,
+                        make_event,
+                        record_ids={record_id},
+                    )
+                )
+            continue
+        if record.get("record_kind") == "verification":
+            verdict = record.get("verdict")
+            value = record.get("value")
+            if verdict is None and isinstance(value, dict):
+                verdict = cast(dict[str, Any], value).get("verdict")
+            if verdict in {"passed", "pass"}:
+                output.extend(
+                    _passed_verification_terminalization_events(
+                        scoped_projection,
+                        active_lease_node_ids,
+                        make_event,
+                        record_ids={record_id},
+                    )
+                )
+            elif verdict in {"failed", "fail"}:
+                output.extend(
+                    _failed_verification_recovery_events(
+                        scoped_projection,
+                        active_lease_node_ids,
+                        make_event,
+                        record_ids={record_id},
+                    )
+                )
+    if patch_or_completion:
+        output.extend(
+            _no_successor_recovery_terminal_failure_events(
+                scoped_projection,
+                active_lease_node_ids,
+                make_event,
+                recovery_node_ids=repair_node_ids,
+            )
+        )
+    return _dedupe_repair_events(output)
+
+
+def _repair_events(
+    projection: GraphProjection,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    active_lease_node_ids = _active_lease_node_ids(projection)
+    output: list[EventEnvelope] = []
+    output.extend(
+        _failed_check_recovery_events(
+            projection,
+            active_lease_node_ids,
+            make_event,
+        )
+    )
+    output.extend(
+        _failed_verification_recovery_events(
+            projection,
+            active_lease_node_ids,
+            make_event,
+        )
+    )
+    output.extend(
+        _passed_verification_terminalization_events(
+            projection,
+            active_lease_node_ids,
+            make_event,
+        )
+    )
+    output.extend(
+        _passed_check_terminalization_events(
+            projection,
+            active_lease_node_ids,
+            make_event,
+        )
+    )
+    output.extend(
+        _no_successor_recovery_terminal_failure_events(
+            projection,
+            active_lease_node_ids,
+            make_event,
+        )
+    )
+    return _dedupe_repair_events(output)
+
+
+def _active_lease_node_ids(projection: GraphProjection) -> list[str]:
+    return [
+        str(lease["node_id"])
+        for lease in projection["leases"].values()
+        if lease.get("state") == "active" and isinstance(lease.get("node_id"), str)
+    ]
+
+
+def _project_with_events(
+    projection: GraphProjection,
+    source_events: list[EventEnvelope],
+) -> GraphProjection:
+    output = projection
+    for event in source_events:
+        output = reduce_event(output, event)
+    return output
+
+
+def _dedupe_repair_events(repair_events: list[EventEnvelope]) -> list[EventEnvelope]:
+    seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
+    output: list[EventEnvelope] = []
+    for event in repair_events:
+        key = (
+            event.event_type,
+            tuple(sorted((key, repr(value)) for key, value in event.payload.items())),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        output.append(event)
+    return output
+
+
 def _failed_check_recovery_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    *,
+    record_ids: set[str] | None = None,
 ) -> list[EventEnvelope]:
     if projection["run_state"] != "active":
         return []
@@ -2467,6 +2637,8 @@ def _failed_check_recovery_events(
 
     output: list[EventEnvelope] = []
     for failed_check in _current_failed_check_results(projection):
+        if record_ids is not None and failed_check["record_id"] not in record_ids:
+            continue
         recovery_node_id = _failed_check_recovery_node_id(failed_check)
         if recovery_node_id in projection["node_states"]:
             continue
@@ -2541,6 +2713,8 @@ def _failed_verification_recovery_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    *,
+    record_ids: set[str] | None = None,
 ) -> list[EventEnvelope]:
     if projection["run_state"] != "active":
         return []
@@ -2555,6 +2729,8 @@ def _failed_verification_recovery_events(
 
     output: list[EventEnvelope] = []
     for verification in _current_failed_verification_results(projection):
+        if record_ids is not None and verification["record_id"] not in record_ids:
+            continue
         recovery_node_id = _failed_verification_recovery_node_id(verification)
         if recovery_node_id in projection["node_states"]:
             continue
@@ -2703,6 +2879,8 @@ def _passed_verification_terminalization_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    *,
+    record_ids: set[str] | None = None,
 ) -> list[EventEnvelope]:
     if projection["run_state"] != "active":
         return []
@@ -2713,6 +2891,8 @@ def _passed_verification_terminalization_events(
     passed_verifications = _current_passed_verification_results(projection)
     latest_passed_verification = passed_verifications[-1] if passed_verifications else None
     for verification in passed_verifications:
+        if record_ids is not None and verification["record_id"] not in record_ids:
+            continue
         retirable_node_ids = _unreachable_failure_branch_node_ids(
             projection,
             verification["node_id"],
@@ -2737,6 +2917,8 @@ def _passed_check_terminalization_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    *,
+    check_node_ids: set[str] | None = None,
 ) -> list[EventEnvelope]:
     if projection["run_state"] != "active":
         return []
@@ -2745,6 +2927,8 @@ def _passed_check_terminalization_events(
 
     output: list[EventEnvelope] = []
     for check_node_id, result in sorted(projection["check_results"].items()):
+        if check_node_ids is not None and check_node_id not in check_node_ids:
+            continue
         if result.get("status") not in {"passed", "pass", "ok"}:
             continue
         for node_id in _unreachable_check_failure_branch_node_ids(projection, check_node_id):
@@ -2756,6 +2940,8 @@ def _no_successor_recovery_terminal_failure_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    *,
+    recovery_node_ids: set[str] | None = None,
 ) -> list[EventEnvelope]:
     if projection["run_state"] != "active":
         return []
@@ -2769,7 +2955,10 @@ def _no_successor_recovery_terminal_failure_events(
     if not any(state != "accepted" for state in projection["task_states"].values()):
         return []
 
-    terminal = _completed_no_successor_recovery(projection)
+    terminal = _completed_no_successor_recovery(
+        projection,
+        recovery_node_ids=recovery_node_ids,
+    )
     if terminal is None:
         return []
     if terminal.get("environment_failure") == "true":
@@ -2793,6 +2982,8 @@ def _no_successor_recovery_terminal_failure_events(
 
 def _completed_no_successor_recovery(
     projection: GraphProjection,
+    *,
+    recovery_node_ids: set[str] | None = None,
 ) -> dict[str, str] | None:
     """Find a completed recovery planner whose recovery is a genuine dead end.
 
@@ -2815,6 +3006,8 @@ def _completed_no_successor_recovery(
         record_id = failed["record_id"]
         for recovery in recovery_nodes.get(record_id, []):
             node_id = recovery["node_id"]
+            if recovery_node_ids is not None and node_id not in recovery_node_ids:
+                continue
             if projection["node_states"].get(node_id) != "completed":
                 continue
             patch_id = _accepted_no_successor_patch_id(projection, node_id)
