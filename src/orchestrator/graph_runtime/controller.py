@@ -81,9 +81,11 @@ class GraphController:
         # while it runs.
         async with self._session_factory() as read_session:
             read_store = GraphEventStore(read_session)
-            projection, existing_events, current_position = await read_store.load_projection_with_tail(
-                run_id
-            )
+            (
+                projection,
+                existing_events,
+                current_position,
+            ) = await read_store.load_projection_with_tail(run_id)
         if current_position != expected_position:
             msg = (
                 f"stale graph projection for run {run_id}: "

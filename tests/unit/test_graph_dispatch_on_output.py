@@ -1830,7 +1830,9 @@ async def test_handle_command_retry_stale_retries_locked_operational_error_then_
 
 
 @pytest.mark.asyncio
-async def test_handle_command_retry_stale_reraises_non_locked_operational_error_immediately() -> None:
+async def test_handle_command_retry_stale_reraises_non_locked_operational_error_immediately() -> (
+    None
+):
     controller = AlwaysNonLockedErrorController()
     executor = GraphDispatchExecutor(
         cast(async_sessionmaker[AsyncSession], object()),

@@ -12,6 +12,7 @@ from orchestrator.runners import (
     build_orchestrator_mcp_server,
     build_mcp_servers,
     build_claude_sdk_prompt,
+    claude_sdk_graph_submit_block_reason,
 )
 from orchestrator.runners.errors import (
     AgentCancelledError,
@@ -627,6 +628,41 @@ def test_claude_sdk_is_distinct_from_other_types() -> None:
         AgentRunnerType.CODEX_SERVER,
     }
     assert AgentRunnerType.CLAUDE_SDK not in other_types
+
+
+def test_graph_submit_requires_accepted_patch_when_patch_tool_is_enabled() -> None:
+    assert (
+        claude_sdk_graph_submit_block_reason(
+            graph_patch_required=True,
+            graph_patch_submitted=False,
+            graph_patch_accepted=False,
+        )
+        == "submit_graph_patch must be accepted before submit."
+    )
+    assert (
+        claude_sdk_graph_submit_block_reason(
+            graph_patch_required=True,
+            graph_patch_submitted=True,
+            graph_patch_accepted=False,
+        )
+        == "submit_graph_patch was rejected; submit a corrected graph patch before submit."
+    )
+    assert (
+        claude_sdk_graph_submit_block_reason(
+            graph_patch_required=True,
+            graph_patch_submitted=True,
+            graph_patch_accepted=True,
+        )
+        is None
+    )
+    assert (
+        claude_sdk_graph_submit_block_reason(
+            graph_patch_required=False,
+            graph_patch_submitted=False,
+            graph_patch_accepted=False,
+        )
+        is None
+    )
 
 
 # ---------------------------------------------------------------------------

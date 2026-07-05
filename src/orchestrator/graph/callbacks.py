@@ -81,26 +81,35 @@ def validate_callback(
     ):
         return _rejected_stale("snapshot_incompatible")
 
+    generation = lease.get("generation")
+    if isinstance(generation, int) and request.lease_generation != generation:
+        return _rejected_stale("lease_generation_incompatible")
+
     lease_state = lease.get("state")
-    if lease_state in _STALE_LEASE_STATES:
+    accepting_late_expired_lease = False
+    if lease_state == "expired":
+        if _has_competing_lease(request, projection, lease):
+            return _rejected_stale("lease expired")
+        accepting_late_expired_lease = True
+    elif lease_state in _STALE_LEASE_STATES:
         return _rejected_stale(f"lease {lease_state}")
     if lease_state == "suspended" and request.is_mutating:
         return _rejected_stale("lease suspended")
     if lease_state == "released":
         return _rejected_stale("lease released, use idempotency key")
 
-    generation = lease.get("generation")
-    if isinstance(generation, int) and request.lease_generation != generation:
-        return _rejected_stale("lease_generation_incompatible")
-
     run_state = projection["run_state"]
     if run_state in _TERMINAL_RUN_STATES:
         return _rejected_stale(f"run {run_state}")
 
     node_state = projection["node_states"].get(request.node_id)
-    if request.is_mutating and node_state in _TERMINAL_NODE_STATES:
+    if (
+        request.is_mutating
+        and node_state in _TERMINAL_NODE_STATES
+        and not accepting_late_expired_lease
+    ):
         return _rejected_stale(f"node {node_state}")
-    if request.is_mutating and node_state != "running":
+    if request.is_mutating and node_state != "running" and not accepting_late_expired_lease:
         return CallbackValidationResult(
             outcome=CallbackOutcome.REJECTED_CONFLICT,
             reason=f"node not running: {node_state}",
@@ -108,8 +117,38 @@ def validate_callback(
 
     return CallbackValidationResult(
         outcome=CallbackOutcome.ACCEPTED,
-        reason="accepted",
+        reason="accepted_late_expired_lease" if accepting_late_expired_lease else "accepted",
     )
+
+
+def _has_competing_lease(
+    request: CallbackRequest,
+    projection: GraphProjection,
+    request_lease: dict[str, Any],
+) -> bool:
+    request_node_id = request_lease.get("node_id")
+    if not isinstance(request_node_id, str):
+        request_node_id = request.node_id
+    request_generation = request_lease.get("generation")
+    if not isinstance(request_generation, int) or isinstance(request_generation, bool):
+        request_generation = request.lease_generation
+    request_execution_id = request_lease.get("execution_id")
+    if not isinstance(request_execution_id, str):
+        request_execution_id = request.execution_id
+    for lease_id, lease in projection["leases"].items():
+        if lease_id == request.lease_id:
+            continue
+        if lease.get("node_id") != request_node_id:
+            continue
+        generation = lease.get("generation")
+        if isinstance(generation, int) and not isinstance(generation, bool):
+            if generation > request_generation:
+                return True
+            continue
+        execution_id = lease.get("execution_id")
+        if isinstance(execution_id, str) and execution_id != request_execution_id:
+            return True
+    return False
 
 
 def _validate_idempotency(

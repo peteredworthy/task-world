@@ -201,7 +201,9 @@ def create_run(
             global_config = load_global_config()
             routine_execution_mode = getattr(routine_config, "execution_mode", None)
             run.execution_mode = (
-                execution_mode or routine_execution_mode or global_config.execution.default_execution_mode
+                execution_mode
+                or routine_execution_mode
+                or global_config.execution.default_execution_mode
             )
 
             # Set agent if provided

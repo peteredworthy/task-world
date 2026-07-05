@@ -222,17 +222,33 @@ def _validate_typed_topology(
             node = op.get("node")
             if not isinstance(node, dict):
                 return "create_node requires node payload"
-            typed_node = cast(dict[str, Any], node)
-            node_id = typed_node.get("node_id")
-            if not isinstance(node_id, str) or not node_id:
-                return "create_node requires node_id"
-            if node_id in seen_node_ids or node_id in projection["node_kinds"]:
-                return f"duplicate node id: {node_id}"
-            seen_node_ids.add(node_id)
-            kind = typed_node.get("kind")
-            if isinstance(kind, str):
-                role = typed_node.get("role")
-                created_nodes[node_id] = (kind, role if isinstance(role, str) else None)
+            duplicate_error = _register_created_node(
+                cast(dict[str, Any], node),
+                created_nodes,
+                seen_node_ids,
+                projection,
+                missing_message="create_node requires node_id",
+            )
+            if duplicate_error is not None:
+                return duplicate_error
+        elif op_name == "create_revision_attempt":
+            for node_key, default_kind in (
+                ("worker_node", "worker"),
+                ("verifier_node", "verifier"),
+            ):
+                node = op.get(node_key)
+                if not isinstance(node, dict):
+                    continue
+                duplicate_error = _register_created_node(
+                    cast(dict[str, Any], node),
+                    created_nodes,
+                    seen_node_ids,
+                    projection,
+                    missing_message=f"create_revision_attempt {node_key} requires node_id",
+                    default_kind=default_kind,
+                )
+                if duplicate_error is not None:
+                    return duplicate_error
         elif op_name == "create_edge":
             edge_id = op.get("edge_id")
             if not isinstance(edge_id, str) or not edge_id:
@@ -255,9 +271,14 @@ def _validate_typed_topology(
         if not isinstance(to_node_id, str) or not to_node_id:
             return f"edge {edge_id} requires to_node_id"
 
-        source = _node_contract_identity(from_node_id, created_nodes, projection)
-        if source is None:
-            return f"edge {edge_id} references unknown source node: {from_node_id}"
+        if from_node_id == "*":
+            source = _producer_class_contract_identity(edge)
+            if source is None:
+                return f"edge {edge_id} producer-class source requires from_node_kind"
+        else:
+            source = _node_contract_identity(from_node_id, created_nodes, projection)
+            if source is None:
+                return f"edge {edge_id} references unknown source node: {from_node_id}"
         target = _node_contract_identity(to_node_id, created_nodes, projection)
         if target is None:
             return f"edge {edge_id} references unknown target node: {to_node_id}"
@@ -273,6 +294,38 @@ def _validate_typed_topology(
             return contract_error
 
     return None
+
+
+def _register_created_node(
+    node: dict[str, Any],
+    created_nodes: dict[str, tuple[str, str | None]],
+    seen_node_ids: set[str],
+    projection: GraphProjection,
+    *,
+    missing_message: str,
+    default_kind: str | None = None,
+) -> str | None:
+    node_id = node.get("node_id")
+    if not isinstance(node_id, str) or not node_id:
+        return missing_message
+    if node_id in seen_node_ids or node_id in projection["node_kinds"]:
+        return f"duplicate node id: {node_id}"
+    seen_node_ids.add(node_id)
+    kind = node.get("kind")
+    if not isinstance(kind, str):
+        kind = default_kind
+    if isinstance(kind, str):
+        role = node.get("role")
+        created_nodes[node_id] = (kind, role if isinstance(role, str) else None)
+    return None
+
+
+def _producer_class_contract_identity(edge: dict[str, Any]) -> tuple[str, str | None] | None:
+    kind = edge.get("from_node_kind")
+    if not isinstance(kind, str) or not kind:
+        return None
+    role = edge.get("from_node_role")
+    return kind, role if isinstance(role, str) else None
 
 
 def _node_contract_identity(

@@ -4180,6 +4180,11 @@ def _derive_task_states(state: GraphProjection) -> dict[str, str]:
         verdict = state["verifier_verdicts"].get(candidate_id)
         file_state_accepted = _task_file_state_accepted(state, task_region_id, candidate_id)
         checks_passed = _required_checks_passed(state, task_region_id)
+        verifier_failure_superseded = _failed_verification_recovery_superseded(
+            state,
+            task_region_id,
+            candidate_id,
+        )
 
         if verifier_passed and gates_passed and file_state_accepted and checks_passed:
             task_states[task_region_id] = "accepted"
@@ -4192,6 +4197,7 @@ def _derive_task_states(state: GraphProjection) -> dict[str, str]:
         elif (
             verdict is not None
             and verdict.get("verdict") == "failed"
+            and not verifier_failure_superseded
             and not _active_invalid_test_override(invalid_block, candidate_id)
         ):
             task_states[task_region_id] = "needs_revision"
@@ -4295,6 +4301,12 @@ def _verifier_requirement_passed(
 ) -> bool:
     verdict = state["verifier_verdicts"].get(candidate_id)
     if verdict is not None:
+        if verdict.get("verdict") == "failed" and _failed_verification_recovery_superseded(
+            state,
+            task_region_id,
+            candidate_id,
+        ):
+            return True
         return verdict.get("verdict") == "passed"
 
     return not any(
@@ -4403,6 +4415,60 @@ def _check_result_recovery_superseded(
         node_id = recovery.get("node_id")
         if _recovery_lineage_passed(state, node_id):
             return True
+    return False
+
+
+def _failed_verification_recovery_superseded(
+    state: GraphProjection,
+    task_region_id: str,
+    candidate_id: str,
+) -> bool:
+    for verification in state["failed_verification_results_by_record_id"].values():
+        if verification.get("candidate_id") != candidate_id:
+            continue
+        if verification.get("task_region_id") != task_region_id:
+            continue
+        record_id = verification.get("record_id")
+        if not isinstance(record_id, str) or not record_id:
+            continue
+        for recovery in state["recovery_nodes_by_record_id"].get(record_id, []):
+            node_id = recovery.get("node_id")
+            if _recovery_lineage_has_complete_verification(state, node_id):
+                return True
+    return False
+
+
+def _recovery_lineage_has_complete_verification(
+    state: GraphProjection,
+    recovery_node_id: str,
+) -> bool:
+    reachable = _downstream_node_ids(state, recovery_node_id)
+    if not reachable:
+        return False
+    for verification in state["passed_verification_results_by_record_id"].values():
+        verifier_node_id = verification.get("node_id")
+        if verifier_node_id not in reachable:
+            continue
+        candidate_id = verification.get("candidate_id")
+        if not isinstance(candidate_id, str) or not candidate_id:
+            continue
+        verdict = state["verifier_verdicts"].get(candidate_id)
+        if verdict is not None and verdict.get("verdict") != "passed":
+            continue
+        task_region_id = verification.get("task_region_id")
+        if not isinstance(task_region_id, str):
+            task_region_id = state["node_task_regions"].get(verifier_node_id)
+        if not isinstance(task_region_id, str) or not task_region_id:
+            continue
+        configured_gates = state["configured_gates"].get(task_region_id, {})
+        gate_decisions = state["gate_decisions"].get(task_region_id, {})
+        if not _all_configured_gates_passed(configured_gates, gate_decisions):
+            continue
+        if not _task_file_state_accepted(state, task_region_id, candidate_id):
+            continue
+        if not _required_checks_passed(state, task_region_id):
+            continue
+        return True
     return False
 
 

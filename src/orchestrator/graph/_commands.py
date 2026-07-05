@@ -1931,7 +1931,7 @@ def _input_bound_events_for_record(
     for edge in projection["edges"].values():
         if edge.get("dependency_type", "input_binding") != "input_binding":
             continue
-        if edge.get("from_node_id") != producer_node_id:
+        if not _edge_accepts_producer(projection, edge, producer_node_id):
             continue
         if edge.get("from_port") != port:
             continue
@@ -2326,6 +2326,19 @@ def _apply_schedule_tick(
             active_claims,
         )
         if not ready:
+            dead_input = _dead_input_from_readiness(node, reason)
+            if dead_input is not None:
+                if projection.get("last_deferred_reasons", {}).get(node_id) != reason:
+                    output.append(
+                        make_event(
+                            "dead_input_detected",
+                            {
+                                "node_id": node_id,
+                                **dead_input,
+                                "reason": reason,
+                            },
+                        )
+                    )
             _append_node_deferred_if_changed(
                 output,
                 projection,
@@ -2434,6 +2447,20 @@ def _append_node_deferred_if_changed(
     if projection.get("last_deferred_reasons", {}).get(node_id) == reason:
         return
     output.append(make_event("node_deferred", {"node_id": node_id, "reason": reason}))
+
+
+def _dead_input_from_readiness(
+    node: NodeScheduleInfo,
+    reason: str,
+) -> dict[str, str] | None:
+    prefix = "upstream_failed:"
+    if not reason.startswith(prefix):
+        return None
+    from_node_id = reason.removeprefix(prefix)
+    for edge in node.required_edges:
+        if edge.from_node_id == from_node_id:
+            return {"from_node_id": from_node_id, "to_port": edge.to_port}
+    return {"from_node_id": from_node_id, "to_port": ""}
 
 
 def _apply_reconcile(
@@ -5258,34 +5285,78 @@ def _input_bound_events_for_edge(
     typed_to_port = cast(str, to_port)
 
     output: list[EventEnvelope] = []
-    records_by_port = projection["output_records_by_node_port"].get(typed_from_node_id, {})
-    for record in records_by_port.get(typed_from_port, []):
-        record_payload = record.model_dump(mode="json")
-        record_id = record_payload.get("record_id")
-        if not isinstance(record_id, str):
-            continue
-        if not record_selector_matches(
-            edge_payload.get("accepted_record_selector"),
-            record_payload,
-            _record_selector_aliases(record_payload),
-        ):
-            continue
-        binding_payload: dict[str, Any] = {
-            "edge_id": typed_edge_id,
-            "to_node_id": typed_to_node_id,
-            "to_port": typed_to_port,
-            "record_ids": [record_id],
-            "bound_at_position": 0,
-            "trigger": "edge_backfill",
-        }
-        binding_policy = edge_payload.get("binding_policy")
-        if isinstance(binding_policy, str):
-            binding_payload["binding_policy"] = binding_policy
-        supersedes_record_id = record_payload.get("supersedes_record_id")
-        if isinstance(supersedes_record_id, str):
-            binding_payload["supersedes_record_id"] = supersedes_record_id
-        output.append(make_event("input_bound", binding_payload))
+    for producer_node_id in _edge_backfill_producer_node_ids(
+        projection,
+        edge_payload,
+        typed_from_node_id,
+    ):
+        records_by_port = projection["output_records_by_node_port"].get(producer_node_id, {})
+        for record in records_by_port.get(typed_from_port, []):
+            record_payload = record.model_dump(mode="json")
+            record_id = record_payload.get("record_id")
+            if not isinstance(record_id, str):
+                continue
+            if not record_selector_matches(
+                edge_payload.get("accepted_record_selector"),
+                record_payload,
+                _record_selector_aliases(record_payload),
+            ):
+                continue
+            binding_payload: dict[str, Any] = {
+                "edge_id": typed_edge_id,
+                "to_node_id": typed_to_node_id,
+                "to_port": typed_to_port,
+                "record_ids": [record_id],
+                "bound_at_position": 0,
+                "trigger": "edge_backfill",
+            }
+            binding_policy = edge_payload.get("binding_policy")
+            if isinstance(binding_policy, str):
+                binding_payload["binding_policy"] = binding_policy
+            supersedes_record_id = record_payload.get("supersedes_record_id")
+            if isinstance(supersedes_record_id, str):
+                binding_payload["supersedes_record_id"] = supersedes_record_id
+            output.append(make_event("input_bound", binding_payload))
     return output
+
+
+def _edge_accepts_producer(
+    projection: GraphProjection,
+    edge: dict[str, Any],
+    producer_node_id: str,
+) -> bool:
+    from_node_id = edge.get("from_node_id")
+    if from_node_id == producer_node_id:
+        return True
+    if from_node_id != "*":
+        return False
+    expected_kind = edge.get("from_node_kind")
+    if (
+        isinstance(expected_kind, str)
+        and projection["node_kinds"].get(producer_node_id) != expected_kind
+    ):
+        return False
+    expected_role = edge.get("from_node_role")
+    if (
+        isinstance(expected_role, str)
+        and projection["node_roles"].get(producer_node_id) != expected_role
+    ):
+        return False
+    return True
+
+
+def _edge_backfill_producer_node_ids(
+    projection: GraphProjection,
+    edge: dict[str, Any],
+    from_node_id: str,
+) -> list[str]:
+    if from_node_id != "*":
+        return [from_node_id]
+    return [
+        node_id
+        for node_id in sorted(projection["node_kinds"])
+        if _edge_accepts_producer(projection, edge, node_id)
+    ]
 
 
 def _record_selector_aliases(record_payload: dict[str, Any]) -> set[str]:

@@ -1135,6 +1135,45 @@ def test_callback_after_acknowledge_start_accepts_boundary() -> None:
     ]
 
 
+def test_late_callback_after_uncontested_lease_expiry_is_accepted() -> None:
+    events = [
+        *_active_lease_events(),
+        _event(
+            "lease_expired",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "reason": "lease_expired_without_callback",
+            },
+            3,
+        ),
+        _event(
+            "node_state_changed",
+            {
+                "node_id": "worker-1",
+                "new_state": "failed",
+                "trigger": "lease_expired_without_callback",
+                "reason": "lease_expired_without_callback",
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(events, "submit_callback", _callback_payload())
+
+    assert [event.event_type for event in output] == [
+        "callback_accepted",
+        "output_record_accepted",
+        "output_record_accepted",
+        "file_state_accepted",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert output[0].payload["reason"] == "accepted_late_expired_lease"
+
+
 def test_callback_rejects_completion_without_required_output_record() -> None:
     output = _apply(
         _active_lease_events(),
@@ -6645,6 +6684,93 @@ def test_schedule_tick_marks_planned_node_ready_when_required_input_bound() -> N
     }
 
 
+def test_output_record_binds_to_producer_class_edge() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "verifier-1", "kind": "verifier", "role": "verifier", "state": "running"},
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+        _event("node_created", {"node_id": "check-final", "kind": "check", "state": "planned"}, 3),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-candidate-verifier",
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            4,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-verifier-class-final",
+                "from_node_id": "*",
+                "from_node_kind": "verifier",
+                "from_node_role": "verifier",
+                "from_port": "verification_report",
+                "to_node_id": "check-final",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                    "outcome": "passed",
+                },
+            },
+            5,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-1",
+            execution_id="exec-1",
+            lease_id="lease-1",
+            payload={
+                "payload_hash": "hash-verification",
+                "output_records": [
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "record_type": "verification_report",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "outcome": "passed",
+                        "grades": [{"requirement_id": "R1", "grade": "pass"}],
+                        "value": {"verdict": "passed"},
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert any(
+        event.event_type == "input_bound"
+        and event.payload["edge_id"] == "edge-verifier-class-final"
+        and event.payload["to_node_id"] == "check-final"
+        and event.payload["to_port"] == "verification_evidence"
+        and event.payload["record_ids"] == ["verification-1"]
+        for event in output
+    )
+
+
 def test_schedule_tick_defers_missing_required_input() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -6679,6 +6805,46 @@ def test_schedule_tick_defers_missing_required_input() -> None:
 
     assert [(event.event_type, event.payload) for event in output] == [
         ("node_deferred", {"node_id": "worker-1", "reason": "missing_required_input:candidate"})
+    ]
+
+
+def test_schedule_tick_emits_dead_input_for_terminal_failed_source() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "producer-1", "kind": "worker", "state": "failed"}, 1),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "blocked"}, 2),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-1",
+                "from_node_id": "producer-1",
+                "from_port": "candidate",
+                "to_node_id": "worker-1",
+                "to_port": "candidate",
+                "required": True,
+            },
+            3,
+        ),
+        _event(
+            "input_bound",
+            {"edge_id": "edge-1", "to_node_id": "worker-1", "to_port": "candidate"},
+            4,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    assert [(event.event_type, event.payload) for event in output] == [
+        (
+            "dead_input_detected",
+            {
+                "node_id": "worker-1",
+                "from_node_id": "producer-1",
+                "to_port": "candidate",
+                "reason": "upstream_failed:producer-1",
+            },
+        ),
+        ("node_deferred", {"node_id": "worker-1", "reason": "upstream_failed:producer-1"}),
     ]
 
 

@@ -460,6 +460,108 @@ def test_create_edge_rejects_unknown_endpoint_node_in_same_patch() -> None:
     assert result.rejection_reason == "edge edge-1 references unknown target node: missing-target"
 
 
+def test_create_edge_accepts_revision_attempt_embedded_worker_in_same_patch() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "task-1",
+                    "failed_candidate_id": "candidate-1",
+                    "worker_node": {
+                        "node_id": "worker-revision-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-revision-candidate",
+                    "from_node_id": "worker-revision-1",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-1",
+                    "to_port": "candidate_under_test",
+                    "required": True,
+                },
+            ]
+        ),
+        projection=_projection(
+            node_kinds={"verifier-1": "verifier"},
+            node_roles={"verifier-1": "verifier"},
+        ),
+        actor_role="oversight",
+    )
+
+    assert result.accepted is True
+
+
+def test_create_edge_accepts_revision_attempt_embedded_worker_with_default_kind() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "task-1",
+                    "failed_candidate_id": "candidate-1",
+                    "worker_node": {
+                        "node_id": "worker-revision-1",
+                        "role": "builder",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-revision-candidate",
+                    "from_node_id": "worker-revision-1",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-1",
+                    "to_port": "candidate_under_test",
+                    "required": True,
+                },
+            ]
+        ),
+        projection=_projection(
+            node_kinds={"verifier-1": "verifier"},
+            node_roles={"verifier-1": "verifier"},
+        ),
+        actor_role="oversight",
+    )
+
+    assert result.accepted is True
+
+
+def test_create_edge_accepts_producer_class_source() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-class-final",
+                    "from_node_id": "*",
+                    "from_node_kind": "verifier",
+                    "from_node_role": "verifier",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-final",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                        "outcome": "passed",
+                    },
+                },
+            ]
+        ),
+        projection=_projection(
+            node_kinds={"check-final": "check"},
+        ),
+        actor_role="oversight",
+    )
+
+    assert result.accepted is True
+
+
 def test_create_edge_rejects_unknown_source_port() -> None:
     result = _validate(
         _patch(

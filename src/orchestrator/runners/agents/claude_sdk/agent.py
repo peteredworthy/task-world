@@ -184,6 +184,10 @@ def build_orchestrator_mcp_server(
     """Build an in-process MCP server with orchestrator callback tools."""
     from claude_agent_sdk import tool, create_sdk_mcp_server
 
+    graph_patch_required = on_submit_graph_patch is not None
+    graph_patch_submitted = False
+    graph_patch_accepted = False
+
     @tool(
         "update_checklist",
         "Mark a requirement as done, blocked, or not_applicable.",
@@ -203,6 +207,13 @@ def build_orchestrator_mcp_server(
 
     @tool("submit", "Submit your completed work for verification.", {})
     async def submit(args: dict[str, Any]) -> dict[str, Any]:
+        block_reason = claude_sdk_graph_submit_block_reason(
+            graph_patch_required=graph_patch_required,
+            graph_patch_submitted=graph_patch_submitted,
+            graph_patch_accepted=graph_patch_accepted,
+        )
+        if block_reason is not None:
+            return {"content": [{"type": "text", "text": f"Error: {block_reason}"}]}
         await on_submit()
         return {"content": [{"type": "text", "text": "Work submitted for verification."}]}
 
@@ -226,6 +237,7 @@ def build_orchestrator_mcp_server(
             {"patch": dict},
         )
         async def submit_graph_patch(args: dict[str, Any]) -> dict[str, Any]:
+            nonlocal graph_patch_submitted, graph_patch_accepted
             raw_patch = args.get("patch")
             if isinstance(raw_patch, str):
                 try:
@@ -240,6 +252,8 @@ def build_orchestrator_mcp_server(
                     cast(dict[str, Any], raw_patch) if isinstance(raw_patch, dict) else args
                 )
             feedback = await on_submit_graph_patch(dict(patch_payload))
+            graph_patch_submitted = True
+            graph_patch_accepted = _graph_patch_feedback_accepted(feedback)
             return {"content": [{"type": "text", "text": feedback}]}
 
         tools_list.append(submit_graph_patch)
@@ -271,6 +285,25 @@ def build_orchestrator_mcp_server(
         tools_list.append(grade)
 
     return create_sdk_mcp_server("orchestrator", tools=tools_list)
+
+
+def claude_sdk_graph_submit_block_reason(
+    *,
+    graph_patch_required: bool,
+    graph_patch_submitted: bool,
+    graph_patch_accepted: bool,
+) -> str | None:
+    if not graph_patch_required:
+        return None
+    if graph_patch_accepted:
+        return None
+    if graph_patch_submitted:
+        return "submit_graph_patch was rejected; submit a corrected graph patch before submit."
+    return "submit_graph_patch must be accepted before submit."
+
+
+def _graph_patch_feedback_accepted(feedback: str) -> bool:
+    return " accepted" in feedback and " rejected" not in feedback
 
 
 # ---------------------------------------------------------------------------

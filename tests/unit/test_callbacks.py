@@ -151,10 +151,54 @@ def test_revoked_lease_rejected() -> None:
     assert result.reason == "lease revoked"
 
 
-def test_expired_lease_rejected() -> None:
+def test_expired_uncontested_lease_accepted() -> None:
     result = validate_callback(
         _request(),
-        _projection(leases={"lease-1": _lease("expired")}),
+        _projection(
+            node_states={"worker-1": "failed"},
+            leases={"lease-1": _lease("expired")},
+        ),
+        [],
+    )
+
+    assert result.outcome == CallbackOutcome.ACCEPTED
+    assert result.reason == "accepted_late_expired_lease"
+
+
+def test_expired_lease_rejected_after_competing_redispatch() -> None:
+    result = validate_callback(
+        _request(),
+        _projection(
+            leases={
+                "lease-1": _lease("expired"),
+                "lease-2": {
+                    **_lease("active", generation=2),
+                    "lease_id": "lease-2",
+                    "execution_id": "exec-2",
+                },
+            },
+        ),
+        [],
+    )
+
+    assert result.outcome == CallbackOutcome.REJECTED_STALE
+    assert result.reason == "lease expired"
+
+
+def test_expired_lease_rejected_after_completed_redispatch() -> None:
+    result = validate_callback(
+        _request(),
+        _projection(
+            node_states={"worker-1": "completed"},
+            leases={
+                "lease-1": _lease("expired"),
+                "lease-2": {
+                    **_lease("released", generation=2),
+                    "lease_id": "lease-2",
+                    "execution_id": "exec-2",
+                },
+            },
+        ),
         [],
     )
 

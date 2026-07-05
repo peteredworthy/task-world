@@ -194,7 +194,9 @@ def compute_run_metrics(run: Run) -> RunMetricSummary:
             if cost_estimate:
                 estimated_cost_usd = cost_estimate.total_usd
                 model_label = model_hint or "gpt-4o"
-                cost_disclaimer = f"Estimate based on {model_label} pricing. {cost_estimate.disclaimer}"
+                cost_disclaimer = (
+                    f"Estimate based on {model_label} pricing. {cost_estimate.disclaimer}"
+                )
 
     return RunMetricSummary(
         total_tokens_read=tokens_read,

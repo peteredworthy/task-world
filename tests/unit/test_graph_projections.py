@@ -1825,6 +1825,254 @@ def test_failed_check_result_recovery_lineage_unblocks_original_task() -> None:
     )
 
 
+def test_failed_verification_recovery_lineage_unblocks_original_task() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "task_region_id": "task-1",
+                "candidate_id": "candidate-1",
+                "attempt_number": 1,
+            },
+        ),
+        _file_state_event("task-1", "candidate-1", 1),
+        _event(
+            "verification_failed",
+            {
+                "node_id": "verifier-1",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+                "record_id": "verification-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-recover-verification-1",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "recovery-task-1",
+                "recovery_reason": "failed_verification",
+                "recovery_of_record_id": "verification-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-repair",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+            },
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-recovery-to-repair",
+                "from_node_id": "planner-recover-verification-1",
+                "from_port": "classified_gap",
+                "to_node_id": "worker-repair",
+                "to_port": "classified_gap",
+                "required": True,
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-repair",
+                "record_kind": "output",
+                "producer_node_id": "worker-repair",
+                "port": "candidate",
+                "task_region_id": "corrective_work_region",
+                "candidate_id": "candidate-repair",
+            },
+        ),
+        _file_state_event("corrective_work_region", "candidate-repair", 6),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-repair",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+            },
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-repair-to-verifier",
+                "from_node_id": "worker-repair",
+                "from_port": "candidate",
+                "to_node_id": "verifier-repair",
+                "to_port": "candidate_under_test",
+                "required": True,
+            },
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-repair",
+                "candidate_id": "candidate-repair",
+                "task_region_id": "corrective_work_region",
+                "record_id": "verification-repair",
+            },
+        ),
+    ]
+
+    assert project_task_states(events)["task-1"] == "accepted"
+
+
+def test_task_state_projection_matches_full_projection_for_recovery_supersession() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "task_region_id": "task-1",
+                "candidate_id": "candidate-1",
+                "attempt_number": 1,
+            },
+        ),
+        _file_state_event("task-1", "candidate-1", 1),
+        _event(
+            "verification_failed",
+            {
+                "node_id": "verifier-1",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+                "record_id": "verification-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-recover-verification-1",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "recovery-task-1",
+                "recovery_reason": "failed_verification",
+                "recovery_of_record_id": "verification-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-repair",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+            },
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-recovery-to-verifier",
+                "from_node_id": "planner-recover-verification-1",
+                "from_port": "classified_gap",
+                "to_node_id": "verifier-repair",
+                "to_port": "classified_gap",
+                "required": True,
+            },
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-repair",
+                "candidate_id": "candidate-repair",
+                "task_region_id": "corrective_work_region",
+                "record_id": "verification-repair",
+            },
+        ),
+    ]
+
+    full_projection = initial_projection()
+    for event in events:
+        full_projection = reduce_event(full_projection, event)
+
+    assert project_task_states(events, projection=full_projection) == project_task_states(events)
+
+
+def test_failed_verification_recovery_without_corrective_file_state_does_not_accept_origin() -> (
+    None
+):
+    events = [
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "task_region_id": "task-1",
+                "candidate_id": "candidate-1",
+                "attempt_number": 1,
+            },
+        ),
+        _file_state_event("task-1", "candidate-1", 1),
+        _event(
+            "verification_failed",
+            {
+                "node_id": "verifier-1",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+                "record_id": "verification-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-recover-verification-1",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "recovery-task-1",
+                "recovery_reason": "failed_verification",
+                "recovery_of_record_id": "verification-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-repair",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+            },
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-recovery-to-verifier",
+                "from_node_id": "planner-recover-verification-1",
+                "from_port": "classified_gap",
+                "to_node_id": "verifier-repair",
+                "to_port": "classified_gap",
+                "required": True,
+            },
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-repair",
+                "candidate_id": "candidate-repair",
+                "task_region_id": "corrective_work_region",
+                "record_id": "verification-repair",
+            },
+        ),
+    ]
+
+    assert project_task_states(events)["task-1"] == "needs_revision"
+
+
 def test_check_result_candidate_id_does_not_replace_latest_task_candidate() -> None:
     events = [
         _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
