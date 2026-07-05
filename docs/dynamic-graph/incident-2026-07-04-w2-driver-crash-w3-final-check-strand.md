@@ -470,3 +470,15 @@ test: for each fixture run, `project_*` over light == over full.
   `region-w3-corrective` citing the two passed corrective candidates.
 - Both runs resumed on `codex_server` (gpt-5.5) — the runner with a proven
   submit path; claude_sdk is unusable for graph runs until class C is fixed.
+
+### Merge backlog landed (2026-07-05)
+
+The July 4–5 recovery backlog has been committed to main. The incident
+hardening layer landed in commits `36bf8b763`, `5be3550cb`, `6f21bcf50`,
+`c901161f3`, and `74849e278`. W2 landed as `23768b98e`, W3 landed as
+`0a5e1b0ba`, and W4 was manually re-split on the post-W2/W3 base as
+`0a092e22d`.
+
+Verification after W4: `uv run pytest tests -q` → 4326 passed, 4 skipped;
+`uv run pytest tests -k graph -q` → 729 passed; `uv run ruff check .` →
+passed.
