@@ -556,6 +556,17 @@ class OutputRecord(TypedRecordBase):
     value: dict[str, Any]
 
 
+class LegacyOutputRecord(TypedRecordBase):
+    """Typed projection wrapper for historical output records with partial shape."""
+
+    record_id: str
+    record_kind: str = "output"
+    producer_node_id: str
+    port: str
+    schema_: str | None = Field(default=None, alias="schema")
+    value: Any | None = None
+
+
 class RunContextValue(GraphBaseModel):
     routine_id: str
     routine_name: str
@@ -1233,6 +1244,29 @@ class RecoveryPlanRecord(TypedRecordBase):
             msg = "record_type must be recovery_plan"
             raise ValueError(msg)
         return self
+
+
+OutputRecordPayload = (
+    OutputRecord
+    | LegacyOutputRecord
+    | RoutineSnapshotRecord
+    | ArtifactReferenceRecord
+    | VerificationReportRecord
+    | CompletionDecisionRecord
+    | JoinResultRecord
+    | CheckResultRecord
+    | CandidateRecord
+    | GapClassificationRecord
+    | DecisionRecord
+    | AuthorityDecisionRecord
+    | AnalysisSummaryRecord
+    | GraphPatchProposalRecord
+    | RequirementRecord
+    | DecisionRequestRecord
+    | AuthorityRequestRecord
+    | FailureRecord
+    | RecoveryPlanRecord
+)
 
 
 class GitRef(GraphBaseModel):

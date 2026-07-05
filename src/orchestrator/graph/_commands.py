@@ -2818,7 +2818,7 @@ def _current_failed_verification_results(projection: GraphProjection) -> list[di
 
 def _superseded_by_later_regional_pass(
     projection: GraphProjection,
-    verification: dict[str, str],
+    verification: dict[str, Any],
 ) -> bool:
     """True when a later candidate in the same task region passed verification.
 
@@ -3458,12 +3458,13 @@ def _current_failed_check_results(projection: GraphProjection) -> list[dict[str,
                 continue
             if not payload:
                 continue
+            payload_data = payload.model_dump(mode="json")
             check_result = {
                 "node_id": node_id,
                 "record_id": record_id,
                 "record_type": "failure_record",
             }
-            task_region_id = payload.get("task_region_id")
+            task_region_id = payload_data.get("task_region_id")
             if not isinstance(task_region_id, str) or not task_region_id:
                 task_region_id = projection["node_task_regions"].get(node_id)
             if isinstance(task_region_id, str) and task_region_id:
@@ -5258,7 +5259,8 @@ def _input_bound_events_for_edge(
 
     output: list[EventEnvelope] = []
     records_by_port = projection["output_records_by_node_port"].get(typed_from_node_id, {})
-    for record_payload in records_by_port.get(typed_from_port, []):
+    for record in records_by_port.get(typed_from_port, []):
+        record_payload = record.model_dump(mode="json")
         record_id = record_payload.get("record_id")
         if not isinstance(record_id, str):
             continue

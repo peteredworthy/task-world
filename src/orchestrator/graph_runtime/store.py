@@ -30,6 +30,8 @@ from orchestrator.graph import (
     project_decision_view,
     project_decision_view_from_projection,
     project_lease_view,
+    projection_from_checkpoint,
+    projection_to_checkpoint,
     project_scheduler_view,
     reduce_event,
 )
@@ -1351,7 +1353,7 @@ def _projection_from_snapshot_row(
     raw_projection = row.decisions.get(_CHECKPOINT_PROJECTION_KEY)
     if not isinstance(raw_projection, dict):
         return None
-    return cast(GraphProjection, {**initial_projection(), **raw_projection})
+    return projection_from_checkpoint(cast(dict[str, Any], raw_projection))
 
 
 def _projection_schema_version_from_snapshot_row(
@@ -1379,7 +1381,7 @@ def _decisions_with_projection_checkpoint(
     return {
         **decisions,
         _CHECKPOINT_SCHEMA_VERSION_KEY: PROJECTION_SCHEMA_VERSION,
-        _CHECKPOINT_PROJECTION_KEY: cast(dict[str, Any], projection),
+        _CHECKPOINT_PROJECTION_KEY: projection_to_checkpoint(projection),
         _CHECKPOINT_TERMINAL_KEY: _is_terminal_run_state(projection["run_state"]),
     }
 

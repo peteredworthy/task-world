@@ -55,20 +55,20 @@ DEFAULT_CHECK_TIMEOUT_SECONDS = 300
 MAX_STALE_COMMAND_RETRIES = 5
 SNAPSHOT_REF_PATTERN = re.compile(r"^refs/orchestrator/snapshots/[0-9a-f]{32}$")
 
-_prompt_for_node = _prompts._prompt_for_node
-_prompt_summary_for_node = _prompts._prompt_summary_for_node
-_planner_evidence = _prompts._planner_evidence
-_planner_packet = _prompts._planner_packet
-_can_submit_graph_patch = _prompts._can_submit_graph_patch
-_requires_graph_patch_before_submit = _prompts._requires_graph_patch_before_submit
-_graph_patch_feedback_accepted = _prompts._graph_patch_feedback_accepted
-_node_role = _prompts._node_role
-_available_tools_for_context = _prompts._available_tools_for_context
-_patch_payload_has_ops = _prompts._patch_payload_has_ops
-_output_records_for_submit = _prompts._output_records_for_submit
-_candidate_id_for_check = _prompts._candidate_id_for_check
-_evaluated_record_citations = _prompts._evaluated_record_citations
-_add_evaluated_record_citations = _prompts._add_evaluated_record_citations
+_prompt_for_node = _prompts.prompt_for_node
+_prompt_summary_for_node = _prompts.prompt_summary_for_node
+_planner_evidence = _prompts.planner_evidence
+_planner_packet = _prompts.planner_packet
+_can_submit_graph_patch = _prompts.can_submit_graph_patch
+_requires_graph_patch_before_submit = _prompts.requires_graph_patch_before_submit
+_graph_patch_feedback_accepted = _prompts.graph_patch_feedback_accepted
+_node_role = _prompts.node_role
+_available_tools_for_context = _prompts.available_tools_for_context
+_patch_payload_has_ops = _prompts.patch_payload_has_ops
+_output_records_for_submit = _prompts.output_records_for_submit
+_candidate_id_for_check = _prompts.candidate_id_for_check
+_evaluated_record_citations = _prompts.evaluated_record_citations
+_add_evaluated_record_citations = _prompts.add_evaluated_record_citations
 
 
 def _empty_event_list() -> list[EventEnvelope]:
