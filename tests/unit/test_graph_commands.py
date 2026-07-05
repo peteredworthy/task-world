@@ -3568,6 +3568,41 @@ def test_patch_accept_emits_graph_events() -> None:
     assert output[0].payload["base_graph_position"] == -1
 
 
+def test_patch_create_edge_preserves_producer_class_constraints() -> None:
+    output = _apply(
+        [
+            _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+            _event("node_created", {"node_id": "check-final", "kind": "check"}, 1),
+        ],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "patch-class-edge",
+            "proposed_by_node_id": "planner-1",
+            "actor_role": "oversight",
+            "base_graph_position": 1,
+            "ops": [
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-verifier-class-final",
+                    "from_node_id": "*",
+                    "from_node_kind": "verifier",
+                    "from_node_role": "verifier",
+                    "from_port": "verification_report",
+                    "to_node_id": "check-final",
+                    "to_port": "verification_evidence",
+                    "required": True,
+                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["graph_patch_accepted", "edge_created"]
+    assert output[1].payload["from_node_kind"] == "verifier"
+    assert output[1].payload["from_node_role"] == "verifier"
+
+
 def test_submit_patch_rejects_verification_selector_with_status_before_acceptance() -> None:
     output = _apply(
         [
@@ -6767,6 +6802,52 @@ def test_output_record_binds_to_producer_class_edge() -> None:
         and event.payload["to_node_id"] == "check-final"
         and event.payload["to_port"] == "verification_evidence"
         and event.payload["record_ids"] == ["verification-1"]
+        for event in output
+    )
+
+
+def test_output_record_does_not_bind_to_non_matching_producer_class_edge() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "role": "builder", "state": "running"},
+            1,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+            },
+            2,
+        ),
+        _event("node_created", {"node_id": "check-final", "kind": "check", "state": "planned"}, 3),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-verifier-class-final",
+                "from_node_id": "*",
+                "from_node_kind": "verifier",
+                "from_node_role": "verifier",
+                "from_port": "candidate",
+                "to_node_id": "check-final",
+                "to_port": "candidate_under_test",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["candidate"]},
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(events, "submit_callback", _callback_payload())
+
+    assert not any(
+        event.event_type == "input_bound"
+        and event.payload["edge_id"] == "edge-verifier-class-final"
         for event in output
     )
 

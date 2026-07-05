@@ -176,6 +176,8 @@ class GraphTopologyNode(TypedDict, total=False):
 class GraphTopologyEdge(TypedDict, total=False):
     edge_id: str
     from_node_id: str
+    from_node_kind: str
+    from_node_role: str
     from_port: str
     to_node_id: str
     to_port: str
@@ -2401,6 +2403,12 @@ def _topology_edge(
         "binding": None,
         "bound_records": [],
     }
+    from_node_kind = edge.get("from_node_kind")
+    if isinstance(from_node_kind, str):
+        topology_edge["from_node_kind"] = from_node_kind
+    from_node_role = edge.get("from_node_role")
+    if isinstance(from_node_role, str):
+        topology_edge["from_node_role"] = from_node_role
     selector = edge.get("accepted_record_selector")
     if isinstance(selector, dict):
         topology_edge["accepted_record_selector"] = normalize_record_selector(selector)
@@ -2433,7 +2441,13 @@ def _edge_port_contracts(
         return None, None
 
     source_kind = projection["node_kinds"].get(cast(str, from_node_id))
+    if source_kind is None and from_node_id == "*":
+        raw_source_kind = edge.get("from_node_kind")
+        source_kind = raw_source_kind if isinstance(raw_source_kind, str) else None
     source_role = projection["node_roles"].get(cast(str, from_node_id))
+    if source_role is None and from_node_id == "*":
+        raw_source_role = edge.get("from_node_role")
+        source_role = raw_source_role if isinstance(raw_source_role, str) else None
     target_kind = projection["node_kinds"].get(cast(str, to_node_id))
     target_role = projection["node_roles"].get(cast(str, to_node_id))
     source_contract = (
@@ -3500,6 +3514,10 @@ def _record_edge(state: GraphProjection, event: EventEnvelope) -> None:
         "required": _edge_required(required),
         "dependency_type": event.payload.get("dependency_type", "input_binding"),
     }
+    for key in ("from_node_kind", "from_node_role"):
+        value = event.payload.get(key)
+        if isinstance(value, str) and value:
+            state["edges"][edge_id][key] = value
     selector = event.payload.get("accepted_record_selector")
     if isinstance(selector, dict):
         state["edges"][edge_id]["accepted_record_selector"] = normalize_record_selector(selector)

@@ -110,6 +110,8 @@ class GraphTopologyBindingResponse(ApiModel):
 class GraphTopologyEdgeResponse(ApiModel):
     edge_id: str
     from_node_id: str
+    from_node_kind: str | None = None
+    from_node_role: str | None = None
     from_port: str
     to_node_id: str
     to_port: str

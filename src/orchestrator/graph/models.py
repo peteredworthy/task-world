@@ -1399,6 +1399,8 @@ class PatchOp(GraphBaseModel):
     edge_id: str | None = None
     node: dict[str, Any] | None = None
     from_node_id: str | None = None
+    from_node_kind: str | None = None
+    from_node_role: str | None = None
     from_port: str | None = None
     to_node_id: str | None = None
     to_port: str | None = None

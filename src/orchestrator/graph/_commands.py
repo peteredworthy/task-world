@@ -4870,6 +4870,8 @@ def _patch_op_events(
             "dependency_type": op_payload.get("dependency_type", "input_binding"),
         }
         for key in (
+            "from_node_kind",
+            "from_node_role",
             "purpose",
             "description",
             "selection",
