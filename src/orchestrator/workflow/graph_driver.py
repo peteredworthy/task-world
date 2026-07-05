@@ -67,6 +67,22 @@ SUPPORTED_GRAPH_RUNNER_TYPES = frozenset(
 )
 
 
+# Persisted, consume-once discriminator written to a run row's pause_reason by
+# WorkflowService.apply_resume_run when — and only when — an operator resumes a
+# FAILED graph run (row FAILED -> ACTIVE while the kernel run_state stays
+# "failed"). The driver's ACTIVE branch reopens the kernel ONLY when it sees this
+# marker, then clears it immediately. Without the marker, a row that is ACTIVE
+# with a failed kernel is a *crash-window stranded* run (the kernel autonomously
+# failed — e.g. a recovery-planner no-successor sweep — and the process died
+# before run() could persist the row FAILED). Those must self-heal by falling
+# through to the drive loop (which re-classifies failed and _apply_fail persists
+# FAILED), NOT be silently un-failed under a falsely-asserted operator role.
+# It is persisted so it survives a crash between the operator resume and the
+# driver start, and consumed (cleared) so a *later* autonomous failure + re-arm
+# is not replayed as another spurious reopen.
+GRAPH_OPERATOR_REOPEN_PAUSE_REASON = "graph_operator_reopen"
+
+
 class SystemClock:
     """Wall-clock time source for production graph runs (real lease expiry)."""
 
@@ -400,7 +416,10 @@ class GraphRunDriver:
                 run_config=seed_run_config,
             )
             await self._bootstrap_graph_lifecycle(run_id)
-        elif run.status == RunStatus.ACTIVE:
+        elif (
+            run.status == RunStatus.ACTIVE
+            and run.pause_reason == GRAPH_OPERATOR_REOPEN_PAUSE_REASON
+        ):
             # Operator reopen bridge. WorkflowService.apply_resume_run flips a
             # FAILED graph run's row to ACTIVE (an operator-only reopen — see
             # _is_graph_run / RUN_LIFECYCLE_TRANSITIONS), but the durable graph
@@ -409,7 +428,18 @@ class GraphRunDriver:
             # it, so the operator resume would appear to succeed yet do nothing.
             # Issue the kernel resume command(s) here so the graph actually
             # reopens, keeping the row status and kernel run_state in step.
+            #
+            # Gated on the persisted GRAPH_OPERATOR_REOPEN_PAUSE_REASON marker
+            # (set by apply_resume_run) so a row that is ACTIVE with a failed
+            # kernel but NO operator resume — the crash-window stranded-ACTIVE
+            # incident, re-armed by select_graph_runs_to_rearm — is NOT
+            # spuriously un-failed here. Such a run has no marker and falls
+            # through to the drive loop, which re-classifies the failed kernel
+            # and lets _apply_fail persist FAILED (the pre-reopen self-heal).
+            # Clear the marker immediately after acting so a later autonomous
+            # failure + re-arm cannot replay the reopen.
             await self._reopen_failed_graph_lifecycle(run_id)
+            await self._clear_reopen_marker(run_id)
 
         runtime_kwargs: dict[str, Any] = {
             "worktree_path": Path(run.worktree_path),
@@ -739,6 +769,11 @@ class GraphRunDriver:
         async with self._session_factory() as session:
             service = await self._create_service(session)
             await service.apply_resume_run(run_id, resume_strategy="continue")
+
+    async def _clear_reopen_marker(self, run_id: str) -> None:
+        async with self._session_factory() as session:
+            service = await self._create_service(session)
+            await service.clear_graph_reopen_marker(run_id)
 
     async def _apply_complete(self, run_id: str) -> None:
         async with self._session_factory() as session:

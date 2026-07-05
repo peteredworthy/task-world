@@ -41,7 +41,11 @@ from orchestrator.runners.types import (
 )
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
-from orchestrator.workflow.graph_driver import GraphRunDriver, _snapshot_from_events
+from orchestrator.workflow.graph_driver import (
+    GRAPH_OPERATOR_REOPEN_PAUSE_REASON,
+    GraphRunDriver,
+    _snapshot_from_events,
+)
 
 
 class FixedClock:
@@ -841,3 +845,126 @@ async def test_driver_does_not_reopen_failed_graph_without_operator_resume(
     # is never silently reopened by the driver.
     assert project_run_state(await _events(session_factory, run_id)) == "failed"
     assert dispatch_order == []
+
+
+@pytest.mark.asyncio
+async def test_driver_does_not_reopen_crash_window_stranded_active_run(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """Row ACTIVE + kernel failed with NO operator resume must self-heal FAILED.
+
+    This is the crash-window stranded-ACTIVE incident: the kernel autonomously
+    failed the run (run_state "failed") but the process died before run() could
+    persist the row FAILED, so the row is still ACTIVE. select_graph_runs_to_rearm
+    re-arms such runs. The driver must NOT treat this as an operator reopen: with
+    no persisted reopen marker it falls through to the drive loop, which
+    re-classifies the failed kernel so _apply_fail persists FAILED. No kernel
+    resume command is issued and nothing is dispatched.
+    """
+    _, session_factory = file_db
+    repo = tmp_path / "repo-stranded-active"
+    _init_repo(repo)
+    run_id = "graph-stranded-active"
+    routine = _routine()
+    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+
+    clock = FixedClock()
+    ids = SequentialIds()
+    await _seed_and_force_failed_graph(
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+    )
+
+    # Crash window: drive the row to ACTIVE but never fail it and never resume it.
+    # No operator involvement => no reopen marker is stamped on pause_reason.
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.apply_start_run(run_id)
+    assert await _run_status(session_factory, run_id) == RunStatus.ACTIVE
+    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+    async with session_factory() as session:
+        stranded = await RunRepository(session).get(run_id)
+    assert stranded.pause_reason != GRAPH_OPERATOR_REOPEN_PAUSE_REASON
+
+    dispatch_order: list[str] = []
+    driver = _shared_driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=dispatch_order,
+        clock=clock,
+        ids=ids,
+    )
+    await driver.run(run_id)
+
+    events_after = await _events(session_factory, run_id)
+    # Kernel stays failed, nothing dispatched, no reopen (resuming) transition,
+    # and the row self-heals to FAILED.
+    assert project_run_state(events_after) == "failed"
+    assert dispatch_order == []
+    # A "resuming" lifecycle transition is produced ONLY by the reopen path's
+    # kernel resume command, so its absence proves no reopen was issued.
+    assert not any(
+        event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "resuming"
+        for event in events_after
+    )
+    assert await _run_status(session_factory, run_id) == RunStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_operator_reopen_marker_is_consumed_once(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """The reopen marker is stamped by the resume and cleared by the driver.
+
+    Consume-once: once the driver has acted on the marker it is cleared from the
+    row, so a subsequent autonomous failure + re-arm (which would leave the row
+    ACTIVE with a failed kernel again) is not replayed as another spurious
+    reopen — the absence of the marker routes it back to the self-heal path.
+    """
+    _, session_factory = file_db
+    repo = tmp_path / "repo-marker-consume"
+    _init_repo(repo)
+    run_id = "graph-marker-consume"
+    routine = _routine()
+    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+
+    clock = FixedClock()
+    ids = SequentialIds()
+    await _seed_and_force_failed_graph(
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+    )
+
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.apply_start_run(run_id)
+        await service.apply_cancel_run(run_id, reason="forced_for_test")
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.apply_resume_run(run_id, resume_strategy="continue")
+
+    # apply_resume_run stamped the persisted reopen marker on the ACTIVE row.
+    async with session_factory() as session:
+        resumed = await RunRepository(session).get(run_id)
+    assert resumed.status == RunStatus.ACTIVE
+    assert resumed.pause_reason == GRAPH_OPERATOR_REOPEN_PAUSE_REASON
+
+    dispatch_order: list[str] = []
+    driver = _shared_driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=dispatch_order,
+        clock=clock,
+        ids=ids,
+    )
+    await driver.run(run_id)
+
+    # The marker is consumed: it no longer lingers on the row after the driver
+    # acted on it, so a later re-arm cannot replay the reopen.
+    async with session_factory() as session:
+        after = await RunRepository(session).get(run_id)
+    assert after.pause_reason != GRAPH_OPERATOR_REOPEN_PAUSE_REASON
+    assert project_run_state(await _events(session_factory, run_id)) != "failed"
+    assert "worker" in dispatch_order

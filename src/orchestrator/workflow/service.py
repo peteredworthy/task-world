@@ -163,6 +163,7 @@ from orchestrator.workflow.delegation import (
     work_from_fan_out_child,
 )
 from orchestrator.workflow.legacy_run_facts import durable_parent_oversight_patch
+from orchestrator.workflow.graph_driver import GRAPH_OPERATOR_REOPEN_PAUSE_REASON
 from orchestrator.git import (
     WorktreeCommitError,
     WorktreeResetError,
@@ -1137,10 +1138,53 @@ class WorkflowService:
                 await self._store_v2.append([event])
                 self._event_emitter.notify_persisted(event)
 
+        # Operator reopen of a FAILED graph run: stamp a persisted, consume-once
+        # marker in pause_reason so the re-armed GraphRunDriver knows this ACTIVE
+        # row is a *genuine* operator reopen (row FAILED -> ACTIVE while the
+        # kernel run_state stays "failed") and issues the kernel resume — as
+        # opposed to a crash-window stranded-ACTIVE run (failed kernel, no
+        # operator), which must self-heal to FAILED instead. See
+        # GRAPH_OPERATOR_REOPEN_PAUSE_REASON. Normal PAUSED -> ACTIVE resumes
+        # leave pause_reason cleared.
+        reopen_marker = (
+            GRAPH_OPERATOR_REOPEN_PAUSE_REASON
+            if (run.status == RunStatus.FAILED and _is_graph_run(run))
+            else None
+        )
         events = await handle_update_run_status(
             UpdateRunStatusCommand(
                 run_id=run_id,
                 old_status=run.status,
+                new_status=RunStatus.ACTIVE,
+                pause_reason=reopen_marker,
+                last_error=None,
+                timestamp=self._clock.now(),
+            ),
+            self._store_v2,
+            self._session,
+        )
+        self._event_emitter.notify_persisted(events[0])
+        await commit_with_event_outbox(self._session)
+        return await self._repo.get(run_id)
+
+    async def clear_graph_reopen_marker(self, run_id: str) -> None:
+        """Clear the operator-reopen marker once the driver has acted on it.
+
+        ``apply_resume_run`` stamps ``pause_reason`` with
+        ``GRAPH_OPERATOR_REOPEN_PAUSE_REASON`` when an operator reopens a FAILED
+        graph run, so the re-armed ``GraphRunDriver`` can tell a genuine reopen
+        from a crash-stranded ACTIVE run. The driver clears it immediately after
+        issuing the kernel resume so a *later* autonomous failure + re-arm is not
+        replayed as another spurious reopen (consume-once). No-op unless the
+        marker is actually present on an ACTIVE row.
+        """
+        run = await self._repo.get(run_id)
+        if run.status != RunStatus.ACTIVE or run.pause_reason != GRAPH_OPERATOR_REOPEN_PAUSE_REASON:
+            return
+        events = await handle_update_run_status(
+            UpdateRunStatusCommand(
+                run_id=run_id,
+                old_status=RunStatus.ACTIVE,
                 new_status=RunStatus.ACTIVE,
                 pause_reason=None,
                 last_error=None,
@@ -1151,7 +1195,6 @@ class WorkflowService:
         )
         self._event_emitter.notify_persisted(events[0])
         await commit_with_event_outbox(self._session)
-        return await self._repo.get(run_id)
 
     async def _run_event_sourced_worktree_reset(
         self,
