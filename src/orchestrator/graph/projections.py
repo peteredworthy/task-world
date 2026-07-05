@@ -1,6 +1,8 @@
 """Pure graph projections for scenario fixtures."""
 
-from typing import Any, Literal, TypedDict, cast
+from __future__ import annotations
+
+from typing import Any, Iterable, Literal, TypedDict, cast
 
 from orchestrator.graph.command_bindings import check_command_reference
 from orchestrator.graph.contracts import (
@@ -26,6 +28,9 @@ _EDGE_METADATA_KEYS = (
     "prompt_hydration_policy",
     "metadata",
 )
+
+# Bump this whenever reduce_event semantics or GraphProjection shape changes.
+PROJECTION_SCHEMA_VERSION = 5
 
 
 class GraphRecordSummary(TypedDict, total=False):
@@ -109,7 +114,18 @@ class GraphProjection(TypedDict):
     requirement_revisions: dict[str, dict[str, Any]]
     active_requirement_versions: dict[str, str]
     support_evidence: dict[str, dict[str, Any]]
+    last_deferred_reasons: dict[str, str]
     retry_not_before_by_node: dict[str, str | None]
+    node_creation_payloads: dict[str, dict[str, Any]]
+    output_record_payloads: dict[str, dict[str, Any]]
+    approval_decisions: dict[str, dict[str, Any]]
+    authority_decisions: dict[str, dict[str, Any]]
+    oversight_decisions: dict[str, dict[str, Any]]
+    decision_request_details: dict[str, PendingGateDecision]
+    callback_idempotency_events: dict[str, dict[str, Any]]
+    open_proposal_blockers: dict[str, FinalInvariantBlocker]
+    suspect_node_reasons: dict[str, str]
+    authority_revision_blockers: dict[str, FinalInvariantBlocker]
     cleanup_requested_events: dict[str, dict[str, Any]]
     cleanup_applied_ids: dict[str, bool]
 
@@ -328,13 +344,25 @@ def initial_projection() -> GraphProjection:
         "requirement_revisions": {},
         "active_requirement_versions": {},
         "support_evidence": {},
+        "last_deferred_reasons": {},
         "retry_not_before_by_node": {},
+        "node_creation_payloads": {},
+        "output_record_payloads": {},
+        "approval_decisions": {},
+        "authority_decisions": {},
+        "oversight_decisions": {},
+        "decision_request_details": {},
+        "callback_idempotency_events": {},
+        "open_proposal_blockers": {},
+        "suspect_node_reasons": {},
+        "authority_revision_blockers": {},
         "cleanup_requested_events": {},
         "cleanup_applied_ids": {},
     }
 
 
 def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
+    latest_routine_snapshot_record = state.get("latest_routine_snapshot_record")
     next_state: GraphProjection = {
         "run_state": state["run_state"],
         "node_states": dict(state["node_states"]),
@@ -476,7 +504,45 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             support_id: dict(support)
             for support_id, support in state.get("support_evidence", {}).items()
         },
+        "last_deferred_reasons": dict(state.get("last_deferred_reasons", {})),
         "retry_not_before_by_node": dict(state.get("retry_not_before_by_node", {})),
+        "node_creation_payloads": {
+            node_id: dict(payload)
+            for node_id, payload in state.get("node_creation_payloads", {}).items()
+        },
+        "output_record_payloads": {
+            record_id: dict(payload)
+            for record_id, payload in state.get("output_record_payloads", {}).items()
+        },
+        "approval_decisions": {
+            node_id: dict(payload)
+            for node_id, payload in state.get("approval_decisions", {}).items()
+        },
+        "authority_decisions": {
+            node_id: dict(payload)
+            for node_id, payload in state.get("authority_decisions", {}).items()
+        },
+        "oversight_decisions": {
+            node_id: dict(payload)
+            for node_id, payload in state.get("oversight_decisions", {}).items()
+        },
+        "decision_request_details": {
+            node_id: cast(PendingGateDecision, dict(details))
+            for node_id, details in state.get("decision_request_details", {}).items()
+        },
+        "callback_idempotency_events": {
+            key: dict(payload)
+            for key, payload in state.get("callback_idempotency_events", {}).items()
+        },
+        "open_proposal_blockers": {
+            proposal_id: cast(FinalInvariantBlocker, dict(blocker))
+            for proposal_id, blocker in state.get("open_proposal_blockers", {}).items()
+        },
+        "suspect_node_reasons": dict(state.get("suspect_node_reasons", {})),
+        "authority_revision_blockers": {
+            revision_id: cast(FinalInvariantBlocker, dict(blocker))
+            for revision_id, blocker in state.get("authority_revision_blockers", {}).items()
+        },
         "cleanup_requested_events": {
             cleanup_id: dict(cleanup_event)
             for cleanup_id, cleanup_event in state.get("cleanup_requested_events", {}).items()
@@ -500,6 +566,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             next_state["node_states"][node_id] = node_state
         if isinstance(node_id, str):
             next_state["node_creation_positions"].setdefault(node_id, event.position)
+            next_state["node_creation_payloads"][node_id] = dict(event.payload)
             _record_recovery_node(next_state, event)
             if kind == "root":
                 budget = event.payload.get("planner_generation_budget")
@@ -645,8 +712,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_node_output_port(next_state, event)
         _record_accepted_output_record(next_state, event)
         _record_accepted_record_summary(next_state, event)
+        _record_output_payload(next_state, event)
         _record_latest_routine_snapshot(next_state, event)
         _record_completion_decision(next_state, event)
+        _record_decision_request_details(next_state, event)
         _record_candidate(next_state, event)
         _record_check_result(next_state, event)
         _record_environment_failure(next_state, event)
@@ -656,10 +725,13 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
     elif event.event_type == "appeal_opened":
         _record_open_appeal(next_state, event)
     elif event.event_type == "oversight_decision_recorded":
+        _record_latest_decision(next_state["oversight_decisions"], event)
         _record_oversight_decision(next_state, event)
     elif event.event_type == "approval_decision_recorded":
+        _record_latest_decision(next_state["approval_decisions"], event)
         _record_gate_decision(next_state, event)
     elif event.event_type == "authority_decision_recorded":
+        _record_latest_decision(next_state["authority_decisions"], event)
         _record_authority_decision(next_state, event)
     elif event.event_type == "node_authority_changed":
         _record_authority_change(next_state, event)
@@ -670,6 +742,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_accepted_record_summary(next_state, event)
         _record_file_state(next_state, event)
     elif event.event_type == "graph_patch_accepted":
+        _record_open_proposal_blocker(next_state, event)
         planner_node_id = event.payload.get("proposed_by_node_id")
         patch_id = event.payload.get("patch_id")
         if isinstance(planner_node_id, str) and isinstance(patch_id, str):
@@ -716,9 +789,55 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_runtime_retry_scheduled(next_state, event)
     elif event.event_type in {"requirement_revision_recorded", "requirement_amended"}:
         _record_requirement_revision(next_state, event)
+        _record_authority_revision_blocker(next_state, event)
+    elif event.event_type == "requirement_revision_proposed":
+        _record_authority_revision_blocker(next_state, event)
     elif event.event_type in {"support_evidence_recorded", "support_edge_recorded"}:
         _record_support_evidence(next_state, event)
-    # node_ready/node_deferred and agent_died are
+    elif event.event_type in {
+        "graph_patch_proposed",
+        "planner_proposal_opened",
+        "proposal_opened",
+        "proposal_recorded",
+        "graph_patch_rejected",
+        "proposal_accepted",
+        "proposal_rejected",
+        "proposal_resolved",
+        "proposal_closed",
+    }:
+        _record_open_proposal_blocker(next_state, event)
+    elif event.event_type in {
+        "plan_region_marked_suspect",
+        "node_marked_suspect",
+        "plan_region_suspect_resolved",
+        "node_suspect_resolved",
+        "plan_region_suspect_cleared",
+        "node_suspect_cleared",
+    }:
+        _record_suspect_node_reason(next_state, event)
+    elif event.event_type in {
+        "authority_resolution_recorded",
+        "authority_resolved",
+        "requirement_revision_authorized",
+    }:
+        _record_authority_revision_blocker(next_state, event)
+    elif event.event_type == "node_deferred":
+        node_id = event.payload.get("node_id")
+        reason = event.payload.get("reason")
+        if isinstance(node_id, str) and isinstance(reason, str):
+            next_state["last_deferred_reasons"][node_id] = reason
+    elif event.event_type in {
+        "callback_accepted",
+        "callback_rejected_stale",
+        "callback_rejected_conflict",
+        "callback_duplicate_returned",
+    }:
+        _record_callback_idempotency_event(next_state, event)
+    elif event.event_type == "node_ready":
+        node_id = event.payload.get("node_id")
+        if isinstance(node_id, str):
+            next_state["last_deferred_reasons"].pop(node_id, None)
+    # node_ready/node_deferred and agent_died/runtime_retry_scheduled are
     # audit/policy facts. Projection facts are updated only by lease_* and
     # node_state_changed events so replay has a single state authority.
 
@@ -804,10 +923,10 @@ def final_invariant_blockers_for_events(
                     "state": node_state,
                 }
             )
-    blockers.extend(_open_proposal_blockers(events))
+    blockers.extend(_open_proposal_blockers(events, projection))
     blockers.extend(_suspect_node_blockers(events, projection))
     blockers.extend(_requirement_evidence_blockers(events, projection))
-    blockers.extend(_authority_revision_blockers(events))
+    blockers.extend(_authority_revision_blockers(events, projection))
     blockers.extend(_blocked_requirement_node_blockers(events, projection))
     blockers.extend(_impossible_input_blockers(projection))
     blockers.extend(_failed_check_result_blockers(events, projection))
@@ -927,6 +1046,8 @@ def _failed_check_result_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
 ) -> list[FinalInvariantBlocker]:
+    if not _has_full_event_history(events):
+        return _failed_check_result_blockers_from_projection(projection)
     blockers_by_record: dict[str, FinalInvariantBlocker] = {}
     for event in events:
         if event.event_type != "output_record_accepted":
@@ -978,6 +1099,50 @@ def _failed_check_result_blockers(
     return [blockers_by_record[key] for key in sorted(blockers_by_record)]
 
 
+def _failed_check_result_blockers_from_projection(
+    projection: GraphProjection,
+) -> list[FinalInvariantBlocker]:
+    blockers_by_record: dict[str, FinalInvariantBlocker] = {}
+    for node_id, payload in projection.get("check_results", {}).items():
+        status = _check_result_status(payload)
+        if status is None or status in {"passed", "pass", "ok"}:
+            continue
+        record_id = payload.get("record_id")
+        key = record_id if isinstance(record_id, str) else node_id
+        blocker: FinalInvariantBlocker = {
+            "kind": "failed_check_result",
+            "reason": "check result did not pass",
+            "node_id": node_id,
+            "state": status,
+        }
+        value = payload.get("value")
+        if isinstance(value, dict):
+            typed_value = cast(dict[str, Any], value)
+            classification = typed_value.get("classification")
+            command_text = typed_value.get("command_text")
+            stderr = typed_value.get("stderr")
+            exit_code = typed_value.get("exit_code")
+            if isinstance(classification, str):
+                blocker["classification"] = classification
+            if isinstance(command_text, str):
+                blocker["command_text"] = command_text
+            if isinstance(stderr, str):
+                blocker["stderr"] = stderr
+            if isinstance(exit_code, int) and not isinstance(exit_code, bool) and (
+                isinstance(command_text, str)
+                or isinstance(stderr, str)
+                or isinstance(classification, str)
+            ):
+                blocker["exit_code"] = exit_code
+            if classification in {"environment_error", "tool_error", "tool_unavailable"}:
+                blocker["reason"] = _environment_failure_reason_from_check_value(typed_value)
+        task_region_id = payload.get("task_region_id")
+        if isinstance(task_region_id, str):
+            blocker["task_region_id"] = task_region_id
+        blockers_by_record[key] = blocker
+    return [blockers_by_record[key] for key in sorted(blockers_by_record)]
+
+
 def _is_check_result_record(payload: dict[str, Any]) -> bool:
     return (
         payload.get("record_type") == "check_result"
@@ -1011,18 +1176,23 @@ def _completion_decision_blockers(
         return []
 
     latest: dict[str, tuple[str, list[FinalInvariantBlocker]]] = {}
-    for event in events:
-        if event.event_type != "output_record_accepted":
-            continue
-        node_id = event.payload.get("producer_node_id")
+    payloads: Iterable[dict[str, Any]]
+    if _has_full_event_history(events):
+        payloads = [
+            event.payload for event in events if event.event_type == "output_record_accepted"
+        ]
+    else:
+        payloads = projection.get("output_record_payloads", {}).values()
+    for payload in payloads:
+        node_id = payload.get("producer_node_id")
         if not isinstance(node_id, str) or node_id not in final_gate_node_ids:
             continue
-        if event.payload.get("port") != "completion_decision":
+        if payload.get("port") != "completion_decision":
             continue
-        status = _completion_decision_status(event.payload)
+        status = _completion_decision_status(payload)
         if status is None:
             continue
-        latest[node_id] = (status, _completion_decision_payload_blockers(event.payload))
+        latest[node_id] = (status, _completion_decision_payload_blockers(payload))
 
     blockers: list[FinalInvariantBlocker] = []
     for node_id in sorted(final_gate_node_ids):
@@ -1086,7 +1256,15 @@ def _completion_decision_payload_blockers(payload: dict[str, Any]) -> list[Final
     return blockers
 
 
-def _open_proposal_blockers(events: list[EventEnvelope]) -> list[FinalInvariantBlocker]:
+def _open_proposal_blockers(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+) -> list[FinalInvariantBlocker]:
+    if not _has_full_event_history(events):
+        return [
+            projection["open_proposal_blockers"][key]
+            for key in sorted(projection["open_proposal_blockers"])
+        ]
     open_proposals: dict[str, FinalInvariantBlocker] = {}
     for event in events:
         proposal_id = _proposal_id(event.payload)
@@ -1123,20 +1301,23 @@ def _suspect_node_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
 ) -> list[FinalInvariantBlocker]:
-    suspect_nodes: dict[str, str] = {}
-    for event in events:
-        if event.event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
-            reason = _payload_reason(event.payload, "suspect graph fact remains unresolved")
-            for node_id in _payload_node_ids(event.payload):
-                suspect_nodes[node_id] = reason
-        elif event.event_type in {
-            "plan_region_suspect_resolved",
-            "node_suspect_resolved",
-            "plan_region_suspect_cleared",
-            "node_suspect_cleared",
-        }:
-            for node_id in _payload_node_ids(event.payload):
-                suspect_nodes.pop(node_id, None)
+    if _has_full_event_history(events):
+        suspect_nodes: dict[str, str] = {}
+        for event in events:
+            if event.event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
+                reason = _payload_reason(event.payload, "suspect graph fact remains unresolved")
+                for node_id in _payload_node_ids(event.payload):
+                    suspect_nodes[node_id] = reason
+            elif event.event_type in {
+                "plan_region_suspect_resolved",
+                "node_suspect_resolved",
+                "plan_region_suspect_cleared",
+                "node_suspect_cleared",
+            }:
+                for node_id in _payload_node_ids(event.payload):
+                    suspect_nodes.pop(node_id, None)
+    else:
+        suspect_nodes = projection.get("suspect_node_reasons", {})
 
     blockers: list[FinalInvariantBlocker] = []
     inactive_states = {"completed", "failed", "cancelled", "retired"}
@@ -1226,7 +1407,15 @@ def _legacy_requirement_evidence_blockers(
     ]
 
 
-def _authority_revision_blockers(events: list[EventEnvelope]) -> list[FinalInvariantBlocker]:
+def _authority_revision_blockers(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+) -> list[FinalInvariantBlocker]:
+    if not _has_full_event_history(events):
+        return [
+            projection["authority_revision_blockers"][key]
+            for key in sorted(projection["authority_revision_blockers"])
+        ]
     unresolved: dict[str, FinalInvariantBlocker] = {}
     for event in events:
         revision_id = _revision_id(event.payload)
@@ -1261,7 +1450,11 @@ def _blocked_requirement_node_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
 ) -> list[FinalInvariantBlocker]:
-    payloads = _latest_node_creation_payloads(events)
+    payloads = (
+        _latest_node_creation_payloads(events)
+        if _has_full_event_history(events)
+        else projection.get("node_creation_payloads", {})
+    )
     blockers: list[FinalInvariantBlocker] = []
     for node_id, node_state in sorted(projection["node_states"].items()):
         if projection["node_kinds"].get(node_id) != "requirement" or node_state != "blocked":
@@ -1289,6 +1482,75 @@ def _proposal_id(payload: dict[str, Any]) -> str | None:
         if isinstance(value, str) and value:
             return value
     return None
+
+
+def _record_open_proposal_blocker(state: GraphProjection, event: EventEnvelope) -> None:
+    proposal_id = _proposal_id(event.payload)
+    if proposal_id is None:
+        return
+    if event.event_type in {
+        "graph_patch_proposed",
+        "planner_proposal_opened",
+        "proposal_opened",
+        "proposal_recorded",
+    }:
+        status = event.payload.get("status")
+        if status in {"accepted", "rejected", "resolved", "closed"}:
+            state["open_proposal_blockers"].pop(proposal_id, None)
+            return
+        state["open_proposal_blockers"][proposal_id] = {
+            "kind": "open_planner_proposal",
+            "reason": "planner proposal has not been accepted or rejected",
+            "proposal_id": proposal_id,
+        }
+    elif event.event_type in {
+        "graph_patch_accepted",
+        "graph_patch_rejected",
+        "proposal_accepted",
+        "proposal_rejected",
+        "proposal_resolved",
+        "proposal_closed",
+    }:
+        state["open_proposal_blockers"].pop(proposal_id, None)
+
+
+def _record_suspect_node_reason(state: GraphProjection, event: EventEnvelope) -> None:
+    if event.event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
+        reason = _payload_reason(event.payload, "suspect graph fact remains unresolved")
+        for node_id in _payload_node_ids(event.payload):
+            state["suspect_node_reasons"][node_id] = reason
+        return
+    for node_id in _payload_node_ids(event.payload):
+        state["suspect_node_reasons"].pop(node_id, None)
+
+
+def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvelope) -> None:
+    revision_id = _revision_id(event.payload)
+    if revision_id is None:
+        return
+    if event.event_type in {
+        "requirement_revision_recorded",
+        "requirement_amended",
+        "requirement_revision_proposed",
+    }:
+        if not _requires_authority_resolution(event.payload):
+            state["authority_revision_blockers"].pop(revision_id, None)
+            return
+        blocker: FinalInvariantBlocker = {
+            "kind": "unresolved_authority_required_revision",
+            "reason": "semantic or new-behavior requirement revision lacks authority resolution",
+            "revision_id": revision_id,
+        }
+        requirement_id = _requirement_id(event.payload)
+        if requirement_id is not None:
+            blocker["requirement_id"] = requirement_id
+        state["authority_revision_blockers"][revision_id] = blocker
+    elif event.event_type in {
+        "authority_resolution_recorded",
+        "authority_resolved",
+        "requirement_revision_authorized",
+    }:
+        state["authority_revision_blockers"].pop(revision_id, None)
 
 
 def _revision_id(payload: dict[str, Any]) -> str | None:
@@ -1785,8 +2047,9 @@ def project_scheduler_view(
     """Project ready/deferred scheduler buckets from graph events.
 
     Readiness remains governed by node_state_changed facts. Deferred scheduler
-    events are audit facts, so this view uses only the latest deferral reason
-    for nodes that are not currently ready.
+    events are audit facts, so this view exposes the latest deferral reason
+    even when a node is still ready but blocked by a transient scheduler
+    precondition such as a resource conflict.
     """
     proj = projection if projection is not None else _project(events)
     node_states = project_node_states(events, projection=proj)
@@ -1800,17 +2063,11 @@ def project_scheduler_view(
     }
     for node_id, node_state in sorted(node_states.items()):
         reason = latest_deferrals.get(node_id)
-        if node_state == "ready":
-            if reason is None:
-                continue
-            entry = {"node_id": node_id, "reason": reason}
-            bucket = _scheduler_bucket_for_reason(reason)
-            if bucket == "waiting_resources":
-                view[bucket].append(entry)
+        if node_state not in {"planned", "blocked", "ready"}:
             continue
-        if node_state not in {"planned", "blocked"}:
+        if node_state == "ready" and reason == "max_grants_reached":
             continue
-        if reason is None and node_state != "blocked":
+        if reason is None and node_state not in {"blocked"}:
             continue
         if reason is None:
             reason = "blocked"
@@ -1857,12 +2114,17 @@ def project_decision_view(
 ) -> DecisionView:
     """Project human decisions, appeal outcomes, and review readiness."""
     projection = projection if projection is not None else _project(events)
-    latest_node_payloads = _latest_node_creation_payloads(events)
-    approval_decisions = _latest_decisions(events, "approval_decision_recorded")
-    authority_decisions = _latest_decisions(events, "authority_decision_recorded")
-    oversight_decisions = _latest_decisions(events, "oversight_decision_recorded")
-    latest_deferrals = _latest_node_deferrals(events)
-    request_details = _request_details_by_node(events)
+    return project_decision_view_from_projection(projection)
+
+
+def project_decision_view_from_projection(projection: GraphProjection) -> DecisionView:
+    """Project decision readback from an already-folded graph projection."""
+    latest_node_payloads = projection.get("node_creation_payloads", {})
+    approval_decisions = projection.get("approval_decisions", {})
+    authority_decisions = projection.get("authority_decisions", {})
+    oversight_decisions = projection.get("oversight_decisions", {})
+    latest_deferrals = projection.get("last_deferred_reasons", {})
+    request_details = projection.get("decision_request_details", {})
 
     pending_gates: list[PendingGateDecision] = []
     appeals: list[AppealDecision] = []
@@ -2296,6 +2558,10 @@ def build_projection(events: list[EventEnvelope]) -> GraphProjection:
     return _project(events)
 
 
+def _has_full_event_history(events: list[EventEnvelope]) -> bool:
+    return bool(events) and events[0].position <= 1
+
+
 _PENDING_DECISION_STATES = {"planned", "blocked", "ready", "leased", "running", "suspended"}
 
 
@@ -2310,45 +2576,51 @@ def _latest_node_creation_payloads(events: list[EventEnvelope]) -> dict[str, dic
     return payloads
 
 
-def _latest_decisions(
-    events: list[EventEnvelope],
-    event_type: str,
-) -> dict[str, dict[str, Any]]:
-    decisions: dict[str, dict[str, Any]] = {}
-    for event in events:
-        if event.event_type != event_type:
-            continue
-        node_id = event.payload.get("node_id")
-        if isinstance(node_id, str):
-            decisions[node_id] = dict(event.payload)
-        appeal_node_id = event.payload.get("appeal_node_id")
-        if isinstance(appeal_node_id, str):
-            decisions[appeal_node_id] = dict(event.payload)
-    return decisions
+def _record_latest_decision(
+    decisions: dict[str, dict[str, Any]],
+    event: EventEnvelope,
+) -> None:
+    node_id = event.payload.get("node_id")
+    if isinstance(node_id, str):
+        decisions[node_id] = dict(event.payload)
+    appeal_node_id = event.payload.get("appeal_node_id")
+    if isinstance(appeal_node_id, str):
+        decisions[appeal_node_id] = dict(event.payload)
 
 
-def _request_details_by_node(events: list[EventEnvelope]) -> dict[str, PendingGateDecision]:
-    details: dict[str, PendingGateDecision] = {}
-    for event in events:
-        if event.event_type != "output_record_accepted":
-            continue
-        node_id = event.payload.get("producer_node_id")
-        if not isinstance(node_id, str):
-            continue
-        record_type = event.payload.get("record_type")
-        port = event.payload.get("port")
-        if record_type not in {"decision_request", "authority_request_record"} and port not in {
-            "decision_request",
-            "authority_request_record",
-        }:
-            continue
-        value = event.payload.get("value")
-        if not isinstance(value, dict):
-            continue
-        projected = _request_details_from_value(cast(dict[str, Any], value))
-        if projected:
-            details[node_id] = projected
-    return details
+def _record_callback_idempotency_event(state: GraphProjection, event: EventEnvelope) -> None:
+    node_id = event.payload.get("node_id")
+    idempotency_key = event.payload.get("idempotency_key")
+    if not isinstance(node_id, str) or not isinstance(idempotency_key, str):
+        return
+    key = _callback_idempotency_projection_key(node_id, idempotency_key)
+    state["callback_idempotency_events"].setdefault(
+        key,
+        {"outcome": event.event_type, "payload": dict(event.payload)},
+    )
+
+
+def _callback_idempotency_projection_key(node_id: str, idempotency_key: str) -> str:
+    return f"{node_id}\0{idempotency_key}"
+
+
+def _record_decision_request_details(state: GraphProjection, event: EventEnvelope) -> None:
+    node_id = event.payload.get("producer_node_id")
+    if not isinstance(node_id, str):
+        return
+    record_type = event.payload.get("record_type")
+    port = event.payload.get("port")
+    if record_type not in {"decision_request", "authority_request_record"} and port not in {
+        "decision_request",
+        "authority_request_record",
+    }:
+        return
+    value = event.payload.get("value")
+    if not isinstance(value, dict):
+        return
+    projected = _request_details_from_value(cast(dict[str, Any], value))
+    if projected:
+        state["decision_request_details"][node_id] = cast(PendingGateDecision, dict(projected))
 
 
 def _request_details_for_pending_gate(
@@ -2814,6 +3086,12 @@ def _record_output_record(state: GraphProjection, event: EventEnvelope) -> None:
     )
 
 
+def _record_output_payload(state: GraphProjection, event: EventEnvelope) -> None:
+    record_id = event.payload.get("record_id")
+    if isinstance(record_id, str) and record_id:
+        state["output_record_payloads"][record_id] = dict(event.payload)
+
+
 def _record_latest_routine_snapshot(state: GraphProjection, event: EventEnvelope) -> None:
     payload = event.payload
     record_id = payload.get("record_id")
@@ -2834,7 +3112,6 @@ def _record_latest_routine_snapshot(state: GraphProjection, event: EventEnvelope
         "producer_node_id": cast(str, producer_node_id),
         "port": cast(str, port),
     }
-
 
 def _record_open_appeal(state: GraphProjection, event: EventEnvelope) -> None:
     appealed_node_id = event.payload.get("appealed_node_id")

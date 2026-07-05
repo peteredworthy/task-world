@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.db import EventV2Model
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem
-from orchestrator.graph_runtime.store import GraphEventStore
+from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, GraphEventStore
 
 
 @dataclass(frozen=True)
@@ -86,5 +86,17 @@ async def reconcile_graph(
 
 
 async def _run_ids(session: AsyncSession) -> list[str]:
-    result = await session.execute(select(distinct(EventV2Model.aggregate_id)))
-    return [str(value) for value in result.scalars()]
+    result = await session.execute(
+        select(distinct(EventV2Model.aggregate_id)).where(
+            EventV2Model.aggregate_id.like(f"{GRAPH_AGGREGATE_PREFIX}%")
+        )
+    )
+    store = GraphEventStore(session)
+    run_ids: list[str] = []
+    for aggregate_id in result.scalars():
+        run_id = str(aggregate_id).removeprefix(GRAPH_AGGREGATE_PREFIX)
+        checkpoint = await store.read_projection_checkpoint(run_id)
+        if checkpoint is not None and checkpoint.terminal:
+            continue
+        run_ids.append(run_id)
+    return run_ids

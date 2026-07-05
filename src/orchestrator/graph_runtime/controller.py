@@ -75,13 +75,15 @@ class GraphController:
         command_payload = dict(payload or {})
         command_payload["run_id"] = run_id
 
-        # Phase 1: read the run's full event log and compute the pure command
-        # result OUTSIDE any write lock. This is the part that can take
-        # seconds on a run with a large events_v2 history, so it must not
-        # hold BEGIN IMMEDIATE while it runs.
+        # Phase 1: load the persisted projection snapshot and fold only the
+        # event tail OUTSIDE any write lock. This is the part that can take
+        # time on a large graph history, so it must not hold BEGIN IMMEDIATE
+        # while it runs.
         async with self._session_factory() as read_session:
-            existing_events = await GraphEventStore(read_session).read_run(run_id)
-        current_position = _projection_position(existing_events)
+            read_store = GraphEventStore(read_session)
+            projection, existing_events, current_position = await read_store.load_projection_with_tail(
+                run_id
+            )
         if current_position != expected_position:
             msg = (
                 f"stale graph projection for run {run_id}: "
@@ -89,10 +91,18 @@ class GraphController:
             )
             raise StaleProjectionError(msg)
 
-        projection = rebuild_projection(existing_events)
+        command_payload["_current_graph_position"] = current_position
+        command_events = existing_events
+        patch_base_position = _patch_base_graph_position(command_type, command_payload)
+        if patch_base_position is not None and patch_base_position < current_position:
+            async with self._session_factory() as read_session:
+                command_events = await GraphEventStore(read_session).read_run(
+                    run_id,
+                    patch_base_position + 1,
+                )
         planned_events = apply_command(
             projection,
-            existing_events,
+            command_events,
             command_type,
             command_payload,
             self._clock,
@@ -201,7 +211,20 @@ def rebuild_projection(events: list[EventEnvelope]) -> GraphProjection:
     return projection
 
 
-def _projection_position(events: list[EventEnvelope]) -> int:
-    if not events:
-        return 0
-    return max(event.position for event in events)
+def _patch_base_graph_position(
+    command_type: str,
+    payload: dict[str, object],
+) -> int | None:
+    if command_type != "submit_patch":
+        return None
+    value = payload.get("base_graph_position")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value)
+        except ValueError:
+            return None
+    return None

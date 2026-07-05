@@ -2075,7 +2075,7 @@ def _apply_patch_command(
             )
         ]
 
-    current_position = _current_position(events)
+    current_position = _current_position(events, payload)
     events_since_base = [event for event in events if event.position > patch.base_graph_position]
     result = validate_patch(patch, current_position, events_since_base, projection, actor_role)
     if not result.accepted:
@@ -2310,14 +2310,12 @@ def _apply_schedule_tick(
         node = _node_schedule_info(projection, payload, node_id)
         backoff_reason = _retry_backoff_deferred_reason(projection, node_id, clock.now())
         if backoff_reason is not None:
-            output.append(
-                make_event(
-                    "node_deferred",
-                    {
-                        "node_id": node_id,
-                        "reason": backoff_reason,
-                    },
-                )
+            _append_node_deferred_if_changed(
+                output,
+                projection,
+                node_id,
+                backoff_reason,
+                make_event,
             )
             continue
         readiness_node = replace(node, state="planned") if node_state == "ready" else node
@@ -2328,14 +2326,12 @@ def _apply_schedule_tick(
             active_claims,
         )
         if not ready:
-            output.append(
-                make_event(
-                    "node_deferred",
-                    {
-                        "node_id": node_id,
-                        "reason": reason,
-                    },
-                )
+            _append_node_deferred_if_changed(
+                output,
+                projection,
+                node_id,
+                reason,
+                make_event,
             )
             continue
         if node_state != "ready":
@@ -2356,7 +2352,7 @@ def _apply_schedule_tick(
         nodes,
         projection["run_state"] or "draft",
         active_claims,
-        _current_position(events),
+        _current_position(events, payload),
         max_grants=int(payload.get("max_grants", 10)),
     )
     lease_seconds = int(payload.get("lease_seconds", 300))
@@ -2369,11 +2365,12 @@ def _apply_schedule_tick(
         )
         base_snapshot_id = _base_snapshot_id_for_node(projection, payload, node_id)
         if base_snapshot_id is None:
-            output.append(
-                make_event(
-                    "node_deferred",
-                    {"node_id": node_id, "reason": "missing_base_snapshot"},
-                )
+            _append_node_deferred_if_changed(
+                output,
+                projection,
+                node_id,
+                "missing_base_snapshot",
+                make_event,
             )
             continue
         if node_id not in readied_node_ids:
@@ -2417,16 +2414,29 @@ def _apply_schedule_tick(
             )
         )
     for node_id in decision.deferred:
-        output.append(
-            make_event(
-                "node_deferred",
-                {
-                    "node_id": node_id,
-                    "reason": decision.deferred_reasons[node_id],
-                },
-            )
+        _append_node_deferred_if_changed(
+            output,
+            projection,
+            node_id,
+            decision.deferred_reasons[node_id],
+            make_event,
         )
     return output
+
+
+def _append_node_deferred_if_changed(
+    output: list[EventEnvelope],
+    projection: GraphProjection,
+    node_id: str,
+    reason: str,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> None:
+    if (
+        reason == "max_grants_reached"
+        and projection.get("last_deferred_reasons", {}).get(node_id) == reason
+    ):
+        return
+    output.append(make_event("node_deferred", {"node_id": node_id, "reason": reason}))
 
 
 def _apply_reconcile(
@@ -4355,6 +4365,7 @@ def _apply_record_cleanup_applied(
                 f"unknown cleanup_requested: {cleanup_id}",
             )
         ]
+    requested_payload = requested.payload
     if _cleanup_applied_exists(projection, cleanup_id):
         return [
             _command_rejected(
@@ -4364,7 +4375,7 @@ def _apply_record_cleanup_applied(
             )
         ]
 
-    record_id = requested.payload.get("file_state_record_id")
+    record_id = requested_payload.get("file_state_record_id")
     if not isinstance(record_id, str) or record_id not in projection["file_state_records"]:
         return [
             _command_rejected(
@@ -4374,7 +4385,7 @@ def _apply_record_cleanup_applied(
             )
         ]
     compromised_record = projection["file_state_records"][record_id]
-    requested_snapshot_id = requested.payload.get("snapshot_id")
+    requested_snapshot_id = requested_payload.get("snapshot_id")
     compromised_snapshot_id = compromised_record.get("snapshot_id")
     if requested_snapshot_id != compromised_snapshot_id:
         return [
@@ -4421,7 +4432,7 @@ def _apply_record_cleanup_applied(
                 "superseding record must use a different snapshot_id",
             )
         ]
-    secret_paths = _cleanup_secret_paths(requested.payload)
+    secret_paths = _cleanup_secret_paths(requested_payload)
     retained_secret_path = _record_contains_any_path(record_payload, secret_paths)
     if retained_secret_path is not None:
         return [
@@ -4446,12 +4457,12 @@ def _apply_record_cleanup_applied(
         "cleanup_id": cleanup_id,
         "file_state_record_id": record_id,
         "superseding_record_id": record.record_id,
-        "old_snapshot_id": requested.payload.get("snapshot_id"),
+        "old_snapshot_id": requested_payload.get("snapshot_id"),
         "new_snapshot_id": record.snapshot_id,
-        "paths": requested.payload.get("paths", []),
-        "authority": requested.payload.get("authority", "gatekeeper"),
-        "reason": payload.get("reason", requested.payload.get("reason")),
-        "execution_id": requested.payload.get("execution_id"),
+        "paths": requested_payload.get("paths", []),
+        "authority": requested_payload.get("authority", "gatekeeper"),
+        "reason": payload.get("reason", requested_payload.get("reason")),
+        "execution_id": requested_payload.get("execution_id"),
         "deleted_snapshot_ref": payload.get("deleted_snapshot_ref") is True,
     }
     accepted_payload = record.model_dump(mode="json")
@@ -5318,8 +5329,14 @@ def _run_id(events: list[EventEnvelope], payload: dict[str, Any]) -> str:
     return "run-1"
 
 
-def _current_position(events: list[EventEnvelope]) -> int:
+def _current_position(
+    events: list[EventEnvelope],
+    payload: dict[str, Any] | None = None,
+) -> int:
     if not events:
+        current = (payload or {}).get("_current_graph_position")
+        if isinstance(current, int) and not isinstance(current, bool):
+            return current
         return -1
     return max(event.position for event in events)
 
