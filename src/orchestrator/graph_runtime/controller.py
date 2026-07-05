@@ -54,36 +54,72 @@ class GraphController:
         command_type: str,
         payload: dict[str, object] | None = None,
     ) -> GraphCommandResult:
-        """Apply a command and atomically commit accepted events plus outbox rows."""
+        """Apply a command and atomically commit accepted events plus outbox rows.
+
+        The expensive part of this — reading the full run event log and
+        rebuilding the projection — happens BEFORE any write lock is taken.
+        Only the cheap position re-check and the append itself run inside the
+        ``BEGIN IMMEDIATE`` write transaction, so the write lock is held for a
+        bounded, small amount of work regardless of how large the run's event
+        log has grown. If the position moved between the pre-read and the
+        write (a concurrent writer landed first), this raises
+        ``StaleProjectionError`` just like a losing ``append_events`` race
+        used to; callers already retry on that (see
+        ``dispatch._handle_command_retry_stale`` and
+        ``graph_driver._handle_command_at_head``), so correctness is
+        preserved by optimistic concurrency. ``append_events`` also performs
+        its own ``current_position`` check and the UNIQUE constraint on
+        ``(aggregate_id, version)`` is the final backstop, so the invariant
+        holds even if two callers somehow race past the explicit check below.
+        """
         command_payload = dict(payload or {})
         command_payload["run_id"] = run_id
+
+        # Phase 1: read the run's full event log and compute the pure command
+        # result OUTSIDE any write lock. This is the part that can take
+        # seconds on a run with a large events_v2 history, so it must not
+        # hold BEGIN IMMEDIATE while it runs.
+        async with self._session_factory() as read_session:
+            existing_events = await GraphEventStore(read_session).read_run(run_id)
+        current_position = _projection_position(existing_events)
+        if current_position != expected_position:
+            msg = (
+                f"stale graph projection for run {run_id}: "
+                f"expected {expected_position}, found {current_position}"
+            )
+            raise StaleProjectionError(msg)
+
+        projection = rebuild_projection(existing_events)
+        planned_events = apply_command(
+            projection,
+            existing_events,
+            command_type,
+            command_payload,
+            self._clock,
+            self._id_gen,
+        )
+        planned_events = self._add_dispatch_intent_events(
+            planned_events,
+            command_type,
+            run_id,
+        )
+
+        # Phase 2: short write transaction. Re-check the position cheaply
+        # (COUNT/MAX query, not a full read) before appending, so a writer
+        # that landed between phase 1 and here is detected without ever
+        # re-reading the whole event log inside the lock.
         async with self._session_factory() as session:
             await session.execute(text("BEGIN IMMEDIATE"))
             try:
                 store = GraphEventStore(session)
-                existing_events = await store.read_run(run_id)
-                current_position = _projection_position(existing_events)
-                if current_position != expected_position:
+                head_position = await store.current_position(run_id)
+                if head_position != expected_position:
                     msg = (
                         f"stale graph projection for run {run_id}: "
-                        f"expected {expected_position}, found {current_position}"
+                        f"expected {expected_position}, found {head_position}"
                     )
                     raise StaleProjectionError(msg)
 
-                projection = rebuild_projection(existing_events)
-                planned_events = apply_command(
-                    projection,
-                    existing_events,
-                    command_type,
-                    command_payload,
-                    self._clock,
-                    self._id_gen,
-                )
-                planned_events = self._add_dispatch_intent_events(
-                    planned_events,
-                    command_type,
-                    run_id,
-                )
                 stored_events = await store.append_events(
                     run_id,
                     expected_position,

@@ -22,7 +22,7 @@ import pytest
 
 from orchestrator.git import WorktreeCommitError
 from orchestrator.runners import CodexServerAgent, RealStdioTransport
-from orchestrator.runners.errors import AgentNotAvailableError
+from orchestrator.runners.errors import AgentExecutionError, AgentNotAvailableError
 from orchestrator.runners.types import ExecutionContext, ExecutionResult
 from orchestrator.config import ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
@@ -454,6 +454,35 @@ async def test_execute_routes_tool_call_grade_to_callback_in_verifier_phase() ->
     )
 
     assert grades == [("R-01", "A", "Excellent")]
+
+
+async def test_execute_raises_when_submit_callback_is_rejected() -> None:
+    notifications = [
+        _tool_call_request("submit", {}, 10),
+        _turn_completed(),
+    ]
+    agent, transport = _make_agent(notifications)
+
+    async def rejected_submit() -> None:
+        raise ValueError("submit callback rejected: verification record at index 0 missing grades")
+
+    with pytest.raises(AgentExecutionError) as exc_info:
+        await agent.execute(
+            context=_ctx(node_kind="verifier"),
+            on_checklist_update=_noop_checklist,
+            on_submit=rejected_submit,
+            on_grade=_noop_grade,
+        )
+
+    assert "submit callback rejected: verification record at index 0 missing grades" in str(
+        exc_info.value
+    )
+    tool_response = next(sent for sent in transport.sent if sent.get("id") == 10)
+    assert tool_response["result"]["success"] is False
+    assert (
+        tool_response["result"]["contentItems"][0]["text"]
+        == "submit callback rejected: verification record at index 0 missing grades"
+    )
 
 
 async def test_execute_silently_drops_disallowed_tool_call_events() -> None:

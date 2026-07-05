@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
+import sqlite3
 import subprocess
 from typing import Any, cast
 
 import pytest
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config.enums import AgentRunnerType
@@ -1752,3 +1754,92 @@ async def test_special_planner_roles_can_submit_without_graph_patch() -> None:
         assert executor.submitted == [context]
         assert executor.graph_patches == []
         assert executor.failures == []
+
+
+class _FakeCommandResult:
+    def __init__(self, events: list[Any]) -> None:
+        self.events = events
+        self.outbox_items: list[Any] = []
+        self.projection_position = 1
+
+
+def _locked_operational_error() -> OperationalError:
+    return OperationalError(
+        "INSERT INTO events_v2 ...",
+        {},
+        sqlite3.OperationalError("database is locked"),
+    )
+
+
+class LockedOnceController:
+    """Fails the first ``handle_command`` call with a locked DB error, then succeeds."""
+
+    def __init__(self, fail_times: int = 1) -> None:
+        self.calls = 0
+        self._fail_times = fail_times
+
+    async def handle_command(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, Any] | None = None,
+    ) -> _FakeCommandResult:
+        self.calls += 1
+        if self.calls <= self._fail_times:
+            raise _locked_operational_error()
+        return _FakeCommandResult([])
+
+
+class AlwaysNonLockedErrorController:
+    """Raises a non-lock OperationalError that must never be retried."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    async def handle_command(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, Any] | None = None,
+    ) -> _FakeCommandResult:
+        self.calls += 1
+        raise OperationalError("SELECT 1", {}, sqlite3.OperationalError("no such table"))
+
+
+@pytest.mark.asyncio
+async def test_handle_command_retry_stale_retries_locked_operational_error_then_succeeds() -> None:
+    controller = LockedOnceController(fail_times=1)
+    executor = GraphDispatchExecutor(
+        cast(async_sessionmaker[AsyncSession], object()),
+        cast(Any, controller),
+        cast(Any, object()),
+        worktree_path="/tmp/worktree",
+    )
+
+    result = await executor._handle_command_retry_stale(
+        "run-1",
+        0,
+        "record_heartbeat",
+        {"lease_id": "lease-1"},
+    )
+
+    assert controller.calls == 2
+    assert result.events == []
+
+
+@pytest.mark.asyncio
+async def test_handle_command_retry_stale_reraises_non_locked_operational_error_immediately() -> None:
+    controller = AlwaysNonLockedErrorController()
+    executor = GraphDispatchExecutor(
+        cast(async_sessionmaker[AsyncSession], object()),
+        cast(Any, controller),
+        cast(Any, object()),
+        worktree_path="/tmp/worktree",
+    )
+
+    with pytest.raises(OperationalError):
+        await executor._handle_command_retry_stale("run-1", 0, "record_heartbeat", {})
+
+    assert controller.calls == 1

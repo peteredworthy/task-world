@@ -88,6 +88,10 @@ _RECV_CHUNK_SIZE = 64 * 1024  # 64KB per read from process stdout.
 _MAX_JSON_RPC_LINE_BYTES = 16 * 1024 * 1024  # 16MB soft cap before dropping an oversized line.
 
 
+def _is_submit_callback_rejection(tool_name: str, exc: Exception) -> bool:
+    return tool_name == "submit" and str(exc).startswith("submit callback rejected:")
+
+
 def _build_workspace_write_config_toml(
     writable_roots: list[Path],
     *,
@@ -629,6 +633,18 @@ class CodexServerAgent:
                         )
                     )
                 except ValueError as exc:
+                    if _is_submit_callback_rejection(tool_name, exc):
+                        parser.record_dynamic_tool_result(
+                            str(req_id), success=False, output=str(exc)
+                        )
+                        await transport.send(
+                            build_dynamic_tool_call_response(
+                                req_id,
+                                success=False,
+                                output=str(exc),
+                            )
+                        )
+                        raise
                     # Disallowed tool — respond with failure to unblock the server.
                     parser.record_dynamic_tool_result(str(req_id), success=False)
                     await transport.send(
@@ -1070,7 +1086,9 @@ class CodexServerAgent:
                     on_complete_recovery=on_complete_recovery,
                     agent_label="CodexServerAgent",
                 )
-            except ValueError:
+            except ValueError as exc:
+                if _is_submit_callback_rejection(tool_name, exc):
+                    raise
                 pass  # Disallowed tool — already logged by enforce_tool_allowlist.
             except Exception as exc:
                 # Tool call raised an unexpected error (e.g. InvalidTransitionError when

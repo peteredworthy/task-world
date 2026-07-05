@@ -16,9 +16,11 @@ from pathlib import Path
 from time import perf_counter
 from typing import Any, Literal, Protocol, cast
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
+from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.graph import (
     CheckResultRecord,
     DEFAULT_NODE_CONTRACTS,
@@ -463,7 +465,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "output_records": [],
                 "file_state_rejected": boundary.rejection_record,
             }
-            result = await self._controller.handle_command(
+            result = await self._handle_command_retry_stale(
                 context.run_id,
                 observed_position,
                 "submit_callback",
@@ -623,8 +625,19 @@ class GraphDispatchExecutor(SideEffectExecutor):
         command_type: str,
         payload: dict[str, object],
     ) -> Any:
+        """Issue a graph command, retrying stale-projection races and transient DB locks.
+
+        Two independent, retriable failure modes can surface from
+        ``GraphController.handle_command``: a losing optimistic-concurrency
+        race (``StaleProjectionError``, re-read position and resend), and a
+        transient SQLite write-lock contention error (``OperationalError``
+        with "database is locked"/"database is busy", back off briefly and
+        resend the same payload — mirrors ``OutboxDispatcher._retry_locked``).
+        Both share this method's retry budget.
+        """
         current_position = expected_position
         retry_payload = dict(payload)
+        delay_seconds = 0.1
         for attempt in range(MAX_STALE_COMMAND_RETRIES + 1):
             try:
                 return await self._controller.handle_command(
@@ -633,6 +646,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     command_type,
                     retry_payload,
                 )
+            except OperationalError as exc:
+                if not is_retriable_sqlite_write_conflict(exc) or attempt >= MAX_STALE_COMMAND_RETRIES:
+                    raise
+                await asyncio.sleep(delay_seconds * (attempt + 1))
             except StaleProjectionError:
                 if attempt >= MAX_STALE_COMMAND_RETRIES:
                     raise
@@ -670,7 +687,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             verdicts = self._residue_classifier.classify(metadata)
             if not verdicts:
                 continue
-            result = await self._controller.handle_command(
+            result = await self._handle_command_retry_stale(
                 context.run_id,
                 current_position,
                 "record_gatekeeper_verdicts",
@@ -713,7 +730,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             cleanup_request=cleanup_event.payload,
             compromised_record=compromised_record,
         )
-        result = await self._controller.handle_command(
+        result = await self._handle_command_retry_stale(
             item.run_id,
             await self._current_position(item.run_id),
             "record_cleanup_applied",
@@ -755,6 +772,7 @@ async def reconcile_runtime(
             continue
         run_id = str(lease["run_id"])
         lease_id = str(lease["lease_id"])
+        delay_seconds = 0.1
         for attempt in range(MAX_STALE_COMMAND_RETRIES):
             if not await _recovered_lease_still_active(
                 controller,
@@ -778,6 +796,11 @@ async def reconcile_runtime(
             except StaleProjectionError:
                 if attempt == MAX_STALE_COMMAND_RETRIES - 1:
                     raise
+                continue
+            except OperationalError as exc:
+                if not is_retriable_sqlite_write_conflict(exc) or attempt == MAX_STALE_COMMAND_RETRIES - 1:
+                    raise
+                await asyncio.sleep(delay_seconds * (attempt + 1))
                 continue
 
 

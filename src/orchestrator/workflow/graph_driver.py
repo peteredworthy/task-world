@@ -105,8 +105,9 @@ async def apply_graph_cancel_until_terminal(
         auto_dispatch=False,
     )
     payload: dict[str, object] = {"reason": reason or "signal_cancel"}
+    delay_seconds = 0.05
 
-    for _ in range(4):
+    for attempt in range(4):
         projection = await controller.read_projection(run_id)
         run_state = projection["run_state"]
         if run_state is None or run_state in {"cancelled", "completed", "failed"}:
@@ -118,6 +119,12 @@ async def apply_graph_cancel_until_terminal(
         try:
             result = await controller.handle_command(run_id, position, "cancel", payload)
         except StaleProjectionError:
+            continue
+        except OperationalError as exc:
+            if not is_retriable_sqlite_write_conflict(exc) or attempt == 3:
+                raise
+            await asyncio.sleep(delay_seconds)
+            delay_seconds *= 2
             continue
 
         if any(
@@ -571,7 +578,14 @@ class GraphRunDriver:
                 run_id,
                 "schedule_tick",
                 {
-                    "lease_seconds": 300,
+                    # 3600, not 300: the kernel's expiry sweep races the driver's
+                    # renewal pass, and under projection-replay load (large event
+                    # logs) renewals slip past a 5-minute TTL — four finished W3
+                    # verifications were discarded as callback_rejected_stale on
+                    # 2026-07-05 before this was widened. Long-running verifier
+                    # sessions legitimately exceed 300s; orphan detection is
+                    # handled by executor liveness, not lease expiry.
+                    "lease_seconds": 3600,
                     "max_grants": 10,
                     "base_snapshot_id": "routine-snapshot",
                 },
@@ -608,7 +622,7 @@ class GraphRunDriver:
                         run_id,
                         "schedule_tick",
                         {
-                            "lease_seconds": 300,
+                            "lease_seconds": 3600,
                             "max_grants": 10,
                             "base_snapshot_id": "routine-snapshot",
                         },
@@ -646,20 +660,21 @@ class GraphRunDriver:
             previous_signature = signature
 
     async def _bootstrap_graph_lifecycle(self, run_id: str) -> None:
+        # Routed through _handle_command_at_head (not a raw controller call)
+        # so a transient "database is locked" from unrelated concurrent
+        # writers elsewhere in the DB — plausible even for a just-seeded run,
+        # since SQLite's write lock is process/file-wide, not per-run — is
+        # retried here instead of escaping run() uncaught and stranding the
+        # run ACTIVE with no driver (see the graph_driver_crashed comment
+        # below for the analogous risk in the main drive loop).
         events = await self._read_events(run_id)
         run_state = project_run_state(events)
         controller = GraphController(self._session_factory, self._clock, self._id_gen)
-        if run_state is None:
-            position = await controller.current_position(run_id)
-            result = await controller.handle_command(run_id, position, "accept_run")
-            await controller.handle_command(run_id, result.projection_position, "start")
-        elif run_state == "draft":
-            position = await controller.current_position(run_id)
-            result = await controller.handle_command(run_id, position, "accept_run")
-            await controller.handle_command(run_id, result.projection_position, "start")
+        if run_state is None or run_state == "draft":
+            await self._handle_command_at_head(controller, run_id, "accept_run")
+            await self._handle_command_at_head(controller, run_id, "start")
         elif run_state == "queued":
-            position = await controller.current_position(run_id)
-            await controller.handle_command(run_id, position, "start")
+            await self._handle_command_at_head(controller, run_id, "start")
 
     async def _read_projection(self, run_id: str) -> GraphProjectionSnapshot:
         events = await self._read_events(run_id)
@@ -772,7 +787,7 @@ async def _renew_running_expired_leases(
         payload: dict[str, object] = {
             "lease_id": lease_id,
             "node_id": node_id,
-            "ttl_seconds": 300,
+            "ttl_seconds": 3600,
         }
         generation = lease.get("generation")
         if isinstance(generation, int) and not isinstance(generation, bool):
