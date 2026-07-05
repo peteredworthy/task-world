@@ -968,3 +968,83 @@ async def test_operator_reopen_marker_is_consumed_once(
     assert after.pause_reason != GRAPH_OPERATOR_REOPEN_PAUSE_REASON
     assert project_run_state(await _events(session_factory, run_id)) != "failed"
     assert "worker" in dispatch_order
+
+
+@pytest.mark.asyncio
+async def test_recover_run_then_resume_reopens_failed_graph_run(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    """recover_run parks a FAILED graph run PAUSED; the resume must still reopen.
+
+    recover_run() transitions a FAILED graph run to PAUSED (pause_reason
+    "recovered") without touching the durable kernel run_state, which stays
+    "failed". The operator resume then takes the ordinary PAUSED -> ACTIVE
+    branch. The reopen marker must still be stamped on that resume (it carries
+    operator intent to reopen the failed kernel) so the re-armed driver issues
+    the kernel resume — otherwise the ACTIVE/failed-kernel row would self-heal
+    straight back to FAILED and the operator recover+resume would silently do
+    nothing.
+    """
+    _, session_factory = file_db
+    repo = tmp_path / "repo-recover-resume"
+    _init_repo(repo)
+    run_id = "graph-recover-resume"
+    routine = _routine()
+    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+
+    clock = FixedClock()
+    ids = SequentialIds()
+    await _seed_and_force_failed_graph(
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+    )
+
+    # Drive the row to FAILED (operator-visible terminal state).
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.apply_start_run(run_id)
+        await service.apply_cancel_run(run_id, reason="forced_for_test")
+    assert await _run_status(session_factory, run_id) == RunStatus.FAILED
+
+    # Operator recover: FAILED -> PAUSED (pause_reason "recovered"), kernel
+    # untouched so run_state is still "failed".
+    async with session_factory() as session:
+        target_task_id = (await RunRepository(session).get(run_id)).steps[0].tasks[0].id
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.recover_run(run_id, target_task_id=target_task_id, reset_branch=False)
+    async with session_factory() as session:
+        recovered = await RunRepository(session).get(run_id)
+    assert recovered.status == RunStatus.PAUSED
+    assert recovered.pause_reason == "recovered"
+    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+
+    # Operator resume takes the ordinary PAUSED -> ACTIVE branch, but the reopen
+    # marker must still be stamped because this is a graph run.
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.apply_resume_run(run_id, resume_strategy="continue")
+    async with session_factory() as session:
+        resumed = await RunRepository(session).get(run_id)
+    assert resumed.status == RunStatus.ACTIVE
+    assert resumed.pause_reason == GRAPH_OPERATOR_REOPEN_PAUSE_REASON
+    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+
+    # Re-arming the driver issues the kernel resume: the graph reopens instead of
+    # self-healing back to FAILED, and the worker node becomes schedulable again.
+    dispatch_order: list[str] = []
+    driver = _shared_driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=dispatch_order,
+        clock=clock,
+        ids=ids,
+    )
+    await driver.run(run_id)
+
+    assert project_run_state(await _events(session_factory, run_id)) != "failed"
+    assert "worker" in dispatch_order
+    async with session_factory() as session:
+        after = await RunRepository(session).get(run_id)
+    assert after.pause_reason != GRAPH_OPERATOR_REOPEN_PAUSE_REASON

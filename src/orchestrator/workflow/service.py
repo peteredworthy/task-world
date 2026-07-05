@@ -164,6 +164,8 @@ from orchestrator.workflow.delegation import (
 )
 from orchestrator.workflow.legacy_run_facts import durable_parent_oversight_patch
 from orchestrator.workflow.graph_driver import GRAPH_OPERATOR_REOPEN_PAUSE_REASON
+from orchestrator.graph import project_run_state
+from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.git import (
     WorktreeCommitError,
     WorktreeResetError,
@@ -1138,19 +1140,32 @@ class WorkflowService:
                 await self._store_v2.append([event])
                 self._event_emitter.notify_persisted(event)
 
-        # Operator reopen of a FAILED graph run: stamp a persisted, consume-once
-        # marker in pause_reason so the re-armed GraphRunDriver knows this ACTIVE
-        # row is a *genuine* operator reopen (row FAILED -> ACTIVE while the
-        # kernel run_state stays "failed") and issues the kernel resume — as
-        # opposed to a crash-window stranded-ACTIVE run (failed kernel, no
-        # operator), which must self-heal to FAILED instead. See
-        # GRAPH_OPERATOR_REOPEN_PAUSE_REASON. Normal PAUSED -> ACTIVE resumes
-        # leave pause_reason cleared.
-        reopen_marker = (
-            GRAPH_OPERATOR_REOPEN_PAUSE_REASON
-            if (run.status == RunStatus.FAILED and _is_graph_run(run))
-            else None
-        )
+        # Operator reopen of a graph run: stamp a persisted, consume-once marker
+        # in pause_reason so the re-armed GraphRunDriver knows this ACTIVE row
+        # carries genuine operator intent to reopen a failed kernel, and issues
+        # the kernel resume — as opposed to a crash-window stranded-ACTIVE run
+        # (failed kernel, no operator), which must self-heal to FAILED instead.
+        # See GRAPH_OPERATOR_REOPEN_PAUSE_REASON.
+        #
+        # Invariant: every operator resume of a graph run whose durable kernel
+        # run_state is still "failed"/"resuming" carries the reopen marker. The
+        # marker cannot be gated on the pre-transition row status alone: a FAILED
+        # graph run resumes FAILED -> ACTIVE, but recover_run() first parks such a
+        # run PAUSED (pause_reason "recovered") WITHOUT touching the kernel, so the
+        # operator resume then takes the ordinary PAUSED -> ACTIVE branch while the
+        # kernel is still "failed". Gating on pre-status FAILED would drop the
+        # reopen intent there and the driver would self-heal the ACTIVE/failed-
+        # kernel row straight back to FAILED — "operator resume appears to succeed
+        # yet does nothing". So key off the kernel run_state instead of the row
+        # status: this stamps for both FAILED->ACTIVE and recover-then-resume, and
+        # crucially does NOT stamp for a normal resume of a healthy (non-failed)
+        # graph run — leaving pause_reason cleared as before, so no observer sees a
+        # spurious reopen marker on an ordinary pause/resume cycle.
+        reopen_marker: str | None = None
+        if _is_graph_run(run):
+            graph_events = await GraphEventStore(self._session).read_run(run_id)
+            if project_run_state(graph_events) in {"failed", "resuming"}:
+                reopen_marker = GRAPH_OPERATOR_REOPEN_PAUSE_REASON
         events = await handle_update_run_status(
             UpdateRunStatusCommand(
                 run_id=run_id,
