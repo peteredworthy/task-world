@@ -37,6 +37,7 @@ from orchestrator.graph_runtime import (
     StaleProjectionError,
     build_graph_runtime,
     recover,
+    reconcile_graph,
     reconcile_runtime,
     seed_run,
 )
@@ -379,6 +380,7 @@ class GraphRunDriver:
         if not is_fresh:
             try:
                 report = await recover(self._session_factory, dispatcher, run_id=run_id)
+                await reconcile_graph(controller, run_id=run_id)
                 await reconcile_runtime(controller, executor, report)
             except Exception:
                 logger.exception(
@@ -494,12 +496,7 @@ class GraphRunDriver:
                     await controller.handle_command(
                         run_id,
                         recovery_position,
-                        "schedule_tick",
-                        {
-                            "lease_seconds": 300,
-                            "max_grants": 10,
-                            "base_snapshot_id": "routine-snapshot",
-                        },
+                        "reconcile",
                     )
                     recovery_projection = await read_projection(run_id)
                     if _progress_signature(recovery_projection) != _progress_signature(projection):

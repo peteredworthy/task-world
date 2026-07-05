@@ -243,7 +243,7 @@ async def test_driver_reaches_scheduler_after_expired_active_lease() -> None:
         read_projection=reader.read,
     )
 
-    assert controller.commands == ["schedule_tick", "schedule_tick", "schedule_tick"]
+    assert controller.commands == ["schedule_tick", "schedule_tick", "reconcile"]
     assert executor.waits[0] == (0.0, {"exec-expired"})
     assert outcome.completed is False
     assert outcome.blocked_reason == (
@@ -309,7 +309,7 @@ async def test_driver_renews_expired_lease_when_execution_is_still_running() -> 
 
 
 @pytest.mark.asyncio
-async def test_driver_runs_recovery_tick_before_quiescent_classification() -> None:
+async def test_driver_runs_reconcile_before_quiescent_classification() -> None:
     controller = RecordingController()
     dispatcher = RecordingDispatcher()
     executor = RecordingExecutor()
@@ -363,7 +363,7 @@ async def test_driver_runs_recovery_tick_before_quiescent_classification() -> No
         read_projection=reader.read,
     )
 
-    assert controller.commands == ["schedule_tick", "schedule_tick", "schedule_tick"]
+    assert controller.commands == ["schedule_tick", "reconcile", "schedule_tick"]
     assert dispatcher.calls == 2
     assert executor.calls == 2
     assert outcome.completed is True

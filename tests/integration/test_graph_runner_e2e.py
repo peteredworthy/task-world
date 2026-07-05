@@ -494,7 +494,10 @@ async def test_graph_runner_verifier_fail_needs_revision(
     await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
 
     events = await _read_events(session_factory, run_id)
-    assert project_task_states(events) == {"step-1/task-1": "needs_revision"}
+    assert project_task_states(events) == {
+        "step-1/task-1": "needs_revision",
+        "recovery-step-1-task-1": "pending",
+    }
 
 
 @pytest.mark.asyncio

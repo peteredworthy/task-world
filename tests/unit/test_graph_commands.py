@@ -3704,7 +3704,7 @@ def test_schedule_tick_grants_leases() -> None:
     assert output[1].payload["node_id"] == "worker-1"
 
 
-def test_schedule_tick_recovers_quiescent_graph_after_failed_required_check() -> None:
+def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event(
@@ -3760,7 +3760,7 @@ def test_schedule_tick_recovers_quiescent_graph_after_failed_required_check() ->
 
     assert project_task_states(events) == {"region-r1-final": "pending"}
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     assert [event.event_type for event in output] == [
         "node_created",
@@ -3786,6 +3786,243 @@ def test_schedule_tick_recovers_quiescent_graph_after_failed_required_check() ->
         and event.payload["node_id"] == "planner-recover-check-result-r1"
         and event.payload["base_snapshot_id"] == "routine-snapshot-record"
         for event in next_output
+    )
+
+
+def test_schedule_tick_does_not_repair_failed_required_check() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-r1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant-r1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "status": "failed",
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert output == []
+
+
+def test_reconcile_is_idempotent_and_rejects_terminal_runs() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+            },
+            3,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-r1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant-r1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "status": "failed",
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    second_output = _apply([*events, *output], "reconcile", {"run_id": "run-1"})
+    terminal_output = _apply(
+        [_event("run_lifecycle_changed", {"to_state": "completed"}, 0)],
+        "reconcile",
+        {"run_id": "run-1"},
+    )
+
+    assert any(event.event_type == "node_created" for event in output)
+    assert second_output == []
+    assert [event.event_type for event in terminal_output] == ["command_rejected"]
+    assert terminal_output[0].payload["command_type"] == "reconcile"
+    assert terminal_output[0].payload["reason"] == "terminal run: completed"
+
+
+def test_callback_check_result_emits_scoped_failed_check_recovery() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "routine-snapshot",
+                "kind": "artifact",
+                "role": "routine_snapshot",
+                "state": "completed",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "routine-snapshot-record",
+                "record_kind": "routine_snapshot",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "routine-snapshot",
+                "port": "snapshot",
+                "schema": "RoutineSnapshot",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "running",
+                "task_region_id": "region-r1-final",
+            },
+            3,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "check-final-invariant-r1",
+                "lease_id": "lease-check",
+                "generation": 1,
+                "execution_id": "exec-check",
+                "base_snapshot_id": "routine-snapshot-record",
+            },
+            4,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="check-final-invariant-r1",
+            execution_id="exec-check",
+            lease_id="lease-check",
+            base_snapshot_id="routine-snapshot-record",
+            observed_graph_position=4,
+            payload={
+                "payload_hash": "hash-check",
+                "output_records": [
+                    {
+                        "record_id": "check-result-r1",
+                        "record_kind": "output",
+                        "record_type": "check_result",
+                        "producer_node_id": "check-final-invariant-r1",
+                        "port": "check_result",
+                        "schema": "CheckResult",
+                        "candidate_id": "candidate-1",
+                        "task_region_id": "region-r1-final",
+                        "attempt_number": 1,
+                        "value": {
+                            "status": "failed",
+                            "classification": "failed",
+                            "command_id": "unit-check",
+                            "command_binding": None,
+                            "command_text": "unit check",
+                            "command": {"id": "unit-check", "argv": ["false"]},
+                            "worktree_path": "/tmp/worktree",
+                            "base_snapshot_id": "routine-snapshot-record",
+                            "execution_id": "exec-check",
+                            "exit_code": 1,
+                            "duration_ms": 1,
+                            "stdout": "",
+                            "stderr": "failed",
+                            "stdout_truncated": False,
+                            "stderr_truncated": False,
+                            "timeout_seconds": 60,
+                            "environment_policy": {
+                                "cwd": "/tmp/worktree",
+                                "env": "inherited",
+                                "shell": False,
+                            },
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert any(
+        event.event_type == "node_created"
+        and event.payload["node_id"] == "planner-recover-check-result-r1"
+        for event in output
+    )
+    assert any(
+        event.event_type == "input_bound"
+        and event.payload["to_port"] == "verification_evidence"
+        and event.payload["record_ids"] == ["check-result-r1"]
+        for event in output
     )
 
 
@@ -3870,7 +4107,7 @@ def test_schedule_tick_does_not_duplicate_existing_failed_check_recovery() -> No
     assert output == []
 
 
-def test_schedule_tick_fails_after_no_successor_failed_check_recovery() -> None:
+def test_reconcile_fails_after_no_successor_failed_check_recovery() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event(
@@ -3923,7 +4160,7 @@ def test_schedule_tick_fails_after_no_successor_failed_check_recovery() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     assert [event.event_type for event in output] == ["run_lifecycle_changed"]
     assert output[0].payload["to_state"] == "failed"
@@ -4000,7 +4237,7 @@ def test_schedule_tick_does_not_fail_after_environment_no_successor_recovery() -
     )
 
 
-def test_schedule_tick_ignores_retired_failed_check_recovery_target() -> None:
+def test_reconcile_ignores_retired_failed_check_recovery_target() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event(
@@ -4076,14 +4313,14 @@ def test_schedule_tick_ignores_retired_failed_check_recovery_target() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     recovery_node = next(event.payload for event in output if event.event_type == "node_created")
     assert recovery_node["node_id"] == "planner-recover-check-result-r1"
     assert recovery_node["recovery_reason"] == "failed_required_check"
 
 
-def test_schedule_tick_creates_gap_planner_for_failed_corrective_verifier() -> None:
+def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event(
@@ -4204,7 +4441,7 @@ def test_schedule_tick_creates_gap_planner_for_failed_corrective_verifier() -> N
 
     assert project_task_states(events)["corrective_work_region"] == "needs_revision"
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     assert [event.event_type for event in output[:5]] == [
         "node_created",
@@ -4667,7 +4904,7 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "reconcile", {"run_id": "run-1", "base_snapshot_id": "S0"})
 
     recovery_edge = next(
         event
@@ -4763,7 +5000,7 @@ def test_passed_final_check_retires_failure_continuation() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "reconcile", {"run_id": "run-1", "base_snapshot_id": "S0"})
 
     assert [event.payload["node_id"] for event in output if event.event_type == "node_retired"] == [
         "planner-gap-final"

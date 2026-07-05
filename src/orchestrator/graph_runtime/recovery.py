@@ -8,7 +8,7 @@ from sqlalchemy import distinct, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.db import EventV2Model
-from orchestrator.graph_runtime.controller import rebuild_projection
+from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem
 from orchestrator.graph_runtime.store import GraphEventStore
 
@@ -66,6 +66,22 @@ async def recover(
         pending_cleanups=pending_cleanups,
         awaiting_start_ack=awaiting_start_ack,
         awaiting_callback=awaiting_callback,
+    )
+
+
+async def reconcile_graph(
+    controller: GraphController,
+    *,
+    run_id: str,
+) -> None:
+    """Run the kernel recovery escape hatch for active graph runs."""
+    projection = await controller.read_projection(run_id)
+    if projection["run_state"] != "active":
+        return
+    await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "reconcile",
     )
 
 
