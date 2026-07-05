@@ -323,3 +323,150 @@ immediately cuts wall time and cost.
 | 9 | Patch lint for poison pattern (W3-3) | S | Planning-time prevention |
 | 10 | Operator patch API endpoint (W3-4) | S | Recovery toil |
 | 11 | Auto-resume transient driver crashes (W2-5) | S | Overnight resilience |
+
+---
+
+## Addendum (2026-07-04 PM → 2026-07-05): second-order strands after the morning repairs
+
+After the morning repairs and resumes, both runs completed their corrective
+work but stranded again in **new** ways. Status of the original list: item 10
+(operator patch endpoint, `POST /api/runs/{id}/graph/patch`) is implemented;
+the no-successor-sweep and run-lifecycle fixes below are implemented but
+**uncommitted** in the working tree.
+
+### Fixed in working tree (uncommitted — needs commit)
+
+- **No-successor sweep false positive failed W2 wrongly.** W2's recovery
+  succeeded (repair verifier passed pos 520, final checks passed pos 545/550)
+  yet `_completed_no_successor_recovery` failed the run on the next quiescent
+  tick: patches creating executable (non-planner) successors were bookkept as
+  dead ends, and a failed verification stayed "current" forever unless its own
+  candidate later passed. Fixed by `_superseded_by_later_regional_pass` +
+  `_recovery_lineage_superseded` (graph/commands.py) + tests.
+- **No legal path out of run-state `failed`.** `RUN_LIFECYCLE_TRANSITIONS` now
+  has `"resume": {"failed": "resuming"}` as a human/operator-only edge.
+
+### New strand class A — runtime-failed nodes have no reopen path (W2)
+
+`planner-gap-w2-corrective-verification` and
+`verifier-corrective-corrective_work_region` died `lease_expired_without_callback`
+when the driver died; the nodes are terminally `failed`. Resume re-arms the
+driver but nothing reschedules a runtime-failed node, so the run re-pauses
+`graph_blocked` within seconds, forever. Runtime failures (lease expiry,
+driver death) are not agent verdicts and should not consume the node
+permanently. **Work needed:** on resume (or via operator command), reopen
+nodes whose failure reason is runtime-class (`lease_expired_without_callback`,
+`runtime_execution_missing_no_callback`) and which have retry budget left.
+Until then: operator patch retires + recreates them.
+
+### New strand class B — `needs_revision` regions never see cross-region repairs (W2 + W3)
+
+`_derive_task_states` marks a region `needs_revision` when its own latest
+candidate has a failed verdict. Gap-planner recovery creates corrective
+candidates in *other* regions (`corrective_work_region`); when those pass, the
+sweep now supersedes the old failure (fix above) — but task-state derivation
+does **not**, so the origin region stays `needs_revision` with all nodes
+terminal. `_should_complete_graph` requires every task accepted → permanent
+quiescent pause; resume is a proven no-op (three zero-event resumes on W3).
+This is the same stale-identity family as the final-check pin: region
+acceptance is pinned to "a passing verdict on MY latest candidate" instead of
+"the lineage this region guards was repaired". **Work needed:** apply the
+supersession rule in `_derive_task_states`, or require corrective regions to
+submit their candidate into the origin region (cite-latest rule extension).
+Until then: operator patch adds a revision worker+verifier pair in the origin
+region citing the applied repair.
+
+### New failure class C — claude_sdk runner cannot submit graph callbacks (W4)
+
+After switching W4 to the `claude_sdk` runner, both verifier attempts finished
+the verification (PASS, full suite green) but every
+`mcp__orchestrator__grade`/`submit` call returned `Stream closed` while local
+tools kept working; the agent exits, dispatch records
+`agent exited without submit`, and the retry burns another ~25-minute session
+into the same wall. Correlated server-side error at first dispatch:
+`RuntimeError: Attempted to exit cancel scope in a different task than it was
+entered in` inside `claude_agent_sdk` (`process_query` → `query.close`),
+which kills the in-process SDK MCP server that hosts the submit/grade tools
+(`runners/agents/claude_sdk/agent.py`). **Work needed:** reproduce and fix (or
+pin/upgrade `claude-agent-sdk`); dispatch-side detection — agent output
+claiming submit failure with no callback should pause with a distinct reason
+instead of retrying blind. Until then: use `codex_server` for graph runs.
+
+### Strand class A recurrence, self-inflicted: event-loop starvation expires live leases
+
+During the W3 final revision round (2026-07-05 ~03:20), the server worker hit
+sustained ~100% CPU (DB back to 3.15 GB; `read_run` full-log JSON parses on
+every command — the exact inflation W3 exists to fix). Consequences chained:
+heartbeat renewals starved → `verifier-w3-snapshots-revision-final-2` lease
+expired at 03:23:46 **while its agent was alive and finishing** → its callback
+landed 14 minutes later and was rejected `callback_rejected_stale` → ~40
+minutes of verification discarded, node failed (class A again), and the REST
+API went unresponsive (health timeouts >3 min) so even the operator repair
+patch couldn't land. The run's own bookkeeping starved the run. Adds urgency
+to: W3 spec itself (incremental snapshots), W5 typed payloads (stop new-event
+bloat), and a lease-renewal path that cannot be starved by projection reads
+(or: accept late callbacks whose lease expired without a competing
+re-dispatch — the work was valid, nothing else held the lease).
+
+### Patch-validator gap (minor)
+
+`create_revision_attempt`'s embedded `worker_node`/`verifier_node` are not
+registered by the patch validator, so `create_edge` ops referencing them are
+rejected (`references unknown target node`). Workaround: plain `create_node`
+ops (`revision_created` is inert in projections today). Fix when revisions
+become load-bearing.
+
+### Strand class B is two-layered: region checks also pin the latest candidate
+
+The W2 revision pair completed cleanly (candidate pos 581, verification passed
+pos 597, codex submits fine) — and the region **still** would not accept.
+`_required_checks_passed` (projections.py) requires every non-retired check
+node in the region to have a passing result that **cites the latest
+candidate** (`_check_result_cites_latest_candidate`). The final-invariant
+checks live in `region-w2-recovery-at-source` and their passing results cite
+the pre-revision candidate, so any new candidate re-poisons the region — the
+cite-latest rule and the revision path fight each other. Every needs_revision
+repair in a region that contains check nodes therefore needs a second patch:
+retire the stale checks (their results remain factually valid for the same
+worktree state) or clone them against the new candidate (another duplicate
+suite run — see Redundancy-1). Applied to W2:
+`operator-w2-retire-stale-final-checks-2026-07-05` (pos 606) → all regions
+accepted. The singleton-gate + producer-class-selector redesign (items 5/8)
+fixes this layer too.
+
+### Strand class B, layer 3: `attempt_number` shadows operator revision candidates
+
+The W2 revision candidate STILL didn't take even after the check retirement.
+`_latest_candidate` sorts by `(attempt_number, position)`. Planner-authored
+workers carry `attempt_number` (impl=1, corrective=2) which the candidate
+record inherits; the operator revision worker had none, so its candidate
+registered at attempt 0 and the kernel kept the old failed attempt-2
+candidate as "latest" → `needs_revision` forever. **Operator revision
+workers must set `attempt_number` above the region's current max** (W2 fix:
+`worker-w2-revision-final-2` with `attempt_number: 3`, patch
+`operator-w2-revision-final-r2-2026-07-05`, pos 612).
+
+### Projection divergence: light vs full event reads disagree on task state
+
+Same events, same position (606), two different answers:
+`project_task_states(read_run_light(...))` → region **accepted**;
+`project_task_states(read_run(...))` → region **needs_revision**. The light
+read's summary trim drops `attempt_number` from `output_record_accepted`
+payloads, so every candidate defaults to attempt 0 and position ordering wins
+— masking the shadowing above. Any consumer mixing read paths (API endpoints
+serve light, kernel commands project full) can disagree about run-blocking
+state at the same event count. The trim allowlist should preserve every field
+the projections consume (`attempt_number` at minimum); ideally add a parity
+test: for each fixture run, `project_*` over light == over full.
+
+### Recovery applied (2026-07-05, via `POST /api/runs/{id}/graph/patch`)
+
+- **W2** `operator-w2-revision-final-2026-07-05` (pos 570): retired the two
+  runtime-failed nodes; created `worker-w2-revision-final` +
+  `verifier-w2-revision-final` in `region-w2-recovery-at-source` citing the
+  passed source-scope repair; classified_gap edge backfill-bound immediately.
+- **W3** `operator-w3-revision-final-2026-07-05` (pos 782): created revision
+  worker+verifier pairs in `region-w3-incremental-snapshots` and
+  `region-w3-corrective` citing the two passed corrective candidates.
+- Both runs resumed on `codex_server` (gpt-5.5) — the runner with a proven
+  submit path; claude_sdk is unusable for graph runs until class C is fixed.

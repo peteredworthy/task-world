@@ -169,7 +169,11 @@ class EventSignalTransport(SignalTransport):
         payload: dict[str, Any] | None = None,
     ) -> PendingSignal:
         await self._ensure_projector_rebuilt()
-        if self._projector.is_terminal(run_id):
+        # RESUME is exempt from the terminal-state guard: graph-mode runs may
+        # be reopened from FAILED by an operator (WorkflowService.resume_run
+        # validates who may resume what BEFORE enqueueing; legacy failed runs
+        # are still rejected there with InvalidTransitionError).
+        if signal_type is not WorkflowSignal.RESUME and self._projector.is_terminal(run_id):
             raise SignalForInactiveRunError(run_id)
 
         from orchestrator.workflow import SignalEnqueued

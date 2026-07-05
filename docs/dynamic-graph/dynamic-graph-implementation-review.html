@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dynamic Graph Implementation Review — 2026-07-01</title>
+<title>Dynamic Graph Implementation Review — 2026-07-01 (status 2026-07-05)</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -56,6 +56,13 @@
   .badge.med   { background: rgba(224,179,84,0.15);  color: var(--warn); }
   .badge.low   { background: rgba(139,147,167,0.15); color: var(--muted); }
   .badge.str   { background: rgba(78,201,140,0.15);  color: var(--good); }
+  .badge.pend  { background: rgba(94,177,239,0.15);  color: var(--accent); }
+  .status-note {
+    border-left: 3px solid var(--accent); background: var(--panel2);
+    border-radius: 0 6px 6px 0; padding: 8px 14px; margin: 10px 0 0;
+    font-size: 0.9rem;
+  }
+  .status-note strong { color: var(--accent); }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
   table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 0.92rem; }
@@ -89,11 +96,26 @@
 
 <header>
   <h1>Dynamic Graph Implementation Review</h1>
-  <div class="subtitle">task-world · <code>src/orchestrator/graph/</code> + <code>src/orchestrator/graph_runtime/</code> + <code>src/orchestrator/workflow/graph_driver.py</code> · ~20,700 lines · reviewed 2026-07-01</div>
+  <div class="subtitle">task-world · <code>src/orchestrator/graph/</code> + <code>src/orchestrator/graph_runtime/</code> + <code>src/orchestrator/workflow/graph_driver.py</code> · ~20,700 lines · reviewed 2026-07-01 · re-assessed 2026-07-03 · <strong>status updated 2026-07-05</strong></div>
 </header>
 
 <div class="verdict">
   <strong>Verdict.</strong> The dynamic graph is an architecturally serious event-sourced execution kernel: a pure command/event/projection core with an effectful shell, transactional outbox, optimistic concurrency, and an unusually disciplined validation culture (FR proof ledger, product-path evidence). Its main risks are internal, not conceptual: a handful of monolithic modules, a growing dual-source-of-truth pattern where command handlers rescan the raw event log instead of the projection, recovery logic accreting into <code>schedule_tick</code> as reactive patches for quiescence bugs, and full-replay costs that grow with every audit event the scheduler emits. All are fixable incrementally without changing the external contract.
+</div>
+
+<div class="verdict" style="border-left-color: var(--warn);">
+  <strong>Status 2026-07-05.</strong> W1 + W1b are merged to main. W2, W3, and W4 were each implemented and <em>verified</em> by dynamic-graph runs — but <strong>none of the three is merged</strong>: their code sits uncommitted in run worktrees (<code>worktrees/r355</code>–<code>r357</code>), all branched from <code>f526cd70a</code> (Jun 29), eight commits behind main. All three diffs fail <code>git apply --check</code> against current main, and W4 (which dissolves <code>commands.py</code> into a package) conflicts with W2 and W3 as well. Separately, a July 4–5 incident wave (driver crash, final-check strand, lease starvation — see <code>incident-2026-07-04-w2-driver-crash-w3-final-check-strand.md</code>) produced a set of hardening fixes: some merged (<code>d390f6c41</code>, <code>6753f244a</code>), the latest layer <strong>uncommitted in the main working tree</strong>. W5's run is paused <code>graph_blocked</code>; W6/W7/W8 are untouched. The fresh action list is in <a href="#improvements">section 4</a>.
+  <table>
+    <tr><th>Item</th><th>Code state</th><th>Where</th></tr>
+    <tr><td>W1 single read path + W1b residual scans</td><td><span class="badge str">Merged</span></td><td><code>c95793889</code>, <code>4073a0d4b</code></td></tr>
+    <tr><td>W2 recovery at source (reconcile cmd, sweeps → source)</td><td><span class="badge pend">Verified, unmerged</span></td><td>run <code>69ce4f7c</code> → <code>worktrees/r355</code> (dirty, base <code>f526cd70a</code>)</td></tr>
+    <tr><td>W3 incremental snapshots + deferral dedup</td><td><span class="badge pend">Verified, unmerged</span></td><td>run <code>88f46a2e</code> → <code>worktrees/r356</code> (dirty, base <code>f526cd70a</code>)</td></tr>
+    <tr><td>W4 split monoliths (<code>graph/commands/</code> pkg, <code>prompts.py</code>)</td><td><span class="badge pend">Verified, unmerged</span></td><td>run <code>0694df2d</code> → <code>worktrees/r357</code> (dirty, base <code>f526cd70a</code>)</td></tr>
+    <tr><td>W5 typed payloads</td><td><span class="badge med">Run paused</span></td><td>run <code>b57c201d</code>, <code>graph_blocked</code>: ready nodes not dispatched</td></tr>
+    <tr><td>W6 outbox · W7 glob overlap · W8 drive loop</td><td><span class="badge low">Not started</span></td><td>—</td></tr>
+    <tr><td>Incident hardening (BEGIN&nbsp;IMMEDIATE, poison-edge lint, operator patch API, cite-not-rerun, auto-resume, richer blocked reasons)</td><td><span class="badge str">Merged</span></td><td><code>d390f6c41</code>, <code>f71676e03</code>, <code>6753f244a</code></td></tr>
+    <tr><td>Incident hardening layer 2 (read-outside-lock, locked-retry in driver/dispatch, sweep + check-cite supersession, <code>failed→resuming</code>, codex submit-rejection detection)</td><td><span class="badge high">Uncommitted</span></td><td>main working tree (~1,540 insertions, only copy)</td></tr>
+  </table>
 </div>
 
 <h2 id="toc">Contents</h2>
@@ -180,115 +202,160 @@ events ─▶ projections.py (35+ project_* readbacks) ─▶ API /graph/* views
 
 <h2 id="weaknesses">3. Weaknesses</h2>
 
-<p><em>Re-assessed 2026-07-03 at commit <code>c95793889</code>. W1 largely resolved; W3's read-side cost fixed by the fold-once series; W5 partially improved by typed edge selectors. W2, W4, W6, W7, W8 unchanged. Per-weakness implementation specs live alongside this file as <code>w*-spec.md</code>.</em></p>
+<p><em>Re-assessed 2026-07-03 at commit <code>c95793889</code>; status notes added 2026-07-05 at <code>c02eceadd</code> + dirty working tree. Per-weakness implementation specs live alongside this file as <code>w*-spec.md</code>; the July 4–5 incident record is <code>incident-2026-07-04-w2-driver-crash-w3-final-check-strand.md</code> and <code>project_driver_db_locked_crash.md</code>.</em></p>
 
 <div class="card">
-  <span class="badge str">Largely resolved</span><span class="badge low">Residual: Low</span><h3>W1 — Dual source of truth: handlers rescan raw events past the projection</h3>
+  <span class="badge str">Resolved</span><h3>W1 — Dual source of truth: handlers rescan raw events past the projection</h3>
   <div class="loc">fixed in c95793889 "Make graph projection the single read path" · residual scans: commands.py _has_passed_completion_decision, _current_passed_verification_results, _retry_backoff_deferred_reason, _cleanup_requested_event / _cleanup_applied_exists, _node_creation_position</div>
   <p><strong>Resolved for the named high-risk helpers.</strong> Accepted-output-record, failed-verification, and recovery-node lookups now read folded projection fields, with parity tests in <code>tests/unit/test_graph_projections.py</code> (per <code>w1-single-read-path-spec.md</code>). <strong>Residual:</strong> six small helpers still scan raw events, and command-handler signatures still accept the raw event list alongside the projection, so nothing structurally prevents the raw-scan idiom from returning. Finish per <code>w1b-residual-raw-scans-spec.md</code>: migrate the stragglers, then drop <code>events</code> from handler signatures so the type system enforces the discipline.</p>
+  <p class="status-note"><strong>2026-07-05:</strong> Closed. W1b squash-merged as <code>4073a0d4b</code> (via run <code>2bed8f2f</code>): residual helpers migrated to folded projection fields, only two legitimate raw-event uses remain (patch staleness tail, current-position max), plus a raw-scan regression guard and light/full parity tests. Handler signatures still carry <code>events</code> (needed by the two legitimate uses), so the type-system enforcement remains aspirational — acceptable residual.</p>
 </div>
 
 <div class="card">
-  <span class="badge high">High</span><h3>W2 — Recovery logic is accreting into <code>schedule_tick</code> as reactive patches <em>(unchanged)</em></h3>
+  <span class="badge pend">Verified, unmerged</span><span class="badge high">High on main</span><h3>W2 — Recovery logic is accreting into <code>schedule_tick</code> as reactive patches</h3>
   <div class="loc">commands.py:2244 _apply_schedule_tick → _failed_check_recovery_events (:2441), _failed_verification_recovery_events (:2525), _passed_verification_terminalization_events (:2614), _passed_check_terminalization_events (:2646), _no_successor_recovery_terminal_failure_events (:2665)</div>
   <p><code>schedule_tick</code> is no longer a scheduler: before it schedules anything it runs five distinct repair passes that patch up states other commands should have settled. The commit history (<em>"Recover quiescent graphs after failed checks"</em>, <em>"Recover dynamic graph continuation after verifier failure"</em>, and post-review <code>5bacd79dd</code> <em>"fix graph runtime recovery edges"</em>) and the June dogfood pause (<code>graph_blocked</code>, <code>task_not_accepted</code> blockers on control regions) show the pattern: a lifecycle transition is missed at its source, the graph goes quiescent, and a new patch is bolted on reactively. The class of bug — "graph quiescent with non-accepted tasks" — keeps recurring because the root cause (transitions not emitted where the triggering event is applied) is untreated. All five sweeps remain as of <code>c95793889</code>. Spec: <code>w2-recovery-at-source-spec.md</code>.</p>
+  <p class="status-note"><strong>2026-07-05:</strong> Implemented and verified by run <code>69ce4f7c</code> (transitions at source, idempotent <code>reconcile</code> command, sweeps stripped from <code>schedule_tick</code>) — <strong>but not merged</strong>: the code is uncommitted in <code>worktrees/r355</code> on base <code>f526cd70a</code>, and the diff no longer applies to main. Meanwhile main's sweeps grew <em>further</em>: the no-successor-sweep false positive (it wrongly failed W2's own run) forced supersession logic (<code>_superseded_by_later_regional_pass</code>, <code>_recovery_lineage_superseded</code>) — currently uncommitted in the working tree — that the r355 rebase must absorb. Executing this spec was itself the incident generator: the run crashed on the driver DB-lock race and later stranded on the final-check poison topology, surfacing the strand classes A/B now in the incident doc.</p>
 </div>
 
 <div class="card">
-  <span class="badge high">High</span><h3>W3 — Full replay per command, and the scheduler inflates the log it must replay <em>(read side improved; write side unchanged)</em></h3>
+  <span class="badge pend">Verified, unmerged</span><span class="badge high">High on main</span><h3>W3 — Full replay per command, and the scheduler inflates the log it must replay</h3>
   <div class="loc">controller.py:62–71 read_run + rebuild_projection every command · store.py invalidate_projection_snapshot on append · commands.py:2324–2431 node_deferred per tick</div>
   <p><strong>Partially improved:</strong> the fold-once series (<code>8892968a5</code>…<code>c11b04f95</code>) removed redundant re-folds on the read path — API views and the evidence digest now fold once (digest ~10s → ~1.8s). <strong>Unchanged:</strong> every <code>handle_command</code> still reads the full event stream and folds from scratch — O(n) per command, O(n²) over a run's life. The store <em>has</em> a projection snapshot read model, but the controller's write path never uses it, and appends invalidate the snapshot rather than folding new events into it. <code>schedule_tick</code> still persists <code>node_deferred</code> audit events on every tick for every ineligible node, so the polling drive loop grows the log even when nothing happens — inflating replay cost and forcing the driver's signature-based progress check because raw position always advances. Startup recovery still replays every run in the database. Spec: <code>w3-incremental-snapshots-spec.md</code>.</p>
+  <p class="status-note"><strong>2026-07-05:</strong> Implemented and verified by run <code>88f46a2e</code> (snapshot+tail write path with <code>PROJECTION_SCHEMA_VERSION</code>, deferral dedup, terminal-run skip in startup recovery; +283 lines <code>store.py</code>, +547 <code>projections.py</code>) — <strong>but not merged</strong>: uncommitted in <code>worktrees/r356</code>, base <code>f526cd70a</code>, conflicts with main's rewritten <code>handle_command</code> (read-outside-lock, uncommitted). The cost of not landing it was demonstrated live on 2026-07-05: full-log JSON parses per command at 3.15&nbsp;GB DB pinned the worker at 100% CPU, starved lease renewals, expired a live verifier's lease, and made the REST API unresponsive — the run's own bookkeeping starved the run. Interim mitigations on main: fold-once reads (merged), <code>BEGIN IMMEDIATE</code> (merged), read-outside-lock + payload trim 28.8→1.77&nbsp;GB (uncommitted). New-event bloat continues until W5 lands.</p>
 </div>
 
 <div class="card">
-  <span class="badge med">Medium</span><h3>W4 — Monolithic modules with an if-chain dispatcher <em>(unchanged — files grew)</em></h3>
+  <span class="badge pend">Verified, unmerged</span><span class="badge med">Medium on main</span><h3>W4 — Monolithic modules with an if-chain dispatcher</h3>
   <div class="loc">commands.py 4,962 lines (+47) · projections.py 3,869 (+243) · dispatch.py 2,962 (+45) · store.py 1,797 (+53) · commands.py:91 apply_command if-chain · graph/__init__.py 368-line re-export</div>
   <p>Four files hold ~65% of the subsystem, and every file has grown since the original review — the W1 fix added projection fields into <code>projections.py</code> rather than splitting it. <code>commands.py</code> mixes lifecycle, callbacks, patches, scheduling, joins, gates, heartbeats, and five recovery sweeps; <code>dispatch.py</code> mixes outbox execution, process management, prompt/packet assembly for four node roles, and hydration policy. Helper counts (150+ private functions in <code>commands.py</code>) make ownership of any given invariant hard to locate, and the flat <code>__init__</code> re-export couples every consumer to one namespace. A small extraction has started (<code>graph/callbacks.py</code>, 153 lines) — the seam is viable. Spec: <code>w4-split-monoliths-spec.md</code>.</p>
+  <p class="status-note"><strong>2026-07-05:</strong> Implemented and verified by run <code>0694df2d</code> (deletes <code>commands.py</code> into a <code>graph/commands/</code> package, extracts <code>graph_runtime/prompts.py</code>) — <strong>but not merged</strong>: uncommitted in <code>worktrees/r357</code>, base <code>f526cd70a</code>. Because it is a wholesale file move, it conflicts with main, with the uncommitted working-tree fixes, <em>and</em> with the W2/W3 diffs; porting the conflict resolution is likely more expensive than re-running the mechanical split on a post-W2/W3 base. Main's monoliths kept growing: <code>commands.py</code> 5,173 (+211), <code>projections.py</code> 4,059 (+190), <code>dispatch.py</code> 3,082 (+120), <code>graph_driver.py</code> 1,181 (+177).</p>
 </div>
 
 <div class="card">
   <span class="badge med">Medium</span><h3>W5 — Stringly-typed core despite the "typed work graph" goal <em>(edge layer improved)</em></h3>
   <div class="loc">projections.py:58 GraphProjection = TypedDict of dict[str, Any] maps · pervasive payload.get()/isinstance guards (_payload_string_list, _payload_truthy, _candidate_id_from_payload…)</div>
   <p><strong>Partially improved:</strong> <code>478055890</code> "Add typed graph edge selectors" put typed models on edges and selectors (<code>models.py</code> +449 lines), proving the incremental conversion path works. <strong>Unchanged elsewhere:</strong> records and node payloads have Pydantic models in <code>models.py</code> but are validated at the boundary and then handled as <code>dict[str, Any]</code> everywhere else — the projection, the reducers, and command helpers work on untyped dicts with defensive extraction helpers. Typos in payload keys, missing fields, and shape drift remain runtime phenomena discovered by tests or dogfood rather than by mypy. The <code>_is_*_record_payload</code> / <code>_*_payload_for_validation</code> shims are the visible cost. Spec: <code>w5-typed-payloads-spec.md</code>.</p>
+  <p class="status-note"><strong>2026-07-05:</strong> In flight, blocked. First attempt (run <code>481149a8</code>) failed <code>no_executor_running</code>; current run <code>b57c201d</code> (worktree r358, codex_server) is paused <code>graph_blocked</code> — "graph has ready node(s) not dispatched" on two corrective-recovery workers, a symptom shared by three other paused runs and worth its own diagnosis. Urgency raised by the starvation incident: untyped, untrimmed new-event payloads are the remaining DB-bloat source. Re-seed from current main once W2/W3/W4 land — <strong>every W run so far seeded from stale <code>f526cd70a</code>, which is what created the merge backlog.</strong></p>
 </div>
 
 <div class="card">
   <span class="badge med">Medium</span><h3>W6 — Outbox dispatcher is serial, backoff-free, and dead-ends quietly <em>(unchanged)</em></h3>
   <div class="loc">outbox.py:125 max_attempts=3 · :149 immediate re-pending · :227–233 _mark_failed_attempt → OUTBOX_FAILED dead-end · spec: w6-outbox-hardening-spec.md</div>
   <p>Dispatch claims one row per DB transaction and executes side effects strictly sequentially — independent agent dispatches for parallel-safe nodes still serialize through the dispatcher (the executor tracks concurrent processes, but rows are dispatched one at a time). A failed attempt goes straight back to <code>pending</code> with no backoff, so a deterministic failure burns all 3 attempts in quick succession, after which the row sits in <code>failed</code> with no readback, alert, or requeue path surfaced in the graph API. Recovery redispatches <code>pending</code>/<code>dispatching</code> but not <code>failed</code>.</p>
+  <p class="status-note"><strong>2026-07-05:</strong> Still open as specced. Adjacent-but-different fix landed: <code>d390f6c41</code> added <code>_retry_locked</code> (exponential backoff on lock-class <code>OperationalError</code>) around outbox <em>bookkeeping</em> — the success-path crash from <code>project_driver_db_locked_crash.md</code> — plus WAL + <code>busy_timeout</code>. Attempt-level backoff, <code>failed</code>-row surfacing, and requeue remain untouched.</p>
 </div>
 
 <div class="card">
   <span class="badge med">Medium</span><h3>W7 — Heuristic glob-overlap check can under-detect conflicts <em>(unchanged)</em></h3>
   <div class="loc">scheduler.py:333–344 _literal_prefix_may_match_glob probes ("x", "x.py", "nested/x.py") · :339 _glob_prefixes_may_overlap static-prefix comparison · spec: w7-glob-overlap-spec.md</div>
   <p>Whether a literal claim path sits "under" a glob claim is decided by probing three synthetic suffixes; a pattern whose match depth exceeds the probes (e.g. <code>src/*/*/gen/*.py</code> vs literal <code>src/a</code>) can be judged non-overlapping, letting two writers into overlapping paths — the exact safety property claims exist to enforce. Glob-vs-glob comparison falls back to static prefixes, which is conservative but returns <code>True</code> for any two rootless patterns, over-serializing. Empty path lists also conflict with everything, which is safe but silently defeats parallelism when a claim is sloppily specified.</p>
+  <p class="status-note"><strong>2026-07-05:</strong> Unchanged — probes and static-prefix fallback still in place (<code>scheduler.py:330–344</code>). No spec run scheduled yet.</p>
 </div>
 
 <div class="card">
   <span class="badge low">Low</span><h3>W8 — Drive loop is a poll loop with embedded special cases; assorted dead code <em>(unchanged — driver grew)</em></h3>
   <div class="loc">graph_driver.py now 1,004 lines (was 838; +173 in 5bacd79dd) · recovery.py:62–63 no-op <code>if not redispatched and pending_before: redispatched = []</code> still present</div>
   <p><code>drive_to_quiescence</code> re-ticks, re-reads the projection multiple times per iteration, renews expired leases, retries one extra recovery tick on quiescence, and compares progress signatures — workable, but it is control flow compensating for the kernel not telling the runtime <em>when</em> to act (a consequence of W2/W3), and the recovery-edges fix added more driver special-casing rather than less. <code>recovery.py</code> still carries the self-cancelling statement. The single-writer, position-serialized design is fine for current scale but is a stated ceiling for multi-process deployment. Spec: <code>w8-drive-loop-cleanup-spec.md</code> (do after W2/W3).</p>
+  <p class="status-note"><strong>2026-07-05:</strong> Got worse before it gets better — by design. The driver is now 1,181 lines: <code>6753f244a</code> added <code>_drive_with_transient_retries</code> (auto-resume of transient crash classes), richer blocked reasons (deferral reasons + missing-input sources in the pause message — incident item "blocked-reason depth"), and the working tree adds locked-retry around lease renewal. All justified incident responses, all more driver special-casing. Still do after W2/W3 land; the reconcile command in r355 is a prerequisite for event-triggered driving.</p>
 </div>
 
-<h2 id="improvements">4. Recommended improvements</h2>
+<h2 id="improvements">4. Recommended changes — fresh list, 2026-07-05</h2>
 
-<p>Ordered by leverage; 1–3 attack the recurring bug class, 4–6 are structural hygiene, 7–9 are hardening.</p>
+<p><em>Supersedes the 2026-07-01 improvement table (items 1–4 of which are now implemented — 1 merged, 2–4 stranded unmerged). Three tiers: <strong>P0</strong> lands work that already exists before it rots or is lost; <strong>P1</strong> fixes the kernel gaps the July 4–5 incidents proved; <strong>P2</strong> carries over the unstarted hardening.</em></p>
 
+<h3>P0 — land what exists (verified code is currently unmergeable and partly uncommitted)</h3>
 <table>
-  <tr><th>#</th><th>Improvement</th><th>Addresses</th><th>Sketch</th></tr>
+  <tr><th>#</th><th>Change</th><th>Sketch</th></tr>
   <tr>
     <td class="num">1</td>
-    <td><strong>Make <code>GraphProjection</code> the single read path</strong></td>
-    <td>W1, W2, W3</td>
-    <td>Inventory every raw-event scan in <code>commands.py</code>; for each, add the missing derived field to the projection and fold it in <code>reduce_event</code> (accepted records by port, failed verifications, recovery-node index already half-exist as helpers). Then change handler signatures to take projection only — the type system enforces the discipline permanently. This is the same refactor the project's event-driven-intent note has been pointing at.</td>
+    <td><strong>Commit the working-tree incident fixes on main</strong></td>
+    <td>~1,540 insertions across 23 files, live-tested during the Jul 4–5 recoveries, existing <em>only</em> in the working tree: read-outside-lock <code>handle_command</code>, locked-retry in driver/dispatch, no-successor-sweep supersession + check-cite recovery supersession, <code>failed→resuming</code> lifecycle edge, codex submit-rejection detection, CLI execution-mode default. The journal-truncation and stash gotchas make an uncommitted-only state actively dangerous. Run the affected suites, split into 2–3 commits, push.</td>
   </tr>
   <tr>
     <td class="num">2</td>
-    <td><strong>Move state repair out of <code>schedule_tick</code> to the causing command</strong></td>
-    <td>W2</td>
-    <td>Each recovery sweep exists because a callback/check acceptance didn't emit its follow-up transitions. Emit terminalization and recovery-arming events where the triggering record is accepted (<code>_apply_callback_command</code>), keeping one idempotent <code>reconcile</code> command as an explicit escape hatch instead of five implicit sweeps per tick. Kills the "graph quiescent with non-accepted tasks" whack-a-mole class at the source.</td>
+    <td><strong>Merge W2 (r355): rebase, re-verify, land</strong></td>
+    <td>Reconcile <code>worktrees/r355</code> against post-#1 main. Conflicts are real, not mechanical: base <code>f526cd70a</code> predates W1/W1b (same helpers rewritten) and the sweep-supersession fixes must move into the at-source emission points the W2 code creates. Re-run the W2 acceptance suite plus the full graph suite on the rebased result. Precedent: W1b's merge (<code>4073a0d4b</code>) resolved exactly this kind of stale-base conflict.</td>
   </tr>
   <tr>
     <td class="num">3</td>
-    <td><strong>Incremental projection snapshots on the write path</strong></td>
-    <td>W3</td>
-    <td>The fold is already incremental (<code>reduce_event</code>); persist the folded projection per append (snapshot + position) instead of invalidating it, and have <code>handle_command</code> load snapshot + tail. Raw-scan helpers block this today — do after #1. Startup recovery should replay only non-terminal runs.</td>
+    <td><strong>Merge W3 (r356) after W2</strong></td>
+    <td>Snapshot+tail write path must be reconciled with main's read-outside-lock <code>handle_command</code> — both rewrote the same method; the merged form is "load snapshot + tail outside the lock, cheap position re-check inside". Keep the Alembic migration; re-run crash-point suite (R5) on the merged form. This is the single highest-operational-value merge: it removes the O(n²) replay that caused the Jul 5 starvation incident.</td>
   </tr>
   <tr>
     <td class="num">4</td>
-    <td><strong>Stop persisting per-tick <code>node_deferred</code> audit events</strong></td>
-    <td>W3, W8</td>
-    <td>Keep last-deferred-reason in a read model (or emit only on reason <em>change</em>). Log stops growing while idle, replay cost drops, and the driver's progress-signature workaround can shrink back to "did position advance".</td>
+    <td><strong>Re-run W4's split on the post-W2/W3 base (don't port the diff)</strong></td>
+    <td>r357 deletes <code>commands.py</code> into a package — a wholesale move that conflicts with everything that has touched the file since Jun 29. The split is mechanical; re-executing the spec against fresh main (agent or by hand) is cheaper and safer than resolving a three-way rewrite. Keep r357 as reference for the chosen seams (<code>graph/commands/</code> package, <code>graph_runtime/prompts.py</code>).</td>
   </tr>
   <tr>
     <td class="num">5</td>
-    <td><strong>Split the monoliths along command/role seams</strong></td>
-    <td>W4</td>
-    <td><code>graph/commands/</code> package: lifecycle, callbacks, patches, scheduling, recovery — with a registry dict replacing the if-chain in <code>apply_command</code>. <code>dispatch.py</code>: separate prompt/packet assembly (pure, ~1,200 lines of it) from process execution. Mechanical, low-risk, big review-cost payoff.</td>
+    <td><strong>Unblock W5; seed all future spec runs from current main</strong></td>
+    <td>Diagnose run <code>b57c201d</code>'s pause ("graph has ready node(s) not dispatched" — shared by 3 other paused runs; likely dispatch/outbox, not kernel). Re-seed W5 after P0-2/3/4 land. Process fix: every W run so far branched from stale <code>f526cd70a</code>, which is what created this merge backlog — run creation should default to current main HEAD and warn when the seed SHA is behind.</td>
   </tr>
+</table>
+
+<h3>P1 — kernel gaps proven by the July 4–5 incidents</h3>
+<table>
+  <tr><th>#</th><th>Change</th><th>Sketch</th></tr>
   <tr>
     <td class="num">6</td>
-    <td><strong>Typed event payloads end-to-end</strong></td>
-    <td>W5</td>
-    <td>Discriminated union on <code>event_type</code> for <code>EventEnvelope.payload</code>; typed dataclass fields in the projection. Do gradually — start with the record types that already have Pydantic models and delete the <code>_is_*_record_payload</code> shims as each converts.</td>
+    <td><strong>Cross-region supersession in <code>_derive_task_states</code></strong> (strand class B)</td>
+    <td>A region stays <code>needs_revision</code> forever when its repair happened in a corrective region — three proven strands. Apply the same supersession rule the no-successor sweep now uses (uncommitted, P0-1), or require corrective candidates to submit into the origin region. Companion: check-cite layer (partially fixed via <code>_check_result_recovery_superseded</code>) and kernel-assigned <code>attempt_number</code> for revision candidates so operator repairs can't be shadowed by stale attempts.</td>
   </tr>
   <tr>
     <td class="num">7</td>
-    <td><strong>Outbox hardening</strong></td>
-    <td>W6</td>
-    <td>Exponential backoff with jitter on failed attempts (add <code>next_attempt_at</code>); batch-claim rows for parallel-safe kinds; surface <code>failed</code> rows in a readback (e.g. <code>/graph/final-blockers</code> already has the shape) plus an operator requeue endpoint.</td>
+    <td><strong>Reopen runtime-failed nodes</strong> (strand class A)</td>
+    <td><code>lease_expired_without_callback</code> / <code>runtime_execution_missing_no_callback</code> are not agent verdicts; nodes failed that way with retry budget left should be reopened on resume (or via <code>reconcile</code> once W2 lands) instead of consuming the node permanently and re-pausing the run within seconds.</td>
   </tr>
   <tr>
     <td class="num">8</td>
-    <td><strong>Replace the glob-probe heuristic with segment analysis</strong></td>
-    <td>W7</td>
-    <td>Compare claim paths segment-by-segment treating <code>*</code>/<code>?</code> segments as wildcards (and <code>**</code> as multi-segment); conservative-True only for genuinely undecidable cases. Add a Hypothesis property test: overlap(a,b) must be True whenever any concrete path matches both — the current probes would fail it immediately.</td>
+    <td><strong>Node-expectation redesign: unpin evidence from node identity</strong></td>
+    <td>The root of the final-check poison topology and most operator-patch toil. Four pieces, in dependency order: producer-class selectors (match "latest passing <code>VerificationReport</code> in lineage", no <code>from_node_id</code>); trigger edges distinct from required edges; kernel-managed <code>skipped</code> terminal state for provably-dead branches; singleton final-invariant gate per run/lineage. The merged poison-pattern patch lint (<code>6753f244a</code>) and cite-not-rerun fallback are stopgaps for this, not fixes. Kills strand class B layer 2 (stale check cites) and the per-round check cloning as side effects.</td>
   </tr>
   <tr>
     <td class="num">9</td>
-    <td><strong>Event-triggered driving instead of pure polling</strong></td>
-    <td>W8</td>
-    <td>After #2, the drive loop can tick on completion signals (callback accepted, lease expired, patch applied) with a slow heartbeat fallback, instead of unconditional tick-and-diff. Also delete the <code>recovery.py</code> no-op and prune the 355-line <code>__init__</code> re-export to the actual public surface.</td>
+    <td><strong>Kernel dead-input detection</strong></td>
+    <td>When a required edge's source is terminally failed with no retry budget, emit <code>node_unsatisfiable</code> (route to the node's gap planner if present) instead of deferring forever into a generic <code>graph_blocked</code>. The richer blocked reasons merged in <code>6753f244a</code> improve the autopsy; this improves the outcome.</td>
+  </tr>
+  <tr>
+    <td class="num">10</td>
+    <td><strong>Light/full projection parity</strong></td>
+    <td>Proven divergence: light-read summary trim drops <code>attempt_number</code>, so light and full projections disagree on run-blocking task state at the same position. Make the trim allowlist preserve every field projections consume, and add the parity test (for each fixture run, <code>project_*</code> over light == over full). W1b added parity tests for its helpers; extend to task states.</td>
+  </tr>
+  <tr>
+    <td class="num">11</td>
+    <td><strong>Starvation-proof leases / late-callback acceptance</strong></td>
+    <td>The Jul 5 incident chain: projection reads starve the event loop → live agent's lease expires → its callback rejected <code>callback_rejected_stale</code> → 40 minutes of valid work discarded. W3's merge removes the starvation source; independently, accept a late callback when the lease expired without a competing re-dispatch (the work is valid, nothing else held the lease), and keep renewal writes off the projection-read path.</td>
+  </tr>
+  <tr>
+    <td class="num">12</td>
+    <td><strong>claude_sdk graph submit fix</strong> (failure class C)</td>
+    <td>Cancel-scope <code>RuntimeError</code> in <code>claude_agent_sdk</code> kills the in-process MCP server hosting grade/submit; agents finish work then can't report it ("Stream closed"), burning ~25-minute sessions. Reproduce, then pin/upgrade/fix. The dispatch-side detection of submit-rejection output is in the working tree (P0-1); until fixed, codex_server remains the only graph runner.</td>
+  </tr>
+  <tr>
+    <td class="num">13</td>
+    <td><strong>Patch-validator: register revision-embedded nodes</strong></td>
+    <td><code>create_revision_attempt</code>'s embedded worker/verifier aren't registered, so follow-up <code>create_edge</code> ops are rejected ("references unknown target node"). Minor until revisions are load-bearing — which strand-class-B repairs make them.</td>
+  </tr>
+</table>
+
+<h3>P2 — carried over, unstarted</h3>
+<table>
+  <tr><th>#</th><th>Change</th><th>Sketch</th></tr>
+  <tr>
+    <td class="num">14</td>
+    <td><strong>Outbox hardening (W6)</strong></td>
+    <td>As originally specced (<code>w6-outbox-hardening-spec.md</code>): attempt backoff with <code>next_attempt_at</code>, batch-claim for parallel-safe kinds, <code>failed</code>-row readback + operator requeue. Note the "ready nodes not dispatched" pause cluster (P0-5) may implicate this path — diagnose first, it may re-prioritize W6.</td>
+  </tr>
+  <tr>
+    <td class="num">15</td>
+    <td><strong>Glob segment analysis (W7)</strong></td>
+    <td>As originally specced (<code>w7-glob-overlap-spec.md</code>): segment-wise wildcard comparison, Hypothesis property test (overlap must be True whenever any concrete path matches both).</td>
+  </tr>
+  <tr>
+    <td class="num">16</td>
+    <td><strong>Drive-loop cleanup / event-triggered driving (W8)</strong></td>
+    <td>After W2+W3 merge: tick on completion signals with heartbeat fallback; shrink progress-signature check back to "did position advance" (deferral dedup makes this valid); delete the <code>recovery.py</code> no-op; prune the <code>__init__</code> re-export. The driver's incident-era special cases (transient retries, locked retries) should mostly fall away with the kernel fixes.</td>
   </tr>
 </table>
 
@@ -298,9 +365,10 @@ events ─▶ projections.py (35+ project_* readbacks) ─▶ API /graph/* views
   <li><strong>Docs:</strong> <code>docs/dynamic-graph/status.md</code> (FR ledger, June dogfood pause + contract-driven fulfillment fix), <code>typed-work-graph-requirements.md</code>, <code>complete/true-comparison-results.md</code> (cost data).</li>
   <li><strong>History:</strong> recent commits <code>a3c10f8df</code> "Recover quiescent graphs after failed checks", <code>e53072de8</code> "Recover dynamic graph continuation after verifier failure", <code>f526cd70a</code> "Merge failed check graph recovery" — the W2 accretion pattern.</li>
   <li><strong>Tests:</strong> 80 graph-related test files including per-FR acceptance suites and outbox crash-point tests.</li>
+  <li><strong>2026-07-05 status evidence:</strong> git — main at <code>c02eceadd</code> with ~1,540 uncommitted insertions; no W2/W3/W4 merge commits on any branch; <code>worktrees/r355–r358</code> all at base <code>f526cd70a</code> with dirty trees; all three run diffs fail <code>git apply --check</code> against main. Runs API — W2 <code>69ce4f7c</code>, W3 <code>88f46a2e</code>, W4 <code>0694df2d</code> <code>completed</code>; W5 <code>b57c201d</code> paused <code>graph_blocked</code>. Incident docs — <code>incident-2026-07-04-w2-driver-crash-w3-final-check-strand.md</code> (incl. 07-04 PM → 07-05 addendum), <code>project_driver_db_locked_crash.md</code>. Merged hardening — <code>d390f6c41</code>, <code>f71676e03</code>, <code>6753f244a</code>.</li>
 </ul>
 
-<footer>Generated by Claude Code · 2026-07-01 · review of working tree at commit <code>f526cd70a</code></footer>
+<footer>Generated by Claude Code · 2026-07-01 · review of working tree at commit <code>f526cd70a</code> · status updated 2026-07-05 at <code>c02eceadd</code> + dirty working tree</footer>
 
 </div>
 </body>

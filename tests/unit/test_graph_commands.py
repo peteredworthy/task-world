@@ -4868,6 +4868,435 @@ def test_schedule_tick_does_not_fail_after_environment_no_successor_recovery() -
     )
 
 
+def test_lifecycle_resume_reopens_failed_run_for_operator_only() -> None:
+    failed_events = [_event("run_lifecycle_changed", {"to_state": "failed"}, 0)]
+
+    # No actor_role: rejected.
+    rejected = _apply(failed_events, "resume")
+    assert rejected[0].event_type == "command_rejected"
+    assert "operator" in rejected[0].payload["reason"]
+
+    # Non-operator actor: rejected.
+    rejected_planner = _apply(
+        failed_events,
+        "resume",
+        {"run_id": "run-1", "actor_role": "planner"},
+    )
+    assert rejected_planner[0].event_type == "command_rejected"
+
+    # Human/operator actor: failed -> resuming.
+    for actor_role in ("human", "operator"):
+        reopened = _apply(
+            failed_events,
+            "resume",
+            {"run_id": "run-1", "actor_role": actor_role},
+        )
+        assert reopened[0].event_type == "run_lifecycle_changed"
+        assert reopened[0].payload["from_state"] == "failed"
+        assert reopened[0].payload["to_state"] == "resuming"
+
+    # Second resume completes the reopen: resuming -> active (ungated).
+    resuming_events = [_event("run_lifecycle_changed", {"to_state": "resuming"}, 0)]
+    activated = _apply(resuming_events, "resume")
+    assert activated[0].event_type == "run_lifecycle_changed"
+    assert activated[0].payload["to_state"] == "active"
+
+
+def test_schedule_tick_no_successor_skips_recovery_with_executable_successors() -> None:
+    # Same shape as test_schedule_tick_fails_after_no_successor_failed_check_recovery,
+    # but the recovery planner's accepted patch wired a corrective worker
+    # (executable successor). That is real recovery work, not a dead end, so
+    # the sweep must not fail the run (W4 0694df2d regression, 2026-07-04).
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant-r1",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-r1-final",
+            },
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-r1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant-r1",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-r1-final",
+                "status": "failed",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-recover-check-result-r1",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "recovery-region-r1-final",
+                "recovery_reason": "failed_required_check",
+                "recovery_of_node_id": "check-final-invariant-r1",
+                "recovery_of_record_id": "check-result-r1",
+            },
+            3,
+        ),
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-corrective-work",
+                "proposed_by_node_id": "planner-recover-check-result-r1",
+                "successor_planner_node_ids": [],
+            },
+            4,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-corrective-1",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+            },
+            5,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-gap-to-corrective-worker",
+                "from_node_id": "planner-recover-check-result-r1",
+                "from_port": "classified_gap",
+                "to_node_id": "worker-corrective-1",
+                "to_port": "classified_gap",
+                "required": True,
+            },
+            6,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert not any(
+        event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
+        for event in output
+    )
+
+    # Validity control: without the executable successor the same graph is a
+    # genuine dead end and the sweep still fails the run.
+    dead_end_output = _apply(events[:5], "schedule_tick", {"run_id": "run-1"})
+    assert any(
+        event.event_type == "run_lifecycle_changed"
+        and event.payload.get("to_state") == "failed"
+        and event.payload.get("trigger") == "recovery_planner_no_successor"
+        for event in dead_end_output
+    )
+
+
+def test_schedule_tick_no_successor_skips_superseded_failed_verification() -> None:
+    # A failed verification whose task region later produced a PASSING
+    # candidate is superseded: it must neither trigger the no-successor
+    # terminal failure nor count as a current failure needing recovery.
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-a",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "region-a",
+            },
+            1,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-a",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "region-a",
+            },
+            2,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "cand-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-a",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "task_region_id": "region-a",
+                "candidate_id": "cand-1",
+            },
+            3,
+        ),
+        _event(
+            "verification_failed",
+            {
+                "node_id": "verifier-a",
+                "record_id": "vf-1",
+                "candidate_id": "cand-1",
+                "task_region_id": "region-a",
+            },
+            4,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-recover-vf-1",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "recovery-region-a",
+                "recovery_reason": "failed_verification",
+                "recovery_of_node_id": "verifier-a",
+                "recovery_of_record_id": "vf-1",
+            },
+            5,
+        ),
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-no-planner-successor",
+                "proposed_by_node_id": "planner-recover-vf-1",
+                "successor_planner_node_ids": [],
+            },
+            6,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-a-retry",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "region-a",
+            },
+            7,
+        ),
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-a-retry",
+                "record_id": "vp-1",
+                "candidate_id": "cand-2",
+                "task_region_id": "region-a",
+            },
+            8,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert not any(
+        event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
+        for event in output
+    )
+
+    # Validity control: without the later regional pass, the failed
+    # verification is current and its dead-end recovery fails the run.
+    dead_end_output = _apply(events[:7], "schedule_tick", {"run_id": "run-1"})
+    assert any(
+        event.event_type == "run_lifecycle_changed"
+        and event.payload.get("to_state") == "failed"
+        and event.payload.get("trigger") == "recovery_planner_no_successor"
+        for event in dead_end_output
+    )
+
+
+def test_schedule_tick_does_not_fail_recovered_run_w2_shape() -> None:
+    # Regression for run 69ce4f7c (W2, 2026-07-04): failed verification ->
+    # kernel recovery planner -> accepted patch with NO successor planner but
+    # a corrective worker+verifier -> repair candidate passes -> final
+    # invariant check passes -> quiescent tick. The kernel used to emit
+    # run_lifecycle_changed active->failed (recovery_planner_no_successor)
+    # at event v557 despite the recovery having fully succeeded.
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-impl",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "region-impl",
+            },
+            1,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-impl",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "region-impl",
+            },
+            2,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "cand-impl-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-impl",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "task_region_id": "region-impl",
+                "candidate_id": "cand-impl-1",
+            },
+            3,
+        ),
+        # The primary verification fails (W2: verification-exec-857f...).
+        _event(
+            "verification_failed",
+            {
+                "node_id": "verifier-impl",
+                "record_id": "vf-impl-1",
+                "candidate_id": "cand-impl-1",
+                "task_region_id": "region-impl",
+            },
+            4,
+        ),
+        # Kernel-created recovery planner for the failed verification.
+        _event(
+            "node_created",
+            {
+                "node_id": "planner-recover-vf-impl-1",
+                "kind": "planner",
+                "role": "gap_planner",
+                "state": "completed",
+                "task_region_id": "recovery-region-impl",
+                "recovery_reason": "failed_verification",
+                "recovery_of_node_id": "verifier-impl",
+                "recovery_of_record_id": "vf-impl-1",
+            },
+            5,
+        ),
+        # Its accepted patch: no successor planner, but corrective work nodes.
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-source-scope-corrective-v2",
+                "proposed_by_node_id": "planner-recover-vf-impl-1",
+                "successor_planner_node_ids": [],
+            },
+            6,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-repair",
+                "kind": "worker",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+            },
+            7,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-repair",
+                "kind": "verifier",
+                "state": "completed",
+                "task_region_id": "corrective_work_region",
+            },
+            8,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-recovery-gap-to-repair-worker",
+                "from_node_id": "planner-recover-vf-impl-1",
+                "from_port": "classified_gap",
+                "to_node_id": "worker-repair",
+                "to_port": "classified_gap",
+                "required": True,
+            },
+            9,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-repair-worker-to-verifier",
+                "from_node_id": "worker-repair",
+                "from_port": "candidate",
+                "to_node_id": "verifier-repair",
+                "to_port": "candidate_under_test",
+                "required": True,
+            },
+            10,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "cand-repair-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-repair",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "task_region_id": "corrective_work_region",
+                "candidate_id": "cand-repair-1",
+            },
+            11,
+        ),
+        # The repair candidate passes verification.
+        _event(
+            "verification_passed",
+            {
+                "node_id": "verifier-repair",
+                "record_id": "vp-repair-1",
+                "candidate_id": "cand-repair-1",
+                "task_region_id": "corrective_work_region",
+            },
+            12,
+        ),
+        # Final invariant check completed with a passing result.
+        _event(
+            "node_created",
+            {
+                "node_id": "check-final-invariant",
+                "kind": "check",
+                "role": "invariant_gate",
+                "state": "completed",
+                "task_region_id": "region-final-invariant",
+            },
+            13,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-final-1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-final-invariant",
+                "port": "check_result",
+                "schema": "CheckResult",
+                "task_region_id": "region-final-invariant",
+                "status": "passed",
+                "value": {"status": "passed"},
+            },
+            14,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+
+    assert not any(
+        event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
+        for event in output
+    )
+
+
 def test_schedule_tick_ignores_retired_failed_check_recovery_target() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -6698,6 +7127,52 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
     }
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["planner-1"] == "failed"
+
+
+def test_agent_died_usage_limit_revokes_lease_and_fails_without_retry() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "verifier-1", "kind": "verifier", "state": "running"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+    reason = (
+        "Agent runner 'codex_server' execution failed: Codex session ended with status: "
+        "failed - You've hit your usage limit for GPT-5.3-Codex-Spark. "
+        "Switch to another model now, or try again at 5:25 PM."
+    )
+
+    output = _apply(
+        events,
+        "agent_died",
+        {
+            "run_id": "run-1",
+            "lease_id": "lease-1",
+            "execution_id": "exec-1",
+            "reason": reason,
+        },
+    )
+    projection = _project([*events, *output])
+
+    assert [event.event_type for event in output] == [
+        "agent_died",
+        "lease_revoked",
+        "output_record_accepted",
+        "node_state_changed",
+    ]
+    assert output[2].payload["value"]["error_class"] == "agent_rate_limited"
+    assert output[2].payload["value"]["retryable"] is False
+    assert output[3].payload["trigger"] == "agent_rate_limited"
+    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["node_states"]["verifier-1"] == "failed"
 
 
 def test_agent_died_completes_non_gap_planner_after_accepted_patch() -> None:

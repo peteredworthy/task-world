@@ -72,10 +72,17 @@ RUN_LIFECYCLE_TRANSITIONS: dict[str, dict[str, str]] = {
     "accept_run": {"draft": "queued"},
     "start": {"queued": "active"},
     "pause": {"active": "pausing", "pausing": "paused"},
-    "resume": {"paused": "resuming", "resuming": "active"},
+    # failed -> resuming is the operator reopen edge: it is only legal for a
+    # human/operator actor (enforced in _apply_lifecycle_command), so a driver
+    # or agent cannot silently un-fail a run. Added after the W2/W4
+    # recovery_planner_no_successor false positives (2026-07-04) left runs
+    # terminally failed with no kernel-legal recovery path.
+    "resume": {"paused": "resuming", "resuming": "active", "failed": "resuming"},
     "cancel": {"active": "cancelling", "paused": "cancelling", "cancelling": "cancelled"},
     "complete": {"active": "completed"},
 }
+# Actor roles allowed to take the failed -> resuming reopen edge.
+REOPEN_ACTOR_ROLES = {"human", "operator"}
 TERMINAL_RUN_STATES = {"cancelled", "completed", "failed"}
 NONTERMINAL_RUN_STATES = {
     "draft",
@@ -182,6 +189,17 @@ def _apply_lifecycle_command(
             else f"illegal transition from {current_state}"
         )
         return [_command_rejected(make_event, command_type, reason)]
+    if command_type == "resume" and current_state == "failed":
+        actor_role = payload.get("actor_role")
+        if actor_role not in REOPEN_ACTOR_ROLES:
+            return [
+                _command_rejected(
+                    make_event,
+                    command_type,
+                    "reopen from failed requires an operator: "
+                    f"actor_role must be one of {sorted(REOPEN_ACTOR_ROLES)}",
+                )
+            ]
     if command_type == "complete":
         blockers = final_invariant_blockers_for_events(events, projection)
         if blockers:
@@ -2611,7 +2629,74 @@ def _current_failed_verification_results(projection: GraphProjection) -> list[di
         cast(dict[str, str], dict(verification))
         for verification in projection["failed_verification_results_by_record_id"].values()
         if verification.get("candidate_id") not in passed_candidates
+        and not _superseded_by_later_regional_pass(projection, dict(verification))
     ]
+
+
+def _superseded_by_later_regional_pass(
+    projection: GraphProjection,
+    verification: dict[str, str],
+) -> bool:
+    """True when a later candidate in the same task region passed verification.
+
+    Recovery never re-runs the failed candidate: a gap/recovery planner wires a
+    corrective worker that produces a NEW candidate in the same region, and the
+    corrective verifier grades that. The old failed verification's own
+    candidate therefore never enters passed_verification_candidate_ids, so
+    without this check the failure stays "current" forever — which is what let
+    the recovery_planner_no_successor sweep fail runs W2/W4 after their
+    repairs had already passed (incident 2026-07-04). Supersession requires a
+    strictly later passing verdict (by verdict position) in the same region.
+    """
+    failed_region = _verification_task_region(projection, verification)
+    if failed_region is None:
+        return False
+    failed_position = _candidate_verdict_position(projection, verification.get("candidate_id"))
+    if failed_position is None:
+        return False
+    failed_record_id = verification.get("record_id")
+    for passed in projection["passed_verification_results_by_record_id"].values():
+        if passed.get("record_id") == failed_record_id:
+            continue
+        candidate_id = passed.get("candidate_id")
+        verdict = projection["verifier_verdicts"].get(candidate_id or "")
+        if verdict is not None and verdict.get("verdict") != "passed":
+            # The candidate's latest verdict is a failure; not a supersession.
+            continue
+        if _verification_task_region(projection, dict(passed)) != failed_region:
+            continue
+        passed_position = _candidate_verdict_position(projection, candidate_id)
+        if passed_position is None:
+            continue
+        if passed_position > failed_position:
+            return True
+    return False
+
+
+def _verification_task_region(
+    projection: GraphProjection,
+    verification: dict[str, str],
+) -> str | None:
+    task_region_id = verification.get("task_region_id")
+    if isinstance(task_region_id, str) and task_region_id:
+        return task_region_id
+    node_id = verification.get("node_id")
+    if isinstance(node_id, str) and node_id:
+        return projection["node_task_regions"].get(node_id)
+    return None
+
+
+def _candidate_verdict_position(
+    projection: GraphProjection,
+    candidate_id: str | None,
+) -> int | None:
+    if not isinstance(candidate_id, str) or not candidate_id:
+        return None
+    verdict = projection["verifier_verdicts"].get(candidate_id)
+    if verdict is None:
+        return None
+    position = verdict.get("position")
+    return position if isinstance(position, int) else None
 
 
 def _passed_verification_terminalization_events(
@@ -2709,6 +2794,19 @@ def _no_successor_recovery_terminal_failure_events(
 def _completed_no_successor_recovery(
     projection: GraphProjection,
 ) -> dict[str, str] | None:
+    """Find a completed recovery planner whose recovery is a genuine dead end.
+
+    A recovery planner only counts as a dead end when ALL of the following
+    hold: its latest accepted patch created no successor planner, it created
+    no executable successor nodes (worker/verifier/check wired from the
+    planner's outputs), and nothing downstream of the planner has since
+    produced a passing verification or check. The last two guards were added
+    after runs W2 (69ce4f7c) and W4 (0694df2d) were failed by this sweep on
+    2026-07-04 even though their recovery patches had spawned corrective
+    workers whose candidates passed verification and satisfied the final
+    invariant checks — a successful recovery, misread as a dead end because
+    only successor *planner* nodes were counted as continuation.
+    """
     recovery_nodes = _recovery_nodes_by_record_id(projection)
     for failed in [
         *_current_failed_check_results(projection),
@@ -2721,6 +2819,10 @@ def _completed_no_successor_recovery(
                 continue
             patch_id = _accepted_no_successor_patch_id(projection, node_id)
             if patch_id is None:
+                continue
+            if _recovery_created_executable_successors(projection, node_id):
+                continue
+            if _recovery_lineage_superseded(projection, node_id):
                 continue
             return {
                 "node_id": node_id,
@@ -2747,6 +2849,82 @@ def _recovery_nodes_by_record_id(
 def _accepted_no_successor_patch_id(projection: GraphProjection, node_id: str) -> str | None:
     patch_ids = projection["accepted_no_successor_patches_by_node"].get(node_id, [])
     return patch_ids[-1] if patch_ids else None
+
+
+def _recovery_created_executable_successors(
+    projection: GraphProjection,
+    recovery_node_id: str,
+) -> bool:
+    """True when a recovery planner wired executable (non-planner) successors.
+
+    A gap/recovery planner's accepted patch links its output records to the
+    corrective work it plans (e.g. classified_gap -> worker), so an outgoing
+    edge to a later-created non-planner node means the recovery produced real
+    work — not a dead end — even though successor_planner_node_ids was empty.
+    """
+    recovery_position = projection["node_creation_positions"].get(recovery_node_id, 0)
+    for edge in projection["edges"].values():
+        if edge.get("from_node_id") != recovery_node_id:
+            continue
+        to_node_id = edge.get("to_node_id")
+        if not isinstance(to_node_id, str):
+            continue
+        if to_node_id not in projection["node_kinds"]:
+            continue
+        if projection["node_kinds"].get(to_node_id) == "planner":
+            continue
+        if projection["node_creation_positions"].get(to_node_id, 0) < recovery_position:
+            continue
+        return True
+    return False
+
+
+def _recovery_lineage_superseded(
+    projection: GraphProjection,
+    recovery_node_id: str,
+) -> bool:
+    """True when work downstream of a recovery planner has already passed.
+
+    Walks the edge graph from the recovery planner and looks for a passing
+    verification (whose candidate's latest verdict is still a pass) or a
+    passing check result produced by any reachable node. Covers both recovery
+    flavors: failed verifications (W2 shape) and failed required checks (W4
+    shape), where the corrective chain is planner -> worker -> verifier.
+    """
+    reachable = _downstream_node_ids(projection, recovery_node_id)
+    if not reachable:
+        return False
+    for verification in projection["passed_verification_results_by_record_id"].values():
+        if verification.get("node_id") not in reachable:
+            continue
+        candidate_id = verification.get("candidate_id")
+        verdict = projection["verifier_verdicts"].get(candidate_id or "")
+        if verdict is None or verdict.get("verdict") == "passed":
+            return True
+    for check_node_id, result in projection["check_results"].items():
+        if check_node_id not in reachable:
+            continue
+        if result.get("status") in {"passed", "pass", "ok"}:
+            return True
+    return False
+
+
+def _downstream_node_ids(projection: GraphProjection, start_node_id: str) -> set[str]:
+    adjacency: dict[str, set[str]] = {}
+    for edge in projection["edges"].values():
+        source = edge.get("from_node_id")
+        target = edge.get("to_node_id")
+        if isinstance(source, str) and isinstance(target, str):
+            adjacency.setdefault(source, set()).add(target)
+    seen: set[str] = set()
+    frontier = [start_node_id]
+    while frontier:
+        node_id = frontier.pop()
+        for neighbor in adjacency.get(node_id, set()):
+            if neighbor not in seen:
+                seen.add(neighbor)
+                frontier.append(neighbor)
+    return seen
 
 
 def _passed_verification_final_check_edges(
@@ -3638,7 +3816,12 @@ def _non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: st
 
 def _is_rate_limit_death(reason: str) -> bool:
     normalized = reason.lower()
-    return "rate limit" in normalized or "hit rate limit" in normalized
+    return (
+        "rate limit" in normalized
+        or "hit rate limit" in normalized
+        or "usage limit" in normalized
+        or "quota" in normalized
+    )
 
 
 def _is_non_retryable_runtime_death(reason: str) -> bool:

@@ -810,7 +810,7 @@ def final_invariant_blockers_for_events(
     blockers.extend(_authority_revision_blockers(events))
     blockers.extend(_blocked_requirement_node_blockers(events, projection))
     blockers.extend(_impossible_input_blockers(projection))
-    blockers.extend(_failed_check_result_blockers(events))
+    blockers.extend(_failed_check_result_blockers(events, projection))
     if include_completion_decision:
         blockers.extend(_completion_decision_blockers(events, projection))
     blockers.extend(_node_fulfillment_blockers(projection))
@@ -923,7 +923,10 @@ def _non_terminal_node_blockers(
     return blockers
 
 
-def _failed_check_result_blockers(events: list[EventEnvelope]) -> list[FinalInvariantBlocker]:
+def _failed_check_result_blockers(
+    events: list[EventEnvelope],
+    projection: GraphProjection,
+) -> list[FinalInvariantBlocker]:
     blockers_by_record: dict[str, FinalInvariantBlocker] = {}
     for event in events:
         if event.event_type != "output_record_accepted":
@@ -934,6 +937,8 @@ def _failed_check_result_blockers(events: list[EventEnvelope]) -> list[FinalInva
         if status is None:
             continue
         if status in {"passed", "pass", "ok"}:
+            continue
+        if _check_result_recovery_superseded(projection, event.payload):
             continue
         record_id = event.payload.get("record_id")
         key = record_id if isinstance(record_id, str) else f"position-{event.position}"
@@ -3778,6 +3783,11 @@ def _required_checks_passed(state: GraphProjection, task_region_id: str) -> bool
         if result is None:
             return False
         status = result.get("status")
+        if status not in {"passed", "pass", "ok"} and _check_result_recovery_superseded(
+            state,
+            result,
+        ):
+            continue
         if status not in {"passed", "pass", "ok"}:
             return False
         if latest_candidate is not None and not _check_result_cites_latest_candidate(
@@ -3819,6 +3829,57 @@ def _check_result_cites_latest_candidate(
         for record_id in cast(list[Any], expected_file_state_ids)
         if isinstance(record_id, str)
     )
+
+
+def _check_result_recovery_superseded(
+    state: GraphProjection,
+    check_result: dict[str, Any],
+) -> bool:
+    record_id = check_result.get("record_id")
+    if not isinstance(record_id, str) or not record_id:
+        return False
+    for recovery in state["recovery_nodes_by_record_id"].get(record_id, []):
+        node_id = recovery.get("node_id")
+        if isinstance(node_id, str) and _recovery_lineage_passed(state, node_id):
+            return True
+    return False
+
+
+def _recovery_lineage_passed(state: GraphProjection, recovery_node_id: str) -> bool:
+    reachable = _downstream_node_ids(state, recovery_node_id)
+    if not reachable:
+        return False
+    for verification in state["passed_verification_results_by_record_id"].values():
+        if verification.get("node_id") not in reachable:
+            continue
+        candidate_id = verification.get("candidate_id")
+        verdict = state["verifier_verdicts"].get(candidate_id or "")
+        if verdict is None or verdict.get("verdict") == "passed":
+            return True
+    for check_node_id, result in state["check_results"].items():
+        if check_node_id not in reachable:
+            continue
+        if result.get("status") in {"passed", "pass", "ok"}:
+            return True
+    return False
+
+
+def _downstream_node_ids(state: GraphProjection, start_node_id: str) -> set[str]:
+    adjacency: dict[str, set[str]] = {}
+    for edge in state["edges"].values():
+        source = edge.get("from_node_id")
+        target = edge.get("to_node_id")
+        if isinstance(source, str) and isinstance(target, str):
+            adjacency.setdefault(source, set()).add(target)
+    seen: set[str] = set()
+    frontier = [start_node_id]
+    while frontier:
+        node_id = frontier.pop()
+        for neighbor in adjacency.get(node_id, set()):
+            if neighbor not in seen:
+                seen.add(neighbor)
+                frontier.append(neighbor)
+    return seen
 
 
 def _latest_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:

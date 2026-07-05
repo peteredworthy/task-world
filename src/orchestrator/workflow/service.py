@@ -275,6 +275,11 @@ def _resolve_working_path(run: Run) -> Path | None:
     return None
 
 
+def _is_graph_run(run: Run) -> bool:
+    """True for runs executed by the graph kernel (vs the legacy workflow)."""
+    return getattr(run, "execution_mode", "legacy") == "graph"
+
+
 class _ServiceClock:
     """Clock for WorkflowService that returns UTC now."""
 
@@ -954,9 +959,18 @@ class WorkflowService:
         Enqueues a RESUME signal; the consumer applies the DB transition.
         Returns the run in its current (pre-transition) state.
         Raises InvalidTransitionError if the run is not in a resumable state.
+
+        Graph-mode runs may also be resumed from FAILED (operator reopen).
+        The row-level transition alone does not reopen the graph: the graph
+        kernel's run_state must first be moved failed -> resuming -> active
+        via two `resume` commands with actor_role "human"/"operator" (see
+        RUN_LIFECYCLE_TRANSITIONS in graph/commands.py); otherwise the
+        re-armed driver just re-fails the run from the graph state.
         """
         run = await self._repo.get(run_id)
-        if run.status != RunStatus.PAUSED:
+        if run.status != RunStatus.PAUSED and not (
+            run.status == RunStatus.FAILED and _is_graph_run(run)
+        ):
             raise InvalidTransitionError(run.status.value, "active")
         queue = self._get_signal_queue()
         payload: dict[str, Any] = {}
@@ -1069,7 +1083,9 @@ class WorkflowService:
             await commit_with_event_outbox(self._session)
             return await self._repo.get(run_id)
 
-        if run.status != RunStatus.PAUSED:
+        if run.status != RunStatus.PAUSED and not (
+            run.status == RunStatus.FAILED and _is_graph_run(run)
+        ):
             raise InvalidTransitionError(run.status.value, RunStatus.ACTIVE.value)
 
         # For continue strategy: clear paused_at/outcome on paused attempts so they
