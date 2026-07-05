@@ -6682,6 +6682,40 @@ def test_schedule_tick_defers_missing_required_input() -> None:
     ]
 
 
+def test_schedule_tick_dedupes_unchanged_missing_required_input() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created", {"node_id": "producer-1", "kind": "worker", "state": "completed"}, 1
+        ),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "blocked"}, 2),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-1",
+                "from_node_id": "producer-1",
+                "from_port": "candidate",
+                "to_node_id": "worker-1",
+                "to_port": "candidate",
+                "required": True,
+            },
+            3,
+        ),
+    ]
+
+    first = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    second = _apply(
+        [*events, *first],
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0"},
+    )
+
+    assert [(event.event_type, event.payload) for event in first] == [
+        ("node_deferred", {"node_id": "worker-1", "reason": "missing_required_input:candidate"})
+    ]
+    assert second == []
+
+
 def test_schedule_tick_defers_unapproved_gate_input() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),

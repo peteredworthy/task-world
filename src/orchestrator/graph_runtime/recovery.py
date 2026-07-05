@@ -12,6 +12,8 @@ from orchestrator.graph_runtime.controller import GraphController, rebuild_proje
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem
 from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, GraphEventStore
 
+_TERMINAL_RUN_STATES = {"cancelled", "completed", "failed"}
+
 
 @dataclass(frozen=True)
 class RecoveryReport:
@@ -98,5 +100,9 @@ async def _run_ids(session: AsyncSession) -> list[str]:
         checkpoint = await store.read_projection_checkpoint(run_id)
         if checkpoint is not None and checkpoint.terminal:
             continue
+        if checkpoint is None:
+            projection, _, _ = await store.load_projection_with_tail(run_id)
+            if projection["run_state"] in _TERMINAL_RUN_STATES:
+                continue
         run_ids.append(run_id)
     return run_ids

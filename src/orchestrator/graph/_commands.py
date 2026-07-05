@@ -2431,10 +2431,7 @@ def _append_node_deferred_if_changed(
     reason: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> None:
-    if (
-        reason == "max_grants_reached"
-        and projection.get("last_deferred_reasons", {}).get(node_id) == reason
-    ):
+    if projection.get("last_deferred_reasons", {}).get(node_id) == reason:
         return
     output.append(make_event("node_deferred", {"node_id": node_id, "reason": reason}))
 

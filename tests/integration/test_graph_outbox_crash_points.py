@@ -7,12 +7,13 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.db import (
     EventV2Model,
     GraphOutboxModel,
+    GraphProjectionSnapshotModel,
     create_engine,
     create_session_factory,
     init_db,
@@ -564,6 +565,66 @@ async def test_recover_without_run_id_skips_terminal_snapshot_without_replay(
             "classification": "awaiting_start_ack",
         }
     ]
+    assert report.awaiting_callback == []
+
+
+@pytest.mark.asyncio
+async def test_recover_without_run_id_skips_terminal_run_when_snapshot_missing(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, session_factory = file_db
+    terminal_run_id = "recover-skip-terminal-missing-snapshot"
+    clock = FixedClock()
+
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            await store.append_events(
+                terminal_run_id,
+                0,
+                [
+                    _event(
+                        "terminal-active",
+                        terminal_run_id,
+                        "run_lifecycle_changed",
+                        {"from_state": "queued", "to_state": "active"},
+                    ),
+                    _event(
+                        "terminal-worker",
+                        terminal_run_id,
+                        "node_created",
+                        {"node_id": "worker-1", "kind": "worker", "state": "leased"},
+                    ),
+                    _event(
+                        "terminal-lease",
+                        terminal_run_id,
+                        "lease_granted",
+                        {
+                            "lease_id": "lease-terminal",
+                            "node_id": "worker-1",
+                            "generation": 1,
+                            "execution_id": "exec-terminal",
+                        },
+                    ),
+                    _event(
+                        "terminal-completed",
+                        terminal_run_id,
+                        "run_lifecycle_changed",
+                        {"from_state": "active", "to_state": "completed"},
+                    ),
+                ],
+            )
+            await session.execute(
+                delete(GraphProjectionSnapshotModel).where(
+                    GraphProjectionSnapshotModel.run_id == terminal_run_id
+                )
+            )
+
+    call_log: list[str] = []
+    dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
+    report = await recover(session_factory, dispatcher)
+
+    assert report.awaiting_start_ack == []
     assert report.awaiting_callback == []
 
 

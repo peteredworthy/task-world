@@ -107,7 +107,6 @@ async def test_fr10_scheduler_readiness_command_precondition_and_retry_readbacks
         for event in immediate_tick.events
         if event.event_type == "node_deferred"
     } == {
-        "check-missing-command": "precondition_failed:has_command_definition",
         "worker-retry": f"retry_backoff_until:{retry_not_before}",
     }
 
