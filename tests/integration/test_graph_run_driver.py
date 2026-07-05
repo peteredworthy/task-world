@@ -19,7 +19,12 @@ from orchestrator.graph import (
     project_run_state,
     project_task_states,
 )
-from orchestrator.graph_runtime import GraphController, GraphDispatchContext, GraphDispatchExecutor
+from orchestrator.graph_runtime import (
+    GraphController,
+    GraphDispatchContext,
+    GraphDispatchExecutor,
+    seed_run,
+)
 from orchestrator.graph_runtime.outbox import OutboxDispatcher
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner
@@ -669,3 +674,170 @@ async def test_driver_planner_run_completes_only_when_no_pending_planner(
     assert project_run_state(events) == "completed"
     assert outcome.completed is True
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
+
+
+async def _seed_and_force_failed_graph(
+    session_factory: async_sessionmaker[AsyncSession],
+    routine: RoutineConfig,
+    *,
+    run_id: str,
+    clock: FixedClock,
+    ids: SequentialIds,
+) -> None:
+    """Seed a graph, bring the kernel to active, then force run_state failed.
+
+    The worker node is left schedulable (never dispatched), mirroring a run
+    that failed with recovery work still outstanding.
+    """
+    await seed_run(
+        session_factory,
+        routine,
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+        run_config={},
+    )
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    for command in ("accept_run", "start"):
+        position = await controller.current_position(run_id)
+        await controller.handle_command(run_id, position, command, {})
+    position = await controller.current_position(run_id)
+    await controller.handle_command(run_id, position, "fail", {"reason": "forced_for_test"})
+
+
+def _shared_driver(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    repo: Path,
+    agents: dict[str, AgentRunner],
+    dispatch_order: list[str],
+    clock: FixedClock,
+    ids: SequentialIds,
+) -> GraphRunDriver:
+    """Like ``_driver`` but reuses an existing clock/id generator.
+
+    A shared, monotonic id source keeps driver-appended event ids from
+    colliding with the ids the caller already used to seed/force-fail the run.
+    """
+
+    def runtime_builder(
+        session_factory_arg: async_sessionmaker[AsyncSession],
+        clock_arg: Any,
+        id_gen_arg: Any,
+        *,
+        worktree_path: str | Path,
+        runner_type: AgentRunnerType,
+        runner_config: dict[str, Any] | None = None,
+    ) -> tuple[GraphController, GraphDispatchExecutor]:
+        controller = GraphController(
+            session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
+        )
+        executor = GraphDispatchExecutor(
+            session_factory_arg,
+            controller,
+            AgentFactory(agents, dispatch_order),
+            worktree_path=repo,
+        )
+        return controller, executor
+
+    return GraphRunDriver(
+        session_factory,
+        _create_service,
+        clock=clock,
+        id_gen=ids,
+        runtime_builder=runtime_builder,
+    )
+
+
+@pytest.mark.asyncio
+async def test_operator_resume_reopens_failed_graph_run(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "repo-operator-reopen"
+    _init_repo(repo)
+    run_id = "graph-operator-reopen"
+    routine = _routine()
+    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+
+    clock = FixedClock()
+    ids = SequentialIds()
+    await _seed_and_force_failed_graph(
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+    )
+    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+
+    # Drive the run row to FAILED (operator-visible terminal state).
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.apply_start_run(run_id)
+        await service.apply_cancel_run(run_id, reason="forced_for_test")
+    assert await _run_status(session_factory, run_id) == RunStatus.FAILED
+
+    # Operator resume flips the row FAILED -> ACTIVE but the service alone does
+    # not touch the kernel: run_state is still "failed" afterwards.
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.apply_resume_run(run_id, resume_strategy="continue")
+    assert await _run_status(session_factory, run_id) == RunStatus.ACTIVE
+    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+
+    # Re-arming the driver issues the kernel resume command so the graph reopens
+    # and the previously-stranded worker node becomes schedulable again.
+    dispatch_order: list[str] = []
+    driver = _shared_driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=dispatch_order,
+        clock=clock,
+        ids=ids,
+    )
+    await driver.run(run_id)
+
+    events_after = await _events(session_factory, run_id)
+    assert project_run_state(events_after) != "failed"
+    assert "worker" in dispatch_order
+
+
+@pytest.mark.asyncio
+async def test_driver_does_not_reopen_failed_graph_without_operator_resume(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "repo-no-reopen"
+    _init_repo(repo)
+    run_id = "graph-no-reopen"
+    routine = _routine()
+    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+
+    clock = FixedClock()
+    ids = SequentialIds()
+    await _seed_and_force_failed_graph(
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+    )
+
+    # Row driven to FAILED and left there: no operator resume occurred.
+    async with session_factory() as session:
+        service = WorkflowService(session)
+        await service.apply_start_run(run_id)
+        await service.apply_cancel_run(run_id, reason="forced_for_test")
+    assert await _run_status(session_factory, run_id) == RunStatus.FAILED
+
+    dispatch_order: list[str] = []
+    driver = _shared_driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=dispatch_order,
+        clock=clock,
+        ids=ids,
+    )
+    await driver.run(run_id)
+
+    # The kernel stays failed and nothing dispatches: an un-resumed FAILED run
+    # is never silently reopened by the driver.
+    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+    assert dispatch_order == []

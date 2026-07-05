@@ -400,6 +400,16 @@ class GraphRunDriver:
                 run_config=seed_run_config,
             )
             await self._bootstrap_graph_lifecycle(run_id)
+        elif run.status == RunStatus.ACTIVE:
+            # Operator reopen bridge. WorkflowService.apply_resume_run flips a
+            # FAILED graph run's row to ACTIVE (an operator-only reopen — see
+            # _is_graph_run / RUN_LIFECYCLE_TRANSITIONS), but the durable graph
+            # run_state stays "failed". Without moving the kernel too, the drive
+            # loop below would classify the run failed and immediately re-fail
+            # it, so the operator resume would appear to succeed yet do nothing.
+            # Issue the kernel resume command(s) here so the graph actually
+            # reopens, keeping the row status and kernel run_state in step.
+            await self._reopen_failed_graph_lifecycle(run_id)
 
         runtime_kwargs: dict[str, Any] = {
             "worktree_path": Path(run.worktree_path),
@@ -675,6 +685,33 @@ class GraphRunDriver:
             await self._handle_command_at_head(controller, run_id, "start")
         elif run_state == "queued":
             await self._handle_command_at_head(controller, run_id, "start")
+
+    async def _reopen_failed_graph_lifecycle(self, run_id: str) -> bool:
+        """Reopen a graph run that an operator resumed from FAILED.
+
+        The kernel gates the ``failed -> resuming`` edge on an operator/human
+        ``actor_role`` (see _apply_lifecycle_command / REOPEN_ACTOR_ROLES), so
+        only this sanctioned driver path — reached solely after an operator
+        resume flipped the run row to ACTIVE — can un-fail a run; an agent
+        cannot. Reopening takes two lifecycle commands (failed -> resuming ->
+        active); the second is ungated. A crash between them leaves the run
+        "resuming", from which a re-arm issues only the remaining command.
+        Returns True when a reopen command was issued.
+
+        Routed through _handle_command_at_head so a transient "database is
+        locked" is retried instead of stranding the run ACTIVE with a still-
+        failed kernel (mirrors _bootstrap_graph_lifecycle).
+        """
+        events = await self._read_events(run_id)
+        run_state = project_run_state(events)
+        if run_state not in {"failed", "resuming"}:
+            return False
+        controller = GraphController(self._session_factory, self._clock, self._id_gen)
+        payload: dict[str, object] = {"actor_role": "operator"}
+        if run_state == "failed":
+            await self._handle_command_at_head(controller, run_id, "resume", payload)
+        await self._handle_command_at_head(controller, run_id, "resume", payload)
+        return True
 
     async def _read_projection(self, run_id: str) -> GraphProjectionSnapshot:
         events = await self._read_events(run_id)
