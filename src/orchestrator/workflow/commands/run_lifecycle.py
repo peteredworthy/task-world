@@ -128,6 +128,7 @@ class CreateRunCommand(BaseModel):
     delete_worktree_on_completion: bool = False
     source_branch: str | None = None
     source_branch_sha: str | None = None
+    intended_seed_sha: str | None = None
     merge_strategy: str | None = None
     env_file_specs: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
     env_source_dir: str | None = None
@@ -483,6 +484,7 @@ def build_create_run_command(run: Run, *, project_path: str = "") -> CreateRunCo
         delete_worktree_on_completion=run.delete_worktree_on_completion,
         source_branch=run.source_branch,
         source_branch_sha=run.source_branch_sha,
+        intended_seed_sha=run.intended_seed_sha,
         merge_strategy=run.merge_strategy,
         env_file_specs=[spec.model_dump(mode="json") for spec in run.env_file_specs],
         env_source_dir=run.env_source_dir,
@@ -545,6 +547,7 @@ async def handle_create_run(
         delete_worktree_on_completion=cmd.delete_worktree_on_completion,
         source_branch=cmd.source_branch,
         source_branch_sha=cmd.source_branch_sha,
+        intended_seed_sha=cmd.intended_seed_sha,
         merge_strategy=cmd.merge_strategy,
         env_file_specs=cmd.env_file_specs,
         env_source_dir=cmd.env_source_dir,

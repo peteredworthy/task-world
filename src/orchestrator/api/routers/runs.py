@@ -374,6 +374,7 @@ def _run_to_response(run: Run, *, is_graph_backed: bool = False) -> RunResponse:
         worktree_relative_path=worktree_relative_path,
         source_branch=run.source_branch,
         source_branch_sha=run.source_branch_sha,
+        intended_seed_sha=run.intended_seed_sha,
         merge_strategy=run.merge_strategy,
         config=run.config,
         env_file_specs=[

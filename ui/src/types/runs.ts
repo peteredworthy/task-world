@@ -142,6 +142,7 @@ export interface RunResponse {
   worktree_relative_path: string | null;
   source_branch: string | null;
   source_branch_sha: string | null;
+  intended_seed_sha: string | null;
   merge_strategy: string | null;
   config: Record<string, unknown>;
   env_file_specs: EnvFileSpec[];

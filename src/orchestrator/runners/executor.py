@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import subprocess
+from enum import Enum
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
@@ -45,7 +46,13 @@ from orchestrator.runners.health_check import (
 )
 from orchestrator.workflow import InvalidTransitionError
 from orchestrator.workflow import generate_builder_prompt, SummaryCache
-from orchestrator.git import get_head_commit, reset_worktree_changes
+from orchestrator.git import (
+    SeedStaleness,
+    classify_seed_staleness,
+    get_head_commit,
+    reset_worktree_changes,
+    resolve_branch_sha,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -71,6 +78,42 @@ __all__ = [
 ]
 
 HealthCheckRunner = Callable[[str, str], Awaitable[HealthCheckCommandResult]]
+
+
+class SeedAction(str, Enum):
+    """Policy decision for seeding a fresh worktree given seed staleness."""
+
+    PROCEED = "proceed"
+    """Seed silently — no discrepancy worth logging (SHAs match or unknown)."""
+
+    PROCEED_WARN = "proceed_warn"
+    """Seed, but log a warning first (branch advanced, indeterminate ancestry,
+    or a stale base explicitly overridden via allow_stale_base)."""
+
+    REFUSE = "refuse"
+    """Refuse to seed: the clone is behind what run creation saw (stale base)."""
+
+
+def decide_seed_action(staleness: SeedStaleness, *, allow_stale_base: bool) -> SeedAction:
+    """Map a seed-staleness classification to a worktree-seeding policy decision.
+
+    Pure decision function (no I/O) so the stale-base refusal policy can be
+    unit tested independently of the executor/service/git plumbing that
+    surrounds it.
+
+    | staleness  | allow_stale_base | action        |
+    |------------|------------------|---------------|
+    | MATCH      | any              | PROCEED       |
+    | ADVANCED   | any              | PROCEED_WARN  |
+    | UNRELATED  | any              | PROCEED_WARN  |
+    | STALE      | False            | REFUSE        |
+    | STALE      | True             | PROCEED_WARN  |
+    """
+    if staleness == SeedStaleness.MATCH:
+        return SeedAction.PROCEED
+    if staleness == SeedStaleness.STALE and not allow_stale_base:
+        return SeedAction.REFUSE
+    return SeedAction.PROCEED_WARN
 
 
 def resolve_verifier_config(
@@ -487,6 +530,37 @@ class AgentRunnerExecutor:
             return False
 
         await service.request_worktree_creation(run_id, run.repo_name, run.source_branch)
+
+        actual_seed_sha = resolve_branch_sha(repo_path, run.source_branch)
+        staleness = classify_seed_staleness(repo_path, run.intended_seed_sha, actual_seed_sha)
+        allow_stale_base = bool(run.config.get("allow_stale_base"))
+        seed_action = decide_seed_action(staleness, allow_stale_base=allow_stale_base)
+
+        if seed_action == SeedAction.REFUSE:
+            reason = (
+                "stale_seed_base: run "
+                f"{run_id} was created against {run.repo_name}/{run.source_branch}="
+                f"{run.intended_seed_sha}, but the repo's current head is "
+                f"{actual_seed_sha}, which is BEHIND the intended seed SHA. Seeding "
+                "now would silently drop commits the run creator expected to be "
+                "included. Set config.allow_stale_base=true to override."
+            )
+            logger.warning("Run %s: refusing stale-base worktree seed. %s", run_id, reason)
+            await service.fail_worktree_creation(run_id, reason)
+            return False
+
+        if seed_action == SeedAction.PROCEED_WARN:
+            logger.warning(
+                "Run %s: seed staleness=%s intended_seed_sha=%s actual_sha=%s "
+                "repo=%s branch=%s allow_stale_base=%s",
+                run_id,
+                staleness.value,
+                run.intended_seed_sha,
+                actual_seed_sha,
+                run.repo_name,
+                run.source_branch,
+                allow_stale_base,
+            )
 
         try:
             wt_mgr = WorktreeManager(

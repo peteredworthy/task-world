@@ -182,7 +182,7 @@ class RunStateProjector:
                         " routine_path, routine_commit, parent_slice_id,"
                         " runner_type, runner_config, verifier_model,"
                         " worktree_enabled, worktree_path, delete_worktree_on_completion,"
-                        " source_branch, source_branch_sha, merge_strategy,"
+                        " source_branch, source_branch_sha, intended_seed_sha, merge_strategy,"
                         " oversight_state, env_file_specs, env_source_dir,"
                         " current_step_index, transition_tracker,"
                         " total_tokens_read, total_tokens_write, total_tokens_cache,"
@@ -196,7 +196,7 @@ class RunStateProjector:
                         " :routine_path, :routine_commit, :parent_slice_id,"
                         " :runner_type, :runner_config, :verifier_model,"
                         " :worktree_enabled, :worktree_path, :delete_worktree_on_completion,"
-                        " :source_branch, :source_branch_sha, :merge_strategy,"
+                        " :source_branch, :source_branch_sha, :intended_seed_sha, :merge_strategy,"
                         " :oversight_state, :env_file_specs, :env_source_dir,"
                         " :current_step_index, :transition_tracker,"
                         " :total_tokens_read, :total_tokens_write, :total_tokens_cache,"
@@ -231,6 +231,7 @@ class RunStateProjector:
                         else 0,
                         "source_branch": event.source_branch,
                         "source_branch_sha": event.source_branch_sha,
+                        "intended_seed_sha": event.intended_seed_sha,
                         "merge_strategy": event.merge_strategy,
                         "oversight_state": _json_dump(event.oversight_state),
                         "env_file_specs": _json_dump(event.env_file_specs),
@@ -483,7 +484,7 @@ class RunStateProjector:
                 " routine_path, routine_commit, parent_run_id, parent_task_id, parent_slice_id,"
                 " oversight_state, runner_type, runner_config, verifier_model,"
                 " worktree_enabled, worktree_path, delete_worktree_on_completion,"
-                " source_branch, source_branch_sha, merge_strategy, config,"
+                " source_branch, source_branch_sha, intended_seed_sha, merge_strategy, config,"
                 " env_file_specs, env_source_dir, current_step_index, transition_tracker,"
                 " created_at, updated_at, started_at, completed_at,"
                 " runner_started_at, scheduled_resume_at, total_tokens_read, total_tokens_write,"
@@ -495,7 +496,7 @@ class RunStateProjector:
                 " :parent_slice_id,"
                 " :oversight_state, :runner_type, :runner_config, :verifier_model,"
                 " :worktree_enabled, :worktree_path, :delete_worktree_on_completion,"
-                " :source_branch, :source_branch_sha, :merge_strategy, :config,"
+                " :source_branch, :source_branch_sha, :intended_seed_sha, :merge_strategy, :config,"
                 " :env_file_specs, :env_source_dir, :current_step_index, :transition_tracker,"
                 " :created_at, :updated_at, :started_at, :completed_at,"
                 " :runner_started_at, :scheduled_resume_at, :total_tokens_read, :total_tokens_write,"
@@ -529,6 +530,7 @@ class RunStateProjector:
                 else 0,
                 "source_branch": snapshot.get("source_branch"),
                 "source_branch_sha": snapshot.get("source_branch_sha"),
+                "intended_seed_sha": snapshot.get("intended_seed_sha"),
                 "merge_strategy": snapshot.get("merge_strategy"),
                 "config": _json_dump(snapshot.get("config") or event.config),
                 "env_file_specs": _json_dump(snapshot.get("env_file_specs") or []),

@@ -76,6 +76,11 @@ from orchestrator.git.repos import (
     list_branches,
     list_repos,
 )
+from orchestrator.git.seed import (
+    SeedStaleness,
+    classify_seed_staleness,
+    resolve_branch_sha,
+)
 from orchestrator.git.snapshot import SnapshotResult, delete_snapshot_ref, restore, snapshot
 from orchestrator.git.testing import TestRunResult, TestRunner, TestSummary
 from orchestrator.git.utils import (
@@ -143,6 +148,7 @@ __all__ = [
     "RepoInfo",
     "RepoNotFoundError",
     "RevertBackMergeResult",
+    "SeedStaleness",
     "SnapshotResult",
     "TestRunResult",
     "TestRunner",
@@ -160,6 +166,7 @@ __all__ = [
     "apply_prune",
     "back_merge",
     "branch_count",
+    "classify_seed_staleness",
     "commit_uncommitted_changes",
     "commit_uncommitted_changes_or_raise",
     "compute_selection_preview",
@@ -190,6 +197,7 @@ __all__ = [
     "revert_file",
     "reset_worktree_changes",
     "reset_worktree_to_ref",
+    "resolve_branch_sha",
     "restore",
     "snapshot",
 ]

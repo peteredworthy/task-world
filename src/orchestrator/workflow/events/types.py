@@ -381,6 +381,7 @@ class RunCreated(WorkflowEvent):
     delete_worktree_on_completion: bool = False
     source_branch: str | None = None
     source_branch_sha: str | None = None
+    intended_seed_sha: str | None = None
     merge_strategy: str | None = None
     env_file_specs: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
     env_source_dir: str | None = None

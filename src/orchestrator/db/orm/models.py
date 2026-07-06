@@ -76,6 +76,7 @@ class RunModel(Base):
     delete_worktree_on_completion: Mapped[bool] = mapped_column(Integer, default=0)
     source_branch: Mapped[str | None] = mapped_column(String, nullable=True)
     source_branch_sha: Mapped[str | None] = mapped_column(String, nullable=True)
+    intended_seed_sha: Mapped[str | None] = mapped_column(String, nullable=True)
     merge_strategy: Mapped[str | None] = mapped_column(String, nullable=True)
 
     # Config passed to routine

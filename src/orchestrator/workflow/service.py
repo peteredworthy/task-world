@@ -173,6 +173,7 @@ from orchestrator.git import (
     get_head_commit,
     reset_worktree_changes,
     reset_worktree_to_ref,
+    resolve_branch_sha,
 )
 from orchestrator.git.worktree import WorktreeManager
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
@@ -3509,7 +3510,19 @@ class WorkflowService:
         return state.get_task(run_id, task_id)
 
     async def create_run(self, run: Run) -> Run:
-        """Persist a new run."""
+        """Persist a new run.
+
+        Best-effort records ``run.intended_seed_sha`` as the source branch's
+        current HEAD SHA, so that worktree seeding later can detect if the
+        clone it seeds from has fallen behind what was visible right now (the
+        stale-base failure mode). Resolution failures (missing repo, unknown
+        branch, no global_config) never block run creation; the field is
+        simply left null.
+        """
+        if run.intended_seed_sha is None and run.repo_name and run.source_branch:
+            run.intended_seed_sha = self._resolve_intended_seed_sha(
+                run.repo_name, run.source_branch
+            )
         await handle_create_run(
             build_create_run_command(run),
             self._store_v2,
@@ -3517,6 +3530,28 @@ class WorkflowService:
         )
         await commit_with_event_outbox(self._session)
         return await self._repo.get(run.id)
+
+    def _resolve_intended_seed_sha(self, repo_name: str, source_branch: str) -> str | None:
+        """Best-effort resolve the source branch's current HEAD SHA.
+
+        Returns None (never raises) if global_config is unavailable or the
+        repo/branch cannot be resolved.
+        """
+        if self._global_config is None:
+            return None
+        try:
+            repo_path = self._global_config.paths.get_repos_path() / repo_name
+            return resolve_branch_sha(repo_path, source_branch)
+        except Exception:
+            import logging
+
+            logging.getLogger(__name__).warning(
+                "Failed to resolve intended_seed_sha for repo=%s branch=%s",
+                repo_name,
+                source_branch,
+                exc_info=True,
+            )
+            return None
 
     async def set_worktree_path(
         self, run_id: str, worktree_path: str, source_branch_sha: str | None = None

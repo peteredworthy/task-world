@@ -222,6 +222,7 @@ class RunResponse(ApiModel):
     worktree_relative_path: str | None = None
     source_branch: str | None = None
     source_branch_sha: str | None = None
+    intended_seed_sha: str | None = None
     merge_strategy: str | None = None
     config: dict[str, Any] = {}
     env_file_specs: list[EnvFileSpecSchema] = []
