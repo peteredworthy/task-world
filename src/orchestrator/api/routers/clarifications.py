@@ -64,6 +64,10 @@ def _is_clarification_pause_reason(reason: str | None) -> bool:
     return reason.removeprefix("parent_") in _CLARIFICATION_PAUSE_REASONS
 
 
+def is_clarification_pause_reason(reason: str | None) -> bool:
+    return _is_clarification_pause_reason(reason)
+
+
 def _get_current_user() -> str:
     """Get the current user.
 

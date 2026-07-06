@@ -87,6 +87,7 @@ __all__ = [
     "get_agent_runner_icon",
     "get_connection_manager",
     "get_runner_executor",
+    "is_clarification_pause_reason",
     "run_to_trace_response",
     "validate_clarification_question_payloads",
 ]
@@ -118,6 +119,7 @@ _GRAPH_ROUTER_SYMBOLS = {
     "build_node_detail_response_from_summary",
 }
 _RUNS_ROUTER_SYMBOLS = {"_graph_backed_run_ids_from_rows"}
+_CLARIFICATION_ROUTER_SYMBOLS = {"is_clarification_pause_reason"}
 
 
 def build_graph_patch_attempts_response(*args: Any, **kwargs: Any) -> Any:
@@ -144,6 +146,12 @@ def build_graph_topology_response(*args: Any, **kwargs: Any) -> Any:
     return _graph_router.build_graph_topology_response(*args, **kwargs)
 
 
+def is_clarification_pause_reason(*args: Any, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.clarifications as _clarifications_router  # noqa: PLC0415
+
+    return _clarifications_router.is_clarification_pause_reason(*args, **kwargs)
+
+
 def __getattr__(name: str) -> object:
     if name in _TASKS_ROUTER_SYMBOLS:
         import orchestrator.api.routers.tasks as _tasks  # noqa: PLC0415
@@ -165,4 +173,8 @@ def __getattr__(name: str) -> object:
         import orchestrator.api.routers.runs as _runs_router  # noqa: PLC0415
 
         return getattr(_runs_router, name)
+    if name in _CLARIFICATION_ROUTER_SYMBOLS:
+        import orchestrator.api.routers.clarifications as _clarifications_router  # noqa: PLC0415
+
+        return getattr(_clarifications_router, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -248,7 +248,9 @@ def instantiate_horizon_template(
                 {
                     "op": "create_edge",
                     "edge_id": f"edge-corrective-verification-final-{region_id}",
-                    "from_node_id": f"verifier-corrective-{region_id}",
+                    "from_node_id": "*",
+                    "from_node_kind": "verifier",
+                    "from_node_role": "verifier",
                     "from_port": "verification_report",
                     "to_node_id": f"check-final-invariant-{region_id}",
                     "to_port": "verification_evidence",

@@ -63,7 +63,6 @@ MAX_NODE_RECOVERIES_PER_DRIVE = 3
 SUPPORTED_GRAPH_RUNNER_TYPES = frozenset(
     {
         AgentRunnerType.CODEX_SERVER,
-        AgentRunnerType.CLAUDE_SDK,
     }
 )
 

@@ -586,20 +586,29 @@ async def test_driver_blocks_on_verifier_fail_without_completing(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("agent_runner_type", "expected_runner"),
+    [
+        (AgentRunnerType.CLI_SUBPROCESS, "cli_subprocess"),
+        (AgentRunnerType.CLAUDE_SDK, "claude_sdk"),
+    ],
+)
 async def test_driver_rejects_unsupported_graph_runner_before_seeding(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    agent_runner_type: AgentRunnerType,
+    expected_runner: str,
 ) -> None:
     _, session_factory = file_db
-    repo = tmp_path / "repo-unsupported-runner"
+    repo = tmp_path / f"repo-unsupported-runner-{expected_runner}"
     _init_repo(repo)
-    run_id = "graph-driver-unsupported-runner"
+    run_id = f"graph-driver-unsupported-runner-{expected_runner}"
     await _create_graph_run(
         session_factory,
         _routine(),
         run_id=run_id,
         repo=repo,
-        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_type=agent_runner_type,
     )
     dispatch_order: list[str] = []
     driver = _driver(
@@ -614,7 +623,7 @@ async def test_driver_rejects_unsupported_graph_runner_before_seeding(
 
     assert outcome.completed is False
     assert outcome.blocked_reason is not None
-    assert "unsupported runner 'cli_subprocess'" in outcome.blocked_reason
+    assert f"unsupported runner '{expected_runner}'" in outcome.blocked_reason
     assert events == []
     assert dispatch_order == []
     assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
@@ -1066,7 +1075,7 @@ async def test_clarification_resume_does_not_reopen_recovered_failed_graph(
     (_is_clarification_pause_reason) blocks that, so the run stays PAUSED and the
     kernel stays failed with no reopen marker.
     """
-    from orchestrator.api.routers.clarifications import _is_clarification_pause_reason
+    from orchestrator.api import is_clarification_pause_reason
 
     _, session_factory = file_db
     repo = tmp_path / "repo-clarif-no-reopen"
@@ -1101,12 +1110,12 @@ async def test_clarification_resume_does_not_reopen_recovered_failed_graph(
     # The clarification-response endpoint gates its auto-resume on this guard.
     # "recovered" is not a clarification/user-action pause reason, so the resume
     # branch is skipped entirely.
-    assert _is_clarification_pause_reason(recovered.pause_reason) is False
+    assert is_clarification_pause_reason(recovered.pause_reason) is False
 
     # Reproduce the exact router branch: because the guard is False, the resume
     # is not issued. The run must remain PAUSED/"recovered" and the kernel must
     # remain "failed" — no operator-reopen marker is stamped.
-    if recovered.status == RunStatus.PAUSED and _is_clarification_pause_reason(
+    if recovered.status == RunStatus.PAUSED and is_clarification_pause_reason(
         recovered.pause_reason
     ):  # pragma: no cover - guard is False in this scenario
         async with session_factory() as session:
@@ -1122,14 +1131,14 @@ async def test_clarification_resume_does_not_reopen_recovered_failed_graph(
 
 def test_is_clarification_pause_reason_classification() -> None:
     """The clarification-resume guard admits only user-action pause reasons."""
-    from orchestrator.api.routers.clarifications import _is_clarification_pause_reason
+    from orchestrator.api import is_clarification_pause_reason
 
-    assert _is_clarification_pause_reason("awaiting_user_input") is True
-    assert _is_clarification_pause_reason("awaiting_clarification") is True
+    assert is_clarification_pause_reason("awaiting_user_input") is True
+    assert is_clarification_pause_reason("awaiting_clarification") is True
     # Fan-out children carry a parent_ prefix over the underlying reason.
-    assert _is_clarification_pause_reason("parent_awaiting_user_input") is True
+    assert is_clarification_pause_reason("parent_awaiting_user_input") is True
     # Unrelated pause reasons must not trigger an auto-resume.
-    assert _is_clarification_pause_reason("recovered") is False
-    assert _is_clarification_pause_reason("manual_gate") is False
-    assert _is_clarification_pause_reason("agent_execution_error") is False
-    assert _is_clarification_pause_reason(None) is False
+    assert is_clarification_pause_reason("recovered") is False
+    assert is_clarification_pause_reason("manual_gate") is False
+    assert is_clarification_pause_reason("agent_execution_error") is False
+    assert is_clarification_pause_reason(None) is False

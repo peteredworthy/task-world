@@ -117,6 +117,17 @@ def test_final_invariant_template_declares_runtime_command_binding() -> None:
     }
 
 
+def test_final_invariant_template_uses_wildcard_verifier_evidence() -> None:
+    template = instantiate_horizon_template("final_invariant_region", region_id="region-1")
+
+    evidence_edge = next(op for op in template["ops"] if op.get("op") == "create_edge")
+
+    assert evidence_edge["from_node_id"] == "*"
+    assert evidence_edge["from_node_kind"] == "verifier"
+    assert evidence_edge["from_node_role"] == "verifier"
+    assert evidence_edge["to_port"] == "verification_evidence"
+
+
 def _planner_envelope(purpose: str, ops: list[dict[str, Any]]) -> PatchEnvelope:
     return PatchEnvelope(
         patch_id=f"patch-{purpose}",
