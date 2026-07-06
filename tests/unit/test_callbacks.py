@@ -11,6 +11,7 @@ from orchestrator.graph import (
     FakeClock,
     GraphProjection,
     initial_projection,
+    reduce_event,
     validate_callback,
 )
 
@@ -123,6 +124,25 @@ def test_duplicate_different_payload_rejected() -> None:
     result = validate_callback(_request(), _projection(), [event])
 
     assert result.outcome == CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT
+
+
+def test_projected_prior_rejection_does_not_return_duplicate() -> None:
+    projection = reduce_event(
+        _projection(),
+        _event(
+            "callback_rejected_conflict",
+            {
+                "node_id": "worker-1",
+                "idempotency_key": "key-1",
+                "payload": {"payload_hash": "hash-a"},
+                "reason": "idempotency payload conflict",
+            },
+        ),
+    )
+
+    result = validate_callback(_request(), projection, [])
+
+    assert result.outcome == CallbackOutcome.ACCEPTED
 
 
 def test_first_callback_not_duplicate() -> None:

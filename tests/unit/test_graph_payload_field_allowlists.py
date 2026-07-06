@@ -68,6 +68,7 @@ import inspect
 from pathlib import Path
 
 from orchestrator.graph import projections
+from orchestrator.graph_runtime import store
 from orchestrator.graph_runtime.store import GRAPH_PROJECTION_PAYLOAD_FIELDS
 
 _PROJECTIONS_PATH = Path(inspect.getfile(projections))
@@ -167,6 +168,11 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "file_state_records fields _task_file_state_accepted never reads",
     "version_id": "requirement_revisions bookkeeping",
 }
+
+
+def test_graph_projection_payload_fields_are_owned_by_projection_module() -> None:
+    """The compact projection allowlist must live with the reducer that reads it."""
+    assert store.GRAPH_PROJECTION_PAYLOAD_FIELDS is projections.GRAPH_PROJECTION_PAYLOAD_FIELDS
 
 
 def _is_payload_expr(node: ast.AST) -> bool:

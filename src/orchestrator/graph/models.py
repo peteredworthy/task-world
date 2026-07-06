@@ -1394,6 +1394,19 @@ class EventEnvelope(GraphBaseModel):
     payload: dict[str, Any]
 
 
+class CallbackIdempotencyEvent(GraphBaseModel):
+    event_type: Literal[
+        "callback_accepted",
+        "callback_rejected_stale",
+        "callback_rejected_conflict",
+        "callback_duplicate_returned",
+    ]
+    node_id: str
+    idempotency_key: str
+    outcome: str
+    payload: dict[str, Any] | None
+
+
 class PatchOp(GraphBaseModel):
     op: str
     edge_id: str | None = None

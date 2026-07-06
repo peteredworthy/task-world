@@ -199,18 +199,19 @@ def _validate_idempotency(
         projected = projection.get("callback_idempotency_events", {}).get(
             _callback_idempotency_projection_key(request.node_id, request.idempotency_key)
         )
-        if projected is not None:
-            stored_payload = projected.get("payload")
-            if isinstance(stored_payload, dict):
-                outcome = projected.get("outcome")
-                prior_outcome = outcome if isinstance(outcome, str) else "callback_accepted"
-                prior_payload = cast(dict[str, Any], stored_payload)
-                if _stored_callback_payload(prior_payload) == request.payload:
-                    return CallbackValidationResult(
-                        outcome=CallbackOutcome.DUPLICATE_IDEMPOTENT,
-                        reason="duplicate idempotency key",
-                        prior_result={"outcome": prior_outcome, "payload": prior_payload},
-                    )
+        if projected is not None and projected.event_type == "callback_accepted":
+            if projected.payload == request.payload:
+                return CallbackValidationResult(
+                    outcome=CallbackOutcome.DUPLICATE_IDEMPOTENT,
+                    reason="duplicate idempotency key",
+                    prior_result={
+                        "outcome": projected.outcome,
+                        "payload": projected.model_dump(
+                            mode="json",
+                            exclude={"event_type", "outcome"},
+                        ),
+                    },
+                )
             return CallbackValidationResult(
                 outcome=CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT,
                 reason="idempotency payload conflict",

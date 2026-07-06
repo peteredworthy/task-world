@@ -20,6 +20,7 @@ from orchestrator.graph.models import (
     ArtifactReferenceRecord,
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
+    CallbackIdempotencyEvent,
     CandidateRecord,
     CheckResultRecord,
     CompletionDecisionRecord,
@@ -54,7 +55,51 @@ _EDGE_METADATA_KEYS = (
 )
 
 # Bump this whenever reduce_event semantics or GraphProjection shape changes.
-PROJECTION_SCHEMA_VERSION = 6
+PROJECTION_SCHEMA_VERSION = 7
+
+GRAPH_PROJECTION_PAYLOAD_FIELDS = (
+    "appeal_type",
+    "attempt_number",
+    "approved",
+    "base_snapshot_id",
+    "candidate_id",
+    "classification",
+    "command_binding",
+    "decision",
+    "execution_id",
+    "expires_at",
+    "failed_candidate_id",
+    "from_node_id",
+    "from_port",
+    "from_state",
+    "gate_id",
+    "generation",
+    "kind",
+    "lease_id",
+    "membership",
+    "new_state",
+    "node_id",
+    "outcome",
+    "port",
+    "producer_node_id",
+    "record_id",
+    "record_kind",
+    "record_type",
+    "recovery_of_record_id",
+    "recovery_reason",
+    "role",
+    "session_id",
+    "state",
+    "status",
+    "supersedes_task_region_id",
+    "supersedes_task_region_ids",
+    "task_region_id",
+    "to_node_id",
+    "to_port",
+    "to_state",
+    "verdict",
+    "verifier_node_id",
+)
 
 
 class GraphRecordSummary(TypedDict, total=False):
@@ -146,7 +191,7 @@ class GraphProjection(TypedDict):
     authority_decisions: dict[str, dict[str, Any]]
     oversight_decisions: dict[str, dict[str, Any]]
     decision_request_details: dict[str, PendingGateDecision]
-    callback_idempotency_events: dict[str, dict[str, Any]]
+    callback_idempotency_events: dict[str, CallbackIdempotencyEvent]
     open_proposal_blockers: dict[str, FinalInvariantBlocker]
     suspect_node_reasons: dict[str, str]
     authority_revision_blockers: dict[str, FinalInvariantBlocker]
@@ -414,6 +459,10 @@ def projection_to_checkpoint(projection: GraphProjection) -> dict[str, Any]:
         record_id: _output_record_payload_dict(payload)
         for record_id, payload in projection.get("output_record_payloads", {}).items()
     }
+    checkpoint["callback_idempotency_events"] = {
+        key: event.model_dump(mode="json")
+        for key, event in projection.get("callback_idempotency_events", {}).items()
+    }
     return checkpoint
 
 
@@ -428,7 +477,25 @@ def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjectio
     projection["output_record_payloads"] = _output_payloads_from_checkpoint(
         raw_projection.get("output_record_payloads"),
     )
+    projection["callback_idempotency_events"] = _callback_idempotency_events_from_checkpoint(
+        raw_projection.get("callback_idempotency_events"),
+    )
     return projection
+
+
+def _callback_idempotency_events_from_checkpoint(
+    raw_events: Any,
+) -> dict[str, CallbackIdempotencyEvent]:
+    if not isinstance(raw_events, dict):
+        return {}
+    typed: dict[str, CallbackIdempotencyEvent] = {}
+    for key, raw_event in cast(dict[Any, Any], raw_events).items():
+        if not isinstance(key, str) or not isinstance(raw_event, dict):
+            continue
+        event = _callback_idempotency_event_from_payload(cast(dict[str, Any], raw_event))
+        if event is not None:
+            typed[key] = event
+    return typed
 
 
 def _accepted_output_records_from_checkpoint(
@@ -677,8 +744,8 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             for node_id, details in state.get("decision_request_details", {}).items()
         },
         "callback_idempotency_events": {
-            key: dict(payload)
-            for key, payload in state.get("callback_idempotency_events", {}).items()
+            key: event.model_copy(deep=True)
+            for key, event in state.get("callback_idempotency_events", {}).items()
         },
         "open_proposal_blockers": {
             proposal_id: cast(FinalInvariantBlocker, dict(blocker))
@@ -973,12 +1040,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         reason = event.payload.get("reason")
         if isinstance(node_id, str) and isinstance(reason, str):
             next_state["last_deferred_reasons"][node_id] = reason
-    elif event.event_type in {
-        "callback_accepted",
-        "callback_rejected_stale",
-        "callback_rejected_conflict",
-        "callback_duplicate_returned",
-    }:
+    elif event.event_type == "callback_accepted":
         _record_callback_idempotency_event(next_state, event)
     elif event.event_type == "node_ready":
         node_id = event.payload.get("node_id")
@@ -2800,11 +2862,29 @@ def _record_callback_idempotency_event(state: GraphProjection, event: EventEnvel
     idempotency_key = event.payload.get("idempotency_key")
     if not isinstance(node_id, str) or not isinstance(idempotency_key, str):
         return
+    callback_event = _callback_idempotency_event_from_envelope(event)
+    if callback_event is None:
+        return
     key = _callback_idempotency_projection_key(node_id, idempotency_key)
-    state["callback_idempotency_events"].setdefault(
-        key,
-        {"outcome": event.event_type, "payload": dict(event.payload)},
-    )
+    state["callback_idempotency_events"].setdefault(key, callback_event)
+
+
+def _callback_idempotency_event_from_envelope(
+    event: EventEnvelope,
+) -> CallbackIdempotencyEvent | None:
+    callback_payload = dict(event.payload)
+    callback_payload["event_type"] = event.event_type
+    callback_payload["outcome"] = event.event_type
+    return _callback_idempotency_event_from_payload(callback_payload)
+
+
+def _callback_idempotency_event_from_payload(
+    payload: dict[str, Any],
+) -> CallbackIdempotencyEvent | None:
+    try:
+        return CallbackIdempotencyEvent.model_validate(payload)
+    except ValueError:
+        return None
 
 
 def _callback_idempotency_projection_key(node_id: str, idempotency_key: str) -> str:

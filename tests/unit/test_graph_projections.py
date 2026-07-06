@@ -10,6 +10,7 @@ import pytest
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    CallbackIdempotencyEvent,
     EventEnvelope,
     FakeClock,
     FinalInvariantBlocker,
@@ -27,6 +28,8 @@ from orchestrator.graph import (
     project_node_states,
     project_planner_freshness_packet,
     project_ready_nodes,
+    projection_from_checkpoint,
+    projection_to_checkpoint,
     project_requirement_freshness_facts,
     project_requirement_revisions,
     project_run_state,
@@ -157,6 +160,82 @@ def test_empty_projection() -> None:
         "cleanup_requested_events": {},
         "cleanup_applied_ids": {},
     }
+
+
+def test_callback_idempotency_projection_uses_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "callback_accepted",
+            {
+                "node_id": "worker-1",
+                "idempotency_key": "key-1",
+                "payload": {"payload_hash": "hash-a"},
+            },
+        ),
+    )
+
+    projected = projection["callback_idempotency_events"]["worker-1\0key-1"]
+
+    assert isinstance(projected, CallbackIdempotencyEvent)
+    assert projected.outcome == "callback_accepted"
+    assert projected.payload == {"payload_hash": "hash-a"}
+
+
+def test_callback_idempotency_projection_checkpoint_round_trips_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "callback_accepted",
+            {
+                "node_id": "worker-1",
+                "idempotency_key": "key-1",
+                "payload": {"payload_hash": "hash-a"},
+            },
+        ),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    projected = restored["callback_idempotency_events"]["worker-1\0key-1"]
+
+    assert isinstance(projected, CallbackIdempotencyEvent)
+    assert projected.event_type == "callback_accepted"
+    assert projected.payload == {"payload_hash": "hash-a"}
+
+
+def test_malformed_callback_idempotency_payload_is_tolerated_without_raw_projection_entry() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "callback_accepted",
+            {
+                "node_id": "worker-1",
+                "idempotency_key": "key-1",
+                "payload": "legacy-non-dict-payload",
+            },
+        ),
+    )
+
+    assert projection["callback_idempotency_events"] == {}
+
+
+def test_callback_idempotency_projection_allows_empty_callback_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "callback_accepted",
+            {
+                "node_id": "worker-1",
+                "idempotency_key": "key-1",
+                "payload": None,
+            },
+        ),
+    )
+
+    projected = projection["callback_idempotency_events"]["worker-1\0key-1"]
+
+    assert isinstance(projected, CallbackIdempotencyEvent)
+    assert projected.payload is None
 
 
 def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
