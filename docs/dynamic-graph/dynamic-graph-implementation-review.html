@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Dynamic Graph Implementation Review — 2026-07-01 (status 2026-07-05)</title>
+<title>Dynamic Graph Implementation Review — 2026-07-01 (status 2026-07-06)</title>
 <style>
   :root {
     --bg: #0f1117;
@@ -96,7 +96,7 @@
 
 <header>
   <h1>Dynamic Graph Implementation Review</h1>
-  <div class="subtitle">task-world · <code>src/orchestrator/graph/</code> + <code>src/orchestrator/graph_runtime/</code> + <code>src/orchestrator/workflow/graph_driver.py</code> · ~25,200 lines · reviewed 2026-07-01 · re-assessed 2026-07-03 · <strong>status updated 2026-07-05</strong></div>
+  <div class="subtitle">task-world · <code>src/orchestrator/graph/</code> + <code>src/orchestrator/graph_runtime/</code> + <code>src/orchestrator/workflow/graph_driver.py</code> · ~25,200 lines · reviewed 2026-07-01 · re-assessed 2026-07-03 · <strong>status updated 2026-07-06</strong></div>
 </header>
 
 <div class="verdict">
@@ -104,15 +104,16 @@
 </div>
 
 <div class="verdict" style="border-left-color: var(--warn);">
-  <strong>Status 2026-07-05.</strong> W1 through W4 are implemented in the current tree. W2 landed as <code>23768b98e</code>, W3 as <code>0a5e1b0ba</code>, and W4 as <code>0a092e22d</code>; the July 4–5 incident hardening layer is also present. The recommendations that said "merge W2/W3/W4" are no longer relevant except as provenance. W5 remains paused <code>graph_blocked</code>; W6/W7/W8 are still relevant, with W8 now able to depend on W2/W3 primitives. The current action list is in <a href="#improvements">section 4</a>.
+  <strong>Status 2026-07-06.</strong> W1 through W4 are implemented; the P1 items from the 2026-07-05 list (#3–#9) are now all closed with executable regression evidence tracked in <code>p1-resolution-ledger.md</code> and re-verified green today (174 targeted tests). A first W5 slice merged (<code>5bd440506</code>: typed output-record projections). <code>claude_sdk</code> is now explicitly gated off as a graph runner (<code>7d60173c0</code>) — <code>codex_server</code> is the only supported graph runner. W6/W7/W8 remain open. The P1 closure itself caused two rounds of regressions (see <a href="#entropy">section 5, entropy</a>); the fresh action list is in <a href="#improvements">section 4</a>.
   <table>
     <tr><th>Item</th><th>Code state</th><th>Where</th></tr>
     <tr><td>W1 single read path + W1b residual scans</td><td><span class="badge str">Merged</span></td><td><code>c95793889</code>, <code>4073a0d4b</code></td></tr>
     <tr><td>W2 recovery at source (reconcile cmd, sweeps → source)</td><td><span class="badge str">Merged</span></td><td><code>23768b98e</code> (from run <code>69ce4f7c</code>)</td></tr>
-    <tr><td>W3 incremental snapshots + deferral dedup</td><td><span class="badge str">Merged</span></td><td><code>0a5e1b0ba</code> (from run <code>88f46a2e</code>)</td></tr>
+    <tr><td>W3 incremental snapshots + deferral dedup</td><td><span class="badge str">Merged</span></td><td><code>0a5e1b0ba</code>; deferral-dedup/terminal-skip follow-up <code>da02309b4</code></td></tr>
     <tr><td>W4 split monoliths (<code>graph/commands/</code> pkg, <code>prompts.py</code>)</td><td><span class="badge str">Merged</span></td><td><code>0a092e22d</code> (manual port from run <code>0694df2d</code>)</td></tr>
-    <tr><td>W5 typed payloads</td><td><span class="badge med">Still relevant; run paused</span></td><td>run <code>b57c201d</code>, <code>graph_blocked</code>: ready nodes not dispatched</td></tr>
-    <tr><td>W6 outbox · W7 glob overlap · W8 drive loop</td><td><span class="badge low">Not started</span></td><td>—</td></tr>
+    <tr><td>W5 typed payloads — slice 1 (output-record projections)</td><td><span class="badge str">Merged (partial)</span></td><td><code>ff312302d</code> / merge <code>5bd440506</code>; 166 <code>dict[str, Any]</code> remain in <code>projections.py</code>, 202 in <code>_commands.py</code></td></tr>
+    <tr><td>P1 #3–#9 (supersession, late callback, node-expectation, dead-input, parity, revision nodes, claude_sdk gating)</td><td><span class="badge str">Closed w/ ledger</span></td><td><code>5b76e5cfe</code> + repairs <code>8a20597c8</code>, <code>fd219ae60</code>, <code>4f2cb0f58</code>, <code>7d60173c0</code>; evidence in <code>p1-resolution-ledger.md</code></td></tr>
+    <tr><td>W6 outbox · W7 glob overlap · W8 drive loop</td><td><span class="badge low">Not started</span></td><td>verified still open in code today (see cards below)</td></tr>
     <tr><td>Incident hardening (BEGIN&nbsp;IMMEDIATE, poison-edge lint, operator patch API, cite-not-rerun, auto-resume, richer blocked reasons)</td><td><span class="badge str">Merged</span></td><td><code>d390f6c41</code>, <code>f71676e03</code>, <code>6753f244a</code></td></tr>
     <tr><td>Incident hardening layer 2 (read-outside-lock, locked-retry in driver/dispatch, sweep + check-cite supersession, <code>failed→resuming</code>, codex submit-rejection detection)</td><td><span class="badge str">Merged</span></td><td><code>36bf8b763</code>, <code>5be3550cb</code>, <code>6f21bcf50</code>, <code>c901161f3</code>, <code>74849e278</code></td></tr>
   </table>
@@ -125,6 +126,7 @@
     <li><a href="#strengths">Strengths</a></li>
     <li><a href="#weaknesses">Weaknesses</a></li>
     <li><a href="#improvements">Recommended improvements</a></li>
+    <li><a href="#entropy">Entropy: where changes broke the system</a></li>
     <li><a href="#evidence">Evidence &amp; provenance</a></li>
   </ol>
 </div>
@@ -233,89 +235,74 @@ checkpoint/tail or summaries ─▶ projections.py (35+ project_* readbacks) ─
 </div>
 
 <div class="card">
-  <span class="badge med">Medium</span><h3>W5 — Stringly-typed core despite the "typed work graph" goal <em>(edge layer improved)</em></h3>
-  <div class="loc">projections.py:58 GraphProjection = TypedDict of dict[str, Any] maps · pervasive payload.get()/isinstance guards (_payload_string_list, _payload_truthy, _candidate_id_from_payload…)</div>
-  <p><strong>Partially improved:</strong> <code>478055890</code> "Add typed graph edge selectors" put typed models on edges and selectors (<code>models.py</code> +449 lines), proving the incremental conversion path works. <strong>Unchanged elsewhere:</strong> records and node payloads have Pydantic models in <code>models.py</code> but are validated at the boundary and then handled as <code>dict[str, Any]</code> everywhere else — the projection, the reducers, and command helpers work on untyped dicts with defensive extraction helpers. Typos in payload keys, missing fields, and shape drift remain runtime phenomena discovered by tests or dogfood rather than by mypy. The <code>_is_*_record_payload</code> / <code>_*_payload_for_validation</code> shims are the visible cost. Spec: <code>w5-typed-payloads-spec.md</code>.</p>
-  <p class="status-note"><strong>Current review:</strong> Still relevant. First attempt (run <code>481149a8</code>) failed <code>no_executor_running</code>; current run <code>b57c201d</code> (worktree r358, codex_server) is paused <code>graph_blocked</code> — "graph has ready node(s) not dispatched" on two corrective-recovery workers, a symptom shared by other paused runs and worth diagnosing before re-seeding. Urgency remains: untyped, untrimmed new-event payloads are now the main DB-bloat source after W3 removed full-replay starvation.</p>
+  <span class="badge med">Medium</span><h3>W5 — Stringly-typed core despite the "typed work graph" goal <em>(slice 1 merged; bulk remains)</em></h3>
+  <div class="loc">projections.py:87 GraphProjection = TypedDict of dict[str, Any] maps · 166 dict[str, Any] in projections.py, 202 in _commands.py (counted 2026-07-06)</div>
+  <p><strong>Partially improved:</strong> <code>478055890</code> typed edges/selectors; <code>ff312302d</code> (merged <code>5bd440506</code>) typed output-record projections — <code>AcceptedOutputRecord</code>, <code>FailedVerificationResult</code>, <code>GraphRecordSummary</code> TypedDicts plus new models in <code>models.py</code>, consumed by dispatch/prompts/store. <strong>Unchanged elsewhere:</strong> node payloads, callback/runtime-failure records, and most reducer state are still <code>dict[str, Any]</code> with defensive extraction helpers. Typos in payload keys and shape drift remain runtime phenomena — and the 07-06 parity fix (<code>4f2cb0f58</code>) shows this class of defect is still live. Spec: <code>w5-typed-payloads-spec.md</code>.</p>
+  <p class="status-note"><strong>Current review (2026-07-06):</strong> Highest-leverage remaining code-quality change, now doubly motivated: (a) untyped, untrimmed new-event payloads are the main DB-bloat source after W3, and (b) typed payload models are the natural single source of truth for the store's hand-maintained <code>json_extract</code> field allowlists (see <a href="#entropy">section 5</a>).</p>
 </div>
 
 <div class="card">
   <span class="badge med">Medium</span><h3>W6 — Outbox dispatcher is serial, backoff-free, and dead-ends quietly <em>(unchanged)</em></h3>
   <div class="loc">outbox.py:138 max_attempts=3 · :145–168 serial loop · :285–298 immediate retry or <code>OUTBOX_FAILED</code> dead-end · spec: w6-outbox-hardening-spec.md</div>
   <p>Dispatch claims one row per DB transaction and executes side effects strictly sequentially — independent agent dispatches for parallel-safe nodes still serialize through the dispatcher (the executor tracks concurrent processes, but rows are dispatched one at a time). A failed attempt goes straight back to <code>pending</code> with no backoff, so a deterministic failure burns all 3 attempts in quick succession, after which the row sits in <code>failed</code> with no readback, alert, or requeue path surfaced in the graph API. Recovery redispatches <code>pending</code>/<code>dispatching</code> but not <code>failed</code>.</p>
-  <p class="status-note"><strong>Current review:</strong> Still open as specced. Adjacent-but-different fix landed: <code>_retry_locked</code> adds exponential backoff on SQLite lock-class <code>OperationalError</code> around outbox <em>bookkeeping</em> — the success-path crash from <code>project_driver_db_locked_crash.md</code> — plus WAL + <code>busy_timeout</code>. Attempt-level backoff, batch claim, <code>failed</code>-row surfacing, and operator requeue remain untouched.</p>
+  <p class="status-note"><strong>Current review (2026-07-06):</strong> Verified still open in code — <code>outbox.py:293</code> still flips straight to <code>OUTBOX_FAILED</code> at <code>max_attempts=3</code> with no <code>next_attempt_at</code>, no failed-row readback, no requeue. Adjacent-but-different fix landed earlier: <code>_retry_locked</code> exponential backoff on SQLite lock-class errors around outbox <em>bookkeeping</em>, plus WAL + <code>busy_timeout</code>. The recurring "graph has ready node(s) not dispatched" <code>graph_blocked</code> pauses (<code>graph_driver.py:1156</code>) make this the next diagnostic priority: a dead-ended or serialized outbox row is one of the few mechanisms that produces exactly that symptom.</p>
 </div>
 
 <div class="card">
   <span class="badge med">Medium</span><h3>W7 — Heuristic glob-overlap check can under-detect conflicts <em>(unchanged)</em></h3>
   <div class="loc">scheduler.py:333–344 _literal_prefix_may_match_glob probes ("x", "x.py", "nested/x.py") · :339 _glob_prefixes_may_overlap static-prefix comparison · spec: w7-glob-overlap-spec.md</div>
   <p>Whether a literal claim path sits "under" a glob claim is decided by probing three synthetic suffixes; a pattern whose match depth exceeds the probes (e.g. <code>src/*/*/gen/*.py</code> vs literal <code>src/a</code>) can be judged non-overlapping, letting two writers into overlapping paths — the exact safety property claims exist to enforce. Glob-vs-glob comparison falls back to static prefixes, which is conservative but returns <code>True</code> for any two rootless patterns, over-serializing. Empty path lists also conflict with everything, which is safe but silently defeats parallelism when a claim is sloppily specified.</p>
-  <p class="status-note"><strong>Current review:</strong> Unchanged — probes and static-prefix fallback still in place (<code>scheduler.py:330–344</code>). No spec run scheduled yet.</p>
+  <p class="status-note"><strong>Current review (2026-07-06):</strong> Unchanged — probes and static-prefix fallback still in place (<code>scheduler.py:331–349</code>). No spec run scheduled yet.</p>
 </div>
 
 <div class="card">
   <span class="badge med">Medium</span><h3>W8 — Drive loop is still a poll loop with embedded special cases <em>(still relevant after W2/W3)</em></h3>
   <div class="loc">graph_driver.py 1,250 lines · recovery.py:62–63 no-op <code>if not redispatched and pending_before: redispatched = []</code> still present</div>
   <p><code>drive_to_quiescence</code> still re-ticks, re-reads the projection multiple times per iteration, dispatches pending rows, waits, renews leases, recovers orphaned active leases, runs <code>reconcile</code> on quiescence, and compares a progress signature. The added recovery paths are justified incident responses, but they also confirm the original concern: the driver owns too much policy. W2's <code>reconcile</code> command and W3's checkpointed reads make the cleanup more feasible now, not less. Spec: <code>w8-drive-loop-cleanup-spec.md</code>.</p>
-  <p class="status-note"><strong>Current review:</strong> Still relevant, upgraded to medium. The specific recommendation should be updated from "do after W2/W3" to "use W2/W3 as prerequisites": event-triggered driving, narrower progress checks, deletion of recovery no-op code, and consolidation of orphan/late-callback handling.</p>
+  <p class="status-note"><strong>Current review (2026-07-06):</strong> Verified still open — <code>graph_driver.py</code> is 1,249 lines and the <code>recovery.py</code> no-op (<code>if not redispatched and pending_before: redispatched = []</code>) is still present. P1 #4 (late-callback acceptance) landed in the kernel, so the driver-side orphan/late-callback consolidation is now simpler than when W8 was specced. Recommendation stands: event-triggered driving, narrower progress checks, delete the no-op, consolidate recovery policy.</p>
 </div>
 
-<h2 id="improvements">4. Recommended changes — current list, 2026-07-05</h2>
+<h2 id="improvements">4. Recommended changes — current list, 2026-07-06</h2>
 
-<p><em>Supersedes the 2026-07-01 and merge-backlog tables. Retired as no longer relevant: "commit incident fixes", "merge W2", "merge W3", and "re-run W4"; all are implemented and verified. The active recommendations below are the items still worth doing after reviewing the current code.</em></p>
+<p><em>Supersedes the 2026-07-05 list. Retired as implemented and verified (evidence in <code>p1-resolution-ledger.md</code>, all cited tests re-run green 2026-07-06): #3 cross-region supersession, #4 late-callback acceptance, #5 node-expectation wildcard evidence, #6 kernel dead-input detection, #7 task-state parity coverage, #8 revision-embedded node registration, #9 claude_sdk closure (resolved by gating it off — <code>SUPPORTED_GRAPH_RUNNER_TYPES</code> is now <code>codex_server</code> only). Also retired: "diagnose and unblock W5 run" — the W5 slice landed via <code>5bd440506</code>. The list below is re-prioritized around what the P1 closure itself revealed (section 5).</em></p>
 
-<h3>P0 — unblock the next implementation run</h3>
+<h3>P0 — stop the recurring failure modes</h3>
 <table>
   <tr><th>#</th><th>Change</th><th>Sketch</th></tr>
   <tr>
     <td class="num">1</td>
-    <td><strong>Diagnose and unblock W5</strong></td>
-    <td>Run <code>b57c201d</code> is paused <code>graph_blocked</code> with ready nodes not dispatched. Confirm whether this is an outbox/dispatch issue, a graph state issue, or a stale-run artifact. Re-seed W5 from the current post-W4 tree once the pause is understood; the typed-payload work is still the highest-leverage remaining code-quality change.</td>
+    <td><strong>Single source of truth for projection payload field lists</strong></td>
+    <td>The hand-maintained <code>json_extract</code> allowlists in <code>store.py</code> (<code>GRAPH_PROJECTION_PAYLOAD_FIELDS</code>, <code>SUMMARY_REBUILD_PAYLOAD_FIELDS</code>, <code>LIGHT_GRAPH_PAYLOAD_FIELDS</code>, <code>NODE_DETAIL_PAYLOAD_FIELDS</code>) have now caused two parity regressions (<code>attempt_number</code>, then <code>decision</code>/<code>gate_id</code>/<code>approved</code>/<code>appeal_type</code> in <code>4f2cb0f58</code>). Either derive the lists from typed payload models (ties into W5), or add a guard test that statically extracts every payload key the reducers read and asserts allowlist coverage, or replay a full event corpus through both compact and full paths and diff projections. Until this exists, every new reducer field is a latent read-model divergence.</td>
   </tr>
   <tr>
     <td class="num">2</td>
-    <td><strong>Prevent stale-base W-run creation</strong></td>
-    <td>The W2-W4 merge backlog came from runs seeded from stale <code>f526cd70a</code>. Add or enforce a routine/run creation check that records the intended seed SHA and warns when it is behind the current integration branch before expensive graph work starts.</td>
+    <td><strong>Prevent stale-base run creation (carried over, now twice-proven)</strong></td>
+    <td>Bit the W2–W4 backlog (seeded from stale <code>f526cd70a</code>) and again in the P1 closure: fixes developed off-main needed a manual port (<code>5b76e5cfe</code>) plus two repair commits before parity held. Record the intended seed SHA at run creation and refuse (or loudly warn) when it is behind the integration branch; on merge-back, require the porting commit to cite the source run and base SHA so drift is mechanically checkable. Adopt the <code>p1-resolution-ledger.md</code> closure rule for all future W-spec closures: no item marked done without a named regression test re-run green on main — it caught both doc-ahead-of-code gaps in the P1 batch.</td>
   </tr>
 </table>
 
-<h3>P1 — incident-proven kernel/runtime gaps still relevant</h3>
+<h3>P1 — active weaknesses with specs</h3>
 <table>
   <tr><th>#</th><th>Change</th><th>Sketch</th></tr>
   <tr>
     <td class="num">3</td>
-    <td><strong>Cross-region task-state supersession</strong></td>
-    <td>Still relevant. The no-successor and check-cite layers now have lineage supersession guards, but <code>_derive_task_states</code> still needs an explicit rule for repairs that pass in corrective regions while the origin region remains <code>needs_revision</code>. Use the landed supersession helpers as the policy model, or require corrective candidates to submit into the origin region.</td>
+    <td><strong>Outbox hardening (W6) — promoted</strong></td>
+    <td>As specced (<code>w6-outbox-hardening-spec.md</code>): attempt backoff with <code>next_attempt_at</code>, batch-claim for parallel-safe kinds, <code>failed</code>-row readback + operator requeue. Promoted because the recurring <code>graph_blocked</code> "ready node(s) not dispatched" pauses are consistent with rows dead-ending in <code>failed</code> with no surface; W6 both fixes the mechanism and makes the next occurrence diagnosable from the API instead of from SQLite.</td>
   </tr>
   <tr>
     <td class="num">4</td>
-    <td><strong>Late-callback acceptance for expired-but-uncontested leases</strong></td>
-    <td>Still relevant, narrowed. W3 removed projection-read starvation and the driver now recovers orphaned running leases, but <code>validate_callback</code> still rejects callbacks for expired/revoked leases and <code>schedule_tick</code> still turns lease expiry into a terminal runtime failure. Accept a late callback when the lease expired without a competing re-dispatch and the execution identity still matches.</td>
+    <td><strong>Finish typed graph payloads (W5 slices 2+)</strong></td>
+    <td>Slice 1 typed output-record projections. Continue per <code>w5-typed-payloads-spec.md</code>: callback/runtime-failure records, node state/attempt fields, then reducer-internal maps (166 <code>dict[str, Any]</code> remain in <code>projections.py</code>, 202 in <code>_commands.py</code>). Sequence it so the typed models become the source for the P0-#1 field lists, and payload trimming rides along to close the remaining DB-bloat source.</td>
   </tr>
   <tr>
     <td class="num">5</td>
-    <td><strong>Node-expectation redesign: unpin evidence from node identity</strong></td>
-    <td>Still relevant. Producer-class selectors, trigger edges distinct from required evidence edges, kernel-managed <code>skipped</code> branches, and a singleton final-invariant gate would remove the final-check poison topology rather than linting around it. The merged poison-pattern lint and cite-not-rerun fallback remain stopgaps.</td>
+    <td><strong>Drive-loop cleanup / event-triggered driving (W8)</strong></td>
+    <td>Prerequisites all landed (W2 <code>reconcile</code>, W3 checkpoints, P1 #4 kernel late-callback acceptance). Update <code>w8-drive-loop-cleanup-spec.md</code> accordingly: tick on completion signals with heartbeat fallback, shrink progress-signature checks, delete the <code>recovery.py:64</code> no-op, consolidate orphaned-lease policy now that the kernel accepts uncontested late callbacks, prune broad <code>graph/__init__.py</code> re-exports. Include a full stopgap audit, not just the guards named here: enumerate every incident-era guard in driver/dispatch/recovery/template-lint, check each against the kernel capability that now covers it (dead-input events, wildcard evidence, late-callback acceptance, reconcile), delete the obsolete ones, and record an explicit retirement condition on each survivor so the next kernel change knows what it can remove.</td>
   </tr>
   <tr>
     <td class="num">6</td>
-    <td><strong>Kernel dead-input detection</strong></td>
-    <td>Still relevant. Richer blocked reasons make the autopsy better, but when a required edge's source is terminally failed with no retry budget, the kernel should emit an explicit unsatisfiable/dead-input event and route to a gap planner where possible instead of deferring into a generic <code>graph_blocked</code>.</td>
-  </tr>
-  <tr>
-    <td class="num">7</td>
-    <td><strong>Projection parity coverage for task-state fields</strong></td>
-    <td>Partially addressed by W1b/W3 but still worth extending. Event summaries now preserve <code>attempt_number</code>, and checkpointed full projections are the write-path source, but task-state parity should be locked down with fixture coverage so summary/light reads cannot drift from full projection semantics again.</td>
-  </tr>
-  <tr>
-    <td class="num">8</td>
-    <td><strong>Patch-validator: register revision-embedded nodes</strong></td>
-    <td>Still relevant if revision attempts become load-bearing. <code>create_revision_attempt</code> can emit embedded worker/verifier nodes; ensure validator symbol registration lets follow-up <code>create_edge</code> ops reference them in the same patch.</td>
-  </tr>
-  <tr>
-    <td class="num">9</td>
-    <td><strong>claude_sdk graph submit fix</strong></td>
-    <td>Still relevant if <code>claude_sdk</code> is expected as a graph runner. The dispatch-side detection of submit-rejection output has landed, but the in-process MCP/submit failure mode still needs a reproduction and dependency or runner fix. Until then, treat <code>codex_server</code> as the reliable graph runner.</td>
+    <td><strong>claude_sdk graph runner: reproduction-backed fix or permanent retirement</strong></td>
+    <td>The gate-off (<code>7d60173c0</code>) is an honest closure but leaves a single supported runner — a bus-factor risk on codex quota/availability. Either reproduce the SDK stream lifecycle failure ("Stream closed" on grade/submit, cancel-scope RuntimeError) and fix it, or declare <code>codex_server</code>-only supported and delete the dormant claude_sdk graph-callback code path so it cannot half-work.</td>
   </tr>
 </table>
 
@@ -323,37 +310,56 @@ checkpoint/tail or summaries ─▶ projections.py (35+ project_* readbacks) ─
 <table>
   <tr><th>#</th><th>Change</th><th>Sketch</th></tr>
   <tr>
-    <td class="num">10</td>
-    <td><strong>Typed graph payloads (W5)</strong></td>
-    <td>As specced in <code>w5-typed-payloads-spec.md</code>, convert the highest-churn event payloads/projection records from <code>dict[str, Any]</code> to Pydantic-backed types at the reducer/helper boundary. Prioritize accepted records, verification/check results, node state/attempt fields, and callback/runtime failure records.</td>
-  </tr>
-  <tr>
-    <td class="num">11</td>
-    <td><strong>Outbox hardening (W6)</strong></td>
-    <td>As originally specced (<code>w6-outbox-hardening-spec.md</code>): attempt backoff with <code>next_attempt_at</code>, batch-claim for parallel-safe kinds, <code>failed</code>-row readback + operator requeue. The W5 "ready nodes not dispatched" pause may re-prioritize this if diagnosis points at dispatch.</td>
-  </tr>
-  <tr>
-    <td class="num">12</td>
+    <td class="num">7</td>
     <td><strong>Glob segment analysis (W7)</strong></td>
-    <td>As originally specced (<code>w7-glob-overlap-spec.md</code>): segment-wise wildcard comparison, Hypothesis property test (overlap must be True whenever any concrete path matches both).</td>
+    <td>As originally specced (<code>w7-glob-overlap-spec.md</code>): segment-wise wildcard comparison, Hypothesis property test (overlap must be True whenever any concrete path matches both). Verified unchanged at <code>scheduler.py:331–349</code>.</td>
   </tr>
   <tr>
-    <td class="num">13</td>
-    <td><strong>Drive-loop cleanup / event-triggered driving (W8)</strong></td>
-    <td>Now that W2/W3 landed, update <code>w8-drive-loop-cleanup-spec.md</code> to use <code>reconcile</code> and checkpointed reads as prerequisites: tick on completion signals with heartbeat fallback, shrink progress-signature checks, consolidate orphaned-lease and late-callback policy, delete the <code>recovery.py</code> no-op, and prune broad public re-exports where they no longer serve compatibility.</td>
+    <td class="num">8</td>
+    <td><strong>Further modularization of the remaining monoliths</strong></td>
+    <td><code>_commands.py</code> is 5,487 lines (grew ~75 since W4) and <code>projections.py</code> 4,786 (grew ~450, largely W5 slice 1 + P1 supersession). Not urgent, but each fix lands in the same two files — extract the task-state derivation and supersession policy into their own module while the P1 tests are fresh, so policy changes stop touching the reducer core.</td>
   </tr>
 </table>
 
-<h2 id="evidence">5. Evidence &amp; provenance</h2>
+<h2 id="entropy">5. Entropy: where recent changes broke the system, and how to evolve without breaking</h2>
+
+<p>The P1 closure is a useful natural experiment: seven kernel-level fixes landed in three days, and the commit history records exactly where the system resisted change and where it tore. Three failure modes account for all of the breakage.</p>
+
+<div class="card">
+  <span class="badge high">Entropy 1</span><h3>Derived read models drift because field propagation is manual</h3>
+  <div class="loc">store.py:234 GRAPH_PROJECTION_PAYLOAD_FIELDS + 3 sibling allowlists · broke in 4f2cb0f58 (2nd occurrence; 1st was attempt_number)</div>
+  <p><strong>What happened.</strong> P1 #3 and #7 added new payload fields the reducers read (<code>decision</code>, <code>gate_id</code>, <code>approved</code>, <code>appeal_type</code>, <code>supersedes_task_region_id(s)</code>). The compact read path reconstructs events via SQL <code>json_extract</code> over a hand-maintained field tuple, so the new fields were silently absent from compact projections and snapshots — full replay and checkpoint reads disagreed until <code>4f2cb0f58</code> patched the tuple and added a state-matrix parity test.</p>
+  <p><strong>Why the design tears here.</strong> The information "reducer X reads payload key K" exists in one place (<code>_commands.py</code>/<code>projections.py</code>) and must be manually mirrored into a second place (<code>store.py</code>) with no compiler, test, or runtime check connecting them. Every performance-motivated derived read model (light reads, summaries, node detail, compact projection) multiplies the mirror count. This is the same multi-source-of-truth family as pre-W1 raw scans — W1 unified <em>who folds</em>; the field allowlists re-introduced <em>what gets folded</em> as a second truth.</p>
+  <p><strong>Engineering for evolution.</strong> Make the schema the artifact that changes, not the mirrors: typed payload models (W5) that both the reducers and the extraction lists are generated from; or an automated corpus-replay parity test (fold full events vs compact events for every recorded fixture run, diff projections) so any missed field fails CI the day it is introduced rather than in the next incident. The manual matrix tests added in <code>4f2cb0f58</code> protect only the states someone thought to enumerate.</p>
+</div>
+
+<div class="card">
+  <span class="badge high">Entropy 2</span><h3>Work developed off stale bases arrives as archaeology, not merges</h3>
+  <div class="loc">W2–W4 backlog (base f526cd70a) · P1 chain: 8a20597c8 → fd219ae60 → 5b76e5cfe "Port … to main" → 4f2cb0f58 → 7d60173c0</div>
+  <p><strong>What happened.</strong> The P1 fixes were developed and then had to be <em>ported</em> to main, followed by two repair rounds ("Fixes for P1 fixes", "Fixes for Fixes for P1 fixes") and two ledger-gap closures where the docs claimed Fixed ahead of the tree: the final-invariant template still wired the brittle <code>verifier-corrective-{region_id}</code> node id, and the claude_sdk gate-off wasn't actually in <code>SUPPORTED_GRAPH_RUNNER_TYPES</code> until <code>7d60173c0</code>. Same shape as the July W-spec merge backlog.</p>
+  <p><strong>Why the design tears here.</strong> Graph runs execute in isolated worktrees (correctly, per the incident history), but nothing records or checks the seed SHA against the integration branch, and nothing forces "run verified" to mean "merged and verified on main". The gap between those two states is where every fixes-for-fixes chain has originated.</p>
+  <p><strong>Engineering for evolution.</strong> P0 #2: seed-SHA recording + staleness refusal at run creation, and a merge-back convention where the port commit cites source run + base SHA. The <code>p1-resolution-ledger.md</code> closure rule (no "Fixed" without a named test re-run green) is the right complement and demonstrably worked — it caught both doc-ahead-of-code gaps — so extend the ledger pattern to future W-spec closures.</p>
+</div>
+
+<div class="card">
+  <span class="badge med">Entropy 3</span><h3>Policy accretes in the effectful edges faster than the kernel absorbs it</h3>
+  <div class="loc">graph_driver.py 1,249 lines · recovery.py:64 no-op · dispatch-side codex submit-rejection detection · poison-pattern lint</div>
+  <p><strong>What happened (pattern, not a single break).</strong> Each incident deposited a guard at the layer where it was observed — driver progress signatures, dispatch output sniffing, recovery no-ops, template lints — and the later, correct kernel fix (reconcile, dead-input events, wildcard evidence edges, late-callback acceptance) did not retire the stopgap. The driver still carries incident-era control flow whose triggering conditions the kernel now prevents; the no-progress guard that pauses runs as <code>graph_blocked</code> "ready node(s) not dispatched" is itself one of these edge-layer patches, and it currently masks whatever the underlying dispatch defect is (see W6).</p>
+  <p><strong>Why the design tears here.</strong> The kernel is cheap to change safely (pure, replayable, 80 test files); the edges are expensive (async, DB, processes). Under incident pressure, fixes land where reproduction is fastest — the edges — so entropy concentrates exactly where tests are weakest. Stopgaps without retirement conditions become permanent load-bearing behavior.</p>
+  <p><strong>Engineering for evolution.</strong> Treat every edge-layer guard as a numbered stopgap with an explicit retirement condition ("delete when kernel emits dead-input events" — that condition is now true). W8 is the concrete vehicle: after each kernel capability lands, sweep the driver/dispatch/recovery layer for guards it obsoletes. The heuristic worth institutionalizing: <em>if a fix can be expressed as a command/event/projection rule, it belongs in the kernel even when the incident was observed at an edge</em> — the P1 batch shows the kernel versions were all achievable and all landed with deterministic tests.</p>
+</div>
+
+<h2 id="evidence">6. Evidence &amp; provenance</h2>
 <ul>
   <li><strong>Code reviewed:</strong> <code>graph/</code> (<code>__init__</code>, <code>_commands.py</code>, <code>commands/</code>, <code>callbacks.py</code>, <code>scheduler.py</code>, <code>projections.py</code> outline, <code>patch_validator.py</code>), <code>graph_runtime/</code> (<code>controller.py</code>, <code>outbox.py</code>, <code>recovery.py</code>, <code>store.py</code>, <code>dispatch.py</code>, <code>prompts.py</code>, <code>horizon_templates.py</code>), <code>workflow/graph_driver.py</code>.</li>
   <li><strong>Docs:</strong> <code>docs/dynamic-graph/status.md</code> (FR ledger, June dogfood pause + contract-driven fulfillment fix), <code>typed-work-graph-requirements.md</code>, <code>complete/true-comparison-results.md</code> (cost data).</li>
   <li><strong>History:</strong> recent commits <code>a3c10f8df</code> "Recover quiescent graphs after failed checks", <code>e53072de8</code> "Recover dynamic graph continuation after verifier failure", <code>f526cd70a</code> "Merge failed check graph recovery" — the W2 accretion pattern.</li>
   <li><strong>Tests:</strong> 80 graph-related test files including per-FR acceptance suites and outbox crash-point tests.</li>
-  <li><strong>2026-07-05 current-state evidence:</strong> W2 <code>23768b98e</code>, W3 <code>0a5e1b0ba</code>, and W4 <code>0a092e22d</code> are represented in the current tree: <code>handle_reconcile</code>, <code>load_projection_with_tail</code>, <code>advance_projection_snapshot</code>, <code>graph/commands/</code>, and <code>graph_runtime/prompts.py</code>. W5 <code>b57c201d</code> remains paused <code>graph_blocked</code>. Incident docs — <code>incident-2026-07-04-w2-driver-crash-w3-final-check-strand.md</code> (incl. 07-04 PM → 07-05 addendum), <code>project_driver_db_locked_crash.md</code>. Earlier merged hardening — <code>d390f6c41</code>, <code>f71676e03</code>, <code>6753f244a</code>; merge-backlog hardening — <code>36bf8b763</code>, <code>5be3550cb</code>, <code>6f21bcf50</code>, <code>c901161f3</code>, <code>74849e278</code>.</li>
+  <li><strong>2026-07-05 current-state evidence:</strong> W2 <code>23768b98e</code>, W3 <code>0a5e1b0ba</code>, and W4 <code>0a092e22d</code> are represented in the current tree: <code>handle_reconcile</code>, <code>load_projection_with_tail</code>, <code>advance_projection_snapshot</code>, <code>graph/commands/</code>, and <code>graph_runtime/prompts.py</code>. Incident docs — <code>incident-2026-07-04-w2-driver-crash-w3-final-check-strand.md</code> (incl. 07-04 PM → 07-05 addendum), <code>project_driver_db_locked_crash.md</code>. Earlier merged hardening — <code>d390f6c41</code>, <code>f71676e03</code>, <code>6753f244a</code>; merge-backlog hardening — <code>36bf8b763</code>, <code>5be3550cb</code>, <code>6f21bcf50</code>, <code>c901161f3</code>, <code>74849e278</code>.</li>
+  <li><strong>2026-07-06 current-state evidence:</strong> P1 closure chain <code>8a20597c8</code>, <code>fd219ae60</code>, <code>5b76e5cfe</code>, <code>4f2cb0f58</code>, <code>7d60173c0</code> with evidence ledger <code>p1-resolution-ledger.md</code>; W5 slice 1 <code>ff312302d</code> / merge <code>5bd440506</code>; W3 follow-up <code>da02309b4</code>. Verified by re-running the ledger-cited tests plus <code>tests/integration/test_graph_read_models.py</code>, the claude_sdk gating driver test, and <code>tests/unit/test_graph_commands.py</code> — 174 passed, 0 failed. Verified-still-open code: <code>outbox.py</code> (no attempt backoff / failed-row surface), <code>scheduler.py:331–349</code> (glob probes), <code>recovery.py:64</code> (no-op), <code>graph_driver.py</code> 1,249 lines. <code>dict[str, Any]</code> counts: projections.py 166, _commands.py 202.</li>
 </ul>
 
-<footer>Generated by Claude Code · 2026-07-01 · review of working tree at commit <code>f526cd70a</code> · status updated 2026-07-05 after W1-W4 implementation review</footer>
+<footer>Generated by Claude Code · 2026-07-01 · review of working tree at commit <code>f526cd70a</code> · status updated 2026-07-06 after P1 ledger closure (<code>7d60173c0</code>) — added §5 entropy analysis, refreshed §4 recommendations</footer>
 
 </div>
 </body>
