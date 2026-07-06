@@ -161,6 +161,193 @@ def _corrective_supersession_events(run_id: str) -> list[EventEnvelope]:
     ]
 
 
+def _file_state_event(
+    event_id: str,
+    run_id: str,
+    task_region_id: str,
+    candidate_id: str,
+) -> EventEnvelope:
+    return _event(
+        event_id,
+        run_id,
+        "file_state_accepted",
+        {
+            "record_id": f"file-state-{candidate_id}",
+            "record_kind": "file_state",
+            "producer_node_id": f"worker-{candidate_id}",
+            "port": "file_state",
+            "schema": "FileStateRecord",
+            "snapshot_id": f"snapshot-{candidate_id}",
+            "base_snapshot_id": "S0",
+            "task_region_id": task_region_id,
+            "candidate_id": candidate_id,
+            "verdict": "captured",
+        },
+    )
+
+
+def _candidate_event(
+    event_id: str,
+    run_id: str,
+    task_region_id: str,
+    candidate_id: str,
+    attempt_number: int = 1,
+) -> EventEnvelope:
+    return _event(
+        event_id,
+        run_id,
+        "output_record_accepted",
+        {
+            "task_region_id": task_region_id,
+            "candidate_id": candidate_id,
+            "attempt_number": attempt_number,
+            "record_id": candidate_id,
+            "record_kind": "output",
+            "record_type": "candidate",
+            "producer_node_id": f"worker-{candidate_id}",
+            "port": "candidate",
+            "schema": "ImplementationCandidate",
+        },
+    )
+
+
+def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
+    return {
+        "accepted": [
+            _candidate_event("accepted-candidate", run_id, "accepted", "cand-accepted"),
+            _event(
+                "accepted-verification",
+                run_id,
+                "verification_passed",
+                {"candidate_id": "cand-accepted"},
+            ),
+            _file_state_event(
+                "accepted-file-state",
+                run_id,
+                "accepted",
+                "cand-accepted",
+            ),
+        ],
+        "accepted_with_gate": [
+            _event(
+                "gate-node",
+                run_id,
+                "node_created",
+                {
+                    "node_id": "gate-accepted",
+                    "kind": "gate",
+                    "task_region_id": "accepted_with_gate",
+                },
+            ),
+            _candidate_event(
+                "gate-candidate",
+                run_id,
+                "accepted_with_gate",
+                "cand-accepted-with-gate",
+            ),
+            _event(
+                "gate-verification",
+                run_id,
+                "verification_passed",
+                {"candidate_id": "cand-accepted-with-gate"},
+            ),
+            _file_state_event(
+                "gate-file-state",
+                run_id,
+                "accepted_with_gate",
+                "cand-accepted-with-gate",
+            ),
+            _event(
+                "gate-decision",
+                run_id,
+                "approval_decision_recorded",
+                {
+                    "node_id": "gate-accepted",
+                    "decision": "approved",
+                },
+            ),
+        ],
+        "needs_revision": [
+            _candidate_event("revision-candidate", run_id, "needs_revision", "cand-revision"),
+            _event(
+                "revision-verification",
+                run_id,
+                "verification_failed",
+                {"candidate_id": "cand-revision"},
+            ),
+        ],
+        "blocked_invalid_test": [
+            _candidate_event(
+                "invalid-test-candidate",
+                run_id,
+                "blocked_invalid_test",
+                "cand-invalid-test",
+            ),
+            _event(
+                "invalid-test-verification",
+                run_id,
+                "verification_failed",
+                {"candidate_id": "cand-invalid-test"},
+            ),
+            _event(
+                "invalid-test-oversight",
+                run_id,
+                "oversight_decision_recorded",
+                {
+                    "task_region_id": "blocked_invalid_test",
+                    "candidate_id": "cand-invalid-test",
+                    "appeal_type": "invalid_test",
+                    "decision": "accepted",
+                },
+            ),
+        ],
+        "blocked_environment": [
+            _candidate_event(
+                "environment-candidate",
+                run_id,
+                "blocked_environment",
+                "cand-environment",
+            ),
+            _event(
+                "environment-failure",
+                run_id,
+                "environment_failure_accepted",
+                {"task_region_id": "blocked_environment", "reason": "tool_unavailable"},
+            ),
+        ],
+        "in_progress": [
+            _event(
+                "in-progress-node",
+                run_id,
+                "node_created",
+                {
+                    "node_id": "worker-in-progress",
+                    "kind": "worker",
+                    "task_region_id": "in_progress",
+                },
+            ),
+            _event(
+                "in-progress-lease",
+                run_id,
+                "lease_granted",
+                {"node_id": "worker-in-progress", "lease_id": "lease-in-progress"},
+            ),
+        ],
+        "pending": [
+            _event(
+                "pending-node",
+                run_id,
+                "node_created",
+                {
+                    "node_id": "worker-pending",
+                    "kind": "worker",
+                    "task_region_id": "pending",
+                },
+            )
+        ],
+    }
+
+
 async def _count_model(session: AsyncSession, model: type[Any], run_id: str) -> int:
     result = await session.scalar(
         select(func.count()).select_from(model).where(model.run_id == run_id)
@@ -300,6 +487,46 @@ async def test_projection_read_model_preserves_corrective_supersession_task_stat
         await session.commit()
 
     assert expected_task_states == {"corrective": "accepted", "origin": "accepted"}
+    assert project_task_states(compact_projection_events) == expected_task_states
+    assert snapshot_before_rebuild is not None
+    assert snapshot_before_rebuild.task_states == expected_task_states
+    assert rebuilt_snapshot is not None
+    assert rebuilt_snapshot.task_states == expected_task_states
+
+
+@pytest.mark.asyncio
+async def test_projection_read_model_preserves_task_state_matrix(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "read-model-task-state-matrix"
+    cases = _task_state_parity_cases(run_id)
+    events = [
+        _event("matrix-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
+        *(event for case_events in cases.values() for event in case_events),
+    ]
+    expected_task_states = {
+        task_region_id: ("accepted" if task_region_id == "accepted_with_gate" else task_region_id)
+        for task_region_id in cases
+    }
+
+    assert project_task_states(events) == expected_task_states
+
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, events)
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        snapshot_before_rebuild = await store.read_projection_snapshot(run_id)
+        await store.delete_read_models(run_id)
+        await session.commit()
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        compact_projection_events = await store.read_run_projection(run_id)
+        rebuilt_snapshot = await store.rebuild_read_models(run_id)
+        await session.commit()
+
     assert project_task_states(compact_projection_events) == expected_task_states
     assert snapshot_before_rebuild is not None
     assert snapshot_before_rebuild.task_states == expected_task_states

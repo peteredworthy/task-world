@@ -232,14 +232,18 @@ SUMMARY_REBUILD_PAYLOAD_FIELDS = tuple(
     )
 )
 GRAPH_PROJECTION_PAYLOAD_FIELDS = (
+    "appeal_type",
     "attempt_number",
+    "approved",
     "base_snapshot_id",
     "candidate_id",
     "command_binding",
+    "decision",
     "execution_id",
     "expires_at",
     "failed_candidate_id",
     "from_state",
+    "gate_id",
     "generation",
     "kind",
     "lease_id",
