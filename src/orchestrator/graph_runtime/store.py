@@ -185,6 +185,8 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "state",
     "status",
     "supersedes_record_id",
+    "supersedes_task_region_id",
+    "supersedes_task_region_ids",
     "successor_planner_node_ids",
     "superseding_record_id",
     "support_id",
@@ -252,6 +254,8 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "session_id",
     "state",
     "status",
+    "supersedes_task_region_id",
+    "supersedes_task_region_ids",
     "task_region_id",
     "to_state",
 )

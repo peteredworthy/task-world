@@ -8242,3 +8242,205 @@ def test_record_decision_rejects_terminal_run() -> None:
 
     assert output[0].event_type == "command_rejected"
     assert "terminal run" in output[0].payload["reason"]
+
+
+def test_submit_patch_accepts_edge_between_revision_attempt_embedded_nodes() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "revision-edge",
+            "proposed_by_node_id": "gap-planner-1",
+            "actor_role": "gap_planner",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "task-1",
+                    "failed_candidate_id": "cand-1",
+                    "worker_node": {
+                        "node_id": "worker-revision-2",
+                        "state": "planned",
+                    },
+                    "verifier_node": {
+                        "node_id": "verifier-revision-2",
+                        "state": "planned",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-revision-candidate",
+                    "from_node_id": "worker-revision-2",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-revision-2",
+                    "to_port": "candidate_under_test",
+                    "required": True,
+                },
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "graph_patch_accepted",
+        "revision_created",
+        "node_created",
+        "node_created",
+        "edge_created",
+    ]
+    assert output[2].payload["kind"] == "worker"
+    assert output[3].payload["kind"] == "verifier"
+    assert output[4].payload["from_node_id"] == "worker-revision-2"
+    assert output[4].payload["to_node_id"] == "verifier-revision-2"
+
+
+def test_callback_binds_required_input_by_wildcard_producer_class_edge() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "state": "completed"},
+            1,
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "task_region_id": "task-1",
+            },
+            2,
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-replacement",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "running",
+            },
+            3,
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-candidate-replacement",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "verifier-replacement",
+                "to_port": "candidate_under_test",
+                "required": True,
+            },
+            4,
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-candidate-replacement",
+                "to_node_id": "verifier-replacement",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            5,
+        ),
+        _event("node_created", {"node_id": "check-final", "kind": "check", "state": "blocked"}, 6),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-verification-evidence",
+                "from_node_id": "*",
+                "from_node_kind": "verifier",
+                "from_node_role": "verifier",
+                "from_port": "verification_report",
+                "to_node_id": "check-final",
+                "to_port": "verification_evidence",
+                "required": True,
+                "accepted_record_selector": {"record_kinds": ["verification"]},
+            },
+            7,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-replacement",
+                "lease_id": "lease-replacement",
+                "generation": 1,
+                "execution_id": "exec-replacement",
+                "base_snapshot_id": "S0",
+            },
+            8,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-replacement",
+            execution_id="exec-replacement",
+            lease_id="lease-replacement",
+            base_snapshot_id="S0",
+            payload_hash="hash-replacement",
+            idempotency_key="key-replacement",
+            payload={
+                "payload_hash": "hash-replacement",
+                "output_records": [
+                    {
+                        "record_id": "verification-replacement",
+                        "record_kind": "verification",
+                        "record_type": "verification_report",
+                        "producer_node_id": "verifier-replacement",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "outcome": "passed",
+                        "value": {
+                            "outcome": "passed",
+                            "grades": [{"requirement_id": "R-01", "grade": "pass"}],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert any(
+        event.event_type == "input_bound"
+        and event.payload["edge_id"] == "edge-verification-evidence"
+        and event.payload["to_node_id"] == "check-final"
+        and event.payload["record_ids"] == ["verification-replacement"]
+        for event in output
+    ), [(event.event_type, event.payload.get("reason")) for event in output]
+
+
+def test_schedule_tick_marks_dead_required_input_when_required_source_failed_unbound() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "producer-1", "kind": "worker", "state": "failed"}, 1),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "blocked"}, 2),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-1",
+                "from_node_id": "producer-1",
+                "from_port": "candidate",
+                "to_node_id": "worker-1",
+                "to_port": "candidate",
+                "required": True,
+            },
+            3,
+        ),
+    ]
+
+    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+
+    assert [(event.event_type, event.payload) for event in output] == [
+        (
+            "node_deferred",
+            {"node_id": "worker-1", "reason": "dead_required_input:candidate:producer-1"},
+        )
+    ]

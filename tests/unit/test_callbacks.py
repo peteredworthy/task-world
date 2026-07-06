@@ -151,7 +151,7 @@ def test_revoked_lease_rejected() -> None:
     assert result.reason == "lease revoked"
 
 
-def test_expired_uncontested_lease_accepted() -> None:
+def test_expired_lease_without_expiry_event_rejected() -> None:
     result = validate_callback(
         _request(),
         _projection(
@@ -161,11 +161,47 @@ def test_expired_uncontested_lease_accepted() -> None:
         [],
     )
 
+    assert result.outcome == CallbackOutcome.REJECTED_STALE
+    assert result.reason == "lease expired"
+
+
+def test_expired_uncontested_lease_with_matching_execution_accepted() -> None:
+    events = [
+        _event(
+            "lease_expired",
+            {
+                "lease_id": "lease-1",
+                "node_id": "worker-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "reason": "lease_expired_without_callback",
+            },
+        ),
+        _event(
+            "node_state_changed",
+            {
+                "node_id": "worker-1",
+                "new_state": "failed",
+                "trigger": "lease_expired_without_callback",
+                "reason": "lease_expired_without_callback",
+            },
+        ),
+    ]
+
+    result = validate_callback(
+        _request(),
+        _projection(
+            node_states={"worker-1": "failed"},
+            leases={"lease-1": _lease("expired")},
+        ),
+        events,
+    )
+
     assert result.outcome == CallbackOutcome.ACCEPTED
     assert result.reason == "accepted_late_expired_lease"
 
 
-def test_expired_lease_rejected_after_competing_redispatch() -> None:
+def test_expired_redispatched_lease_rejected_as_contested() -> None:
     result = validate_callback(
         _request(),
         _projection(
@@ -178,11 +214,25 @@ def test_expired_lease_rejected_after_competing_redispatch() -> None:
                 },
             },
         ),
-        [],
+        [
+            _event(
+                "lease_expired",
+                {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+            ),
+            _event(
+                "lease_granted",
+                {
+                    "lease_id": "lease-2",
+                    "node_id": "worker-1",
+                    "generation": 2,
+                    "execution_id": "exec-2",
+                },
+            ),
+        ],
     )
 
     assert result.outcome == CallbackOutcome.REJECTED_STALE
-    assert result.reason == "lease expired"
+    assert result.reason == "lease expired and redispatched"
 
 
 def test_expired_lease_rejected_after_completed_redispatch() -> None:

@@ -50,7 +50,7 @@ _IDEMPOTENCY_EVENT_TYPES = {
     "callback_accepted",
 }
 
-_STALE_LEASE_STATES = {"revoked", "expired"}
+_STALE_LEASE_STATES = {"revoked"}
 _TERMINAL_NODE_STATES = {"completed", "failed", "cancelled", "retired"}
 _TERMINAL_RUN_STATES = {"cancelled", "failed"}
 
@@ -87,11 +87,7 @@ def validate_callback(
 
     lease_state = lease.get("state")
     accepting_late_expired_lease = False
-    if lease_state == "expired":
-        if _has_competing_lease(request, projection, lease):
-            return _rejected_stale("lease expired")
-        accepting_late_expired_lease = True
-    elif lease_state in _STALE_LEASE_STATES:
+    if lease_state in _STALE_LEASE_STATES:
         return _rejected_stale(f"lease {lease_state}")
     if lease_state == "suspended" and request.is_mutating:
         return _rejected_stale("lease suspended")
@@ -101,6 +97,17 @@ def validate_callback(
     run_state = projection["run_state"]
     if run_state in _TERMINAL_RUN_STATES:
         return _rejected_stale(f"run {run_state}")
+
+    if lease_state == "expired":
+        expired_result = _validate_expired_lease_callback(
+            request,
+            projection,
+            events,
+            lease,
+        )
+        if expired_result.outcome != CallbackOutcome.ACCEPTED:
+            return expired_result
+        accepting_late_expired_lease = True
 
     node_state = projection["node_states"].get(request.node_id)
     if (
@@ -121,33 +128,65 @@ def validate_callback(
     )
 
 
-def _has_competing_lease(
+def _validate_expired_lease_callback(
     request: CallbackRequest,
     projection: GraphProjection,
+    events: list[EventEnvelope],
     request_lease: dict[str, Any],
+) -> CallbackValidationResult:
+    if _has_replacement_active_lease(projection, request.lease_id, request.node_id):
+        return _rejected_stale("lease expired and redispatched")
+    if not _lease_expiry_recorded(events, request.lease_id, request.node_id):
+        return _rejected_stale("lease expired")
+    node_state = projection["node_states"].get(request.node_id)
+    if node_state == "running" or _latest_node_failure_is_lease_expiry(events, request.node_id):
+        return CallbackValidationResult(
+            outcome=CallbackOutcome.ACCEPTED,
+            reason="accepted_late_expired_lease",
+        )
+    return _rejected_stale("lease expired")
+
+
+def _has_replacement_active_lease(
+    projection: GraphProjection,
+    request_lease_id: str,
+    node_id: str,
 ) -> bool:
-    request_node_id = request_lease.get("node_id")
-    if not isinstance(request_node_id, str):
-        request_node_id = request.node_id
-    request_generation = request_lease.get("generation")
-    if not isinstance(request_generation, int) or isinstance(request_generation, bool):
-        request_generation = request.lease_generation
-    request_execution_id = request_lease.get("execution_id")
-    if not isinstance(request_execution_id, str):
-        request_execution_id = request.execution_id
     for lease_id, lease in projection["leases"].items():
-        if lease_id == request.lease_id:
+        if lease_id == request_lease_id:
             continue
-        if lease.get("node_id") != request_node_id:
+        if lease.get("node_id") != node_id:
             continue
-        generation = lease.get("generation")
-        if isinstance(generation, int) and not isinstance(generation, bool):
-            if generation > request_generation:
-                return True
-            continue
-        execution_id = lease.get("execution_id")
-        if isinstance(execution_id, str) and execution_id != request_execution_id:
+        if lease.get("state") in {"active", "suspended"}:
             return True
+    return False
+
+
+def _lease_expiry_recorded(
+    events: list[EventEnvelope],
+    lease_id: str,
+    node_id: str,
+) -> bool:
+    return any(
+        event.event_type == "lease_expired"
+        and event.payload.get("lease_id") == lease_id
+        and event.payload.get("node_id") == node_id
+        for event in events
+    )
+
+
+def _latest_node_failure_is_lease_expiry(events: list[EventEnvelope], node_id: str) -> bool:
+    for event in reversed(events):
+        if event.event_type != "node_state_changed":
+            continue
+        if event.payload.get("node_id") != node_id:
+            continue
+        if event.payload.get("new_state") != "failed":
+            return False
+        return (
+            event.payload.get("trigger") == "lease_expired_without_callback"
+            or event.payload.get("reason") == "lease_expired_without_callback"
+        )
     return False
 
 

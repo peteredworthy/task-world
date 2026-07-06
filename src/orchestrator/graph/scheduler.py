@@ -134,6 +134,16 @@ def evaluate_readiness(
         if edge.dependency_type == "state_dependency":
             continue
         if edge.to_port not in node.satisfied_input_ports:
+            upstream_state = node.upstream_states.get(edge.from_node_id)
+            if upstream_state in {
+                "failed",
+                "cancelled",
+                "retired",
+            } and not _upstream_failure_allowed(
+                node,
+                edge,
+            ):
+                return False, f"dead_required_input:{edge.to_port}:{edge.from_node_id}"
             return False, f"missing_required_input:{edge.to_port}"
     for edge in node.required_edges:
         if not edge.required:

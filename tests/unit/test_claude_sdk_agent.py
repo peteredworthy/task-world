@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 import pytest
+from mcp.types import CallToolRequest, CallToolRequestParams
 
 from orchestrator.runners import (
     ClaudeSDKAgent,
@@ -688,6 +689,41 @@ class TestBuildOrchestratorMcpServer:
             on_submit_graph_patch=_noop_graph_patch,
         )
         assert server is not None
+
+    async def test_submit_graph_patch_accepts_object_patch_through_mcp_handler(self) -> None:
+        """The SDK MCP schema accepts graph patches as objects, not only strings."""
+        received: list[dict[str, Any]] = []
+
+        async def capture_graph_patch(patch_payload: dict[str, Any]) -> str:
+            received.append(patch_payload)
+            return f"accepted {patch_payload['patch_id']}"
+
+        server = build_orchestrator_mcp_server(
+            _noop_checklist,
+            _noop_submit,
+            on_grade=None,
+            on_submit_graph_patch=capture_graph_patch,
+        )
+        handler = server["instance"].request_handlers[CallToolRequest]
+
+        result = await handler(
+            CallToolRequest(
+                params=CallToolRequestParams(
+                    name="submit_graph_patch",
+                    arguments={
+                        "patch": {
+                            "patch_id": "patch-1",
+                            "base_graph_position": 1,
+                            "ops": [],
+                        }
+                    },
+                )
+            )
+        )
+
+        assert result.root.isError is not True
+        assert result.root.content[0].text == "accepted patch-1"
+        assert received == [{"patch_id": "patch-1", "base_graph_position": 1, "ops": []}]
 
     async def test_verifier_phase_creates_four_tools(self) -> None:
         """Verifier phase (on_grade provided) creates grade + the 3 builder tools."""

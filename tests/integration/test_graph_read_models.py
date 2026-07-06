@@ -16,7 +16,7 @@ from orchestrator.db import (
     create_session_factory,
     init_db,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, project_task_states
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph_runtime.store import graph_aggregate_id
 
@@ -87,6 +87,75 @@ def _sample_events(run_id: str) -> list[EventEnvelope]:
                 "producer_node_id": "worker-1",
                 "port": "result",
                 "value": {"large": "x" * 1024},
+            },
+        ),
+    ]
+
+
+def _corrective_supersession_events(run_id: str) -> list[EventEnvelope]:
+    return [
+        _event("evt-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
+        _event(
+            "evt-origin-candidate",
+            run_id,
+            "output_record_accepted",
+            {
+                "task_region_id": "origin",
+                "candidate_id": "cand-origin",
+                "attempt_number": 1,
+                "producer_node_id": "worker-origin",
+                "record_id": "cand-origin",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+            },
+        ),
+        _event(
+            "evt-origin-failed",
+            run_id,
+            "verification_failed",
+            {"candidate_id": "cand-origin"},
+        ),
+        _event(
+            "evt-corrective-candidate",
+            run_id,
+            "output_record_accepted",
+            {
+                "task_region_id": "corrective",
+                "candidate_id": "cand-fix",
+                "attempt_number": 1,
+                "producer_node_id": "worker-fix",
+                "record_id": "cand-fix",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "supersedes_task_region_id": "origin",
+            },
+        ),
+        _event(
+            "evt-corrective-passed",
+            run_id,
+            "verification_passed",
+            {"candidate_id": "cand-fix"},
+        ),
+        _event(
+            "evt-corrective-file-state",
+            run_id,
+            "file_state_accepted",
+            {
+                "record_id": "file-state-cand-fix",
+                "record_kind": "file_state",
+                "record_type": "file_state",
+                "task_region_id": "corrective",
+                "candidate_id": "cand-fix",
+                "snapshot_id": "snapshot-cand-fix",
+                "base_snapshot_id": "S0",
+                "verdict": "captured",
+                "producer_node_id": "worker-fix",
+                "port": "file_state",
+                "schema": "FileStateRecord",
             },
         ),
     ]
@@ -204,6 +273,38 @@ async def test_graph_read_models_are_rebuildable_and_idempotent(
     assert [summary.payload for summary in second_rebuild_summaries] == [
         summary.payload for summary in before_summaries
     ]
+
+
+@pytest.mark.asyncio
+async def test_projection_read_model_preserves_corrective_supersession_task_states(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "read-model-corrective-supersession"
+    events = _corrective_supersession_events(run_id)
+    expected_task_states = project_task_states(events)
+
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, events)
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        snapshot_before_rebuild = await store.read_projection_snapshot(run_id)
+        await store.delete_read_models(run_id)
+        await session.commit()
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        compact_projection_events = await store.read_run_projection(run_id)
+        rebuilt_snapshot = await store.rebuild_read_models(run_id)
+        await session.commit()
+
+    assert expected_task_states == {"corrective": "accepted", "origin": "accepted"}
+    assert project_task_states(compact_projection_events) == expected_task_states
+    assert snapshot_before_rebuild is not None
+    assert snapshot_before_rebuild.task_states == expected_task_states
+    assert rebuilt_snapshot is not None
+    assert rebuilt_snapshot.task_states == expected_task_states
 
 
 @pytest.mark.asyncio

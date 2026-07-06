@@ -123,6 +123,20 @@ def test_evaluate_readiness_missing_required_input() -> None:
     assert reason == "missing_required_input:candidate"
 
 
+def test_evaluate_readiness_dead_required_input_from_failed_source() -> None:
+    node = _node(
+        "n1",
+        state="planned",
+        required_edges=[_edge("producer-1", "candidate")],
+        upstream_states={"producer-1": "failed"},
+    )
+
+    ready, reason = evaluate_readiness(node, "active", [], [])
+
+    assert ready is False
+    assert reason == "dead_required_input:candidate:producer-1"
+
+
 def test_evaluate_readiness_optional_input_does_not_block() -> None:
     node = _node(
         "n1", state="planned", required_edges=[_edge("producer-1", "notes", required=False)]

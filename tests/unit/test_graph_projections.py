@@ -1429,6 +1429,52 @@ def test_completed_lifecycle_projects_active_while_final_blockers_remain() -> No
     assert project_run_state(events) == "active"
 
 
+def test_final_blockers_report_dead_required_input_from_terminal_source() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-dead",
+                "kind": "worker",
+                "state": "failed",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-blocked",
+                "kind": "verifier",
+                "state": "blocked",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-dead-candidate",
+                "from_node_id": "worker-dead",
+                "from_port": "candidate",
+                "to_node_id": "verifier-blocked",
+                "to_port": "candidate_under_test",
+                "required": True,
+            },
+        ),
+    ]
+
+    assert {
+        "kind": "dead_required_input",
+        "reason": "required input source is terminal before producing a bound record",
+        "node_id": "verifier-blocked",
+        "edge_id": "edge-dead-candidate",
+        "from_node_id": "worker-dead",
+        "to_port": "candidate_under_test",
+        "state": "blocked",
+        "task_region_id": "task-1",
+    } in project_final_invariant_blockers(events)
+
+
 def test_final_gate_requires_passed_completion_decision_for_projected_completion() -> None:
     events = [
         _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
@@ -2149,6 +2195,7 @@ def test_check_result_candidate_id_does_not_replace_latest_task_candidate() -> N
             "attempt_number": 0,
             "position": 1,
             "file_state_record_ids": [],
+            "supersedes_task_region_ids": [],
         }
     ]
     assert project_task_states(events) == {"task-1": "accepted"}
@@ -2649,6 +2696,36 @@ def test_task_projection_needs_revision() -> None:
     ]
 
     assert project_task_states(events) == {"task-1": "needs_revision"}
+
+
+def test_corrective_region_pass_supersedes_origin_needs_revision() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "origin", "candidate_id": "cand-origin", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event("verification_failed", {"candidate_id": "cand-origin"}).model_copy(
+            update={"position": 1}
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "task_region_id": "corrective",
+                "candidate_id": "cand-fix",
+                "attempt_number": 1,
+                "supersedes_task_region_id": "origin",
+            },
+        ).model_copy(update={"position": 2}),
+        _event("verification_passed", {"candidate_id": "cand-fix"}).model_copy(
+            update={"position": 3}
+        ),
+        _file_state_event("corrective", "cand-fix", 4),
+    ]
+
+    assert project_task_states(events) == {
+        "corrective": "accepted",
+        "origin": "accepted",
+    }
 
 
 def test_verification_output_record_is_not_projected_as_candidate() -> None:

@@ -1406,3 +1406,38 @@ def test_multi_op_patch_one_fails_rejected() -> None:
     assert not result.accepted
     assert result.rejection_reason is not None
     assert "cannot retire active node" in result.rejection_reason
+
+
+def test_create_edge_accepts_revision_attempt_embedded_nodes_in_same_patch() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "task-1",
+                    "failed_candidate_id": "candidate-1",
+                    "worker_node": {
+                        "node_id": "worker-revision-2",
+                        "kind": "worker",
+                        "role": "builder",
+                    },
+                    "verifier_node": {
+                        "node_id": "verifier-revision-2",
+                        "kind": "verifier",
+                        "role": "verifier",
+                    },
+                },
+                {
+                    "op": "create_edge",
+                    "edge_id": "edge-revision-candidate",
+                    "from_node_id": "worker-revision-2",
+                    "from_port": "candidate",
+                    "to_node_id": "verifier-revision-2",
+                    "to_port": "candidate_under_test",
+                    "accepted_record_selector": {"record_kinds": ["candidate"]},
+                },
+            ]
+        )
+    )
+
+    assert result.accepted

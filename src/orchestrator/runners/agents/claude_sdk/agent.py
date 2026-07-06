@@ -234,7 +234,17 @@ def build_orchestrator_mcp_server(
         @tool(
             "submit_graph_patch",
             "Submit a graph patch envelope for planner-driven graph mutations.",
-            {"patch": dict},
+            {
+                "type": "object",
+                "properties": {
+                    "patch": {
+                        "description": "Graph patch envelope as an object or JSON string.",
+                        "anyOf": [{"type": "object"}, {"type": "string"}],
+                    }
+                },
+                "required": ["patch"],
+                "additionalProperties": False,
+            },
         )
         async def submit_graph_patch(args: dict[str, Any]) -> dict[str, Any]:
             nonlocal graph_patch_submitted, graph_patch_accepted

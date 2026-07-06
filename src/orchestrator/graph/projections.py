@@ -279,6 +279,7 @@ class FinalInvariantBlocker(TypedDict, total=False):
     reason: str
     node_id: str
     edge_id: str
+    from_node_id: str
     to_port: str
     proposal_id: str
     requirement_id: str
@@ -1074,6 +1075,7 @@ def final_invariant_blockers_for_events(
     blockers.extend(_requirement_evidence_blockers(events, projection))
     blockers.extend(_authority_revision_blockers(events, projection))
     blockers.extend(_blocked_requirement_node_blockers(events, projection))
+    blockers.extend(_dead_required_input_blockers(projection))
     blockers.extend(_impossible_input_blockers(projection))
     blockers.extend(_failed_check_result_blockers(events, projection))
     if include_completion_decision:
@@ -1149,6 +1151,46 @@ def _impossible_input_blockers(projection: GraphProjection) -> list[FinalInvaria
             "edge_id": str(edge_id),
             "to_port": str(to_port),
             "state": projection["node_states"].get(str(to_node_id), "unknown"),
+        }
+        task_region_id = projection["node_task_regions"].get(str(to_node_id))
+        if task_region_id is not None:
+            blocker["task_region_id"] = task_region_id
+        blockers.append(blocker)
+    return blockers
+
+
+def _dead_required_input_blockers(projection: GraphProjection) -> list[FinalInvariantBlocker]:
+    blockers: list[FinalInvariantBlocker] = []
+    dead_source_states = {"failed", "cancelled", "retired"}
+    target_terminal_states = {"completed", "failed", "cancelled", "retired"}
+    for edge_id, edge in sorted(projection["edges"].items()):
+        if edge.get("required") is False:
+            continue
+        if edge.get("dependency_type", "input_binding") != "input_binding":
+            continue
+        from_node_id = edge.get("from_node_id")
+        to_node_id = edge.get("to_node_id")
+        to_port = edge.get("to_port")
+        if not all(isinstance(value, str) for value in (from_node_id, to_node_id, to_port)):
+            continue
+        source_state = projection["node_states"].get(str(from_node_id))
+        if source_state not in dead_source_states:
+            continue
+        target_state = projection["node_states"].get(str(to_node_id), "unknown")
+        if target_state in target_terminal_states:
+            continue
+        binding = projection["input_bindings"].get(str(to_node_id), {}).get(str(to_port), {})
+        record_ids = binding.get("record_ids")
+        if isinstance(record_ids, list) and record_ids:
+            continue
+        blocker: FinalInvariantBlocker = {
+            "kind": "dead_required_input",
+            "reason": "required input source is terminal before producing a bound record",
+            "node_id": str(to_node_id),
+            "edge_id": str(edge_id),
+            "from_node_id": str(from_node_id),
+            "to_port": str(to_port),
+            "state": target_state,
         }
         task_region_id = projection["node_task_regions"].get(str(to_node_id))
         if task_region_id is not None:
@@ -3050,6 +3092,11 @@ def _record_candidate(state: GraphProjection, event: EventEnvelope) -> None:
                 event.payload,
                 "file_state_record_ids",
             ),
+            "supersedes_task_region_ids": _task_region_ids_from_payload(
+                event.payload,
+                "supersedes_task_region_ids",
+                "supersedes_task_region_id",
+            ),
         }
     )
 
@@ -4226,7 +4273,28 @@ def _derive_task_states(state: GraphProjection) -> dict[str, str]:
         else:
             task_states[task_region_id] = "pending"
 
+    _apply_accepted_region_supersessions(state, task_states)
     return task_states
+
+
+def _apply_accepted_region_supersessions(
+    state: GraphProjection,
+    task_states: dict[str, str],
+) -> None:
+    for task_region_id, candidates in state["task_candidates"].items():
+        if task_states.get(task_region_id) != "accepted":
+            continue
+        latest_candidate = _latest_candidate(candidates)
+        if latest_candidate is None:
+            continue
+        raw_superseded = latest_candidate.get("supersedes_task_region_ids")
+        if not isinstance(raw_superseded, list):
+            continue
+        for superseded_region_id in cast(list[Any], raw_superseded):
+            if not isinstance(superseded_region_id, str):
+                continue
+            if task_states.get(superseded_region_id) == "needs_revision":
+                task_states[superseded_region_id] = "accepted"
 
 
 def _derive_candidate_free_region_state(
@@ -4643,6 +4711,20 @@ def _record_ids_from_payload(payload: dict[str, Any], field: str) -> list[str]:
         ]
         if record_ids:
             return record_ids
+    return []
+
+
+def _task_region_ids_from_payload(
+    payload: dict[str, Any],
+    list_field: str,
+    scalar_field: str,
+) -> list[str]:
+    raw_list = payload.get(list_field)
+    if isinstance(raw_list, list):
+        return [value for value in cast(list[Any], raw_list) if isinstance(value, str)]
+    raw_scalar = payload.get(scalar_field)
+    if isinstance(raw_scalar, str):
+        return [raw_scalar]
     return []
 
 
