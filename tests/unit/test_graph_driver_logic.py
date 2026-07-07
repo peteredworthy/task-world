@@ -59,6 +59,24 @@ class RecordingController:
         return type("Result", (), {"events": events})()
 
 
+class ReconcileProgressController(RecordingController):
+    async def handle_command(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, object] | None = None,
+    ) -> object:
+        if command_type != "reconcile":
+            return await super().handle_command(run_id, expected_position, command_type, payload)
+        self.commands.append(command_type)
+        return type(
+            "Result",
+            (),
+            {"events": [type("Event", (), {"event_type": "reconcile_progress"})()]},
+        )()
+
+
 class LockedOnceController(RecordingController):
     def __init__(self, command_to_lock: str) -> None:
         super().__init__()
@@ -80,6 +98,13 @@ class LockedOnceController(RecordingController):
                 sqlite3.OperationalError("database is locked"),
             )
         return await super().handle_command(run_id, expected_position, command_type, payload)
+
+
+class StablePositionAfterFirstTickController(RecordingController):
+    async def current_position(self, run_id: str) -> int:
+        position = 0 if not self.positions else 1
+        self.positions.append(position)
+        return position
 
 
 class RecordingDispatcher:
@@ -196,6 +221,13 @@ class AgentDiedRecordingController(RecordingController):
                 )()
             ]
         return type("Result", (), {"events": events})()
+
+
+class StablePositionAgentDiedRecordingController(AgentDiedRecordingController):
+    async def current_position(self, run_id: str) -> int:
+        position = 0 if not self.positions else 1
+        self.positions.append(position)
+        return position
 
 
 @pytest.mark.asyncio
@@ -576,6 +608,64 @@ async def test_driver_runs_reconcile_before_quiescent_classification() -> None:
         read_projection=reader.read,
     )
 
+    assert controller.commands == ["schedule_tick", "reconcile"]
+    assert dispatcher.calls == 1
+    assert executor.calls == 1
+    assert reader.calls == 2
+    assert outcome.completed is False
+    assert outcome.blocked_reason == (
+        "graph quiescent with non-accepted task(s): final-invariant-region=pending"
+    )
+
+
+@pytest.mark.asyncio
+async def test_driver_continues_when_reconcile_appends_events() -> None:
+    controller = ReconcileProgressController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+    quiescent_pending = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"final-invariant-region": "pending"},
+        node_states={"check-final": "completed"},
+    )
+    reader = ScriptedProjectionReader(
+        [
+            quiescent_pending,
+            quiescent_pending,
+            GraphProjectionSnapshot(
+                run_state="active",
+                ready_nodes=[],
+                active_leases={},
+                schedulable_nodes=["planner-recover-check-final"],
+                task_states={"final-invariant-region": "pending"},
+                node_states={
+                    "check-final": "completed",
+                    "planner-recover-check-final": "planned",
+                },
+            ),
+            GraphProjectionSnapshot(
+                run_state="completed",
+                ready_nodes=[],
+                active_leases={},
+                schedulable_nodes=[],
+                task_states={"final-invariant-region": "accepted"},
+            ),
+        ]
+    )
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
     assert controller.commands == ["schedule_tick", "reconcile", "schedule_tick"]
     assert dispatcher.calls == 2
     assert executor.calls == 2
@@ -590,7 +680,7 @@ async def test_driver_recovers_orphaned_lease_and_reschedules_node() -> None:
     agent_died for that lease itself — recovering the run — instead of
     pausing graph_blocked with a lease that only clears if an operator
     manually resumes it later."""
-    controller = AgentDiedRecordingController()
+    controller = StablePositionAgentDiedRecordingController()
     dispatcher = RecordingDispatcher()
     executor = RecordingExecutor()  # no execution ids reported running
 
@@ -659,7 +749,7 @@ async def test_driver_recovers_orphaned_lease_and_reschedules_node() -> None:
 
 @pytest.mark.asyncio
 async def test_driver_waits_for_future_outbox_backoff_before_declaring_blocked() -> None:
-    controller = AgentDiedRecordingController()
+    controller = StablePositionAgentDiedRecordingController()
     clock = FakeClock()
     dispatcher = FutureBackoffDispatcher(clock.now() + timedelta(seconds=5))
     executor = RecordingExecutor()
@@ -725,7 +815,7 @@ async def test_driver_blocks_without_recovery_when_no_active_leases() -> None:
     """A genuine block (ready node the scheduler can't dispatch, e.g. a
     resource/gate wait, and no active leases) must still return blocked with
     no behavior change — there is nothing for lease recovery to do."""
-    controller = AgentDiedRecordingController()
+    controller = StablePositionAfterFirstTickController()
     dispatcher = RecordingDispatcher()
     executor = RecordingExecutor()
 
@@ -748,7 +838,36 @@ async def test_driver_blocks_without_recovery_when_no_active_leases() -> None:
     )
 
     assert "agent_died" not in controller.commands
-    assert controller.agent_died_payloads == []
+    assert outcome.completed is False
+    assert outcome.blocked_reason == "graph has ready node(s) not dispatched: planner-gap"
+
+
+@pytest.mark.asyncio
+async def test_driver_uses_event_position_to_detect_stuck_ready_node() -> None:
+    controller = StablePositionAfterFirstTickController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+
+    stuck_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=["planner-gap"],
+        active_leases={},
+        schedulable_nodes=["planner-gap"],
+        task_states={"s/t": "pending"},
+    )
+    reader = ScriptedProjectionReader([stuck_snapshot])
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert controller.positions == [0, 1, 1, 1]
+    assert controller.commands == ["schedule_tick", "schedule_tick"]
     assert outcome.completed is False
     assert outcome.blocked_reason == "graph has ready node(s) not dispatched: planner-gap"
 
@@ -760,7 +879,7 @@ async def test_driver_stops_retrying_a_lease_that_never_clears() -> None:
     a recovery attempt (e.g. the kernel's retry policy keeps requeuing under
     conditions the fake never resolves), the per-lease_id dedup bounds the
     loop so it terminates instead of alternating recover/no-progress forever."""
-    controller = AgentDiedRecordingController()
+    controller = StablePositionAgentDiedRecordingController()
     dispatcher = RecordingDispatcher()
     executor = RecordingExecutor()
 
@@ -815,7 +934,7 @@ async def test_driver_stops_recovering_node_when_fresh_lease_ids_keep_orphaning(
     same chronically orphaned node forever. The driver must stop after the node
     budget and return graph_blocked.
     """
-    controller = AgentDiedRecordingController()
+    controller = StablePositionAgentDiedRecordingController()
     dispatcher = RecordingDispatcher()
     executor = RecordingExecutor()
 

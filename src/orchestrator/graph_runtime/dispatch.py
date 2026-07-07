@@ -53,6 +53,7 @@ MAX_GRAPH_PROMPT_FIELD_CHARS = _prompts.MAX_GRAPH_PROMPT_FIELD_CHARS
 MAX_CHECK_OUTPUT_CHARS = 20_000
 DEFAULT_CHECK_TIMEOUT_SECONDS = 300
 MAX_STALE_COMMAND_RETRIES = 5
+DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS = 3
 SNAPSHOT_REF_PATTERN = re.compile(r"^refs/orchestrator/snapshots/[0-9a-f]{32}$")
 
 _prompt_for_node = _prompts.prompt_for_node
@@ -149,6 +150,15 @@ class StaticGraphAgentFactory:
             run_id=context.run_id,
             phase=phase,
         )
+
+
+def _runtime_death_max_attempts(context: GraphDispatchContext) -> int | None:
+    max_attempts = context.node_payload.get("max_attempts")
+    if isinstance(max_attempts, int) and not isinstance(max_attempts, bool):
+        return max_attempts
+    if context.node_role == "gap_planner":
+        return DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS
+    return None
 
 
 class GraphDispatchExecutor(SideEffectExecutor):
@@ -619,8 +629,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "execution_id": context.execution_id,
             "reason": reason or "runtime_process_died",
         }
-        max_attempts = context.node_payload.get("max_attempts")
-        if isinstance(max_attempts, int):
+        max_attempts = _runtime_death_max_attempts(context)
+        if max_attempts is not None:
             payload["max_attempts"] = max_attempts
         await self._handle_command_retry_stale(
             context.run_id,

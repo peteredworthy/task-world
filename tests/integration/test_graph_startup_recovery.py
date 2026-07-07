@@ -17,18 +17,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.config.enums import RunStatus
 from orchestrator.graph import project_run_state, project_task_states
-from orchestrator.graph_runtime import GraphController, GraphDispatchExecutor
+from orchestrator.graph_runtime import GraphController, GraphDispatchExecutor, seed_run
 from orchestrator.runners import AgentRunner
-from orchestrator.runners.types import (
-    AgentMetadataCallback,
-    ChecklistUpdateCallback,
-    EscalationCallback,
-    ExecutionContext,
-    ExecutionResult,
-    GradeCallback,
-    LogLineCallback,
-    SubmitCallback,
-)
 
 # Reuse the driver-test harness (real SQLite tmp-file DB, real git repo,
 # hand-written agents, real build via GraphController/GraphDispatchExecutor).
@@ -48,25 +38,6 @@ from tests.integration.test_graph_run_driver import (
 )
 from orchestrator.workflow.graph_driver import GraphRunDriver
 from orchestrator.graph_runtime.store import GraphEventStore
-
-
-class StartAckOnlyAgent(SubmitAgent):
-    """Acknowledges start (via dispatch) but never submits — leaves the lease
-    active and the node running, simulating a worker whose process died after
-    start-ack but before callback."""
-
-    async def execute(
-        self,
-        context: ExecutionContext,
-        on_checklist_update: ChecklistUpdateCallback,
-        on_submit: SubmitCallback,
-        on_output: LogLineCallback | None = None,
-        on_grade: GradeCallback | None = None,
-        on_agent_metadata: AgentMetadataCallback | None = None,
-        on_escalation: EscalationCallback | None = None,
-    ) -> ExecutionResult:
-        # Do not call on_submit — the execution "dies" mid-flight.
-        return ExecutionResult(success=True)
 
 
 def _build_driver(
@@ -97,6 +68,35 @@ def _build_driver(
     )
 
 
+async def _seed_active_worker_lease(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    run_id: str,
+) -> None:
+    clock = FixedClock()
+    ids = SequentialIds()
+    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    await seed_run(
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+    )
+    await controller.handle_command(run_id, await controller.current_position(run_id), "accept_run")
+    await controller.handle_command(run_id, await controller.current_position(run_id), "start")
+    await controller.handle_command(
+        run_id,
+        await controller.current_position(run_id),
+        "schedule_tick",
+        {
+            "lease_seconds": 3600,
+            "max_grants": 10,
+            "base_snapshot_id": "routine-snapshot",
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_resume_reschedules_dead_lease_to_completed(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
@@ -112,17 +112,9 @@ async def test_resume_reschedules_dead_lease_to_completed(
     run_id = "graph-recover-dead-lease"
     await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
 
-    # First drive: worker starts but never submits → lease left active.
-    order1: list[str] = []
-    driver1 = _build_driver(
-        session_factory,
-        repo=repo,
-        agents={"worker": StartAckOnlyAgent(), "verifier": GradingAgent("A")},
-        dispatch_order=order1,
-    )
-    outcome1 = await driver1.run(run_id)
-    assert outcome1.completed is False  # stuck on the active worker lease
-
+    # Simulate a process restart after the scheduler granted a worker lease but
+    # before any in-process executor is alive to acknowledge or submit it.
+    await _seed_active_worker_lease(session_factory, run_id=run_id)
     events_after_first = await _events(session_factory, run_id)
     assert project_run_state(events_after_first) != "completed"
 

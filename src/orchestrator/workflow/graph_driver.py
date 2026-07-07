@@ -593,7 +593,7 @@ class GraphRunDriver:
         read_projection: Callable[[str], Awaitable[GraphProjectionSnapshot]],
         should_continue: Callable[[], Awaitable[bool]] | None = None,
     ) -> GraphRunOutcome:
-        previous_signature: tuple[Any, ...] | None = None
+        previous_position: int | None = None
         # Lease ids the driver has already attempted to revoke via a
         # synthesized agent_died during this call. Bounds the recovery below:
         # a lease that the kernel refuses to revoke (command_rejected, or a
@@ -651,7 +651,7 @@ class GraphRunDriver:
                 projection,
                 clock.now(),
             ):
-                previous_signature = None
+                previous_position = None
                 continue
             if (
                 not projection.ready_nodes
@@ -662,37 +662,35 @@ class GraphRunDriver:
                     await self._handle_command_at_head(controller, run_id, "complete")
                     projection = await read_projection(run_id)
                 elif projection.run_state == "active":
-                    await self._handle_command_at_head(
+                    result = await self._handle_command_at_head(
                         controller,
                         run_id,
                         "reconcile",
                     )
-                    recovery_projection = await read_projection(run_id)
-                    if _progress_signature(recovery_projection) != _progress_signature(projection):
-                        previous_signature = None
+                    if result.events:
+                        previous_position = None
                         continue
                 return classify_graph_outcome(run_id, projection)
-            # No-progress guard: schedule_tick emits audit events (e.g.
-            # node_deferred) every call, so raw event position always advances.
-            # Compare a signature of meaningful state instead. wait_for_all()
-            # blocks while an agent is genuinely running, so reaching here with
-            # an unchanged signature means a dispatched execution finished
-            # without producing a callback or agent_died, leaving a lease held
-            # with nothing schedulable. Before giving up, try to recover any
-            # such orphaned lease ourselves (emit agent_died so the kernel
-            # revokes it and reschedules the node) rather than pausing the run
-            # graph_blocked with a lease that will only be revoked if an
-            # operator manually resumes it later. Only return blocked once
-            # recovery has nothing left to try.
-            signature = _progress_signature(projection)
-            if signature == previous_signature:
+            # No-progress guard: compare the event-log head AFTER the loop has
+            # finished its schedule/dispatch/wait/read/renew/quiescence pass.
+            # wait_for_all() blocks while an agent is genuinely running, so
+            # reaching here with the same head position means a dispatched
+            # execution finished without producing a callback or agent_died,
+            # leaving a lease held with nothing schedulable. Before giving up,
+            # try to recover any such orphaned lease ourselves (emit
+            # agent_died so the kernel revokes it and reschedules the node)
+            # rather than pausing the run graph_blocked with a lease that will
+            # only be revoked if an operator manually resumes it later. Only
+            # return blocked once recovery has nothing left to try.
+            position = await controller.current_position(run_id)
+            if position == previous_position:
                 next_retry_at = await dispatcher.earliest_pending_retry_at(run_id=run_id)
                 now = clock.now()
                 if next_retry_at is not None:
                     next_retry_at = _align_datetime_timezone(next_retry_at, now)
                 if next_retry_at is not None and next_retry_at > now:
                     await self._sleep((next_retry_at - now).total_seconds())
-                    previous_signature = None
+                    previous_position = None
                     continue
                 if await _recover_orphaned_active_leases(
                     run_id,
@@ -702,10 +700,10 @@ class GraphRunDriver:
                     recovered_lease_ids,
                     node_recovery_counts,
                 ):
-                    previous_signature = None
+                    previous_position = None
                     continue
                 return classify_graph_outcome(run_id, projection)
-            previous_signature = signature
+            previous_position = position
 
     async def _bootstrap_graph_lifecycle(self, run_id: str) -> None:
         # Routed through _handle_command_at_head (not a raw controller call)
@@ -1010,28 +1008,6 @@ def _align_datetime_timezone(value: datetime, reference: datetime) -> datetime:
     if value.tzinfo is not None and reference.tzinfo is None:
         return value.replace(tzinfo=None)
     return value
-
-
-def _progress_signature(projection: GraphProjectionSnapshot) -> tuple[Any, ...]:
-    """A signature of meaningful drive state, ignoring audit-only churn.
-
-    Two consecutive drive iterations with the same signature mean no progress
-    was made (no lease/state/task transition), so the loop must stop instead of
-    spinning on schedule_tick's per-tick audit events.
-    """
-    leases = tuple(
-        sorted(
-            (lease_id, str(lease.get("state")), str(lease.get("node_id")))
-            for lease_id, lease in projection.active_leases.items()
-        )
-    )
-    return (
-        projection.run_state,
-        tuple(sorted(projection.ready_nodes)),
-        tuple(sorted(projection.schedulable_nodes)),
-        tuple(sorted(projection.task_states.items())),
-        leases,
-    )
 
 
 def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapshot:

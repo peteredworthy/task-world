@@ -23,11 +23,13 @@ from orchestrator.graph import (
 from orchestrator.git import snapshot
 from orchestrator.graph_runtime import GraphDispatchContext, GraphDispatchExecutor
 from orchestrator.graph_runtime.dispatch import (
+    DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS,
     _callback_conflict_reason,
     _execute_check_command,
     _output_records_for_submit,
     _planner_evidence,
     _requirements_for_node,
+    _runtime_death_max_attempts,
 )
 from orchestrator.runners.types import (
     AgentMetadataCallback,
@@ -752,6 +754,16 @@ async def test_executor_marks_agent_died_when_runner_exits_without_submit() -> N
     assert executor.started == [context]
     assert executor.submitted == []
     assert executor.failures == ["agent exited without submit"]
+
+
+def test_runtime_death_max_attempts_bounds_gap_planners_without_node_limit() -> None:
+    assert (
+        _runtime_death_max_attempts(_context(node_kind="planner", node_role="gap_planner"))
+        == DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS
+    )
+    assert _runtime_death_max_attempts(_context(node_payload={"max_attempts": 7})) == 7
+    assert _runtime_death_max_attempts(_context(node_payload={"max_attempts": True})) is None
+    assert _runtime_death_max_attempts(_context(node_kind="worker", node_role="builder")) is None
 
 
 @pytest.mark.asyncio
