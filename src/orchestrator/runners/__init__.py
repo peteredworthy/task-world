@@ -20,7 +20,6 @@ from orchestrator.runners.agents.claude_sdk.agent import (
     build_claude_sdk_prompt,
     build_mcp_servers,
     build_orchestrator_mcp_server,
-    claude_sdk_graph_submit_block_reason as claude_sdk_graph_submit_block_reason,
 )
 from orchestrator.runners.agents.mock.agent import MockAgent, MockBehavior
 from orchestrator.runners.agents.claude_cli.parser import (

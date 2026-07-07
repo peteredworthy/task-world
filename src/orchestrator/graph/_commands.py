@@ -1052,13 +1052,8 @@ def _output_record_contract_conflict(
             except ValueError as exc:
                 return f"check_result record at index {index} is invalid: {exc}"
         if _is_verification_report_record_payload(record_payload):
-            record_payload = _verification_report_record_payload_for_validation(
-                record_payload,
-                expected_producer_node_id,
-            )
-            record_payload.setdefault("record_type", "verification_report")
             try:
-                VerificationReportRecord.model_validate(record_payload)
+                _parse_verification_report_record(record_payload, expected_producer_node_id)
             except ValueError as exc:
                 return f"verification record at index {index} is invalid: {exc}"
         if _is_analysis_summary_record_payload(record_payload):
@@ -1314,26 +1309,21 @@ def _verification_record_conflict(
         record_payload = cast(dict[str, Any], raw_record)
         if not _is_verification_report_record_payload(record_payload):
             continue
-        record_payload = _verification_report_record_payload_for_validation(
-            record_payload,
-            expected_producer_node_id,
-        )
+        try:
+            record = _parse_verification_report_record(record_payload, expected_producer_node_id)
+        except ValueError as exc:
+            return f"verification record at index {index} is invalid: {exc}"
         if projection["node_kinds"].get(expected_producer_node_id) != "verifier":
             return f"verification record at index {index} was not produced by a verifier"
-        candidate_id = _candidate_id_from_payload(record_payload)
-        if candidate_id is None:
-            return f"verification record at index {index} missing candidate_id"
+        candidate_id = record.candidate_id
         if not _candidate_is_bound_to_verifier(projection, expected_producer_node_id, candidate_id):
             return (
                 f"verification record candidate_id at index {index} is not bound "
                 f"to verifier input: {candidate_id}"
             )
-        outcome = _verification_record_outcome(record_payload)
-        if outcome not in {"passed", "failed"}:
-            return f"verification record at index {index} has invalid outcome: {outcome}"
-        grades = _verification_grades(record_payload)
-        if not grades:
+        if not record.value.grades:
             return f"verification record at index {index} missing grades"
+        record_payload = record.model_dump(mode="json")
         citation_conflict = _evaluated_record_citation_conflict(
             projection,
             expected_producer_node_id,
@@ -1342,35 +1332,6 @@ def _verification_record_conflict(
         )
         if citation_conflict is not None:
             return citation_conflict
-    return None
-
-
-def _verification_grades(record_payload: dict[str, Any]) -> list[Any]:
-    grades = record_payload.get("grades")
-    if isinstance(grades, list):
-        return list(cast(list[Any], grades))
-    value = record_payload.get("value")
-    if isinstance(value, dict):
-        value_grades = cast(dict[str, Any], value).get("grades")
-        if isinstance(value_grades, list):
-            return list(cast(list[Any], value_grades))
-    return []
-
-
-def _verification_record_outcome(record_payload: dict[str, Any]) -> str | None:
-    outcome = record_payload.get("outcome")
-    if outcome in {"passed", "failed"}:
-        return cast(str, outcome)
-    value = record_payload.get("value")
-    if isinstance(value, dict):
-        value_outcome = cast(dict[str, Any], value).get("outcome")
-        if value_outcome in {"passed", "failed"}:
-            return cast(str, value_outcome)
-    verdict = record_payload.get("verdict")
-    if verdict in {"passed", "pass"}:
-        return "passed"
-    if verdict in {"failed", "fail"}:
-        return "failed"
     return None
 
 
@@ -1447,14 +1408,9 @@ def _accepted_verification_record_events(
     if not _candidate_is_bound_to_verifier(projection, expected_producer_node_id, candidate_id):
         return []
 
-    record_payload.setdefault("port", "verification_report")
-    record_payload["record_kind"] = "verification"
-    record_payload.setdefault("record_type", "verification_report")
-    record_payload.setdefault("schema", "VerificationReport")
-    _canonicalize_verification_record_port(record_payload)
     _add_evaluated_record_citations(record_payload, projection, expected_producer_node_id)
     try:
-        record = VerificationReportRecord.model_validate(record_payload)
+        record = _parse_verification_report_record(record_payload, expected_producer_node_id)
     except ValueError:
         return []
     payload = record.model_dump(mode="json")
@@ -1548,6 +1504,15 @@ def _verification_report_record_payload_for_validation(
     output.setdefault("port", "verification_report")
     output.setdefault("schema", "VerificationReport")
     return output
+
+
+def _parse_verification_report_record(
+    payload: dict[str, Any],
+    expected_producer_node_id: str,
+) -> VerificationReportRecord:
+    output = _verification_report_record_payload_for_validation(payload, expected_producer_node_id)
+    _canonicalize_verification_record_port(output)
+    return VerificationReportRecord.model_validate(output)
 
 
 def _check_result_status_value(payload: dict[str, Any]) -> str:

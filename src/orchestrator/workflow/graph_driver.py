@@ -662,12 +662,17 @@ class GraphRunDriver:
                     await self._handle_command_at_head(controller, run_id, "complete")
                     projection = await read_projection(run_id)
                 elif projection.run_state == "active":
-                    result = await self._handle_command_at_head(
+                    await self._handle_command_at_head(
                         controller,
                         run_id,
                         "reconcile",
                     )
-                    if result.events:
+                    projection = await read_projection(run_id)
+                    if (
+                        projection.ready_nodes
+                        or projection.active_leases
+                        or projection.schedulable_nodes
+                    ):
                         previous_position = None
                         continue
                 return classify_graph_outcome(run_id, projection)

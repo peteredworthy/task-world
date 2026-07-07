@@ -13,7 +13,6 @@ from orchestrator.runners import (
     build_orchestrator_mcp_server,
     build_mcp_servers,
     build_claude_sdk_prompt,
-    claude_sdk_graph_submit_block_reason,
 )
 from orchestrator.runners.errors import (
     AgentCancelledError,
@@ -198,14 +197,13 @@ def test_build_prompt_builder_contains_update_checklist() -> None:
     assert "update_checklist" in prompt
 
 
-def test_build_prompt_graph_planner_contains_submit_graph_patch() -> None:
+def test_build_prompt_ignores_graph_patch_callback() -> None:
     prompt = build_claude_sdk_prompt(
         _ctx(graph_patch_callback=_noop_graph_patch),
         is_verifier=False,
     )
-    assert "submit_graph_patch" in prompt
-    assert "base_graph_position" in prompt
-    assert "before **submit**" in prompt
+    assert "submit_graph_patch" not in prompt
+    assert "base_graph_position" not in prompt
 
 
 def test_build_prompt_graph_node_requires_submit_tool_even_without_requirements() -> None:
@@ -631,41 +629,6 @@ def test_claude_sdk_is_distinct_from_other_types() -> None:
     assert AgentRunnerType.CLAUDE_SDK not in other_types
 
 
-def test_graph_submit_requires_accepted_patch_when_patch_tool_is_enabled() -> None:
-    assert (
-        claude_sdk_graph_submit_block_reason(
-            graph_patch_required=True,
-            graph_patch_submitted=False,
-            graph_patch_accepted=False,
-        )
-        == "submit_graph_patch must be accepted before submit."
-    )
-    assert (
-        claude_sdk_graph_submit_block_reason(
-            graph_patch_required=True,
-            graph_patch_submitted=True,
-            graph_patch_accepted=False,
-        )
-        == "submit_graph_patch was rejected; submit a corrected graph patch before submit."
-    )
-    assert (
-        claude_sdk_graph_submit_block_reason(
-            graph_patch_required=True,
-            graph_patch_submitted=True,
-            graph_patch_accepted=True,
-        )
-        is None
-    )
-    assert (
-        claude_sdk_graph_submit_block_reason(
-            graph_patch_required=False,
-            graph_patch_submitted=False,
-            graph_patch_accepted=False,
-        )
-        is None
-    )
-
-
 # ---------------------------------------------------------------------------
 # build_orchestrator_mcp_server — tool creation
 # ---------------------------------------------------------------------------
@@ -680,8 +643,8 @@ class TestBuildOrchestratorMcpServer:
         # The server is returned from create_sdk_mcp_server; it should exist.
         assert server is not None
 
-    async def test_graph_builder_phase_accepts_submit_graph_patch_callback(self) -> None:
-        """Graph builder phase can include submit_graph_patch."""
+    async def test_graph_patch_callback_does_not_register_submit_graph_patch(self) -> None:
+        """Claude SDK is not a graph runner, so graph patch callbacks are ignored."""
         server = build_orchestrator_mcp_server(
             _noop_checklist,
             _noop_submit,
@@ -690,19 +653,12 @@ class TestBuildOrchestratorMcpServer:
         )
         assert server is not None
 
-    async def test_submit_graph_patch_accepts_object_patch_through_mcp_handler(self) -> None:
-        """The SDK MCP schema accepts graph patches as objects, not only strings."""
-        received: list[dict[str, Any]] = []
-
-        async def capture_graph_patch(patch_payload: dict[str, Any]) -> str:
-            received.append(patch_payload)
-            return f"accepted {patch_payload['patch_id']}"
-
+    async def test_submit_graph_patch_tool_is_not_registered(self) -> None:
         server = build_orchestrator_mcp_server(
             _noop_checklist,
             _noop_submit,
             on_grade=None,
-            on_submit_graph_patch=capture_graph_patch,
+            on_submit_graph_patch=_noop_graph_patch,
         )
         handler = server["instance"].request_handlers[CallToolRequest]
 
@@ -710,20 +666,14 @@ class TestBuildOrchestratorMcpServer:
             CallToolRequest(
                 params=CallToolRequestParams(
                     name="submit_graph_patch",
-                    arguments={
-                        "patch": {
-                            "patch_id": "patch-1",
-                            "base_graph_position": 1,
-                            "ops": [],
-                        }
-                    },
+                    arguments={"patch": {"patch_id": "patch-1", "ops": []}},
                 )
             )
         )
 
-        assert result.root.isError is not True
-        assert result.root.content[0].text == "accepted patch-1"
-        assert received == [{"patch_id": "patch-1", "base_graph_position": 1, "ops": []}]
+        assert result.root.isError is True
+        assert "submit_graph_patch" in result.root.content[0].text
+        assert "not found" in result.root.content[0].text
 
     async def test_verifier_phase_creates_four_tools(self) -> None:
         """Verifier phase (on_grade provided) creates grade + the 3 builder tools."""

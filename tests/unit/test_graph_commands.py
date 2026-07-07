@@ -2040,6 +2040,82 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
     )
 
 
+def test_verifier_callback_rejects_verification_record_with_status_key() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "completed"}, 1),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "value": {},
+            },
+            2,
+        ),
+        _event(
+            "node_created", {"node_id": "verifier-1", "kind": "verifier", "state": "running"}, 3
+        ),
+        _event(
+            "input_bound",
+            {
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "record_ids": ["candidate-1"],
+            },
+            4,
+        ),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "verifier-1",
+                "lease_id": "lease-v",
+                "generation": 1,
+                "execution_id": "exec-v",
+                "base_snapshot_id": "S0",
+            },
+            5,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "submit_callback",
+        _callback_payload(
+            node_id="verifier-1",
+            lease_id="lease-v",
+            execution_id="exec-v",
+            idempotency_key="verify-key",
+            payload={
+                "payload_hash": "hash-v",
+                "output_records": [
+                    {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "producer_node_id": "verifier-1",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-1",
+                        "status": "passed",
+                        "value": {
+                            "outcome": "passed",
+                            "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                        },
+                    }
+                ],
+            },
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    assert "verification record at index 0 is invalid" in output[0].payload["reason"]
+    assert "uses outcome, not status" in output[0].payload["reason"]
+
+
 def test_verifier_callback_failed_output_has_explicit_failed_outcome() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),

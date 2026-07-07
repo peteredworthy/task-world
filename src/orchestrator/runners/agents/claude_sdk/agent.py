@@ -27,7 +27,7 @@ import shutil
 import subprocess
 import sys
 import time
-from typing import Any, cast
+from typing import Any
 
 from orchestrator.runners.errors import (
     AgentCancelledError,
@@ -47,7 +47,6 @@ from orchestrator.runners.types import (
     ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
-    GraphPatchCallback,
     GradeCallback,
     LogLineCallback,
     SubmitCallback,
@@ -179,14 +178,12 @@ def build_orchestrator_mcp_server(
     on_checklist_update: ChecklistUpdateCallback,
     on_submit: SubmitCallback,
     on_grade: GradeCallback | None,
-    on_submit_graph_patch: GraphPatchCallback | None = None,
+    on_submit_graph_patch: object | None = None,
 ) -> Any:
     """Build an in-process MCP server with orchestrator callback tools."""
     from claude_agent_sdk import tool, create_sdk_mcp_server
 
-    graph_patch_required = on_submit_graph_patch is not None
-    graph_patch_submitted = False
-    graph_patch_accepted = False
+    del on_submit_graph_patch
 
     @tool(
         "update_checklist",
@@ -207,13 +204,6 @@ def build_orchestrator_mcp_server(
 
     @tool("submit", "Submit your completed work for verification.", {})
     async def submit(args: dict[str, Any]) -> dict[str, Any]:
-        block_reason = claude_sdk_graph_submit_block_reason(
-            graph_patch_required=graph_patch_required,
-            graph_patch_submitted=graph_patch_submitted,
-            graph_patch_accepted=graph_patch_accepted,
-        )
-        if block_reason is not None:
-            return {"content": [{"type": "text", "text": f"Error: {block_reason}"}]}
         await on_submit()
         return {"content": [{"type": "text", "text": "Work submitted for verification."}]}
 
@@ -228,45 +218,6 @@ def build_orchestrator_mcp_server(
         return {"content": [{"type": "text", "text": f"Clarification requested: {question}"}]}
 
     tools_list = [submit]
-
-    if on_submit_graph_patch is not None:
-
-        @tool(
-            "submit_graph_patch",
-            "Submit a graph patch envelope for planner-driven graph mutations.",
-            {
-                "type": "object",
-                "properties": {
-                    "patch": {
-                        "description": "Graph patch envelope as an object or JSON string.",
-                        "anyOf": [{"type": "object"}, {"type": "string"}],
-                    }
-                },
-                "required": ["patch"],
-                "additionalProperties": False,
-            },
-        )
-        async def submit_graph_patch(args: dict[str, Any]) -> dict[str, Any]:
-            nonlocal graph_patch_submitted, graph_patch_accepted
-            raw_patch = args.get("patch")
-            if isinstance(raw_patch, str):
-                try:
-                    decoded_patch = json.loads(raw_patch)
-                except json.JSONDecodeError:
-                    decoded_patch = None
-                patch_payload = (
-                    cast(dict[str, Any], decoded_patch) if isinstance(decoded_patch, dict) else args
-                )
-            else:
-                patch_payload = (
-                    cast(dict[str, Any], raw_patch) if isinstance(raw_patch, dict) else args
-                )
-            feedback = await on_submit_graph_patch(dict(patch_payload))
-            graph_patch_submitted = True
-            graph_patch_accepted = _graph_patch_feedback_accepted(feedback)
-            return {"content": [{"type": "text", "text": feedback}]}
-
-        tools_list.append(submit_graph_patch)
 
     if on_grade is None:
         tools_list.extend([update_checklist, request_clarification])
@@ -295,25 +246,6 @@ def build_orchestrator_mcp_server(
         tools_list.append(grade)
 
     return create_sdk_mcp_server("orchestrator", tools=tools_list)
-
-
-def claude_sdk_graph_submit_block_reason(
-    *,
-    graph_patch_required: bool,
-    graph_patch_submitted: bool,
-    graph_patch_accepted: bool,
-) -> str | None:
-    if not graph_patch_required:
-        return None
-    if graph_patch_accepted:
-        return None
-    if graph_patch_submitted:
-        return "submit_graph_patch was rejected; submit a corrected graph patch before submit."
-    return "submit_graph_patch must be accepted before submit."
-
-
-def _graph_patch_feedback_accepted(feedback: str) -> bool:
-    return " accepted" in feedback and " rejected" not in feedback
 
 
 # ---------------------------------------------------------------------------
@@ -471,16 +403,6 @@ def build_claude_sdk_prompt(context: ExecutionContext, is_verifier: bool = False
             "- Collect and integrate sub-agent results before marking requirements done.\n"
         )
 
-        if context.graph_patch_callback is not None:
-            phase_section += (
-                "\n## Graph Planner Tools\n"
-                "- **submit_graph_patch**(patch) — Submit a graph patch envelope for "
-                "planner-driven graph mutations.\n"
-                "- Use `base_graph_position` from the planner packet as the patch base.\n"
-                "- Call **submit_graph_patch** before **submit**; if the patch is rejected, "
-                "submit a corrected patch instead of editing graph events directly.\n"
-            )
-
     return f"{context.prompt}\n\n## Requirements\n{requirements_text}\n\n{phase_section}{graph_node_submit_section}"
 
 
@@ -631,7 +553,6 @@ class ClaudeSDKAgent:
                 on_checklist_update,
                 on_submit,
                 on_grade,
-                context.graph_patch_callback,
             )
             mcp_servers = build_mcp_servers(
                 orchestrator_server,

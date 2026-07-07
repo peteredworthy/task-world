@@ -286,23 +286,23 @@ checkpoint/tail or summaries ─▶ projections.py (35+ project_* readbacks) ─
   <tr><th>#</th><th>Change</th><th>Sketch</th></tr>
   <tr>
     <td class="num">3</td>
-    <td><strong>Outbox hardening (W6) — promoted</strong></td>
-    <td>As specced (<code>w6-outbox-hardening-spec.md</code>): attempt backoff with <code>next_attempt_at</code>, batch-claim for parallel-safe kinds, <code>failed</code>-row readback + operator requeue. Promoted because the recurring <code>graph_blocked</code> "ready node(s) not dispatched" pauses are consistent with rows dead-ending in <code>failed</code> with no surface; W6 both fixes the mechanism and makes the next occurrence diagnosable from the API instead of from SQLite.</td>
+    <td><strong>Outbox hardening (W6) — closed 2026-07-07</strong></td>
+    <td>Attempt backoff with <code>next_attempt_at</code>, failed-row readback through <code>/graph/final-blockers</code>, operator requeue, and migration coverage are implemented. Evidence: <code>tests/integration/test_graph_outbox_crash_points.py</code> backoff/future-retry tests, <code>tests/integration/test_graph_api.py</code> failed-outbox/requeue tests, <code>tests/unit/test_graph_driver_logic.py::test_driver_waits_for_future_outbox_backoff_before_declaring_blocked</code>, and <code>tests/integration/test_migrations.py::test_init_db_adds_graph_outbox_backoff_schema</code>. Batch/parallel claiming remains intentionally out of the W6 slice.</td>
   </tr>
   <tr>
     <td class="num">4</td>
-    <td><strong>Finish typed graph payloads (W5 slices 2+)</strong></td>
-    <td>Slice 1 typed output-record projections. Continue per <code>w5-typed-payloads-spec.md</code>: callback/runtime-failure records, node state/attempt fields, then reducer-internal maps (166 <code>dict[str, Any]</code> remain in <code>projections.py</code>, 202 in <code>_commands.py</code>). Sequence it so the typed models become the source for the P0-#1 field lists, and payload trimming rides along to close the remaining DB-bloat source.</td>
+    <td><strong>Finish typed graph payloads (W5 slices 2+) — verification-report slice closed 2026-07-07</strong></td>
+    <td>Slice 1 typed output-record projections is closed, verification/check/callback projection summaries have typed support, and command-side verification report handling now parses through <code>VerificationReportRecord</code> instead of raw-dict outcome/grades helpers. Evidence: <code>tests/unit/test_graph_models.py</code> verification-report model tests and <code>tests/unit/test_graph_commands.py</code> verifier callback tests, including malformed <code>status</code> rejection. Remaining W5 work: callback/runtime-failure records, node state/attempt fields, and reducer-internal maps.</td>
   </tr>
   <tr>
     <td class="num">5</td>
-    <td><strong>Drive-loop cleanup / event-triggered driving (W8)</strong></td>
-    <td>Prerequisites all landed (W2 <code>reconcile</code>, W3 checkpoints, P1 #4 kernel late-callback acceptance). Update <code>w8-drive-loop-cleanup-spec.md</code> accordingly: tick on completion signals with heartbeat fallback, shrink progress-signature checks, delete the <code>recovery.py:64</code> no-op, consolidate orphaned-lease policy now that the kernel accepts uncontested late callbacks, prune broad <code>graph/__init__.py</code> re-exports. Include a full stopgap audit, not just the guards named here: enumerate every incident-era guard in driver/dispatch/recovery/template-lint, check each against the kernel capability that now covers it (dead-input events, wildcard evidence, late-callback acceptance, reconcile), delete the obsolete ones, and record an explicit retirement condition on each survivor so the next kernel change knows what it can remove.</td>
+    <td><strong>Drive-loop cleanup / event-triggered driving (W8) — partially closed 2026-07-07</strong></td>
+    <td>The no-op in <code>recovery.py</code> is gone, the old progress-signature guard has been replaced by event-position comparison, future outbox backoff is honored without hot looping, and quiescent <code>reconcile</code> now returns the reconciled projection without a second <code>schedule_tick</code> pass unless reconcile creates ready/schedulable work. Evidence: <code>tests/unit/test_graph_driver_logic.py</code>, including <code>test_driver_returns_reconciled_quiescent_projection_without_second_schedule_tick</code> and <code>test_driver_continues_when_reconcile_creates_schedulable_work</code>. Remaining W8 work: prune broad <code>graph/__init__.py</code> re-exports and complete the stopgap audit/retirement-condition ledger.</td>
   </tr>
   <tr>
     <td class="num">6</td>
-    <td><strong>claude_sdk graph runner: reproduction-backed fix or permanent retirement</strong></td>
-    <td>The gate-off (<code>7d60173c0</code>) is an honest closure but leaves a single supported runner — a bus-factor risk on codex quota/availability. Either reproduce the SDK stream lifecycle failure ("Stream closed" on grade/submit, cancel-scope RuntimeError) and fix it, or declare <code>codex_server</code>-only supported and delete the dormant claude_sdk graph-callback code path so it cannot half-work.</td>
+    <td><strong>claude_sdk graph runner — permanently retired for graph execution</strong></td>
+    <td><code>codex_server</code> is the only supported graph runner. <code>claude_sdk</code> remains available for non-graph runs but is rejected before graph seeding, and the dormant SDK graph-patch prompt/MCP path has been removed so it cannot half-work. Evidence: <code>tests/integration/test_graph_run_driver.py::test_driver_rejects_unsupported_graph_runner_before_seeding[claude_sdk-claude_sdk]</code> and <code>tests/unit/test_claude_sdk_agent.py</code> graph-patch retirement tests.</td>
   </tr>
 </table>
 

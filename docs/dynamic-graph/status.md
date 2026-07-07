@@ -925,8 +925,8 @@ and `agent_runner_type=cli_subprocess`. Starting it through
 `last_error="Graph execution requires a runner with native graph callback tools;
 unsupported runner 'cli_subprocess'. Supported runners: claude_sdk,
 codex_server."` As of the P1 ledger closure fix, `claude_sdk` is also gated off
-for graph execution until its SDK stream lifecycle failure has a
-reproduction-backed fix, so the active supported-runner list is `codex_server`.
+for graph execution and its dormant SDK graph-patch prompt/MCP path has been
+removed, so the active supported-runner list is `codex_server`.
 The run reported `is_graph_backed=false` and
 `/graph/events` returned zero events, proving unsupported graph runners fail
 before graph seeding or agent execution.

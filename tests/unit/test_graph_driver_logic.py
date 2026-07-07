@@ -608,18 +608,18 @@ async def test_driver_runs_reconcile_before_quiescent_classification() -> None:
         read_projection=reader.read,
     )
 
-    assert controller.commands == ["schedule_tick", "reconcile"]
-    assert dispatcher.calls == 1
-    assert executor.calls == 1
-    assert reader.calls == 2
-    assert outcome.completed is False
-    assert outcome.blocked_reason == (
-        "graph quiescent with non-accepted task(s): final-invariant-region=pending"
-    )
+    assert controller.commands == ["schedule_tick", "reconcile", "schedule_tick"]
+    assert dispatcher.calls == 2
+    assert executor.calls == 2
+    assert reader.calls == 5
+    assert outcome.completed is True
+    assert outcome.blocked_reason is None
 
 
 @pytest.mark.asyncio
-async def test_driver_continues_when_reconcile_appends_events() -> None:
+async def test_driver_returns_reconciled_quiescent_projection_without_second_schedule_tick() -> (
+    None
+):
     controller = ReconcileProgressController()
     dispatcher = RecordingDispatcher()
     executor = RecordingExecutor()
@@ -639,20 +639,78 @@ async def test_driver_continues_when_reconcile_appends_events() -> None:
                 run_state="active",
                 ready_nodes=[],
                 active_leases={},
-                schedulable_nodes=["planner-recover-check-final"],
+                schedulable_nodes=[],
                 task_states={"final-invariant-region": "pending"},
                 node_states={
                     "check-final": "completed",
                     "planner-recover-check-final": "planned",
                 },
             ),
-            GraphProjectionSnapshot(
-                run_state="completed",
-                ready_nodes=[],
-                active_leases={},
-                schedulable_nodes=[],
-                task_states={"final-invariant-region": "accepted"},
-            ),
+        ]
+    )
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert controller.commands == ["schedule_tick", "reconcile"]
+    assert dispatcher.calls == 1
+    assert executor.calls == 1
+    assert reader.calls == 3
+    assert outcome.completed is False
+    assert outcome.blocked_reason == (
+        "graph quiescent with non-terminal node(s): planner-recover-check-final=planned"
+    )
+
+
+@pytest.mark.asyncio
+async def test_driver_continues_when_reconcile_creates_schedulable_work() -> None:
+    controller = ReconcileProgressController()
+    dispatcher = RecordingDispatcher()
+    executor = RecordingExecutor()
+    quiescent_pending = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"final-invariant-region": "pending"},
+        node_states={"check-final": "completed"},
+    )
+    ready_after_reconcile = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=["planner-recover-check-final"],
+        active_leases={},
+        schedulable_nodes=["planner-recover-check-final"],
+        task_states={"final-invariant-region": "pending"},
+        node_states={
+            "check-final": "completed",
+            "planner-recover-check-final": "planned",
+        },
+    )
+    failed_after_second_tick = GraphProjectionSnapshot(
+        run_state="failed",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"final-invariant-region": "pending"},
+        node_states={
+            "check-final": "completed",
+            "planner-recover-check-final": "failed",
+        },
+    )
+    reader = ScriptedProjectionReader(
+        [
+            quiescent_pending,
+            quiescent_pending,
+            ready_after_reconcile,
+            failed_after_second_tick,
+            failed_after_second_tick,
         ]
     )
 
@@ -669,7 +727,9 @@ async def test_driver_continues_when_reconcile_appends_events() -> None:
     assert controller.commands == ["schedule_tick", "reconcile", "schedule_tick"]
     assert dispatcher.calls == 2
     assert executor.calls == 2
-    assert outcome.completed is True
+    assert reader.calls == 5
+    assert outcome.completed is False
+    assert outcome.run_state == "failed"
 
 
 @pytest.mark.asyncio
