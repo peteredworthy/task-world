@@ -1,5 +1,10 @@
 """Unit tests for pure graph scheduler helpers."""
 
+import fnmatch
+
+from hypothesis import given
+from hypothesis import strategies as st
+
 from orchestrator.graph import (
     InputEdgeInfo,
     NodeScheduleInfo,
@@ -494,6 +499,24 @@ def test_glob_path_overlap_distinguishes_disjoint_roots() -> None:
     assert not claims_conflict(_repo_claim("read", ["src/**"]), _repo_claim("write", ["docs/**"]))
 
 
+def test_glob_path_overlap_detects_deep_literal_prefix_under_glob() -> None:
+    assert claims_conflict(
+        _repo_claim("read", ["src/*/*/gen/*.py"]),
+        _repo_claim("write", ["src/a"]),
+    )
+
+
+def test_glob_path_overlap_detects_literal_prefix_under_recursive_glob() -> None:
+    assert claims_conflict(
+        _repo_claim("read", ["src/**/gen/*.py"]),
+        _repo_claim("write", ["src/a"]),
+    )
+
+
+def test_glob_path_overlap_distinguishes_disjoint_rootless_and_rooted_patterns() -> None:
+    assert not claims_conflict(_repo_claim("read", ["*.md"]), _repo_claim("write", ["src/**"]))
+
+
 def test_path_normalization_resolves_dot_dot_inside_repo() -> None:
     assert claims_conflict(
         _repo_claim("read", ["src/../src/a.py"]),
@@ -555,6 +578,51 @@ def test_external_missing_key_conflicts_conservatively() -> None:
 
 def test_claims_read_read_compatible() -> None:
     assert not claims_conflict(_repo_claim("read", ["src/a.py"]), _repo_claim("read", ["src/a.py"]))
+
+
+_SEGMENT = st.sampled_from(["a", "b", "gen", "x.py", "x.md"])
+_GLOB_SEGMENT = st.sampled_from(["*", "?", "*.py", "*.md", "g?n", "[ab]"])
+_PATH_SEGMENTS = st.lists(_SEGMENT, min_size=1, max_size=4)
+_PATTERN_SEGMENTS = st.lists(st.one_of(_SEGMENT, _GLOB_SEGMENT), min_size=1, max_size=4)
+
+
+def _segmentwise_matches(path: str, pattern: str) -> bool:
+    path_segments = path.split("/")
+    pattern_segments = pattern.split("/")
+    if len(path_segments) != len(pattern_segments):
+        return False
+    return all(
+        fnmatch.fnmatchcase(path_segment, pattern_segment)
+        for path_segment, pattern_segment in zip(path_segments, pattern_segments, strict=True)
+    )
+
+
+@st.composite
+def _matching_claim_pair(
+    draw: st.DrawFn,
+) -> tuple[str, str, str]:
+    concrete_path = "/".join(draw(_PATH_SEGMENTS))
+    first_pattern = "/".join(draw(_PATTERN_SEGMENTS))
+    second_pattern = "/".join(draw(_PATTERN_SEGMENTS))
+    if not _segmentwise_matches(concrete_path, first_pattern):
+        first_pattern = concrete_path
+    if not _segmentwise_matches(concrete_path, second_pattern):
+        second_pattern = concrete_path
+    return first_pattern, second_pattern, concrete_path
+
+
+@given(_matching_claim_pair())
+def test_path_overlap_is_sound_for_concrete_matching_claims(
+    pair: tuple[str, str, str],
+) -> None:
+    first_pattern, second_pattern, concrete_path = pair
+
+    assert _segmentwise_matches(concrete_path, first_pattern)
+    assert _segmentwise_matches(concrete_path, second_pattern)
+    assert claims_conflict(
+        _repo_claim("read", [first_pattern]),
+        _repo_claim("write", [second_pattern]),
+    )
 
 
 def test_schedule_decision_has_deferred_reasons() -> None:

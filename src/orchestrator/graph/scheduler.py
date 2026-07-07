@@ -327,40 +327,55 @@ def _normalize_claim_path(path: str) -> _NormalizedPath:
 def _normalized_paths_overlap(existing: _NormalizedPath, requested: _NormalizedPath) -> bool:
     if existing.whole_repo or requested.whole_repo:
         return True
-    if existing.has_glob and requested.has_glob:
-        return _glob_prefixes_may_overlap(existing.pattern, requested.pattern)
-    if existing.has_glob:
-        return _glob_overlaps_literal(existing.pattern, requested.pattern)
-    if requested.has_glob:
-        return _glob_overlaps_literal(requested.pattern, existing.pattern)
+    if existing.has_glob or requested.has_glob:
+        return _pattern_segments_may_overlap(existing.pattern, requested.pattern)
     return _literal_paths_overlap(existing.pattern, requested.pattern)
 
 
-def _glob_overlaps_literal(pattern: str, literal: str) -> bool:
-    return fnmatch.fnmatchcase(literal, pattern) or _literal_prefix_may_match_glob(literal, pattern)
+def _pattern_segments_may_overlap(existing_pattern: str, requested_pattern: str) -> bool:
+    return _segments_may_overlap(existing_pattern.split("/"), requested_pattern.split("/"))
 
 
-def _literal_prefix_may_match_glob(literal: str, pattern: str) -> bool:
-    return any(
-        fnmatch.fnmatchcase(f"{literal}/{probe}", pattern) for probe in ("x", "x.py", "nested/x.py")
-    )
-
-
-def _glob_prefixes_may_overlap(existing_pattern: str, requested_pattern: str) -> bool:
-    existing_prefix = _static_prefix(existing_pattern)
-    requested_prefix = _static_prefix(requested_pattern)
-    if existing_prefix == "" or requested_prefix == "":
+def _segments_may_overlap(existing: list[str], requested: list[str]) -> bool:
+    if not existing:
         return True
-    return _literal_paths_overlap(existing_prefix, requested_prefix)
+    if not requested:
+        return True
+
+    existing_head, *existing_tail = existing
+    requested_head, *requested_tail = requested
+
+    if existing_head == "**":
+        return (
+            _segments_may_overlap(existing_tail, requested)
+            or _segments_may_overlap(existing_tail, requested_tail)
+            or _segments_may_overlap(existing, requested_tail)
+        )
+    if requested_head == "**":
+        return (
+            _segments_may_overlap(existing, requested_tail)
+            or _segments_may_overlap(existing_tail, requested_tail)
+            or _segments_may_overlap(existing_tail, requested)
+        )
+    if not _segments_can_match_same_name(existing_head, requested_head):
+        return False
+    return _segments_may_overlap(existing_tail, requested_tail)
 
 
-def _static_prefix(pattern: str) -> str:
-    parts: list[str] = []
-    for part in pattern.split("/"):
-        if any(char in part for char in "*?["):
-            break
-        parts.append(part)
-    return "/".join(parts)
+def _segments_can_match_same_name(existing: str, requested: str) -> bool:
+    existing_has_glob = _segment_has_glob(existing)
+    requested_has_glob = _segment_has_glob(requested)
+    if existing_has_glob and requested_has_glob:
+        return True
+    if existing_has_glob:
+        return fnmatch.fnmatchcase(requested, existing)
+    if requested_has_glob:
+        return fnmatch.fnmatchcase(existing, requested)
+    return existing == requested
+
+
+def _segment_has_glob(segment: str) -> bool:
+    return any(char in segment for char in "*?[")
 
 
 def _literal_paths_overlap(existing: str, requested: str) -> bool:
