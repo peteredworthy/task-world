@@ -69,6 +69,10 @@ class FixedSequenceIds:
         return self._values.pop(0)
 
 
+def _db_datetime(value: datetime) -> datetime:
+    return value.replace(tzinfo=None)
+
+
 class RecordingExecutor:
     def __init__(self, call_log: list[str], *, fail_on_calls: set[int] | None = None) -> None:
         self._call_log = call_log
@@ -765,6 +769,189 @@ async def test_restart_mid_dispatching_row_is_retried_idempotently(
 
 
 @pytest.mark.asyncio
+async def test_failed_dispatch_uses_backoff_before_retrying(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, session_factory = file_db
+    run_id = "dispatch-backoff"
+    await _seed_runnable_worker(session_factory, run_id)
+    clock = FixedClock()
+    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    result = await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
+
+    call_log: list[str] = []
+    dispatcher = OutboxDispatcher(
+        session_factory,
+        RecordingExecutor(call_log, fail_on_calls={1, 2}),
+        clock,
+        retry_base_seconds=2,
+        retry_factor=4,
+        retry_jitter_seconds=0,
+    )
+
+    assert await dispatcher.dispatch_pending(run_id=run_id) == []
+    rows_after_first_failure = await _outbox_rows(session_factory)
+    assert call_log == [result.outbox_items[0].event_id]
+    assert rows_after_first_failure[0].status == "pending"
+    assert rows_after_first_failure[0].attempts == 1
+    assert rows_after_first_failure[0].next_attempt_at == _db_datetime(
+        clock.now() + timedelta(seconds=2)
+    )
+
+    assert await dispatcher.dispatch_pending(run_id=run_id) == []
+    assert call_log == [result.outbox_items[0].event_id]
+
+    clock.advance(2)
+    assert await dispatcher.dispatch_pending(run_id=run_id) == []
+    rows_after_second_failure = await _outbox_rows(session_factory)
+    assert call_log == [result.outbox_items[0].event_id, result.outbox_items[0].event_id]
+    assert rows_after_second_failure[0].status == "pending"
+    assert rows_after_second_failure[0].attempts == 2
+    assert rows_after_second_failure[0].next_attempt_at == _db_datetime(
+        clock.now() + timedelta(seconds=8)
+    )
+
+    clock.advance(7)
+    assert await dispatcher.dispatch_pending(run_id=run_id) == []
+    assert call_log == [result.outbox_items[0].event_id, result.outbox_items[0].event_id]
+
+    clock.advance(1)
+    completed = await dispatcher.dispatch_pending(run_id=run_id)
+    rows_after_success = await _outbox_rows(session_factory)
+    assert [item.event_id for item in completed] == [result.outbox_items[0].event_id]
+    assert call_log == [
+        result.outbox_items[0].event_id,
+        result.outbox_items[0].event_id,
+        result.outbox_items[0].event_id,
+    ]
+    assert rows_after_success[0].status == "completed"
+    assert rows_after_success[0].attempts == 3
+    assert rows_after_success[0].next_attempt_at is None
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_idles_when_only_future_backoff_rows_exist(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, session_factory = file_db
+    clock = FixedClock()
+    future = clock.now() + timedelta(seconds=30)
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                GraphOutboxModel(
+                    event_id="future-dispatch-event",
+                    run_id="future-backoff-run",
+                    kind="agent_dispatch",
+                    payload={"event_id": "future-dispatch-event"},
+                    status="pending",
+                    attempts=1,
+                    created_at=clock.now(),
+                    updated_at=clock.now(),
+                    next_attempt_at=future,
+                    last_error="dispatch failed at call 1",
+                )
+            )
+
+    call_log: list[str] = []
+    dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
+
+    assert await dispatcher.dispatch_pending(run_id="future-backoff-run") == []
+    assert call_log == []
+    rows = await _outbox_rows(session_factory)
+    assert rows[0].status == "pending"
+    assert rows[0].attempts == 1
+    assert rows[0].next_attempt_at == _db_datetime(future)
+
+
+@pytest.mark.asyncio
+async def test_retry_jitter_does_not_exceed_backoff_cap(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, session_factory = file_db
+    run_id = "dispatch-backoff-cap"
+    await _seed_runnable_worker(session_factory, run_id)
+    clock = FixedClock()
+    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
+    dispatcher = OutboxDispatcher(
+        session_factory,
+        RecordingExecutor([], fail_on_calls={1}),
+        clock,
+        max_attempts=5,
+        retry_base_seconds=60,
+        retry_factor=4,
+        retry_cap_seconds=60,
+    )
+
+    assert await dispatcher.dispatch_pending(run_id=run_id) == []
+
+    rows = await _outbox_rows(session_factory)
+    assert rows[0].next_attempt_at is not None
+    assert rows[0].next_attempt_at - _db_datetime(clock.now()) <= timedelta(seconds=60)
+
+
+@pytest.mark.asyncio
+async def test_recovery_preserves_future_backoff_until_due(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+) -> None:
+    _, session_factory = file_db
+    run_id = "dispatch-backoff-recovery"
+    await _seed_runnable_worker(session_factory, run_id)
+    clock = FixedClock()
+    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    result = await controller.handle_command(
+        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+    )
+    event_id = result.outbox_items[0].event_id
+    call_log: list[str] = []
+    failing_dispatcher = OutboxDispatcher(
+        session_factory,
+        RecordingExecutor(call_log, fail_on_calls={1}),
+        clock,
+        retry_base_seconds=60,
+        retry_jitter_seconds=0,
+    )
+
+    assert await failing_dispatcher.dispatch_pending(run_id=run_id) == []
+    rows_after_failure = await _outbox_rows(session_factory)
+    assert call_log == [event_id]
+    assert rows_after_failure[0].status == "pending"
+    assert rows_after_failure[0].next_attempt_at == _db_datetime(
+        clock.now() + timedelta(seconds=60)
+    )
+
+    recovery_dispatcher = OutboxDispatcher(
+        session_factory,
+        RecordingExecutor(call_log),
+        clock,
+    )
+    report = await recover(session_factory, recovery_dispatcher, run_id=run_id)
+
+    rows_after_recovery = await _outbox_rows(session_factory)
+    assert report.redispatched == []
+    assert call_log == [event_id]
+    assert rows_after_recovery[0].status == "pending"
+    assert rows_after_recovery[0].attempts == 1
+    assert rows_after_recovery[0].next_attempt_at == _db_datetime(
+        clock.now() + timedelta(seconds=60)
+    )
+
+    clock.advance(60)
+    second_report = await recover(session_factory, recovery_dispatcher, run_id=run_id)
+    rows_after_due_recovery = await _outbox_rows(session_factory)
+    assert [item.event_id for item in second_report.redispatched] == [event_id]
+    assert call_log == [event_id, event_id]
+    assert rows_after_due_recovery[0].status == "completed"
+    assert rows_after_due_recovery[0].attempts == 2
+    assert rows_after_due_recovery[0].next_attempt_at is None
+
+
+@pytest.mark.asyncio
 async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
@@ -783,12 +970,19 @@ async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
     old_ref = f"refs/orchestrator/snapshots/{old_snapshot_id}"
     assert _ref_exists(repo, old_ref) is True
 
-    crashing_dispatcher = OutboxDispatcher(session_factory, CrashBeforeCleanupExecutor(), clock)
+    crashing_dispatcher = OutboxDispatcher(
+        session_factory,
+        CrashBeforeCleanupExecutor(),
+        clock,
+        retry_jitter_seconds=0,
+    )
     await crashing_dispatcher.dispatch_pending(limit=1)
     rows_after_crash = await _outbox_rows(session_factory)
     assert len(rows_after_crash) == 1
     assert rows_after_crash[0].kind == "snapshot_cleanup"
     assert rows_after_crash[0].status == "pending"
+    assert rows_after_crash[0].next_attempt_at == _db_datetime(clock.now() + timedelta(seconds=2))
+    clock.advance(2)
 
     executor = GraphDispatchExecutor(
         session_factory,
@@ -977,6 +1171,7 @@ async def test_compromised_file_state_binding_is_refused_before_cleanup_complete
                 attempts=0,
                 created_at=clock.now(),
                 updated_at=clock.now(),
+                next_attempt_at=None,
                 last_error=None,
             )
         )

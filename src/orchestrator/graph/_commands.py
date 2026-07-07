@@ -43,6 +43,7 @@ from orchestrator.graph.models import (
     PatchEnvelope,
     PatchOp,
     RecoveryPlanRecord,
+    VerificationResultProjection,
     VerificationReportRecord,
     normalize_record_selector,
     record_selector_matches,
@@ -2835,12 +2836,17 @@ def _failed_verification_recovery_events(
 
 def _current_failed_verification_results(projection: GraphProjection) -> list[dict[str, str]]:
     passed_candidates = projection["passed_verification_candidate_ids"]
-    return [
-        cast(dict[str, str], dict(verification))
-        for verification in projection["failed_verification_results_by_record_id"].values()
-        if verification.get("candidate_id") not in passed_candidates
-        and not _superseded_by_later_regional_pass(projection, dict(verification))
-    ]
+    current: list[dict[str, str]] = []
+    for verification in projection["failed_verification_results_by_record_id"].values():
+        verification_dict = _verification_result_dict(verification)
+        if verification_dict is None:
+            continue
+        if verification_dict.get("candidate_id") in passed_candidates:
+            continue
+        if _superseded_by_later_regional_pass(projection, verification_dict):
+            continue
+        current.append(verification_dict)
+    return current
 
 
 def _superseded_by_later_regional_pass(
@@ -2866,14 +2872,17 @@ def _superseded_by_later_regional_pass(
         return False
     failed_record_id = verification.get("record_id")
     for passed in projection["passed_verification_results_by_record_id"].values():
-        if passed.get("record_id") == failed_record_id:
+        passed_dict = _verification_result_dict(passed)
+        if passed_dict is None:
             continue
-        candidate_id = passed.get("candidate_id")
+        if passed_dict.get("record_id") == failed_record_id:
+            continue
+        candidate_id = passed_dict.get("candidate_id")
         verdict = projection["verifier_verdicts"].get(candidate_id or "")
         if verdict is not None and verdict.get("verdict") != "passed":
             # The candidate's latest verdict is a failure; not a supersession.
             continue
-        if _verification_task_region(projection, dict(passed)) != failed_region:
+        if _verification_task_region(projection, passed_dict) != failed_region:
             continue
         passed_position = _candidate_verdict_position(projection, candidate_id)
         if passed_position is None:
@@ -2894,6 +2903,15 @@ def _verification_task_region(
     if isinstance(node_id, str) and node_id:
         return projection["node_task_regions"].get(node_id)
     return None
+
+
+def _verification_result_dict(
+    verification: VerificationResultProjection,
+) -> dict[str, str] | None:
+    data = verification.model_dump(mode="json")
+    if not isinstance(data.get("node_id"), str) or not isinstance(data.get("record_id"), str):
+        return None
+    return {key: value for key, value in data.items() if isinstance(value, str)}
 
 
 def _candidate_verdict_position(
@@ -2963,7 +2981,7 @@ def _passed_check_terminalization_events(
     for check_node_id, result in sorted(projection["check_results"].items()):
         if check_node_ids is not None and check_node_id not in check_node_ids:
             continue
-        if result.get("status") not in {"passed", "pass", "ok"}:
+        if result.status not in {"passed", "pass", "ok"}:
             continue
         for node_id in _unreachable_check_failure_branch_node_ids(projection, check_node_id):
             output.extend(_retire_node_events(projection, node_id, make_event))
@@ -3122,16 +3140,16 @@ def _recovery_lineage_superseded(
     if not reachable:
         return False
     for verification in projection["passed_verification_results_by_record_id"].values():
-        if verification.get("node_id") not in reachable:
+        if verification.node_id not in reachable:
             continue
-        candidate_id = verification.get("candidate_id")
+        candidate_id = verification.candidate_id
         verdict = projection["verifier_verdicts"].get(candidate_id or "")
         if verdict is None or verdict.get("verdict") == "passed":
             return True
     for check_node_id, result in projection["check_results"].items():
         if check_node_id not in reachable:
             continue
-        if result.get("status") in {"passed", "pass", "ok"}:
+        if result.status in {"passed", "pass", "ok"}:
             return True
     return False
 
@@ -3264,11 +3282,15 @@ def _has_final_invariant_check(projection: GraphProjection) -> bool:
 
 def _current_passed_verification_results(projection: GraphProjection) -> list[dict[str, str]]:
     failed_candidates = projection["failed_verification_candidate_ids"]
-    return [
-        dict(verification)
-        for verification in projection["passed_verification_results_by_record_id"].values()
-        if verification.get("candidate_id") not in failed_candidates
-    ]
+    current: list[dict[str, str]] = []
+    for verification in projection["passed_verification_results_by_record_id"].values():
+        verification_dict = _verification_result_dict(verification)
+        if verification_dict is None:
+            continue
+        if verification_dict.get("candidate_id") in failed_candidates:
+            continue
+        current.append(verification_dict)
+    return current
 
 
 def _final_checks_waiting_for_verification_evidence(
@@ -3457,17 +3479,17 @@ def _has_existing_failed_verification_recovery(
 def _current_failed_check_results(projection: GraphProjection) -> list[dict[str, str]]:
     failed: list[dict[str, str]] = []
     for node_id, result in sorted(projection["check_results"].items()):
-        status = result.get("status")
+        status = result.status
         if status in {"passed", "pass", "ok"}:
             continue
-        record_id = result.get("record_id")
+        record_id = result.record_id
         if not isinstance(record_id, str) or not record_id:
             continue
         check_result = {"node_id": node_id, "record_id": record_id}
-        classification = result.get("classification")
+        classification = result.classification
         if isinstance(classification, str) and classification:
             check_result["classification"] = classification
-        task_region_id = result.get("task_region_id")
+        task_region_id = result.task_region_id
         if isinstance(task_region_id, str) and task_region_id:
             check_result["task_region_id"] = task_region_id
         failed.append(check_result)

@@ -22,6 +22,7 @@ from orchestrator.graph.models import (
     AuthorityRequestRecord,
     CallbackIdempotencyEvent,
     CandidateRecord,
+    CheckResultProjection,
     CheckResultRecord,
     CompletionDecisionRecord,
     DecisionRecord,
@@ -40,6 +41,7 @@ from orchestrator.graph.models import (
     RequirementRecord,
     RoutineSnapshotRecord,
     VerificationReportRecord,
+    VerificationResultProjection,
 )
 from orchestrator.graph.models import normalize_record_selector
 
@@ -117,13 +119,6 @@ class AcceptedOutputRecord(TypedDict):
     payload: OutputRecordPayload
 
 
-class FailedVerificationResult(TypedDict, total=False):
-    node_id: str
-    record_id: str
-    candidate_id: str
-    task_region_id: str
-
-
 class RecoveryNodeIndexEntry(TypedDict):
     node_id: str
     recovery_reason: str
@@ -157,12 +152,12 @@ class GraphProjection(TypedDict):
     task_candidates: dict[str, list[dict[str, Any]]]
     verifier_verdicts: dict[str, dict[str, Any]]
     completion_decision_passed: bool
-    passed_verification_results_by_record_id: dict[str, dict[str, str]]
-    failed_verification_results_by_record_id: dict[str, FailedVerificationResult]
+    passed_verification_results_by_record_id: dict[str, VerificationResultProjection]
+    failed_verification_results_by_record_id: dict[str, VerificationResultProjection]
     passed_verification_candidate_ids: list[str]
     failed_verification_candidate_ids: dict[str, bool]
     recovery_nodes_by_record_id: dict[str, list[RecoveryNodeIndexEntry]]
-    check_results: dict[str, dict[str, Any]]
+    check_results: dict[str, CheckResultProjection]
     invalid_test_blocks: dict[str, dict[str, Any]]
     configured_gates: dict[str, dict[str, bool]]
     gate_decisions: dict[str, dict[str, bool]]
@@ -435,6 +430,22 @@ def initial_projection() -> GraphProjection:
 
 def projection_to_checkpoint(projection: GraphProjection) -> dict[str, Any]:
     checkpoint = dict(cast(dict[str, Any], projection))
+    checkpoint["passed_verification_results_by_record_id"] = {
+        record_id: result.model_dump(mode="json")
+        for record_id, result in projection.get(
+            "passed_verification_results_by_record_id", {}
+        ).items()
+    }
+    checkpoint["failed_verification_results_by_record_id"] = {
+        record_id: result.model_dump(mode="json")
+        for record_id, result in projection.get(
+            "failed_verification_results_by_record_id", {}
+        ).items()
+    }
+    checkpoint["check_results"] = {
+        node_id: result.model_dump(mode="json")
+        for node_id, result in projection.get("check_results", {}).items()
+    }
     checkpoint["accepted_output_records_by_node_port"] = {
         node_id: {
             port: [
@@ -468,6 +479,15 @@ def projection_to_checkpoint(projection: GraphProjection) -> dict[str, Any]:
 
 def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjection:
     projection = cast(GraphProjection, {**initial_projection(), **raw_projection})
+    projection["passed_verification_results_by_record_id"] = _verification_results_from_checkpoint(
+        raw_projection.get("passed_verification_results_by_record_id"),
+    )
+    projection["failed_verification_results_by_record_id"] = _verification_results_from_checkpoint(
+        raw_projection.get("failed_verification_results_by_record_id"),
+    )
+    projection["check_results"] = _check_results_from_checkpoint(
+        raw_projection.get("check_results"),
+    )
     projection["accepted_output_records_by_node_port"] = _accepted_output_records_from_checkpoint(
         raw_projection.get("accepted_output_records_by_node_port"),
     )
@@ -495,6 +515,38 @@ def _callback_idempotency_events_from_checkpoint(
         event = _callback_idempotency_event_from_payload(cast(dict[str, Any], raw_event))
         if event is not None:
             typed[key] = event
+    return typed
+
+
+def _verification_results_from_checkpoint(
+    raw_results: Any,
+) -> dict[str, VerificationResultProjection]:
+    if not isinstance(raw_results, dict):
+        return {}
+    typed: dict[str, VerificationResultProjection] = {}
+    for record_id, raw_result in cast(dict[Any, Any], raw_results).items():
+        if not isinstance(record_id, str) or not isinstance(raw_result, dict):
+            continue
+        try:
+            result = VerificationResultProjection.model_validate(raw_result)
+        except ValueError:
+            continue
+        typed[record_id] = result
+    return typed
+
+
+def _check_results_from_checkpoint(raw_results: Any) -> dict[str, CheckResultProjection]:
+    if not isinstance(raw_results, dict):
+        return {}
+    typed: dict[str, CheckResultProjection] = {}
+    for node_id, raw_result in cast(dict[Any, Any], raw_results).items():
+        if not isinstance(node_id, str) or not isinstance(raw_result, dict):
+            continue
+        try:
+            result = CheckResultProjection.model_validate(raw_result)
+        except ValueError:
+            continue
+        typed[node_id] = result
     return typed
 
 
@@ -643,14 +695,14 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         },
         "completion_decision_passed": state.get("completion_decision_passed", False),
         "passed_verification_results_by_record_id": {
-            record_id: dict(result)
+            record_id: result.model_copy(deep=True)
             for record_id, result in state.get(
                 "passed_verification_results_by_record_id",
                 {},
             ).items()
         },
         "failed_verification_results_by_record_id": {
-            record_id: cast(FailedVerificationResult, dict(result))
+            record_id: result.model_copy(deep=True)
             for record_id, result in state.get(
                 "failed_verification_results_by_record_id", {}
             ).items()
@@ -666,7 +718,8 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             for record_id, recoveries in state.get("recovery_nodes_by_record_id", {}).items()
         },
         "check_results": {
-            node_id: dict(result) for node_id, result in state.get("check_results", {}).items()
+            node_id: result.model_copy(deep=True)
+            for node_id, result in state.get("check_results", {}).items()
         },
         "invalid_test_blocks": {
             task_region_id: dict(block)
@@ -1354,45 +1407,34 @@ def _failed_check_result_blockers_from_projection(
 ) -> list[FinalInvariantBlocker]:
     blockers_by_record: dict[str, FinalInvariantBlocker] = {}
     for node_id, payload in projection.get("check_results", {}).items():
-        status = _check_result_status(payload)
-        if status is None or status in {"passed", "pass", "ok"}:
+        status = payload.status
+        if status in {"passed", "pass", "ok"}:
             continue
-        record_id = payload.get("record_id")
-        key = record_id if isinstance(record_id, str) else node_id
+        key = payload.record_id or node_id
         blocker: FinalInvariantBlocker = {
             "kind": "failed_check_result",
             "reason": "check result did not pass",
             "node_id": node_id,
             "state": status,
         }
-        value = payload.get("value")
-        if isinstance(value, dict):
-            typed_value = cast(dict[str, Any], value)
-            classification = typed_value.get("classification")
-            command_text = typed_value.get("command_text")
-            stderr = typed_value.get("stderr")
-            exit_code = typed_value.get("exit_code")
-            if isinstance(classification, str):
-                blocker["classification"] = classification
-            if isinstance(command_text, str):
-                blocker["command_text"] = command_text
-            if isinstance(stderr, str):
-                blocker["stderr"] = stderr
-            if (
-                isinstance(exit_code, int)
-                and not isinstance(exit_code, bool)
-                and (
-                    isinstance(command_text, str)
-                    or isinstance(stderr, str)
-                    or isinstance(classification, str)
-                )
-            ):
-                blocker["exit_code"] = exit_code
-            if classification in {"environment_error", "tool_error", "tool_unavailable"}:
-                blocker["reason"] = _environment_failure_reason_from_check_value(typed_value)
-        task_region_id = payload.get("task_region_id")
-        if isinstance(task_region_id, str):
-            blocker["task_region_id"] = task_region_id
+        if payload.classification is not None:
+            blocker["classification"] = payload.classification
+        if payload.command_text is not None:
+            blocker["command_text"] = payload.command_text
+        if payload.stderr is not None:
+            blocker["stderr"] = payload.stderr
+        if payload.exit_code is not None and (
+            payload.command_text is not None
+            or payload.stderr is not None
+            or payload.classification is not None
+        ):
+            blocker["exit_code"] = payload.exit_code
+        if payload.classification in {"environment_error", "tool_error", "tool_unavailable"}:
+            blocker["reason"] = _environment_failure_reason_from_check_value(
+                payload.model_dump(mode="json"),
+            )
+        if payload.task_region_id is not None:
+            blocker["task_region_id"] = payload.task_region_id
         blockers_by_record[key] = blocker
     return [blockers_by_record[key] for key in sorted(blockers_by_record)]
 
@@ -3237,22 +3279,23 @@ def _record_verification_result(state: GraphProjection, event: EventEnvelope) ->
     if not isinstance(record_id, str) or not record_id:
         return
 
-    result: dict[str, str] = {
+    result_payload: dict[str, str] = {
         "node_id": node_id,
         "record_id": record_id,
     }
     if isinstance(candidate_id, str) and candidate_id:
-        result["candidate_id"] = candidate_id
+        result_payload["candidate_id"] = candidate_id
     task_region_id = event.payload.get("task_region_id")
     if isinstance(task_region_id, str) and task_region_id:
-        result["task_region_id"] = task_region_id
+        result_payload["task_region_id"] = task_region_id
+    try:
+        result = VerificationResultProjection.model_validate(result_payload)
+    except ValueError:
+        return
     if event.event_type == "verification_passed":
         state["passed_verification_results_by_record_id"][record_id] = result
     else:
-        state["failed_verification_results_by_record_id"][record_id] = cast(
-            FailedVerificationResult,
-            dict(result),
-        )
+        state["failed_verification_results_by_record_id"][record_id] = result
 
 
 def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
@@ -3265,7 +3308,7 @@ def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
     if status is None:
         status = "unknown"
     task_region_id = _task_region_id(event.payload) or state["node_task_regions"].get(node_id)
-    result: dict[str, Any] = {
+    result_payload: dict[str, Any] = {
         "node_id": node_id,
         "status": status,
         "position": event.position,
@@ -3275,16 +3318,20 @@ def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
         typed_value = cast(dict[str, Any], value)
         for key in ("classification", "command_text", "stderr", "stdout", "exit_code"):
             if key in typed_value:
-                result[key] = typed_value[key]
+                result_payload[key] = typed_value[key]
     if task_region_id is not None:
-        result["task_region_id"] = task_region_id
+        result_payload["task_region_id"] = task_region_id
     record_id = event.payload.get("record_id")
     if isinstance(record_id, str):
-        result["record_id"] = record_id
+        result_payload["record_id"] = record_id
     for field in ("candidate_record_ids", "file_state_record_ids", "evaluated_record_ids"):
         record_ids = _record_ids_from_payload(event.payload, field)
         if record_ids:
-            result[field] = record_ids
+            result_payload[field] = record_ids
+    try:
+        result = CheckResultProjection.model_validate(result_payload)
+    except ValueError:
+        return
     state["check_results"][node_id] = result
 
 
@@ -4454,7 +4501,7 @@ def _final_invariant_node_passed(state: GraphProjection, node_id: str) -> bool:
         return False
     if "check_result" in contract.fulfillment_required_outputs:
         result = state.get("check_results", {}).get(node_id)
-        return result is not None and result.get("status") in {"passed", "pass", "ok"}
+        return result is not None and result.status in {"passed", "pass", "ok"}
     if "completion_decision" in contract.fulfillment_required_outputs:
         return bool(state["node_output_ports"].get(node_id, {}).get("completion_decision"))
     return True
@@ -4521,7 +4568,7 @@ def _required_checks_passed(state: GraphProjection, task_region_id: str) -> bool
         result = state.get("check_results", {}).get(node_id)
         if result is None:
             return False
-        status = result.get("status")
+        status = result.status
         if status not in {"passed", "pass", "ok"} and _check_result_recovery_superseded(
             state,
             result,
@@ -4538,31 +4585,20 @@ def _required_checks_passed(state: GraphProjection, task_region_id: str) -> bool
 
 
 def _check_result_cites_latest_candidate(
-    result: dict[str, Any],
+    result: CheckResultProjection,
     latest_candidate: dict[str, Any],
 ) -> bool:
     candidate_id = latest_candidate.get("candidate_id")
-    candidate_record_ids = result.get("candidate_record_ids")
-    if not isinstance(candidate_id, str) or not isinstance(candidate_record_ids, list):
+    candidate_record_ids = result.candidate_record_ids
+    if not isinstance(candidate_id, str):
         return False
-    if candidate_id not in {
-        record_id
-        for record_id in cast(list[Any], candidate_record_ids)
-        if isinstance(record_id, str)
-    }:
+    if candidate_id not in candidate_record_ids:
         return False
 
     expected_file_state_ids = latest_candidate.get("file_state_record_ids")
     if not isinstance(expected_file_state_ids, list) or not expected_file_state_ids:
         return True
-    check_file_state_ids = result.get("file_state_record_ids")
-    if not isinstance(check_file_state_ids, list):
-        return False
-    cited_file_state_ids = {
-        record_id
-        for record_id in cast(list[Any], check_file_state_ids)
-        if isinstance(record_id, str)
-    }
+    cited_file_state_ids = set(result.file_state_record_ids)
     return all(
         record_id in cited_file_state_ids
         for record_id in cast(list[Any], expected_file_state_ids)
@@ -4572,9 +4608,13 @@ def _check_result_cites_latest_candidate(
 
 def _check_result_recovery_superseded(
     state: GraphProjection,
-    check_result: dict[str, Any],
+    check_result: CheckResultProjection | dict[str, Any],
 ) -> bool:
-    record_id = check_result.get("record_id")
+    record_id = (
+        check_result.record_id
+        if isinstance(check_result, CheckResultProjection)
+        else check_result.get("record_id")
+    )
     if not isinstance(record_id, str) or not record_id:
         return False
     for recovery in state["recovery_nodes_by_record_id"].get(record_id, []):
@@ -4590,12 +4630,12 @@ def _failed_verification_recovery_superseded(
     candidate_id: str,
 ) -> bool:
     for verification in state["failed_verification_results_by_record_id"].values():
-        if verification.get("candidate_id") != candidate_id:
+        if verification.candidate_id != candidate_id:
             continue
-        if verification.get("task_region_id") != task_region_id:
+        if verification.task_region_id != task_region_id:
             continue
-        record_id = verification.get("record_id")
-        if not isinstance(record_id, str) or not record_id:
+        record_id = verification.record_id
+        if not record_id:
             continue
         for recovery in state["recovery_nodes_by_record_id"].get(record_id, []):
             node_id = recovery.get("node_id")
@@ -4612,16 +4652,16 @@ def _recovery_lineage_has_complete_verification(
     if not reachable:
         return False
     for verification in state["passed_verification_results_by_record_id"].values():
-        verifier_node_id = verification.get("node_id")
+        verifier_node_id = verification.node_id
         if verifier_node_id not in reachable:
             continue
-        candidate_id = verification.get("candidate_id")
+        candidate_id = verification.candidate_id
         if not isinstance(candidate_id, str) or not candidate_id:
             continue
         verdict = state["verifier_verdicts"].get(candidate_id)
         if verdict is not None and verdict.get("verdict") != "passed":
             continue
-        task_region_id = verification.get("task_region_id")
+        task_region_id = verification.task_region_id
         if not isinstance(task_region_id, str):
             task_region_id = state["node_task_regions"].get(verifier_node_id)
         if not isinstance(task_region_id, str) or not task_region_id:
@@ -4643,16 +4683,16 @@ def _recovery_lineage_passed(state: GraphProjection, recovery_node_id: str) -> b
     if not reachable:
         return False
     for verification in state["passed_verification_results_by_record_id"].values():
-        if verification.get("node_id") not in reachable:
+        if verification.node_id not in reachable:
             continue
-        candidate_id = verification.get("candidate_id")
+        candidate_id = verification.candidate_id
         verdict = state["verifier_verdicts"].get(candidate_id or "")
         if verdict is None or verdict.get("verdict") == "passed":
             return True
     for check_node_id, result in state["check_results"].items():
         if check_node_id not in reachable:
             continue
-        if result.get("status") in {"passed", "pass", "ok"}:
+        if result.status in {"passed", "pass", "ok"}:
             return True
     return False
 

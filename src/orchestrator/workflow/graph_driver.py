@@ -272,6 +272,8 @@ class GraphLoopController(Protocol):
 class GraphLoopDispatcher(Protocol):
     async def dispatch_pending(self, *, run_id: str | None = None) -> Any: ...
 
+    async def earliest_pending_retry_at(self, *, run_id: str | None = None) -> datetime | None: ...
+
 
 class GraphLoopExecutor(Protocol):
     def is_running(self, execution_id: str) -> bool: ...
@@ -318,6 +320,7 @@ class GraphRunDriver:
             OutboxDispatcher,
         ]
         | None = None,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
         on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
     ) -> None:
@@ -327,6 +330,7 @@ class GraphRunDriver:
         self._id_gen = id_gen or UuidIdGenerator()
         self._runtime_builder = runtime_builder or build_graph_runtime
         self._dispatcher_factory = dispatcher_factory or OutboxDispatcher
+        self._sleep = sleep
         self._on_agent_output = on_agent_output
         self._on_agent_usage = on_agent_usage
 
@@ -682,6 +686,14 @@ class GraphRunDriver:
             # recovery has nothing left to try.
             signature = _progress_signature(projection)
             if signature == previous_signature:
+                next_retry_at = await dispatcher.earliest_pending_retry_at(run_id=run_id)
+                now = clock.now()
+                if next_retry_at is not None:
+                    next_retry_at = _align_datetime_timezone(next_retry_at, now)
+                if next_retry_at is not None and next_retry_at > now:
+                    await self._sleep((next_retry_at - now).total_seconds())
+                    previous_signature = None
+                    continue
                 if await _recover_orphaned_active_leases(
                     run_id,
                     controller,
@@ -990,6 +1002,14 @@ def _active_lease_expired(lease: dict[str, Any], now: datetime) -> bool:
     if expires_at_dt.tzinfo is None:
         expires_at_dt = expires_at_dt.replace(tzinfo=UTC)
     return expires_at_dt <= now
+
+
+def _align_datetime_timezone(value: datetime, reference: datetime) -> datetime:
+    if value.tzinfo is None and reference.tzinfo is not None:
+        return value.replace(tzinfo=reference.tzinfo)
+    if value.tzinfo is not None and reference.tzinfo is None:
+        return value.replace(tzinfo=None)
+    return value
 
 
 def _progress_signature(projection: GraphProjectionSnapshot) -> tuple[Any, ...]:

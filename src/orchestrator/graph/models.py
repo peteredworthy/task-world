@@ -710,6 +710,13 @@ class VerificationReportRecord(TypedRecordBase):
         return self
 
 
+class VerificationResultProjection(GraphBaseModel):
+    node_id: str
+    record_id: str
+    candidate_id: str | None = None
+    task_region_id: str | None = None
+
+
 def _normalize_verification_outcome(value: Any) -> Literal["passed", "failed"] | None:
     if value in {"passed", "pass"}:
         return "passed"
@@ -835,6 +842,26 @@ class CheckResultRecord(TypedRecordBase):
             msg = "schema must be CheckResult"
             raise ValueError(msg)
         return self
+
+
+def _empty_check_result_record_ids() -> list[str]:
+    return []
+
+
+class CheckResultProjection(GraphBaseModel):
+    node_id: str
+    status: str
+    position: int
+    task_region_id: str | None = None
+    record_id: str | None = None
+    classification: str | None = None
+    command_text: str | None = None
+    stderr: str | None = None
+    stdout: str | None = None
+    exit_code: int | None = None
+    candidate_record_ids: list[str] = Field(default_factory=_empty_check_result_record_ids)
+    file_state_record_ids: list[str] = Field(default_factory=_empty_check_result_record_ids)
+    evaluated_record_ids: list[str] = Field(default_factory=_empty_check_result_record_ids)
 
 
 def _empty_candidate_changed_paths() -> list[str]:

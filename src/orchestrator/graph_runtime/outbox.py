@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol, TypeVar
 
-from sqlalchemy import select, update
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -44,6 +45,7 @@ class OutboxItem:
     attempts: int
     created_at: datetime
     updated_at: datetime
+    next_attempt_at: datetime | None
     last_error: str | None
 
 
@@ -112,6 +114,7 @@ async def append_outbox_rows(
                 attempts=0,
                 created_at=now,
                 updated_at=now,
+                next_attempt_at=None,
             )
         )
 
@@ -136,11 +139,19 @@ class OutboxDispatcher:
         clock: Clock,
         *,
         max_attempts: int = 3,
+        retry_base_seconds: float = 2.0,
+        retry_factor: float = 4.0,
+        retry_cap_seconds: float = 60.0,
+        retry_jitter_seconds: float = 1.0,
     ) -> None:
         self._session_factory = session_factory
         self._executor = executor
         self._clock = clock
         self._max_attempts = max_attempts
+        self._retry_base_seconds = retry_base_seconds
+        self._retry_factor = retry_factor
+        self._retry_cap_seconds = retry_cap_seconds
+        self._retry_jitter_seconds = retry_jitter_seconds
 
     async def dispatch_pending(
         self,
@@ -176,7 +187,11 @@ class OutboxDispatcher:
                     stmt = (
                         update(GraphOutboxModel)
                         .where(GraphOutboxModel.status == OUTBOX_DISPATCHING)
-                        .values(status=OUTBOX_PENDING, updated_at=self._clock.now())
+                        .values(
+                            status=OUTBOX_PENDING,
+                            updated_at=self._clock.now(),
+                            next_attempt_at=None,
+                        )
                         .returning(GraphOutboxModel.outbox_id)
                     )
                     if run_id is not None:
@@ -198,6 +213,22 @@ class OutboxDispatcher:
             result = await session.execute(stmt)
             return [_to_item(row) for row in result.scalars()]
 
+    async def earliest_pending_retry_at(self, *, run_id: str | None = None) -> datetime | None:
+        """Return the earliest deferred pending retry time after ``clock.now()``."""
+        async with self._session_factory() as session:
+            stmt = (
+                select(GraphOutboxModel.next_attempt_at)
+                .where(GraphOutboxModel.status == OUTBOX_PENDING)
+                .where(GraphOutboxModel.next_attempt_at.is_not(None))
+                .where(GraphOutboxModel.next_attempt_at > self._clock.now())
+                .order_by(GraphOutboxModel.next_attempt_at, GraphOutboxModel.outbox_id)
+                .limit(1)
+            )
+            if run_id is not None:
+                stmt = stmt.where(GraphOutboxModel.run_id == run_id)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()
+
     async def _claim_next(
         self,
         limit: int | None,
@@ -212,6 +243,12 @@ class OutboxDispatcher:
                     stmt = (
                         select(GraphOutboxModel)
                         .where(GraphOutboxModel.status == OUTBOX_PENDING)
+                        .where(
+                            or_(
+                                GraphOutboxModel.next_attempt_at.is_(None),
+                                GraphOutboxModel.next_attempt_at <= self._clock.now(),
+                            )
+                        )
                         .order_by(GraphOutboxModel.outbox_id)
                         .limit(1)
                     )
@@ -226,6 +263,7 @@ class OutboxDispatcher:
                     row.status = OUTBOX_DISPATCHING
                     row.attempts += 1
                     row.updated_at = self._clock.now()
+                    row.next_attempt_at = None
                     row.last_error = None
                     await session.flush()
                     return _to_item(row)
@@ -276,6 +314,7 @@ class OutboxDispatcher:
                         return _to_item(row)
                     row.status = OUTBOX_COMPLETED
                     row.updated_at = self._clock.now()
+                    row.next_attempt_at = None
                     row.last_error = None
                     await session.flush()
                     return _to_item(row)
@@ -289,13 +328,25 @@ class OutboxDispatcher:
                     row = await session.get(GraphOutboxModel, item.outbox_id)
                     if row is None or row.status == OUTBOX_COMPLETED:
                         return
-                    row.status = (
-                        OUTBOX_FAILED if row.attempts >= self._max_attempts else OUTBOX_PENDING
-                    )
-                    row.updated_at = self._clock.now()
+                    now = self._clock.now()
+                    exhausted = row.attempts >= self._max_attempts
+                    row.status = OUTBOX_FAILED if exhausted else OUTBOX_PENDING
+                    row.updated_at = now
+                    row.next_attempt_at = None if exhausted else now + self._retry_delay(row)
                     row.last_error = str(exc)
 
         await self._retry_locked(_op)
+
+    def _retry_delay(self, row: GraphOutboxModel) -> timedelta:
+        attempt_index = max(row.attempts - 1, 0)
+        scheduled = self._retry_base_seconds * (self._retry_factor**attempt_index)
+        jitter = _stable_jitter_seconds(
+            row.event_id,
+            row.attempts,
+            max_seconds=self._retry_jitter_seconds,
+        )
+        capped = min(scheduled + jitter, self._retry_cap_seconds)
+        return timedelta(seconds=capped)
 
 
 def _to_item(row: GraphOutboxModel) -> OutboxItem:
@@ -309,5 +360,14 @@ def _to_item(row: GraphOutboxModel) -> OutboxItem:
         attempts=row.attempts,
         created_at=row.created_at,
         updated_at=row.updated_at,
+        next_attempt_at=row.next_attempt_at,
         last_error=row.last_error,
     )
+
+
+def _stable_jitter_seconds(event_id: str, attempts: int, *, max_seconds: float) -> float:
+    if max_seconds <= 0:
+        return 0.0
+    digest = hashlib.sha256(f"{event_id}:{attempts}".encode("utf-8")).digest()
+    fraction = int.from_bytes(digest[:8], "big") / float(2**64 - 1)
+    return fraction * max_seconds

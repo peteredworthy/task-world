@@ -14,6 +14,8 @@ from orchestrator.graph import (
     initial_projection,
     project_requirement_freshness_facts,
     project_task_states,
+    projection_from_checkpoint,
+    projection_to_checkpoint,
     reduce_event,
 )
 
@@ -76,6 +78,22 @@ def _apply(
         command_type,
         payload or {"run_id": "run-1"},
         clock,
+        SequentialIdGenerator(),
+    )
+
+
+def _apply_from_checkpoint(
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: dict[str, Any] | None = None,
+) -> list[EventEnvelope]:
+    projection = projection_from_checkpoint(projection_to_checkpoint(_project(events)))
+    return apply_command(
+        projection,
+        events,
+        command_type,
+        payload or {"run_id": "run-1"},
+        FakeClock(),
         SequentialIdGenerator(),
     )
 
@@ -4576,7 +4594,7 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
 
     assert project_task_states(events) == {"region-r1-final": "pending"}
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply_from_checkpoint(events, "reconcile", {"run_id": "run-1"})
 
     assert [event.event_type for event in output] == [
         "node_created",
@@ -4665,7 +4683,7 @@ def test_reconcile_recovers_runtime_failed_check_without_check_result() -> None:
 
     assert project_task_states(events) == {"region-r1-final": "pending"}
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply_from_checkpoint(events, "reconcile", {"run_id": "run-1"})
 
     assert [event.event_type for event in output] == [
         "node_created",
@@ -5815,7 +5833,7 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
 
     assert project_task_states(events)["corrective_work_region"] == "needs_revision"
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply_from_checkpoint(events, "reconcile", {"run_id": "run-1"})
 
     assert [event.event_type for event in output[:5]] == [
         "node_created",

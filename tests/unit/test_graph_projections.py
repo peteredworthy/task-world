@@ -11,6 +11,7 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     CallbackIdempotencyEvent,
+    CheckResultProjection,
     EventEnvelope,
     FakeClock,
     FinalInvariantBlocker,
@@ -19,6 +20,7 @@ from orchestrator.graph import (
     LegacyOutputRecord,
     OutputRecord,
     SequentialIdGenerator,
+    VerificationResultProjection,
     apply_command,
     initial_projection,
     project_final_invariant_blockers,
@@ -403,6 +405,228 @@ def test_malformed_output_record_payload_is_tolerated_without_raw_projection_ent
     }
 
 
+def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "summary-1",
+                "record_kind": "output",
+                "record_type": "opaque_summary",
+                "producer_node_id": "worker-1",
+                "port": "summary",
+                "schema": "OpaqueSummary",
+                "value": {"summary": "done"},
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "legacy-malformed-1",
+                "record_kind": "output",
+                "record_type": "opaque_summary",
+                "producer_node_id": "worker-1",
+                "port": "summary",
+                "schema": "OpaqueSummary",
+                "value": "legacy-non-dict-value",
+            },
+        ),
+    ]
+
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+
+    summary_payload = restored["output_record_payloads"]["summary-1"]
+    assert isinstance(summary_payload, OutputRecord)
+    assert summary_payload.value == {"summary": "done"}
+    assert isinstance(
+        restored["output_records_by_node_port"]["worker-1"]["summary"][0],
+        OutputRecord,
+    )
+    assert isinstance(
+        restored["accepted_output_records_by_node_port"]["worker-1"]["summary"][0]["payload"],
+        OutputRecord,
+    )
+
+    legacy_payload = restored["output_record_payloads"]["legacy-malformed-1"]
+    assert isinstance(legacy_payload, LegacyOutputRecord)
+    assert legacy_payload.value == "legacy-non-dict-value"
+    assert isinstance(
+        restored["output_records_by_node_port"]["worker-1"]["summary"][1],
+        LegacyOutputRecord,
+    )
+    assert isinstance(
+        restored["accepted_output_records_by_node_port"]["worker-1"]["summary"][1]["payload"],
+        LegacyOutputRecord,
+    )
+
+
+def test_verification_result_projections_are_typed_at_fold() -> None:
+    projection = initial_projection()
+    for event in [
+        _event(
+            "verification_passed",
+            {
+                "record_id": "verification-pass-1",
+                "verifier_node_id": "verifier-1",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+            },
+        ),
+        _event(
+            "verification_failed",
+            {
+                "record_id": "verification-fail-1",
+                "node_id": "verifier-2",
+                "candidate_id": "candidate-2",
+            },
+        ),
+    ]:
+        projection = reduce_event(projection, event)
+
+    passed = projection["passed_verification_results_by_record_id"]["verification-pass-1"]
+    assert isinstance(passed, VerificationResultProjection)
+    assert passed.node_id == "verifier-1"
+    assert passed.candidate_id == "candidate-1"
+    assert passed.task_region_id == "task-1"
+
+    failed = projection["failed_verification_results_by_record_id"]["verification-fail-1"]
+    assert isinstance(failed, VerificationResultProjection)
+    assert failed.node_id == "verifier-2"
+    assert failed.candidate_id == "candidate-2"
+    assert failed.task_region_id is None
+
+
+def test_malformed_verification_result_payload_is_tolerated_without_projection_entry() -> None:
+    projection = initial_projection()
+    for event in [
+        _event("verification_passed", {"record_id": "missing-node"}),
+        _event("verification_failed", {"node_id": "missing-record"}),
+    ]:
+        projection = reduce_event(projection, event)
+
+    assert projection["passed_verification_results_by_record_id"] == {}
+    assert projection["failed_verification_results_by_record_id"] == {}
+
+
+def test_verification_result_checkpoint_round_trip_preserves_typed_payloads() -> None:
+    projection = initial_projection()
+    projection = reduce_event(
+        projection,
+        _event(
+            "verification_passed",
+            {
+                "record_id": "verification-pass-1",
+                "verifier_node_id": "verifier-1",
+                "candidate_id": "candidate-1",
+                "task_region_id": "task-1",
+            },
+        ),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+
+    passed = restored["passed_verification_results_by_record_id"]["verification-pass-1"]
+    assert isinstance(passed, VerificationResultProjection)
+    assert passed.node_id == "verifier-1"
+    assert passed.record_id == "verification-pass-1"
+    assert passed.candidate_id == "candidate-1"
+    assert passed.task_region_id == "task-1"
+
+
+def test_check_result_projection_summary_is_typed_at_fold() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-1",
+                "port": "check_result",
+                "task_region_id": "task-1",
+                "candidate_record_ids": ["candidate-1"],
+                "file_state_record_ids": ["file-state-candidate-1"],
+                "evaluated_record_ids": ["candidate-1", "file-state-candidate-1"],
+                "value": {
+                    "status": "failed",
+                    "classification": "tool_error",
+                    "command_text": "pytest",
+                    "stderr": "failed",
+                    "exit_code": 1,
+                },
+            },
+        ).model_copy(update={"position": 12}),
+    )
+
+    check_result = projection["check_results"]["check-1"]
+    assert isinstance(check_result, CheckResultProjection)
+    assert check_result.status == "failed"
+    assert check_result.position == 12
+    assert check_result.record_id == "check-result-1"
+    assert check_result.task_region_id == "task-1"
+    assert check_result.classification == "tool_error"
+    assert check_result.candidate_record_ids == ["candidate-1"]
+    assert check_result.file_state_record_ids == ["file-state-candidate-1"]
+    assert check_result.evaluated_record_ids == ["candidate-1", "file-state-candidate-1"]
+
+
+def test_malformed_check_result_payload_folds_to_typed_unknown_summary() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-legacy",
+                "record_kind": "check_result",
+                "producer_node_id": "check-legacy",
+            },
+        ),
+    )
+
+    check_result = projection["check_results"]["check-legacy"]
+    assert isinstance(check_result, CheckResultProjection)
+    assert check_result.status == "unknown"
+    assert check_result.record_id == "check-result-legacy"
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    restored_check_result = restored["check_results"]["check-legacy"]
+    assert isinstance(restored_check_result, CheckResultProjection)
+    assert restored_check_result.status == "unknown"
+    assert restored_check_result.record_id == "check-result-legacy"
+
+
+def test_check_result_checkpoint_round_trip_preserves_typed_summary() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "check-result-1",
+                "record_kind": "output",
+                "record_type": "check_result",
+                "producer_node_id": "check-1",
+                "port": "check_result",
+                "task_region_id": "task-1",
+                "value": {"status": "passed"},
+            },
+        ).model_copy(update={"position": 12}),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+
+    check_result = restored["check_results"]["check-1"]
+    assert isinstance(check_result, CheckResultProjection)
+    assert check_result.status == "passed"
+    assert check_result.position == 12
+    assert check_result.record_id == "check-result-1"
+    assert check_result.task_region_id == "task-1"
+
+
 def _accepted_output_records_as_dicts(
     records: dict[str, dict[str, list[Any]]],
 ) -> dict[str, dict[str, list[dict[str, Any]]]]:
@@ -680,7 +904,10 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
         _accepted_output_records_as_dicts(projection["accepted_output_records_by_node_port"])
         == legacy_accepted_by_port
     )
-    assert projection["failed_verification_results_by_record_id"] == legacy_failed_verifications
+    assert {
+        record_id: result.model_dump(mode="json")
+        for record_id, result in projection["failed_verification_results_by_record_id"].items()
+    } == legacy_failed_verifications
     assert projection["recovery_nodes_by_record_id"] == legacy_recovery_nodes
 
 
@@ -740,7 +967,10 @@ def test_residual_command_projection_fields_fold_incrementally() -> None:
 
     assert projection["node_creation_positions"] == {"worker-1": 3}
     assert projection["completion_decision_passed"] is True
-    assert projection["passed_verification_results_by_record_id"] == {
+    assert {
+        record_id: result.model_dump(mode="json")
+        for record_id, result in projection["passed_verification_results_by_record_id"].items()
+    } == {
         "verification-1": {
             "node_id": "verifier-1",
             "record_id": "verification-1",
@@ -1790,9 +2020,9 @@ def test_failed_check_result_blocks_projected_completion_after_task_acceptance()
     for event in events:
         projection = reduce_event(projection, event)
     check_result = projection["check_results"]["check-final-1"]
-    assert check_result["candidate_record_ids"] == ["candidate-1"]
-    assert check_result["file_state_record_ids"] == ["file-state-candidate-1"]
-    assert check_result["evaluated_record_ids"] == ["candidate-1", "file-state-candidate-1"]
+    assert check_result.candidate_record_ids == ["candidate-1"]
+    assert check_result.file_state_record_ids == ["file-state-candidate-1"]
+    assert check_result.evaluated_record_ids == ["candidate-1", "file-state-candidate-1"]
     assert project_task_states(events) == {"task-1": "pending"}
     assert project_final_invariant_blockers(events) == [
         {

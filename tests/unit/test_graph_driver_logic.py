@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 import sqlite3
 
@@ -88,6 +88,20 @@ class RecordingDispatcher:
 
     async def dispatch_pending(self, *, run_id: str | None = None) -> None:
         self.calls += 1
+
+    async def earliest_pending_retry_at(self, *, run_id: str | None = None) -> datetime | None:
+        return None
+
+
+class FutureBackoffDispatcher(RecordingDispatcher):
+    def __init__(self, retry_at: datetime) -> None:
+        super().__init__()
+        self.retry_at = retry_at
+        self.retry_reads = 0
+
+    async def earliest_pending_retry_at(self, *, run_id: str | None = None) -> datetime | None:
+        self.retry_reads += 1
+        return self.retry_at
 
 
 class RecordingExecutor:
@@ -640,6 +654,69 @@ async def test_driver_recovers_orphaned_lease_and_reschedules_node() -> None:
             "execution_id": "exec-1",
         }
     ]
+    assert outcome.completed is True
+
+
+@pytest.mark.asyncio
+async def test_driver_waits_for_future_outbox_backoff_before_declaring_blocked() -> None:
+    controller = AgentDiedRecordingController()
+    clock = FakeClock()
+    dispatcher = FutureBackoffDispatcher(clock.now() + timedelta(seconds=5))
+    executor = RecordingExecutor()
+
+    orphaned_lease_snapshot = GraphProjectionSnapshot(
+        run_state="active",
+        ready_nodes=[],
+        active_leases={
+            "lease-1": {
+                "lease_id": "lease-1",
+                "state": "active",
+                "node_id": "worker-1",
+                "execution_id": "exec-1",
+                "generation": 1,
+            }
+        },
+        schedulable_nodes=[],
+        task_states={"s/t": "in_progress"},
+        node_states={"worker-1": "leased"},
+    )
+    completed_snapshot = GraphProjectionSnapshot(
+        run_state="completed",
+        ready_nodes=[],
+        active_leases={},
+        schedulable_nodes=[],
+        task_states={"s/t": "accepted"},
+    )
+    reader = ScriptedProjectionReader(
+        [
+            orphaned_lease_snapshot,
+            orphaned_lease_snapshot,
+            orphaned_lease_snapshot,
+            orphaned_lease_snapshot,
+            completed_snapshot,
+            completed_snapshot,
+        ]
+    )
+    slept: list[float] = []
+
+    async def advance_sleep(delay: float) -> None:
+        slept.append(delay)
+        clock.advance(delay)
+
+    driver = GraphRunDriver.__new__(GraphRunDriver)
+    driver._clock = clock
+    driver._sleep = advance_sleep
+    outcome = await driver.drive_to_quiescence(
+        "run-1",
+        controller=controller,
+        dispatcher=dispatcher,
+        executor=executor,
+        read_projection=reader.read,
+    )
+
+    assert slept == [5.0]
+    assert controller.commands.count("agent_died") == 0
+    assert dispatcher.calls == 3
     assert outcome.completed is True
 
 

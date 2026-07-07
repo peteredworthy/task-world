@@ -428,6 +428,7 @@ class GraphOutboxModel(Base):
     __table_args__ = (
         UniqueConstraint("event_id", name="uq_graph_outbox_event_id"),
         Index("idx_graph_outbox_status_id", "status", "outbox_id"),
+        Index("idx_graph_outbox_status_next_attempt_id", "status", "next_attempt_at", "outbox_id"),
         Index("idx_graph_outbox_run", "run_id", "outbox_id"),
     )
 
@@ -440,6 +441,7 @@ class GraphOutboxModel(Base):
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

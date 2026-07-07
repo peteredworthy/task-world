@@ -55,7 +55,7 @@ class FixedClock:
     def now(self) -> datetime:
         return self._now
 
-    def advance(self, seconds: int) -> None:
+    def advance(self, seconds: float) -> None:
         self._now += timedelta(seconds=seconds)
 
 
@@ -278,6 +278,9 @@ def _driver(
     clock = FixedClock()
     ids = SequentialIds()
 
+    async def advance_clock(seconds: float) -> None:
+        clock.advance(seconds)
+
     def runtime_builder(
         session_factory_arg: async_sessionmaker[AsyncSession],
         clock_arg: Any,
@@ -304,6 +307,7 @@ def _driver(
         clock=clock,
         id_gen=ids,
         runtime_builder=runtime_builder,
+        sleep=advance_clock,
     )
 
 
@@ -733,6 +737,9 @@ def _shared_driver(
     colliding with the ids the caller already used to seed/force-fail the run.
     """
 
+    async def advance_clock(seconds: float) -> None:
+        clock.advance(seconds)
+
     def runtime_builder(
         session_factory_arg: async_sessionmaker[AsyncSession],
         clock_arg: Any,
@@ -759,6 +766,7 @@ def _shared_driver(
         clock=clock,
         id_gen=ids,
         runtime_builder=runtime_builder,
+        sleep=advance_clock,
     )
 
 

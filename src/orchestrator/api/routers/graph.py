@@ -7,14 +7,18 @@ from hashlib import sha256
 from typing import Any, Literal, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query
 from pydantic import Field, model_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.deps import get_graph_store, get_session_factory, get_workflow_service
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import RunStatus
+from orchestrator.db import GraphOutboxModel
 from orchestrator.graph import (
+    Actor,
+    ActorKind,
     EventEnvelope,
     RecordSelector,
     build_projection,
@@ -370,12 +374,25 @@ class FinalInvariantBlockerResponse(ApiModel):
     task_region_id: str | None = None
     state: str | None = None
     support_ids: list[str] | None = None
+    run_id: str | None = None
+    outbox_id: int | None = None
+    outbox_event_id: str | None = None
+    outbox_kind: str | None = None
+    outbox_last_error: str | None = None
+    outbox_attempts: int | None = None
 
 
 class FinalInvariantBlockersResponse(ApiModel):
     run_id: str
     event_count: int
     blockers: list[FinalInvariantBlockerResponse]
+
+
+class RequeueOutboxResponse(ApiModel):
+    run_id: str
+    event_id: str
+    status: Literal["pending"]
+    attempts: int
 
 
 class GraphRegionResponse(ApiModel):
@@ -602,6 +619,8 @@ def build_graph_patch_attempts_response(
 def build_final_invariant_blockers_response(
     run_id: str,
     events: list[EventEnvelope],
+    *,
+    failed_outbox_rows: list[GraphOutboxModel] | None = None,
 ) -> FinalInvariantBlockersResponse:
     return FinalInvariantBlockersResponse(
         run_id=run_id,
@@ -609,8 +628,46 @@ def build_final_invariant_blockers_response(
         blockers=[
             FinalInvariantBlockerResponse(**cast(dict[str, Any], blocker))
             for blocker in project_final_invariant_blockers(events)
-        ],
+        ]
+        + _failed_outbox_blocker_responses(run_id, failed_outbox_rows or []),
     )
+
+
+def _failed_outbox_blocker_responses(
+    run_id: str,
+    rows: list[GraphOutboxModel],
+) -> list[FinalInvariantBlockerResponse]:
+    return [
+        FinalInvariantBlockerResponse(
+            kind="failed_outbox_row",
+            reason=(
+                f"outbox row failed for run {run_id}: "
+                f"{row.kind}: {row.last_error or 'unknown error'}"
+            ),
+            state="failed",
+            support_ids=[row.event_id],
+            run_id=run_id,
+            outbox_id=row.outbox_id,
+            outbox_event_id=row.event_id,
+            outbox_kind=row.kind,
+            outbox_last_error=row.last_error,
+            outbox_attempts=row.attempts,
+        )
+        for row in rows
+    ]
+
+
+async def append_requeue_audit_event(
+    store: GraphEventStore,
+    *,
+    run_id: str,
+    current_position: int,
+    audit_event: EventEnvelope,
+) -> None:
+    try:
+        await store.append_events(run_id, current_position, [audit_event])
+    except StaleProjectionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def build_graph_regions_response(
@@ -1604,9 +1661,94 @@ async def submit_operator_graph_patch(
 async def get_graph_final_blockers(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
 ) -> FinalInvariantBlockersResponse:
     events = await graph_store.read_run_light(run_id)
-    return build_final_invariant_blockers_response(run_id, events)
+    async with session_factory() as session:
+        result = await session.execute(
+            select(GraphOutboxModel)
+            .where(GraphOutboxModel.run_id == run_id)
+            .where(GraphOutboxModel.status == "failed")
+            .order_by(GraphOutboxModel.outbox_id)
+        )
+        failed_outbox_rows = list(result.scalars())
+    return build_final_invariant_blockers_response(
+        run_id,
+        events,
+        failed_outbox_rows=failed_outbox_rows,
+    )
+
+
+@router.post(
+    "/{run_id}/graph/outbox/requeue/{event_id}",
+    response_model=RequeueOutboxResponse,
+)
+async def requeue_failed_outbox_row(
+    run_id: str = ApiPath(..., min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"),
+    event_id: str = ApiPath(..., min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"),
+    session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+) -> RequeueOutboxResponse:
+    clock = _ApiGraphClock()
+    async with session_factory() as session:
+        async with session.begin():
+            result = await session.execute(
+                select(GraphOutboxModel)
+                .where(GraphOutboxModel.run_id == run_id)
+                .where(GraphOutboxModel.event_id == event_id)
+            )
+            row = result.scalar_one_or_none()
+            if row is None:
+                raise HTTPException(status_code=404, detail="Outbox row not found")
+            if row.status != "failed":
+                raise HTTPException(status_code=409, detail="Outbox row is not failed")
+
+            store = GraphEventStore(session)
+            current_position = await store.current_position(run_id)
+            if current_position == 0:
+                raise HTTPException(status_code=404, detail="Graph not found for run")
+
+            now = clock.now()
+            previous_attempts = row.attempts
+            previous_last_error = row.last_error
+            audit_payload = {
+                "run_id": run_id,
+                "outbox_id": row.outbox_id,
+                "event_id": row.event_id,
+                "kind": row.kind,
+                "previous_status": row.status,
+                "previous_attempts": previous_attempts,
+                "previous_last_error": previous_last_error,
+                "operator": "human-operator",
+                "graph_position": current_position + 1,
+            }
+            row.status = "pending"
+            row.attempts = 0
+            row.next_attempt_at = None
+            row.last_error = None
+            row.updated_at = now
+            await append_requeue_audit_event(
+                store,
+                run_id=run_id,
+                current_position=current_position,
+                audit_event=EventEnvelope(
+                    event_id=f"outbox-requeued-{uuid4().hex}",
+                    run_id=run_id,
+                    position=-1,
+                    event_type="outbox_requeued",
+                    schema_version=1,
+                    actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+                    causation_id=event_id,
+                    timestamp=now,
+                    payload=audit_payload,
+                ),
+            )
+
+    return RequeueOutboxResponse(
+        run_id=run_id,
+        event_id=event_id,
+        status="pending",
+        attempts=0,
+    )
 
 
 @router.get("/{run_id}/graph/regions", response_model=GraphRegionsResponse)

@@ -1,17 +1,21 @@
 """Integration tests for graph compatibility projection endpoints."""
 
+from datetime import datetime, timezone
 from uuid import uuid4
 from typing import Any
 
+from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
+from orchestrator.api import append_requeue_audit_event
 from orchestrator.config import RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import (
     EventV2Model,
     GraphEventSummaryModel,
+    GraphOutboxModel,
     GraphProjectionSnapshotModel,
     RunModel,
 )
@@ -19,7 +23,13 @@ from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.db.access.mutations import save_run
-from orchestrator.graph_runtime import GraphController, GraphEventStore, seed_run
+from orchestrator.graph_runtime import (
+    GraphController,
+    GraphEventStore,
+    OutboxDispatcher,
+    OutboxItem,
+    seed_run,
+)
 
 
 def _routine() -> RoutineConfig:
@@ -74,6 +84,23 @@ class _RunSeedIdGenerator:
         value = f"{self._run_id}-{prefix}-{self._next}"
         self._next += 1
         return value
+
+
+class _RecordingOutboxExecutor:
+    def __init__(self) -> None:
+        self.event_ids: list[str] = []
+
+    async def dispatch(self, item: OutboxItem) -> None:
+        self.event_ids.append(item.event_id)
+
+
+class _AlwaysFailingOutboxExecutor:
+    def __init__(self) -> None:
+        self.event_ids: list[str] = []
+
+    async def dispatch(self, item: OutboxItem) -> None:
+        self.event_ids.append(item.event_id)
+        raise RuntimeError("agent dispatch exploded")
 
 
 async def _save_manual_graph_run(app: Any, run_id: str) -> None:
@@ -552,6 +579,241 @@ async def test_graph_projection_reflects_seeded_events(
 
     not_found = await client.get(f"/api/runs/{run_id}/graph/nodes/nonexistent")
     assert not_found.status_code == 404
+
+
+async def test_graph_final_blockers_surface_failed_outbox_rows(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-failed-outbox-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                GraphOutboxModel(
+                    event_id="failed-outbox-event",
+                    run_id=run_id,
+                    kind="agent_dispatch",
+                    payload={"event_id": "failed-outbox-event", "node_id": "worker-1"},
+                    status="pending",
+                    attempts=0,
+                    created_at=now,
+                    updated_at=now,
+                    next_attempt_at=None,
+                    last_error=None,
+                )
+            )
+
+    dispatcher = OutboxDispatcher(
+        session_factory,
+        _AlwaysFailingOutboxExecutor(),
+        FakeClock(),
+        retry_base_seconds=0,
+        retry_factor=1,
+        retry_jitter_seconds=0,
+    )
+    assert await dispatcher.dispatch_pending(run_id=run_id) == []
+
+    async with session_factory() as session:
+        failed_row = (
+            await session.execute(
+                select(GraphOutboxModel).where(GraphOutboxModel.event_id == "failed-outbox-event")
+            )
+        ).scalar_one()
+    assert failed_row.status == "failed"
+    assert failed_row.attempts == 3
+    assert failed_row.last_error == "agent dispatch exploded"
+
+    response = await client.get(f"/api/runs/{run_id}/graph/final-blockers")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["run_id"] == run_id
+    blocker = next(
+        item
+        for item in body["blockers"]
+        if item["kind"] == "failed_outbox_row" and item["outbox_event_id"] == "failed-outbox-event"
+    )
+    assert blocker["reason"] == (
+        f"outbox row failed for run {run_id}: agent_dispatch: agent dispatch exploded"
+    )
+    assert blocker["state"] == "failed"
+    assert blocker["support_ids"] == ["failed-outbox-event"]
+    assert blocker["run_id"] == run_id
+    assert isinstance(blocker["outbox_id"], int)
+    assert blocker["outbox_kind"] == "agent_dispatch"
+    assert blocker["outbox_last_error"] == "agent dispatch exploded"
+    assert blocker["outbox_attempts"] == 3
+
+
+async def test_operator_requeues_failed_outbox_row_with_audit_event(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-requeue-outbox-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [_event("run_lifecycle_changed", {"to_state": "active"})],
+        )
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        session.add(
+            GraphOutboxModel(
+                event_id="requeue-outbox-event",
+                run_id=run_id,
+                kind="agent_dispatch",
+                payload={"event_id": "requeue-outbox-event", "node_id": "worker-1"},
+                status="failed",
+                attempts=3,
+                created_at=now,
+                updated_at=now,
+                next_attempt_at=now,
+                last_error="agent dispatch exploded",
+            )
+        )
+        await session.commit()
+
+    response = await client.post(f"/api/runs/{run_id}/graph/outbox/requeue/requeue-outbox-event")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "run_id": run_id,
+        "event_id": "requeue-outbox-event",
+        "status": "pending",
+        "attempts": 0,
+    }
+    async with session_factory() as session:
+        row = (
+            await session.execute(
+                select(GraphOutboxModel).where(GraphOutboxModel.event_id == "requeue-outbox-event")
+            )
+        ).scalar_one()
+    assert row.status == "pending"
+    assert row.attempts == 0
+    assert row.next_attempt_at is None
+    assert row.last_error is None
+
+    events_response = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
+    assert events_response.status_code == 200
+    audit_event = next(
+        event for event in events_response.json() if event["event_type"] == "outbox_requeued"
+    )
+    assert audit_event["payload"] == {
+        "run_id": run_id,
+        "outbox_id": row.outbox_id,
+        "event_id": "requeue-outbox-event",
+        "kind": "agent_dispatch",
+        "previous_status": "failed",
+        "previous_attempts": 3,
+        "previous_last_error": "agent dispatch exploded",
+        "operator": "human-operator",
+        "graph_position": audit_event["position"],
+    }
+
+    executor = _RecordingOutboxExecutor()
+    completed = await OutboxDispatcher(session_factory, executor, FakeClock()).dispatch_pending(
+        run_id=run_id
+    )
+    assert executor.event_ids == ["requeue-outbox-event"]
+    assert [item.event_id for item in completed] == ["requeue-outbox-event"]
+    async with session_factory() as session:
+        completed_row = (
+            await session.execute(
+                select(GraphOutboxModel).where(GraphOutboxModel.event_id == "requeue-outbox-event")
+            )
+        ).scalar_one()
+    assert completed_row.status == "completed"
+    assert completed_row.attempts == 1
+
+
+async def test_operator_requeue_failed_outbox_row_rejects_invalid_requests(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-requeue-invalid-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [_event("run_lifecycle_changed", {"to_state": "active"})],
+        )
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        session.add(
+            GraphOutboxModel(
+                event_id="pending-outbox-event",
+                run_id=run_id,
+                kind="agent_dispatch",
+                payload={"event_id": "pending-outbox-event", "node_id": "worker-1"},
+                status="pending",
+                attempts=0,
+                created_at=now,
+                updated_at=now,
+            )
+        )
+        await session.commit()
+
+    missing = await client.post(f"/api/runs/{run_id}/graph/outbox/requeue/missing-event")
+    non_failed = await client.post(f"/api/runs/{run_id}/graph/outbox/requeue/pending-outbox-event")
+    invalid_run = await client.post(
+        "/api/runs/invalid%20run/graph/outbox/requeue/pending-outbox-event"
+    )
+    invalid_event = await client.post(f"/api/runs/{run_id}/graph/outbox/requeue/invalid%20event")
+
+    assert missing.status_code == 404
+    assert missing.json()["detail"] == "Outbox row not found"
+    assert non_failed.status_code == 409
+    assert non_failed.json()["detail"] == "Outbox row is not failed"
+    assert invalid_run.status_code == 422
+    assert invalid_event.status_code == 422
+
+
+async def test_requeue_audit_append_translates_stale_position_to_conflict(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    _client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-requeue-stale-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [
+                _event("run_lifecycle_changed", {"to_state": "active"}),
+                _event("node_created", {"node_id": "worker-1", "kind": "worker"}),
+            ],
+        )
+        audit_event = EventEnvelope(
+            event_id=f"outbox-requeued-{uuid4().hex}",
+            run_id=run_id,
+            position=-1,
+            event_type="outbox_requeued",
+            schema_version=1,
+            actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+            causation_id="stale-outbox-event",
+            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            payload={"event_id": "stale-outbox-event"},
+        )
+
+        try:
+            await append_requeue_audit_event(
+                GraphEventStore(session),
+                run_id=run_id,
+                current_position=1,
+                audit_event=audit_event,
+            )
+        except HTTPException as exc:
+            assert exc.status_code == 409
+            assert "stale graph projection" in str(exc.detail)
+        else:
+            raise AssertionError("expected stale graph projection conflict")
 
 
 async def test_operator_graph_patch_endpoint_accepts_human_patch(
