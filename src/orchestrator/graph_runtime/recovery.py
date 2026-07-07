@@ -61,8 +61,6 @@ async def recover(
                     record["classification"] = "awaiting_callback"
                     awaiting_callback.append(record)
 
-    if not redispatched and pending_before:
-        redispatched = []
     return RecoveryReport(
         redispatched=redispatched,
         pending_cleanups=pending_cleanups,
