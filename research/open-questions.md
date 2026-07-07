@@ -33,6 +33,7 @@ snapshots), but the single-writer pressure grows with graph size and event
 volume. Is the next step per-run DB files, a WAL-tuned single DB, or Postgres?
 **Settle by:** load test: replay the largest historical run at 2×/4× event
 volume; measure command latency and lock contention before choosing.
+[HUMAN] Pressure became a problem with the 28GB DB. keeping files out of it should give us enough headroom for now.
 
 ## OQ-5: Repair or retire claude_sdk as a graph runner?
 Graph submit is broken ("Stream closed"), telemetry is degraded, clarification
@@ -40,6 +41,7 @@ is a stub. Its unique value (in-process, OAuth reuse) may not justify the
 maintenance.
 **Settle by:** timebox one repair attempt against the current SDK version; if
 not fixed, gate it to legacy-carrier only and document.
+[HUMAN]Remove claude_sdk is was a mistake, it lacks any tool use.
 
 ## OQ-6: What is the right horizon-planning effort calibration?
 Single-task routines already get minimal graphs, but there is no measured
@@ -60,6 +62,7 @@ Dollars are accurate only after telemetry fixes; tokens are model-relative;
 wall-clock is noisy. What unit should kernel-enforced budgets use?
 **Settle by:** implement budgets as tokens+dollars both recorded, enforce on
 whichever is defined for the node; revisit after a month of data.
+[HUMAN] Rather than implement limits at this point, ensure that accounting is accurate and that we are able to collect the correct information to later create policies.
 
 ## OQ-9: Scope-reduction invariant — enforceable or aspirational?
 The loop-safety literature suggests every delegation should declare strictly
@@ -74,3 +77,4 @@ The caching argument assumes API-metered usage; subscription CLI runners may
 see latency wins but no direct dollar wins, and codex_server pricing differs.
 **Settle by:** measure cache-read fractions from the runners that report
 them (claude_cli action logs) before and after preamble stabilization.
+[HUMAN] Even if it doesn't win with Codex or Claude (the cache is 5min and so unlikely to help unless the next agent directly reuses the root) it will help with local models that it is easier to keep long caches for.
