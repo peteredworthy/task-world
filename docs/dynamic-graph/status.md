@@ -20,6 +20,24 @@ FR-01 through FR-18 are validated, and FR-19 is explicitly out of scope. The
 validated closure snapshot is archived at
 `docs/dynamic-graph/complete/dynamic-graph-proof-ledger-validated-2026-06-26.md`.
 
+## Current Implementation Status
+
+As of 2026-07-07, the implementation review follow-up has moved past the old
+"W6/W7/W8 not started" state:
+
+- W6 outbox hardening is closed for retry backoff, failed-row surfacing, operator
+  requeue, and migration coverage. Batch/parallel outbox claiming remains a separate
+  performance improvement.
+- W7 glob overlap is closed: scheduler path claims now use segment-wise wildcard
+  comparison instead of synthetic suffix probes.
+- W8 is partially closed: the recovery no-op is gone, progress detection uses event
+  positions, quiescent reconcile avoids the old extra schedule pass when it produces
+  no work, and the driver honors future outbox retry times. Remaining W8 follow-up is
+  to prune `graph/__init__.py` and document driver/runtime stopgap retirement
+  conditions.
+- `claude_sdk` remains available for non-graph runs but is permanently gated off for
+  graph execution. `codex_server` is the only supported graph runner.
+
 ## Post-Closure Product Dogfood Outcome
 
 Dogfood run `784d9e7d-05f5-4d5e-8d74-6854cbf07c7a` was created through

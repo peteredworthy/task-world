@@ -1,64 +1,68 @@
-# W8 Drive Loop Cleanup Implementation Plan
+# W8 Drive Loop Cleanup Closure Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement the remaining unchecked tasks. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Implement W8 by removing dead graph runtime code, pruning the `orchestrator.graph` public re-export surface to actual consumers, and simplifying `GraphRunDriver.drive_to_quiescence` to use event-log position advancement instead of progress signatures.
+**Goal:** Record the W8 cleanup that has landed and define the small remaining follow-up work without asking future agents to re-implement completed behavior.
 
-**Architecture:** Keep the existing graph driver poll loop and safety guards. Replace the state-signature progress guard with a head-position guard read once per iteration after the tick/dispatch/wait cycle, and issue only one `reconcile` command for quiescent active blockers before classifying the outcome. Keep Slice A and Slice B as separate commits so they can be split into separate PRs.
+**Architecture:** The current driver still uses the polling loop, but progress detection is now based on event-log position rather than projection signatures. Runtime recovery no longer contains the dead redispatch assignment, quiescent reconcile no longer performs the old extra schedule pass when it produces no new work, and the driver respects future outbox retry times before classifying a run as blocked.
 
-**Tech Stack:** Python 3.12, FastAPI backend, SQLAlchemy async sessions, Pydantic graph models, pytest/pytest-asyncio, `uv run`.
+**Tech Stack:** Python 3.12, SQLAlchemy async sessions, graph event/projection models, pytest/pytest-asyncio, `uv run`.
 
 ## Global Constraints
 
+- Use `uv run` for all Python commands.
 - Do not change lease renewal/expiry semantics.
 - Do not remove the driver's worktree-contamination guard.
-- Do not remove the driver's no-progress to `graph_blocked` pause behavior.
-- Do not attempt full event-triggered driving; keep the poll loop.
-- Slice A and Slice B must remain separable as separate commits.
-- Use `uv run` for all Python commands.
+- Do not remove the no-progress to `graph_blocked` pause behavior without a kernel-level replacement.
+- Do not attempt full event-triggered driving in this plan.
 - No mocking in tests; use real objects or the existing hand-written fakes.
 
 ---
 
-### Task 1: Slice A Dead Code and Public Export Prune
+### Completed W8 Work
+
+**Evidence in current tree:**
+- `src/orchestrator/graph_runtime/recovery.py` no longer contains `if not redispatched and pending_before: redispatched = []`.
+- `src/orchestrator/workflow/graph_driver.py` no longer uses `_progress_signature` or `previous_signature`.
+- `GraphRunDriver.drive_to_quiescence()` compares `controller.current_position(run_id)` against `previous_position`.
+- `GraphRunDriver.drive_to_quiescence()` checks `dispatcher.earliest_pending_retry_at(run_id=run_id)` before returning a blocked outcome.
+- Quiescent active graphs issue `reconcile`, re-read the projection, and continue only if reconcile creates ready/schedulable work or active leases.
+
+**Regression evidence:**
+- `tests/unit/test_graph_driver_logic.py::test_driver_uses_event_position_to_detect_stuck_ready_node`
+- `tests/unit/test_graph_driver_logic.py::test_driver_returns_reconciled_quiescent_projection_without_second_schedule_tick`
+- `tests/unit/test_graph_driver_logic.py::test_driver_continues_when_reconcile_creates_schedulable_work`
+- `tests/unit/test_graph_driver_logic.py::test_driver_waits_for_future_outbox_backoff_before_declaring_blocked`
+- `tests/integration/test_graph_dynamic_e2e.py`
+- `tests/integration/test_graph_default_carrier.py`
+
+---
+
+### Task 1: Prune the Graph Package Public Surface
 
 **Files:**
-- Modify: `src/orchestrator/graph_runtime/recovery.py`
 - Modify: `src/orchestrator/graph/__init__.py`
 - Test: import collection via `uv run pytest tests --collect-only -q`
 
 **Interfaces:**
-- Consumes: current `RecoveryReport`, `recover()`, and all existing imports from `orchestrator.graph`.
-- Produces: unchanged public names for every current `from orchestrator.graph import ...` consumer; no `ImportError` on test collection.
+- Consumes: every current `from orchestrator.graph import ...` consumer.
+- Produces: unchanged imports for existing consumers and a smaller public package namespace.
 
-- [ ] **Step 1: Verify the recovery no-op is inert**
+- [ ] **Step 1: Build the exact consumer list**
 
-Read `src/orchestrator/graph_runtime/recovery.py` and confirm this block has no effect because it assigns `[]` to an already falsey `redispatched` only when `not redispatched` is true:
-
-```python
-if not redispatched and pending_before:
-    redispatched = []
-```
-
-- [ ] **Step 2: Delete the no-op**
-
-Remove only that `if` block. Do not change `RecoveryReport` fields or pending cleanup behavior.
-
-- [ ] **Step 3: Build the exact public export list**
-
-Run this consumer scan:
+Run:
 
 ```bash
 rg -n "from orchestrator\.graph import|from \.\.graph import|orchestrator\.graph\." src tests
 ```
 
-For every `from orchestrator.graph import (...)` statement, include each imported symbol in `src/orchestrator/graph/__init__.py`. Keep module-level names imported as `from orchestrator.graph import projections` if collection requires them. Do not keep names that are only used by `src/orchestrator/graph/__init__.py` itself.
+Expected: a list of all package-level graph imports.
 
-- [ ] **Step 4: Prune `src/orchestrator/graph/__init__.py`**
+- [ ] **Step 2: Edit exports conservatively**
 
-Remove unused imports and `__all__` entries from the top-level graph package. Prefer keeping the same grouping by source module. Do not change direct submodule imports such as `from orchestrator.graph.models import PatchEnvelope`.
+Keep every symbol imported from `orchestrator.graph` by `src/` or `tests/`. Remove symbols that are only imported by `src/orchestrator/graph/__init__.py` itself and are not part of an observed package-level consumer.
 
-- [ ] **Step 5: Verify Slice A**
+- [ ] **Step 3: Verify collection**
 
 Run:
 
@@ -68,82 +72,48 @@ uv run pytest tests --collect-only -q
 
 Expected: collection succeeds with no `ImportError`.
 
-Also run:
+- [ ] **Step 4: Verify graph package consumers**
+
+Run:
 
 ```bash
-uv run pytest tests/unit/test_graph_driver_logic.py -q
+uv run pytest tests/unit/test_graph_*.py tests/integration/test_graph_*.py -q
 ```
 
-Expected: passes.
+Expected: graph tests pass.
 
-- [ ] **Step 6: Commit Slice A**
+---
 
-```bash
-git add src/orchestrator/graph_runtime/recovery.py src/orchestrator/graph/__init__.py
-git commit -m "refactor: prune graph exports for W8"
-```
-
-### Task 2: Slice B Position-Based Driver Progress
+### Task 2: Add a Driver/Runtime Stopgap Ledger
 
 **Files:**
-- Modify: `tests/unit/test_graph_driver_logic.py`
-- Modify: `src/orchestrator/workflow/graph_driver.py`
+- Create: `docs/dynamic-graph/driver-runtime-stopgaps.md`
+- Modify: `docs/dynamic-graph/dynamic-graph-implementation-review.html`
 
 **Interfaces:**
-- Consumes: `GraphRunDriver.drive_to_quiescence()`, `GraphLoopController.current_position()`, `GraphLoopDispatcher.earliest_pending_retry_at()`, `_recover_orphaned_active_leases()`, `_renew_running_expired_leases()`.
-- Produces: no `_progress_signature()` helper, position-based no-progress detection, and no extra projection re-read after quiescent `reconcile`.
+- Consumes: current driver/runtime guard behavior in `src/orchestrator/workflow/graph_driver.py`, `src/orchestrator/graph_runtime/dispatch.py`, and `src/orchestrator/graph_runtime/recovery.py`.
+- Produces: a short ledger of edge-layer guards, their reason for existence, and the condition under which they can be retired.
 
-- [ ] **Step 1: Write a failing position-progress test**
+- [ ] **Step 1: Inventory current edge guards**
 
-Add a unit test to `tests/unit/test_graph_driver_logic.py` proving an idle graph is detected by unchanged event position, even if projection content is identical across reads. Use an existing fake controller/dispatcher/executor pattern. Add a controller that returns stable head positions after the first tick, and assert:
+Read the driver/runtime files and list guards such as worktree-contamination checks, orphaned active lease recovery, submit-rejection detection, future outbox retry waiting, and graph lifecycle bridge pause/fail classification.
 
-```python
-assert controller.commands == ["schedule_tick", "schedule_tick"]
-assert outcome.completed is False
-assert outcome.blocked_reason == "graph has ready node(s) not dispatched: planner-gap"
+- [ ] **Step 2: Write the ledger**
+
+Create `docs/dynamic-graph/driver-runtime-stopgaps.md` with columns:
+
+```markdown
+| Guard | Layer | Why it exists | Retirement condition | Current owner |
+| --- | --- | --- | --- | --- |
 ```
 
-The test must fail before production changes because the current implementation relies on `_progress_signature`.
+Every row must have a concrete retirement condition. Use "none yet" only when the guard is intentionally permanent.
 
-- [ ] **Step 2: Run the new test red**
+- [ ] **Step 3: Link the ledger from the review**
 
-Run:
+Add the ledger path to the W8 remaining-work note in `dynamic-graph-implementation-review.html`.
 
-```bash
-uv run pytest tests/unit/test_graph_driver_logic.py::<new_test_name> -q
-```
-
-Expected: FAIL for the expected old behavior, not syntax/import errors.
-
-- [ ] **Step 3: Replace signature progress with position progress**
-
-In `src/orchestrator/workflow/graph_driver.py`, remove `previous_signature` and `_progress_signature()`. Track the previous event-log head instead:
-
-```python
-previous_position: int | None = None
-```
-
-At the end of each iteration, after the projection has been read and renewal/quiescence checks have run, call:
-
-```python
-position = await controller.current_position(run_id)
-```
-
-Treat `position == previous_position` as no progress and run the existing outbox-backoff/orphan-recovery/blocked classification branch. Reset `previous_position = None` before `continue` when renewal, backoff sleep, or orphan recovery means the next loop should not compare against stale state. Otherwise assign `previous_position = position`.
-
-- [ ] **Step 4: Collapse redundant quiescent projection re-read**
-
-When the graph is quiescent with `_should_complete_graph(projection)`, keep reading once after `complete` so the returned outcome sees completed state. When the graph is quiescent and active but blocked, issue `reconcile` once and return `classify_graph_outcome(run_id, projection)` without re-reading solely to compare progress. This removes the recovery re-tick behavior while preserving the source-of-truth kernel reconcile command.
-
-- [ ] **Step 5: Verify Slice B focused tests**
-
-Run:
-
-```bash
-uv run pytest tests/unit/test_graph_driver_logic.py -q
-```
-
-Expected: passes.
+- [ ] **Step 4: Verify docs and focused tests**
 
 Run:
 
@@ -153,23 +123,30 @@ uv run pytest tests/unit/test_graph_driver_logic.py tests/integration/test_graph
 
 Expected: passes.
 
-- [ ] **Step 6: Commit Slice B**
+---
 
-```bash
-git add tests/unit/test_graph_driver_logic.py src/orchestrator/workflow/graph_driver.py
-git commit -m "refactor: use graph positions for driver progress"
-```
-
-### Task 3: Final W8 Verification
+### Task 3: Final W8 Follow-Up Verification
 
 **Files:**
-- No planned source changes.
+- No planned source changes beyond Tasks 1 and 2.
 
 **Interfaces:**
-- Consumes: commits from Task 1 and Task 2.
-- Produces: final verification evidence for W8 acceptance.
+- Consumes: completed export prune and stopgap ledger.
+- Produces: current W8 follow-up evidence.
 
-- [ ] **Step 1: Run W8 acceptance**
+- [ ] **Step 1: Confirm old signature code stays deleted**
+
+Run:
+
+```bash
+rg "_progress_signature|previous_signature|not redispatched and pending_before" src/orchestrator/workflow/graph_driver.py src/orchestrator/graph_runtime/recovery.py
+```
+
+Expected: no matches.
+
+- [ ] **Step 2: Run acceptance**
+
+Run:
 
 ```bash
 uv run pytest tests/unit/test_graph_driver_logic.py \
@@ -179,29 +156,12 @@ uv run pytest tests/unit/test_graph_driver_logic.py \
 
 Expected: passes.
 
-- [ ] **Step 2: Run graph suite**
+- [ ] **Step 3: Run collection**
 
-```bash
-uv run pytest tests -k graph -q
-```
-
-Expected: passes.
-
-- [ ] **Step 3: Run collection check**
+Run:
 
 ```bash
 uv run pytest tests --collect-only -q
 ```
 
 Expected: passes with no `ImportError`.
-
-- [ ] **Step 4: Check line-count outcome**
-
-Compare `drive_to_quiescence` before and after the branch and confirm `_progress_signature` is gone:
-
-```bash
-rg "_progress_signature|previous_signature" src/orchestrator/workflow/graph_driver.py
-```
-
-Expected: no matches.
-

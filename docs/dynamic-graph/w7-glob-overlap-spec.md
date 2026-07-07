@@ -3,6 +3,23 @@
 Addresses weakness **W7** (medium) and improvement **#8** in
 `dynamic-graph-implementation-review.html` (re-assessed 2026-07-03).
 
+## Status — closed 2026-07-07
+
+The W7 scope has landed in commits `018483a3b` and `cea6282c9`.
+
+Closed:
+- The synthetic suffix probe heuristic is gone.
+- The scheduler uses a segment-wise comparator (`_segments_may_overlap`) for literal, glob, and recursive `**` path claims.
+- Repo-relative normalization and `../` escape rejection are unchanged.
+- Undecidable wildcard-vs-wildcard cases remain conservative.
+
+Evidence:
+- `tests/unit/test_scheduler.py::test_glob_path_overlap_detects_deep_literal_prefix_under_glob`
+- `tests/unit/test_scheduler.py::test_glob_path_overlap_detects_literal_prefix_under_recursive_glob`
+- `tests/unit/test_scheduler.py::test_glob_path_overlap_distinguishes_disjoint_roots`
+- `tests/integration/test_graph_fr10_acceptance.py`
+- `tests/integration/test_graph_fr11_acceptance.py`
+
 ## Problem
 
 Claim-path overlap in `src/orchestrator/graph/scheduler.py`:

@@ -3,6 +3,28 @@
 Addresses weakness **W6** (medium) and improvement **#7** in
 `dynamic-graph-implementation-review.html` (re-assessed 2026-07-03).
 
+## Status — closed 2026-07-07
+
+The W6 scope has landed in commit `23746c228`.
+
+Closed:
+- `graph_outbox.next_attempt_at` exists with migration coverage.
+- Failed attempts use exponential backoff plus stable jitter.
+- Pending rows with future `next_attempt_at` are not claimed.
+- Failed outbox rows are visible through graph final blockers.
+- Operators can requeue a failed row through the graph API with an audit event.
+- The graph driver waits for future outbox retry times before declaring a run blocked.
+
+Out of scope and still open as a separate performance improvement:
+- Batch or parallel outbox claiming/dispatch. The dispatcher still claims one row at a time.
+
+Evidence:
+- `tests/integration/test_graph_outbox_crash_points.py`
+- `tests/integration/test_graph_api.py::test_graph_final_blockers_surface_failed_outbox_rows`
+- `tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event`
+- `tests/integration/test_migrations.py::test_init_db_adds_graph_outbox_backoff_schema`
+- `tests/unit/test_graph_driver_logic.py::test_driver_waits_for_future_outbox_backoff_before_declaring_blocked`
+
 ## Problem
 
 `graph_runtime/outbox.py` (~250 lines — read it whole first):
