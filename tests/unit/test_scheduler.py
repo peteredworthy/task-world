@@ -583,18 +583,34 @@ def test_claims_read_read_compatible() -> None:
 _SEGMENT = st.sampled_from(["a", "b", "gen", "x.py", "x.md"])
 _GLOB_SEGMENT = st.sampled_from(["*", "?", "*.py", "*.md", "g?n", "[ab]"])
 _PATH_SEGMENTS = st.lists(_SEGMENT, min_size=1, max_size=4)
-_PATTERN_SEGMENTS = st.lists(st.one_of(_SEGMENT, _GLOB_SEGMENT), min_size=1, max_size=4)
+_PATTERN_SEGMENTS = st.lists(
+    st.one_of(_SEGMENT, _GLOB_SEGMENT, st.just("**")),
+    min_size=1,
+    max_size=4,
+)
 
 
 def _segmentwise_matches(path: str, pattern: str) -> bool:
-    path_segments = path.split("/")
-    pattern_segments = pattern.split("/")
-    if len(path_segments) != len(pattern_segments):
+    return _segmentwise_matches_segments(path.split("/"), pattern.split("/"))
+
+
+def _segmentwise_matches_segments(path_segments: list[str], pattern_segments: list[str]) -> bool:
+    if not pattern_segments:
+        return not path_segments
+    if not path_segments and pattern_segments[0] != "**":
         return False
-    return all(
-        fnmatch.fnmatchcase(path_segment, pattern_segment)
-        for path_segment, pattern_segment in zip(path_segments, pattern_segments, strict=True)
-    )
+
+    pattern_head, *pattern_tail = pattern_segments
+    if pattern_head == "**":
+        return _segmentwise_matches_segments(path_segments, pattern_tail) or (
+            bool(path_segments)
+            and _segmentwise_matches_segments(path_segments[1:], pattern_segments)
+        )
+
+    path_head, *path_tail = path_segments
+    if not fnmatch.fnmatchcase(path_head, pattern_head):
+        return False
+    return _segmentwise_matches_segments(path_tail, pattern_tail)
 
 
 @st.composite
