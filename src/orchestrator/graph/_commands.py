@@ -50,6 +50,7 @@ from orchestrator.graph.models import (
     OutputRecord,
     PatchEnvelope,
     PatchOp,
+    PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
     VerificationResultProjection,
     VerificationReportRecord,
@@ -2411,16 +2412,19 @@ def _apply_schedule_tick(
             )
         )
         if planner_session_id is not None:
+            session_payload = PlannerSessionStateChangedPayload.model_validate(
+                {
+                    "session_id": planner_session_id,
+                    "state": "attached",
+                    "node_id": node_id,
+                    "lease_generation": lease_generation,
+                    "carryover_record_id": _session_carryover_record_id(projection, node_id),
+                }
+            )
             output.append(
                 make_event(
                     "session_state_changed",
-                    {
-                        "session_id": planner_session_id,
-                        "state": "attached",
-                        "node_id": node_id,
-                        "lease_generation": lease_generation,
-                        "carryover_record_id": _session_carryover_record_id(projection, node_id),
-                    },
+                    session_payload.model_dump(mode="json", exclude_none=False),
                 )
             )
         output.append(
@@ -3697,15 +3701,18 @@ def _planner_session_state_event(
     session_id = projection["planner_sessions"].get(node_id)
     if not isinstance(session_id, str):
         return None
-    return make_event(
-        "session_state_changed",
+    payload = PlannerSessionStateChangedPayload.model_validate(
         {
             "session_id": session_id,
             "state": state,
             "node_id": node_id,
             "lease_generation": lease_generation,
             "carryover_record_id": _session_carryover_record_id(projection, node_id),
-        },
+        }
+    )
+    return make_event(
+        "session_state_changed",
+        payload.model_dump(mode="json", exclude_none=False),
     )
 
 

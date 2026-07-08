@@ -83,10 +83,6 @@ GREEN:
   - Result: passed, 837 tests.
 - `uv run ruff check .`
   - Result: passed.
-- `uv run pytest tests/ -k graph -q`
-  - Result: passed, 837 tests.
-- `uv run ruff check .`
-  - Result: passed.
 
 ## Lease Event Payload Slice
 
@@ -134,4 +130,55 @@ GREEN:
 - `uv run ruff check src/orchestrator/graph tests/unit`
   - Result: passed.
 - `uv run pyright src/orchestrator/graph tests/unit`
+  - Result: passed, 0 errors.
+- `uv run pytest tests/ -k graph -q`
+  - Result: passed, 837 tests.
+- `uv run ruff check .`
+  - Result: passed.
+
+## Planner / Session Event Payload Slice
+
+Status: complete in working tree, pending commit.
+
+Scope:
+- Added a typed event payload model for `session_state_changed` in
+  `src/orchestrator/graph/models.py`.
+- Routed current `session_state_changed` producers through typed payload
+  validation and JSON dumping, retaining explicit `carryover_record_id: null`
+  so stale carryovers are cleared.
+- Routed projection reducer consumption through the typed payload model instead
+  of raw `event.payload.get(...)` access.
+- Added `carryover_record_id` to the graph projection payload field allowlist so
+  checkpoint/compact replay preserves reducer-read planner session carryovers.
+
+Legacy normalization:
+- Unknown top-level session payload keys are moved under `extra`.
+- Legacy non-string `session_id`, `state`, `node_id`, and
+  `carryover_record_id` values are moved under `extra`.
+- Legacy non-integer `lease_generation` values are moved under `extra`.
+- Explicit historical `carryover_record_id: null` continues to clear/set the
+  carryover slot to `None`.
+
+Dropped write-only keys:
+- None. Legacy free-form top-level keys are preserved under `extra`.
+- `lease_generation` remains a typed audit/detail field; it is not consumed into
+  the planner session projection.
+
+RED:
+- `uv run pytest tests/unit/test_planner_session_event_payloads.py -q`
+  - Result: failed during collection with
+    `ImportError: cannot import name 'PlannerSessionStateChangedPayload' from 'orchestrator.graph'`.
+
+GREEN:
+- `uv run pytest tests/unit/test_planner_session_event_payloads.py -q`
+  - Result: passed, 5 tests.
+- `uv run pytest tests/unit/test_fixture_corpus.py::test_fixture_corpus_replay_matches_checkpoint_and_compact_projection -q`
+  - Result: passed, 1 test.
+- `uv run pytest tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_planner_session_event_payloads.py tests/unit/test_lease_event_payloads.py -q`
+  - Result: passed, 147 tests.
+- `uv run pytest tests/ -k graph -q`
+  - Result: passed, 837 tests.
+- `uv run ruff check .`
+  - Result: passed.
+- `uv run pyright src/orchestrator/graph tests/unit/test_planner_session_event_payloads.py`
   - Result: passed, 0 errors.

@@ -65,6 +65,7 @@ from orchestrator.graph.models import (
     OutputRecord,
     OutputRecordPayload,
     PendingGateDecisionProjection,
+    PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
     RequirementRecord,
     RequirementRevisionProjection,
@@ -108,6 +109,7 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "approved",
     "base_snapshot_id",
     "candidate_id",
+    "carryover_record_id",
     "classification",
     "command_binding",
     "decision",
@@ -1440,6 +1442,15 @@ def _cleanup_applied_payload_from_event(event: EventEnvelope) -> CleanupAppliedP
         return None
 
 
+def _planner_session_state_changed_payload_from_event(
+    event: EventEnvelope,
+) -> PlannerSessionStateChangedPayload | None:
+    try:
+        return PlannerSessionStateChangedPayload.model_validate(event.payload)
+    except ValueError:
+        return None
+
+
 def _cleanup_requested_from_event(event: EventEnvelope) -> CleanupRequestedProjection | None:
     payload = _cleanup_requested_payload_from_event(event)
     if payload is None:
@@ -2004,19 +2015,21 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             if lease is not None:
                 next_state["leases"][lease_id] = lease
     elif event.event_type == "session_state_changed":
-        session_id = event.payload.get("session_id")
-        session_state = event.payload.get("state")
-        if isinstance(session_id, str) and isinstance(session_state, str):
+        payload = _planner_session_state_changed_payload_from_event(event)
+        if payload is not None and payload.session_id is not None and payload.state is not None:
+            session_id = payload.session_id
+            session_state = payload.state
             next_state["planner_session_states"][session_id] = session_state
-            node_id = event.payload.get("node_id")
-            if session_state == "attached" and isinstance(node_id, str):
-                next_state["planner_session_current_nodes"][session_id] = node_id
+            if session_state == "attached" and payload.node_id is not None:
+                next_state["planner_session_current_nodes"][session_id] = payload.node_id
             elif session_state in {"suspended", "detached", "dead"}:
                 next_state["planner_session_current_nodes"].pop(session_id, None)
-            carryover_record_id = event.payload.get("carryover_record_id")
-            if isinstance(carryover_record_id, str):
-                next_state["planner_session_carryovers"][session_id] = carryover_record_id
-            elif carryover_record_id is None and "carryover_record_id" in event.payload:
+            if payload.carryover_record_id is not None:
+                next_state["planner_session_carryovers"][session_id] = payload.carryover_record_id
+            elif (
+                "carryover_record_id" in event.payload
+                and "carryover_record_id" not in payload.extra
+            ):
                 next_state["planner_session_carryovers"][session_id] = None
     elif event.event_type in {
         "lease_suspended",

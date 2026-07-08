@@ -96,7 +96,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "not read by _derive_task_states/_task_file_state_accepted/_downstream_node_ids",
     "bound_at_position": "input_bindings structural position metadata for topology/scheduler; "
     "not read by task_states",
-    "carryover_record_id": "planner_session_carryovers bookkeeping",
     "change_classification": "requirement_revisions bookkeeping",
     "command_text": "environment_failures/check_results informational field; only "
     "classification/status/key-existence matter to task_states",

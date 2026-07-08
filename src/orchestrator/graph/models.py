@@ -1152,10 +1152,14 @@ def _empty_cleanup_paths() -> list[str]:
     return []
 
 
-class CleanupEventPayloadBase(BaseModel):
+def _empty_event_payload_extra() -> dict[str, Any]:
+    return {}
+
+
+class GraphEventPayloadBase(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
-    extra: dict[str, Any] = Field(default_factory=_empty_cleanup_extra)
+    extra: dict[str, Any] = Field(default_factory=_empty_event_payload_extra)
 
     def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         kwargs.setdefault("exclude_none", True)
@@ -1163,6 +1167,10 @@ class CleanupEventPayloadBase(BaseModel):
         if not data.get("extra"):
             data.pop("extra", None)
         return data
+
+
+class CleanupEventPayloadBase(GraphEventPayloadBase):
+    pass
 
 
 def _normalize_cleanup_event_payload(value: Any, known_keys: set[str]) -> Any:
@@ -1190,6 +1198,55 @@ def _normalize_cleanup_event_payload(value: Any, known_keys: set[str]) -> Any:
 
     payload["extra"] = extra
     return payload
+
+
+def _normalize_planner_session_state_changed_payload(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+
+    payload = dict(cast(dict[str, Any], value))
+    normalized_extra = payload.get("extra")
+    extra = (
+        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
+    )
+    known_keys = {
+        "session_id",
+        "state",
+        "node_id",
+        "lease_generation",
+        "carryover_record_id",
+        "extra",
+    }
+    string_keys = {"session_id", "state", "node_id", "carryover_record_id"}
+
+    for key in string_keys:
+        field_value = payload.get(key)
+        if field_value is not None and not isinstance(field_value, str):
+            extra.setdefault(key, payload.pop(key))
+
+    lease_generation = payload.get("lease_generation")
+    if lease_generation is not None and type(lease_generation) is not int:
+        extra.setdefault("lease_generation", payload.pop("lease_generation"))
+
+    for key in list(payload):
+        if key not in known_keys:
+            extra.setdefault(key, payload.pop(key))
+
+    payload["extra"] = extra
+    return payload
+
+
+class PlannerSessionStateChangedPayload(GraphEventPayloadBase):
+    session_id: str | None = None
+    state: str | None = None
+    node_id: str | None = None
+    lease_generation: int | None = None
+    carryover_record_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_planner_session_state_changed_payload(value)
 
 
 class CleanupRequestedPayload(CleanupEventPayloadBase):
