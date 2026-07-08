@@ -50,7 +50,13 @@ from orchestrator.graph.models import (
     InvalidTestBlockProjection,
     InputBindingProjection,
     LegacyOutputRecord,
+    LeaseExpiredPayload,
+    LeaseGrantedPayload,
     LeaseProjection,
+    LeaseReleasedPayload,
+    LeaseRenewedPayload,
+    LeaseRevokedPayload,
+    LeaseSuspendedPayload,
     JoinResultRecord,
     NodeCreationProjection,
     NodeKind,
@@ -1336,6 +1342,51 @@ def _lease_from_payload(payload: dict[str, Any]) -> LeaseProjection | None:
         return None
 
 
+def _lease_granted_from_payload(payload: dict[str, Any]) -> LeaseGrantedPayload | None:
+    try:
+        return LeaseGrantedPayload.model_validate(payload)
+    except ValueError:
+        return None
+
+
+def _lease_renewed_from_payload(payload: dict[str, Any]) -> LeaseRenewedPayload | None:
+    try:
+        return LeaseRenewedPayload.model_validate(payload)
+    except ValueError:
+        return None
+
+
+def _lease_terminal_from_event(
+    event_type: str,
+    payload: dict[str, Any],
+) -> (
+    LeaseReleasedPayload | LeaseRevokedPayload | LeaseExpiredPayload | LeaseSuspendedPayload | None
+):
+    model: (
+        type[LeaseReleasedPayload]
+        | type[LeaseRevokedPayload]
+        | type[LeaseExpiredPayload]
+        | type[LeaseSuspendedPayload]
+        | None
+    )
+    if event_type == "lease_released":
+        model = LeaseReleasedPayload
+    elif event_type == "lease_revoked":
+        model = LeaseRevokedPayload
+    elif event_type == "lease_expired":
+        model = LeaseExpiredPayload
+    elif event_type == "lease_suspended":
+        model = LeaseSuspendedPayload
+    else:
+        model = None
+    if model is None:
+        return None
+    try:
+        return model.model_validate(payload)
+    except ValueError:
+        return None
+
+
 def _edge_from_payload(payload: dict[str, Any]) -> EdgeProjection | None:
     try:
         return EdgeProjection.model_validate(payload)
@@ -1917,41 +1968,34 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
     elif event.event_type == "input_bound":
         _record_input_binding(next_state, event)
     elif event.event_type == "lease_granted":
-        lease_id = event.payload.get("lease_id")
-        node_id = event.payload.get("node_id")
-        generation = event.payload.get("generation")
-        if isinstance(lease_id, str) and isinstance(node_id, str):
+        granted_payload = _lease_granted_from_payload(event.payload)
+        if granted_payload is not None:
+            lease_id = granted_payload.lease_id
+            node_id = granted_payload.node_id
             lease_payload: dict[str, Any] = {
                 "lease_id": lease_id,
                 "node_id": node_id,
                 "state": "active",
             }
-            if isinstance(generation, int):
-                lease_payload["generation"] = generation
-            session_id = event.payload.get("session_id")
-            if isinstance(session_id, str):
+            for key in ("generation", "expires_at", "execution_id", "base_snapshot_id"):
+                value = getattr(granted_payload, key)
+                if value is not None:
+                    lease_payload[key] = value
+            session_id = granted_payload.session_id
+            if session_id is not None:
                 lease_payload["session_id"] = session_id
                 next_state["planner_sessions"][node_id] = session_id
-            expires_at = event.payload.get("expires_at")
-            if isinstance(expires_at, str):
-                lease_payload["expires_at"] = expires_at
-            execution_id = event.payload.get("execution_id")
-            if isinstance(execution_id, str):
-                lease_payload["execution_id"] = execution_id
-            base_snapshot_id = event.payload.get("base_snapshot_id")
-            if isinstance(base_snapshot_id, str):
-                lease_payload["base_snapshot_id"] = base_snapshot_id
-            task_region_id = _task_region_id(event.payload) or next_state["node_task_regions"].get(
-                node_id
-            )
+            task_region_id = _task_region_id(granted_payload.extra) or next_state[
+                "node_task_regions"
+            ].get(node_id)
             if task_region_id is not None:
                 lease_payload["task_region_id"] = task_region_id
-            kind = event.payload.get("kind")
+            kind = granted_payload.extra.get("kind")
             if isinstance(kind, str):
                 lease_payload["kind"] = kind
             elif node_id in next_state["node_kinds"]:
                 lease_payload["kind"] = next_state["node_kinds"][node_id]
-            resource_claims = _resource_claims(event.payload)
+            resource_claims = granted_payload.resource_claims
             if not resource_claims:
                 resource_claims = next_state["node_resource_claims"].get(node_id, [])
             if resource_claims:
@@ -1980,20 +2024,24 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "lease_expired",
         "lease_released",
     }:
-        lease_id = event.payload.get("lease_id")
-        if isinstance(lease_id, str):
-            lease_payload = _lease_payload(next_state["leases"].get(lease_id), lease_id)
+        terminal_payload = _lease_terminal_from_event(event.event_type, event.payload)
+        if terminal_payload is not None:
+            lease_payload = _lease_payload(
+                next_state["leases"].get(terminal_payload.lease_id),
+                terminal_payload.lease_id,
+            )
             lease_payload["state"] = event.event_type.removeprefix("lease_")
             lease = _lease_from_payload(lease_payload)
             if lease is not None:
-                next_state["leases"][lease_id] = lease
+                next_state["leases"][terminal_payload.lease_id] = lease
     elif event.event_type == "lease_renewed":
-        lease_id = event.payload.get("lease_id")
-        if isinstance(lease_id, str):
+        renewed_payload = _lease_renewed_from_payload(event.payload)
+        if renewed_payload is not None:
+            lease_id = renewed_payload.lease_id
             lease_payload = _lease_payload(next_state["leases"].get(lease_id), lease_id)
             lease_payload["state"] = "active"
             for key in ("node_id", "generation", "execution_id", "expires_at"):
-                value = event.payload.get(key)
+                value = getattr(renewed_payload, key)
                 if value is not None:
                     lease_payload[key] = value
             lease = _lease_from_payload(lease_payload)

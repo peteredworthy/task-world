@@ -83,3 +83,55 @@ GREEN:
   - Result: passed, 837 tests.
 - `uv run ruff check .`
   - Result: passed.
+- `uv run pytest tests/ -k graph -q`
+  - Result: passed, 837 tests.
+- `uv run ruff check .`
+  - Result: passed.
+
+## Lease Event Payload Slice
+
+Status: complete in working tree, pending commit.
+
+Scope:
+- Added typed event payload models for `lease_granted`, `lease_renewed`,
+  `lease_released`, `lease_revoked`, `lease_expired`, and replay-only
+  `lease_suspended` in `src/orchestrator/graph/models.py`.
+- Routed current lease producers in `src/orchestrator/graph/_commands.py`
+  through typed payload validation/dump for grant, renewal, release, revoke,
+  and expiry events. `lease_suspended` remains replay-only.
+- Routed lease projection reducer consumption in
+  `src/orchestrator/graph/projections.py` through typed payload models before
+  reading lease fields.
+
+Legacy normalization:
+- Unknown top-level lease payload keys are moved under `extra`.
+- Legacy top-level `lease_granted.task_region_id` and `lease_granted.kind`
+  are moved under `extra` and still consumed for replay compatibility before
+  falling back to node projection state.
+- `resource_claims` keeps using the existing typed
+  `ResourceClaimProjection` shape; legacy scalar `path` is normalized to
+  `paths`, and non-dict claim entries are dropped.
+- Partial legacy lease events remain tolerant: reducer parsing still accepts
+  old events that only carry `lease_id` and the minimum historical fields.
+
+Dropped write-only keys:
+- None. Legacy free-form top-level keys are preserved under `extra`.
+- `observed_at` remains a typed audit field on `lease_renewed`; it is not
+  consumed into the lease projection.
+
+RED:
+- `uv run pytest tests/unit/test_lease_event_payloads.py -q`
+  - Result: failed during collection with
+    `ImportError: cannot import name 'LeaseExpiredPayload' from 'orchestrator.graph'`.
+
+GREEN:
+- `uv run pytest tests/unit/test_lease_event_payloads.py -q`
+  - Result: passed, 4 tests.
+- `uv run pytest tests/unit/test_fixture_corpus.py::test_fixture_corpus_replay_matches_checkpoint_and_compact_projection -q`
+  - Result: passed, 1 test.
+- `uv run pytest tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_lease_event_payloads.py -q`
+  - Result: passed, 142 tests.
+- `uv run ruff check src/orchestrator/graph tests/unit`
+  - Result: passed.
+- `uv run pyright src/orchestrator/graph tests/unit`
+  - Result: passed, 0 errors.

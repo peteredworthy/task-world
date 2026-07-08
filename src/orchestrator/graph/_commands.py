@@ -42,6 +42,11 @@ from orchestrator.graph.models import (
     FileStateRecord,
     JoinResultRecord,
     GraphPatchProposalRecord,
+    LeaseExpiredPayload,
+    LeaseGrantedPayload,
+    LeaseReleasedPayload,
+    LeaseRenewedPayload,
+    LeaseRevokedPayload,
     OutputRecord,
     PatchEnvelope,
     PatchOp,
@@ -101,6 +106,32 @@ NONTERMINAL_RUN_STATES = {
     "resuming",
     "cancelling",
 }
+
+
+def _typed_lease_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    model: (
+        type[LeaseGrantedPayload]
+        | type[LeaseRenewedPayload]
+        | type[LeaseReleasedPayload]
+        | type[LeaseRevokedPayload]
+        | type[LeaseExpiredPayload]
+        | None
+    )
+    if event_type == "lease_granted":
+        model = LeaseGrantedPayload
+    elif event_type == "lease_renewed":
+        model = LeaseRenewedPayload
+    elif event_type == "lease_released":
+        model = LeaseReleasedPayload
+    elif event_type == "lease_revoked":
+        model = LeaseRevokedPayload
+    elif event_type == "lease_expired":
+        model = LeaseExpiredPayload
+    else:
+        model = None
+    if model is None:
+        return payload
+    return model.model_validate(payload).model_dump(mode="json")
 
 
 def apply_command(
@@ -329,7 +360,7 @@ def _apply_record_heartbeat(
         heartbeat_payload["execution_id"] = execution_id
     return [
         make_event("heartbeat_recorded", heartbeat_payload),
-        make_event("lease_renewed", heartbeat_payload),
+        make_event("lease_renewed", _typed_lease_event_payload("lease_renewed", heartbeat_payload)),
     ]
 
 
@@ -357,7 +388,9 @@ def _cancel_active_lease_events(
         execution_id = lease.get("execution_id")
         if isinstance(execution_id, str):
             revoke_payload["execution_id"] = execution_id
-        output.append(make_event("lease_revoked", revoke_payload))
+        output.append(
+            make_event("lease_revoked", _typed_lease_event_payload("lease_revoked", revoke_payload))
+        )
 
         node_state = projection["node_states"].get(node_id)
         if node_state not in {"completed", "failed", "cancelled", "retired"}:
@@ -501,11 +534,14 @@ def _maybe_release_lease(
     return [
         make_event(
             "lease_released",
-            {
-                "node_id": node_id,
-                "lease_id": lease_id,
-                "generation": generation,
-            },
+            _typed_lease_event_payload(
+                "lease_released",
+                {
+                    "node_id": node_id,
+                    "lease_id": lease_id,
+                    "generation": generation,
+                },
+            ),
         )
     ]
 
@@ -526,7 +562,9 @@ def _release_active_node_leases(
         generation = lease.get("generation")
         if isinstance(generation, int) and not isinstance(generation, bool):
             payload["generation"] = generation
-        output.append(make_event("lease_released", payload))
+        output.append(
+            make_event("lease_released", _typed_lease_event_payload("lease_released", payload))
+        )
     return output
 
 
@@ -793,11 +831,14 @@ def _apply_callback_command(
         output.append(
             make_event(
                 "lease_released",
-                {
-                    "node_id": request.node_id,
-                    "lease_id": request.lease_id,
-                    "generation": request.lease_generation,
-                },
+                _typed_lease_event_payload(
+                    "lease_released",
+                    {
+                        "node_id": request.node_id,
+                        "lease_id": request.lease_id,
+                        "generation": request.lease_generation,
+                    },
+                ),
             )
         )
         session_event = _planner_session_state_event(
@@ -2366,7 +2407,7 @@ def _apply_schedule_tick(
         output.append(
             make_event(
                 "lease_granted",
-                lease_payload,
+                _typed_lease_event_payload("lease_granted", lease_payload),
             )
         )
         if planner_session_id is not None:
@@ -3758,12 +3799,15 @@ def _apply_agent_died(
             make_event("agent_died", event_payload),
             make_event(
                 "lease_revoked",
-                {
-                    "lease_id": lease_id,
-                    "node_id": node_id,
-                    "generation": generation,
-                    "reason": reason,
-                },
+                _typed_lease_event_payload(
+                    "lease_revoked",
+                    {
+                        "lease_id": lease_id,
+                        "node_id": node_id,
+                        "generation": generation,
+                        "reason": reason,
+                    },
+                ),
             ),
             make_event(
                 "node_state_changed",
@@ -3780,12 +3824,15 @@ def _apply_agent_died(
             make_event("agent_died", event_payload),
             make_event(
                 "lease_revoked",
-                {
-                    "lease_id": lease_id,
-                    "node_id": node_id,
-                    "generation": generation,
-                    "reason": reason,
-                },
+                _typed_lease_event_payload(
+                    "lease_revoked",
+                    {
+                        "lease_id": lease_id,
+                        "node_id": node_id,
+                        "generation": generation,
+                        "reason": reason,
+                    },
+                ),
             ),
             make_event(
                 "output_record_accepted",
@@ -3816,12 +3863,15 @@ def _apply_agent_died(
             make_event("agent_died", event_payload),
             make_event(
                 "lease_revoked",
-                {
-                    "lease_id": lease_id,
-                    "node_id": node_id,
-                    "generation": generation,
-                    "reason": reason,
-                },
+                _typed_lease_event_payload(
+                    "lease_revoked",
+                    {
+                        "lease_id": lease_id,
+                        "node_id": node_id,
+                        "generation": generation,
+                        "reason": reason,
+                    },
+                ),
             ),
             make_event(
                 "output_record_accepted",
@@ -3854,12 +3904,15 @@ def _apply_agent_died(
             make_event("agent_died", event_payload),
             make_event(
                 "lease_revoked",
-                {
-                    "lease_id": lease_id,
-                    "node_id": node_id,
-                    "generation": generation,
-                    "reason": reason,
-                },
+                _typed_lease_event_payload(
+                    "lease_revoked",
+                    {
+                        "lease_id": lease_id,
+                        "node_id": node_id,
+                        "generation": generation,
+                        "reason": reason,
+                    },
+                ),
             ),
             make_event(
                 "output_record_accepted",
@@ -3921,12 +3974,15 @@ def _apply_agent_died(
         make_event("agent_died", event_payload),
         make_event(
             "lease_revoked",
-            {
-                "lease_id": lease_id,
-                "node_id": node_id,
-                "generation": generation,
-                "reason": reason,
-            },
+            _typed_lease_event_payload(
+                "lease_revoked",
+                {
+                    "lease_id": lease_id,
+                    "node_id": node_id,
+                    "generation": generation,
+                    "reason": reason,
+                },
+            ),
         ),
         make_event(
             "runtime_retry_scheduled",
@@ -5007,14 +5063,17 @@ def _expired_lease_events(
         expired.append(
             make_event(
                 "lease_expired",
-                {
-                    "lease_id": lease.get("lease_id"),
-                    "node_id": node_id,
-                    "generation": lease.get("generation"),
-                    "execution_id": lease.get("execution_id"),
-                    "expires_at": lease.get("expires_at"),
-                    "reason": "lease_expired_without_callback",
-                },
+                _typed_lease_event_payload(
+                    "lease_expired",
+                    {
+                        "lease_id": lease.get("lease_id"),
+                        "node_id": node_id,
+                        "generation": lease.get("generation"),
+                        "execution_id": lease.get("execution_id"),
+                        "expires_at": lease.get("expires_at"),
+                        "reason": "lease_expired_without_callback",
+                    },
+                ),
             )
         )
         if isinstance(node_id, str):
