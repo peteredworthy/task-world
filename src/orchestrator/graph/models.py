@@ -19,6 +19,9 @@ class GraphBaseModel(BaseModel):
         return super().model_dump(*args, **kwargs)
 
 
+CommandDefinitionProjection: TypeAlias = dict[str, Any]
+
+
 class TypedRecordBase(GraphBaseModel):
     record_type: str | None = None
     schema_version: int | None = None
@@ -105,12 +108,31 @@ class NodeState(str, Enum):
     CANCELLED = "cancelled"
 
 
-class ResourceClaim(GraphBaseModel):
+class ResourceClaimProjection(GraphBaseModel):
     mode: str
     scope: str
     paths: list[str] | None = None
     external_resource_key: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_shape(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(cast(dict[str, Any], value))
+        payload.setdefault("mode", "read")
+        payload.setdefault("scope", "repo")
+        path = payload.pop("path", None)
+        if isinstance(path, str):
+            paths = payload.get("paths")
+            if not isinstance(paths, list):
+                payload["paths"] = [path]
+            elif path not in paths:
+                payload["paths"] = [*paths, path]
+        return payload
+
+
+class ResourceClaim(ResourceClaimProjection):
     @model_validator(mode="after")
     def external_claims_require_keys(self) -> "ResourceClaim":
         if self.mode == "external" and self.external_resource_key is None:
@@ -840,7 +862,7 @@ class VerifierVerdictProjection(GraphBaseModel):
     position: int
 
 
-def _empty_lease_resource_claims() -> list[dict[str, Any]]:
+def _empty_lease_resource_claims() -> list[ResourceClaimProjection]:
     return []
 
 
@@ -860,7 +882,7 @@ if TYPE_CHECKING:
         base_snapshot_id: str | None
         task_region_id: str | None
         kind: str | None
-        resource_claims: list[dict[str, Any]]
+        resource_claims: list[ResourceClaimProjection]
 
         @classmethod
         def model_validate(cls, obj: Any) -> "LeaseProjection": ...
@@ -882,7 +904,9 @@ else:
         base_snapshot_id: str | None = None
         task_region_id: str | None = None
         kind: str | None = None
-        resource_claims: list[dict[str, Any]] = Field(default_factory=_empty_lease_resource_claims)
+        resource_claims: list[ResourceClaimProjection] = Field(
+            default_factory=_empty_lease_resource_claims,
+        )
 
         def get(self, key: str, default: Any = None) -> Any:
             return getattr(self, key, default)
@@ -1186,7 +1210,7 @@ def _filtered_string_list(value: Any) -> list[str]:
     return [item for item in cast(list[Any], value) if isinstance(item, str)]
 
 
-def _empty_node_resource_claims() -> list[dict[str, Any]]:
+def _empty_node_resource_claims() -> list[ResourceClaimProjection]:
     return []
 
 
@@ -1200,7 +1224,9 @@ class NodeCreationProjection(GraphBaseModel):
     attempt_number: int | None = None
     candidate_id: str | None = None
     failed_candidate_id: str | None = None
-    resource_claims: list[dict[str, Any]] = Field(default_factory=_empty_node_resource_claims)
+    resource_claims: list[ResourceClaimProjection] = Field(
+        default_factory=_empty_node_resource_claims,
+    )
     allowed_actions: list[str] = Field(default_factory=list)
     preconditions: list[str] = Field(default_factory=list)
     planner_generation_budget: int | None = None
@@ -1220,7 +1246,7 @@ class NodeCreationProjection(GraphBaseModel):
     authority_request_record: dict[str, Any] | None = None
     authority_request: dict[str, Any] | None = None
     authority: dict[str, Any] | None = None
-    command_definition: dict[str, Any] | None = None
+    command_definition: CommandDefinitionProjection | None = None
     command_definition_id: str | None = None
     hidden_oracle_command: str | None = None
     command_binding: str | None = None

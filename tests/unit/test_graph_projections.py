@@ -1119,7 +1119,9 @@ def test_node_creation_projection_uses_typed_payload() -> None:
     assert projected.attempt_number == 2
     assert projected.candidate_id == "candidate-1"
     assert projected.failed_candidate_id == "candidate-0"
-    assert projected.resource_claims == [{"path": "src/app.py", "mode": "write"}]
+    assert [claim.model_dump(mode="json") for claim in projected.resource_claims] == [
+        {"mode": "write", "scope": "repo", "paths": ["src/app.py"]}
+    ]
     assert projected.allowed_actions == ["submit_callback"]
     assert projected.preconditions == ["inputs_bound"]
 
@@ -1504,7 +1506,13 @@ def test_structural_index_checkpoint_entries_are_validated() -> None:
             },
             "recovery_nodes_by_record_id": {
                 "record-1": [
-                    {"node_id": "recovery-1", "recovery_reason": "failed_check"},
+                    {
+                        "node_id": "recovery-1",
+                        "recovery_reason": "failed_check",
+                        "unexpected": "drop-me",
+                    },
+                    {"node_id": "", "recovery_reason": "failed_check"},
+                    {"node_id": "recovery-empty-reason", "recovery_reason": ""},
                     {"node_id": "recovery-bad"},
                     "not-a-recovery",
                 ],
@@ -1514,21 +1522,229 @@ def test_structural_index_checkpoint_entries_are_validated() -> None:
                 "record_id": "routine-snapshot-1",
                 "producer_node_id": "routine-snapshot",
                 "port": "routine_snapshot",
+                "unexpected": "drop-me",
             },
         }
     )
 
-    assert restored["node_resource_claims"] == {
-        "worker-1": [{"mode": "read", "scope": "repo", "paths": ["src/"]}]
+    assert projection_to_checkpoint(restored)["node_resource_claims"] == {
+        "worker-1": [
+            {"mode": "read", "scope": "repo", "paths": ["src/"]},
+            {"mode": "external", "scope": "external"},
+        ]
     }
-    assert restored["recovery_nodes_by_record_id"] == {
+    assert projection_to_checkpoint(restored)["recovery_nodes_by_record_id"] == {
         "record-1": [{"node_id": "recovery-1", "recovery_reason": "failed_check"}]
     }
-    assert restored["latest_routine_snapshot_record"] == {
+    assert projection_to_checkpoint(restored)["latest_routine_snapshot_record"] == {
         "record_id": "routine-snapshot-1",
         "producer_node_id": "routine-snapshot",
         "port": "routine_snapshot",
     }
+
+
+def test_node_resource_claims_checkpoint_restores_typed_claims() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "node_resource_claims": {
+                "worker-1": [
+                    {"mode": "read", "scope": "repo", "paths": ["src/"]},
+                ],
+            },
+        }
+    )
+
+    claim = restored["node_resource_claims"]["worker-1"][0]
+    assert claim.mode == "read"
+    assert claim.scope == "repo"
+    assert projection_to_checkpoint(restored)["node_resource_claims"] == {
+        "worker-1": [{"mode": "read", "scope": "repo", "paths": ["src/"]}]
+    }
+
+
+def test_structural_checkpoint_records_restore_typed_entries() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "recovery_nodes_by_record_id": {
+                "record-1": [
+                    {"node_id": "recovery-1", "recovery_reason": "failed_check"},
+                ],
+            },
+            "latest_routine_snapshot_record": {
+                "record_id": "routine-snapshot-1",
+                "producer_node_id": "routine-snapshot",
+                "port": "routine_snapshot",
+            },
+        }
+    )
+
+    recovery = restored["recovery_nodes_by_record_id"]["record-1"][0]
+    assert recovery.node_id == "recovery-1"
+    assert recovery.recovery_reason == "failed_check"
+    assert restored["latest_routine_snapshot_record"].record_id == "routine-snapshot-1"
+    assert projection_to_checkpoint(restored)["recovery_nodes_by_record_id"] == {
+        "record-1": [{"node_id": "recovery-1", "recovery_reason": "failed_check"}]
+    }
+    assert projection_to_checkpoint(restored)["latest_routine_snapshot_record"] == {
+        "record_id": "routine-snapshot-1",
+        "producer_node_id": "routine-snapshot",
+        "port": "routine_snapshot",
+    }
+
+
+def test_remaining_primitive_checkpoint_maps_are_validated() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "run_state": 3,
+            "ready_nodes": ["worker-1", 5],
+            "node_roles": {"worker-1": "builder", "worker-bad": 7, 7: "builder"},
+            "node_creation_positions": {"worker-1": 3, "worker-bad": "3", "bool": True},
+            "node_task_regions": {"worker-1": "task-1", "worker-bad": None},
+            "node_attempts": {"worker-1": 2, "worker-bad": False},
+            "node_candidates": {"worker-1": "candidate-1", "worker-bad": 5},
+            "node_failed_candidates": {"worker-1": "candidate-0", "worker-bad": 5},
+            "node_allowed_actions": {
+                "worker-1": ["submit_callback", 7],
+                "worker-bad": "submit_callback",
+            },
+            "node_preconditions": {"worker-1": ["inputs_bound", None], "worker-bad": 3},
+            "node_command_definitions": {"worker-1": {"command": "test"}, "worker-bad": "test"},
+            "node_output_ports": {
+                "worker-1": {"result": ["record-1", 9], "bad": "record-2"},
+                "worker-bad": ["record-3"],
+            },
+            "accepted_record_summaries_by_id": {
+                "record-1": {
+                    "record_id": "record-1",
+                    "producer_node_id": "worker-1",
+                    "position": 8,
+                    "bad": 7,
+                },
+                "record-bad": "bad",
+            },
+            "node_pending_appeals": {"worker-1": True, "worker-bad": "true"},
+            "node_gate_decisions": {"gate-1": False, "gate-bad": 1},
+            "completion_decision_passed": "true",
+            "passed_verification_candidate_ids": ["candidate-1", 3],
+            "failed_verification_candidate_ids": {"candidate-2": True, "candidate-bad": "true"},
+            "configured_gates": {
+                "task-1": {"gate-1": True, "gate-bad": "true"},
+                "task-bad": "gate-1",
+            },
+            "gate_decisions": {
+                "task-1": {"gate-1": False, "gate-bad": 0},
+                "task-bad": "gate-1",
+            },
+            "planner_successors": {"planner-1": "planner-2", "planner-bad": 2},
+            "accepted_graph_patches_by_node": {
+                "planner-1": ["patch-1", 1],
+                "planner-bad": "patch-2",
+            },
+            "accepted_no_successor_patches_by_node": {
+                "planner-1": ["patch-3", None],
+                "planner-bad": "patch-4",
+            },
+            "accepted_no_successor_patch_ids_by_node": {
+                "planner-1": "patch-3",
+                "planner-bad": 4,
+            },
+            "planner_generations": {"planner-1": 4, "planner-bad": True},
+            "planner_sessions": {"planner-1": "session-1", "planner-bad": 5},
+            "planner_session_states": {"session-1": "active", "session-bad": None},
+            "planner_session_current_nodes": {"session-1": "planner-1", "session-bad": 5},
+            "planner_session_carryovers": {"session-1": None, "session-2": "record-1", 3: "bad"},
+            "planner_region_labels": {"planner-1": "Step 1", "planner-bad": 5},
+            "active_requirement_versions": {"req-1": "v1", "req-bad": 2},
+            "last_deferred_reasons": {"worker-1": "waiting", "worker-bad": 4},
+            "retry_not_before_by_node": {
+                "worker-1": None,
+                "worker-2": "2026-01-01T00:00:00",
+                5: "bad",
+            },
+            "open_proposal_blockers": {
+                "proposal-1": {
+                    "kind": "missing_successor",
+                    "reason": "planner proposal has not been accepted or rejected",
+                    "node_id": "planner-1",
+                    "exit_code": 2,
+                    "support_ids": ["support-1", 7],
+                },
+                "proposal-node-only": {"node_id": "planner-2"},
+                "proposal-bad": "bad",
+            },
+            "suspect_node_reasons": {"worker-1": "failed", "worker-bad": 8},
+            "authority_revision_blockers": {
+                "revision-1": {
+                    "kind": "authority_required",
+                    "reason": "semantic revision lacks authority",
+                    "requirement_id": "req-1",
+                },
+                "revision-bad": {"kind": 7},
+            },
+            "cleanup_applied_ids": {"cleanup-1": True, "cleanup-bad": "true"},
+        }
+    )
+
+    assert restored["run_state"] is None
+    assert restored["ready_nodes"] == ["worker-1"]
+    assert restored["node_roles"] == {"worker-1": "builder"}
+    assert restored["node_creation_positions"] == {"worker-1": 3}
+    assert restored["node_task_regions"] == {"worker-1": "task-1"}
+    assert restored["node_attempts"] == {"worker-1": 2}
+    assert restored["node_candidates"] == {"worker-1": "candidate-1"}
+    assert restored["node_failed_candidates"] == {"worker-1": "candidate-0"}
+    assert restored["node_allowed_actions"] == {"worker-1": ["submit_callback"]}
+    assert restored["node_preconditions"] == {"worker-1": ["inputs_bound"]}
+    assert restored["node_command_definitions"] == {"worker-1": {"command": "test"}}
+    assert restored["node_output_ports"] == {"worker-1": {"result": ["record-1"]}}
+    assert restored["accepted_record_summaries_by_id"] == {
+        "record-1": {
+            "record_id": "record-1",
+            "producer_node_id": "worker-1",
+            "position": 8,
+        }
+    }
+    assert restored["node_pending_appeals"] == {"worker-1": True}
+    assert restored["node_gate_decisions"] == {"gate-1": False}
+    assert restored["completion_decision_passed"] is False
+    assert restored["passed_verification_candidate_ids"] == ["candidate-1"]
+    assert restored["failed_verification_candidate_ids"] == {"candidate-2": True}
+    assert restored["configured_gates"] == {"task-1": {"gate-1": True}}
+    assert restored["gate_decisions"] == {"task-1": {"gate-1": False}}
+    assert restored["planner_successors"] == {"planner-1": "planner-2"}
+    assert restored["accepted_graph_patches_by_node"] == {"planner-1": ["patch-1"]}
+    assert restored["accepted_no_successor_patches_by_node"] == {"planner-1": ["patch-3"]}
+    assert restored["accepted_no_successor_patch_ids_by_node"] == {"planner-1": "patch-3"}
+    assert restored["planner_generations"] == {"planner-1": 4}
+    assert restored["planner_sessions"] == {"planner-1": "session-1"}
+    assert restored["planner_session_states"] == {"session-1": "active"}
+    assert restored["planner_session_current_nodes"] == {"session-1": "planner-1"}
+    assert restored["planner_session_carryovers"] == {"session-1": None, "session-2": "record-1"}
+    assert restored["planner_region_labels"] == {"planner-1": "Step 1"}
+    assert restored["active_requirement_versions"] == {"req-1": "v1"}
+    assert restored["last_deferred_reasons"] == {"worker-1": "waiting"}
+    assert restored["retry_not_before_by_node"] == {
+        "worker-1": None,
+        "worker-2": "2026-01-01T00:00:00",
+    }
+    assert restored["open_proposal_blockers"] == {
+        "proposal-1": {
+            "kind": "missing_successor",
+            "reason": "planner proposal has not been accepted or rejected",
+            "node_id": "planner-1",
+            "exit_code": 2,
+            "support_ids": ["support-1"],
+        }
+    }
+    assert restored["suspect_node_reasons"] == {"worker-1": "failed"}
+    assert restored["authority_revision_blockers"] == {
+        "revision-1": {
+            "kind": "authority_required",
+            "reason": "semantic revision lacks authority",
+            "requirement_id": "req-1",
+        }
+    }
+    assert restored["cleanup_applied_ids"] == {"cleanup-1": True}
 
 
 def test_malformed_latest_routine_snapshot_checkpoint_entry_is_dropped() -> None:
@@ -1670,6 +1886,29 @@ def test_lease_projection_checkpoint_round_trips_typed_payload_and_drops_malform
         "node_id": "worker-2",
         "state": "active",
     }
+
+
+def test_lease_checkpoint_restores_typed_resource_claims() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "leases": {
+                "lease-1": {
+                    "lease_id": "lease-1",
+                    "state": "active",
+                    "resource_claims": [
+                        {"mode": "write", "scope": "repo", "paths": ["src/"]},
+                    ],
+                },
+            },
+        }
+    )
+
+    claim = restored["leases"]["lease-1"].resource_claims[0]
+    assert claim.mode == "write"
+    assert claim.scope == "repo"
+    assert projection_to_checkpoint(restored)["leases"]["lease-1"]["resource_claims"] == [
+        {"mode": "write", "scope": "repo", "paths": ["src/"]}
+    ]
 
 
 def test_output_record_payloads_are_typed_at_fold() -> None:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Literal, TypedDict, cast
 
+from pydantic import ConfigDict, field_validator
+
 from orchestrator.graph.command_bindings import check_command_reference
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
@@ -28,6 +30,7 @@ from orchestrator.graph.models import (
     CheckResultProjection,
     CheckResultRecord,
     CleanupRequestedProjection,
+    CommandDefinitionProjection,
     CompletionDecisionRecord,
     DecisionRecord,
     DecisionRequestRecord,
@@ -57,7 +60,7 @@ from orchestrator.graph.models import (
     RecoveryPlanRecord,
     RequirementRecord,
     RequirementRevisionProjection,
-    ResourceClaim,
+    ResourceClaimProjection,
     RoutineSnapshotRecord,
     SupportEvidenceProjection,
     VerificationReportRecord,
@@ -151,15 +154,35 @@ class AcceptedOutputRecord(TypedDict):
     payload: OutputRecordPayload
 
 
-class RecoveryNodeIndexEntry(TypedDict):
+class RecoveryNodeIndexEntry(GraphBaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     node_id: str
     recovery_reason: str
 
+    @field_validator("node_id", "recovery_reason")
+    @classmethod
+    def fields_must_be_non_empty(cls, value: str) -> str:
+        if not value:
+            msg = "field must be non-empty"
+            raise ValueError(msg)
+        return value
 
-class LatestRoutineSnapshotRecord(TypedDict):
+
+class LatestRoutineSnapshotRecord(GraphBaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     record_id: str
     producer_node_id: str
     port: str
+
+    @field_validator("record_id", "producer_node_id", "port")
+    @classmethod
+    def fields_must_be_non_empty(cls, value: str) -> str:
+        if not value:
+            msg = "field must be non-empty"
+            raise ValueError(msg)
+        return value
 
 
 class GraphProjection(TypedDict):
@@ -175,10 +198,10 @@ class GraphProjection(TypedDict):
     node_attempts: dict[str, int]
     node_candidates: dict[str, str]
     node_failed_candidates: dict[str, str]
-    node_resource_claims: dict[str, list[dict[str, Any]]]
+    node_resource_claims: dict[str, list[ResourceClaimProjection]]
     node_allowed_actions: dict[str, list[str]]
     node_preconditions: dict[str, list[str]]
-    node_command_definitions: dict[str, Any]
+    node_command_definitions: dict[str, CommandDefinitionProjection]
     node_output_ports: dict[str, dict[str, list[str]]]
     accepted_output_records_by_node_port: dict[str, dict[str, list[AcceptedOutputRecord]]]
     accepted_record_summaries_by_id: dict[str, GraphRecordSummary]
@@ -483,6 +506,10 @@ def projection_to_checkpoint(projection: GraphProjection) -> dict[str, Any]:
     checkpoint["node_resource_claims"] = _node_resource_claims_from_checkpoint(
         projection.get("node_resource_claims"),
     )
+    checkpoint["node_resource_claims"] = {
+        node_id: [claim.model_dump(mode="json") for claim in claims]
+        for node_id, claims in checkpoint["node_resource_claims"].items()
+    }
     checkpoint["leases"] = {
         lease_id: lease.model_dump(mode="json")
         for lease_id, lease in projection.get("leases", {}).items()
@@ -575,9 +602,17 @@ def projection_to_checkpoint(projection: GraphProjection) -> dict[str, Any]:
     checkpoint["recovery_nodes_by_record_id"] = _recovery_nodes_from_checkpoint(
         projection.get("recovery_nodes_by_record_id"),
     )
+    checkpoint["recovery_nodes_by_record_id"] = {
+        record_id: [recovery.model_dump(mode="json") for recovery in recoveries]
+        for record_id, recoveries in checkpoint["recovery_nodes_by_record_id"].items()
+    }
     checkpoint["latest_routine_snapshot_record"] = _latest_routine_snapshot_from_checkpoint(
         projection.get("latest_routine_snapshot_record"),
     )
+    if checkpoint["latest_routine_snapshot_record"] is not None:
+        checkpoint["latest_routine_snapshot_record"] = checkpoint[
+            "latest_routine_snapshot_record"
+        ].model_dump(mode="json")
     checkpoint["node_creation_payloads"] = {
         node_id: payload.model_dump(mode="json")
         for node_id, payload in projection.get("node_creation_payloads", {}).items()
@@ -607,6 +642,8 @@ def projection_to_checkpoint(projection: GraphProjection) -> dict[str, Any]:
 
 def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjection:
     projection = cast(GraphProjection, {**initial_projection(), **raw_projection})
+    projection["run_state"] = _nullable_string_from_checkpoint(raw_projection.get("run_state"))
+    projection["ready_nodes"] = _string_list_from_checkpoint(raw_projection.get("ready_nodes"))
     projection["node_states"] = _string_map_from_checkpoint(
         raw_projection.get("node_states"),
         _NODE_STATE_VALUES,
@@ -619,8 +656,37 @@ def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjectio
         raw_projection.get("node_kinds"),
         _NODE_KIND_VALUES,
     )
+    projection["node_roles"] = _string_map_from_checkpoint(raw_projection.get("node_roles"))
+    projection["node_creation_positions"] = _int_map_from_checkpoint(
+        raw_projection.get("node_creation_positions"),
+    )
+    projection["node_task_regions"] = _string_map_from_checkpoint(
+        raw_projection.get("node_task_regions"),
+    )
+    projection["node_attempts"] = _int_map_from_checkpoint(raw_projection.get("node_attempts"))
+    projection["node_candidates"] = _string_map_from_checkpoint(
+        raw_projection.get("node_candidates"),
+    )
+    projection["node_failed_candidates"] = _string_map_from_checkpoint(
+        raw_projection.get("node_failed_candidates"),
+    )
     projection["node_resource_claims"] = _node_resource_claims_from_checkpoint(
         raw_projection.get("node_resource_claims"),
+    )
+    projection["node_allowed_actions"] = _string_list_map_from_checkpoint(
+        raw_projection.get("node_allowed_actions"),
+    )
+    projection["node_preconditions"] = _string_list_map_from_checkpoint(
+        raw_projection.get("node_preconditions"),
+    )
+    projection["node_command_definitions"] = _dict_map_from_checkpoint(
+        raw_projection.get("node_command_definitions"),
+    )
+    projection["node_output_ports"] = _node_output_ports_from_checkpoint(
+        raw_projection.get("node_output_ports"),
+    )
+    projection["accepted_record_summaries_by_id"] = _record_summaries_from_checkpoint(
+        raw_projection.get("accepted_record_summaries_by_id"),
     )
     projection["leases"] = _leases_from_checkpoint(
         raw_projection.get("leases"),
@@ -631,17 +697,38 @@ def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjectio
     projection["input_bindings"] = _input_bindings_from_checkpoint(
         raw_projection.get("input_bindings"),
     )
+    projection["node_pending_appeals"] = _bool_map_from_checkpoint(
+        raw_projection.get("node_pending_appeals"),
+    )
+    projection["node_gate_decisions"] = _bool_map_from_checkpoint(
+        raw_projection.get("node_gate_decisions"),
+    )
+    projection["completion_decision_passed"] = _bool_from_checkpoint(
+        raw_projection.get("completion_decision_passed"),
+    )
     projection["passed_verification_results_by_record_id"] = _verification_results_from_checkpoint(
         raw_projection.get("passed_verification_results_by_record_id"),
     )
     projection["failed_verification_results_by_record_id"] = _verification_results_from_checkpoint(
         raw_projection.get("failed_verification_results_by_record_id"),
     )
+    projection["passed_verification_candidate_ids"] = _string_list_from_checkpoint(
+        raw_projection.get("passed_verification_candidate_ids"),
+    )
+    projection["failed_verification_candidate_ids"] = _bool_map_from_checkpoint(
+        raw_projection.get("failed_verification_candidate_ids"),
+    )
     projection["check_results"] = _check_results_from_checkpoint(
         raw_projection.get("check_results"),
     )
     projection["invalid_test_blocks"] = _invalid_test_blocks_from_checkpoint(
         raw_projection.get("invalid_test_blocks"),
+    )
+    projection["configured_gates"] = _bool_matrix_from_checkpoint(
+        raw_projection.get("configured_gates"),
+    )
+    projection["gate_decisions"] = _bool_matrix_from_checkpoint(
+        raw_projection.get("gate_decisions"),
     )
     projection["decision_request_details"] = _decision_request_details_from_checkpoint(
         raw_projection.get("decision_request_details"),
@@ -679,6 +766,40 @@ def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjectio
     projection["latest_routine_snapshot_record"] = _latest_routine_snapshot_from_checkpoint(
         raw_projection.get("latest_routine_snapshot_record"),
     )
+    projection["planner_generation_budget"] = _int_from_checkpoint(
+        raw_projection.get("planner_generation_budget"),
+        default=initial_projection()["planner_generation_budget"],
+    )
+    projection["planner_successors"] = _string_map_from_checkpoint(
+        raw_projection.get("planner_successors"),
+    )
+    projection["accepted_graph_patches_by_node"] = _string_list_map_from_checkpoint(
+        raw_projection.get("accepted_graph_patches_by_node"),
+    )
+    projection["accepted_no_successor_patches_by_node"] = _string_list_map_from_checkpoint(
+        raw_projection.get("accepted_no_successor_patches_by_node"),
+    )
+    projection["accepted_no_successor_patch_ids_by_node"] = _string_map_from_checkpoint(
+        raw_projection.get("accepted_no_successor_patch_ids_by_node"),
+    )
+    projection["planner_generations"] = _int_map_from_checkpoint(
+        raw_projection.get("planner_generations"),
+    )
+    projection["planner_sessions"] = _string_map_from_checkpoint(
+        raw_projection.get("planner_sessions"),
+    )
+    projection["planner_session_states"] = _string_map_from_checkpoint(
+        raw_projection.get("planner_session_states"),
+    )
+    projection["planner_session_current_nodes"] = _string_map_from_checkpoint(
+        raw_projection.get("planner_session_current_nodes"),
+    )
+    projection["planner_session_carryovers"] = _nullable_string_map_from_checkpoint(
+        raw_projection.get("planner_session_carryovers"),
+    )
+    projection["planner_region_labels"] = _string_map_from_checkpoint(
+        raw_projection.get("planner_region_labels"),
+    )
     projection["node_creation_payloads"] = _node_creation_payloads_from_checkpoint(
         raw_projection.get("node_creation_payloads"),
     )
@@ -694,40 +815,239 @@ def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjectio
     projection["support_evidence"] = _support_evidence_from_checkpoint(
         raw_projection.get("support_evidence"),
     )
+    projection["active_requirement_versions"] = _string_map_from_checkpoint(
+        raw_projection.get("active_requirement_versions"),
+    )
+    projection["last_deferred_reasons"] = _string_map_from_checkpoint(
+        raw_projection.get("last_deferred_reasons"),
+    )
+    projection["retry_not_before_by_node"] = _nullable_string_map_from_checkpoint(
+        raw_projection.get("retry_not_before_by_node"),
+    )
     projection["oversight_decisions"] = _oversight_decisions_from_checkpoint(
         raw_projection.get("oversight_decisions"),
+    )
+    projection["open_proposal_blockers"] = _final_invariant_blockers_from_checkpoint(
+        raw_projection.get("open_proposal_blockers"),
+    )
+    projection["suspect_node_reasons"] = _string_map_from_checkpoint(
+        raw_projection.get("suspect_node_reasons"),
+    )
+    projection["authority_revision_blockers"] = _final_invariant_blockers_from_checkpoint(
+        raw_projection.get("authority_revision_blockers"),
+    )
+    projection["cleanup_applied_ids"] = _bool_map_from_checkpoint(
+        raw_projection.get("cleanup_applied_ids"),
     )
     return projection
 
 
-def _string_map_from_checkpoint(raw_map: Any, allowed_values: set[str]) -> dict[str, str]:
+def _nullable_string_from_checkpoint(raw_value: Any) -> str | None:
+    return raw_value if isinstance(raw_value, str) else None
+
+
+def _int_from_checkpoint(raw_value: Any, *, default: int = 0) -> int:
+    return raw_value if isinstance(raw_value, int) and not isinstance(raw_value, bool) else default
+
+
+def _bool_from_checkpoint(raw_value: Any) -> bool:
+    return raw_value if isinstance(raw_value, bool) else False
+
+
+def _string_list_from_checkpoint(raw_values: Any) -> list[str]:
+    if not isinstance(raw_values, list):
+        return []
+    return [value for value in cast(list[Any], raw_values) if isinstance(value, str)]
+
+
+def _string_map_from_checkpoint(
+    raw_map: Any,
+    allowed_values: set[str] | None = None,
+) -> dict[str, str]:
     if not isinstance(raw_map, dict):
         return {}
     typed: dict[str, str] = {}
     for key, value in cast(dict[Any, Any], raw_map).items():
-        if isinstance(key, str) and isinstance(value, str) and value in allowed_values:
+        if (
+            isinstance(key, str)
+            and isinstance(value, str)
+            and (allowed_values is None or value in allowed_values)
+        ):
             typed[key] = value
+    return typed
+
+
+def _nullable_string_map_from_checkpoint(raw_map: Any) -> dict[str, str | None]:
+    if not isinstance(raw_map, dict):
+        return {}
+    typed: dict[str, str | None] = {}
+    for key, value in cast(dict[Any, Any], raw_map).items():
+        if isinstance(key, str) and (isinstance(value, str) or value is None):
+            typed[key] = value
+    return typed
+
+
+def _int_map_from_checkpoint(raw_map: Any) -> dict[str, int]:
+    if not isinstance(raw_map, dict):
+        return {}
+    typed: dict[str, int] = {}
+    for key, value in cast(dict[Any, Any], raw_map).items():
+        if isinstance(key, str) and isinstance(value, int) and not isinstance(value, bool):
+            typed[key] = value
+    return typed
+
+
+def _bool_map_from_checkpoint(raw_map: Any) -> dict[str, bool]:
+    if not isinstance(raw_map, dict):
+        return {}
+    typed: dict[str, bool] = {}
+    for key, value in cast(dict[Any, Any], raw_map).items():
+        if isinstance(key, str) and isinstance(value, bool):
+            typed[key] = value
+    return typed
+
+
+def _string_list_map_from_checkpoint(raw_map: Any) -> dict[str, list[str]]:
+    if not isinstance(raw_map, dict):
+        return {}
+    typed: dict[str, list[str]] = {}
+    for key, raw_values in cast(dict[Any, Any], raw_map).items():
+        if not isinstance(key, str) or not isinstance(raw_values, list):
+            continue
+        typed[key] = _string_list_from_checkpoint(raw_values)
+    return typed
+
+
+def _dict_map_from_checkpoint(raw_map: Any) -> dict[str, CommandDefinitionProjection]:
+    if not isinstance(raw_map, dict):
+        return {}
+    typed: dict[str, CommandDefinitionProjection] = {}
+    for key, value in cast(dict[Any, Any], raw_map).items():
+        if isinstance(key, str) and isinstance(value, dict):
+            typed[key] = dict(cast(dict[str, Any], value))
+    return typed
+
+
+def _bool_matrix_from_checkpoint(raw_map: Any) -> dict[str, dict[str, bool]]:
+    if not isinstance(raw_map, dict):
+        return {}
+    typed: dict[str, dict[str, bool]] = {}
+    for key, raw_values in cast(dict[Any, Any], raw_map).items():
+        if not isinstance(key, str) or not isinstance(raw_values, dict):
+            continue
+        values = _bool_map_from_checkpoint(raw_values)
+        if values:
+            typed[key] = values
+    return typed
+
+
+def _node_output_ports_from_checkpoint(raw_map: Any) -> dict[str, dict[str, list[str]]]:
+    if not isinstance(raw_map, dict):
+        return {}
+    typed: dict[str, dict[str, list[str]]] = {}
+    for node_id, raw_ports in cast(dict[Any, Any], raw_map).items():
+        if not isinstance(node_id, str) or not isinstance(raw_ports, dict):
+            continue
+        ports = _string_list_map_from_checkpoint(raw_ports)
+        if ports:
+            typed[node_id] = ports
+    return typed
+
+
+_GRAPH_RECORD_SUMMARY_STRING_FIELDS = {
+    "record_id",
+    "record_type",
+    "record_kind",
+    "schema",
+    "producer_node_id",
+    "producer_port",
+}
+
+
+def _record_summaries_from_checkpoint(raw_map: Any) -> dict[str, GraphRecordSummary]:
+    if not isinstance(raw_map, dict):
+        return {}
+    typed: dict[str, GraphRecordSummary] = {}
+    for record_id, raw_summary in cast(dict[Any, Any], raw_map).items():
+        if not isinstance(record_id, str) or not isinstance(raw_summary, dict):
+            continue
+        summary: GraphRecordSummary = {}
+        for field in _GRAPH_RECORD_SUMMARY_STRING_FIELDS:
+            value = cast(dict[str, Any], raw_summary).get(field)
+            if isinstance(value, str):
+                summary[field] = value
+        position = cast(dict[str, Any], raw_summary).get("position")
+        if isinstance(position, int) and not isinstance(position, bool):
+            summary["position"] = position
+        if summary:
+            typed[record_id] = summary
+    return typed
+
+
+_FINAL_INVARIANT_BLOCKER_STRING_FIELDS = {
+    "kind",
+    "reason",
+    "node_id",
+    "edge_id",
+    "from_node_id",
+    "to_port",
+    "proposal_id",
+    "requirement_id",
+    "revision_id",
+    "task_region_id",
+    "state",
+    "classification",
+    "command_text",
+    "stderr",
+}
+
+
+def _final_invariant_blockers_from_checkpoint(raw_map: Any) -> dict[str, FinalInvariantBlocker]:
+    if not isinstance(raw_map, dict):
+        return {}
+    typed: dict[str, FinalInvariantBlocker] = {}
+    for blocker_id, raw_blocker in cast(dict[Any, Any], raw_map).items():
+        if not isinstance(blocker_id, str) or not isinstance(raw_blocker, dict):
+            continue
+        blocker: FinalInvariantBlocker = {}
+        for field in _FINAL_INVARIANT_BLOCKER_STRING_FIELDS:
+            value = cast(dict[str, Any], raw_blocker).get(field)
+            if isinstance(value, str):
+                blocker[field] = value
+        exit_code = cast(dict[str, Any], raw_blocker).get("exit_code")
+        if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+            blocker["exit_code"] = exit_code
+        support_ids = _string_list_from_checkpoint(
+            cast(dict[str, Any], raw_blocker).get("support_ids"),
+        )
+        if support_ids:
+            blocker["support_ids"] = support_ids
+        if "kind" in blocker and "reason" in blocker:
+            typed[blocker_id] = blocker
     return typed
 
 
 def _node_resource_claims_from_checkpoint(
     raw_claims_by_node: Any,
-) -> dict[str, list[dict[str, Any]]]:
+) -> dict[str, list[ResourceClaimProjection]]:
     if not isinstance(raw_claims_by_node, dict):
         return {}
-    typed: dict[str, list[dict[str, Any]]] = {}
+    typed: dict[str, list[ResourceClaimProjection]] = {}
     for node_id, raw_claims in cast(dict[Any, Any], raw_claims_by_node).items():
         if not isinstance(node_id, str) or not isinstance(raw_claims, list):
             continue
-        claims: list[dict[str, Any]] = []
+        claims: list[ResourceClaimProjection] = []
         for raw_claim in cast(list[Any], raw_claims):
-            if not isinstance(raw_claim, dict):
+            if isinstance(raw_claim, ResourceClaimProjection):
+                claim = raw_claim.model_copy(deep=True)
+            elif isinstance(raw_claim, dict):
+                try:
+                    claim = ResourceClaimProjection.model_validate(raw_claim)
+                except ValueError:
+                    continue
+            else:
                 continue
-            try:
-                claim = ResourceClaim.model_validate(raw_claim)
-            except ValueError:
-                continue
-            claims.append(claim.model_dump(mode="json"))
+            claims.append(claim)
         if claims:
             typed[node_id] = claims
     return typed
@@ -747,35 +1067,32 @@ def _recovery_nodes_from_checkpoint(
             continue
         recoveries: list[RecoveryNodeIndexEntry] = []
         for raw_recovery in cast(list[Any], raw_recoveries):
+            if isinstance(raw_recovery, RecoveryNodeIndexEntry):
+                recoveries.append(raw_recovery.model_copy(deep=True))
+                continue
             if not isinstance(raw_recovery, dict):
                 continue
-            node_id = cast(dict[str, Any], raw_recovery).get("node_id")
-            recovery_reason = cast(dict[str, Any], raw_recovery).get("recovery_reason")
-            if isinstance(node_id, str) and isinstance(recovery_reason, str):
-                recoveries.append(
-                    {
-                        "node_id": node_id,
-                        "recovery_reason": recovery_reason,
-                    }
-                )
+            try:
+                recoveries.append(RecoveryNodeIndexEntry.model_validate(raw_recovery))
+            except ValueError:
+                continue
         if recoveries:
             typed[record_id] = recoveries
     return typed
 
 
 def _latest_routine_snapshot_from_checkpoint(raw_record: Any) -> LatestRoutineSnapshotRecord | None:
+    if isinstance(raw_record, LatestRoutineSnapshotRecord):
+        return raw_record.model_copy(deep=True)
     if not isinstance(raw_record, dict):
         return None
-    record_id = cast(dict[str, Any], raw_record).get("record_id")
-    producer_node_id = cast(dict[str, Any], raw_record).get("producer_node_id")
-    port = cast(dict[str, Any], raw_record).get("port")
-    if not all(isinstance(value, str) and value for value in (record_id, producer_node_id, port)):
+    try:
+        record = LatestRoutineSnapshotRecord.model_validate(raw_record)
+    except ValueError:
         return None
-    return {
-        "record_id": cast(str, record_id),
-        "producer_node_id": cast(str, producer_node_id),
-        "port": cast(str, port),
-    }
+    if not all(value for value in (record.record_id, record.producer_node_id, record.port)):
+        return None
+    return record
 
 
 def _leases_from_checkpoint(raw_leases: Any) -> dict[str, LeaseProjection]:
@@ -1329,7 +1646,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "node_candidates": dict(state["node_candidates"]),
         "node_failed_candidates": dict(state["node_failed_candidates"]),
         "node_resource_claims": {
-            node_id: [dict(claim) for claim in claims]
+            node_id: [claim.model_copy(deep=True) for claim in claims]
             for node_id, claims in state["node_resource_claims"].items()
         },
         "node_allowed_actions": {
@@ -1412,7 +1729,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             state.get("passed_verification_candidate_ids", [])
         ),
         "recovery_nodes_by_record_id": {
-            record_id: [cast(RecoveryNodeIndexEntry, dict(recovery)) for recovery in recoveries]
+            record_id: [recovery.model_copy(deep=True) for recovery in recoveries]
             for record_id, recoveries in state.get("recovery_nodes_by_record_id", {}).items()
         },
         "check_results": {
@@ -2752,7 +3069,10 @@ def project_node_metadata(
                 port: _bound_record_ids(binding)
                 for port, binding in projection["input_bindings"].get(node_id, {}).items()
             },
-            "resource_claims": list(projection["node_resource_claims"].get(node_id, [])),
+            "resource_claims": [
+                claim.model_dump(mode="json")
+                for claim in projection["node_resource_claims"].get(node_id, [])
+            ],
             "allowed_actions": list(projection["node_allowed_actions"].get(node_id, [])),
             "preconditions": list(projection["node_preconditions"].get(node_id, [])),
         }
@@ -4032,10 +4352,10 @@ def _record_recovery_node(state: GraphProjection, event: EventEnvelope) -> None:
     if recovery_reason not in {"failed_required_check", "failed_verification"}:
         return
     state["recovery_nodes_by_record_id"].setdefault(cast(str, record_id), []).append(
-        {
-            "node_id": cast(str, node_id),
-            "recovery_reason": cast(str, recovery_reason),
-        }
+        RecoveryNodeIndexEntry(
+            node_id=cast(str, node_id),
+            recovery_reason=cast(str, recovery_reason),
+        )
     )
 
 
@@ -4367,11 +4687,11 @@ def _record_latest_routine_snapshot(state: GraphProjection, event: EventEnvelope
     )
     if not is_routine_snapshot:
         return
-    state["latest_routine_snapshot_record"] = {
-        "record_id": cast(str, record_id),
-        "producer_node_id": cast(str, producer_node_id),
-        "port": cast(str, port),
-    }
+    state["latest_routine_snapshot_record"] = LatestRoutineSnapshotRecord(
+        record_id=cast(str, record_id),
+        producer_node_id=cast(str, producer_node_id),
+        port=cast(str, port),
+    )
 
 
 def _record_open_appeal(state: GraphProjection, event: EventEnvelope) -> None:
@@ -5518,8 +5838,7 @@ def _check_result_recovery_superseded(
     if not isinstance(record_id, str) or not record_id:
         return False
     for recovery in state["recovery_nodes_by_record_id"].get(record_id, []):
-        node_id = recovery.get("node_id")
-        if _recovery_lineage_passed(state, node_id):
+        if _recovery_lineage_passed(state, recovery.node_id):
             return True
     return False
 
@@ -5538,8 +5857,7 @@ def _failed_verification_recovery_superseded(
         if not record_id:
             continue
         for recovery in state["recovery_nodes_by_record_id"].get(record_id, []):
-            node_id = recovery.get("node_id")
-            if _recovery_lineage_has_complete_verification(state, node_id):
+            if _recovery_lineage_has_complete_verification(state, recovery.node_id):
                 return True
     return False
 
@@ -5747,7 +6065,7 @@ def _task_region_ids_from_payload(
     return []
 
 
-def _resource_claims(payload: dict[str, Any]) -> list[dict[str, Any]]:
+def _resource_claims(payload: dict[str, Any]) -> list[ResourceClaimProjection]:
     raw_claims = payload.get("resource_claims")
     if raw_claims is None:
         authority = payload.get("authority")
@@ -5755,10 +6073,13 @@ def _resource_claims(payload: dict[str, Any]) -> list[dict[str, Any]]:
             raw_claims = cast(dict[str, Any], authority).get("resource_claims")
     if not isinstance(raw_claims, list):
         return []
-    claims: list[dict[str, Any]] = []
+    claims: list[ResourceClaimProjection] = []
     for raw_claim in cast(list[Any], raw_claims):
         if isinstance(raw_claim, dict):
-            claims.append(dict(cast(dict[str, Any], raw_claim)))
+            try:
+                claims.append(ResourceClaimProjection.model_validate(raw_claim))
+            except ValueError:
+                continue
     return claims
 
 
@@ -5788,5 +6109,7 @@ def _preconditions(payload: dict[str, Any]) -> list[str]:
     ]
 
 
-def _command_definition_for_node_creation(payload: NodeCreationProjection) -> Any | None:
+def _command_definition_for_node_creation(
+    payload: NodeCreationProjection,
+) -> CommandDefinitionProjection | None:
     return check_command_reference(payload.model_dump(mode="json"))

@@ -888,8 +888,7 @@ def _file_state_authority_conflict(
         raw_claims = []
     write_claims: list[ResourceClaim] = []
     for raw_claim in cast(list[Any], raw_claims):
-        if isinstance(raw_claim, dict):
-            write_claims.append(_claim_from_dict(cast(dict[str, Any], raw_claim)))
+        write_claims.append(_claim_from_dict(raw_claim))
     for index, raw_record in enumerate(cast(list[Any], raw_records)):
         if not isinstance(raw_record, dict):
             continue
@@ -2246,7 +2245,7 @@ def _apply_schedule_tick(
         if lease.get("state") == "active"
         and isinstance(lease.get("lease_id"), str)
         and lease.get("lease_id") not in expired_lease_ids
-        for claim in cast(list[dict[str, Any]], lease.get("resource_claims", []))
+        for claim in cast(list[Any], lease.get("resource_claims", []))
     ]
     active_lease_node_ids = [
         str(lease["node_id"])
@@ -2358,7 +2357,7 @@ def _apply_schedule_tick(
             "execution_id": id_gen.next_id("exec"),
             "base_snapshot_id": base_snapshot_id,
             "expires_at": (clock.now() + timedelta(seconds=lease_seconds)).isoformat(),
-            "resource_claims": claims,
+            "resource_claims": [_resource_claim_payload(claim) for claim in claims],
         }
         if planner_session_id is not None:
             lease_payload["session_id"] = planner_session_id
@@ -3045,7 +3044,13 @@ def _recovery_nodes_by_record_id(
     projection: GraphProjection,
 ) -> dict[str, list[dict[str, str]]]:
     return {
-        record_id: [cast(dict[str, str], dict(recovery)) for recovery in recoveries]
+        record_id: [
+            {
+                "node_id": recovery.node_id,
+                "recovery_reason": recovery.recovery_reason,
+            }
+            for recovery in recoveries
+        ]
         for record_id, recoveries in projection["recovery_nodes_by_record_id"].items()
     }
 
@@ -3512,9 +3517,9 @@ def _latest_routine_snapshot_record(projection: GraphProjection) -> dict[str, st
     record = projection.get("latest_routine_snapshot_record")
     if record is not None:
         return {
-            "record_id": record["record_id"],
-            "producer_node_id": record["producer_node_id"],
-            "port": record["port"],
+            "record_id": record.record_id,
+            "producer_node_id": record.producer_node_id,
+            "port": record.port,
         }
     latest: dict[str, str] | None = None
     for summary in projection["accepted_record_summaries_by_id"].values():
@@ -5409,12 +5414,13 @@ def _callback_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     return {"payload": raw_payload}
 
 
-def _claim_from_dict(claim: dict[str, Any]) -> ResourceClaim:
-    mode = str(claim.get("mode", "read"))
-    scope = str(claim.get("scope", "repo"))
+def _claim_from_dict(claim: Any) -> ResourceClaim:
+    claim_payload = _resource_claim_payload(claim)
+    mode = str(claim_payload.get("mode", "read"))
+    scope = str(claim_payload.get("scope", "repo"))
     paths = (
-        [str(path) for path in claim.get("paths", [])]
-        if isinstance(claim.get("paths"), list)
+        [str(path) for path in claim_payload.get("paths", [])]
+        if isinstance(claim_payload.get("paths"), list)
         else []
     )
     # Self-healing normalization (also applied on replay of historic events): planners
@@ -5433,10 +5439,20 @@ def _claim_from_dict(claim: dict[str, Any]) -> ResourceClaim:
         mode=mode,
         scope=scope,
         paths=paths,
-        snapshot_id=cast(str | None, claim.get("snapshot_id")),
-        external_resource_key=cast(str | None, claim.get("external_resource_key")),
-        exclusive=bool(claim.get("exclusive", False)),
+        snapshot_id=cast(str | None, claim_payload.get("snapshot_id")),
+        external_resource_key=cast(str | None, claim_payload.get("external_resource_key")),
+        exclusive=bool(claim_payload.get("exclusive", False)),
     )
+
+
+def _resource_claim_payload(claim: Any) -> dict[str, Any]:
+    if hasattr(claim, "model_dump"):
+        dumped = claim.model_dump(mode="json")
+        if isinstance(dumped, dict):
+            return cast(dict[str, Any], dumped)
+    if isinstance(claim, dict):
+        return dict(cast(dict[str, Any], claim))
+    return {}
 
 
 command_rejected = _command_rejected
