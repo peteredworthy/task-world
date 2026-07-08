@@ -218,15 +218,23 @@ SUMMARY_REBUILD_PAYLOAD_FIELDS = tuple(
         [
             *LIGHT_GRAPH_PAYLOAD_FIELDS,
             *SUMMARY_PAYLOAD_FIELDS,
+            "attempt_number",
             "blockers",
+            "decider",
+            "decision_type",
             "graph_verifier_grades",
             "grades",
+            "idempotency_key",
             "operations",
             "ops",
+            "payload",
             "patch_ops",
             "patch_rejection_reasons",
+            "provenance",
             "record_ids",
+            "run_id",
             "schema",
+            "snapshot_id",
             "tokens_by_node",
             "tokens_by_node_kind",
             "value",
@@ -282,6 +290,21 @@ NODE_DETAIL_PAYLOAD_FIELDS = (
     "classifications",
     "diff_summary",
     "patch_bundle_id",
+)
+BOOLEAN_PAYLOAD_FIELDS = frozenset(
+    {
+        "active",
+        "approved",
+        "behavior_change",
+        "explicit_authority_required",
+        "required",
+        "requires_authority",
+        "semantic_change",
+        "stale_only",
+        "supported",
+        "unsupported",
+        "validation_strengthening",
+    }
 )
 
 
@@ -596,6 +619,7 @@ class GraphEventStore:
             run_id,
             from_position,
             SUMMARY_REBUILD_PAYLOAD_FIELDS,
+            include_nested_value_fallbacks=False,
         )
 
     async def read_run_projection(
@@ -627,6 +651,8 @@ class GraphEventStore:
         run_id: str,
         from_position: int,
         fields: tuple[str, ...],
+        *,
+        include_nested_value_fallbacks: bool = True,
     ) -> list[EventEnvelope]:
         payload_selects = [
             func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(field)
@@ -671,14 +697,20 @@ class GraphEventStore:
         events: list[EventEnvelope] = []
         for row in result.mappings():
             payload = {
-                field: _json_extract_value(row[field])
+                field: _json_extract_payload_value(field, row[field])
                 for field in fields
                 if row.get(field) is not None
             }
-            if "status" in fields and "status" not in payload and row.get("__value_status"):
+            if (
+                include_nested_value_fallbacks
+                and "status" in fields
+                and "status" not in payload
+                and row.get("__value_status")
+            ):
                 payload["status"] = _json_extract_value(row["__value_status"])
             if (
-                "classification" in fields
+                include_nested_value_fallbacks
+                and "classification" in fields
                 and "classification" not in payload
                 and row.get("__value_classification")
             ):
@@ -2003,3 +2035,9 @@ def _json_extract_value(value: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return value
+
+
+def _json_extract_payload_value(field: str, value: Any) -> Any:
+    if field in BOOLEAN_PAYLOAD_FIELDS and value in {0, 1}:
+        return bool(value)
+    return _json_extract_value(value)

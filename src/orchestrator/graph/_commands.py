@@ -31,6 +31,8 @@ from orchestrator.graph.models import (
     AuthorityRequestRecord,
     CandidateRecord,
     CheckResultRecord,
+    CleanupAppliedPayload,
+    CleanupRequestedPayload,
     CleanupRequestedProjection,
     CompletionDecisionRecord,
     DecisionRequestRecord,
@@ -4346,16 +4348,18 @@ def _apply_record_gatekeeper_verdicts(
         events.append(
             make_event(
                 "cleanup_requested",
-                {
-                    "cleanup_id": cleanup_id,
-                    "file_state_record_id": record_id,
-                    "snapshot_id": record.snapshot_id,
-                    "paths": secret_paths,
-                    "authority": "gatekeeper",
-                    "reason": "gatekeeper_classified_secret_after_snapshot",
-                    "execution_id": execution_id,
-                    "producer_node_id": record.producer_node_id,
-                },
+                CleanupRequestedPayload.model_validate(
+                    {
+                        "cleanup_id": cleanup_id,
+                        "file_state_record_id": record_id,
+                        "snapshot_id": record.snapshot_id,
+                        "paths": secret_paths,
+                        "authority": "gatekeeper",
+                        "reason": "gatekeeper_classified_secret_after_snapshot",
+                        "execution_id": execution_id,
+                        "producer_node_id": record.producer_node_id,
+                    }
+                ).model_dump(mode="json"),
             )
         )
     events.append(make_event("gatekeeper_cost_recorded", cost_payload))
@@ -4468,18 +4472,20 @@ def _apply_record_cleanup_applied(
             )
         ]
 
-    applied_payload = {
-        "cleanup_id": cleanup_id,
-        "file_state_record_id": record_id,
-        "superseding_record_id": record.record_id,
-        "old_snapshot_id": requested_payload.get("snapshot_id"),
-        "new_snapshot_id": record.snapshot_id,
-        "paths": requested_payload.get("paths", []),
-        "authority": requested_payload.get("authority", "gatekeeper"),
-        "reason": payload.get("reason", requested_payload.get("reason")),
-        "execution_id": requested_payload.get("execution_id"),
-        "deleted_snapshot_ref": payload.get("deleted_snapshot_ref") is True,
-    }
+    applied_payload = CleanupAppliedPayload.model_validate(
+        {
+            "cleanup_id": cleanup_id,
+            "file_state_record_id": record_id,
+            "superseding_record_id": record.record_id,
+            "old_snapshot_id": requested.snapshot_id,
+            "new_snapshot_id": record.snapshot_id,
+            "paths": requested.paths,
+            "authority": requested.authority or "gatekeeper",
+            "reason": payload.get("reason", requested.reason),
+            "execution_id": requested.execution_id,
+            "deleted_snapshot_ref": payload.get("deleted_snapshot_ref") is True,
+        }
+    ).model_dump(mode="json")
     accepted_payload = record.model_dump(mode="json")
     return [
         make_event("cleanup_applied", applied_payload),

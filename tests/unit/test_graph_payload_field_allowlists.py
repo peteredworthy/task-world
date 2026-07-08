@@ -98,13 +98,9 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "not read by task_states",
     "carryover_record_id": "planner_session_carryovers bookkeeping",
     "change_classification": "requirement_revisions bookkeeping",
-    "cleanup_id": "cleanup_requested_events/cleanup_applied_ids + file_state_records cleanup "
-    "annotations _task_file_state_accepted never reads",
     "command_text": "environment_failures/check_results informational field; only "
     "classification/status/key-existence matter to task_states",
     "confidence": "support_evidence bookkeeping",
-    "deleted_snapshot_ref": "file_state_records cleanup annotation, never read by "
-    "_task_file_state_accepted",
     "dependency_type": "edges metadata; downstream traversal only uses from_node_id/to_node_id",
     "description": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "edge_id": "edges dict key/metadata; not read by the recovery-lineage traversal helper",
@@ -127,7 +123,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "new_behavior": "requirement revision classification helper",
     "node_ids": "suspect_node_reasons bookkeeping",
     "patch_id": "accepted_no_successor_patches_by_node / graph-patch-attempt bookkeeping",
-    "paths": "file_state_records cleanup annotation, never read by _task_file_state_accepted",
     "preconditions": "node_preconditions: scheduler-only substate",
     "previous_version_id": "requirement_revisions bookkeeping",
     "proposal_id": "open_proposal_blockers bookkeeping",
@@ -157,15 +152,11 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "schema": "node_command_definitions/record-type classification (topology/summary views)",
     "selection": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "semantic_change": "requirement revision authority-resolution bookkeeping",
-    "snapshot_id": "cleanup_requested_events bookkeeping for cleanup command validation; "
-    "task-state file acceptance reads file_state_records snapshots, not cleanup request snapshots",
     "stale_reason": "support_evidence bookkeeping",
     "stderr": "environment_failures/check_results informational field (see command_text)",
     "successor_planner_node_ids": "planner_successors bookkeeping",
     "supersedes_record_id": "input_bindings merge policy helper; task_states does not read "
     "bound input records",
-    "superseding_record_id": "file_state_records cleanup annotation, never read by "
-    "_task_file_state_accepted",
     "support_id": "support_evidence bookkeeping",
     "trigger": "input_bindings informational trigger metadata; not read by task_states",
     "validation_strengthening": "requirement_revisions bookkeeping",

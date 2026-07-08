@@ -29,6 +29,8 @@ from orchestrator.graph.models import (
     CandidateRecord,
     CheckResultProjection,
     CheckResultRecord,
+    CleanupAppliedPayload,
+    CleanupRequestedPayload,
     CleanupRequestedProjection,
     CommandDefinitionProjection,
     CompletionDecisionRecord,
@@ -1373,31 +1375,30 @@ def _cleanup_requested_from_payload(payload: dict[str, Any]) -> CleanupRequested
         return None
 
 
-def _cleanup_requested_from_event(
-    event: EventEnvelope,
-    cleanup_id: str,
-) -> CleanupRequestedProjection | None:
-    payload: dict[str, Any] = {
-        "cleanup_id": cleanup_id,
-        "position": event.position,
-    }
-    for key in (
-        "file_state_record_id",
-        "snapshot_id",
-        "authority",
-        "reason",
-        "execution_id",
-        "producer_node_id",
-    ):
-        value = event.payload.get(key)
-        if isinstance(value, str):
-            payload[key] = value
-    paths = event.payload.get("paths")
-    if isinstance(paths, list):
-        string_paths = [path for path in cast(list[Any], paths) if isinstance(path, str)]
-        if string_paths:
-            payload["paths"] = string_paths
-    return _cleanup_requested_from_payload(payload)
+def _cleanup_requested_payload_from_event(event: EventEnvelope) -> CleanupRequestedPayload | None:
+    try:
+        return CleanupRequestedPayload.model_validate(event.payload)
+    except ValueError:
+        return None
+
+
+def _cleanup_applied_payload_from_event(event: EventEnvelope) -> CleanupAppliedPayload | None:
+    try:
+        return CleanupAppliedPayload.model_validate(event.payload)
+    except ValueError:
+        return None
+
+
+def _cleanup_requested_from_event(event: EventEnvelope) -> CleanupRequestedProjection | None:
+    payload = _cleanup_requested_payload_from_event(event)
+    if payload is None:
+        return None
+    return _cleanup_requested_from_payload(
+        {
+            **payload.model_dump(mode="json"),
+            "position": event.position,
+        }
+    )
 
 
 def _node_creation_from_event(event: EventEnvelope) -> NodeCreationProjection | None:
@@ -5331,47 +5332,47 @@ def _record_gatekeeper_verdicts(state: GraphProjection, event: EventEnvelope) ->
 
 
 def _record_cleanup_requested(state: GraphProjection, event: EventEnvelope) -> None:
-    cleanup_id = event.payload.get("cleanup_id")
-    if isinstance(cleanup_id, str) and cleanup_id:
-        cleanup = _cleanup_requested_from_event(event, cleanup_id)
-        if cleanup is not None:
-            state["cleanup_requested_events"].setdefault(cleanup_id, cleanup)
+    payload = _cleanup_requested_payload_from_event(event)
+    if payload is None:
+        return
 
-    record_id = event.payload.get("file_state_record_id")
-    if not isinstance(record_id, str):
+    cleanup_id = payload.cleanup_id
+    cleanup = _cleanup_requested_from_event(event)
+    if cleanup is not None:
+        state["cleanup_requested_events"].setdefault(cleanup_id, cleanup)
+
+    record_id = payload.file_state_record_id
+    if record_id is None:
         return
     record = state["file_state_records"].get(record_id)
     if record is None:
         return
-    paths = event.payload.get("paths")
     record.compromised = True
     record.superseded_pending = True
-    cleanup_id = event.payload.get("cleanup_id")
-    record.cleanup_id = cleanup_id if isinstance(cleanup_id, str) else None
-    reason = event.payload.get("reason")
-    record.cleanup_reason = reason if isinstance(reason, str) else None
-    record.compromised_paths = list(cast(list[Any], paths)) if isinstance(paths, list) else []
+    record.cleanup_id = cleanup_id
+    record.cleanup_reason = payload.reason
+    record.compromised_paths = list(payload.paths)
 
 
 def _record_cleanup_applied(state: GraphProjection, event: EventEnvelope) -> None:
-    cleanup_id = event.payload.get("cleanup_id")
-    if isinstance(cleanup_id, str) and cleanup_id:
-        state["cleanup_applied_ids"][cleanup_id] = True
+    payload = _cleanup_applied_payload_from_event(event)
+    if payload is None:
+        return
 
-    record_id = event.payload.get("file_state_record_id")
-    if not isinstance(record_id, str):
+    cleanup_id = payload.cleanup_id
+    state["cleanup_applied_ids"][cleanup_id] = True
+
+    record_id = payload.file_state_record_id
+    if record_id is None:
         return
     record = state["file_state_records"].get(record_id)
     if record is None:
         return
     record.compromised = True
     record.superseded_pending = False
-    superseding_record_id = event.payload.get("superseding_record_id")
-    record.superseded_by_record_id = (
-        superseding_record_id if isinstance(superseding_record_id, str) else None
-    )
+    record.superseded_by_record_id = payload.superseding_record_id
     record.cleanup_applied_event_id = event.event_id
-    record.compromised_snapshot_deleted = event.payload.get("deleted_snapshot_ref") is True
+    record.compromised_snapshot_deleted = payload.deleted_snapshot_ref is True
 
 
 def _record_runtime_retry_scheduled(state: GraphProjection, event: EventEnvelope) -> None:

@@ -954,11 +954,119 @@ class PendingGateDecisionProjection(GraphBaseModel):
         return self
 
 
+def _empty_cleanup_extra() -> dict[str, Any]:
+    return {}
+
+
 def _empty_cleanup_paths() -> list[str]:
     return []
 
 
+class CleanupEventPayloadBase(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    extra: dict[str, Any] = Field(default_factory=_empty_cleanup_extra)
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        kwargs.setdefault("exclude_none", True)
+        data = super().model_dump(*args, **kwargs)
+        if not data.get("extra"):
+            data.pop("extra", None)
+        return data
+
+
+def _normalize_cleanup_event_payload(value: Any, known_keys: set[str]) -> Any:
+    if not isinstance(value, dict):
+        return value
+
+    payload = dict(cast(dict[str, Any], value))
+    normalized_extra = payload.get("extra")
+    extra = (
+        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
+    )
+
+    authority = payload.get("authority")
+    if authority is not None and not isinstance(authority, str):
+        extra["authority"] = authority
+        payload.pop("authority", None)
+
+    paths = payload.get("paths")
+    if isinstance(paths, list):
+        payload["paths"] = [path for path in cast(list[Any], paths) if isinstance(path, str)]
+
+    for key in list(payload):
+        if key not in known_keys:
+            extra.setdefault(key, payload.pop(key))
+
+    payload["extra"] = extra
+    return payload
+
+
+class CleanupRequestedPayload(CleanupEventPayloadBase):
+    cleanup_id: str
+    file_state_record_id: str | None = None
+    snapshot_id: str | None = None
+    paths: list[str] = Field(default_factory=_empty_cleanup_paths)
+    authority: str | None = None
+    reason: str | None = None
+    execution_id: str | None = None
+    producer_node_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_cleanup_event_payload(
+            value,
+            {
+                "cleanup_id",
+                "file_state_record_id",
+                "snapshot_id",
+                "paths",
+                "authority",
+                "reason",
+                "execution_id",
+                "producer_node_id",
+                "extra",
+            },
+        )
+
+
+class CleanupAppliedPayload(CleanupEventPayloadBase):
+    cleanup_id: str
+    file_state_record_id: str | None = None
+    superseding_record_id: str | None = None
+    old_snapshot_id: str | None = None
+    new_snapshot_id: str | None = None
+    paths: list[str] = Field(default_factory=_empty_cleanup_paths)
+    authority: str | None = None
+    reason: str | None = None
+    execution_id: str | None = None
+    deleted_snapshot_ref: bool | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_cleanup_event_payload(
+            value,
+            {
+                "cleanup_id",
+                "file_state_record_id",
+                "superseding_record_id",
+                "old_snapshot_id",
+                "new_snapshot_id",
+                "paths",
+                "authority",
+                "reason",
+                "execution_id",
+                "deleted_snapshot_ref",
+                "extra",
+            },
+        )
+
+
 class CleanupRequestedProjection(GraphBaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
     cleanup_id: str
     position: int
     file_state_record_id: str | None = None
@@ -968,6 +1076,26 @@ class CleanupRequestedProjection(GraphBaseModel):
     reason: str | None = None
     execution_id: str | None = None
     producer_node_id: str | None = None
+    extra: dict[str, Any] = Field(default_factory=_empty_cleanup_extra)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_cleanup_event_payload(
+            value,
+            {
+                "cleanup_id",
+                "position",
+                "file_state_record_id",
+                "snapshot_id",
+                "paths",
+                "authority",
+                "reason",
+                "execution_id",
+                "producer_node_id",
+                "extra",
+            },
+        )
 
 
 class RequirementRevisionProjection(GraphBaseModel):
