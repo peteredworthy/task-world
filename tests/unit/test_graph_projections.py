@@ -10,22 +10,41 @@ import pytest
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    ApprovalDecisionProjection,
+    AuthorityDecisionProjection,
     CallbackIdempotencyEvent,
+    CandidateProjection,
     CheckResultProjection,
+    CleanupRequestedProjection,
+    EnvironmentFailureProjection,
+    EdgeProjection,
     EventEnvelope,
     FakeClock,
+    FileStateRecord,
     FinalInvariantBlocker,
     GraphProjection,
     InMemoryEventStore,
+    InputBindingProjection,
+    InvalidTestBlockProjection,
     LegacyOutputRecord,
+    LeaseProjection,
+    NodeCreationProjection,
     OutputRecord,
+    OversightDecisionProjection,
+    PendingGateDecisionProjection,
+    RequirementRevisionProjection,
     SequentialIdGenerator,
+    SupportEvidenceProjection,
+    VerifierVerdictProjection,
     VerificationResultProjection,
     apply_command,
     initial_projection,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
+    project_graph_topology,
     project_decision_view,
+    project_decision_view_from_projection,
+    project_lease_view,
     project_leases,
     project_node_states,
     project_planner_freshness_packet,
@@ -34,6 +53,7 @@ from orchestrator.graph import (
     projection_to_checkpoint,
     project_requirement_freshness_facts,
     project_requirement_revisions,
+    project_residue_report,
     project_run_state,
     project_task_states,
     project_support_evidence_freshness,
@@ -240,6 +260,929 @@ def test_callback_idempotency_projection_allows_empty_callback_payload() -> None
     assert projected.payload is None
 
 
+def test_approval_decision_projection_uses_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "approval_decision_recorded",
+            {
+                "node_id": "gate-1",
+                "decision": "approved",
+                "decider": {"kind": "human", "id": "alice"},
+                "task_region_id": "task-1",
+                "reason": "looks safe",
+            },
+        ),
+    )
+
+    projected = projection["approval_decisions"]["gate-1"]
+
+    assert isinstance(projected, ApprovalDecisionProjection)
+    assert projected.node_id == "gate-1"
+    assert projected.decision == "approved"
+    assert projected.reason == "looks safe"
+
+
+def test_authority_decision_projection_uses_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "authority_decision_recorded",
+            {
+                "node_id": "authority-1",
+                "decision": "granted",
+                "decider": {"kind": "human", "id": "alice"},
+                "scope": {"tools": ["graph_write"]},
+                "expires_at": "2026-01-02T00:00:00+00:00",
+            },
+        ),
+    )
+
+    projected = projection["authority_decisions"]["authority-1"]
+
+    assert isinstance(projected, AuthorityDecisionProjection)
+    assert projected.node_id == "authority-1"
+    assert projected.decision == "granted"
+    assert projected.scope == {"tools": ["graph_write"]}
+
+
+def test_decision_projection_accepts_legacy_outcome_and_boolean_payloads() -> None:
+    projection = reduce_event(
+        reduce_event(
+            initial_projection(),
+            _event(
+                "approval_decision_recorded",
+                {
+                    "node_id": "gate-1",
+                    "outcome": "approved",
+                },
+            ),
+        ),
+        _event(
+            "authority_decision_recorded",
+            {
+                "node_id": "authority-1",
+                "approved": False,
+            },
+        ),
+    )
+
+    assert projection["approval_decisions"]["gate-1"].decision == "approved"
+    assert projection["authority_decisions"]["authority-1"].decision == "denied"
+
+
+def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
+    projection = reduce_event(
+        reduce_event(
+            initial_projection(),
+            _event(
+                "approval_decision_recorded",
+                {
+                    "node_id": "gate-1",
+                    "decision": "approved",
+                    "reason": "looks safe",
+                },
+            ),
+        ),
+        _event(
+            "authority_decision_recorded",
+            {
+                "node_id": "authority-1",
+                "decision": "granted",
+                "scope": {"tools": ["graph_write"]},
+            },
+        ),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+
+    approval = restored["approval_decisions"]["gate-1"]
+    authority = restored["authority_decisions"]["authority-1"]
+
+    assert isinstance(approval, ApprovalDecisionProjection)
+    assert approval.decision == "approved"
+    assert isinstance(authority, AuthorityDecisionProjection)
+    assert authority.decision == "granted"
+    assert authority.scope == {"tools": ["graph_write"]}
+
+
+def test_malformed_decision_payloads_are_tolerated_without_raw_projection_entries() -> None:
+    folded = reduce_event(
+        initial_projection(),
+        _event(
+            "approval_decision_recorded",
+            {
+                "node_id": "gate-1",
+                "decision": "not-a-real-decision",
+            },
+        ),
+    )
+    folded_oversight = reduce_event(
+        initial_projection(),
+        _event(
+            "oversight_decision_recorded",
+            {
+                "node_id": "oversight-1",
+                "decision": "not-a-real-oversight-decision",
+            },
+        ),
+    )
+
+    restored = projection_from_checkpoint(
+        {
+            "approval_decisions": {
+                "gate-2": {
+                    "node_id": "gate-2",
+                    "decision": "still-not-valid",
+                }
+            },
+            "authority_decisions": {
+                "authority-1": {
+                    "node_id": "authority-1",
+                    "decision": "unknown-authority-decision",
+                }
+            },
+            "oversight_decisions": {
+                "oversight-1": {
+                    "node_id": "oversight-1",
+                    "decision": "unknown-oversight-decision",
+                    "position": 1,
+                }
+            },
+        }
+    )
+
+    assert folded["approval_decisions"] == {}
+    assert folded_oversight["oversight_decisions"] == {}
+    assert restored["approval_decisions"] == {}
+    assert restored["authority_decisions"] == {}
+    assert restored["oversight_decisions"] == {}
+
+
+def test_decision_view_behavior_is_preserved_with_typed_decision_projection() -> None:
+    events = [
+        _event(
+            "node_created",
+            {
+                "node_id": "human-gate-1",
+                "kind": "human_gate",
+                "state": "blocked",
+                "reason": "approve final scope",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "authority-1",
+                "kind": "authority_request",
+                "state": "blocked",
+                "reason": "needs graph_write",
+            },
+        ),
+        _event(
+            "authority_decision_recorded",
+            {
+                "node_id": "authority-1",
+                "decision": "granted",
+            },
+        ),
+    ]
+
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+
+    expected = [
+        {
+            "node_id": "human-gate-1",
+            "gate_type": "approve final scope",
+            "prompt": "approve final scope",
+        }
+    ]
+
+    assert project_decision_view(events)["pending_gates"] == expected
+    assert project_decision_view_from_projection(restored)["pending_gates"] == expected
+
+
+def test_decision_request_details_projection_checkpoint_round_trips_typed_payload() -> None:
+    projection = initial_projection()
+    for event in [
+        _event(
+            "node_created",
+            {
+                "node_id": "human-gate-1",
+                "kind": "human_gate",
+                "state": "blocked",
+                "reason": "approve final scope",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "producer_node_id": "human-gate-1",
+                "record_type": "decision_request",
+                "port": "decision_request",
+                "value": {
+                    "options": ["approve", "reject"],
+                    "default_option": "approve",
+                    "consequence_summary": "scope is accepted",
+                    "expires_at": "2026-01-01T00:00:00Z",
+                    "target_node_id": "worker-1",
+                    "target_region_id": "task-1",
+                },
+            },
+        ),
+    ]:
+        projection = reduce_event(projection, event)
+
+    projected = projection["decision_request_details"]["human-gate-1"]
+    assert isinstance(projected, PendingGateDecisionProjection)
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    restored_projected = restored["decision_request_details"]["human-gate-1"]
+
+    assert isinstance(restored_projected, PendingGateDecisionProjection)
+    assert restored_projected.model_dump(mode="json") == {
+        "options": ["approve", "reject"],
+        "default_option": "approve",
+        "consequence_summary": "scope is accepted",
+        "expires_at": "2026-01-01T00:00:00Z",
+        "target_node_id": "worker-1",
+        "target_region_id": "task-1",
+    }
+    assert project_decision_view_from_projection(restored)["pending_gates"] == [
+        {
+            "node_id": "human-gate-1",
+            "gate_type": "approve final scope",
+            "prompt": "approve final scope",
+            "options": ["approve", "reject"],
+            "default_option": "approve",
+            "consequence_summary": "scope is accepted",
+            "expires_at": "2026-01-01T00:00:00Z",
+            "target_node_id": "worker-1",
+            "target_region_id": "task-1",
+        }
+    ]
+
+
+def test_malformed_decision_request_details_checkpoint_entry_is_dropped() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "decision_request_details": {
+                "human-gate-1": {
+                    "options": ["approve", 3],
+                    "expires_at": ["not", "a", "string"],
+                }
+            }
+        }
+    )
+
+    assert restored["decision_request_details"] == {}
+
+
+def test_environment_failure_projection_uses_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "environment_failure_accepted",
+            {
+                "task_region_id": "task-1",
+                "node_id": "check-1",
+                "record_id": "failure-record-1",
+                "classification": "tool_unavailable",
+                "reason": "tool missing",
+                "command_text": "uv run pytest",
+                "stderr": "uv: command not found",
+                "exit_code": 127,
+            },
+        ).model_copy(update={"position": 17}),
+    )
+
+    projected = projection["environment_failures"]["task-1"]
+
+    assert isinstance(projected, EnvironmentFailureProjection)
+    assert projected.position == 17
+    assert projected.node_id == "check-1"
+    assert projected.record_id == "failure-record-1"
+    assert projected.classification == "tool_unavailable"
+    assert projected.reason == "tool missing"
+    assert projected.command_text == "uv run pytest"
+    assert projected.stderr == "uv: command not found"
+    assert projected.exit_code == 127
+
+
+def test_environment_failure_projection_checkpoint_round_trips_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "environment_failure_accepted",
+            {
+                "task_region_id": "task-1",
+                "node_id": "check-1",
+                "classification": "environment_error",
+                "value": {
+                    "command_text": "uv run pytest",
+                    "stderr": "missing dependency",
+                    "exit_code": 1,
+                },
+            },
+        ).model_copy(update={"position": 18}),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    projected = restored["environment_failures"]["task-1"]
+
+    assert isinstance(projected, EnvironmentFailureProjection)
+    assert projected.position == 18
+    assert projected.node_id == "check-1"
+    assert projected.classification == "environment_error"
+    assert projected.reason == "check environment setup failed while running: uv run pytest"
+    assert projected.command_text == "uv run pytest"
+    assert projected.stderr == "missing dependency"
+    assert projected.exit_code == 1
+
+
+def test_environment_failure_projection_preserves_missing_reason_as_typed_none() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ),
+        _event(
+            "environment_failure_accepted",
+            {
+                "task_region_id": "task-1",
+                "classification": "tool_error",
+            },
+        ),
+    ]
+    projection = reduce_event(
+        reduce_event(initial_projection(), events[0]),
+        events[1],
+    )
+
+    projected = projection["environment_failures"]["task-1"]
+
+    assert isinstance(projected, EnvironmentFailureProjection)
+    assert projected.reason is None
+    assert project_task_states(events)["task-1"] == "blocked_environment"
+
+
+def test_file_state_projection_uses_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _file_state_event("task-1", "cand-1", 21),
+    )
+
+    projected = projection["file_state_records"]["file-state-cand-1"]
+
+    assert isinstance(projected, FileStateRecord)
+    assert projected.record_id == "file-state-cand-1"
+    assert projected.snapshot_id == "snapshot-cand-1"
+    assert projected.run_id == "run-1"
+    assert projected.model_dump(mode="json")["position"] == 21
+
+
+def test_file_state_projection_checkpoint_round_trips_typed_payload() -> None:
+    projection = initial_projection()
+    projection = reduce_event(projection, _file_state_event("task-1", "cand-1", 21))
+    projection = reduce_event(
+        projection,
+        _event(
+            "cleanup_requested",
+            {
+                "cleanup_id": "cleanup-1",
+                "file_state_record_id": "file-state-cand-1",
+                "reason": "secret found",
+                "paths": ["secrets.env"],
+            },
+        ).model_copy(update={"position": 22}),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    projected = restored["file_state_records"]["file-state-cand-1"]
+
+    assert isinstance(projected, FileStateRecord)
+    assert projected.record_id == "file-state-cand-1"
+    assert projected.cleanup_id == "cleanup-1"
+    assert projected.model_dump(mode="json")["cleanup_reason"] == "secret found"
+    assert projected.compromised is True
+    assert projected.compromised_paths == ["secrets.env"]
+
+
+def test_residue_report_reads_typed_file_state_entries() -> None:
+    report = project_residue_report(
+        [
+            _event(
+                "file_state_accepted",
+                {
+                    "record_id": "file-state-cand-1",
+                    "record_kind": "file_state",
+                    "producer_node_id": "worker-1",
+                    "port": "file_state",
+                    "schema": "FileStateRecord",
+                    "snapshot_id": "snapshot-cand-1",
+                    "base_snapshot_id": "S0",
+                    "candidate_id": "cand-1",
+                    "verdict": "captured",
+                    "residue": [
+                        {
+                            "path": "secrets.env",
+                            "classification": "secret",
+                            "source": "untracked",
+                        }
+                    ],
+                },
+            ).model_copy(update={"position": 22})
+        ]
+    )
+
+    assert report["secrets.env"][0]["classification"] == "secret"
+    assert report["secrets.env"][0]["source"] == "untracked"
+    assert report["secrets.env"][0]["record_id"] == "file-state-cand-1"
+
+
+def test_task_candidate_projection_uses_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "output_record_accepted",
+            {
+                "producer_node_id": "worker-1",
+                "task_region_id": "task-1",
+                "candidate_id": "candidate-1",
+                "attempt_number": 2,
+                "file_state_record_ids": ["file-state-1"],
+                "supersedes_task_region_ids": ["task-old"],
+            },
+        ).model_copy(update={"position": 31}),
+    )
+
+    projected = projection["task_candidates"]["task-1"][0]
+
+    assert isinstance(projected, CandidateProjection)
+    assert projected.candidate_id == "candidate-1"
+    assert projected.attempt_number == 2
+    assert projected.position == 31
+    assert projected.file_state_record_ids == ["file-state-1"]
+    assert projected.supersedes_task_region_ids == ["task-old"]
+
+
+def test_task_candidate_projection_checkpoint_round_trips_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "output_record_accepted",
+            {
+                "task_region_id": "task-1",
+                "record_id": "candidate-1",
+                "attempt_number": 1,
+            },
+        ).model_copy(update={"position": 32}),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    projected = restored["task_candidates"]["task-1"][0]
+
+    assert isinstance(projected, CandidateProjection)
+    assert projected.candidate_id == "candidate-1"
+    assert projected.attempt_number == 1
+    assert projected.position == 32
+    assert projected.file_state_record_ids == []
+    assert projected.supersedes_task_region_ids == []
+
+
+def test_malformed_task_candidate_checkpoint_entry_is_dropped() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "task_candidates": {
+                "task-1": [
+                    {
+                        "candidate_id": ["candidate-bad"],
+                        "attempt_number": 1,
+                        "position": 33,
+                    }
+                ]
+            }
+        }
+    )
+
+    assert restored["task_candidates"] == {"task-1": []}
+
+
+def test_verifier_verdict_projection_uses_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "verification_passed",
+            {"candidate_id": "candidate-1"},
+        ).model_copy(update={"position": 34}),
+    )
+
+    projected = projection["verifier_verdicts"]["candidate-1"]
+
+    assert isinstance(projected, VerifierVerdictProjection)
+    assert projected.candidate_id == "candidate-1"
+    assert projected.verdict == "passed"
+    assert projected.position == 34
+
+
+def test_verifier_verdict_projection_checkpoint_round_trips_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "verification_failed",
+            {"candidate_id": "candidate-1"},
+        ).model_copy(update={"position": 35}),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    projected = restored["verifier_verdicts"]["candidate-1"]
+
+    assert isinstance(projected, VerifierVerdictProjection)
+    assert projected.candidate_id == "candidate-1"
+    assert projected.verdict == "failed"
+    assert projected.position == 35
+
+
+def test_malformed_verifier_verdict_checkpoint_entry_is_dropped() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "verifier_verdicts": {
+                "candidate-1": {
+                    "candidate_id": "candidate-1",
+                    "verdict": "unknown",
+                    "position": 36,
+                }
+            }
+        }
+    )
+
+    assert restored["verifier_verdicts"] == {}
+
+
+def test_requirement_revision_projection_uses_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "requirement_revision_recorded",
+            {
+                "requirement_id": "R-1",
+                "version_id": "R-1.v2",
+                "previous_version_id": "R-1.v1",
+                "revision_index": 2,
+                "classification": "semantic_change",
+                "authority_required_reason": "behavior change needs approval",
+                "active": True,
+            },
+        ).model_copy(update={"position": 37}),
+    )
+
+    projected = projection["requirement_revisions"]["R-1.v2"]
+
+    assert isinstance(projected, RequirementRevisionProjection)
+    assert projected.model_dump(mode="json") == {
+        "requirement_id": "R-1",
+        "version_id": "R-1.v2",
+        "change_classification": "semantic_change",
+        "requires_authority": True,
+        "position": 37,
+        "previous_version_id": "R-1.v1",
+        "revision_index": 2,
+        "authority_required_reason": "behavior change needs approval",
+        "validation_strengthening": False,
+    }
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    restored_projected = restored["requirement_revisions"]["R-1.v2"]
+
+    assert isinstance(restored_projected, RequirementRevisionProjection)
+    assert restored_projected.model_dump(mode="json") == projected.model_dump(mode="json")
+
+
+def test_support_evidence_projection_checkpoint_round_trips_typed_payload() -> None:
+    projection = initial_projection()
+    for event in [
+        _event(
+            "requirement_revision_recorded",
+            {"requirement_id": "R-1", "version_id": "R-1.v1"},
+        ).model_copy(update={"position": 38}),
+        _event(
+            "support_evidence_recorded",
+            {
+                "support_id": "S-1",
+                "evidence_id": "E-1",
+                "requirement_id": "R-1",
+                "requirement_version_id": "R-1.v1",
+                "confidence": "high",
+            },
+        ).model_copy(update={"position": 39}),
+    ]:
+        projection = reduce_event(projection, event)
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    projected = restored["support_evidence"]["S-1"]
+
+    assert isinstance(projected, SupportEvidenceProjection)
+    assert projected.model_dump(mode="json") == {
+        "support_id": "S-1",
+        "evidence_id": "E-1",
+        "requirement_id": "R-1",
+        "requirement_version_id": "R-1.v1",
+        "status": "active",
+        "position": 39,
+        "confidence": "high",
+    }
+    assert support_evidence_freshness_from_projection(restored) == {
+        "S-1": {
+            "support_id": "S-1",
+            "evidence_id": "E-1",
+            "requirement_id": "R-1",
+            "requirement_version_id": "R-1.v1",
+            "status": "active",
+            "freshness": "fresh",
+            "stale_reason": None,
+        }
+    }
+
+
+def test_malformed_requirement_and_support_checkpoint_entries_are_dropped() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "requirement_revisions": {
+                "R-1.v1": {
+                    "requirement_id": "R-1",
+                    "version_id": "R-1.v1",
+                    "change_classification": "initial",
+                    "requires_authority": False,
+                    "position": "bad",
+                    "validation_strengthening": False,
+                }
+            },
+            "support_evidence": {
+                "S-1": {
+                    "support_id": "S-1",
+                    "evidence_id": "E-1",
+                    "requirement_id": "R-1",
+                    "requirement_version_id": "R-1.v1",
+                    "status": "active",
+                    "position": "bad",
+                }
+            },
+        }
+    )
+
+    assert restored["requirement_revisions"] == {}
+    assert restored["support_evidence"] == {}
+
+
+def test_oversight_decision_projection_checkpoint_round_trips_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "oversight_decision_recorded",
+            {
+                "node_id": "oversight-1",
+                "appeal_node_id": "appeal-1",
+                "appealed_node_id": "verifier-1",
+                "task_region_id": "task-1",
+                "candidate_id": "candidate-1",
+                "decision": "invalid_test_accepted",
+                "appeal_type": "invalid_test",
+                "reason": "test assertion was wrong",
+            },
+        ).model_copy(update={"position": 40}),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    projected = restored["oversight_decisions"]["oversight-1"]
+
+    assert isinstance(projected, OversightDecisionProjection)
+    assert projected.model_dump(mode="json") == {
+        "node_id": "oversight-1",
+        "decision": "invalid_test_accepted",
+        "position": 40,
+        "task_region_id": "task-1",
+        "candidate_id": "candidate-1",
+        "appeal_node_id": "appeal-1",
+        "appealed_node_id": "verifier-1",
+        "appeal_type": "invalid_test",
+        "reason": "test assertion was wrong",
+    }
+    assert restored["oversight_decisions"]["appeal-1"] is projected
+
+
+def test_oversight_decision_checkpoint_restore_rebuilds_appeal_alias() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "oversight_decisions": {
+                "oversight-1": {
+                    "node_id": "oversight-1",
+                    "appeal_node_id": "appeal-1",
+                    "decision": "invalid_test_accepted",
+                    "position": 41,
+                }
+            }
+        }
+    )
+
+    projected = restored["oversight_decisions"]["oversight-1"]
+
+    assert restored["oversight_decisions"]["appeal-1"] is projected
+
+
+def test_oversight_decision_approved_boolean_blocks_invalid_test() -> None:
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
+            update={"position": 1}
+        ),
+        _event(
+            "oversight_decision_recorded",
+            {
+                "task_region_id": "task-1",
+                "candidate_id": "cand-1",
+                "appeal_type": "invalid_test",
+                "approved": True,
+            },
+        ).model_copy(update={"position": 2}),
+    ]
+
+    assert project_task_states(events) == {"task-1": "blocked_invalid_test"}
+
+
+def test_malformed_file_state_payload_is_tolerated_without_raw_projection_entry() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "file_state_accepted",
+            {
+                "record_id": ["file-state-bad-1"],
+                "record_kind": "file_state",
+                "producer_node_id": "worker-1",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "verdict": "captured",
+            },
+        ).model_copy(update={"position": 23}),
+    )
+
+    assert projection["file_state_records"] == {}
+
+
+def test_task_projection_accepts_file_state_via_producer_node_task_region_fallback() -> None:
+    events = [
+        _event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "task_region_id": "task-1"},
+        ).model_copy(update={"position": 0}),
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 1}),
+        _event("verification_passed", {"candidate_id": "cand-1"}).model_copy(
+            update={"position": 2}
+        ),
+        _event(
+            "file_state_accepted",
+            {
+                "record_id": "file-state-cand-1",
+                "record_kind": "file_state",
+                "producer_node_id": "worker-1",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "snapshot_id": "snapshot-cand-1",
+                "base_snapshot_id": "S0",
+                "candidate_id": "cand-1",
+                "verdict": "captured",
+            },
+        ).model_copy(update={"position": 3}),
+    ]
+
+    assert project_task_states(events) == {"task-1": "accepted"}
+
+
+def test_file_state_projection_normalizes_legacy_membership_candidate_id() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "file_state_accepted",
+            {
+                "record_id": "file-state-cand-1",
+                "record_kind": "file_state",
+                "producer_node_id": "worker-1",
+                "port": "file_state",
+                "membership": {"task_region_id": "task-1", "candidate_id": "cand-1"},
+            },
+        ),
+    )
+
+    projected = projection["file_state_records"]["file-state-cand-1"]
+
+    assert projected.task_region_id == "task-1"
+    assert projected.candidate_id == "cand-1"
+
+
+def test_node_creation_projection_uses_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "role": "builder",
+                "state": "planned",
+                "task_region_id": "step/task",
+                "attempt_number": 2,
+                "candidate_id": "candidate-1",
+                "failed_candidate_id": "candidate-0",
+                "resource_claims": [{"path": "src/app.py", "mode": "write"}],
+                "allowed_actions": ["submit_callback"],
+                "preconditions": ["inputs_bound"],
+            },
+        ).model_copy(update={"position": 23}),
+    )
+
+    projected = projection["node_creation_payloads"]["worker-1"]
+
+    assert isinstance(projected, NodeCreationProjection)
+    assert projected.node_id == "worker-1"
+    assert projected.kind == "worker"
+    assert projected.role == "builder"
+    assert projected.state == "planned"
+    assert projected.task_region_id == "step/task"
+    assert projected.attempt_number == 2
+    assert projected.candidate_id == "candidate-1"
+    assert projected.failed_candidate_id == "candidate-0"
+    assert projected.resource_claims == [{"path": "src/app.py", "mode": "write"}]
+    assert projected.allowed_actions == ["submit_callback"]
+    assert projected.preconditions == ["inputs_bound"]
+
+
+def test_node_creation_projection_checkpoint_round_trips_typed_payload() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "node_created",
+            {
+                "node_id": "gate-1",
+                "kind": "gate",
+                "role": "human_gate",
+                "state": "blocked",
+                "task_region_id": "step/task",
+                "gate_type": "approval",
+                "prompt": "Approve the change?",
+            },
+        ).model_copy(update={"position": 24}),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    projected = restored["node_creation_payloads"]["gate-1"]
+
+    assert isinstance(projected, NodeCreationProjection)
+    assert projected.node_id == "gate-1"
+    assert projected.kind == "gate"
+    assert projected.prompt == "Approve the change?"
+
+
+def test_malformed_node_created_payload_is_tolerated_without_raw_projection_entry() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "node_created",
+            {
+                "node_id": ["legacy", "bad", "shape"],
+                "kind": "worker",
+                "state": "planned",
+            },
+        ),
+    )
+
+    assert projection["node_creation_payloads"] == {}
+    assert projection["node_states"] == {}
+
+
+def test_malformed_environment_failure_payload_is_tolerated_without_raw_projection_entry() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "environment_failure_accepted",
+            {
+                "task_region_id": "task-1",
+                "classification": "tool_error",
+                "reason": ["legacy", "bad", "shape"],
+            },
+        ),
+    )
+
+    assert projection["environment_failures"] == {}
+
+
 def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
     events = [
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "completed"}),
@@ -290,6 +1233,317 @@ def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
     assert binding["record_bound_positions"] == {"candidate-1": 4, "candidate-2": 5}
 
 
+def test_edge_projection_uses_typed_payload_and_preserves_topology_shape() -> None:
+    events = [
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "completed"}),
+        _event(
+            "node_created",
+            {"node_id": "summarizer-1", "kind": "summarizer", "state": "planned"},
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-source-records",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "required": False,
+                "dependency_type": "input_binding",
+                "accepted_record_selector": {
+                    "record_type": "candidate",
+                    "schema": "ImplementationCandidate",
+                },
+                "prompt_hydration_policy": {"mode": "summary"},
+                "metadata": {"priority": "high"},
+                "unexpected_payload": {"must": "drop"},
+            },
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-source-records",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "record_ids": ["candidate-1"],
+                "bound_at_position": 4,
+            },
+        ),
+    ]
+
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+
+    edge = projection["edges"]["edge-source-records"]
+    assert isinstance(edge, EdgeProjection)
+    assert edge["accepted_record_selector"] == {
+        "record_type": "candidate",
+        "schema": "ImplementationCandidate",
+    }
+    assert "unexpected_payload" not in edge
+
+    topology = project_graph_topology(events)
+    topology_edge = topology["edges"][0]
+    assert topology_edge["edge_id"] == "edge-source-records"
+    assert topology_edge["required"] is False
+    assert topology_edge["accepted_record_selector"] == {
+        "record_type": "candidate",
+        "schema": "ImplementationCandidate",
+    }
+    assert topology_edge["metadata"] == {
+        "prompt_hydration_policy": {"mode": "summary"},
+        "metadata": {"priority": "high"},
+    }
+    assert topology_edge["binding"] == {
+        "edge_id": "edge-source-records",
+        "to_node_id": "summarizer-1",
+        "to_port": "source_records",
+        "record_ids": ["candidate-1"],
+        "bound_at_position": 4,
+        "record_bound_positions": {"candidate-1": 4},
+        "binding_policy": "bind_all",
+    }
+
+
+def test_input_binding_projection_uses_typed_payload_and_drops_raw_event_extras() -> None:
+    projection = initial_projection()
+    for event in [
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "completed"}),
+        _event(
+            "node_created",
+            {"node_id": "summarizer-1", "kind": "summarizer", "state": "planned"},
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-source-records",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+            },
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-source-records",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "record_ids": ["candidate-1"],
+                "bound_at_position": 4,
+                "trigger": "record_accepted",
+                "raw_payload_only": {"must": "drop"},
+            },
+        ),
+    ]:
+        projection = reduce_event(projection, event)
+
+    binding = projection["input_bindings"]["summarizer-1"]["source_records"]
+    assert isinstance(binding, InputBindingProjection)
+    assert binding["record_ids"] == ["candidate-1"]
+    assert binding["trigger"] == "record_accepted"
+    assert "raw_payload_only" not in binding
+
+
+def test_edge_and_input_binding_projection_checkpoint_round_trips_typed_payloads() -> None:
+    projection = initial_projection()
+    for event in [
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "completed"}),
+        _event(
+            "node_created",
+            {"node_id": "summarizer-1", "kind": "summarizer", "state": "planned"},
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-source-records",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "binding_policy": "bind_all",
+            },
+        ),
+        _event(
+            "input_bound",
+            {
+                "edge_id": "edge-source-records",
+                "to_node_id": "summarizer-1",
+                "to_port": "source_records",
+                "record_ids": ["candidate-1"],
+                "bound_at_position": 4,
+            },
+        ),
+    ]:
+        projection = reduce_event(projection, event)
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+
+    assert isinstance(restored["edges"]["edge-source-records"], EdgeProjection)
+    assert isinstance(
+        restored["input_bindings"]["summarizer-1"]["source_records"],
+        InputBindingProjection,
+    )
+    assert restored["edges"]["edge-source-records"]["binding_policy"] == "bind_all"
+    assert restored["input_bindings"]["summarizer-1"]["source_records"]["record_ids"] == [
+        "candidate-1"
+    ]
+
+
+def test_malformed_edge_and_input_binding_checkpoint_entries_are_dropped() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "edges": {
+                "edge-valid": {
+                    "edge_id": "edge-valid",
+                    "from_node_id": "worker-1",
+                    "from_port": "candidate",
+                    "to_node_id": "summarizer-1",
+                    "to_port": "source_records",
+                },
+                "edge-invalid-dependency": {
+                    "edge_id": "edge-invalid-dependency",
+                    "from_node_id": "worker-1",
+                    "from_port": "candidate",
+                    "to_node_id": "summarizer-1",
+                    "to_port": "source_records",
+                    "dependency_type": "invalid-dependency",
+                },
+                "edge-mismatched-key": {
+                    "edge_id": "edge-other",
+                    "from_node_id": "worker-1",
+                    "from_port": "candidate",
+                    "to_node_id": "summarizer-1",
+                    "to_port": "source_records",
+                },
+                "edge-malformed": {
+                    "edge_id": "edge-malformed",
+                    "from_node_id": "worker-1",
+                },
+            },
+            "input_bindings": {
+                "summarizer-1": {
+                    "source_records": {
+                        "edge_id": "edge-valid",
+                        "to_node_id": "summarizer-1",
+                        "to_port": "source_records",
+                        "record_ids": ["candidate-1"],
+                        "bound_at_position": 4,
+                    },
+                    "mismatched-port": {
+                        "edge_id": "edge-valid",
+                        "to_node_id": "summarizer-1",
+                        "to_port": "source_records",
+                        "record_ids": ["candidate-1"],
+                        "bound_at_position": 4,
+                    },
+                    "malformed": {
+                        "edge_id": "edge-valid",
+                        "to_node_id": "summarizer-1",
+                        "to_port": "malformed",
+                        "record_ids": "candidate-1",
+                        "bound_at_position": 4,
+                    },
+                },
+                "mismatched-node": {
+                    "source_records": {
+                        "edge_id": "edge-valid",
+                        "to_node_id": "summarizer-1",
+                        "to_port": "source_records",
+                        "record_ids": ["candidate-1"],
+                        "bound_at_position": 4,
+                    }
+                },
+            },
+        }
+    )
+
+    assert list(restored["edges"]) == ["edge-valid"]
+    assert list(restored["input_bindings"]["summarizer-1"]) == ["source_records"]
+    assert isinstance(restored["edges"]["edge-valid"], EdgeProjection)
+    assert isinstance(
+        restored["input_bindings"]["summarizer-1"]["source_records"],
+        InputBindingProjection,
+    )
+
+
+def test_finite_state_and_kind_checkpoint_entries_are_validated() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "node_states": {
+                "worker-1": "running",
+                "worker-bad": "definitely-not-a-node-state",
+            },
+            "task_states": {
+                "task-1": "accepted",
+                "task-bad": "running",
+            },
+            "node_kinds": {
+                "worker-1": "worker",
+                "worker-bad": "definitely-not-a-node-kind",
+            },
+        }
+    )
+
+    assert restored["node_states"] == {"worker-1": "running"}
+    assert restored["task_states"] == {"task-1": "accepted"}
+    assert restored["node_kinds"] == {"worker-1": "worker"}
+
+
+def test_structural_index_checkpoint_entries_are_validated() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "node_resource_claims": {
+                "worker-1": [
+                    {"mode": "read", "scope": "repo", "paths": ["src/"]},
+                    {"mode": "external", "scope": "external"},
+                    "not-a-claim",
+                ],
+                "worker-bad": "not-a-list",
+            },
+            "recovery_nodes_by_record_id": {
+                "record-1": [
+                    {"node_id": "recovery-1", "recovery_reason": "failed_check"},
+                    {"node_id": "recovery-bad"},
+                    "not-a-recovery",
+                ],
+                "record-bad": "not-a-list",
+            },
+            "latest_routine_snapshot_record": {
+                "record_id": "routine-snapshot-1",
+                "producer_node_id": "routine-snapshot",
+                "port": "routine_snapshot",
+            },
+        }
+    )
+
+    assert restored["node_resource_claims"] == {
+        "worker-1": [{"mode": "read", "scope": "repo", "paths": ["src/"]}]
+    }
+    assert restored["recovery_nodes_by_record_id"] == {
+        "record-1": [{"node_id": "recovery-1", "recovery_reason": "failed_check"}]
+    }
+    assert restored["latest_routine_snapshot_record"] == {
+        "record_id": "routine-snapshot-1",
+        "producer_node_id": "routine-snapshot",
+        "port": "routine_snapshot",
+    }
+
+
+def test_malformed_latest_routine_snapshot_checkpoint_entry_is_dropped() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "latest_routine_snapshot_record": {
+                "record_id": "routine-snapshot-1",
+                "producer_node_id": "routine-snapshot",
+            }
+        }
+    )
+
+    assert restored["latest_routine_snapshot_record"] is None
+
+
 def test_invalid_persisted_edge_selector_raises_projection_error() -> None:
     projection = initial_projection()
     event = _event(
@@ -337,6 +1591,84 @@ def test_replay_determinism() -> None:
             "kind": "worker",
             "state": "active",
         }
+    }
+
+
+def test_lease_projection_uses_typed_payload_and_preserves_public_shape() -> None:
+    event = _event(
+        "lease_granted",
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "generation": 2,
+            "execution_id": "exec-1",
+            "expires_at": "2026-01-02T00:00:00+00:00",
+            "task_region_id": "task-1",
+            "kind": "worker",
+        },
+    )
+
+    projection = reduce_event(initial_projection(), event)
+    projected = projection["leases"]["lease-1"]
+
+    assert isinstance(projected, LeaseProjection)
+    assert project_leases([], projection=projection) == {
+        "lease-1": {
+            "lease_id": "lease-1",
+            "node_id": "worker-1",
+            "generation": 2,
+            "state": "active",
+            "execution_id": "exec-1",
+            "expires_at": "2026-01-02T00:00:00+00:00",
+            "task_region_id": "task-1",
+            "kind": "worker",
+        }
+    }
+    assert project_lease_view([], projection=projection) == {
+        "active": [
+            {
+                "lease_id": "lease-1",
+                "node_id": "worker-1",
+                "generation": 2,
+                "state": "active",
+                "execution_id": "exec-1",
+                "expires_at": "2026-01-02T00:00:00+00:00",
+            }
+        ],
+        "suspended": [],
+    }
+
+
+def test_lease_projection_checkpoint_round_trips_typed_payload_and_drops_malformed_entries() -> (
+    None
+):
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "lease_granted",
+            {"node_id": "worker-1", "lease_id": "lease-1", "task_region_id": "task-1"},
+        ),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    restored_from_historical = projection_from_checkpoint(
+        {
+            "leases": {
+                "lease-2": {"lease_id": "lease-2", "node_id": "worker-2", "state": "active"},
+                "bad-state": {"lease_id": "bad-state", "state": 42},
+                "bad-entry": "not-a-dict",
+            }
+        }
+    )
+
+    assert isinstance(restored["leases"]["lease-1"], LeaseProjection)
+    assert restored["leases"]["lease-1"].task_region_id == "task-1"
+    assert restored_from_historical["leases"].keys() == {"lease-2"}
+    assert isinstance(restored_from_historical["leases"]["lease-2"], LeaseProjection)
+    assert restored_from_historical["leases"]["lease-2"].model_dump(mode="json") == {
+        "lease_id": "lease-2",
+        "node_id": "worker-2",
+        "state": "active",
     }
 
 
@@ -980,12 +2312,69 @@ def test_residual_command_projection_fields_fold_incrementally() -> None:
     }
     assert projection["failed_verification_candidate_ids"] == {"candidate-2": True}
     assert projection["retry_not_before_by_node"] == {"worker-1": "2025-01-01T00:01:00+00:00"}
-    assert projection["cleanup_requested_events"]["cleanup-1"]["position"] == 8
+    assert projection["cleanup_requested_events"]["cleanup-1"].position == 8
     assert (
-        projection["cleanup_requested_events"]["cleanup-1"]["payload"]["file_state_record_id"]
-        == "file-state-1"
+        projection["cleanup_requested_events"]["cleanup-1"].file_state_record_id == "file-state-1"
     )
     assert projection["cleanup_applied_ids"] == {"cleanup-1": True}
+
+
+def test_cleanup_requested_events_checkpoint_round_trips_typed_envelopes() -> None:
+    projection = initial_projection()
+    for event in [
+        _event(
+            "cleanup_requested",
+            {
+                "cleanup_id": "cleanup-1",
+                "file_state_record_id": "file-state-1",
+                "paths": ["secrets.env"],
+            },
+        ).model_copy(update={"position": 8}),
+        _event(
+            "cleanup_requested",
+            {
+                "cleanup_id": "cleanup-1",
+                "file_state_record_id": "file-state-2",
+                "paths": ["ignored.env"],
+            },
+        ).model_copy(update={"position": 9}),
+    ]:
+        projection = reduce_event(projection, event)
+
+    projected = projection["cleanup_requested_events"]["cleanup-1"]
+
+    assert isinstance(projected, CleanupRequestedProjection)
+    assert projected.cleanup_id == "cleanup-1"
+    assert projected.position == 8
+    assert projected.file_state_record_id == "file-state-1"
+    assert projected.paths == ["secrets.env"]
+
+    checkpoint = projection_to_checkpoint(projection)
+    assert checkpoint["cleanup_requested_events"]["cleanup-1"]["position"] == 8
+
+    restored = projection_from_checkpoint(checkpoint)
+    restored_projected = restored["cleanup_requested_events"]["cleanup-1"]
+
+    assert isinstance(restored_projected, CleanupRequestedProjection)
+    assert restored_projected.position == 8
+    assert restored_projected.paths == ["secrets.env"]
+
+
+def test_malformed_cleanup_requested_checkpoint_entry_is_dropped() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "cleanup_requested_events": {
+                "cleanup-1": {
+                    "event_id": "cleanup-requested-event",
+                    "position": "bad",
+                    "event_type": "cleanup_requested",
+                    "payload": {"cleanup_id": "cleanup-1"},
+                }
+            }
+        }
+    )
+
+    assert restored["cleanup_requested_events"] == {}
 
 
 def test_requirement_revisions_replay_active_versions() -> None:
@@ -2498,15 +3887,13 @@ def test_check_result_candidate_id_does_not_replace_latest_task_candidate() -> N
     for event in events:
         projection = reduce_event(projection, event)
 
-    assert projection["task_candidates"]["task-1"] == [
-        {
-            "candidate_id": "candidate-1",
-            "attempt_number": 0,
-            "position": 1,
-            "file_state_record_ids": [],
-            "supersedes_task_region_ids": [],
-        }
-    ]
+    candidate = projection["task_candidates"]["task-1"][0]
+    assert isinstance(candidate, CandidateProjection)
+    assert candidate.candidate_id == "candidate-1"
+    assert candidate.attempt_number == 0
+    assert candidate.position == 1
+    assert candidate.file_state_record_ids == []
+    assert candidate.supersedes_task_region_ids == []
     assert project_task_states(events) == {"task-1": "accepted"}
     assert project_final_invariant_blockers(events) == []
     assert project_run_state(events) == "completed"
@@ -3089,6 +4476,80 @@ def test_task_projection_blocked_invalid_test() -> None:
     ]
 
     assert project_task_states(events) == {"task-1": "blocked_invalid_test"}
+
+
+def test_invalid_test_block_projection_uses_typed_payload_and_preserves_task_state_behavior() -> (
+    None
+):
+    events = [
+        _event(
+            "output_record_accepted",
+            {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
+        ).model_copy(update={"position": 0}),
+        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
+            update={"position": 1}
+        ),
+        _event(
+            "oversight_decision_recorded",
+            {
+                "task_region_id": "task-1",
+                "candidate_id": "cand-1",
+                "appeal_type": "invalid_test",
+                "decision": "accepted",
+            },
+        ).model_copy(update={"position": 2}),
+    ]
+
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+
+    projected = projection["invalid_test_blocks"]["task-1"]
+
+    assert isinstance(projected, InvalidTestBlockProjection)
+    assert projected.accepted is True
+    assert project_task_states(events) == {"task-1": "blocked_invalid_test"}
+
+
+def test_invalid_test_block_checkpoint_round_trips_typed_payload_and_drops_malformed_entries() -> (
+    None
+):
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "oversight_decision_recorded",
+            {
+                "task_region_id": "task-1",
+                "candidate_id": "cand-1",
+                "appeal_type": "invalid_test",
+                "decision": "accepted",
+            },
+        ).model_copy(update={"position": 2}),
+    )
+
+    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
+    restored_from_historical = projection_from_checkpoint(
+        {
+            "invalid_test_blocks": {
+                "task-2": {"accepted": True, "candidate_id": "cand-2", "position": 4},
+                "bad-position": {"accepted": True, "position": "late"},
+                "bad-entry": "not-a-dict",
+            }
+        }
+    )
+
+    assert isinstance(restored["invalid_test_blocks"]["task-1"], InvalidTestBlockProjection)
+    assert restored["invalid_test_blocks"]["task-1"].position == 2
+    assert restored_from_historical["invalid_test_blocks"].keys() == {"task-2"}
+    assert isinstance(
+        restored_from_historical["invalid_test_blocks"]["task-2"],
+        InvalidTestBlockProjection,
+    )
+    assert restored_from_historical["invalid_test_blocks"]["task-2"].model_dump(mode="json") == {
+        "accepted": True,
+        "candidate_id": "cand-2",
+        "position": 4,
+    }
 
 
 def test_task_projection_blocked_environment() -> None:

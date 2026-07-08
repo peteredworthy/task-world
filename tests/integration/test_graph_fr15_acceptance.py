@@ -203,9 +203,9 @@ async def test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable(
     raw_events = await _read_events(session_factory, run_id)
     projection = rebuild_projection(raw_events)
     original = projection["file_state_records"][record_id]
-    superseding_id = str(original["superseded_by_record_id"])
+    superseding_id = str(original.superseded_by_record_id)
     superseding = projection["file_state_records"][superseding_id]
-    new_ref = f"refs/orchestrator/snapshots/{superseding['snapshot_id']}"
+    new_ref = f"refs/orchestrator/snapshots/{superseding.snapshot_id}"
     public_events = await _get_json(client, f"/api/runs/{run_id}/graph/events?payload_mode=full")
     node = await _get_json(
         client, f"/api/runs/{run_id}/graph/nodes/worker-cleanup?payload_mode=full"
@@ -225,13 +225,14 @@ async def test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable(
         "output_record_accepted",
         "file_state_accepted",
     ]
-    assert original["compromised"] is True
-    assert original["superseded_pending"] is False
-    assert original["compromised_paths"] == ["residue.txt"]
-    assert original["cleanup_applied_event_id"] is not None
-    assert superseding["supersedes_record_id"] == record_id
-    assert superseding["cleanup_id"] == f"{record_id}:gatekeeper-secret"
-    assert "residue.txt" not in _tree_paths(repo, str(superseding["git"]["commit_sha"]))
+    assert original.compromised is True
+    assert original.superseded_pending is False
+    assert original.compromised_paths == ["residue.txt"]
+    assert original.cleanup_applied_event_id is not None
+    assert superseding.supersedes_record_id == record_id
+    assert superseding.cleanup_id == f"{record_id}:gatekeeper-secret"
+    assert superseding.git is not None
+    assert "residue.txt" not in _tree_paths(repo, str(superseding.git.commit_sha))
     assert _ref_exists(repo, old_ref) is False
     assert _ref_exists(repo, new_ref) is True
     assert [record["record_id"] for record in node["file_state_records"]] == [

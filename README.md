@@ -31,3 +31,5 @@ Routine → Run → Step → Task → Builder → Gates → Verifier → Pass/Re
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full directory map, API routes, CLI commands, and technology stack.
 
 See [AGENTS.md](AGENTS.md) for coding agent guidance, design constraints, and implementation details.
+
+See [research/README.md](research/README.md) for the research wiki — current-system understanding, external evidence digests, and a prioritized recommendation set for the orchestrator's evolution.

@@ -14,6 +14,7 @@ from typing import cast
 
 from orchestrator.git import SnapshotResult, WorktreeError, delete_snapshot_ref, snapshot
 from orchestrator.graph import (
+    FileStateRecord,
     FileStateClassification,
     FileStatePath,
     FileStatePathKind,
@@ -141,12 +142,13 @@ def apply_cleanup_requested(
     *,
     worktree_path: str | Path,
     cleanup_request: dict[str, object],
-    compromised_record: dict[str, object],
+    compromised_record: dict[str, object] | FileStateRecord,
 ) -> CleanupApplication:
     """Re-snapshot without gatekeeper-secret paths and delete the compromised ref."""
+    compromised_payload = _file_state_record_payload(compromised_record)
     cleanup_id = str(cleanup_request.get("cleanup_id", ""))
     paths = _cleanup_paths(cleanup_request)
-    old_snapshot_id = str(cleanup_request.get("snapshot_id") or compromised_record["snapshot_id"])
+    old_snapshot_id = str(cleanup_request.get("snapshot_id") or compromised_payload["snapshot_id"])
     snap = snapshot(
         worktree_path,
         f"graph file-state cleanup {cleanup_id}",
@@ -156,13 +158,19 @@ def apply_cleanup_requested(
     return CleanupApplication(
         cleanup_id=cleanup_id,
         superseding_file_state_record=_cleanup_superseding_record(
-            compromised_record=compromised_record,
+            compromised_record=compromised_payload,
             cleanup_id=cleanup_id,
             excluded_paths=paths,
             snapshot_result=snap,
         ),
         deleted_snapshot_ref=deleted,
     )
+
+
+def _file_state_record_payload(record: dict[str, object] | FileStateRecord) -> dict[str, object]:
+    if isinstance(record, FileStateRecord):
+        return cast(dict[str, object], record.model_dump(mode="json"))
+    return record
 
 
 def _file_state_output_record(

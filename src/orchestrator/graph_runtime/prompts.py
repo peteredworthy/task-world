@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from orchestrator.graph import DEFAULT_NODE_CONTRACTS, EventEnvelope, GraphProjection
 from orchestrator.graph.command_bindings import resolve_check_command_definition
-from orchestrator.graph.models import GapClassificationRecord
+from orchestrator.graph.models import FileStateRecord, GapClassificationRecord
 from orchestrator.graph.patch_validator import PLANNER_OPS
 from orchestrator.graph.projections import project_planner_freshness_packet
 from orchestrator.graph_runtime.horizon_templates import horizon_region_templates
@@ -718,7 +718,7 @@ def _hydration_policy_for_binding(
     if not isinstance(edge_id, str):
         return "structured_json"
     edge = projection["edges"].get(edge_id)
-    if not isinstance(edge, dict):
+    if edge is None:
         return "structured_json"
     policy = edge.get("prompt_hydration_policy")
     if isinstance(policy, str) and policy in {
@@ -792,22 +792,25 @@ def _inline_record_summary(record_payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in inline.items() if value is not None}
 
 
-def _compact_file_state_record(record: dict[str, Any]) -> dict[str, Any]:
-    tracked = _path_entries(record.get("tracked"))
-    untracked = _path_entries(record.get("untracked"))
-    ignored = _path_entries(record.get("ignored"))
-    rejected_paths = record.get("rejected_paths")
+def _compact_file_state_record(record: dict[str, Any] | FileStateRecord) -> dict[str, Any]:
+    record_payload = (
+        record.model_dump(mode="json") if isinstance(record, FileStateRecord) else record
+    )
+    tracked = _path_entries(record_payload.get("tracked"))
+    untracked = _path_entries(record_payload.get("untracked"))
+    ignored = _path_entries(record_payload.get("ignored"))
+    rejected_paths = record_payload.get("rejected_paths")
     rejected_path_count = (
         len(cast(list[object], rejected_paths)) if isinstance(rejected_paths, list) else 0
     )
 
     compact: dict[str, Any] = {
-        "snapshot_id": record.get("snapshot_id"),
-        "base_snapshot_id": record.get("base_snapshot_id"),
-        "producer_node_id": record.get("producer_node_id"),
-        "port": record.get("port"),
-        "schema": record.get("schema"),
-        "verdict": record.get("verdict"),
+        "snapshot_id": record_payload.get("snapshot_id"),
+        "base_snapshot_id": record_payload.get("base_snapshot_id"),
+        "producer_node_id": record_payload.get("producer_node_id"),
+        "port": record_payload.get("port"),
+        "schema": record_payload.get("schema"),
+        "verdict": record_payload.get("verdict"),
         "counts": {
             "tracked": len(tracked),
             "untracked": len(untracked),
@@ -819,7 +822,7 @@ def _compact_file_state_record(record: dict[str, Any]) -> dict[str, Any]:
     }
     if isinstance(rejected_paths, list) and rejected_paths:
         compact["rejected_paths"] = [str(path) for path in cast(list[object], rejected_paths)[:10]]
-    git = record.get("git")
+    git = record_payload.get("git")
     if isinstance(git, dict):
         git_data = cast(dict[str, Any], git)
         compact["git"] = {
@@ -864,7 +867,7 @@ def _planner_outstanding_failures(
     for region_id, failure in projection["environment_failures"].items():
         if task_region_id is not None and task_region_id != region_id:
             continue
-        entry = dict(failure)
+        entry = failure.model_dump(mode="json")
         entry["task_region_id"] = region_id
         failures.append(entry)
     failures.sort(key=lambda item: str(item.get("task_region_id")))
@@ -1298,16 +1301,16 @@ def _file_state_record_ids_for_task_region(context: GraphDispatchContext) -> lis
         return []
     output: list[str] = []
     for record_id, record in context.graph_projection["file_state_records"].items():
-        record_region_id = record.get("task_region_id")
+        record_region_id = record.task_region_id
         if not isinstance(record_region_id, str):
-            producer_node_id = record.get("producer_node_id")
+            producer_node_id = record.producer_node_id
             if isinstance(producer_node_id, str):
                 record_region_id = context.graph_projection["node_task_regions"].get(
                     producer_node_id
                 )
         if record_region_id != task_region_id:
             continue
-        if record.get("verdict") in {"rejected", "failed"}:
+        if record.verdict in {"rejected", "failed"}:
             continue
         output.append(record_id)
     return _unique_record_ids(output)

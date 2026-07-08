@@ -1001,19 +1001,20 @@ async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
     events = await _read_events(session_factory, "cleanup-before-side-effect")
     projection = rebuild_projection(events)
     original = projection["file_state_records"][record_id]
-    superseding_id = str(original["superseded_by_record_id"])
+    superseding_id = str(original.superseded_by_record_id)
     superseding = projection["file_state_records"][superseding_id]
-    new_snapshot_id = str(superseding["snapshot_id"])
+    new_snapshot_id = str(superseding.snapshot_id)
     new_ref = f"refs/orchestrator/snapshots/{new_snapshot_id}"
 
     assert [item.kind for item in report.pending_cleanups] == ["snapshot_cleanup"]
     assert [item.kind for item in report.redispatched] == ["snapshot_cleanup"]
     assert _ref_exists(repo, old_ref) is False
     assert _ref_exists(repo, new_ref) is True
-    assert "residue.txt" not in _tree_paths(repo, str(superseding["git"]["commit_sha"]))
+    assert superseding.git is not None
+    assert "residue.txt" not in _tree_paths(repo, str(superseding.git.commit_sha))
     assert any(event.event_type == "cleanup_applied" for event in events)
-    assert original["superseded_pending"] is False
-    assert superseding["supersedes_record_id"] == record_id
+    assert original.superseded_pending is False
+    assert superseding.supersedes_record_id == record_id
     assert await _outbox_statuses(session_factory) == ["completed"]
 
 
@@ -1074,7 +1075,7 @@ async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
     assert _ref_exists(repo, old_ref) is False
     assert len([event for event in events_after if event.event_type == "cleanup_applied"]) == 1
     assert len(superseding_records) == 1
-    assert original["superseded_pending"] is False
+    assert original.superseded_pending is False
     assert await _outbox_statuses(session_factory) == ["completed"]
 
 

@@ -59,6 +59,56 @@ what each contributed. Digests: [external/](external/).
 | [LiteLLM Anthropic effort docs](https://docs.litellm.ai/docs/providers/anthropic_effort); [Claude Opus 4.6 announcement](https://www.anthropic.com/news/claude-opus-4-6) | 2025-26 | Effort knobs; default shift medium→high |
 | [RelayPlane runaway costs](https://relayplane.com/blog/agent-runaway-costs-2026); [MLflow gateway](https://mlflow.org/blog/agent-costs-mlflow-gateway/); [AgentGuard](https://bmdpat.com/blog/ai-agent-cost-control-agentguard-python) | 2025-26 | Budget chokepoints; ALERT vs REJECT |
 
+## Workflow frameworks for larger work (added 2026-07-07)
+
+| Source | Date | Contribution |
+|---|---|---|
+| [obra/superpowers](https://github.com/obra/superpowers); [author's intro](https://blog.fsck.com/2025/10/09/superpowers/) | Oct 2025- | Skills-as-methodology mechanism; enforced phase gates |
+| [Superpowers eval request #1462](https://github.com/obra/superpowers/issues/1462) | 2026 | Eval framework closed "not planned" — no in-project measurement |
+| [MindStudio Superpowers benchmark](https://www.mindstudio.ai/blog/5-claude-code-skills-cut-token-costs-70-percent-benchmarked) | 2026 | 6-vs-6 session comparison (9% cheaper, 14% fewer tokens) — vendor, tiny n |
+| [gsd-build/get-shit-done](https://github.com/gsd-build/get-shit-done); [GSD docs](https://gsd-build-get-shit-done.mintlify.app/) | Dec 2025- | Atomic plans sized to ~50% fresh context; wave parallelism; revertable commits |
+| [codecentric GSD anatomy](https://www.codecentric.de/en/knowledge-hub/blog/the-anatomy-of-claude-code-workflows-turning-slash-commands-into-an-ai-development-system) | 2026 | Mechanism deep-dive, independent of vendor |
+| [Ewan Mak — Superpowers/GSD/gstack constraints](https://medium.com/@tentenco/superpowers-gsd-and-gstack-what-each-claude-code-framework-actually-constrains-12a1560960ad) | 2026 | Process vs context vs decision-perspective framing; anecdote inventory |
+| [From Prompt to Process (arXiv 2606.04967)](https://arxiv.org/pdf/2606.04967) | Jun 2026 | Six-dimension taxonomy of 6 frameworks; "absent benchmarks for complete processes" |
+| [BMAD vs Spec Kit vs OpenSpec (Reenbit)](https://reenbit.com/bmad-vs-spec-kit-vs-openspec-choosing-your-spec-driven-ai-framework/) | May 2026 | Token/cost figures per framework; n=1 build-time comparison — vendor |
+| [METR RCT (arXiv 2507.09089)](https://arxiv.org/abs/2507.09089) | Jul 2025 | 19% measured slowdown vs 20% perceived speedup; overhead mechanism |
+| [Agentless (arXiv 2407.01489)](https://arxiv.org/abs/2407.01489) | 2024 | Fixed pipeline beat agent scaffolds: 27.33% @ $0.34 |
+| [SWE-Effi (arXiv 2509.09853)](https://arxiv.org/pdf/2509.09853) | 2025 | Resolution vs token-efficiency divergence across scaffolds |
+| [DirectSolve/LCLM (arXiv 2505.08120)](https://arxiv.org/pdf/2505.08120) | 2025 | Scaffold-free long-context beat Agentless +6% pass@1 |
+| [HULA (arXiv 2411.12924, ICSE 2025)](https://arxiv.org/abs/2411.12924) | 2024-25 | Industrial funnel: 663 issues → 8% merged; plan-approval gate data |
+| [DORA 2025 report](https://dora.dev/dora-report-2025/) | Sep 2025 | AI ↑ throughput, ↓ stability; amplifier thesis (survey, correlational) |
+| [CURRANTE registered report (arXiv 2601.03878)](https://arxiv.org/html/2601.03878v1) | Jan 2026 | Peer-reviewed protocol for spec→test→function study; results pending |
+| [Skill evaluation survey (arXiv 2606.11435)](https://arxiv.org/pdf/2606.11435) | 2026 | Skill evals are binary pass/fail; no cost/latency comparisons exist |
+
+## Reconsider & sketch operations (added 2026-07-07, third pass)
+
+| Source | Date | Contribution |
+|---|---|---|
+| [Escalation of commitment in LLMs (arXiv 2508.01545)](https://arxiv.org/abs/2508.01545) | 2025 | Sunk-cost bias: 99.2% escalation in peer deliberation, 46.2% in hierarchy, near-rational solo |
+| [Large Language Monkeys (arXiv 2407.21787)](https://arxiv.org/abs/2407.21787) | 2024 | pass@k scaling; SWE-bench Lite 15.9%→56% @250 samples; selection plateau without oracle |
+| [SWE-Search (arXiv 2410.20285, ICLR 2025)](https://arxiv.org/abs/2410.20285) | 2024-25 | MCTS over agent states, hybrid value fn: +23% relative across 5 models |
+| [LATS (arXiv 2310.04406, ICML 2024)](https://arxiv.org/abs/2310.04406) | 2023-24 | MCTS + reflection + backtracking; 94.4% HumanEval |
+| [AIDE (arXiv 2502.13138)](https://arxiv.org/html/2502.13138v1) | 2025 | Solution-tree search (Draft/Debug/Improve operators); MLE-bench SOTA; closest system to branch-and-pivot |
+| [Claude Code checkpointing docs](https://code.claude.com/docs/en/checkpointing) | 2025 | Product rewind: auto pre-edit snapshots, human-triggered only |
+| [Augment — worktrees for parallel agents](https://www.augmentcode.com/guides/git-worktrees-parallel-ai-agent-execution) | 2025-26 | Practitioner pattern: worktree per alternative approach (Low, blog ecosystem) |
+| [Self-planning codegen (arXiv 2303.06689)](https://arxiv.org/pdf/2303.06689) | 2023 | NL plan before code: double-digit relative pass@1 gains |
+| [Parsel (arXiv 2212.10561, NeurIPS 2023)](https://arxiv.org/abs/2212.10561) | 2022-23 | Function-responsibility decomposition + tests: HumanEval 67→85 pass@1 |
+| [CodeChain (arXiv 2310.08992, ICLR 2024)](https://arxiv.org/pdf/2310.08992) | 2023-24 | Modularity as quality lever; sub-module reuse in revisions |
+| [Sketch-and-Verify (arXiv 2605.08658)](https://arxiv.org/pdf/2605.08658) | 2026 | Skeleton-first + partial-program verification beats direct generation |
+| [AlphaCodium (arXiv 2401.08500)](https://arxiv.org/abs/2401.08500) | 2024 | Problem-reflection stage; CodeContests pass@5 19→44 |
+| [Architecture Without Architects (arXiv 2604.04990)](https://arxiv.org/html/2604.04990v1) | 2026 | "Vibe architecting"; same task 141-827 LOC / 2-6 files by prompt wording; no rationale recorded (position paper) |
+
+## Structural code navigation (added 2026-07-07, fourth pass)
+
+| Source | Date | Contribution |
+|---|---|---|
+| [CodeTeam (arXiv 2606.22082)](https://arxiv.org/abs/2606.22082) | Jun 2026 | Competing design sketches → CTO-normalized machine-checkable contract → bounded developer agents; +4.1 SketchBLEU (proxy metric) |
+| [Decoupled Intelligence (arXiv 2605.27685)](https://arxiv.org/abs/2605.27685) | May 2026 | Planner/worker role split + state-persistent orchestrator; role-ablation design; non-coding domain (SUMO) |
+| [Hydra — Do Not Treat Code as Natural Language (arXiv 2602.11671)](https://arxiv.org/abs/2602.11671) | Feb 2026 | Structure-aware index + Dependency-Aware Retriever; >5% Pass@1 over best baseline; smaller models match larger ones |
+| [OpenClassGen (arXiv 2504.15564)](https://arxiv.org/abs/2504.15564) | Apr 2025 / EASE 2026 | 325K real Python class-skeleton pairs; skeleton specs → 0.89 CodeBERTScore but 0.33 pass rate |
+| [CodeCompass (arXiv 2602.20048)](https://arxiv.org/abs/2602.20048) | Feb 2026 | Navigation Paradox; 1-hop AST-edge MCP tool; +23.2pp on hidden-dependency tasks; tool adoption needed prompt surgery |
+| [LARGER (arXiv 2605.16352)](https://arxiv.org/abs/2605.16352) | May 2026 | Graph evidence injected into lexical search output, no separate graph tool; +13.9 Acc@5 LocBench |
+
 ## Caveats
 
 - arXiv IDs with 26xx prefixes are 2026 preprints; several (governance decay,
@@ -68,3 +118,10 @@ what each contributed. Digests: [external/](external/).
 - Vendor blog claims (Factory, Confident AI, Adaline, Unblocked) are tagged
   as such in the digests; used for patterns, not numbers.
 - Secondary sources (CTOL, decodeclaude.com) were used only for framing.
+- Workflow-framework section: star counts and adoption claims come from
+  project READMEs and secondary blogs (unverified); the only
+  framework-vs-baseline comparisons found are a 6-vs-6-session vendor
+  benchmark and an n=1 build-time case — treat every framework efficacy
+  number as anecdote. The measured evidence in that section (METR, HULA,
+  Agentless family, DORA) is about underlying mechanisms, not the
+  frameworks themselves.

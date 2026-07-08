@@ -30,6 +30,7 @@ from orchestrator.graph import (
     merge_bound_record_ids,
     project_decision_view,
     project_decision_view_from_projection,
+    project_leases,
     project_lease_view,
     projection_from_checkpoint,
     projection_to_checkpoint,
@@ -1306,7 +1307,7 @@ def _assign_projection_snapshot(
     row.run_state = projection["run_state"]
     row.node_states = dict(projection["node_states"])
     row.task_states = dict(projection["task_states"])
-    row.leases = {lease_id: dict(lease) for lease_id, lease in projection["leases"].items()}
+    row.leases = project_leases([], projection=projection)
     row.ready_nodes = list(projection["ready_nodes"])
     if events is None:
         row.scheduler = _scheduler_view_from_projection(projection)
@@ -1410,21 +1411,7 @@ def _scheduler_view_from_projection(projection: GraphProjection) -> dict[str, An
 
 
 def _lease_view_from_projection(projection: GraphProjection) -> dict[str, Any]:
-    view: dict[str, Any] = {"active": [], "suspended": []}
-    for lease_id, lease in sorted(projection["leases"].items()):
-        state = lease.get("state")
-        if state not in {"active", "suspended"}:
-            continue
-        entry = {
-            "lease_id": lease_id,
-            "node_id": lease.get("node_id"),
-            "generation": lease.get("generation"),
-            "state": state,
-            "execution_id": lease.get("execution_id"),
-            "expires_at": lease.get("expires_at"),
-        }
-        view[state].append(entry)
-    return view
+    return dict(project_lease_view([], projection=projection))
 
 
 def _add_node_detail_summaries(

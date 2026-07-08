@@ -20,6 +20,7 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktree
 from orchestrator.graph import (
+    EnvironmentFailureProjection,
     EventEnvelope,
     build_projection,
     project_leases,
@@ -170,7 +171,7 @@ def _empty_str_dict() -> dict[str, str]:
     return {}
 
 
-def _empty_environment_failures() -> dict[str, dict[str, Any]]:
+def _empty_environment_failures() -> dict[str, EnvironmentFailureProjection]:
     return {}
 
 
@@ -193,7 +194,7 @@ class GraphProjectionSnapshot:
     failed_node_reasons: dict[str, str] = field(default_factory=_empty_str_dict)
     node_deferral_reasons: dict[str, str] = field(default_factory=_empty_str_dict)
     missing_input_sources: dict[str, list[str]] = field(default_factory=_empty_str_list_dict)
-    environment_failures: dict[str, dict[str, Any]] = field(
+    environment_failures: dict[str, EnvironmentFailureProjection] = field(
         default_factory=_empty_environment_failures
     )
     # Each executable node's compiled retry budget (RoutineConfig retry.max_attempts,
@@ -1039,7 +1040,7 @@ def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapsho
         node_deferral_reasons=_node_deferral_reasons(events),
         missing_input_sources=_missing_input_sources(projection, events),
         environment_failures={
-            task_region_id: dict(failure)
+            task_region_id: failure.model_copy(deep=True)
             for task_region_id, failure in projection["environment_failures"].items()
         },
         node_max_attempts=_node_max_attempts(events),
@@ -1193,11 +1194,8 @@ def _blocked_reason(projection: GraphProjectionSnapshot) -> str:
     if environment_failures:
         details = []
         for task_region_id, failure in sorted(environment_failures.items())[:3]:
-            typed_failure = cast(dict[str, Any], failure)
-            raw_reason = typed_failure.get("reason")
-            raw_classification = typed_failure.get("classification")
-            reason = raw_reason if isinstance(raw_reason, str) else None
-            classification = raw_classification if isinstance(raw_classification, str) else None
+            reason = failure.reason
+            classification = failure.classification
             label: str = classification or "environment"
             details.append(
                 f"{task_region_id}: {label}: {reason}" if reason else f"{task_region_id}: {label}"

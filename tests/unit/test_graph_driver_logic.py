@@ -18,9 +18,16 @@ from orchestrator.workflow.graph_driver import (
     _graph_seed_run_config,
     _node_max_attempts,
     _renew_running_expired_leases,
+    _snapshot_from_events,
     classify_graph_outcome,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EnvironmentFailureProjection,
+    EventEnvelope,
+    FakeClock,
+)
 
 
 def _event(event_type: str, payload: dict[str, object], position: int = -1) -> EventEnvelope:
@@ -34,6 +41,28 @@ def _event(event_type: str, payload: dict[str, object], position: int = -1) -> E
         timestamp=FakeClock().now(),
         payload=payload,
     )
+
+
+def test_snapshot_from_events_preserves_typed_environment_failures() -> None:
+    snapshot = _snapshot_from_events(
+        [
+            _event(
+                "environment_failure_accepted",
+                {
+                    "task_region_id": "step/task",
+                    "classification": "tool_unavailable",
+                    "reason": "missing tool",
+                },
+                position=12,
+            )
+        ]
+    )
+
+    failure = snapshot.environment_failures["step/task"]
+
+    assert isinstance(failure, EnvironmentFailureProjection)
+    assert failure.position == 12
+    assert failure.reason == "missing tool"
 
 
 class RecordingController:
@@ -1240,10 +1269,11 @@ def test_outcome_classification() -> None:
             schedulable_nodes=[],
             task_states={"step/task": "blocked_environment"},
             environment_failures={
-                "step/task": {
-                    "classification": "tool_unavailable",
-                    "reason": "check tool unavailable while running: npm --prefix ui test",
-                }
+                "step/task": EnvironmentFailureProjection(
+                    position=12,
+                    classification="tool_unavailable",
+                    reason="check tool unavailable while running: npm --prefix ui test",
+                )
             },
         ),
     )

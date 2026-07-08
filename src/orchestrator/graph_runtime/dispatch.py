@@ -752,7 +752,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         cleanup = apply_cleanup_requested(
             worktree_path=self._worktree_path,
             cleanup_request=cleanup_event.payload,
-            compromised_record=compromised_record,
+            compromised_record=compromised_record.model_dump(mode="json"),
         )
         result = await self._handle_command_retry_stale(
             item.run_id,
@@ -1017,8 +1017,8 @@ def _guard_no_pending_compromised_file_state_bindings(
             record = projection["file_state_records"].get(raw_record_id)
             if record is None:
                 continue
-            if record.get("compromised") is True and record.get("superseded_pending") is True:
-                cleanup_id = record.get("cleanup_id")
+            if record.compromised is True and record.superseded_pending is True:
+                cleanup_id = record.cleanup_id
                 msg = (
                     "refusing to bind compromised file-state record "
                     f"{raw_record_id} for node {node_id}"

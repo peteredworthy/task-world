@@ -14,6 +14,7 @@ from orchestrator.graph.models import (
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
     CallbackEnvelope,
+    CandidateProjection,
     CandidateRecord,
     CheckResultRecord,
     CompletionDecisionRecord,
@@ -49,6 +50,7 @@ from orchestrator.graph.models import (
     RunLifecycleState,
     RunModel,
     VerificationReportRecord,
+    VerifierVerdictProjection,
 )
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
@@ -712,6 +714,52 @@ def test_candidate_record_round_trips() -> None:
             },
         },
     )
+
+
+def test_candidate_projection_round_trips() -> None:
+    assert_round_trips(
+        CandidateProjection,
+        {
+            "candidate_id": "candidate-1",
+            "attempt_number": 2,
+            "position": 31,
+            "file_state_record_ids": ["file-state-1"],
+            "supersedes_task_region_ids": ["task-old"],
+        },
+    )
+
+
+def test_candidate_projection_rejects_negative_attempt_number() -> None:
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        CandidateProjection.model_validate(
+            {
+                "candidate_id": "candidate-1",
+                "attempt_number": -1,
+                "position": 31,
+            }
+        )
+
+
+def test_verifier_verdict_projection_round_trips() -> None:
+    assert_round_trips(
+        VerifierVerdictProjection,
+        {
+            "candidate_id": "candidate-1",
+            "verdict": "passed",
+            "position": 34,
+        },
+    )
+
+
+def test_verifier_verdict_projection_rejects_invalid_verdict() -> None:
+    with pytest.raises(ValueError, match="Input should be 'passed' or 'failed'"):
+        VerifierVerdictProjection.model_validate(
+            {
+                "candidate_id": "candidate-1",
+                "verdict": "unknown",
+                "position": 34,
+            }
+        )
 
 
 def test_candidate_record_rejects_missing_summary() -> None:

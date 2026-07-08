@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Annotated, Any, Literal, cast
+from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
@@ -547,6 +547,115 @@ class InputBinding(GraphBaseModel):
     bound_at_position: int
 
 
+if TYPE_CHECKING:
+
+    class EdgeProjection(dict[str, Any]):
+        edge_id: str
+        from_node_id: str
+        from_port: str
+        to_node_id: str
+        to_port: str
+        required: bool = True
+        dependency_type: Literal["input_binding", "state_dependency"] = "input_binding"
+        from_node_kind: str | None
+        from_node_role: str | None
+        accepted_record_selector: dict[str, Any] | None
+        purpose: Any | None
+        description: Any | None
+        selection: Any | None
+        binding_policy: Any | None
+        freshness_policy: Any | None
+        prompt_hydration_policy: Any | None
+        metadata: Any | None
+
+        @classmethod
+        def model_validate(cls, obj: Any) -> "EdgeProjection": ...
+
+        def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]: ...
+
+        def model_copy(self, *args: Any, **kwargs: Any) -> "EdgeProjection": ...
+
+    class InputBindingProjection(dict[str, Any]):
+        edge_id: str | None
+        to_node_id: str
+        to_port: str
+        record_ids: list[str]
+        bound_at_position: int
+        record_bound_positions: dict[str, int] | None
+        binding_policy: str | None
+        trigger: str | None
+        supersedes_record_id: str | None
+
+        @classmethod
+        def model_validate(cls, obj: Any) -> "InputBindingProjection": ...
+
+        def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]: ...
+
+        def model_copy(self, *args: Any, **kwargs: Any) -> "InputBindingProjection": ...
+
+else:
+
+    class _DictCompatibleProjection(GraphBaseModel):
+        model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+        def _as_mapping(self) -> dict[str, Any]:
+            return self.model_dump(mode="json")
+
+        def get(self, key: str, default: Any = None) -> Any:
+            return self._as_mapping().get(key, default)
+
+        def __getitem__(self, key: str) -> Any:
+            return self._as_mapping()[key]
+
+        def __contains__(self, key: object) -> bool:
+            return key in self._as_mapping()
+
+        def __iter__(self) -> Any:
+            return iter(self._as_mapping())
+
+        def __len__(self) -> int:
+            return len(self._as_mapping())
+
+        def keys(self) -> Any:
+            return self._as_mapping().keys()
+
+        def items(self) -> Any:
+            return self._as_mapping().items()
+
+        def values(self) -> Any:
+            return self._as_mapping().values()
+
+    class EdgeProjection(_DictCompatibleProjection):
+        edge_id: str
+        from_node_id: str
+        from_port: str
+        to_node_id: str
+        to_port: str
+        required: bool = True
+        dependency_type: Literal["input_binding", "state_dependency"] = "input_binding"
+        from_node_kind: str | None = None
+        from_node_role: str | None = None
+        accepted_record_selector: dict[str, Any] | None = None
+        purpose: Any | None = None
+        description: Any | None = None
+        selection: Any | None = None
+        binding_policy: Any | None = None
+        freshness_policy: Any | None = None
+        prompt_hydration_policy: Any | None = None
+        metadata: Any | None = None
+
+    class InputBindingProjection(_DictCompatibleProjection):
+        edge_id: str | None = None
+        to_node_id: str
+        to_port: str
+        record_ids: list[str]
+        bound_at_position: int
+        record_bound_positions: dict[str, int] | None = None
+        binding_policy: str | None = None
+        trigger: str | None = None
+        supersedes_record_id: str | None = None
+
+
 class OutputRecord(TypedRecordBase):
     record_id: str
     record_kind: Literal["output"]
@@ -717,6 +826,191 @@ class VerificationResultProjection(GraphBaseModel):
     task_region_id: str | None = None
 
 
+class CandidateProjection(GraphBaseModel):
+    candidate_id: str
+    attempt_number: int = Field(ge=0)
+    position: int
+    file_state_record_ids: list[str] = Field(default_factory=list)
+    supersedes_task_region_ids: list[str] = Field(default_factory=list)
+
+
+class VerifierVerdictProjection(GraphBaseModel):
+    candidate_id: str
+    verdict: Literal["passed", "failed"]
+    position: int
+
+
+def _empty_lease_resource_claims() -> list[dict[str, Any]]:
+    return []
+
+
+LeaseProjectionState: TypeAlias = Literal["active", "suspended", "revoked", "expired", "released"]
+
+
+if TYPE_CHECKING:
+
+    class LeaseProjection(dict[str, Any]):
+        lease_id: str
+        state: LeaseProjectionState
+        node_id: str | None
+        generation: int | None
+        execution_id: str | None
+        expires_at: str | None
+        session_id: str | None
+        base_snapshot_id: str | None
+        task_region_id: str | None
+        kind: str | None
+        resource_claims: list[dict[str, Any]]
+
+        @classmethod
+        def model_validate(cls, obj: Any) -> "LeaseProjection": ...
+
+        def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]: ...
+
+        def model_copy(self, *args: Any, **kwargs: Any) -> "LeaseProjection": ...
+
+else:
+
+    class LeaseProjection(GraphBaseModel):
+        lease_id: str
+        state: LeaseProjectionState
+        node_id: str | None = None
+        generation: int | None = None
+        execution_id: str | None = None
+        expires_at: str | None = None
+        session_id: str | None = None
+        base_snapshot_id: str | None = None
+        task_region_id: str | None = None
+        kind: str | None = None
+        resource_claims: list[dict[str, Any]] = Field(default_factory=_empty_lease_resource_claims)
+
+        def get(self, key: str, default: Any = None) -> Any:
+            return getattr(self, key, default)
+
+        def __getitem__(self, key: str) -> Any:
+            return getattr(self, key)
+
+
+class InvalidTestBlockProjection(GraphBaseModel):
+    position: int
+    accepted: bool | None = None
+    appeal_open: bool | None = None
+    candidate_id: str | None = None
+
+
+class PendingGateDecisionProjection(GraphBaseModel):
+    node_id: str | None = None
+    gate_type: str | None = None
+    prompt: str | None = None
+    options: list[str] | None = None
+    default_option: str | None = None
+    consequence_summary: str | None = None
+    expires_at: str | None = None
+    requested_authority: list[str] | None = None
+    target_node_id: str | None = None
+    target_region_id: str | None = None
+
+    @model_validator(mode="after")
+    def contains_projected_detail(self) -> "PendingGateDecisionProjection":
+        values = (
+            self.node_id,
+            self.gate_type,
+            self.prompt,
+            self.options,
+            self.default_option,
+            self.consequence_summary,
+            self.expires_at,
+            self.requested_authority,
+            self.target_node_id,
+            self.target_region_id,
+        )
+        if not any(value not in (None, [], "") for value in values):
+            msg = "pending gate decision detail must include at least one field"
+            raise ValueError(msg)
+        return self
+
+
+def _empty_cleanup_paths() -> list[str]:
+    return []
+
+
+class CleanupRequestedProjection(GraphBaseModel):
+    cleanup_id: str
+    position: int
+    file_state_record_id: str | None = None
+    snapshot_id: str | None = None
+    paths: list[str] = Field(default_factory=_empty_cleanup_paths)
+    authority: str | None = None
+    reason: str | None = None
+    execution_id: str | None = None
+    producer_node_id: str | None = None
+
+
+class RequirementRevisionProjection(GraphBaseModel):
+    requirement_id: str
+    version_id: str
+    change_classification: str
+    requires_authority: bool
+    position: int
+    previous_version_id: str | None = None
+    revision_index: int | None = None
+    authority_required_reason: str | None = None
+    validation_strengthening: bool
+
+
+class SupportEvidenceProjection(GraphBaseModel):
+    support_id: str
+    evidence_id: str
+    requirement_id: str
+    requirement_version_id: str
+    status: str
+    position: int
+    stale_reason: str | None = None
+    confidence: str | None = None
+
+
+class OversightDecisionProjection(GraphBaseModel):
+    node_id: str
+    decision: Literal["accepted", "rejected", "invalid_test_accepted"]
+    position: int
+    outcome: str | None = None
+    verdict: str | None = None
+    approved: bool | None = None
+    task_region_id: str | None = None
+    candidate_id: str | None = None
+    gate_id: str | None = None
+    appeal_node_id: str | None = None
+    appealed_node_id: str | None = None
+    appeal_type: str | None = None
+    decider: dict[str, Any] | str | None = None
+    scope: dict[str, Any] | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_decision_payload(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(cast(dict[str, Any], value))
+        decision = payload.get("decision")
+        if decision is None:
+            decision = payload.get("outcome")
+        if decision is None:
+            decision = payload.get("verdict")
+        if decision is None:
+            approved = payload.get("approved")
+            if isinstance(approved, bool):
+                decision = "accepted" if approved else "rejected"
+        if decision == "approved":
+            decision = "accepted"
+        if decision == "denied":
+            decision = "rejected"
+        if decision is not None:
+            payload["decision"] = decision
+        return payload
+
+
 def _normalize_verification_outcome(value: Any) -> Literal["passed", "failed"] | None:
     if value in {"passed", "pass"}:
         return "passed"
@@ -864,6 +1158,104 @@ class CheckResultProjection(GraphBaseModel):
     evaluated_record_ids: list[str] = Field(default_factory=_empty_check_result_record_ids)
 
 
+class EnvironmentFailureProjection(GraphBaseModel):
+    position: int
+    node_id: str | None = None
+    classification: str | None = None
+    reason: str | None = None
+    task_region_id: str | None = None
+    record_id: str | None = None
+    command_text: str | None = None
+    stderr: str | None = None
+    exit_code: int | None = None
+
+
+def _filtered_dict_list(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    return [
+        dict(cast(dict[str, Any], item))
+        for item in cast(list[Any], value)
+        if isinstance(item, dict)
+    ]
+
+
+def _filtered_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in cast(list[Any], value) if isinstance(item, str)]
+
+
+def _empty_node_resource_claims() -> list[dict[str, Any]]:
+    return []
+
+
+class NodeCreationProjection(GraphBaseModel):
+    node_id: str
+    position: int
+    kind: str | None = None
+    role: str | None = None
+    state: str | None = None
+    task_region_id: str | None = None
+    attempt_number: int | None = None
+    candidate_id: str | None = None
+    failed_candidate_id: str | None = None
+    resource_claims: list[dict[str, Any]] = Field(default_factory=_empty_node_resource_claims)
+    allowed_actions: list[str] = Field(default_factory=list)
+    preconditions: list[str] = Field(default_factory=list)
+    planner_generation_budget: int | None = None
+    generation_index: int | None = None
+    region_label: str | None = None
+    session_id: str | None = None
+    gate_type: str | None = None
+    approval_type: str | None = None
+    reason: str | None = None
+    prompt: str | None = None
+    approval_prompt: str | None = None
+    human_prompt: str | None = None
+    message: str | None = None
+    blocker: str | None = None
+    blocker_reason: str | None = None
+    decision_request: dict[str, Any] | None = None
+    authority_request_record: dict[str, Any] | None = None
+    authority_request: dict[str, Any] | None = None
+    authority: dict[str, Any] | None = None
+    command_definition: dict[str, Any] | None = None
+    command_definition_id: str | None = None
+    hidden_oracle_command: str | None = None
+    command_binding: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        payload = dict(cast(dict[str, Any], value))
+        membership = payload.get("membership")
+        if isinstance(membership, dict):
+            typed_membership = cast(dict[str, Any], membership)
+            for key in (
+                "task_region_id",
+                "attempt_number",
+                "candidate_id",
+                "failed_candidate_id",
+            ):
+                if payload.get(key) is None and typed_membership.get(key) is not None:
+                    payload[key] = typed_membership[key]
+
+        authority = payload.get("authority")
+        authority_payload = cast(dict[str, Any], authority) if isinstance(authority, dict) else {}
+        for key in ("resource_claims", "allowed_actions", "preconditions"):
+            if payload.get(key) is None and authority_payload.get(key) is not None:
+                payload[key] = authority_payload[key]
+
+        payload["resource_claims"] = _filtered_dict_list(payload.get("resource_claims"))
+        payload["allowed_actions"] = _filtered_string_list(payload.get("allowed_actions"))
+        payload["preconditions"] = _filtered_string_list(payload.get("preconditions"))
+        return payload
+
+
 def _empty_candidate_changed_paths() -> list[str]:
     return []
 
@@ -952,6 +1344,56 @@ class DecisionActor(GraphBaseModel):
     id: str | None = None
 
 
+def _normalize_approval_decision(value: Any) -> Literal["approved", "rejected", "deferred"] | None:
+    if value in {"approve", "approved", "accept", "accepted", "pass", "passed"}:
+        return "approved"
+    if value in {"reject", "rejected", "deny", "denied"}:
+        return "rejected"
+    if value in {"defer", "deferred"}:
+        return "deferred"
+    return None
+
+
+def _normalize_authority_decision(value: Any) -> Literal["granted", "denied", "deferred"] | None:
+    if value in {"grant", "granted", "approve", "approved", "accept", "accepted", "pass", "passed"}:
+        return "granted"
+    if value in {"deny", "denied", "reject", "rejected"}:
+        return "denied"
+    if value in {"defer", "deferred"}:
+        return "deferred"
+    return None
+
+
+class ApprovalDecisionProjection(GraphBaseModel):
+    node_id: str
+    decision: Literal["approved", "rejected", "deferred"]
+    task_region_id: str | None = None
+    gate_id: str | None = None
+    appeal_node_id: str | None = None
+    decider: DecisionActor | str | None = None
+    scope: dict[str, Any] | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_decision_payload(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(cast(dict[str, Any], value))
+        decision = _normalize_approval_decision(payload.get("decision"))
+        if decision is None:
+            decision = _normalize_approval_decision(payload.get("outcome"))
+        if decision is None:
+            approved = payload.get("approved")
+            if isinstance(approved, bool):
+                decision = "approved" if approved else "rejected"
+        if decision is None:
+            return payload
+        payload["decision"] = decision
+        return payload
+
+
 class DecisionRecordValue(GraphBaseModel):
     decision: Literal["approved", "rejected", "deferred"]
     decision_type: Literal["approval"]
@@ -1014,6 +1456,35 @@ class AuthorityDecisionRecord(TypedRecordBase):
             msg = "record_type must be authority_decision"
             raise ValueError(msg)
         return self
+
+
+class AuthorityDecisionProjection(GraphBaseModel):
+    node_id: str
+    decision: Literal["granted", "denied", "deferred"]
+    task_region_id: str | None = None
+    appeal_node_id: str | None = None
+    decider: DecisionActor | str | None = None
+    scope: dict[str, Any] | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_decision_payload(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(cast(dict[str, Any], value))
+        decision = _normalize_authority_decision(payload.get("decision"))
+        if decision is None:
+            decision = _normalize_authority_decision(payload.get("outcome"))
+        if decision is None:
+            approved = payload.get("approved")
+            if isinstance(approved, bool):
+                decision = "granted" if approved else "denied"
+        if decision is None:
+            return payload
+        payload["decision"] = decision
+        return payload
 
 
 class AnalysisSummaryValue(GraphBaseModel):
@@ -1335,8 +1806,8 @@ def _empty_external_file_entries() -> list[ExternalFileEntry]:
 
 class FileStateRecord(TypedRecordBase):
     record_id: str
-    record_kind: Literal["file_state"]
-    snapshot_id: str
+    record_kind: Literal["file_state"] = "file_state"
+    snapshot_id: str | None = None
     base_snapshot_id: str | None = None
     producer_node_id: str | None = None
     port: str = "file_state"
@@ -1352,6 +1823,9 @@ class FileStateRecord(TypedRecordBase):
     verdict: Literal["captured", "rejected"] = "captured"
     patch_bundle_id: str | None = None
     tree_snapshot_id: str | None = None
+    position: int | None = None
+    task_region_id: str | None = None
+    candidate_id: str | None = None
     # Projection-only lineage/safety fields used when a later gatekeeper verdict
     # proves the original snapshot captured a secret. Historical records remain
     # immutable; reducers mark the old record compromised and point at the
@@ -1361,7 +1835,24 @@ class FileStateRecord(TypedRecordBase):
     supersedes_record_id: str | None = None
     superseded_by_record_id: str | None = None
     cleanup_id: str | None = None
+    cleanup_reason: str | None = None
+    cleanup_applied_event_id: str | None = None
+    compromised_snapshot_deleted: bool | None = None
     compromised_paths: list[str] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_membership(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(cast(dict[str, Any], value))
+        membership = payload.get("membership")
+        if isinstance(membership, dict):
+            typed_membership = cast(dict[str, Any], membership)
+            for key in ("task_region_id", "candidate_id"):
+                if payload.get(key) is None and isinstance(typed_membership.get(key), str):
+                    payload[key] = typed_membership[key]
+        return payload
 
 
 class GraphRecordKind(str, Enum):

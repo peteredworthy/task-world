@@ -392,10 +392,10 @@ async def test_gatekeeper_secret_verdict_scrubs_compromised_snapshot(
         projection = reduce_event(projection, event)
     original_record = projection["file_state_records"][original.payload["record_id"]]
     superseding_record = projection["file_state_records"][superseding.payload["record_id"]]
-    assert original_record["compromised"] is True
-    assert original_record["superseded_pending"] is False
-    assert original_record["superseded_by_record_id"] == superseding.payload["record_id"]
-    assert superseding_record["supersedes_record_id"] == original.payload["record_id"]
+    assert original_record.compromised is True
+    assert original_record.superseded_pending is False
+    assert original_record.superseded_by_record_id == superseding.payload["record_id"]
+    assert superseding_record.supersedes_record_id == original.payload["record_id"]
 
 
 async def _seed_active_run(

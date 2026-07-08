@@ -11,6 +11,9 @@ Guide completion of development work by presenting clear options and handling ch
 
 **Core principle:** Verify tests → Detect environment → Present options → Execute choice → Clean up.
 
+For "clean up and commit", inspect the full dirty state and commit the whole
+workspace unless the user explicitly scopes the commit.
+
 **Announce at start:** "I'm using the finishing-a-development-branch skill to complete this work."
 
 ## The Process
@@ -93,6 +96,17 @@ Which option?
 **Don't add explanation** - keep options concise.
 
 ### Step 5: Execute Choice
+
+#### Commit Scope for "Clean Up and Commit"
+
+When the user asks to "clean up and commit" without explicitly narrowing the
+scope, treat it as a request to stage and commit the entire dirty workspace:
+all tracked modifications, deletions, and untracked files. Do not limit the
+commit to the most recent slice of work.
+
+If the user explicitly scopes the commit, honor that scope. If including a
+dirty file would be unsafe (for example secrets or build artifacts that should
+not enter version control), stop and ask before excluding it.
 
 #### Option 1: Merge Locally
 

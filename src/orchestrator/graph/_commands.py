@@ -31,6 +31,7 @@ from orchestrator.graph.models import (
     AuthorityRequestRecord,
     CandidateRecord,
     CheckResultRecord,
+    CleanupRequestedProjection,
     CompletionDecisionRecord,
     DecisionRequestRecord,
     DecisionRecord,
@@ -1464,7 +1465,9 @@ def _candidate_is_bound_to_verifier(
     return isinstance(record_ids, list) and candidate_id in record_ids
 
 
-def _candidate_id_from_payload(payload: dict[str, Any]) -> str | None:
+def _candidate_id_from_payload(payload: dict[str, Any] | FileStateRecord) -> str | None:
+    if isinstance(payload, FileStateRecord):
+        return payload.candidate_id
     candidate_id = payload.get("candidate_id")
     if isinstance(candidate_id, str):
         return candidate_id
@@ -1833,24 +1836,16 @@ def _file_state_record_ids_for_candidate_records(
     output: list[str] = []
     for candidates in projection["task_candidates"].values():
         for candidate in candidates:
-            candidate_id = candidate.get("candidate_id")
-            if not isinstance(candidate_id, str) or candidate_id not in wanted:
+            candidate_id = candidate.candidate_id
+            if candidate_id not in wanted:
                 continue
-            file_state_record_ids = candidate.get("file_state_record_ids")
-            if isinstance(file_state_record_ids, list):
-                output.extend(
-                    record_id
-                    for record_id in cast(list[Any], file_state_record_ids)
-                    if isinstance(record_id, str)
-                )
+            output.extend(candidate.file_state_record_ids)
     if output:
         return _unique_record_ids(output)
     for record in projection["file_state_records"].values():
         candidate_id = _candidate_id_from_payload(record)
         if candidate_id in wanted:
-            record_id = record.get("record_id")
-            if isinstance(record_id, str):
-                output.append(record_id)
+            output.append(record.record_id)
     return _unique_record_ids(output)
 
 
@@ -2844,7 +2839,7 @@ def _superseded_by_later_regional_pass(
             continue
         candidate_id = passed_dict.get("candidate_id")
         verdict = projection["verifier_verdicts"].get(candidate_id or "")
-        if verdict is not None and verdict.get("verdict") != "passed":
+        if verdict is not None and verdict.verdict != "passed":
             # The candidate's latest verdict is a failure; not a supersession.
             continue
         if _verification_task_region(projection, passed_dict) != failed_region:
@@ -2888,8 +2883,7 @@ def _candidate_verdict_position(
     verdict = projection["verifier_verdicts"].get(candidate_id)
     if verdict is None:
         return None
-    position = verdict.get("position")
-    return position if isinstance(position, int) else None
+    return verdict.position
 
 
 def _passed_verification_terminalization_events(
@@ -3109,7 +3103,7 @@ def _recovery_lineage_superseded(
             continue
         candidate_id = verification.candidate_id
         verdict = projection["verifier_verdicts"].get(candidate_id or "")
-        if verdict is None or verdict.get("verdict") == "passed":
+        if verdict is None or verdict.verdict == "passed":
             return True
     for check_node_id, result in projection["check_results"].items():
         if check_node_id not in reachable:
@@ -3517,7 +3511,11 @@ def _has_existing_failed_check_recovery(
 def _latest_routine_snapshot_record(projection: GraphProjection) -> dict[str, str] | None:
     record = projection.get("latest_routine_snapshot_record")
     if record is not None:
-        return dict(record)
+        return {
+            "record_id": record["record_id"],
+            "producer_node_id": record["producer_node_id"],
+            "port": record["port"],
+        }
     latest: dict[str, str] | None = None
     for summary in projection["accepted_record_summaries_by_id"].values():
         record_id = summary.get("record_id")
@@ -4329,7 +4327,7 @@ def _apply_record_gatekeeper_verdicts(
             {
                 "file_state_record_id": record_id,
                 "execution_id": execution_id,
-                "producer_node_id": record.get("producer_node_id"),
+                "producer_node_id": record.producer_node_id,
                 "verdicts": accepted,
                 "resolved_count": len(accepted),
             },
@@ -4346,12 +4344,12 @@ def _apply_record_gatekeeper_verdicts(
                 {
                     "cleanup_id": cleanup_id,
                     "file_state_record_id": record_id,
-                    "snapshot_id": record.get("snapshot_id"),
+                    "snapshot_id": record.snapshot_id,
                     "paths": secret_paths,
                     "authority": "gatekeeper",
                     "reason": "gatekeeper_classified_secret_after_snapshot",
                     "execution_id": execution_id,
-                    "producer_node_id": record.get("producer_node_id"),
+                    "producer_node_id": record.producer_node_id,
                 },
             )
         )
@@ -4377,7 +4375,7 @@ def _apply_record_cleanup_applied(
                 f"unknown cleanup_requested: {cleanup_id}",
             )
         ]
-    requested_payload = requested.payload
+    requested_payload = requested.model_dump(mode="json")
     if _cleanup_applied_exists(projection, cleanup_id):
         return [
             _command_rejected(
@@ -4398,7 +4396,7 @@ def _apply_record_cleanup_applied(
         ]
     compromised_record = projection["file_state_records"][record_id]
     requested_snapshot_id = requested_payload.get("snapshot_id")
-    compromised_snapshot_id = compromised_record.get("snapshot_id")
+    compromised_snapshot_id = compromised_record.snapshot_id
     if requested_snapshot_id != compromised_snapshot_id:
         return [
             _command_rejected(
@@ -4565,11 +4563,8 @@ def _apply_record_support_evidence(
 def _cleanup_requested_event(
     projection: GraphProjection,
     cleanup_id: str,
-) -> EventEnvelope | None:
-    raw_event = projection["cleanup_requested_events"].get(cleanup_id)
-    if raw_event is None:
-        return None
-    return EventEnvelope.model_validate(raw_event)
+) -> CleanupRequestedProjection | None:
+    return projection["cleanup_requested_events"].get(cleanup_id)
 
 
 def _cleanup_applied_exists(projection: GraphProjection, cleanup_id: str) -> bool:
@@ -4611,7 +4606,9 @@ def _record_contains_any_path(
     return None
 
 
-def _record_residue(record: dict[str, Any]) -> list[dict[str, Any]]:
+def _record_residue(record: dict[str, Any] | FileStateRecord) -> list[dict[str, Any]]:
+    if isinstance(record, FileStateRecord):
+        return [entry.model_dump(mode="json") for entry in record.residue]
     residue = record.get("residue")
     if not isinstance(residue, list):
         return []

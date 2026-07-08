@@ -94,6 +94,8 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "behavior_change": "requirement revision classification helper, not task_states",
     "binding_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (_topology_edge); "
     "not read by _derive_task_states/_task_file_state_accepted/_downstream_node_ids",
+    "bound_at_position": "input_bindings structural position metadata for topology/scheduler; "
+    "not read by task_states",
     "carryover_record_id": "planner_session_carryovers bookkeeping",
     "change_classification": "requirement_revisions bookkeeping",
     "cleanup_id": "cleanup_requested_events/cleanup_applied_ids + file_state_records cleanup "
@@ -118,7 +120,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "from_node_id/to_node_id",
     "freshness_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata "
     "(see binding_policy)",
-    "generation_index": "planner_generations bookkeeping",
     "id": "requirement id fallback helper, used only for authority_revision_blockers/support views",
     "idempotency_key": "callback_idempotency_events bookkeeping",
     "input": "legacy scheduler input-binding fallback, not task_states",
@@ -127,7 +128,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "node_ids": "suspect_node_reasons bookkeeping",
     "patch_id": "accepted_no_successor_patches_by_node / graph-patch-attempt bookkeeping",
     "paths": "file_state_records cleanup annotation, never read by _task_file_state_accepted",
-    "planner_generation_budget": "planner_generation_budget bookkeeping",
     "preconditions": "node_preconditions: scheduler-only substate",
     "previous_version_id": "requirement_revisions bookkeeping",
     "proposal_id": "open_proposal_blockers bookkeeping",
@@ -138,8 +138,11 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "purpose": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "reason": "informational annotation (environment_failures/cleanup/suspect-node); never "
     "gates a task_states branch",
+    "record_bound_positions": "input_bindings per-record topology metadata; not read by "
+    "task_states",
+    "record_ids": "input_bindings bound-record list for scheduler/topology/prompt hydration; "
+    "task_states reads accepted file-state records directly",
     "region_id": "suspect_node_reasons node-id resolution helper",
-    "region_label": "planner_region_labels bookkeeping",
     "region_node_ids": "suspect_node_reasons node-id resolution helper",
     "required": 'edges metadata ("required" flag); traversal helper ignores it',
     "requirement": "requirement id/priority resolution helper, not task_states",
@@ -154,12 +157,17 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "schema": "node_command_definitions/record-type classification (topology/summary views)",
     "selection": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "semantic_change": "requirement revision authority-resolution bookkeeping",
+    "snapshot_id": "cleanup_requested_events bookkeeping for cleanup command validation; "
+    "task-state file acceptance reads file_state_records snapshots, not cleanup request snapshots",
     "stale_reason": "support_evidence bookkeeping",
     "stderr": "environment_failures/check_results informational field (see command_text)",
     "successor_planner_node_ids": "planner_successors bookkeeping",
+    "supersedes_record_id": "input_bindings merge policy helper; task_states does not read "
+    "bound input records",
     "superseding_record_id": "file_state_records cleanup annotation, never read by "
     "_task_file_state_accepted",
     "support_id": "support_evidence bookkeeping",
+    "trigger": "input_bindings informational trigger metadata; not read by task_states",
     "validation_strengthening": "requirement_revisions bookkeeping",
     "value": "nested payload.value.* reads; status/classification fallbacks are already handled "
     "by the dedicated __value_status/__value_classification json_extract columns in "

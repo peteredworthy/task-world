@@ -236,9 +236,9 @@ def test_record_gatekeeper_verdicts_secret_requests_cleanup_and_marks_projection
 
     projection = _project([*events, *emitted])
     record = projection["file_state_records"]["file-state-1"]
-    assert record["compromised"] is True
-    assert record["superseded_pending"] is True
-    assert record["compromised_paths"] == ["residue.txt"]
+    assert record.compromised is True
+    assert record.superseded_pending is True
+    assert record.compromised_paths == ["residue.txt"]
 
 
 def test_record_cleanup_applied_rejects_unknown_cleanup() -> None:
