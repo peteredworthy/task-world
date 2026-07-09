@@ -292,7 +292,11 @@ class RunStateProjector:
                 }
                 if old_status == RunStatus.DRAFT.value and new_status == RunStatus.ACTIVE.value:
                     values["started_at"] = event.timestamp
-                if new_status in (RunStatus.FAILED.value, RunStatus.COMPLETED.value):
+                if new_status in (
+                    RunStatus.FAILED.value,
+                    RunStatus.COMPLETED.value,
+                    RunStatus.CANCELLED.value,
+                ):
                     values["completed_at"] = event.timestamp
                 else:
                     values["completed_at"] = None

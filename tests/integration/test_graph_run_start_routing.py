@@ -181,7 +181,7 @@ async def test_graph_cancel_route_appends_graph_cancel_before_signal_drain(
 
     await drain(run_id)
     data = (await client.get(f"/api/runs/{run_id}")).json()
-    assert data["status"] == "failed"
+    assert data["status"] == "cancelled"
     async with session_factory() as session:
         after_drain_events = await GraphEventStore(session).read_run(run_id)
     assert [event.event_type for event in after_drain_events] == event_types

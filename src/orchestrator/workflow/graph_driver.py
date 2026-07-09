@@ -795,7 +795,7 @@ class GraphRunDriver:
     async def _apply_fail(self, run_id: str, reason: str | None = None) -> None:
         async with self._session_factory() as session:
             service = await self._create_service(session)
-            await service.apply_cancel_run(run_id, reason=reason or "graph failed")
+            await service.apply_fail_run(run_id, reason=reason or "graph failed")
 
     async def _apply_pause(
         self,

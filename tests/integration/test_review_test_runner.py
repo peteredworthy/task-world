@@ -239,6 +239,43 @@ class TestGetTestRun:
         # The routine's auto_verify command is `echo "tests passed"`
         assert "tests passed" in data["log_output"]
 
+    async def test_test_run_resolves_run_config_placeholders(
+        self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
+    ) -> None:
+        """auto_verify commands with {{key}} placeholders resolve against run.config.
+
+        Regression test: the Review workbench's test-run endpoint used to hand
+        raw routine auto_verify commands straight to TestRunner, so a
+        `{{marker}}` placeholder ran literally instead of being substituted.
+        """
+        client, repo, app, drain = client_with_auto_verify
+        resp = await client.post(
+            "/api/runs",
+            json={
+                "routine_id": "auto-verify-placeholder-routine",
+                "repo_name": repo.name,
+                "branch": "main",
+                "config": {"marker": "resolved-marker-value"},
+            },
+        )
+        assert resp.status_code == 201, resp.text
+        run_id = resp.json()["id"]
+        resp = await client.post(f"/api/runs/{run_id}/start")
+        assert resp.status_code == 202, resp.text
+        await drain(run_id)
+
+        post_resp = await client.post(f"/api/runs/{run_id}/review/test", json={})
+        assert post_resp.status_code == 202
+        test_run_id = post_resp.json()["test_run_id"]
+
+        await app.state.test_runner.wait_for_test_run(test_run_id)
+        get_resp = await client.get(f"/api/runs/{run_id}/review/test/{test_run_id}")
+        assert get_resp.status_code == 200
+        data = get_resp.json()
+
+        assert "resolved-marker-value" in data["log_output"]
+        assert "{{marker}}" not in data["log_output"]
+
     async def test_test_run_reports_failure(
         self, client_with_auto_verify: tuple[AsyncClient, Path, Any, DrainFn]
     ) -> None:

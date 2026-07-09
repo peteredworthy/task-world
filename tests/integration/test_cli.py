@@ -190,7 +190,7 @@ async def test_pause_resume_cancel_via_api(test_app: FastAPI) -> None:
         cancel_response = await client.post(f"/api/runs/{run_id}/cancel")
         assert cancel_response.status_code == 202
         await drain(run_id)
-        assert (await client.get(f"/api/runs/{run_id}")).json()["status"] == "failed"
+        assert (await client.get(f"/api/runs/{run_id}")).json()["status"] == "cancelled"
 
 
 @pytest.mark.asyncio

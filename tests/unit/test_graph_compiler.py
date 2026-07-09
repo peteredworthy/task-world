@@ -267,6 +267,35 @@ def test_auto_verify_maps_to_one_check_node_per_item() -> None:
         )
 
 
+def test_auto_verify_cmd_resolves_run_config_placeholders() -> None:
+    routine = _routine_with_task(
+        TaskConfig(
+            id="T-01",
+            title="Task",
+            auto_verify=AutoVerifyConfig(
+                items=[
+                    AutoVerifyItemConfig(id="spec-exists", cmd="test -f {{spec_path}}"),
+                    AutoVerifyItemConfig(id="unresolved", cmd="echo {{unknown_key}}"),
+                ],
+            ),
+        )
+    )
+
+    events = compile_routine(
+        routine,
+        FakeClock(),
+        SequentialIdGenerator(),
+        run_id="run-1",
+        run_config={"spec_path": "docs/spec.md", "slice_id": "2.6"},
+    )
+    projection = _project(events)
+
+    definitions = projection["node_command_definitions"]
+    assert definitions["check-s-01-t-01-auto_verify-spec-exists"]["cmd"] == "test -f docs/spec.md"
+    # Placeholders without a matching run-config key stay literal.
+    assert definitions["check-s-01-t-01-auto_verify-unresolved"]["cmd"] == "echo {{unknown_key}}"
+
+
 def test_verifier_rubric_maps_to_verifier_node() -> None:
     routine = _routine_with_task(
         TaskConfig(

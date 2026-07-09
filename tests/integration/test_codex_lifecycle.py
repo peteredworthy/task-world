@@ -164,7 +164,7 @@ async def test_codex_server_lifecycle_cancel(
     run_id = data["id"]
     await _start(client, run_id, drain)
     cancelled = await _cancel(client, run_id, drain)
-    assert cancelled["status"] == "failed"
+    assert cancelled["status"] == "cancelled"
 
 
 async def test_codex_server_lifecycle_resume_preserves_agent_runner_config(

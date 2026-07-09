@@ -458,35 +458,35 @@ def test_run_auto_fails_when_task_fails() -> None:
 
 
 def test_cancel_run_from_active() -> None:
-    """ACTIVE -> FAILED via cancel_run succeeds."""
+    """ACTIVE -> CANCELLED via cancel_run succeeds."""
     run = _make_run(status=RunStatus.ACTIVE)
     engine, _, clock, emitter = _engine(run)
 
     result = engine.cancel_run("run-1")
-    assert result.status == RunStatus.FAILED
+    assert result.status == RunStatus.CANCELLED
     assert result.completed_at == clock.now()
 
     assert len(emitter.events) == 1
     event = emitter.events[0]
     assert isinstance(event, RunStatusChanged)
     assert event.old_status == RunStatus.ACTIVE
-    assert event.new_status == RunStatus.FAILED
+    assert event.new_status == RunStatus.CANCELLED
 
 
 def test_cancel_run_from_paused() -> None:
-    """PAUSED -> FAILED via cancel_run succeeds."""
+    """PAUSED -> CANCELLED via cancel_run succeeds."""
     run = _make_run(status=RunStatus.PAUSED)
     engine, _, clock, emitter = _engine(run)
 
     result = engine.cancel_run("run-1")
-    assert result.status == RunStatus.FAILED
+    assert result.status == RunStatus.CANCELLED
     assert result.completed_at == clock.now()
 
     assert len(emitter.events) == 1
     event = emitter.events[0]
     assert isinstance(event, RunStatusChanged)
     assert event.old_status == RunStatus.PAUSED
-    assert event.new_status == RunStatus.FAILED
+    assert event.new_status == RunStatus.CANCELLED
 
 
 def test_cancel_run_from_completed_raises() -> None:

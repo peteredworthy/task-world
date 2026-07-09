@@ -10,6 +10,15 @@ class RunStatus(str, Enum):
     STOPPING = "stopping"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+# Statuses from which a run can never leave (except the operator reopen edge
+# for FAILED graph runs; CANCELLED has no reopen path — the graph kernel
+# treats cancelled as strictly terminal).
+TERMINAL_RUN_STATUSES: frozenset[RunStatus] = frozenset(
+    {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
+)
 
 
 class TaskStatus(str, Enum):

@@ -571,6 +571,7 @@ def _graph_api_run_state(
         RunStatus.STOPPING,
         RunStatus.COMPLETED,
         RunStatus.FAILED,
+        RunStatus.CANCELLED,
     }:
         return run_status.value
     return projected_run_state

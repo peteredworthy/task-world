@@ -8,6 +8,7 @@ export function runStatusColor(status: RunStatus): string {
     case 'stopping': return 'bg-status-paused/20 text-status-paused';
     case 'completed': return 'bg-status-completed/20 text-status-completed';
     case 'failed': return 'bg-status-failed/20 text-status-failed';
+    case 'cancelled': return 'bg-status-pending/20 text-status-pending';
   }
 }
 
@@ -80,6 +81,7 @@ export function statusHexColor(status: RunStatus | TaskStatus): string {
       return '#22c55e';
     case 'failed':
       return '#ef4444';
+    case 'cancelled':
     default:
       return '#6b7280';
   }

@@ -44,6 +44,7 @@ from orchestrator.api.schemas.review import (
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
+from orchestrator.config.template_vars import resolve_plain_variables
 from orchestrator.db import commit_with_event_outbox, create_wired_event_store_v2
 from orchestrator.git import (
     BlockResolution as ConflictBlockResolution,
@@ -602,6 +603,7 @@ async def start_test_run(
             status_code=422,
             detail="No auto_verify commands configured in the routine",
         )
+    commands = [resolve_plain_variables(cmd, run.config) for cmd in commands]
 
     # Prevent concurrent test runs for the same run
     if test_runner.is_running(run_id):

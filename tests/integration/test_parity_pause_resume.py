@@ -213,7 +213,7 @@ async def test_cancel_active_run(
     await drain(run_id)
 
     run = await _get_run(client, run_id)
-    assert run["status"] == "failed", "Cancelled run should have status=failed"
+    assert run["status"] == "cancelled", "Cancelled run should have status=cancelled"
     assert run["completed_at"] is not None
 
 
@@ -234,4 +234,4 @@ async def test_cancel_paused_run(
     assert resp.status_code == 202
     await drain(run_id)
     run = await _get_run(client, run_id)
-    assert run["status"] == "failed"
+    assert run["status"] == "cancelled"

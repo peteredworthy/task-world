@@ -361,7 +361,7 @@ async def test_full_lifecycle_cancel_active_run(
     # 4. Verify via GET
     run_resp = await client.get(f"/api/runs/{run_id}")
     cancel_data = run_resp.json()
-    assert cancel_data["status"] == "failed", "Cancelled run should be in failed status"
+    assert cancel_data["status"] == "cancelled", "Cancelled run should be in cancelled status"
     assert cancel_data["completed_at"] is not None, "completed_at should be set on cancel"
 
     # 5. Verify activity includes the cancellation event

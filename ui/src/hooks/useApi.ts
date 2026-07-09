@@ -14,7 +14,7 @@ import type {
   RunEvidenceDigestResponse,
 } from '../types';
 
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'stopping']);
+const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'stopping']);
 
 export function useRuns(params?: { status?: string; repo_name?: string; limit?: number }) {
   return useQuery({
@@ -38,7 +38,9 @@ export function useRun(runId: string | undefined) {
     enabled: !!runId,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
-      return (status === 'completed' || status === 'failed') ? false : 10000;
+      return (status === 'completed' || status === 'failed' || status === 'cancelled')
+        ? false
+        : 10000;
     },
   });
 }

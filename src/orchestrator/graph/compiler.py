@@ -27,6 +27,7 @@ from orchestrator.config.models import (
     StepConfig,
     TaskConfig,
 )
+from orchestrator.config.template_vars import resolve_plain_variables
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph.models import (
     Actor,
@@ -773,7 +774,7 @@ class _Compiler:
                     "check_index": index,
                     "command_definition": {
                         "id": item.id,
-                        "cmd": item.cmd,
+                        "cmd": resolve_plain_variables(item.cmd, self._run_config),
                         "must": item.must,
                         "tail_lines": tail_lines,
                         "source": source,

@@ -399,7 +399,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             all_runs = await repo.list_all()
 
         all_run_ids = {r.id for r in all_runs}
-        terminal = {RunStatus.COMPLETED, RunStatus.FAILED}
+        terminal = {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
         run_completed_at = {
             r.id: r.completed_at
             for r in all_runs

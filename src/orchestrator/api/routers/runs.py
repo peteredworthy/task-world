@@ -658,7 +658,7 @@ async def cancel_run(
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
     graph_store: Annotated[Any, Depends(get_graph_store)],
 ) -> RunResponse:
-    """Cancel a run (ACTIVE/PAUSED -> FAILED).
+    """Cancel a run (ACTIVE/PAUSED -> CANCELLED).
 
     Enqueues a CANCEL signal and returns 202 Accepted.
     """

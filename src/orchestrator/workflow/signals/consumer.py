@@ -502,7 +502,7 @@ class SignalConsumer:
         session: AsyncSession,
         service: WorkflowService,
     ) -> None:
-        """CANCEL: with active workflow → remove; then apply FAILED."""
+        """CANCEL: with active workflow → remove; then apply CANCELLED."""
         reason: str | None = payload.get("reason") if payload else None
 
         if run_id in self._active_workflows:

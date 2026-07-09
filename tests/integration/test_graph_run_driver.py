@@ -793,7 +793,7 @@ async def test_operator_resume_reopens_failed_graph_run(
     async with session_factory() as session:
         service = WorkflowService(session)
         await service.apply_start_run(run_id)
-        await service.apply_cancel_run(run_id, reason="forced_for_test")
+        await service.apply_fail_run(run_id, reason="forced_for_test")
     assert await _run_status(session_factory, run_id) == RunStatus.FAILED
 
     # Operator resume flips the row FAILED -> ACTIVE but the service alone does
@@ -844,7 +844,7 @@ async def test_driver_does_not_reopen_failed_graph_without_operator_resume(
     async with session_factory() as session:
         service = WorkflowService(session)
         await service.apply_start_run(run_id)
-        await service.apply_cancel_run(run_id, reason="forced_for_test")
+        await service.apply_fail_run(run_id, reason="forced_for_test")
     assert await _run_status(session_factory, run_id) == RunStatus.FAILED
 
     dispatch_order: list[str] = []
@@ -956,7 +956,7 @@ async def test_operator_reopen_marker_is_consumed_once(
     async with session_factory() as session:
         service = WorkflowService(session)
         await service.apply_start_run(run_id)
-        await service.apply_cancel_run(run_id, reason="forced_for_test")
+        await service.apply_fail_run(run_id, reason="forced_for_test")
     async with session_factory() as session:
         service = WorkflowService(session)
         await service.apply_resume_run(run_id, resume_strategy="continue")
@@ -1020,7 +1020,7 @@ async def test_recover_run_then_resume_reopens_failed_graph_run(
     async with session_factory() as session:
         service = WorkflowService(session)
         await service.apply_start_run(run_id)
-        await service.apply_cancel_run(run_id, reason="forced_for_test")
+        await service.apply_fail_run(run_id, reason="forced_for_test")
     assert await _run_status(session_factory, run_id) == RunStatus.FAILED
 
     # Operator recover: FAILED -> PAUSED (pause_reason "recovered"), kernel
@@ -1103,7 +1103,7 @@ async def test_clarification_resume_does_not_reopen_recovered_failed_graph(
     async with session_factory() as session:
         service = WorkflowService(session)
         await service.apply_start_run(run_id)
-        await service.apply_cancel_run(run_id, reason="forced_for_test")
+        await service.apply_fail_run(run_id, reason="forced_for_test")
     async with session_factory() as session:
         target_task_id = (await RunRepository(session).get(run_id)).steps[0].tasks[0].id
     async with session_factory() as session:

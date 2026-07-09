@@ -2,7 +2,7 @@
 // Source: src/orchestrator/config/enums.py
 // Run `uv run python scripts/export_enums.py` to regenerate.
 
-export type RunStatus = 'draft' | 'active' | 'paused' | 'stopping' | 'completed' | 'failed';
+export type RunStatus = 'draft' | 'active' | 'paused' | 'stopping' | 'completed' | 'failed' | 'cancelled';
 
 export type TaskStatus = 'pending' | 'building' | 'pending_user_action' | 'verifying' | 'recovering' | 'fan_out_running' | 'completed' | 'failed';
 

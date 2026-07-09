@@ -193,7 +193,7 @@ async def test_cancel_twice(
     assert resp.status_code == 202, f"First cancel should succeed: {resp.text}"
     await drain(run_id)
     run = (await client.get(f"/api/runs/{run_id}")).json()
-    assert run["status"] == "failed", "Run should be failed after cancel"
+    assert run["status"] == "cancelled", "Run should be cancelled after cancel"
 
     # Second cancel: must also succeed (HTTP 202), no error, run stays failed
     resp = await client.post(f"/api/runs/{run_id}/cancel")
@@ -202,5 +202,5 @@ async def test_cancel_twice(
     )
     await drain(run_id)
     run = (await client.get(f"/api/runs/{run_id}")).json()
-    assert run["status"] == "failed", "Run must remain failed after duplicate cancel"
+    assert run["status"] == "cancelled", "Run must remain cancelled after duplicate cancel"
     assert run["id"] == run_id, "Response must refer to the same run"

@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from pydantic import BaseModel
 
 from orchestrator.config.models import AutoVerifyConfig, AutoVerifyItemConfig
+from orchestrator.config.template_vars import resolve_plain_variables
 
 
 class AutoVerifyResult(BaseModel):
@@ -58,14 +59,6 @@ class LocalAutoVerifyRunner:
             return None, f"Command crashed: {type(e).__name__}: {e}"
 
 
-def _resolve_variables(template: str, variables: dict[str, Any]) -> str:
-    """Resolve {{variable}} placeholders in a template string."""
-    result = template
-    for key, value in variables.items():
-        result = result.replace(f"{{{{{key}}}}}", str(value))
-    return result
-
-
 async def run_auto_verify(
     config: AutoVerifyConfig,
     runner: AutoVerifyRunner,
@@ -75,7 +68,7 @@ async def run_auto_verify(
     """Run all auto-verify commands and collect results."""
     results: list[AutoVerifyResult] = []
     for item in config.items:
-        cmd = _resolve_variables(item.cmd, variables) if variables else item.cmd
+        cmd = resolve_plain_variables(item.cmd, variables)
         exit_code, output = await runner.run_command(cmd, cwd, config.tail_lines)
         if exit_code is None:
             results.append(
@@ -118,7 +111,7 @@ async def run_auto_verify_items(
     """
     results: list[AutoVerifyResult] = []
     for item in items:
-        cmd = _resolve_variables(item.cmd, variables) if variables else item.cmd
+        cmd = resolve_plain_variables(item.cmd, variables)
         exit_code, output = await runner.run_command(cmd, cwd, tail_lines)
         if exit_code is None:
             results.append(

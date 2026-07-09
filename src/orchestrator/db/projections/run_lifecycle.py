@@ -10,14 +10,17 @@ from orchestrator.config.enums import RunStatus
 from orchestrator.workflow import RunStatusChanged, WorkflowEvent
 
 _ACTIVE_STATUSES: frozenset[RunStatus] = frozenset({RunStatus.ACTIVE, RunStatus.PAUSED})
-_TERMINAL_STATUSES: frozenset[RunStatus] = frozenset({RunStatus.COMPLETED, RunStatus.FAILED})
+_TERMINAL_STATUSES: frozenset[RunStatus] = frozenset(
+    {RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.CANCELLED}
+)
 
 
 class RunLifecycleProjector:
     """In-memory set of active run_ids derived from RunStatusChanged events.
 
     A run is considered active if its most recent status is ACTIVE or PAUSED.
-    Terminal and pre-start statuses (DRAFT, STOPPING, COMPLETED, FAILED) are
+    Terminal and pre-start statuses (DRAFT, STOPPING, COMPLETED, FAILED,
+    CANCELLED) are
     treated as inactive.
     """
 

@@ -74,10 +74,10 @@ function StatusIcon({ status }: { status: string }) {
     );
   }
 
-  if (status === 'failed') {
+  if (status === 'failed' || status === 'cancelled') {
     return (
       <svg
-        className="h-4 w-4 text-status-failed shrink-0"
+        className={`h-4 w-4 shrink-0 ${status === 'failed' ? 'text-status-failed' : 'text-text-muted'}`}
         fill="none"
         viewBox="0 0 24 24"
         stroke="currentColor"
@@ -149,7 +149,7 @@ function QuickActions({
           {loading?.resume ? 'Resuming...' : 'Resume'}
         </button>
       )}
-      {run.status === 'failed' && (
+      {(run.status === 'failed' || run.status === 'cancelled') && (
         <button
           onClick={e => { e.stopPropagation(); onDelete(run.id); }}
           disabled={loading?.delete}
@@ -247,7 +247,7 @@ function FooterActions({
           </button>
         </>
       )}
-      {(run.status === 'completed' || run.status === 'failed') && (
+      {(run.status === 'completed' || run.status === 'failed' || run.status === 'cancelled') && (
         <button
           onClick={() => onDelete(run.id)}
           disabled={loading?.delete}

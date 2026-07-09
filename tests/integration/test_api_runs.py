@@ -815,7 +815,7 @@ async def test_create_run_agent_runner_config_defaults_to_empty(
 async def test_cancel_run_from_active(
     client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
-    """Cancel an active run -> FAILED."""
+    """Cancel an active run -> CANCELLED."""
     client, drain = client_and_drain
     created = await _create_run(client, repo_name)
     run_id = created["id"]
@@ -828,14 +828,14 @@ async def test_cancel_run_from_active(
     assert response.status_code == 202
     await drain(run_id)
     data = (await client.get(f"/api/runs/{run_id}")).json()
-    assert data["status"] == "failed"
+    assert data["status"] == "cancelled"
     assert data["completed_at"] is not None
 
 
 async def test_cancel_run_from_paused(
     client_and_drain: tuple[AsyncClient, DrainFn], repo_name: str
 ) -> None:
-    """Cancel a paused run -> FAILED."""
+    """Cancel a paused run -> CANCELLED."""
     client, drain = client_and_drain
     created = await _create_run(client, repo_name)
     run_id = created["id"]
@@ -851,7 +851,7 @@ async def test_cancel_run_from_paused(
     assert response.status_code == 202
     await drain(run_id)
     data = (await client.get(f"/api/runs/{run_id}")).json()
-    assert data["status"] == "failed"
+    assert data["status"] == "cancelled"
     assert data["completed_at"] is not None
 
 

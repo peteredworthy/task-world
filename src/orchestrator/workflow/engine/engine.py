@@ -135,14 +135,14 @@ class WorkflowEngine:
         return run
 
     def cancel_run(self, run_id: str, reason: str | None = None) -> Run:
-        """Cancel a run - move from ACTIVE/PAUSED/STOPPING to FAILED."""
+        """Cancel a run - move from ACTIVE/PAUSED/STOPPING to CANCELLED."""
         run = self._state.get_run(run_id)
         cancellable = (RunStatus.ACTIVE, RunStatus.PAUSED, RunStatus.STOPPING)
         if run.status not in cancellable:
-            raise InvalidTransitionError(run.status.value, RunStatus.FAILED.value)
+            raise InvalidTransitionError(run.status.value, RunStatus.CANCELLED.value)
 
         old_status = run.status
-        run.status = RunStatus.FAILED
+        run.status = RunStatus.CANCELLED
         run.completed_at = self._clock.now()
         self._state.update_run(run)
 
@@ -152,7 +152,7 @@ class WorkflowEngine:
                 run_id=run_id,
                 event_type="run_status_changed",
                 old_status=old_status,
-                new_status=RunStatus.FAILED,
+                new_status=RunStatus.CANCELLED,
             )
         )
         return run

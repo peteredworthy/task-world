@@ -537,18 +537,18 @@ class WorkflowService:
     # --- Delegating to WorkflowEngine ---
 
     async def cancel_run(self, run_id: str, reason: str | None = None) -> Run:
-        """Cancel a run (ACTIVE/PAUSED -> FAILED) via signal queue.
+        """Cancel a run (ACTIVE/PAUSED -> CANCELLED) via signal queue.
 
         Enqueues a CANCEL signal; the consumer applies the DB transition.
         Returns the run in its current (pre-transition) state.
         """
         run = await self._repo.get(run_id)
         # Idempotency: if run is already in a terminal state, return it as-is.
-        if run.status in (RunStatus.FAILED, RunStatus.COMPLETED):
+        if run.status in (RunStatus.FAILED, RunStatus.COMPLETED, RunStatus.CANCELLED):
             return run
         # DRAFT runs cannot be cancelled.
         if run.status == RunStatus.DRAFT:
-            raise InvalidTransitionError(run.status.value, "failed")
+            raise InvalidTransitionError(run.status.value, "cancelled")
         queue = self._get_signal_queue()
         payload: dict[str, Any] | None = {"reason": reason} if reason else None
         await queue.enqueue(run_id, WorkflowSignal.CANCEL, payload)
@@ -556,18 +556,32 @@ class WorkflowService:
         return run
 
     async def apply_cancel_run(self, run_id: str, reason: str | None = None) -> Run:
-        """Cancel a run (ACTIVE/PAUSED -> FAILED) via event append and projection.
+        """Cancel a run (ACTIVE/PAUSED -> CANCELLED) via event append and projection.
 
         Called by the signal consumer and internal executor code.
         Handles worktree cleanup if the run has a worktree configured.
         """
+        return await self._apply_terminal_stop(run_id, RunStatus.CANCELLED, reason)
+
+    async def apply_fail_run(self, run_id: str, reason: str | None = None) -> Run:
+        """Fail a run (ACTIVE/PAUSED -> FAILED) via event append and projection.
+
+        Called by the graph driver when the graph kernel reaches run_state
+        "failed". Distinct from apply_cancel_run: FAILED means the run's own
+        work failed; CANCELLED means an operator or parent stopped it.
+        """
+        return await self._apply_terminal_stop(run_id, RunStatus.FAILED, reason)
+
+    async def _apply_terminal_stop(
+        self, run_id: str, new_status: RunStatus, reason: str | None
+    ) -> Run:
         run = await self._repo.get(run_id)
 
         # Idempotency: if run is already in a terminal state, return it as-is.
-        if run.status in (RunStatus.FAILED, RunStatus.COMPLETED):
+        if run.status in (RunStatus.FAILED, RunStatus.COMPLETED, RunStatus.CANCELLED):
             return run
         if run.status not in (RunStatus.ACTIVE, RunStatus.PAUSED, RunStatus.STOPPING):
-            raise InvalidTransitionError(run.status.value, RunStatus.FAILED.value)
+            raise InvalidTransitionError(run.status.value, new_status.value)
 
         await self._pause_or_cancel_run_for_parent_control(
             run,
@@ -579,7 +593,7 @@ class WorkflowService:
             UpdateRunStatusCommand(
                 run_id=run_id,
                 old_status=run.status,
-                new_status=RunStatus.FAILED,
+                new_status=new_status,
                 pause_reason=run.pause_reason,
                 last_error=run.last_error,
                 timestamp=self._clock.now(),
@@ -591,10 +605,10 @@ class WorkflowService:
         await commit_with_event_outbox(self._session)
         result = await self._repo.get(run_id)
 
-        # Call env_lifecycle hook for run_end if run was cancelled
+        # Call env_lifecycle hook for run_end if run reached the stop status
         if (
             self._env_lifecycle is not None
-            and result.status == RunStatus.FAILED
+            and result.status == new_status
             and result.worktree_path
             and result.env_file_specs
         ):
@@ -606,8 +620,8 @@ class WorkflowService:
                 success=False,
             )
 
-        # Handle completion actions for cancelled (FAILED) runs
-        if result.status == RunStatus.FAILED:
+        # Handle completion actions for stopped runs
+        if result.status == new_status:
             worktree_manager = self._create_worktree_manager(result)
             if worktree_manager is not None:
                 handle_run_completion(result, worktree_manager)
@@ -869,12 +883,12 @@ class WorkflowService:
     async def _cancel_child_run(self, child: Run, reason: str) -> None:
         """Cancel a single child run via event append and projection."""
         if child.status not in (RunStatus.ACTIVE, RunStatus.PAUSED, RunStatus.STOPPING):
-            raise InvalidTransitionError(child.status.value, RunStatus.FAILED.value)
+            raise InvalidTransitionError(child.status.value, RunStatus.CANCELLED.value)
         events = await handle_update_run_status(
             UpdateRunStatusCommand(
                 run_id=child.id,
                 old_status=child.status,
-                new_status=RunStatus.FAILED,
+                new_status=RunStatus.CANCELLED,
                 pause_reason=child.pause_reason,
                 last_error=child.last_error,
                 timestamp=self._clock.now(),
@@ -2830,7 +2844,9 @@ class WorkflowService:
         if cwd is None:
             return True, []
 
-        results = await run_auto_verify(av_config, self._auto_verify_runner, cwd)
+        results = await run_auto_verify(
+            av_config, self._auto_verify_runner, cwd, variables=run.config
+        )
         all_must_passed, _ = evaluate_auto_verify(av_config, results)
         return all_must_passed, results
 
@@ -3474,7 +3490,12 @@ class WorkflowService:
         deadline = loop.time() + timeout_seconds
         while True:
             run = await self._repo.get(run_id)
-            if run.status in (RunStatus.COMPLETED, RunStatus.FAILED, RunStatus.PAUSED):
+            if run.status in (
+                RunStatus.COMPLETED,
+                RunStatus.FAILED,
+                RunStatus.CANCELLED,
+                RunStatus.PAUSED,
+            ):
                 return run
             if loop.time() >= deadline:
                 return run

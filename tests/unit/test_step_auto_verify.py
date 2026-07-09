@@ -127,6 +127,7 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
 def _make_run_with_step_auto_verify(
     tmp_path: Path,
     step_auto_verify_items: list[dict[str, Any]],
+    config: dict[str, Any] | None = None,
 ) -> Run:
     """Build a run whose step has step_auto_verify configured."""
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
@@ -137,6 +138,7 @@ def _make_run_with_step_auto_verify(
         status=RunStatus.DRAFT,
         routine_id="sav-routine",
         routine_source=RoutineSource.EMBEDDED,
+        config=config or {},
         routine_embedded={
             "id": "sav-routine",
             "name": "Step Auto-Verify Test",
@@ -228,6 +230,30 @@ async def test_step_auto_verify_failing_halts_run(session: AsyncSession, tmp_pat
     assert updated.status == RunStatus.FAILED
     assert updated.last_error is not None
     assert "auto-verify" in updated.last_error.lower()
+
+
+@pytest.mark.asyncio
+async def test_step_auto_verify_resolves_run_config_placeholders(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    """{{key}} placeholders in step_auto_verify commands resolve against run.config.
+
+    Regression test: _run_step_auto_verify used to call run_auto_verify without
+    passing run.config as variables, so placeholders ran through literally.
+    """
+    run = _make_run_with_step_auto_verify(
+        tmp_path,
+        step_auto_verify_items=[
+            {"id": "sav1", "cmd": '[ "{{marker}}" = "sav-value" ]', "must": True}
+        ],
+        config={"marker": "sav-value"},
+    )
+    svc = WorkflowService(session, auto_verify_runner=LocalAutoVerifyRunner())
+    await svc.create_run(run)
+    await _run_task_to_verified(svc, run.id, "task-1")
+
+    updated = await svc.get_run(run.id)
+    assert updated.status == RunStatus.COMPLETED
 
 
 @pytest.mark.asyncio

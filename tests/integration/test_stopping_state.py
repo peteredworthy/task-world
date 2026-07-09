@@ -111,18 +111,18 @@ def test_stopping_to_paused_valid() -> None:
 
 
 def test_stopping_to_failed_valid() -> None:
-    """STOPPING → FAILED is a valid transition via cancel_run()."""
+    """STOPPING → CANCELLED is a valid transition via cancel_run()."""
     run = _make_stopping_run()
     engine, manager, clock, emitter = _engine(run)
 
     result = engine.cancel_run("run-1")
 
-    assert result.status == RunStatus.FAILED
+    assert result.status == RunStatus.CANCELLED
     assert len(emitter.events) == 1
     event = emitter.events[0]
     assert isinstance(event, RunStatusChanged)
     assert event.old_status == RunStatus.STOPPING
-    assert event.new_status == RunStatus.FAILED
+    assert event.new_status == RunStatus.CANCELLED
 
 
 def test_stopping_to_active_invalid() -> None:

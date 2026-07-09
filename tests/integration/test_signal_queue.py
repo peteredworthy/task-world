@@ -222,8 +222,8 @@ async def test_cancel_active_run_via_queue(
     # Drain processes CANCEL signal → FAILED
     await drain(run_id)
     run_after = await _get_run(client, run_id)
-    assert run_after["status"] == "failed", (
-        f"After CANCEL signal consumed, run must be FAILED; got {run_after['status']!r}"
+    assert run_after["status"] == "cancelled", (
+        f"After CANCEL signal consumed, run must be CANCELLED; got {run_after['status']!r}"
     )
     assert run_after["completed_at"] is not None
 
@@ -272,4 +272,4 @@ async def test_concurrent_runs_process_signals_independently(
     await drain(run_b)
 
     assert (await _get_run(client, run_a))["status"] == "paused"
-    assert (await _get_run(client, run_b))["status"] == "failed"
+    assert (await _get_run(client, run_b))["status"] == "cancelled"

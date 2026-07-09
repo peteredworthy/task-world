@@ -16,6 +16,7 @@ const STATUS_OPTIONS: Array<{ value: string; label: string }> = [
   { value: 'paused', label: 'Paused' },
   { value: 'completed', label: 'Completed' },
   { value: 'failed', label: 'Failed' },
+  { value: 'cancelled', label: 'Cancelled' },
   { value: 'needs_input', label: 'Needs Input' },
 ];
 
