@@ -127,7 +127,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "proposal_id": "open_proposal_blockers bookkeeping",
     "prompt_hydration_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata "
     "(see binding_policy)",
-    "proposed_by_node_id": "accepted_no_successor_patches_by_node/planner_successors bookkeeping",
     "provenance": "support_evidence bookkeeping",
     "purpose": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "reason": "informational annotation (environment_failures/cleanup/suspect-node); never "
@@ -153,7 +152,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "semantic_change": "requirement revision authority-resolution bookkeeping",
     "stale_reason": "support_evidence bookkeeping",
     "stderr": "environment_failures/check_results informational field (see command_text)",
-    "successor_planner_node_ids": "planner_successors bookkeeping",
     "supersedes_record_id": "input_bindings merge policy helper; task_states does not read "
     "bound input records",
     "support_id": "support_evidence bookkeeping",

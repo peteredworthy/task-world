@@ -40,8 +40,10 @@ from orchestrator.graph.models import (
     EventEnvelope,
     FailureRecord,
     FileStateRecord,
+    GraphPatchAcceptedPayload,
     JoinResultRecord,
     GraphPatchProposalRecord,
+    GraphPatchRejectedPayload,
     LeaseExpiredPayload,
     LeaseGrantedPayload,
     LeaseReleasedPayload,
@@ -2172,15 +2174,17 @@ def _apply_patch_command(
     output = [
         make_event(
             "graph_patch_accepted",
-            {
-                "patch_id": patch.patch_id,
-                "base_graph_position": patch.base_graph_position,
-                "actor_role": actor_role,
-                "proposed_by_node_id": patch.proposed_by_node_id,
-                "successor_planner_node_ids": successor_planner_node_ids,
-                "session_id": parent_session_id,
-                "carryover_record_id": carryover_record_id,
-            },
+            GraphPatchAcceptedPayload.model_validate(
+                {
+                    "patch_id": patch.patch_id,
+                    "base_graph_position": patch.base_graph_position,
+                    "actor_role": actor_role,
+                    "proposed_by_node_id": patch.proposed_by_node_id,
+                    "successor_planner_node_ids": successor_planner_node_ids,
+                    "session_id": parent_session_id,
+                    "carryover_record_id": carryover_record_id,
+                }
+            ).model_dump(mode="json"),
         )
     ]
     for op in patch.ops:
@@ -2218,14 +2222,16 @@ def _patch_rejected_payload(
     reason: str | None,
     read_set_diff: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    return {
-        "patch_id": patch.patch_id,
-        "base_graph_position": patch.base_graph_position,
-        "actor_role": actor_role,
-        "proposed_by_node_id": patch.proposed_by_node_id,
-        "reason": reason,
-        "read_set_diff": read_set_diff,
-    }
+    return GraphPatchRejectedPayload.model_validate(
+        {
+            "patch_id": patch.patch_id,
+            "base_graph_position": patch.base_graph_position,
+            "actor_role": actor_role,
+            "proposed_by_node_id": patch.proposed_by_node_id,
+            "reason": reason,
+            "read_set_diff": read_set_diff,
+        }
+    ).model_dump(mode="json")
 
 
 def _request_record_validation_error(patch: PatchEnvelope) -> str | None:

@@ -8,7 +8,8 @@ the submit, bounded by max_commit_fix_attempts. The worktree persists between
 spawns, so the agent fixes its own changes in place.
 
 These tests use hand-written fake subprocess objects injected via the
-``subprocess_factory`` seam — no mocks/monkeypatching (project rule).
+``subprocess_factory`` seam, satisfying the project rule against test doubles
+that patch runtime behavior.
 """
 
 from __future__ import annotations

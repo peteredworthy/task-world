@@ -45,8 +45,11 @@ from orchestrator.graph.models import (
     FailureRecord,
     GapClassificationRecord,
     GraphBaseModel,
+    GraphPatchAcceptedPayload,
     GraphPatchProposalRecord,
+    GraphPatchRejectedPayload,
     GraphPatchResultRecord,
+    GraphPatchStatusPayload,
     InvalidTestBlockProjection,
     InputBindingProjection,
     LegacyOutputRecord,
@@ -1451,6 +1454,54 @@ def _planner_session_state_changed_payload_from_event(
         return None
 
 
+def _graph_patch_accepted_payload_from_event(
+    event: EventEnvelope,
+) -> GraphPatchAcceptedPayload | None:
+    try:
+        return GraphPatchAcceptedPayload.model_validate(event.payload)
+    except ValueError:
+        return None
+
+
+def _graph_patch_rejected_payload_from_event(
+    event: EventEnvelope,
+) -> GraphPatchRejectedPayload | None:
+    try:
+        return GraphPatchRejectedPayload.model_validate(event.payload)
+    except ValueError:
+        return None
+
+
+def _graph_patch_status_payload_from_event(event: EventEnvelope) -> GraphPatchStatusPayload | None:
+    try:
+        return GraphPatchStatusPayload.model_validate(event.payload)
+    except ValueError:
+        return None
+
+
+def _graph_patch_payload_for_event(event: EventEnvelope) -> dict[str, Any] | None:
+    if event.event_type == "graph_patch_accepted":
+        payload = _graph_patch_accepted_payload_from_event(event)
+    elif event.event_type == "graph_patch_rejected":
+        payload = _graph_patch_rejected_payload_from_event(event)
+    elif event.event_type in {
+        "graph_patch_proposed",
+        "planner_proposal_opened",
+        "proposal_opened",
+        "proposal_recorded",
+        "proposal_accepted",
+        "proposal_rejected",
+        "proposal_resolved",
+        "proposal_closed",
+    }:
+        payload = _graph_patch_status_payload_from_event(event)
+    else:
+        payload = None
+    if payload is None:
+        return None
+    return payload.model_dump(mode="json")
+
+
 def _cleanup_requested_from_event(event: EventEnvelope) -> CleanupRequestedProjection | None:
     payload = _cleanup_requested_payload_from_event(event)
     if payload is None:
@@ -2097,16 +2148,15 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_file_state(next_state, event)
     elif event.event_type == "graph_patch_accepted":
         _record_open_proposal_blocker(next_state, event)
-        planner_node_id = event.payload.get("proposed_by_node_id")
-        patch_id = event.payload.get("patch_id")
-        if isinstance(planner_node_id, str) and isinstance(patch_id, str):
+        accepted_payload = _graph_patch_accepted_payload_from_event(event)
+        if accepted_payload is not None and accepted_payload.proposed_by_node_id is not None:
+            planner_node_id = accepted_payload.proposed_by_node_id
+            patch_id = accepted_payload.patch_id
             accepted = list(next_state["accepted_graph_patches_by_node"].get(planner_node_id, []))
             accepted.append(patch_id)
             next_state["accepted_graph_patches_by_node"][planner_node_id] = accepted
-            successor_node_ids = event.payload.get("successor_planner_node_ids")
-            has_successor = isinstance(successor_node_ids, list) and any(
-                isinstance(item, str) for item in cast(list[Any], successor_node_ids)
-            )
+            successor_node_ids = accepted_payload.successor_planner_node_ids
+            has_successor = bool(successor_node_ids)
             if not has_successor:
                 no_successor_patches = list(
                     next_state["accepted_no_successor_patches_by_node"].get(planner_node_id, [])
@@ -2117,22 +2167,15 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 )
             else:
                 next_state["accepted_no_successor_patches_by_node"][planner_node_id] = []
-            successors = event.payload.get("successor_planner_node_ids")
-            if isinstance(successors, list) and any(
-                isinstance(item, str) for item in cast(list[Any], successors)
-            ):
+            if successor_node_ids:
                 next_state["accepted_no_successor_patch_ids_by_node"].pop(
                     planner_node_id,
                     None,
                 )
             else:
                 next_state["accepted_no_successor_patch_ids_by_node"][planner_node_id] = patch_id
-        successor_node_ids = event.payload.get("successor_planner_node_ids")
-        if isinstance(planner_node_id, str) and isinstance(successor_node_ids, list):
-            for successor_node_id in cast(list[Any], successor_node_ids):
-                if isinstance(successor_node_id, str):
-                    next_state["planner_successors"][planner_node_id] = successor_node_id
-                    break
+            if successor_node_ids:
+                next_state["planner_successors"][planner_node_id] = successor_node_ids[0]
     elif event.event_type == "gatekeeper_verdict_recorded":
         _record_gatekeeper_verdicts(next_state, event)
     elif event.event_type == "cleanup_requested":
@@ -2653,7 +2696,10 @@ def _open_proposal_blockers(
         ]
     open_proposals: dict[str, FinalInvariantBlocker] = {}
     for event in events:
-        proposal_id = _proposal_id(event.payload)
+        payload = _graph_patch_payload_for_event(event)
+        if payload is None:
+            continue
+        proposal_id = _proposal_id(payload)
         if proposal_id is None:
             continue
         if event.event_type in {
@@ -2662,7 +2708,7 @@ def _open_proposal_blockers(
             "proposal_opened",
             "proposal_recorded",
         }:
-            status = event.payload.get("status")
+            status = payload.get("status")
             if status in {"accepted", "rejected", "resolved", "closed"}:
                 open_proposals.pop(proposal_id, None)
                 continue
@@ -2872,7 +2918,10 @@ def _proposal_id(payload: dict[str, Any]) -> str | None:
 
 
 def _record_open_proposal_blocker(state: GraphProjection, event: EventEnvelope) -> None:
-    proposal_id = _proposal_id(event.payload)
+    payload = _graph_patch_payload_for_event(event)
+    if payload is None:
+        return
+    proposal_id = _proposal_id(payload)
     if proposal_id is None:
         return
     if event.event_type in {
@@ -2881,7 +2930,7 @@ def _record_open_proposal_blocker(state: GraphProjection, event: EventEnvelope) 
         "proposal_opened",
         "proposal_recorded",
     }:
-        status = event.payload.get("status")
+        status = payload.get("status")
         if status in {"accepted", "rejected", "resolved", "closed"}:
             state["open_proposal_blockers"].pop(proposal_id, None)
             return
@@ -3197,7 +3246,7 @@ def project_graph_patch_attempts(
         return attempt
 
     for event in events:
-        payload = event.payload
+        payload = _graph_patch_payload_for_event(event) or event.payload
         patch_id = _patch_id(payload)
         if event.event_type == "graph_patch_proposed" and patch_id is not None:
             attempt = ensure_attempt(patch_id)

@@ -1249,6 +1249,142 @@ class PlannerSessionStateChangedPayload(GraphEventPayloadBase):
         return _normalize_planner_session_state_changed_payload(value)
 
 
+def _normalize_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in cast(list[Any], value) if isinstance(item, str)]
+
+
+def _normalize_patch_event_payload(value: Any, known_keys: set[str]) -> Any:
+    if not isinstance(value, dict):
+        return value
+
+    payload = dict(cast(dict[str, Any], value))
+    normalized_extra = payload.get("extra")
+    extra = (
+        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
+    )
+    string_keys = {
+        "patch_id",
+        "proposal_id",
+        "actor_role",
+        "proposed_by_node_id",
+        "node_id",
+        "session_id",
+        "carryover_record_id",
+        "reason",
+        "rejection_reason",
+        "status",
+    }
+    for key in string_keys & known_keys:
+        field_value = payload.get(key)
+        if field_value is not None and not isinstance(field_value, str):
+            extra.setdefault(key, payload.pop(key))
+
+    if "successor_planner_node_ids" in known_keys and "successor_planner_node_ids" in payload:
+        payload["successor_planner_node_ids"] = _normalize_string_list(
+            payload.get("successor_planner_node_ids")
+        )
+
+    for key in list(payload):
+        if key not in known_keys:
+            extra.setdefault(key, payload.pop(key))
+
+    payload["extra"] = extra
+    return payload
+
+
+class GraphPatchAcceptedPayload(GraphEventPayloadBase):
+    patch_id: str
+    base_graph_position: int | None = None
+    actor_role: str | None = None
+    proposed_by_node_id: str | None = None
+    successor_planner_node_ids: list[str] = Field(default_factory=list)
+    session_id: str | None = None
+    carryover_record_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_patch_event_payload(
+            value,
+            {
+                "patch_id",
+                "base_graph_position",
+                "actor_role",
+                "proposed_by_node_id",
+                "successor_planner_node_ids",
+                "session_id",
+                "carryover_record_id",
+                "extra",
+            },
+        )
+
+
+class GraphPatchRejectedPayload(GraphEventPayloadBase):
+    patch_id: str
+    base_graph_position: int | str | None = None
+    actor_role: str | None = None
+    proposed_by_node_id: str | None = None
+    reason: str | None = None
+    rejection_reason: str | None = None
+    read_set_diff: dict[str, Any] | None = None
+    diagnostics: dict[str, Any] | None = None
+    budget: int | None = None
+    count: int | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_patch_event_payload(
+            value,
+            {
+                "patch_id",
+                "base_graph_position",
+                "actor_role",
+                "proposed_by_node_id",
+                "reason",
+                "rejection_reason",
+                "read_set_diff",
+                "diagnostics",
+                "budget",
+                "count",
+                "extra",
+            },
+        )
+
+
+class GraphPatchStatusPayload(GraphEventPayloadBase):
+    proposal_id: str | None = None
+    patch_id: str | None = None
+    node_id: str | None = None
+    proposed_by_node_id: str | None = None
+    base_graph_position: int | None = None
+    actor_role: str | None = None
+    status: str | None = None
+    reason: str | None = None
+    diagnostics: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_patch_event_payload(
+            value,
+            {
+                "proposal_id",
+                "patch_id",
+                "node_id",
+                "proposed_by_node_id",
+                "base_graph_position",
+                "actor_role",
+                "status",
+                "reason",
+                "diagnostics",
+                "extra",
+            },
+        )
+
+
 class CleanupRequestedPayload(CleanupEventPayloadBase):
     cleanup_id: str
     file_state_record_id: str | None = None

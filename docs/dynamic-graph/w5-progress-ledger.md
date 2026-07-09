@@ -182,3 +182,51 @@ GREEN:
   - Result: passed.
 - `uv run pyright src/orchestrator/graph tests/unit/test_planner_session_event_payloads.py`
   - Result: passed, 0 errors.
+
+## Patch Event Payload Slice
+
+Status: complete in working tree, pending commit.
+
+Scope:
+- Added typed event payload models for `graph_patch_accepted`,
+  `graph_patch_rejected`, and replay-only proposal/status aliases in
+  `src/orchestrator/graph/models.py`.
+- Routed current `graph_patch_accepted` and `graph_patch_rejected` producers
+  through typed payload validation and JSON dumping.
+- Routed projection consumption for accepted patches, proposal blockers, and
+  graph patch attempts through typed patch payload models instead of raw event
+  payload reads.
+- Removed stale allowlist-guard exclusions for raw patch fields no longer read
+  directly by the `reduce_event` closure.
+
+Legacy normalization:
+- Unknown top-level patch event keys are moved under `extra`.
+- `successor_planner_node_ids` is normalized to string entries only.
+- Sparse historical `graph_patch_accepted` events with only `patch_id` still
+  close open proposal blockers; accepted-patch planner indexes are updated only
+  when `proposed_by_node_id` is present.
+- Replay-only proposal/status aliases accept `proposal_id` or `patch_id` and
+  preserve free-form compatibility keys under `extra`.
+
+Dropped write-only keys:
+- None. Legacy free-form top-level keys are preserved under `extra`.
+- Diagnostic rejected-patch fields such as `read_set_diff`, `diagnostics`,
+  `budget`, and `count` remain typed event fields; they are not
+  reducer-critical.
+
+RED:
+- `uv run pytest tests/unit/test_patch_event_payloads.py -q`
+  - Result: failed during collection with
+    `ImportError: cannot import name 'GraphPatchAcceptedPayload' from 'orchestrator.graph'`.
+
+GREEN:
+- `uv run pytest tests/unit/test_patch_event_payloads.py -q`
+  - Result: passed, 6 tests.
+- `uv run pytest tests/unit/test_fixture_corpus.py::test_fixture_corpus_replay_matches_checkpoint_and_compact_projection -q`
+  - Result: passed, 1 test.
+- `uv run pytest tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_patch_event_payloads.py -q`
+  - Result: passed, 144 tests.
+- `uv run ruff check src/orchestrator/graph tests/unit/test_patch_event_payloads.py tests/unit/test_graph_payload_field_allowlists.py`
+  - Result: passed.
+- `uv run pyright src/orchestrator/graph tests/unit/test_patch_event_payloads.py`
+  - Result: passed, 0 errors.

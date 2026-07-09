@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 
 import pytest
 from sqlalchemy import event
@@ -6,7 +7,7 @@ from sqlalchemy import event
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, SequentialIdGenerator
 from orchestrator.graph_runtime import GraphController, StaleProjectionError
-from orchestrator.graph_runtime.store import GraphEventStore
+from orchestrator.graph_runtime.store import graph_aggregate_id
 
 
 async def test_graph_controller_write_commands_begin_immediate(tmp_path: Path) -> None:
@@ -39,10 +40,7 @@ async def test_graph_controller_write_commands_begin_immediate(tmp_path: Path) -
     assert "BEGIN IMMEDIATE" in [statement.upper() for statement in statements]
 
 
-async def test_graph_controller_reads_run_before_taking_write_lock(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+async def test_graph_controller_reads_run_before_taking_write_lock(tmp_path: Path) -> None:
     """The expensive read + projection rebuild must happen before BEGIN IMMEDIATE.
 
     Regression guard for the write-lock-hold-time incident: if ``read_run``
@@ -66,21 +64,6 @@ async def test_graph_controller_reads_run_before_taking_write_lock(
     ) -> None:
         statements.append(statement.upper())
 
-    read_run_called_at: list[int] = []
-    real_read_run = GraphEventStore.read_run
-
-    async def _tracking_read_run(
-        self: GraphEventStore,
-        run_id: str,
-        from_position: int = 0,
-    ) -> list[EventEnvelope]:
-        read_run_called_at.append(
-            sum(1 for statement in statements if "BEGIN IMMEDIATE" in statement)
-        )
-        return await real_read_run(self, run_id, from_position)
-
-    monkeypatch.setattr(GraphEventStore, "read_run", _tracking_read_run)
-
     controller = GraphController(
         session_factory,
         FakeClock(),
@@ -90,13 +73,19 @@ async def test_graph_controller_reads_run_before_taking_write_lock(
     await controller.handle_command("run-read-before-lock", 0, "accept_run")
     await engine.dispose()
 
-    assert read_run_called_at == [0]
-    assert "BEGIN IMMEDIATE" in statements
+    begin_index = statements.index("BEGIN IMMEDIATE")
+    pre_read_indexes = [
+        index
+        for index, statement in enumerate(statements)
+        if statement.startswith("SELECT")
+        and ("EVENTS_V2" in statement or "GRAPH_PROJECTION_SNAPSHOTS" in statement)
+    ]
+    assert pre_read_indexes
+    assert min(pre_read_indexes) < begin_index
 
 
 async def test_handle_command_raises_stale_projection_error_when_position_moves_before_write(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A concurrent writer landing between the pre-read and the write txn must
     surface as StaleProjectionError, not silently overwrite/duplicate events.
@@ -106,7 +95,8 @@ async def test_handle_command_raises_stale_projection_error_when_position_moves_
     transaction opens. The controller's cheap position re-check inside
     BEGIN IMMEDIATE must catch that the head moved.
     """
-    engine = create_engine(tmp_path / "graph-controller-race.db")
+    db_path = tmp_path / "graph-controller-race.db"
+    engine = create_engine(db_path)
     await init_db(engine)
     session_factory = create_session_factory(engine)
     clock = FakeClock()
@@ -117,39 +107,45 @@ async def test_handle_command_raises_stale_projection_error_when_position_moves_
     seeded = await controller.handle_command(run_id, 0, "accept_run")
     position = seeded.projection_position
 
-    real_read_run = GraphEventStore.read_run
     injected = {"done": False}
 
-    async def _read_run_then_race(
-        self: GraphEventStore,
-        target_run_id: str,
-        from_position: int = 0,
-    ) -> list[EventEnvelope]:
-        events = await real_read_run(self, target_run_id, from_position)
-        if not injected["done"] and target_run_id == run_id:
-            injected["done"] = True
-            async with session_factory() as racer_session:
-                racer_store = GraphEventStore(racer_session)
-                await racer_store.append_events(
-                    run_id,
-                    position,
-                    [
-                        EventEnvelope(
-                            event_id="racer-event",
-                            run_id=run_id,
-                            position=-1,
-                            event_type="lease_renewed",
-                            schema_version=1,
-                            actor=Actor(kind=ActorKind.CONTROLLER),
-                            timestamp=clock.now(),
-                            payload={},
-                        )
-                    ],
-                )
-                await racer_session.commit()
-        return events
-
-    monkeypatch.setattr(GraphEventStore, "read_run", _read_run_then_race)
+    @event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _inject_race_before_write_lock(
+        _conn: object,
+        _cursor: object,
+        statement: str,
+        _parameters: object,
+        _context: object,
+        _executemany: object,
+    ) -> None:
+        if injected["done"] or statement.upper() != "BEGIN IMMEDIATE":
+            return
+        injected["done"] = True
+        event = EventEnvelope(
+            event_id="racer-event",
+            run_id=run_id,
+            position=position + 1,
+            event_type="lease_renewed",
+            schema_version=1,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=clock.now(),
+            payload={},
+        )
+        with sqlite3.connect(db_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO events_v2 (aggregate_id, version, event_type, payload, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    graph_aggregate_id(run_id),
+                    position + 1,
+                    event.event_type,
+                    event.model_dump_json(),
+                    event.timestamp.isoformat(),
+                ),
+            )
+            connection.commit()
 
     with pytest.raises(StaleProjectionError):
         await controller.handle_command(run_id, position, "start")
