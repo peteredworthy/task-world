@@ -94,12 +94,6 @@ from orchestrator.graph.models import (
     VerifierVerdictProjection,
 )
 from orchestrator.graph.models import normalize_record_selector
-from orchestrator.graph.events.lifecycle import (
-    CALLBACK_ACCEPTED,
-    RUNTIME_RETRY_SCHEDULED,
-    RUN_LIFECYCLE_CHANGED,
-)
-from orchestrator.graph.specifications import StoredEventEnvelope
 
 
 _EDGE_METADATA_KEYS = (
@@ -140,6 +134,7 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "command_binding",
     "command_definition",
     "command_definition_id",
+    "command_type",
     "decision",
     "execution_id",
     "expires_at",
@@ -152,18 +147,24 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "idempotency_key",
     "kind",
     "lease_id",
+    "lease_granted_event_id",
+    "lease_generation",
     "membership",
     "new_state",
     "node_id",
     "outcome",
+    "observed_at",
     "port",
     "producer_node_id",
+    "prior_result",
     "payload",
+    "policy",
     "record_id",
     "record_kind",
     "record_type",
     "recovery_of_record_id",
     "recovery_reason",
+    "reason",
     "retry_not_before",
     "role",
     "session_id",
@@ -1814,6 +1815,14 @@ def _pending_gate_decision_payload(
 
 
 def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
+    # Mixed persistence boundary: catalog-owned events hydrate exactly once;
+    # future-domain events continue through the legacy raw reducer below.
+    from orchestrator.graph.catalog import build_graph_catalog
+
+    handled, reduced = build_graph_catalog().reduce_stored_event(state, event)
+    if handled:
+        return cast(GraphProjection, reduced)
+
     next_state: GraphProjection = {
         "run_state": state["run_state"],
         "node_states": dict(state["node_states"]),
@@ -2020,27 +2029,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "cleanup_applied_ids": dict(state.get("cleanup_applied_ids", {})),
     }
 
-    converted_spec = {
-        RUN_LIFECYCLE_CHANGED.name: RUN_LIFECYCLE_CHANGED,
-        RUNTIME_RETRY_SCHEDULED.name: RUNTIME_RETRY_SCHEDULED,
-        CALLBACK_ACCEPTED.name: CALLBACK_ACCEPTED,
-    }.get(event.event_type)
-    if converted_spec is not None:
-        stored = event.model_dump()
-        stored["payload_schema_generation"] = stored.pop("schema_version")
-        if converted_spec is RUNTIME_RETRY_SCHEDULED:
-            retry_payload = stored["payload"]
-            retry_payload.setdefault("lease_id", "compact-replay")
-            retry_payload.setdefault("generation", 0)
-            retry_payload.setdefault("policy", "compact-replay")
-            retry_payload.setdefault("reason", "compact-replay")
-        elif converted_spec is CALLBACK_ACCEPTED:
-            stored["payload"].setdefault("reason", "generation-1-replay")
-        next_state = converted_spec.reduce(
-            next_state,
-            converted_spec.hydrate(StoredEventEnvelope.model_validate(stored)),
-        )
-    elif event.event_type == "node_created":
+    if event.event_type == "node_created":
         typed_node_payload = _node_created_payload_from_event(event)
         node_payload = _node_creation_from_event(event)
         if node_payload is not None and typed_node_payload is not None:

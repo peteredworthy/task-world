@@ -17,7 +17,7 @@
 
 - name: patch_stale_neutral_heartbeat_accepted
   given_events:
-    - heartbeat_recorded: {node_id: worker-neutral-heartbeat}
+    - heartbeat_recorded: {node_id: worker-neutral-heartbeat, lease_id: lease-neutral-heartbeat, lease_generation: 1, observed_at: 2026-01-01T00:00:00Z}
   when_command:
     submit_patch:
       run_id: run-1

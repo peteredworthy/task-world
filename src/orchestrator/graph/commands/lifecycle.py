@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 from datetime import timedelta
-from orchestrator.graph._commands import Clock, future_command_effects
+from orchestrator.graph._commands import Clock
 from typing import Any
 from orchestrator.graph.models import (
     EventEnvelope,
@@ -47,6 +47,63 @@ from orchestrator.graph.specifications import (
 )
 
 
+def _strict_event(
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    specification: Any,
+    payload: dict[str, Any],
+) -> EventEnvelope:
+    validated = specification.validate_payload(payload)
+    return make_event(specification.name, validated.to_json())
+
+
+def _command_rejected(
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope], command_type: str, reason: str
+) -> EventEnvelope:
+    return _strict_event(
+        make_event,
+        COMMAND_REJECTED,
+        {"command_type": command_type, "reason": reason},
+    )
+
+
+def _lifecycle_event(
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    command_type: str,
+    from_state: str,
+    to_state: str,
+    trigger: str,
+) -> EventEnvelope:
+    return _strict_event(
+        make_event,
+        RUN_LIFECYCLE_CHANGED,
+        {
+            "command_type": command_type,
+            "from_state": from_state,
+            "to_state": to_state,
+            "trigger": trigger,
+        },
+    )
+
+
+def _is_rate_limit_death(reason: str) -> bool:
+    normalized = reason.lower()
+    return any(token in normalized for token in ("rate limit", "usage limit", "quota"))
+
+
+def _is_non_retryable_runtime_death(reason: str) -> bool:
+    return reason.startswith("check node missing command_definition") or reason.startswith(
+        "check command_definition requires "
+    )
+
+
+def _non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: str) -> bool:
+    return (
+        projection.get("node_kinds", {}).get(node_id) == "planner"
+        and projection.get("node_roles", {}).get(node_id) != "gap_planner"
+        and bool(projection.get("accepted_graph_patches_by_node", {}).get(node_id))
+    )
+
+
 class RecordHeartbeatCommand(StrictPayload):
     node_id: str
     lease_id: str
@@ -76,19 +133,18 @@ def _lifecycle_handler(command_type: str):
         events: tuple[EventEnvelope, ...],
         context: CommandExecutionContext,
     ) -> list[EventEnvelope | HydratedEvent]:
-        payload = command.model_dump(mode="python")
-        if context.actor.role is not None:
-            payload["actor_role"] = context.actor.role
-        elif context.actor.kind.value == "human":
-            payload["actor_role"] = "human"
+        actor_role = context.actor.role
+        if actor_role is None and context.actor.kind.value == "human":
+            actor_role = "human"
         make_event = event_factory(
             context.run_id, command_type, context.clock, context.id_generator
         )
-        output = temporary_unconverted_lifecycle_effects(
+        output = apply_lifecycle_effects(
             projection,
             list(events),
             command_type,
-            payload,
+            command,
+            actor_role,
             make_event,
             context.id_generator,
             context.future_effects,
@@ -180,7 +236,7 @@ def handle_agent_died_command(
     )
     output = build_agent_died_effects(
         projection,
-        command.model_dump(mode="python"),
+        command,
         context.clock,
         make_event,
         context.future_effects,
@@ -203,29 +259,6 @@ COMMAND_SPECIFICATIONS: tuple[CommandSpecification[Any], ...] = (
 )
 
 
-def handle_lifecycle_command(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    """Temporary adapter for lifecycle commands outside the Task 1 slice."""
-
-    del clock
-    return temporary_unconverted_lifecycle_effects(
-        projection,
-        events,
-        command_type,
-        payload,
-        make_event,
-        id_gen,
-        future_command_effects(),
-    )
-
-
 __all__ = [
     "COMMAND_SPECIFICATIONS",
     "ACCEPT_RUN",
@@ -238,28 +271,25 @@ __all__ = [
     "AGENT_DIED_COMMAND",
     "RECORD_HEARTBEAT",
     "RecordHeartbeatCommand",
-    "handle_lifecycle_command",
     "handle_record_heartbeat",
-    "temporary_unconverted_lifecycle_effects",
+    "apply_lifecycle_effects",
     "_apply_agent_died",
 ]
 
 
-def temporary_unconverted_lifecycle_effects(
+def apply_lifecycle_effects(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: dict[str, Any],
+    command: EmptyLifecycleCommand | FailCommand,
+    actor_role: str | None,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     id_gen: IdGenerator,
     effects: FutureCommandEffects,
 ) -> list[EventEnvelope]:
     _cancel_active_lease_events = effects.cancel_active_lease_events
-    _command_rejected = effects.command_rejected
-    _has_passed_completion_decision = effects.has_passed_completion_decision
     _lifecycle_completion_decision_event = effects.lifecycle_completion_decision_event
-    _lifecycle_event = effects.lifecycle_event
-    _make_strict_event = effects.make_strict_event
+    _make_strict_event = _strict_event
     current_state = projection["run_state"] or "draft"
     if command_type == "fail":
         if current_state in NONTERMINAL_RUN_STATES:
@@ -269,7 +299,9 @@ def temporary_unconverted_lifecycle_effects(
                     command_type,
                     current_state,
                     "failed",
-                    payload.get("reason", "unrecoverable_controller_error"),
+                    command.reason
+                    if isinstance(command, FailCommand)
+                    else "unrecoverable_controller_error",
                 )
             ]
         return [_command_rejected(make_event, command_type, f"terminal run: {current_state}")]
@@ -283,7 +315,6 @@ def temporary_unconverted_lifecycle_effects(
         )
         return [_command_rejected(make_event, command_type, reason)]
     if command_type == "resume" and current_state == "failed":
-        actor_role = payload.get("actor_role")
         if actor_role not in REOPEN_ACTOR_ROLES:
             return [
                 _command_rejected(
@@ -307,10 +338,10 @@ def temporary_unconverted_lifecycle_effects(
                     },
                 )
             ]
-    trigger = payload.get("trigger", f"{command_type}_command_accepted")
+    trigger = f"{command_type}_command_accepted"
     output: list[EventEnvelope] = []
-    if command_type == "complete" and not _has_passed_completion_decision(projection):
-        output.append(_lifecycle_completion_decision_event(payload, make_event, id_gen))
+    if command_type == "complete" and not projection["completion_decision_passed"]:
+        output.append(_lifecycle_completion_decision_event({}, make_event, id_gen))
     output.append(
         _lifecycle_event(
             make_event,
@@ -327,23 +358,16 @@ def temporary_unconverted_lifecycle_effects(
 
 def _apply_agent_died(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    command: AgentDiedCommand,
     clock: Clock,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     effects: FutureCommandEffects,
 ) -> list[EventEnvelope]:
-    _command_rejected = effects.command_rejected
     _failure_record_payload = effects.failure_record_payload
-    _is_non_retryable_runtime_death = effects.is_non_retryable_runtime_death
-    _is_rate_limit_death = effects.is_rate_limit_death
-    _make_strict_event = effects.make_strict_event
-    _non_gap_planner_has_accepted_patch = effects.non_gap_planner_has_accepted_patch
-    _positive_int = effects.positive_int
+    _make_strict_event = _strict_event
     _recovery_plan_record_payload = effects.recovery_plan_record_payload
     _typed_lease_event_payload = effects.typed_lease_event_payload
-    lease_id = payload.get("lease_id")
-    if not isinstance(lease_id, str):
-        return [_command_rejected(make_event, "agent_died", "missing lease_id")]
+    lease_id = command.lease_id
 
     lease = projection["leases"].get(lease_id)
     if lease is None:
@@ -351,7 +375,7 @@ def _apply_agent_died(
     if lease.get("state") != "active":
         return [_command_rejected(make_event, "agent_died", "lease not active")]
 
-    execution_id = payload.get("execution_id")
+    execution_id = command.execution_id
     lease_execution_id = lease.get("execution_id")
     if isinstance(lease_execution_id, str):
         # A lease with a recorded execution requires the caller to present the
@@ -363,7 +387,7 @@ def _apply_agent_died(
 
     node_id = str(lease.get("node_id"))
     generation = lease.get("generation")
-    reason = str(payload.get("reason", "runtime_process_died"))
+    reason = command.reason
     event_payload = {
         "lease_id": lease_id,
         "node_id": node_id,
@@ -475,7 +499,7 @@ def _apply_agent_died(
             ),
         ]
 
-    max_attempts = _positive_int(payload.get("max_attempts"), 0)
+    max_attempts = command.max_attempts
     attempt_number = projection["node_attempts"].get(node_id, 0)
     if max_attempts > 0 and attempt_number >= max_attempts:
         return [
@@ -522,7 +546,7 @@ def _apply_agent_died(
     # V1 retry policy: runtime death before an accepted boundary requeues the
     # same executable node. No new retry node is created until output/file-state
     # acceptance semantics exist in the graph runtime slice.
-    retry_backoff_seconds = _positive_int(payload.get("retry_backoff_seconds"), 0)
+    retry_backoff_seconds = command.retry_backoff_seconds
     retry_payload: dict[str, Any] = {
         "node_id": node_id,
         "lease_id": lease_id,

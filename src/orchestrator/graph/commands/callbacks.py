@@ -1,7 +1,7 @@
 """Callback and output/evidence command handlers."""
 
 from __future__ import annotations
-from typing import Any, cast
+from typing import Any
 
 from orchestrator.graph.callbacks import (
     CallbackOutcome,
@@ -29,7 +29,6 @@ from pydantic import Field
 from orchestrator.graph._commands import (
     Clock,
     IdGenerator,
-    future_command_effects,
     apply_raise_appeal,
     apply_record_cleanup_applied,
     apply_record_decision,
@@ -46,6 +45,25 @@ from orchestrator.graph.specifications import (
     FutureCommandEffects,
     StoredEventEnvelope,
 )
+
+
+def _strict_event(
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    specification: Any,
+    payload: dict[str, Any],
+) -> EventEnvelope:
+    validated = specification.validate_payload(payload)
+    return make_event(specification.name, validated.to_json())
+
+
+def _command_rejected(
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope], command_type: str, reason: str
+) -> EventEnvelope:
+    return _strict_event(
+        make_event,
+        COMMAND_REJECTED,
+        {"command_type": command_type, "reason": reason},
+    )
 
 
 class SubmitCallbackCommand(StrictPayload):
@@ -111,10 +129,8 @@ def handle_submit_callback_command(
     make_event = event_factory(
         context.run_id, SUBMIT_CALLBACK.name, context.clock, context.id_generator
     )
-    payload = command.model_dump(mode="python")
-    payload["run_id"] = context.run_id
-    output = temporary_unconverted_callback_effects(
-        projection, list(events), payload, make_event, context.future_effects
+    output = apply_callback_effects(
+        projection, list(events), command, context.run_id, make_event, context.future_effects
     )
     return _hydrate_converted_callback_outcomes(output)
 
@@ -129,11 +145,9 @@ def handle_acknowledge_start_command(
     make_event = event_factory(
         context.run_id, ACKNOWLEDGE_START.name, context.clock, context.id_generator
     )
-    return [
-        *temporary_unconverted_acknowledge_start_effects(
-            projection, command.model_dump(mode="python"), make_event, context.future_effects
-        )
-    ]
+    return _hydrate_converted_callback_outcomes(
+        apply_acknowledge_start_effects(projection, command, make_event, context.future_effects)
+    )
 
 
 SUBMIT_CALLBACK = CommandSpecification(
@@ -143,53 +157,6 @@ ACKNOWLEDGE_START = CommandSpecification(
     "acknowledge_start", AcknowledgeStartCommand, handle_acknowledge_start_command
 )
 CALLBACK_COMMAND_SPECIFICATIONS = (ACKNOWLEDGE_START, SUBMIT_CALLBACK)
-
-
-def handle_submit_callback(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: SubmitCallbackCommand,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    del command_type
-    del clock
-    del id_gen
-    compatibility_payload = cast(Any, payload)
-    raw_payload = (
-        payload.model_dump(mode="python")
-        if isinstance(compatibility_payload, SubmitCallbackCommand)
-        else compatibility_payload
-    )
-    return temporary_unconverted_callback_effects(
-        projection, events, raw_payload, make_event, future_command_effects()
-    )
-
-
-def handle_acknowledge_start(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: AcknowledgeStartCommand,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    del events
-    del command_type
-    del clock
-    del id_gen
-    compatibility_payload = cast(Any, payload)
-    raw_payload = (
-        payload.model_dump(mode="python")
-        if isinstance(compatibility_payload, AcknowledgeStartCommand)
-        else compatibility_payload
-    )
-    return temporary_unconverted_acknowledge_start_effects(
-        projection, raw_payload, make_event, future_command_effects()
-    )
 
 
 def handle_raise_appeal(
@@ -294,34 +261,31 @@ __all__ = [
     "SUBMIT_CALLBACK",
     "AcknowledgeStartCommand",
     "SubmitCallbackCommand",
-    "handle_acknowledge_start",
     "handle_raise_appeal",
     "handle_record_cleanup_applied",
     "handle_record_decision",
     "handle_record_gatekeeper_verdicts",
     "handle_record_requirement_revision",
     "handle_record_support_evidence",
-    "handle_submit_callback",
-    "temporary_unconverted_callback_effects",
-    "temporary_unconverted_acknowledge_start_effects",
+    "apply_callback_effects",
+    "apply_acknowledge_start_effects",
 ]
 
 
-def temporary_unconverted_callback_effects(
+def apply_callback_effects(
     projection: GraphProjection,
     events: list[EventEnvelope],
-    payload: dict[str, Any],
+    command: SubmitCallbackCommand,
+    run_id: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     effects: FutureCommandEffects,
 ) -> list[EventEnvelope]:
     _accepted_output_record_events = effects.accepted_output_record_events
-    _callback_payload = effects.callback_payload
-    _command_rejected = effects.command_rejected
     _file_state_authority_conflict = effects.file_state_authority_conflict
     _file_state_rejected_conflict = effects.file_state_rejected_conflict
     _file_state_rejected_events = effects.file_state_rejected_events
     _lease_node_id = effects.lease_node_id
-    _make_strict_event = effects.make_strict_event
+    _make_strict_event = _strict_event
     _output_record_contract_conflict = effects.output_record_contract_conflict
     _output_record_provenance_conflict = effects.output_record_provenance_conflict
     _planner_session_state_event = effects.planner_session_state_event
@@ -329,45 +293,31 @@ def temporary_unconverted_callback_effects(
     _source_repair_events = effects.source_repair_events
     _typed_lease_event_payload = effects.typed_lease_event_payload
     _verification_record_conflict = effects.verification_record_conflict
-    required = [
-        "run_id",
-        "node_id",
-        "execution_id",
-        "lease_id",
-        "lease_generation",
-        "base_snapshot_id",
-        "observed_graph_position",
-        "idempotency_key",
-    ]
-    missing = [field for field in required if field not in payload]
-    if missing:
-        return [
-            _command_rejected(
-                make_event,
-                "submit_callback",
-                f"missing callback fields: {', '.join(missing)}",
-            )
-        ]
-
-    callback_payload = cast(dict[str, Any] | None, _callback_payload(payload))
+    raw_callback_payload = command.payload
+    if raw_callback_payload is None:
+        callback_payload = (
+            {"payload_hash": command.payload_hash} if command.payload_hash is not None else None
+        )
+    elif isinstance(raw_callback_payload, dict):
+        callback_payload = raw_callback_payload
+    else:
+        callback_payload = {"payload": raw_callback_payload}
     # Mutating-ness is derived from the callback's actual effects, never trusted
     # from the caller's flag: completing the node or carrying output records IS
     # a mutation, so a callback claiming is_mutating=False cannot bypass the
     # running-state and suspended-lease guards.
-    has_effects = bool(payload.get("complete_node", True)) or bool(
-        (callback_payload or {}).get("output_records")
-    )
+    has_effects = command.complete_node or bool((callback_payload or {}).get("output_records"))
     request = CallbackRequest(
-        run_id=str(payload["run_id"]),
-        node_id=str(payload["node_id"]),
-        execution_id=str(payload["execution_id"]),
-        lease_id=str(payload["lease_id"]),
-        lease_generation=int(payload["lease_generation"]),
-        base_snapshot_id=str(payload["base_snapshot_id"]),
-        observed_graph_position=int(payload["observed_graph_position"]),
-        idempotency_key=str(payload["idempotency_key"]),
+        run_id=run_id,
+        node_id=command.node_id,
+        execution_id=command.execution_id,
+        lease_id=command.lease_id,
+        lease_generation=command.lease_generation,
+        base_snapshot_id=command.base_snapshot_id,
+        observed_graph_position=command.observed_graph_position,
+        idempotency_key=command.idempotency_key,
         payload=callback_payload,
-        is_mutating=bool(payload.get("is_mutating", True)) or has_effects,
+        is_mutating=command.is_mutating or has_effects,
     )
     result = validate_callback(request, projection, events)
 
@@ -474,10 +424,7 @@ def temporary_unconverted_callback_effects(
         projection,
         request,
         expected_producer_node_id,
-        successful_completion=(
-            bool(payload.get("complete_node", True))
-            and str(payload.get("new_state", "completed")) == "completed"
-        ),
+        successful_completion=(command.complete_node and command.new_state == "completed"),
     )
     if missing_output_conflict is not None:
         return [
@@ -499,13 +446,13 @@ def temporary_unconverted_callback_effects(
             make_event,
         )
     )
-    if payload.get("complete_node", True):
+    if command.complete_node:
         output.append(
             make_event(
                 "node_state_changed",
                 {
                     "node_id": request.node_id,
-                    "new_state": str(payload.get("new_state", "completed")),
+                    "new_state": command.new_state,
                     "trigger": "callback_accepted",
                 },
             )
@@ -536,23 +483,17 @@ def temporary_unconverted_callback_effects(
     return output
 
 
-def temporary_unconverted_acknowledge_start_effects(
+def apply_acknowledge_start_effects(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    command: AcknowledgeStartCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     effects: FutureCommandEffects,
 ) -> list[EventEnvelope]:
-    _command_rejected = effects.command_rejected
-    node_id = payload.get("node_id")
-    lease_id = payload.get("lease_id")
-    lease_generation = payload.get("lease_generation")
-    execution_id = payload.get("execution_id")
-    if not isinstance(node_id, str) or not isinstance(lease_id, str):
-        return [_command_rejected(make_event, "acknowledge_start", "missing lease identity")]
-    if not isinstance(lease_generation, int):
-        return [_command_rejected(make_event, "acknowledge_start", "missing lease generation")]
-    if not isinstance(execution_id, str):
-        return [_command_rejected(make_event, "acknowledge_start", "missing execution_id")]
+    del effects
+    node_id = command.node_id
+    lease_id = command.lease_id
+    lease_generation = command.lease_generation
+    execution_id = command.execution_id
 
     lease = projection["leases"].get(lease_id)
     if lease is None:
@@ -572,8 +513,7 @@ def temporary_unconverted_acknowledge_start_effects(
         "new_state": "running",
         "trigger": "runtime_start_acknowledged",
     }
-    prompt_summary = payload.get("prompt_summary")
-    if isinstance(prompt_summary, dict):
-        event_payload["prompt_summary"] = dict(cast(dict[str, Any], prompt_summary))
+    if command.prompt_summary is not None:
+        event_payload["prompt_summary"] = dict(command.prompt_summary)
 
     return [make_event("node_state_changed", event_payload)]

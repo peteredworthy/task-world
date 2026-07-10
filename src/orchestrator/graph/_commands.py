@@ -5033,13 +5033,10 @@ class LegacyFutureCommandEffects:
     """Injected Task 3/4/6 compatibility capabilities; Task 9 deletes this."""
 
     accepted_output_record_events: Callable[..., Any] = _accepted_output_record_events
-    callback_payload: Callable[..., Any] = _callback_payload
-    command_rejected: Callable[..., Any] = _command_rejected
     file_state_authority_conflict: Callable[..., Any] = _file_state_authority_conflict
     file_state_rejected_conflict: Callable[..., Any] = _file_state_rejected_conflict
     file_state_rejected_events: Callable[..., Any] = _file_state_rejected_events
     lease_node_id: Callable[..., Any] = _lease_node_id
-    make_strict_event: Callable[..., Any] = _make_strict_event
     output_record_contract_conflict: Callable[..., Any] = _output_record_contract_conflict
     output_record_provenance_conflict: Callable[..., Any] = _output_record_provenance_conflict
     planner_session_state_event: Callable[..., Any] = _planner_session_state_event
@@ -5048,14 +5045,8 @@ class LegacyFutureCommandEffects:
     typed_lease_event_payload: Callable[..., Any] = _typed_lease_event_payload
     verification_record_conflict: Callable[..., Any] = _verification_record_conflict
     cancel_active_lease_events: Callable[..., Any] = _cancel_active_lease_events
-    has_passed_completion_decision: Callable[..., Any] = _has_passed_completion_decision
     lifecycle_completion_decision_event: Callable[..., Any] = _lifecycle_completion_decision_event
-    lifecycle_event: Callable[..., Any] = _lifecycle_event
     failure_record_payload: Callable[..., Any] = _failure_record_payload
-    is_non_retryable_runtime_death: Callable[..., Any] = _is_non_retryable_runtime_death
-    is_rate_limit_death: Callable[..., Any] = _is_rate_limit_death
-    non_gap_planner_has_accepted_patch: Callable[..., Any] = _non_gap_planner_has_accepted_patch
-    positive_int: Callable[..., Any] = _positive_int
     recovery_plan_record_payload: Callable[..., Any] = _recovery_plan_record_payload
 
 

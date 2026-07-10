@@ -1092,6 +1092,21 @@ class StrictPayloadCutoverCodemod:
             working[path] = transformed
             diagnostics.extend(result.diagnostics)
             changes += result.changes + import_changes
+        if self.migration.domain == "lifecycle":
+            forbidden = {
+                "temporary_unconverted_lifecycle": "W5TASK2_LEGACY_POLICY",
+                "temporary_unconverted_callback": "W5TASK2_LEGACY_POLICY",
+                "temporary_unconverted_acknowledge": "W5TASK2_LEGACY_POLICY",
+                "command.model_dump": "W5TASK2_COMMAND_DUMP",
+                "compact-replay": "W5TASK2_TOLERANT_DEFAULT",
+                "generation-1-replay": "W5TASK2_TOLERANT_DEFAULT",
+            }
+            for path, source in working.items():
+                if not path.startswith("src/"):
+                    continue
+                for pattern, code in forbidden.items():
+                    if pattern in source:
+                        diagnostics.append(CodemodDiagnostic(path, 1, 0, code, pattern))
         return FileTransformResult(working, tuple(sorted(diagnostics)), changes)
 
 
@@ -1238,24 +1253,6 @@ DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
             "src/orchestrator/graph_runtime/outbox.py",
         ),
         relocations=(
-            SymbolRelocation(
-                "temporary_unconverted_lifecycle_effects",
-                "src/orchestrator/graph/_commands.py",
-                "src/orchestrator/graph/commands/lifecycle.py",
-                "orchestrator.graph._commands",
-            ),
-            SymbolRelocation(
-                "temporary_unconverted_callback_effects",
-                "src/orchestrator/graph/_commands.py",
-                "src/orchestrator/graph/commands/callbacks.py",
-                "orchestrator.graph._commands",
-            ),
-            SymbolRelocation(
-                "temporary_unconverted_acknowledge_start_effects",
-                "src/orchestrator/graph/_commands.py",
-                "src/orchestrator/graph/commands/callbacks.py",
-                "orchestrator.graph._commands",
-            ),
             SymbolRelocation(
                 "_apply_agent_died",
                 "src/orchestrator/graph/_commands.py",

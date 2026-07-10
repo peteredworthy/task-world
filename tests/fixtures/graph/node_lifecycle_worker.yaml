@@ -19,7 +19,7 @@
 - name: worker_leased_to_running
   given_events:
     - node_created: {node_id: worker-3, kind: worker, state: leased}
-    - callback_accepted: {node_id: worker-3, idempotency_key: worker-3-started, payload: {callback_type: agent_started}}
+    - callback_accepted: {node_id: worker-3, idempotency_key: worker-3-started, payload: {callback_type: agent_started}, reason: accepted}
     - node_state_changed: {node_id: worker-3, new_state: running, trigger: agent_start_accepted}
   when_command: null
   then_events: []
@@ -56,7 +56,7 @@
 - name: worker_running_to_failed
   given_events:
     - node_created: {node_id: worker-7, kind: worker, state: running}
-    - callback_accepted: {node_id: worker-7, idempotency_key: worker-7-failed, payload: {callback_type: agent_failed}}
+    - callback_accepted: {node_id: worker-7, idempotency_key: worker-7-failed, payload: {callback_type: agent_failed}, reason: accepted}
     - node_state_changed: {node_id: worker-7, new_state: failed, trigger: accepted_failure}
   when_command: null
   then_events: []

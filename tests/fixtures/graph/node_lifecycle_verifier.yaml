@@ -20,7 +20,7 @@
 - name: verifier_leased_to_running
   given_events:
     - node_created: {node_id: verify-3, kind: verifier, state: leased}
-    - callback_accepted: {node_id: verify-3, idempotency_key: verify-3-started, payload: {callback_type: verifier_started}}
+    - callback_accepted: {node_id: verify-3, idempotency_key: verify-3-started, payload: {callback_type: verifier_started}, reason: accepted}
     - node_state_changed: {node_id: verify-3, new_state: running, trigger: verifier_starts}
   when_command: null
   then_events: []
@@ -47,7 +47,7 @@
 - name: verifier_running_to_failed
   given_events:
     - node_created: {node_id: verify-6, kind: verifier, state: running}
-    - callback_accepted: {node_id: verify-6, idempotency_key: verify-6-error, payload: {callback_type: verifier_runtime_error}}
+    - callback_accepted: {node_id: verify-6, idempotency_key: verify-6-error, payload: {callback_type: verifier_runtime_error}, reason: accepted}
     - node_state_changed: {node_id: verify-6, new_state: failed, trigger: verifier_runtime_error}
   when_command: null
   then_events: []

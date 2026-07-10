@@ -184,6 +184,7 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
                 "lease_generation": 1,
                 "idempotency_key": "node-detail-callback-1",
                 "payload": None,
+                "reason": "accepted",
             },
         ),
         _event("evt-release", run_id, "lease_released", {"lease_id": "lease-1"}),

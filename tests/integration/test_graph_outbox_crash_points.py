@@ -1270,7 +1270,15 @@ async def test_events_and_outbox_rows_commit_atomically_on_outbox_failure(
         "dispatch-event-collision",
         run_id,
         "agent_dispatch_requested",
-        {"lease_id": "lease-1", "node_id": "worker-1"},
+        {
+            "lease_granted_event_id": "lease-event-1",
+            "lease_id": "lease-1",
+            "node_id": "worker-1",
+            "generation": 1,
+            "execution_id": "exec-1",
+            "base_snapshot_id": "snapshot-1",
+            "resource_claims": [],
+        },
     )
 
     async with session_factory() as session:

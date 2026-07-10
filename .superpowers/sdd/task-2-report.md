@@ -124,3 +124,30 @@ Final evidence after all reviewer fixes:
   converted event and ten converted command routes this preserves the reviewed 44/23 surface,
   with heartbeat represented at its temporary Task-4 renewal bridge.
 - Ruff format/check: clean. Pyright: 0 errors after the final context-role narrowing.
+
+## Re-review wave 2 repair
+
+Removed strict-command serialization and all `temporary_unconverted_*` Task-2 policy seams.
+Lifecycle, callback, acknowledgement, heartbeat, and agent-death handlers now consume concrete
+command attributes. Task-2 rejection and outcome events are constructed by their owning domain
+specifications and hydrated before leaving catalog dispatch; acknowledgement identity failures
+now follow the same `COMMAND_REJECTED` path.
+
+The mixed projection boundary now resolves catalog-owned event types, JSON-normalizes the stored
+payload once, hydrates once, and invokes `EventSpecification.reduce`. Central `reduce_event` no
+longer contains converted-name branches, revalidation, or historical default mutation. Compact
+readers retain every required callback/retry/heartbeat field. A boundary regression proves
+heartbeat remains a native `datetime` in `HydratedEvent` and becomes an ISO string only when
+serialized for storage.
+
+`FutureCommandEffects` no longer exposes Task-2 event constructors, rejection policy, callback
+payload normalization, lifecycle policy, retry classification, or scalar normalization. The
+remaining capabilities emit or validate precomputed Tasks 3/4/6 effects. Dispatch intent remains
+hydrated through controller planning and is converted only in the `append_events` argument.
+
+Wave-two verification: focused Task-2/automation slice `307 passed`; full unit suite `3362
+passed` with three existing SQLite datetime-adapter warnings; lifecycle assert-clean and domain
+inventory passed with the explicit 34 future-event / 13 future-command inventory (44/23 combined
+surface); Ruff format/check clean; Pyright 0 errors. Serial integration was started in foreground
+and reached the initial segment without a failure, but the execution transport returned before a
+pytest completion summary, so no complete integration count is claimed here.

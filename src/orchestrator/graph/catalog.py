@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Protocol, TypeVar
 
-from orchestrator.graph.specifications import CommandSpecification, EventSpecification
+from orchestrator.graph.models import EventEnvelope
+from orchestrator.graph.specifications import (
+    CommandSpecification,
+    EventSpecification,
+    StoredEventEnvelope,
+)
 
 
 class NamedSpecification(Protocol):
@@ -87,6 +92,18 @@ class GraphCatalog:
             return self.command_specs[name]
         except KeyError as error:
             raise UnknownGraphCommandError(f"unknown graph command: {name}") from error
+
+    def reduce_stored_event(self, state: Any, event: EventEnvelope) -> tuple[bool, Any]:
+        """Hydrate a catalog-owned event once; leave future-domain events to legacy projection."""
+
+        specification = self.event_specs.get(event.event_type)
+        if specification is None:
+            return False, state
+        stored = event.model_dump()
+        stored["payload"] = event.model_dump(mode="json")["payload"]
+        stored["payload_schema_generation"] = stored.pop("schema_version")
+        hydrated = specification.hydrate(StoredEventEnvelope.model_validate(stored))
+        return True, specification.reduce(state, hydrated)
 
 
 def build_graph_catalog() -> GraphCatalog:

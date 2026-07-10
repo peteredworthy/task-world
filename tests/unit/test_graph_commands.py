@@ -261,6 +261,15 @@ def test_converted_domain_handlers_do_not_delegate_to_legacy_appliers() -> None:
     assert not {"apply_callback_command", "apply_acknowledge_start"} & callback_calls
 
 
+def test_converted_handlers_never_serialize_commands_or_construct_global_effects() -> None:
+    root = Path(__file__).resolve().parents[2] / "src" / "orchestrator" / "graph" / "commands"
+    for module_name in ("lifecycle.py", "callbacks.py"):
+        source = (root / module_name).read_text()
+        assert "command.model_dump" not in source
+        assert "temporary_unconverted_" not in source
+        assert "future_command_effects()" not in source
+
+
 def test_converted_domain_modules_do_not_import_private_legacy_helpers() -> None:
     root = Path(__file__).resolve().parents[2] / "src" / "orchestrator" / "graph" / "commands"
     for module_name in ("lifecycle.py", "callbacks.py"):
@@ -3930,6 +3939,7 @@ def test_callback_rejected_conflict() -> None:
                 "node_id": "worker-1",
                 "idempotency_key": "key-1",
                 "payload": {"payload_hash": "hash-b"},
+                "reason": "accepted",
             },
             3,
         ),
@@ -3953,6 +3963,7 @@ def test_callback_duplicate_returned() -> None:
                 "node_id": "worker-1",
                 "idempotency_key": "key-1",
                 "payload": {"payload_hash": "hash-a"},
+                "reason": "accepted",
             },
             3,
         ),

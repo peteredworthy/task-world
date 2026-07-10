@@ -1134,6 +1134,7 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
                             "node_id": "worker-1",
                             "lease_id": "lease-1",
                             "idempotency_key": "summary-callback-1",
+                            "reason": "accepted",
                             "payload": {
                                 "output_records": [
                                     {
@@ -1190,7 +1191,11 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
         "evt-summary-2",
         "evt-summary-3",
     ]
-    assert summaries[0].payload == {"lease_id": "lease-1", "node_id": "worker-1"}
+    assert summaries[0].payload == {
+        "lease_id": "lease-1",
+        "node_id": "worker-1",
+        "reason": "accepted",
+    }
     assert summaries[1].payload == {
         "kind": "worker",
         "node_id": "worker-1",
@@ -1274,6 +1279,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                             "node_id": "worker-1",
                             "lease_id": "lease-1",
                             "idempotency_key": "light-callback-1",
+                            "reason": "accepted",
                             "payload": {"output_records": large_payload},
                         },
                     ),
@@ -1360,6 +1366,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "lease_id": "lease-1",
         "node_id": "worker-1",
         "payload": {"output_records": large_payload},
+        "reason": "accepted",
     }
     assert events[3].payload == {
         "bound_at_position": 2,

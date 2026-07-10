@@ -55,9 +55,6 @@ def test_lifecycle_domain_routes_cover_complete_slice() -> None:
         "CallbackDuplicateReturnedPayload",
         "RuntimeRetryScheduledPayload",
         "AgentDiedPayload",
-        "temporary_unconverted_lifecycle_effects",
-        "temporary_unconverted_callback_effects",
-        "temporary_unconverted_acknowledge_start_effects",
         "_apply_agent_died",
     }
 

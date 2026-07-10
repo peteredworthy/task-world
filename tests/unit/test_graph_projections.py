@@ -195,6 +195,7 @@ def test_callback_idempotency_projection_uses_typed_payload() -> None:
                 "node_id": "worker-1",
                 "idempotency_key": "key-1",
                 "payload": {"payload_hash": "hash-a"},
+                "reason": "accepted",
             },
         ),
     )
@@ -215,6 +216,7 @@ def test_callback_idempotency_projection_checkpoint_round_trips_typed_payload() 
                 "node_id": "worker-1",
                 "idempotency_key": "key-1",
                 "payload": {"payload_hash": "hash-a"},
+                "reason": "accepted",
             },
         ),
     )
@@ -236,6 +238,7 @@ def test_malformed_callback_idempotency_payload_is_tolerated_without_raw_project
                 "node_id": "worker-1",
                 "idempotency_key": "key-1",
                 "payload": "legacy-non-dict-payload",
+                "reason": "accepted",
             },
         ),
     )
@@ -252,6 +255,7 @@ def test_callback_idempotency_projection_allows_empty_callback_payload() -> None
                 "node_id": "worker-1",
                 "idempotency_key": "key-1",
                 "payload": None,
+                "reason": "accepted",
             },
         ),
     )
@@ -2508,6 +2512,10 @@ def test_residual_command_projection_fields_fold_incrementally() -> None:
             "runtime_retry_scheduled",
             {
                 "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "policy": "retry",
+                "reason": "agent_died",
                 "retry_not_before": "2025-01-01T00:01:00+00:00",
             },
         ).model_copy(update={"position": 7}),

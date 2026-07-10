@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 from sqlalchemy import text
@@ -157,7 +158,6 @@ class GraphController:
                 self._clock,
                 self._id_gen,
             )
-        planned_events = [_to_legacy_envelope(event) for event in planned_events]
         planned_events = self._add_dispatch_intent_events(
             planned_events,
             command_type,
@@ -183,7 +183,7 @@ class GraphController:
                 stored_events = await store.append_events(
                     run_id,
                     expected_position,
-                    planned_events,
+                    [_to_legacy_envelope(event) for event in planned_events],
                 )
                 outbox_items = await append_outbox_rows(session, stored_events, self._clock)
                 await session.commit()
@@ -213,48 +213,48 @@ class GraphController:
 
     def _add_dispatch_intent_events(
         self,
-        events: list[EventEnvelope],
+        events: Sequence[EventEnvelope | HydratedEvent],
         command_type: str,
         run_id: str,
-    ) -> list[EventEnvelope]:
+    ) -> list[EventEnvelope | HydratedEvent]:
         """Normalize lease grants into explicit side-effect-intent events.
 
         The current pure kernel grants leases during ``schedule_tick``. This
         runtime layer adds the PRD §12.3 ``agent_dispatch_requested`` event next
         to each grant, then the outbox mapping keys dispatch by that event id.
         """
-        expanded: list[EventEnvelope] = []
+        expanded: list[EventEnvelope | HydratedEvent] = []
         for event in events:
             expanded.append(event)
+            if isinstance(event, HydratedEvent):
+                continue
             if event.event_type != "lease_granted":
                 continue
             node_id = event.payload.get("node_id")
             expanded.append(
-                _to_legacy_envelope(
-                    AGENT_DISPATCH_REQUESTED.create(
-                        EventMetadata(
-                            event_id=self._id_gen.next_id("event"),
-                            run_id=run_id,
-                            position=-1,
-                            event_type="agent_dispatch_requested",
-                            actor=Actor(kind=ActorKind.CONTROLLER),
-                            causation_id=command_type,
-                            correlation_id=str(node_id) if isinstance(node_id, str) else None,
-                            timestamp=self._clock.now(),
-                            payload_schema_generation=1,
-                        ),
-                        AgentDispatchRequestedPayload.model_validate(
-                            {
-                                "lease_granted_event_id": event.event_id,
-                                "lease_id": event.payload.get("lease_id"),
-                                "node_id": node_id,
-                                "generation": event.payload.get("generation"),
-                                "execution_id": event.payload.get("execution_id"),
-                                "base_snapshot_id": event.payload.get("base_snapshot_id"),
-                                "resource_claims": event.payload.get("resource_claims", []),
-                            }
-                        ),
-                    )
+                AGENT_DISPATCH_REQUESTED.create(
+                    EventMetadata(
+                        event_id=self._id_gen.next_id("event"),
+                        run_id=run_id,
+                        position=-1,
+                        event_type="agent_dispatch_requested",
+                        actor=Actor(kind=ActorKind.CONTROLLER),
+                        causation_id=command_type,
+                        correlation_id=str(node_id) if isinstance(node_id, str) else None,
+                        timestamp=self._clock.now(),
+                        payload_schema_generation=1,
+                    ),
+                    AgentDispatchRequestedPayload.model_validate(
+                        {
+                            "lease_granted_event_id": event.event_id,
+                            "lease_id": event.payload.get("lease_id"),
+                            "node_id": node_id,
+                            "generation": event.payload.get("generation"),
+                            "execution_id": event.payload.get("execution_id"),
+                            "base_snapshot_id": event.payload.get("base_snapshot_id"),
+                            "resource_claims": event.payload.get("resource_claims", []),
+                        }
+                    ),
                 )
             )
         return expanded

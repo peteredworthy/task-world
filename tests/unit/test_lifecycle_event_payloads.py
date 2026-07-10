@@ -18,6 +18,8 @@ from orchestrator.graph import (
     DeadInputDetectedPayload,
     EventEnvelope,
     FakeClock,
+    HEARTBEAT_RECORDED,
+    HeartbeatRecordedPayload,
     RunLifecycleChangedPayload,
     RuntimeRetryScheduledPayload,
     SequentialIdGenerator,
@@ -29,6 +31,7 @@ from orchestrator.graph import (
     build_graph_catalog,
     future_command_effects,
     ProjectionParticipation,
+    EventMetadata,
 )
 from orchestrator.graph_runtime.store import (
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
@@ -66,6 +69,30 @@ def _typed_apply(events: list[EventEnvelope], command_type: str, payload: dict[s
 
 def _typed_event_type(event: Any) -> str:
     return event.event_type if isinstance(event, EventEnvelope) else event.metadata.event_type
+
+
+def test_heartbeat_is_native_datetime_until_json_storage_boundary() -> None:
+    clock = FakeClock()
+    event = HEARTBEAT_RECORDED.create(
+        EventMetadata(
+            event_id="event-1",
+            run_id="run-1",
+            position=1,
+            event_type=HEARTBEAT_RECORDED.name,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=clock.now(),
+            payload_schema_generation=2,
+        ),
+        HeartbeatRecordedPayload(
+            node_id="node-1",
+            lease_id="lease-1",
+            lease_generation=1,
+            observed_at=clock.now(),
+        ),
+    )
+
+    assert event.payload.observed_at == clock.now()
+    assert isinstance(HEARTBEAT_RECORDED.serialize(event).payload["observed_at"], str)
 
 
 STRICT_LIFECYCLE_EVENT_SAMPLES: dict[str, tuple[dict[str, Any], str]] = {
@@ -405,7 +432,14 @@ def test_retry_not_before_is_retained_by_every_compact_payload_allowlist() -> No
 def test_compact_runtime_retry_reconstructs_scheduler_backoff() -> None:
     retry_not_before = "2026-07-09T12:01:00+00:00"
     payload = _compact_payload(
-        {"node_id": "worker-1", "retry_not_before": retry_not_before},
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "generation": 1,
+            "policy": "retry",
+            "reason": "agent_died",
+            "retry_not_before": retry_not_before,
+        },
         SUMMARY_REBUILD_PAYLOAD_FIELDS,
     )
 
@@ -419,7 +453,14 @@ async def test_sqlite_compact_readers_retain_runtime_retry_not_before() -> None:
     retry_not_before = "2026-07-09T12:01:00+00:00"
     event = _event(
         "runtime_retry_scheduled",
-        {"node_id": "worker-1", "retry_not_before": retry_not_before},
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "generation": 1,
+            "policy": "retry",
+            "reason": "agent_died",
+            "retry_not_before": retry_not_before,
+        },
         position=1,
     )
     engine = create_engine(":memory:")
