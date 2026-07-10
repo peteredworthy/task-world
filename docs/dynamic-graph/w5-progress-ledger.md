@@ -272,3 +272,65 @@ GREEN (independently rerun by a fresh verifier):
   - Result: passed.
 - `uv run pyright src/orchestrator/graph tests/unit/test_decision_event_payloads.py`
   - Result: passed, 0 errors.
+
+## Requirement and Evidence Event Payload Slice
+
+Status: complete.
+
+Implementation commit:
+- `73c68b75a84d88855533124175a6296e4ae51835` — typed requirement, support
+  evidence, and authority-resolution payloads with compact replay retention.
+
+Scope:
+- Added `RequirementRevisionPayload`, `SupportEvidencePayload`, and
+  `RequirementAuthorityResolutionPayload` and exported them through the graph
+  public API.
+- Routed current requirement/support producers through typed validation and
+  JSON dumping.
+- Routed recorded and replay-only requirement, support, and authority aliases
+  through typed parsing in both normal reduction and the separate full-history
+  authority blocker scan.
+- Retained authority/classification inputs needed by light and summary replay.
+
+Legacy normalization:
+- Preserved requirement, revision, version, proposal, patch, support, and edge
+  identifier aliases; classification aliases; strict authority/behavior
+  booleans; prior-version metadata; nested legacy requirement identity; and
+  support status metadata.
+- Invalid typed scalars and unknown top-level keys move under the single
+  inherited `extra` map.
+- Sparse and malformed history keeps the prior skip/default behavior.
+- `change_classification` is retained in light/summary payloads and SQLite
+  integer `new_behavior` values are normalized to booleans before strict model
+  validation.
+
+Dropped write-only keys:
+- None. Legacy free-form top-level keys are preserved under `extra`.
+
+RED:
+- `uv run pytest tests/unit/test_requirement_evidence_event_payloads.py -q`
+  - Result: failed during collection with
+    `ImportError: cannot import name 'RequirementRevisionPayload' from 'orchestrator.graph'`.
+- Compact replay regression tests initially demonstrated that an omitted
+  `change_classification` produced `initial`/`False`, and integer
+  `new_behavior=1` was moved under `extra` instead of projecting authority.
+
+GREEN (independently rerun by a fresh final verifier):
+- `uv run pytest tests/unit/test_requirement_evidence_event_payloads.py -q`
+  - Result: passed, 9 tests.
+- `uv run pytest tests/unit/test_fixture_corpus.py -q`
+  - Result: passed, 7 tests.
+- `uv run pytest tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_requirement_evidence_event_payloads.py -q`
+  - Result: passed, 147 tests.
+- `uv run pytest tests/ -k graph -q`
+  - Result: passed, 844 tests.
+- `uv run ruff check .`
+  - Result: passed.
+- `uv run pyright src/orchestrator/graph tests/unit`
+  - Result: passed, 0 errors.
+- `git diff --check`
+  - Result: passed.
+- Commit hooks:
+  - Result: 4,508 backend tests passed, 4 skipped; Ruff, formatting, secret
+    detection, Pyright, module-import, signal-routing, UI lint, and UI
+    typecheck hooks passed.
