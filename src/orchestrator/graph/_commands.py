@@ -50,6 +50,7 @@ from orchestrator.graph.models import (
     FailureRecord,
     FileStateRecord,
     GraphPatchAcceptedPayload,
+    GraphEventPayloadBase,
     JoinResultRecord,
     GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
@@ -61,6 +62,12 @@ from orchestrator.graph.models import (
     LeaseRenewedPayload,
     LeaseRevokedPayload,
     NodeCreatedPayload,
+    NodeAuthorityChangedPayload,
+    NodeDeferredPayload,
+    NodeReadyPayload,
+    NodeRetiredPayload,
+    NodeStateChangedPayload,
+    NodeSuspectPayload,
     OutputRecord,
     OversightDecisionRecordedPayload,
     PatchEnvelope,
@@ -167,9 +174,25 @@ _LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[LifecycleEventPayloadBase]] = {
     "dead_input_detected": DeadInputDetectedPayload,
 }
 
+_NODE_LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[GraphEventPayloadBase]] = {
+    "node_state_changed": NodeStateChangedPayload,
+    "node_retired": NodeRetiredPayload,
+    "node_ready": NodeReadyPayload,
+    "node_deferred": NodeDeferredPayload,
+    "node_authority_changed": NodeAuthorityChangedPayload,
+    "plan_region_marked_suspect": NodeSuspectPayload,
+}
+
 
 def _typed_lifecycle_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     model = _LIFECYCLE_EVENT_PAYLOAD_MODELS.get(event_type)
+    if model is None:
+        return payload
+    return model.model_validate(payload).model_dump(mode="json")
+
+
+def _typed_node_lifecycle_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    model = _NODE_LIFECYCLE_EVENT_PAYLOAD_MODELS.get(event_type)
     if model is None:
         return payload
     return model.model_validate(payload).model_dump(mode="json")
@@ -5510,7 +5533,9 @@ def _event_factory(
         typed_payload = (
             NodeCreatedPayload.model_validate(payload).model_dump(mode="json")
             if event_type == "node_created"
-            else _typed_lifecycle_event_payload(event_type, payload)
+            else _typed_node_lifecycle_event_payload(
+                event_type, _typed_lifecycle_event_payload(event_type, payload)
+            )
         )
         return EventEnvelope(
             event_id=id_gen.next_id("event"),

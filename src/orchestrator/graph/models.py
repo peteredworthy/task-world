@@ -2481,6 +2481,155 @@ class NodeCreatedPayload(GraphEventPayloadBase):
         return super().model_dump(*args, **kwargs)
 
 
+def _normalize_node_lifecycle_payload(value: Any, known_keys: set[str]) -> Any:
+    if not isinstance(value, dict):
+        return value
+    payload = dict(cast(dict[str, Any], value))
+    raw_extra = payload.get("extra")
+    extra = dict(cast(dict[str, Any], raw_extra)) if isinstance(raw_extra, dict) else {}
+    string_keys = {
+        "node_id",
+        "new_state",
+        "trigger",
+        "reason",
+        "completion_status",
+        "completion_decision_record_id",
+        "join_result_record_id",
+        "retry_not_before",
+        "region_id",
+    }
+    for key in string_keys & known_keys:
+        if payload.get(key) is not None and not isinstance(payload[key], str):
+            extra.setdefault(key, payload.pop(key))
+    for key in {"attempt_number", "max_attempts"} & known_keys:
+        if payload.get(key) is not None and (
+            not isinstance(payload[key], int) or isinstance(payload[key], bool)
+        ):
+            extra.setdefault(key, payload.pop(key))
+    for key in {"prompt_summary"} & known_keys:
+        if payload.get(key) is not None and not isinstance(payload[key], dict):
+            extra.setdefault(key, payload.pop(key))
+    membership = payload.get("membership")
+    if membership is not None and not isinstance(membership, dict):
+        extra.setdefault("membership", payload.pop("membership"))
+        membership = None
+    if isinstance(membership, dict) and payload.get("attempt_number") is None:
+        legacy_attempt = cast(dict[str, Any], membership).get("attempt_number")
+        if isinstance(legacy_attempt, int) and not isinstance(legacy_attempt, bool):
+            payload["attempt_number"] = legacy_attempt
+    authority = payload.get("authority")
+    if authority is not None and not isinstance(authority, dict):
+        extra.setdefault("authority", payload.pop("authority"))
+        authority = None
+    if isinstance(authority, dict):
+        typed_authority = cast(dict[str, Any], authority)
+        for key in ("resource_claims", "allowed_actions", "preconditions"):
+            if key in known_keys and payload.get(key) is None and key in typed_authority:
+                payload[key] = typed_authority[key]
+    for key in {"node_ids", "region_node_ids", "allowed_actions", "preconditions"} & known_keys:
+        raw_values = payload.get(key)
+        if raw_values is not None and not isinstance(raw_values, list):
+            extra.setdefault(key, payload.pop(key))
+        elif isinstance(raw_values, list):
+            invalid_values = [
+                item for item in cast(list[Any], raw_values) if not isinstance(item, str)
+            ]
+            payload[key] = [item for item in cast(list[Any], raw_values) if isinstance(item, str)]
+            if invalid_values:
+                extra.setdefault(key, invalid_values)
+    if "resource_claims" in known_keys and "resource_claims" in payload:
+        raw_claims = payload["resource_claims"]
+        if not isinstance(raw_claims, list):
+            extra.setdefault("resource_claims", payload.pop("resource_claims"))
+        else:
+            claims, invalid_claims = _validated_node_created_claims(raw_claims)
+            payload["resource_claims"] = claims
+            if invalid_claims:
+                extra.setdefault("resource_claims", invalid_claims)
+    for key in list(payload):
+        if key not in known_keys:
+            extra.setdefault(key, payload.pop(key))
+    payload["extra"] = extra
+    return payload
+
+
+class NodeStateChangedPayload(GraphEventPayloadBase):
+    node_id: str | None = None
+    new_state: str | None = None
+    trigger: str | None = None
+    reason: str | None = None
+    attempt_number: int | None = None
+    max_attempts: int | None = None
+    completion_status: str | None = None
+    completion_decision_record_id: str | None = None
+    join_result_record_id: str | None = None
+    retry_not_before: str | None = None
+    prompt_summary: dict[str, Any] | None = None
+    membership: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
+
+
+class NodeRetiredPayload(GraphEventPayloadBase):
+    node_id: str | None = None
+    reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
+
+
+class NodeReadyPayload(GraphEventPayloadBase):
+    node_id: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
+
+
+class NodeDeferredPayload(GraphEventPayloadBase):
+    node_id: str | None = None
+    reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
+
+
+class NodeAuthorityChangedPayload(GraphEventPayloadBase):
+    node_id: str | None = None
+    authority: dict[str, Any] | None = None
+    resource_claims: list[ResourceClaimProjection] = Field(
+        default_factory=_empty_node_created_resource_claims
+    )
+    allowed_actions: list[str] = Field(default_factory=list)
+    preconditions: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
+
+
+class NodeSuspectPayload(GraphEventPayloadBase):
+    node_id: str | None = None
+    node_ids: list[str] = Field(default_factory=list)
+    region_node_ids: list[str] = Field(default_factory=list)
+    region_id: str | None = None
+    reason: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
+
+
 class CleanupRequestedProjection(GraphBaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 

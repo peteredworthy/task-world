@@ -66,7 +66,13 @@ from orchestrator.graph.models import (
     LeaseSuspendedPayload,
     JoinResultRecord,
     NodeCreationProjection,
+    NodeAuthorityChangedPayload,
     NodeCreatedPayload,
+    NodeDeferredPayload,
+    NodeReadyPayload,
+    NodeRetiredPayload,
+    NodeStateChangedPayload,
+    NodeSuspectPayload,
     NodeKind,
     NodeState,
     OversightDecisionProjection,
@@ -2076,15 +2082,16 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             if kind == "gate" and task_region_id is not None:
                 next_state["configured_gates"].setdefault(task_region_id, {})[node_id] = True
     elif event.event_type == "node_state_changed":
-        node_id = event.payload.get("node_id")
-        new_state = event.payload.get("new_state")
+        payload = NodeStateChangedPayload.model_validate(event.payload)
+        node_id = payload.node_id
+        new_state = payload.new_state
         if isinstance(node_id, str) and isinstance(new_state, str):
             next_state["node_states"][node_id] = new_state
-            attempt_number = _attempt_number(event.payload)
+            attempt_number = payload.attempt_number
             if attempt_number is not None:
                 next_state["node_attempts"][node_id] = attempt_number
     elif event.event_type == "node_retired":
-        node_id = event.payload.get("node_id")
+        node_id = NodeRetiredPayload.model_validate(event.payload).node_id
         if isinstance(node_id, str):
             next_state["node_states"][node_id] = "retired"
     elif event.event_type == "edge_created":
@@ -2210,7 +2217,9 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_latest_authority_decision(next_state["authority_decisions"], authority_payload)
         _record_authority_decision(next_state, authority_payload)
     elif event.event_type == "node_authority_changed":
-        _record_authority_change(next_state, event)
+        _record_authority_change(
+            next_state, NodeAuthorityChangedPayload.model_validate(event.payload)
+        )
     elif event.event_type in {"environment_failure_accepted", "check_result_classified"}:
         _record_environment_failure(next_state, event)
     elif event.event_type == "file_state_accepted":
@@ -2282,7 +2291,9 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "plan_region_suspect_cleared",
         "node_suspect_cleared",
     }:
-        _record_suspect_node_reason(next_state, event)
+        _record_suspect_node_reason(
+            next_state, event.event_type, NodeSuspectPayload.model_validate(event.payload)
+        )
     elif event.event_type in {
         "authority_resolution_recorded",
         "authority_resolved",
@@ -2290,14 +2301,15 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
     }:
         _record_authority_revision_blocker(next_state, event)
     elif event.event_type == "node_deferred":
-        node_id = event.payload.get("node_id")
-        reason = event.payload.get("reason")
+        payload = NodeDeferredPayload.model_validate(event.payload)
+        node_id = payload.node_id
+        reason = payload.reason
         if isinstance(node_id, str) and isinstance(reason, str):
             next_state["last_deferred_reasons"][node_id] = reason
     elif event.event_type == "callback_accepted":
         _record_callback_idempotency_event(next_state, event)
     elif event.event_type == "node_ready":
-        node_id = event.payload.get("node_id")
+        node_id = NodeReadyPayload.model_validate(event.payload).node_id
         if isinstance(node_id, str):
             next_state["last_deferred_reasons"].pop(node_id, None)
     # node_ready/node_deferred and agent_died/runtime_retry_scheduled are
@@ -2808,8 +2820,9 @@ def _suspect_node_blockers(
         suspect_nodes: dict[str, str] = {}
         for event in events:
             if event.event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
-                reason = _payload_reason(event.payload, "suspect graph fact remains unresolved")
-                for node_id in _payload_node_ids(event.payload):
+                payload = NodeSuspectPayload.model_validate(event.payload)
+                reason = payload.reason or "suspect graph fact remains unresolved"
+                for node_id in _node_ids_from_suspect_payload(payload):
                     suspect_nodes[node_id] = reason
             elif event.event_type in {
                 "plan_region_suspect_resolved",
@@ -2817,7 +2830,8 @@ def _suspect_node_blockers(
                 "plan_region_suspect_cleared",
                 "node_suspect_cleared",
             }:
-                for node_id in _payload_node_ids(event.payload):
+                payload = NodeSuspectPayload.model_validate(event.payload)
+                for node_id in _node_ids_from_suspect_payload(payload):
                     suspect_nodes.pop(node_id, None)
     else:
         suspect_nodes = projection.get("suspect_node_reasons", {})
@@ -3024,14 +3038,27 @@ def _record_open_proposal_blocker(state: GraphProjection, event: EventEnvelope) 
         state["open_proposal_blockers"].pop(proposal_id, None)
 
 
-def _record_suspect_node_reason(state: GraphProjection, event: EventEnvelope) -> None:
-    if event.event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
-        reason = _payload_reason(event.payload, "suspect graph fact remains unresolved")
-        for node_id in _payload_node_ids(event.payload):
+def _record_suspect_node_reason(
+    state: GraphProjection, event_type: str, payload: NodeSuspectPayload
+) -> None:
+    node_ids = _node_ids_from_suspect_payload(payload)
+    if event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
+        reason = payload.reason or "suspect graph fact remains unresolved"
+        for node_id in node_ids:
             state["suspect_node_reasons"][node_id] = reason
         return
-    for node_id in _payload_node_ids(event.payload):
+    for node_id in node_ids:
         state["suspect_node_reasons"].pop(node_id, None)
+
+
+def _node_ids_from_suspect_payload(payload: NodeSuspectPayload) -> list[str]:
+    return sorted(
+        set(
+            [node_id for node_id in [payload.node_id, payload.region_id] if node_id is not None]
+            + payload.node_ids
+            + payload.region_node_ids
+        )
+    )
 
 
 def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvelope) -> None:
@@ -3113,23 +3140,6 @@ def _payload_string_list(payload: dict[str, Any], key: str) -> list[str]:
     if not isinstance(value, list):
         return []
     return [item for item in cast(list[Any], value) if isinstance(item, str)]
-
-
-def _payload_node_ids(payload: dict[str, Any]) -> list[str]:
-    node_ids = _payload_string_list(payload, "node_ids")
-    node_ids.extend(_payload_string_list(payload, "region_node_ids"))
-    node_id = payload.get("node_id")
-    if isinstance(node_id, str):
-        node_ids.append(node_id)
-    region_id = payload.get("region_id")
-    if isinstance(region_id, str):
-        node_ids.append(region_id)
-    return sorted(set(node_ids))
-
-
-def _payload_reason(payload: dict[str, Any], fallback: str) -> str:
-    reason = payload.get("reason")
-    return reason if isinstance(reason, str) and reason else fallback
 
 
 def _payload_truthy(payload: dict[str, Any], key: str) -> bool:
@@ -4352,8 +4362,9 @@ def _latest_node_deferrals(events: list[EventEnvelope]) -> dict[str, str]:
     for event in events:
         if event.event_type != "node_deferred":
             continue
-        node_id = event.payload.get("node_id")
-        reason = event.payload.get("reason")
+        payload = NodeDeferredPayload.model_validate(event.payload)
+        node_id = payload.node_id
+        reason = payload.reason
         if isinstance(node_id, str) and isinstance(reason, str):
             reasons[node_id] = reason
     return reasons
@@ -5388,20 +5399,20 @@ def _merged_record_bound_positions(
     return {record_id: positions[record_id] for record_id in merged_ids if record_id in positions}
 
 
-def _record_authority_change(state: GraphProjection, event: EventEnvelope) -> None:
-    node_id = event.payload.get("node_id")
+def _record_authority_change(state: GraphProjection, payload: NodeAuthorityChangedPayload) -> None:
+    node_id = payload.node_id
     if not isinstance(node_id, str):
         return
 
-    resource_claims = _resource_claims(event.payload)
+    resource_claims = payload.resource_claims
     if resource_claims:
         state["node_resource_claims"][node_id] = resource_claims
 
-    allowed_actions = _allowed_actions(event.payload)
+    allowed_actions = payload.allowed_actions
     if allowed_actions:
         state["node_allowed_actions"][node_id] = allowed_actions
 
-    preconditions = _preconditions(event.payload)
+    preconditions = payload.preconditions
     if preconditions:
         state["node_preconditions"][node_id] = preconditions
 
@@ -6259,50 +6270,6 @@ def _task_region_ids_from_payload(
     if isinstance(raw_scalar, str):
         return [raw_scalar]
     return []
-
-
-def _resource_claims(payload: dict[str, Any]) -> list[ResourceClaimProjection]:
-    raw_claims = payload.get("resource_claims")
-    if raw_claims is None:
-        authority = payload.get("authority")
-        if isinstance(authority, dict):
-            raw_claims = cast(dict[str, Any], authority).get("resource_claims")
-    if not isinstance(raw_claims, list):
-        return []
-    claims: list[ResourceClaimProjection] = []
-    for raw_claim in cast(list[Any], raw_claims):
-        if isinstance(raw_claim, dict):
-            try:
-                claims.append(ResourceClaimProjection.model_validate(raw_claim))
-            except ValueError:
-                continue
-    return claims
-
-
-def _allowed_actions(payload: dict[str, Any]) -> list[str]:
-    raw_actions = payload.get("allowed_actions")
-    if raw_actions is None:
-        authority = payload.get("authority")
-        if isinstance(authority, dict):
-            raw_actions = cast(dict[str, Any], authority).get("allowed_actions")
-    if not isinstance(raw_actions, list):
-        return []
-    return [action for action in cast(list[Any], raw_actions) if isinstance(action, str)]
-
-
-def _preconditions(payload: dict[str, Any]) -> list[str]:
-    raw_preconditions = payload.get("preconditions")
-    if raw_preconditions is None:
-        authority = payload.get("authority")
-        if isinstance(authority, dict):
-            raw_preconditions = cast(dict[str, Any], authority).get("preconditions")
-    if not isinstance(raw_preconditions, list):
-        return []
-    return [
-        precondition
-        for precondition in cast(list[Any], raw_preconditions)
-        if isinstance(precondition, str)
-    ]
 
 
 def _command_definition_for_node_creation(

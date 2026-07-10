@@ -86,8 +86,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "accepted_record_selector": "edges: binding-selector metadata; recovery-lineage traversal "
     "only reads from_node_id/to_node_id",
     "active": "requirement_revisions/active_requirement_versions bookkeeping",
-    "allowed_actions": "node_allowed_actions: scheduler-only substate",
-    "authority": "decision_request_details authority payload, not read by task_states",
     "authority_required_reason": "requirement_revisions / decision_request_details bookkeeping",
     "behavior_change": "requirement revision classification helper, not task_states",
     "binding_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (_topology_edge); "
@@ -117,9 +115,7 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "input": "legacy scheduler input-binding fallback, not task_states",
     "metadata": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "new_behavior": "requirement revision classification helper",
-    "node_ids": "suspect_node_reasons bookkeeping",
     "patch_id": "accepted_no_successor_patches_by_node / graph-patch-attempt bookkeeping",
-    "preconditions": "node_preconditions: scheduler-only substate",
     "previous_version_id": "requirement_revisions bookkeeping",
     "proposal_id": "open_proposal_blockers bookkeeping",
     "prompt_hydration_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata "
@@ -132,14 +128,11 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "task_states",
     "record_ids": "input_bindings bound-record list for scheduler/topology/prompt hydration; "
     "task_states reads accepted file-state records directly",
-    "region_id": "suspect_node_reasons node-id resolution helper",
-    "region_node_ids": "suspect_node_reasons node-id resolution helper",
     "required": 'edges metadata ("required" flag); traversal helper ignores it',
     "requirement": "requirement id/priority resolution helper, not task_states",
     "requirement_id": "requirement_revisions/authority_revision_blockers bookkeeping",
     "requirement_version_id": "requirement_revisions bookkeeping",
     "requires_authority": "requirement_revisions authority-resolution bookkeeping",
-    "resource_claims": "node_resource_claims: scheduler-only substate",
     "revision_id": "authority_revision_blockers bookkeeping",
     "revision_index": "requirement_revisions bookkeeping",
     "revision_type": "requirement revision classification helper",

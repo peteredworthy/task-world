@@ -433,3 +433,38 @@ GREEN (independently rerun by a fresh verifier):
   - Result: passed, 0 errors.
 - `git diff --check`
   - Result: passed.
+
+## Remaining Node Lifecycle Event Payload Slice
+
+Status: complete.
+
+Scope:
+- Added and exported typed payloads for node state, retirement, readiness,
+  deferral, authority, and all suspect replay aliases.
+- Producers validate and JSON-dump typed payloads; normal reduction and the
+  suspect/deferral auxiliary scans parse typed payloads before use.
+
+Legacy normalization:
+- Membership and nested authority fallbacks are retained. Malformed
+  `retry_not_before` and `prompt_summary` values relocate to inherited
+  `extra` rather than rejecting durable history.
+
+RED:
+- `uv run pytest tests/unit/test_node_lifecycle_event_payloads.py -q`
+  - Result: failed during collection with missing `NodeAuthorityChangedPayload`.
+- Added replay regressions for malformed retry timing and prompt summaries;
+  before the normalizer fix, malformed values raised validation errors.
+
+GREEN (independently rerun by a fresh final verifier):
+- `uv run pytest tests/unit/test_node_lifecycle_event_payloads.py -q`
+  - Result: passed, 8 tests.
+- Combined corpus/projection/allowlist/lifecycle checks
+  - Result: passed, 13 tests.
+- `uv run pytest tests/ -k graph -q`
+  - Result: passed, 844 tests (112.09s).
+- `uv run ruff check .`
+  - Result: passed.
+- `uv run pyright src/orchestrator/graph tests/unit/test_node_lifecycle_event_payloads.py`
+  - Result: passed, 0 errors.
+- `git diff --check`
+  - Result: passed.
