@@ -230,3 +230,45 @@ GREEN:
   - Result: passed.
 - `uv run pyright src/orchestrator/graph tests/unit/test_patch_event_payloads.py`
   - Result: passed, 0 errors.
+
+## Decision Event Payload Slice
+
+Status: complete.
+
+Implementation commits:
+- `6a6686ab8c18e15c472b27f6c0e88e3c457936f8` — typed decision event payloads.
+- `9402c3f5d64fa29140f3eeeb29d629c232689c58` — preserve legacy decision alias fallback.
+
+Scope:
+- Added typed payloads for `appeal_opened`, `approval_decision_recorded`,
+  `authority_decision_recorded`, and `oversight_decision_recorded`.
+- Routed current decision/appeal producers through model validation and JSON
+  dumping, and reducers through typed payload parsing.
+
+Legacy normalization:
+- Membership identifiers, legacy `decision`/`outcome`/`verdict` aliases, and
+  boolean `approved` fallback remain replay-compatible.
+- Unknown top-level keys move under the single `extra` map; `decider` and
+  `scope` remain intentionally flexible.
+- An obsolete earlier decision alias no longer masks a recognized later alias.
+
+Dropped write-only keys:
+- None.
+
+RED:
+- `uv run pytest tests/unit/test_decision_event_payloads.py -q`
+  - Result: failed during collection with missing `AppealOpenedPayload` export.
+
+GREEN (independently rerun by a fresh verifier):
+- `uv run pytest tests/unit/test_decision_event_payloads.py -q`
+  - Result: passed, 7 tests.
+- `uv run pytest tests/unit/test_fixture_corpus.py::test_fixture_corpus_replay_matches_checkpoint_and_compact_projection -q`
+  - Result: passed, 1 test.
+- `uv run pytest tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_decision_event_payloads.py -q`
+  - Result: passed, 145 tests.
+- `uv run pytest tests/ -k graph -q`
+  - Result: passed.
+- `uv run ruff check .`
+  - Result: passed.
+- `uv run pyright src/orchestrator/graph tests/unit/test_decision_event_payloads.py`
+  - Result: passed, 0 errors.
