@@ -1,27 +1,33 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from math import inf, nan
 
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.graph.catalog import (
-    DuplicateGraphSpecificationError,
-    GraphCatalog,
-    UnknownGraphCommandError,
-    UnknownGraphEventError,
-    build_graph_catalog,
-)
-from orchestrator.graph.commands.lifecycle import RECORD_HEARTBEAT, RecordHeartbeatCommand
-from orchestrator.graph.events.lifecycle import HEARTBEAT_RECORDED, HeartbeatRecordedPayload
-from orchestrator.graph.models import Actor, ActorKind
-from orchestrator.graph.payloads import StrictPayload
-from orchestrator.graph.specifications import (
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
     CommandExecutionContext,
     CommandSpecification,
+    DuplicateGraphSpecificationError,
     EventMetadata,
     EventSpecification,
+    GraphCatalog,
+    HEARTBEAT_RECORDED,
+    HeartbeatRecordedPayload,
+    HydratedEvent,
+    JsonValue,
     ProjectionParticipation,
+    RECORD_HEARTBEAT,
+    RecordHeartbeatCommand,
+    StoredEventEnvelope,
+    StrictPayload,
+    UnknownGraphCommandError,
+    UnknownGraphEventError,
+    apply_command,
+    build_graph_catalog,
 )
 
 
@@ -32,6 +38,14 @@ class ExamplePayload(StrictPayload):
 
 class DerivedExamplePayload(ExamplePayload):
     pass
+
+
+class NumericPayload(StrictPayload):
+    value: float
+
+
+class NestedJsonPayload(StrictPayload):
+    data: dict[str, JsonValue]
 
 
 class FixedClock:
@@ -146,6 +160,45 @@ def test_catalog_is_immutable_and_unknown_names_raise_typed_errors() -> None:
         catalog.resolve_command("missing")
 
 
+def test_catalog_direct_construction_copies_and_freezes_input_mappings() -> None:
+    event_specs = {HEARTBEAT_RECORDED.name: HEARTBEAT_RECORDED}
+    command_specs = {RECORD_HEARTBEAT.name: RECORD_HEARTBEAT}
+    catalog = GraphCatalog(event_specs=event_specs, command_specs=command_specs)
+
+    event_specs["other"] = HEARTBEAT_RECORDED
+    command_specs.clear()
+
+    assert catalog.events == (HEARTBEAT_RECORDED,)
+    assert catalog.commands == (RECORD_HEARTBEAT,)
+    with pytest.raises(TypeError):
+        catalog.command_specs["other"] = RECORD_HEARTBEAT
+
+
+def test_catalog_direct_construction_rejects_duplicate_specification_names() -> None:
+    with pytest.raises(DuplicateGraphSpecificationError, match="heartbeat_recorded"):
+        GraphCatalog(
+            event_specs={"first": HEARTBEAT_RECORDED, "second": HEARTBEAT_RECORDED},
+            command_specs={},
+        )
+
+
+@pytest.mark.parametrize("value", [nan, inf, -inf])
+def test_strict_payload_rejects_non_finite_floats(value: float) -> None:
+    with pytest.raises(ValidationError):
+        NumericPayload(value=value)
+    with pytest.raises(ValidationError):
+        NestedJsonPayload(data={"outer": [value]})
+
+
+@pytest.mark.parametrize("value", [nan, inf, -inf])
+def test_stored_envelope_rejects_recursive_non_finite_floats(value: float) -> None:
+    with pytest.raises(ValidationError):
+        StoredEventEnvelope(
+            **metadata("example").model_dump(),
+            payload={"outer": [value]},
+        )
+
+
 def test_heartbeat_command_emits_projection_neutral_typed_event() -> None:
     catalog = build_graph_catalog()
     command = catalog.resolve_command("record_heartbeat").validate(
@@ -170,3 +223,34 @@ def test_heartbeat_command_emits_projection_neutral_typed_event() -> None:
     assert spec.projection_participation is ProjectionParticipation.NEUTRAL
     projection = {"kept": True}
     assert spec.reduce(projection, event) is projection
+
+
+def test_public_apply_command_dispatches_heartbeat_through_injected_catalog_context() -> None:
+    catalog = build_graph_catalog()
+    context = CommandExecutionContext(
+        run_id="run-1",
+        current_position=4,
+        clock=FixedClock(NOW),
+        id_generator=FixedIds(),
+        actor=ACTOR,
+        events=(),
+    )
+
+    events = apply_command(
+        {},
+        [],
+        "record_heartbeat",
+        {"node_id": "worker-1", "lease_id": "lease-1", "lease_generation": 2},
+        context.clock,
+        context.id_generator,
+        catalog=catalog,
+        context=context,
+    )
+
+    event = events[0]
+    assert isinstance(event, HydratedEvent)
+    assert event.metadata.event_id == "event-1"
+    assert event.metadata.actor is ACTOR
+    assert event.metadata.position == 5
+    assert type(event.payload) is HeartbeatRecordedPayload
+    assert event.payload.observed_at == NOW

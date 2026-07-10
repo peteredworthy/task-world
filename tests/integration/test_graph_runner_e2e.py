@@ -13,7 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
-from orchestrator.graph import project_leases, project_residue_report, project_task_states
+from orchestrator.graph import (
+    build_graph_catalog,
+    project_leases,
+    project_residue_report,
+    project_task_states,
+)
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -373,7 +378,13 @@ async def _seed_active_run(
     routine: RoutineConfig | None = None,
 ) -> GraphController:
     await seed_run(session_factory, routine or _routine(), run_id=run_id, clock=clock, id_gen=ids)
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        catalog=build_graph_catalog(),
+        auto_dispatch=False,
+    )
     position = await controller.current_position(run_id)
     accepted = await controller.handle_command(run_id, position, "accept_run")
     await controller.handle_command(run_id, accepted.projection_position, "start")
@@ -550,6 +561,7 @@ async def test_graph_runner_restart_reattaches_running_builder(
             restarted_session_factory,
             restarted_clock,
             restarted_ids,
+            catalog=build_graph_catalog(),
             auto_dispatch=False,
         )
         restarted_executor = GraphDispatchExecutor(
@@ -617,7 +629,13 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
         task.cancel()
     running.clear()
 
-    restarted_controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    restarted_controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        catalog=build_graph_catalog(),
+        auto_dispatch=False,
+    )
     restarted_executor = GraphDispatchExecutor(
         session_factory,
         restarted_controller,
@@ -908,9 +926,6 @@ async def test_graph_dispatch_carries_projection_base_snapshot_id_to_callback(
     heartbeat_recorded = next(event for event in events if event.event_type == "heartbeat_recorded")
     assert heartbeat_recorded.payload["lease_id"] == dispatch_payload["lease_id"]
     assert heartbeat_recorded.payload["node_id"] == dispatch_payload["node_id"]
-    assert heartbeat_recorded.payload["generation"] == dispatch_payload["generation"]
-    assert heartbeat_recorded.payload["execution_id"] == dispatch_payload["execution_id"]
-    lease_renewed = next(event for event in events if event.event_type == "lease_renewed")
-    assert lease_renewed.payload["lease_id"] == dispatch_payload["lease_id"]
+    assert heartbeat_recorded.payload["lease_generation"] == dispatch_payload["generation"]
     assert any(event.event_type == "callback_accepted" for event in events)
     assert not any(event.event_type == "callback_rejected_stale" for event in events)

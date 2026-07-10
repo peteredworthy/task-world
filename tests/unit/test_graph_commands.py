@@ -4,13 +4,20 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    CommandExecutionContext,
     EventEnvelope,
     FakeClock,
+    HeartbeatRecordedPayload,
+    HydratedEvent,
     SequentialIdGenerator,
     apply_command,
+    build_graph_catalog,
     initial_projection,
     project_requirement_freshness_facts,
     project_task_states,
@@ -346,64 +353,58 @@ def test_cancel_revokes_suspended_lease_without_reopening_terminal_node() -> Non
     assert projected["node_states"]["worker-1"] == "failed"
 
 
-def test_record_heartbeat_renews_active_lease() -> None:
-    events = [
-        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
-        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
-        _event(
-            "lease_granted",
-            {
-                "node_id": "worker-1",
-                "lease_id": "lease-1",
-                "generation": 2,
-                "execution_id": "exec-1",
-                "expires_at": "2026-01-01T00:01:00+00:00",
-            },
-            2,
-        ),
-    ]
-
-    output = _apply(
-        events,
-        "record_heartbeat",
-        {"run_id": "run-1", "lease_id": "lease-1", "node_id": "worker-1", "ttl_seconds": 120},
+def test_record_heartbeat_public_path_emits_strict_typed_audit_event() -> None:
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    context = CommandExecutionContext(
+        run_id="run-1",
+        current_position=2,
+        clock=clock,
+        id_generator=ids,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        events=(),
     )
 
-    assert [event.event_type for event in output] == ["heartbeat_recorded", "lease_renewed"]
-    assert output[0].payload == {
-        "lease_id": "lease-1",
-        "node_id": "worker-1",
-        "observed_at": "2026-01-01T00:00:00+00:00",
-        "expires_at": "2026-01-01T00:02:00+00:00",
-        "generation": 2,
-        "execution_id": "exec-1",
-    }
-    assert output[1].payload == output[0].payload
-
-    projected = _project([*events, *output])
-    assert projected["leases"]["lease-1"]["state"] == "active"
-    assert projected["leases"]["lease-1"]["expires_at"] == "2026-01-01T00:02:00+00:00"
-
-
-def test_record_heartbeat_rejects_non_active_lease() -> None:
-    events = [
-        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
-        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
-        _event("lease_granted", {"node_id": "worker-1", "lease_id": "lease-1"}, 2),
-        _event("lease_suspended", {"node_id": "worker-1", "lease_id": "lease-1"}, 3),
-    ]
-
-    output = _apply(
-        events,
+    output = apply_command(
+        {},
+        [],
         "record_heartbeat",
-        {"run_id": "run-1", "lease_id": "lease-1", "node_id": "worker-1"},
+        {"lease_id": "lease-1", "node_id": "worker-1", "lease_generation": 2},
+        clock,
+        ids,
+        catalog=build_graph_catalog(),
+        context=context,
     )
 
-    assert [event.event_type for event in output] == ["command_rejected"]
-    assert output[0].payload == {
-        "command_type": "record_heartbeat",
-        "reason": "lease_not_active:suspended",
-    }
+    assert len(output) == 1
+    assert isinstance(output[0], HydratedEvent)
+    assert type(output[0].payload) is HeartbeatRecordedPayload
+    assert output[0].payload.lease_generation == 2
+
+
+def test_record_heartbeat_public_path_rejects_legacy_shape() -> None:
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    context = CommandExecutionContext(
+        run_id="run-1",
+        current_position=2,
+        clock=clock,
+        id_generator=ids,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        events=(),
+    )
+
+    with pytest.raises(ValidationError):
+        apply_command(
+            {},
+            [],
+            "record_heartbeat",
+            {"lease_id": "lease-1", "node_id": "worker-1", "generation": 2},
+            clock,
+            ids,
+            catalog=build_graph_catalog(),
+            context=context,
+        )
 
 
 def test_lifecycle_illegal_transition_rejected() -> None:

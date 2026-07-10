@@ -14,7 +14,7 @@ from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType, GlobalConfig, PathsConfig, RoutineConfig
 from orchestrator.config.enums import RunStatus
 from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
-from orchestrator.graph import project_run_state, project_task_states
+from orchestrator.graph import build_graph_catalog, project_run_state, project_task_states
 from orchestrator.graph_runtime import GraphController, GraphDispatchContext, GraphDispatchExecutor
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner, OutputBatcher
@@ -286,7 +286,11 @@ def _driver(
         on_agent_output: Any = None,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
-            session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
+            session_factory_arg,
+            clock_arg,
+            id_gen_arg,
+            catalog=build_graph_catalog(),
+            auto_dispatch=False,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,

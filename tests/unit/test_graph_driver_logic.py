@@ -84,7 +84,7 @@ class RecordingController:
         self.commands.append(command_type)
         events: list[object] = []
         if command_type == "record_heartbeat":
-            events = [type("Event", (), {"event_type": "lease_renewed"})()]
+            events = [type("Event", (), {"event_type": "heartbeat_recorded"})()]
         return type("Result", (), {"events": events})()
 
 
@@ -542,7 +542,7 @@ async def test_driver_retries_locked_schedule_tick_at_new_head() -> None:
 
 
 @pytest.mark.asyncio
-async def test_driver_retries_locked_heartbeat_renewal_at_new_head() -> None:
+async def test_driver_retries_locked_heartbeat_recording_at_new_head() -> None:
     controller = LockedOnceController(command_to_lock="record_heartbeat")
     executor = RecordingExecutor(running_execution_ids={"exec-live"})
     expired_lease_snapshot = GraphProjectionSnapshot(

@@ -1,7 +1,7 @@
 """Pure command applier for execution graph fixtures."""
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, overload
 
 from orchestrator.graph._commands import (
     Clock,
@@ -13,9 +13,9 @@ from orchestrator.graph._commands import (
     TERMINAL_RUN_STATES,
     command_rejected,
     event_factory,
-    apply_record_heartbeat,
     run_id,
 )
+from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.commands.callbacks import (
     handle_acknowledge_start,
     handle_raise_appeal,
@@ -38,6 +38,7 @@ from orchestrator.graph.commands.schedule import (
     handle_schedule_tick,
     handle_seed_compiled_events,
 )
+from orchestrator.graph.specifications import CommandExecutionContext, HydratedEvent
 
 ApplyCommandHandler = Callable[
     [
@@ -68,13 +69,6 @@ _UNCONVERTED_W5_BRIDGE: dict[str, ApplyCommandHandler] = {
     "reconcile": handle_reconcile,
     "acknowledge_start": handle_acknowledge_start,
     "agent_died": handle_agent_died,
-    "record_heartbeat": lambda projection,
-    events,
-    command_type,
-    payload,
-    make_event,
-    clock,
-    id_gen: apply_record_heartbeat(projection, payload, clock, make_event),
     "raise_appeal": handle_raise_appeal,
     "record_decision": handle_record_decision,
     "record_gatekeeper_verdicts": handle_record_gatekeeper_verdicts,
@@ -89,6 +83,7 @@ _UNCONVERTED_W5_BRIDGE: dict[str, ApplyCommandHandler] = {
 COMMAND_SPECIFICATIONS = (RECORD_HEARTBEAT,)
 
 
+@overload
 def apply_command(
     projection: GraphProjection,
     events: list[EventEnvelope],
@@ -96,11 +91,47 @@ def apply_command(
     payload: dict[str, Any],
     clock: Clock,
     id_gen: IdGenerator,
-) -> list[EventEnvelope]:
+    *,
+    catalog: None = None,
+    context: None = None,
+) -> list[EventEnvelope]: ...
+
+
+@overload
+def apply_command(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: dict[str, Any],
+    clock: Clock,
+    id_gen: IdGenerator,
+    *,
+    catalog: GraphCatalog,
+    context: CommandExecutionContext,
+) -> list[EventEnvelope] | list[HydratedEvent]: ...
+
+
+def apply_command(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: dict[str, Any],
+    clock: Clock,
+    id_gen: IdGenerator,
+    *,
+    catalog: GraphCatalog | None = None,
+    context: CommandExecutionContext | None = None,
+) -> list[EventEnvelope] | list[HydratedEvent]:
     """Apply a pure graph command and return events a controller would append."""
 
     run_id_value = run_id(events, payload)
     make_event = event_factory(run_id_value, command_type, clock, id_gen)
+    specification = catalog.command_specs.get(command_type) if catalog is not None else None
+    if specification is not None:
+        if context is None:
+            msg = f"typed graph command {command_type!r} requires an execution context"
+            raise ValueError(msg)
+        return specification.handle(specification.validate(payload), context)
     handler = _UNCONVERTED_W5_BRIDGE.get(command_type)
     if handler is None:
         return [

@@ -15,6 +15,7 @@ class StrictPayload(BaseModel):
         strict=True,
         extra="forbid",
         frozen=True,
+        allow_inf_nan=False,
         populate_by_name=True,
     )
 

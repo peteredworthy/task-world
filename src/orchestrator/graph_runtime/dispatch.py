@@ -26,6 +26,7 @@ from orchestrator.graph import (
     EventEnvelope,
     GraphProjection,
     RequirementRecord,
+    build_graph_catalog,
     check_command_uses_acceptance_fallback,
     initial_projection,
     resolve_check_command_definition,
@@ -445,8 +446,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             {
                 "node_id": context.node_id,
                 "lease_id": context.lease_id,
-                "generation": context.lease_generation,
-                "ttl_seconds": 300,
+                "lease_generation": context.lease_generation,
             },
         )
         rejection = next(
@@ -858,7 +858,13 @@ def build_graph_runtime(
 ) -> tuple[GraphController, GraphDispatchExecutor]:
     """Assemble graph controller and dispatch executor without API imports."""
 
-    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        id_gen,
+        catalog=build_graph_catalog(),
+        auto_dispatch=False,
+    )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,

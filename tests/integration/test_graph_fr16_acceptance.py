@@ -16,6 +16,7 @@ from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType, RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import init_db
+from orchestrator.graph import build_graph_catalog
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -262,7 +263,11 @@ def _driver(
         runner_config: dict[str, Any] | None = None,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
-            session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
+            session_factory_arg,
+            clock_arg,
+            id_gen_arg,
+            catalog=build_graph_catalog(),
+            auto_dispatch=False,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
@@ -336,7 +341,7 @@ async def test_fr16_supported_codex_callbacks_complete_and_read_back(
     assert graph["run_state"] == "completed"
     assert graph["node_states"]["worker-step-1-task-1"] == "completed"
     assert "heartbeat_recorded" in event_types
-    assert "lease_renewed" in event_types
+    assert "lease_renewed" not in event_types
     assert "callback_accepted" in event_types
     assert "candidate" in output_types
     assert "artifact_reference" in output_types

@@ -33,7 +33,7 @@ from orchestrator.config import load_routine_from_path
 from orchestrator.config.enums import AgentRunnerType, RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
-from orchestrator.graph import project_run_state, project_task_states
+from orchestrator.graph import build_graph_catalog, project_run_state, project_task_states
 from orchestrator.graph_runtime import GraphController, GraphDispatchContext, GraphDispatchExecutor
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner
@@ -758,7 +758,11 @@ def _driver(
         runner_config: dict[str, Any] | None = None,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
-            session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
+            session_factory_arg,
+            clock_arg,
+            id_gen_arg,
+            catalog=build_graph_catalog(),
+            auto_dispatch=False,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,

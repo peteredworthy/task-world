@@ -55,6 +55,7 @@ from orchestrator.graph.models import (
     GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
     LeaseExpiredPayload,
+    LeaseEventPayloadBase,
     LeaseGrantedPayload,
     LifecycleEventPayloadBase,
     LeaseReleasedPayload,
@@ -134,27 +135,17 @@ NONTERMINAL_RUN_STATES = {
 }
 
 
+_UNCONVERTED_LEASE_EVENT_PAYLOAD_MODELS: dict[str, type[LeaseEventPayloadBase]] = {
+    "lease_granted": LeaseGrantedPayload,
+    "lease_renewed": LeaseRenewedPayload,
+    "lease_released": LeaseReleasedPayload,
+    "lease_revoked": LeaseRevokedPayload,
+    "lease_expired": LeaseExpiredPayload,
+}
+
+
 def _typed_lease_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    model: (
-        type[LeaseGrantedPayload]
-        | type[LeaseRenewedPayload]
-        | type[LeaseReleasedPayload]
-        | type[LeaseRevokedPayload]
-        | type[LeaseExpiredPayload]
-        | None
-    )
-    if event_type == "lease_granted":
-        model = LeaseGrantedPayload
-    elif event_type == "lease_renewed":
-        model = LeaseRenewedPayload
-    elif event_type == "lease_released":
-        model = LeaseReleasedPayload
-    elif event_type == "lease_revoked":
-        model = LeaseRevokedPayload
-    elif event_type == "lease_expired":
-        model = LeaseExpiredPayload
-    else:
-        model = None
+    model = _UNCONVERTED_LEASE_EVENT_PAYLOAD_MODELS.get(event_type)
     if model is None:
         return payload
     return model.model_validate(payload).model_dump(mode="json")
@@ -248,9 +239,6 @@ def apply_command(
         return _apply_evaluate_final_gate(projection, events, payload, make_event, id_gen)
     if command_type == "record_cleanup_applied":
         return _apply_record_cleanup_applied(projection, payload, make_event)
-    if command_type == "record_heartbeat":
-        return _apply_record_heartbeat(projection, payload, clock, make_event)
-
     return [
         make_event(
             "command_rejected",
@@ -365,92 +353,6 @@ def _lifecycle_completion_decision_event(
         "output_record_accepted",
         record.model_dump(mode="json"),
     )
-
-
-def _apply_record_heartbeat(
-    projection: GraphProjection,
-    payload: dict[str, Any],
-    clock: Clock,
-    emit_unconverted_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
-    lease_id = payload.get("lease_id")
-    if not isinstance(lease_id, str) or not lease_id:
-        return [
-            _command_rejected(
-                emit_unconverted_event,
-                "record_heartbeat",
-                "heartbeat requires lease_id",
-            )
-        ]
-    lease = projection["leases"].get(lease_id)
-    if lease is None:
-        return [
-            _command_rejected(
-                emit_unconverted_event,
-                "record_heartbeat",
-                f"unknown lease: {lease_id}",
-            )
-        ]
-    if projection["run_state"] != "active":
-        return [_command_rejected(emit_unconverted_event, "record_heartbeat", "run_not_active")]
-    if lease.get("state") != "active":
-        return [
-            _command_rejected(
-                emit_unconverted_event,
-                "record_heartbeat",
-                f"lease_not_active:{lease.get('state')}",
-            )
-        ]
-
-    node_id = lease.get("node_id")
-    payload_node_id = payload.get("node_id")
-    if isinstance(payload_node_id, str) and payload_node_id != node_id:
-        return [_command_rejected(emit_unconverted_event, "record_heartbeat", "node_id_mismatch")]
-    if not isinstance(node_id, str):
-        return [
-            _command_rejected(
-                emit_unconverted_event,
-                "record_heartbeat",
-                "lease_missing_node_id",
-            )
-        ]
-
-    expected_generation = payload.get("generation")
-    lease_generation = lease.get("generation")
-    if (
-        isinstance(expected_generation, int)
-        and not isinstance(expected_generation, bool)
-        and isinstance(lease_generation, int)
-        and expected_generation != lease_generation
-    ):
-        return [
-            _command_rejected(
-                emit_unconverted_event,
-                "record_heartbeat",
-                "lease_generation_mismatch",
-            )
-        ]
-
-    ttl_seconds = _positive_int(payload.get("ttl_seconds"), 300)
-    expires_at = (clock.now() + timedelta(seconds=ttl_seconds)).isoformat()
-    heartbeat_payload: dict[str, Any] = {
-        "lease_id": lease_id,
-        "node_id": node_id,
-        "observed_at": clock.now().isoformat(),
-        "expires_at": expires_at,
-    }
-    if isinstance(lease_generation, int) and not isinstance(lease_generation, bool):
-        heartbeat_payload["generation"] = lease_generation
-    execution_id = lease.get("execution_id")
-    if isinstance(execution_id, str):
-        heartbeat_payload["execution_id"] = execution_id
-    return [
-        emit_unconverted_event("heartbeat_recorded", heartbeat_payload),
-        emit_unconverted_event(
-            "lease_renewed",
-            _typed_lease_event_payload("lease_renewed", heartbeat_payload),
-        ),
-    ]
 
 
 def _cancel_active_lease_events(
@@ -5656,7 +5558,6 @@ event_factory = _event_factory
 run_id = _run_id
 
 apply_lifecycle_command = _apply_lifecycle_command
-apply_record_heartbeat = _apply_record_heartbeat
 apply_seed_compiled_events = _apply_seed_compiled_events
 apply_callback_command = _apply_callback_command
 apply_patch_command = _apply_patch_command

@@ -296,6 +296,12 @@ class InventoryReport:
             if domain_events is not None
             else tuple(site for site in self.dynamic_event_sites if relevant(site))
         )
+        typed_event_names = {
+            name
+            for site in self.dynamic_event_sites
+            if site.classification == "typed_specification"
+            for name in site.resolved_values
+        }
         handlers = tuple(
             site
             for site in self.command_handlers
@@ -361,8 +367,15 @@ class InventoryReport:
                         *(
                             site
                             for site in dynamic_sites
-                            if site.classification
-                            not in {"typed_specification", "unconverted_bridge"}
+                            if site.classification != "typed_specification"
+                            and (
+                                site.classification
+                                not in {
+                                    "unconverted_bridge",
+                                    "unconverted_event_registry",
+                                }
+                                or bool(typed_event_names.intersection(site.resolved_values))
+                            )
                         ),
                     ),
                     key=lambda site: (site.path, site.line, site.column),
@@ -593,6 +606,8 @@ def _dynamic_classification(
 ) -> tuple[str, tuple[str, ...]]:
     owner = _owner_function(call, parsed)
     owner_name = owner.name if owner is not None else ""
+    if owner_name == "_to_legacy_envelope":
+        return "typed_event_serialization", ()
     if owner_name in {"make_event", "event_factory"}:
         return "generic_factory_definition", ()
     owner_key = (
@@ -730,6 +745,8 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     allowlists: list[NamedSite] = []
     partial_consumers: list[SourceSite] = []
     command_names: set[str] = set()
+    typed_command_names: set[str] = set()
+    bridge_handlers: list[CommandHandler] = []
 
     for parsed in parsed_files:
         for node in ast.walk(parsed.tree):
@@ -752,7 +769,9 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
                             )
                         )
                 elif _call_name(node.func) == "CommandSpecification" and specification_name:
-                    command_names.update(_literal_strings(specification_name))
+                    values = _literal_strings(specification_name)
+                    command_names.update(values)
+                    typed_command_names.update(values)
                 if _call_name(node.func) == "emit_unconverted_event" and node.args:
                     values = _literal_strings(node.args[0])
                     if values:
@@ -814,10 +833,41 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
                             NamedSite(str(parsed.path), node.lineno, node.col_offset, name)
                         )
                 value = node.value
-                if "_UNCONVERTED_W5_BRIDGE" in names and isinstance(value, ast.Dict):
+                if any(name.endswith("_EVENT_PAYLOAD_MODELS") for name in names) and isinstance(
+                    value, ast.Dict
+                ):
                     for key in value.keys:
-                        if key is not None:
-                            command_names.update(_literal_strings(key))
+                        if key is None:
+                            continue
+                        values = _literal_strings(key)
+                        if values:
+                            dynamic_sites.append(
+                                DynamicSite(
+                                    str(parsed.path),
+                                    key.lineno,
+                                    key.col_offset,
+                                    ast.unparse(key),
+                                    "unconverted_event_registry",
+                                    values,
+                                )
+                            )
+                if "_UNCONVERTED_W5_BRIDGE" in names and isinstance(value, ast.Dict):
+                    for key, handler in zip(value.keys, value.values, strict=True):
+                        if key is None:
+                            continue
+                        values = _literal_strings(key)
+                        command_names.update(values)
+                        bridge_handlers.extend(
+                            CommandHandler(
+                                str(parsed.path),
+                                handler.lineno,
+                                handler.col_offset,
+                                command_name,
+                                ast.unparse(handler),
+                                _handler_annotation(handler, parsed.functions),
+                            )
+                            for command_name in values
+                        )
                 if "COMMAND_HANDLERS" in names and isinstance(value, ast.Dict):
                     for key, handler in zip(value.keys, value.values, strict=True):
                         values = _literal_strings(key) if key is not None else ()
@@ -849,6 +899,9 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
             ):
                 partial_consumers.append(_site(parsed.path, node))
 
+    handlers.extend(
+        handler for handler in bridge_handlers if handler.command_name in typed_command_names
+    )
     literal_names = frozenset(site.name for site in literal_sites)
     return InventoryReport(
         literal_event_names=literal_names,

@@ -16,7 +16,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.config.enums import RunStatus
-from orchestrator.graph import project_run_state, project_task_states
+from orchestrator.graph import build_graph_catalog, project_run_state, project_task_states
 from orchestrator.graph_runtime import GraphController, GraphDispatchExecutor, seed_run
 from orchestrator.runners import AgentRunner
 
@@ -53,7 +53,13 @@ def _build_driver(
     def runtime_builder(
         sf, clock_arg, id_gen_arg, *, worktree_path, runner_type, runner_config=None
     ):  # type: ignore[no-untyped-def]
-        controller = GraphController(sf, clock_arg, id_gen_arg, auto_dispatch=False)
+        controller = GraphController(
+            sf,
+            clock_arg,
+            id_gen_arg,
+            catalog=build_graph_catalog(),
+            auto_dispatch=False,
+        )
         executor = GraphDispatchExecutor(
             sf, controller, AgentFactory(agents, dispatch_order), worktree_path=repo
         )

@@ -871,11 +871,10 @@ async def _renew_running_expired_leases(
         payload: dict[str, object] = {
             "lease_id": lease_id,
             "node_id": node_id,
-            "ttl_seconds": 3600,
         }
         generation = lease.get("generation")
         if isinstance(generation, int) and not isinstance(generation, bool):
-            payload["generation"] = generation
+            payload["lease_generation"] = generation
         delay_seconds = 0.01
         for attempt in range(5):
             try:
@@ -895,7 +894,9 @@ async def _renew_running_expired_leases(
                 await asyncio.sleep(delay_seconds)
                 delay_seconds *= 2
                 continue
-            renewed = renewed or any(event.event_type == "lease_renewed" for event in result.events)
+            renewed = renewed or any(
+                event.event_type == "heartbeat_recorded" for event in result.events
+            )
             break
     return renewed
 

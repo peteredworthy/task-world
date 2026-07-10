@@ -16,6 +16,7 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
+    build_graph_catalog,
     project_run_state,
     project_task_states,
 )
@@ -291,7 +292,11 @@ def _driver(
         runner_config: dict[str, Any] | None = None,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
-            session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
+            session_factory_arg,
+            clock_arg,
+            id_gen_arg,
+            catalog=build_graph_catalog(),
+            auto_dispatch=False,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,

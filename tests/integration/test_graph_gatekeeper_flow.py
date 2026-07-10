@@ -14,6 +14,7 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     GatekeeperTaxonomy,
+    build_graph_catalog,
     initial_projection,
     project_gatekeeper_report,
     project_residue_report,
@@ -405,7 +406,13 @@ async def _seed_active_run(
     ids: SequentialIds,
 ) -> GraphController:
     await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        catalog=build_graph_catalog(),
+        auto_dispatch=False,
+    )
     position = await controller.current_position(run_id)
     accepted = await controller.handle_command(run_id, position, "accept_run")
     await controller.handle_command(run_id, accepted.projection_position, "start")

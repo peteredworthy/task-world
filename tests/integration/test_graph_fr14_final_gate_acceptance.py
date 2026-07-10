@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType, RunStatus, RoutineConfig
 from orchestrator.db import init_db
+from orchestrator.graph import build_graph_catalog
 from orchestrator.graph_runtime import GraphController, GraphDispatchContext, GraphDispatchExecutor
 from orchestrator.runners import AgentRunner
 from orchestrator.runners.types import (
@@ -271,7 +272,11 @@ def _driver(
         runner_config: dict[str, Any] | None = None,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
-            session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
+            session_factory_arg,
+            clock_arg,
+            id_gen_arg,
+            catalog=build_graph_catalog(),
+            auto_dispatch=False,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,

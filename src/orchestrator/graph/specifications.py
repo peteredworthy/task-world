@@ -30,7 +30,7 @@ class IdGenerator(Protocol):
 class EventMetadata(BaseModel):
     """Durable event identity and stream metadata."""
 
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, allow_inf_nan=False)
 
     event_id: str
     run_id: str
@@ -46,7 +46,7 @@ class EventMetadata(BaseModel):
 class StoredEventEnvelope(BaseModel):
     """JSON storage boundary for graph events."""
 
-    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, allow_inf_nan=False)
 
     event_id: str
     run_id: str

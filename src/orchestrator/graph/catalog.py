@@ -45,6 +45,18 @@ class GraphCatalog:
     event_specs: Mapping[str, EventSpecification[Any]]
     command_specs: Mapping[str, CommandSpecification[Any]]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "event_specs",
+            MappingProxyType(_unique_by_name("event", self.event_specs.values())),
+        )
+        object.__setattr__(
+            self,
+            "command_specs",
+            MappingProxyType(_unique_by_name("command", self.command_specs.values())),
+        )
+
     @classmethod
     def compose(
         cls,
@@ -52,8 +64,8 @@ class GraphCatalog:
         command_specs: Iterable[CommandSpecification[Any]],
     ) -> GraphCatalog:
         return cls(
-            event_specs=MappingProxyType(_unique_by_name("event", event_specs)),
-            command_specs=MappingProxyType(_unique_by_name("command", command_specs)),
+            event_specs=_unique_by_name("event", event_specs),
+            command_specs=_unique_by_name("command", command_specs),
         )
 
     @property

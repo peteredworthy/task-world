@@ -251,6 +251,52 @@ def legacy(emit_unconverted_event):
     assert report.command_names == ("record_heartbeat", "start")
 
 
+def test_domain_rejects_converted_names_that_remain_in_unconverted_bridge(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "mixed.py"
+    source.write_text(
+        """\
+HEARTBEAT_RECORDED = EventSpecification(name="heartbeat_recorded", payload_type=Payload)
+RECORD_HEARTBEAT = CommandSpecification(name="record_heartbeat", payload_type=Command)
+_UNCONVERTED_W5_BRIDGE = {"record_heartbeat": legacy_heartbeat}
+
+def legacy(emit_unconverted_event):
+    return emit_unconverted_event("heartbeat_recorded", {})
+"""
+    )
+
+    domain = scan_graph_payload_architecture([source]).for_domain("vertical_slice")
+
+    assert [site.command_name for site in domain.raw_handler_boundaries] == ["record_heartbeat"]
+    assert len(domain.raw_producers) == 1
+    assert not domain.is_clean
+
+
+def test_inventory_counts_unconverted_event_registry_and_typed_serialization(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "mixed_events.py"
+    source.write_text(
+        """\
+from orchestrator.graph import EventEnvelope
+
+_LIFECYCLE_EVENT_PAYLOAD_MODELS = {"lease_renewed": LeaseRenewedPayload}
+
+def _to_legacy_envelope(event):
+    return EventEnvelope(event_type=event.metadata.event_type, payload=event.payload.to_json())
+"""
+    )
+
+    report = scan_graph_payload_architecture([source])
+
+    assert report.produced_event_names == {"lease_renewed"}
+    assert {site.classification for site in report.dynamic_event_sites} == {
+        "typed_event_serialization",
+        "unconverted_event_registry",
+    }
+
+
 def test_inventory_resolves_positional_keyword_qualified_and_aliased_envelopes(
     tmp_path: Path,
 ) -> None:

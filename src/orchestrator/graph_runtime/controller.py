@@ -10,8 +10,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    CommandExecutionContext,
     EventEnvelope,
+    GraphCatalog,
     GraphProjection,
+    HydratedEvent,
     apply_command,
     initial_projection,
     reduce_event,
@@ -38,12 +41,14 @@ class GraphController:
         clock: Clock,
         id_gen: IdGenerator,
         *,
+        catalog: GraphCatalog | None = None,
         dispatcher: OutboxDispatcher | None = None,
         auto_dispatch: bool = True,
     ) -> None:
         self._session_factory = session_factory
         self._clock = clock
         self._id_gen = id_gen
+        self._catalog = catalog
         self._dispatcher = dispatcher
         self._auto_dispatch = auto_dispatch
 
@@ -102,14 +107,40 @@ class GraphController:
                     run_id,
                     patch_base_position + 1,
                 )
-        planned_events = apply_command(
-            projection,
-            command_events,
-            command_type,
-            command_payload,
-            self._clock,
-            self._id_gen,
-        )
+        if self._catalog is None:
+            planned_events = apply_command(
+                projection,
+                command_events,
+                command_type,
+                command_payload,
+                self._clock,
+                self._id_gen,
+            )
+        else:
+            typed_payload = (
+                dict(payload or {})
+                if command_type in self._catalog.command_specs
+                else command_payload
+            )
+            context = CommandExecutionContext(
+                run_id=run_id,
+                current_position=current_position,
+                clock=self._clock,
+                id_generator=self._id_gen,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                events=(),
+            )
+            planned_events = apply_command(
+                projection,
+                command_events,
+                command_type,
+                typed_payload,
+                self._clock,
+                self._id_gen,
+                catalog=self._catalog,
+                context=context,
+            )
+        planned_events = [_to_legacy_envelope(event) for event in planned_events]
         planned_events = self._add_dispatch_intent_events(
             planned_events,
             command_type,
@@ -204,6 +235,24 @@ class GraphController:
                 )
             )
         return expanded
+
+
+def _to_legacy_envelope(event: EventEnvelope | HydratedEvent) -> EventEnvelope:
+    if isinstance(event, EventEnvelope):
+        return event
+    metadata = event.metadata
+    return EventEnvelope(
+        event_id=metadata.event_id,
+        run_id=metadata.run_id,
+        position=metadata.position,
+        event_type=metadata.event_type,
+        schema_version=metadata.payload_schema_generation,
+        actor=metadata.actor,
+        causation_id=metadata.causation_id,
+        correlation_id=metadata.correlation_id,
+        timestamp=metadata.timestamp,
+        payload=event.payload.to_json(),
+    )
 
 
 def rebuild_projection(events: list[EventEnvelope]) -> GraphProjection:

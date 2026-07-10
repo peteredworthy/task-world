@@ -12,7 +12,12 @@ from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.git import restore
-from orchestrator.graph import project_leases, project_node_states, project_residue_report
+from orchestrator.graph import (
+    build_graph_catalog,
+    project_leases,
+    project_node_states,
+    project_residue_report,
+)
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -337,7 +342,13 @@ async def _seed_active_run(
     clock = FixedClock()
     ids = SequentialIds()
     await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        catalog=build_graph_catalog(),
+        auto_dispatch=False,
+    )
     position = await controller.current_position(run_id)
     accepted = await controller.handle_command(run_id, position, "accept_run")
     await controller.handle_command(run_id, accepted.projection_position, "start")

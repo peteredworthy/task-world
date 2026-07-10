@@ -16,7 +16,7 @@ from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, build_graph_catalog
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -395,7 +395,11 @@ def _driver(
         runner_config: dict[str, Any] | None = None,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
-            session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
+            session_factory_arg,
+            clock_arg,
+            id_gen_arg,
+            catalog=build_graph_catalog(),
+            auto_dispatch=False,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,

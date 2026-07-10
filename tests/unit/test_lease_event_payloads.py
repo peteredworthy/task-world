@@ -10,7 +10,6 @@ from orchestrator.graph import (
     LeaseExpiredPayload,
     LeaseGrantedPayload,
     LeaseReleasedPayload,
-    LeaseRenewedPayload,
     LeaseRevokedPayload,
     LeaseSuspendedPayload,
     SequentialIdGenerator,
@@ -163,7 +162,7 @@ def test_lease_reducers_tolerate_legacy_payloads_through_typed_models() -> None:
         assert projection["leases"]["lease-1"].state == event_type.removeprefix("lease_")
 
 
-def test_lease_producers_emit_payloads_validated_by_typed_models() -> None:
+def test_schedule_produces_lease_payload_validated_by_typed_model() -> None:
     events = [
         _event(
             "run_lifecycle_changed",
@@ -206,21 +205,6 @@ def test_lease_producers_emit_payloads_validated_by_typed_models() -> None:
     granted = LeaseGrantedPayload.model_validate(granted_event.payload)
     assert granted.lease_id == "lease-1"
     assert granted.extra == {}
-
-    events = [*events, granted_event]
-    renewed = apply_command(
-        _project(events),
-        events,
-        "record_heartbeat",
-        {"run_id": "run-1", "lease_id": granted.lease_id},
-        FakeClock(),
-        SequentialIdGenerator(),
-    )
-    renewed_payload = LeaseRenewedPayload.model_validate(
-        next(event for event in renewed if event.event_type == "lease_renewed").payload
-    )
-    assert renewed_payload.lease_id == granted.lease_id
-    assert renewed_payload.extra == {}
 
 
 def _project(events: list[EventEnvelope]) -> Any:

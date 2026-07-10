@@ -19,7 +19,7 @@ from orchestrator.db import (
     GraphProjectionSnapshotModel,
     RunModel,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, build_graph_catalog
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.db.access.mutations import save_run
@@ -303,6 +303,7 @@ async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
         session_factory,
         FakeClock(),
         _RunSeedIdGenerator(run_id),
+        catalog=build_graph_catalog(),
         auto_dispatch=False,
     )
     heartbeat = await controller.handle_command(
@@ -312,8 +313,7 @@ async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
         {
             "lease_id": "lease-callback",
             "node_id": "worker-callback",
-            "generation": 1,
-            "ttl_seconds": 120,
+            "lease_generation": 1,
         },
     )
     await controller.handle_command(run_id, heartbeat.projection_position, "cancel")
@@ -1276,7 +1276,7 @@ async def test_callback_lifecycle_readbacks_cover_heartbeat_cancel_artifact_and_
     assert graph["run_state"] == "cancelling"
     assert graph["node_states"]["worker-callback"] == "cancelled"
     assert graph["leases"]["lease-callback"]["state"] == "revoked"
-    assert graph["leases"]["lease-callback"]["expires_at"] == "2026-01-01T00:02:00+00:00"
+    assert graph["leases"]["lease-callback"]["expires_at"] == "2026-01-01T00:01:00+00:00"
     assert scheduler["leases"] == {"active": [], "suspended": []}
     assert scheduler["scheduler"] == {
         "ready": [],
@@ -1286,7 +1286,7 @@ async def test_callback_lifecycle_readbacks_cover_heartbeat_cancel_artifact_and_
     }
 
     assert "heartbeat_recorded" in event_types
-    assert "lease_renewed" in event_types
+    assert "lease_renewed" not in event_types
     assert "lease_revoked" in event_types
     assert any(record["record_type"] == "artifact_reference" for record in node["output_records"])
     assert any(record["record_type"] == "failure_record" for record in node["output_records"])
