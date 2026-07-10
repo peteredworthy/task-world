@@ -16,6 +16,7 @@ from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import SignalConsumer, WorkflowService
+from orchestrator.graph import build_graph_catalog
 
 
 def _routine_payload() -> dict[str, Any]:
@@ -133,7 +134,10 @@ async def test_graph_cancel_route_appends_graph_cancel_before_signal_drain(
         agent_runner_type=AgentRunnerType.CODEX_SERVER,
     )
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(
             run_id,
             0,
             [
@@ -161,7 +165,10 @@ async def test_graph_cancel_route_appends_graph_cancel_before_signal_drain(
     assert response.status_code == 202
     assert response.json()["is_graph_backed"] is True
     async with session_factory() as session:
-        events = await GraphEventStore(session).read_run(run_id)
+        events = await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
     event_types = [event.event_type for event in events]
     assert event_types[-4:] == [
         "run_lifecycle_changed",
@@ -183,7 +190,10 @@ async def test_graph_cancel_route_appends_graph_cancel_before_signal_drain(
     data = (await client.get(f"/api/runs/{run_id}")).json()
     assert data["status"] == "cancelled"
     async with session_factory() as session:
-        after_drain_events = await GraphEventStore(session).read_run(run_id)
+        after_drain_events = await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
     assert [event.event_type for event in after_drain_events] == event_types
 
 

@@ -261,7 +261,10 @@ async def _seed_fr03_base_events(
     run_id: str,
 ) -> None:
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(
             run_id,
             0,
             [

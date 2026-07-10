@@ -16,6 +16,7 @@ from orchestrator.graph import (
     project_graph_patch_attempts,
     reduce_event,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def test_graph_patch_accepted_payload_normalizes_legacy_free_form_keys_to_extra() -> None:
@@ -81,6 +82,7 @@ def test_graph_patch_status_payload_handles_replay_aliases() -> None:
 
 def test_patch_reducers_tolerate_legacy_payloads_through_typed_models() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "graph_patch_accepted",
@@ -98,12 +100,14 @@ def test_patch_reducers_tolerate_legacy_payloads_through_typed_models() -> None:
     assert projection["planner_successors"] == {"planner-1": "planner-2"}
 
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event("graph_patch_proposed", {"patch_id": "patch-2", "node_id": "planner-2"}, position=2),
     )
     assert "patch-2" in projection["open_proposal_blockers"]
 
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event("graph_patch_rejected", {"patch_id": "patch-2", "reason": "invalid"}, position=3),
     )
@@ -186,7 +190,7 @@ def test_project_graph_patch_attempts_reads_patch_payloads_through_typed_models(
 def _project(events: list[EventEnvelope]) -> Any:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

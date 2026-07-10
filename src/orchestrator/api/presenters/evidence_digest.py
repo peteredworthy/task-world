@@ -26,6 +26,7 @@ from orchestrator.graph import (
     project_scheduler_view,
 )
 from orchestrator.state import Run
+from orchestrator.graph import build_graph_catalog
 
 
 def _now() -> datetime:
@@ -140,11 +141,11 @@ def _representative_nodes(
     if not events:
         return []
 
-    node_states = project_node_states(events, projection=projection)
+    node_states = project_node_states(build_graph_catalog(), events, projection=projection)
     if not node_states:
         return []
 
-    node_metadata = project_node_metadata(events, projection=projection)
+    node_metadata = project_node_metadata(build_graph_catalog(), events, projection=projection)
     creation_payloads = _node_creation_payloads(events)
 
     entries: list[RepresentativeNodeEvidence] = []
@@ -209,10 +210,12 @@ def build_run_evidence_digest_response(
         # Fold the event stream a single time and reuse the projection across
         # every view below, instead of each project_* call re-folding from
         # scratch (an O(n^2) full replay per call).
-        projection = build_projection(events)
-        scheduler_view = project_scheduler_view(events, projection=projection)
-        lease_view = project_lease_view(events, projection=projection)
-        decision_view = project_decision_view(events, projection=projection)
+        projection = build_projection(build_graph_catalog(), events)
+        scheduler_view = project_scheduler_view(
+            build_graph_catalog(), events, projection=projection
+        )
+        lease_view = project_lease_view(build_graph_catalog(), events, projection=projection)
+        decision_view = project_decision_view(build_graph_catalog(), events, projection=projection)
         scheduler = RunEvidenceDigestScheduler(
             graph_event_count=graph_event_count,
             ready_count=len(scheduler_view["ready"]),

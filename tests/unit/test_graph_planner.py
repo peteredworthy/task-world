@@ -13,6 +13,7 @@ from orchestrator.graph import (
     reduce_event,
 )
 from tests.graph_command_support import dispatch_graph_command
+from orchestrator.graph import build_graph_catalog
 
 
 def test_planner_lifecycle_states() -> None:
@@ -373,7 +374,7 @@ def test_final_planner_no_successor_terminates() -> None:
     events = [*events, *_append(events, _submit_patch(events, "patch-1", _region_ops(None)))]
     events = _drive_region_to_accepted(events)
 
-    assert project_run_state(events) == "completed"
+    assert project_run_state(build_graph_catalog(), events) == "completed"
 
 
 def test_run_not_complete_with_pending_planner() -> None:
@@ -381,7 +382,7 @@ def test_run_not_complete_with_pending_planner() -> None:
     events = [*events, *_append(events, _submit_patch(events, "patch-1", _region_ops("planner-1")))]
     events = _drive_region_to_accepted(events)
 
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_lifecycle_completed_does_not_bypass_pending_planner() -> None:
@@ -391,7 +392,7 @@ def test_lifecycle_completed_does_not_bypass_pending_planner() -> None:
     completed = _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"})
     events = [*events, *_append(events, [completed])]
 
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_generation_budget_rejects_and_gates() -> None:
@@ -421,7 +422,7 @@ def test_parallel_successor_planners_rejected() -> None:
     assert rejected[0].payload["reason"] == "multiple_successor_planners_not_allowed"
     assert "planner-a" not in projection["node_states"]
     assert "planner-b" not in projection["node_states"]
-    assert project_planner_chain([*events, *_append(events, rejected)]) == [
+    assert project_planner_chain(build_graph_catalog(), [*events, *_append(events, rejected)]) == [
         {
             "node_id": "planner-0",
             "generation_index": 0,
@@ -438,7 +439,7 @@ def test_project_planner_chain() -> None:
     events = _planner_events()
     events = [*events, *_append(events, _submit_patch(events, "patch-1", _region_ops("planner-1")))]
 
-    assert project_planner_chain(events) == [
+    assert project_planner_chain(build_graph_catalog(), events) == [
         {
             "node_id": "planner-0",
             "generation_index": 0,
@@ -795,7 +796,7 @@ def _apply(
 def _project(events: list[EventEnvelope]) -> Any:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

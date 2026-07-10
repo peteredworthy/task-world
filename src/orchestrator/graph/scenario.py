@@ -61,7 +61,7 @@ def run_scenario(
         }
         projection = initial_projection()
         for event in events_before_command:
-            projection = reduce_event(projection, event)
+            projection = reduce_event(catalog, projection, event)
         for event in apply_command(
             projection,
             events_before_command,
@@ -94,7 +94,7 @@ def run_scenario(
 
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(catalog, projection, event)
     projection_snapshot: dict[str, str] = {}
     if projection["run_state"] is not None:
         projection_snapshot["run_state"] = projection["run_state"]

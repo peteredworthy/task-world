@@ -14,6 +14,7 @@ from orchestrator.graph import (
     reduce_event,
     validate_callback,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def _projection(
@@ -128,6 +129,7 @@ def test_duplicate_different_payload_rejected() -> None:
 
 def test_projected_prior_rejection_does_not_return_duplicate() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         _projection(),
         _event(
             "callback_rejected_conflict",

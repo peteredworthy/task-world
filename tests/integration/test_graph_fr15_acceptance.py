@@ -204,7 +204,7 @@ async def test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable(
     await OutboxDispatcher(session_factory, executor, FixedClock()).dispatch_pending()
 
     raw_events = await _read_events(session_factory, run_id)
-    projection = rebuild_projection(raw_events)
+    projection = rebuild_projection(build_graph_catalog(), raw_events)
     original = projection["file_state_records"][record_id]
     superseding_id = str(original.superseded_by_record_id)
     superseding = projection["file_state_records"][superseding_id]
@@ -444,7 +444,10 @@ async def _append_manual_cleanup_seed(
     ]
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, events)
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, events)
 
 
 async def _read_events(
@@ -452,7 +455,10 @@ async def _read_events(
     run_id: str,
 ) -> list[EventEnvelope]:
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 async def _outbox_statuses(

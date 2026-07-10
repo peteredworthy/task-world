@@ -29,6 +29,7 @@ from orchestrator.state.models import Run
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.envfiles.cleanup import EnvFileCleanup
+from orchestrator.graph import build_graph_catalog
 
 logger = logging.getLogger(__name__)
 
@@ -286,7 +287,10 @@ async def _run_graph_startup_recovery(app: FastAPI) -> None:
             repo = RunRepository(session)
             active = await repo.list_by_status(RunStatus.ACTIVE, include_action_logs=False)
             paused = await repo.list_by_status(RunStatus.PAUSED, include_action_logs=False)
-            store = GraphEventStore(session)
+            store = GraphEventStore(
+                session,
+                build_graph_catalog(),
+            )
 
             to_rearm = await select_graph_runs_to_rearm(
                 active,

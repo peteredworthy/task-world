@@ -25,6 +25,7 @@ from orchestrator.graph import (
     reduce_event,
 )
 from tests.graph_command_support import dispatch_graph_command
+from orchestrator.graph import build_graph_catalog
 
 
 def test_routine_maps_to_root_and_routine_snapshot_record_node() -> None:
@@ -700,7 +701,7 @@ def _compile(routine: RoutineConfig) -> list[EventEnvelope]:
 def _project(events: list[EventEnvelope]) -> Any:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

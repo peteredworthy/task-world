@@ -42,6 +42,7 @@ from orchestrator.runners.types import (
     LogLineCallback,
     SubmitCallback,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def _context(
@@ -97,7 +98,7 @@ def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> Even
 def _project(events: list[EventEnvelope]) -> GraphProjection:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

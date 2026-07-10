@@ -131,7 +131,7 @@ async def test_resume_reschedules_dead_lease_to_completed(
     # before any in-process executor is alive to acknowledge or submit it.
     await _seed_active_worker_lease(session_factory, run_id=run_id)
     events_after_first = await _events(session_factory, run_id)
-    assert project_run_state(events_after_first) != "completed"
+    assert project_run_state(build_graph_catalog(), events_after_first) != "completed"
 
     # "Restart": fresh driver/runtime over the same DB. recover()+reconcile in
     # run() must agent_died the dead lease, reschedule, and drive to completion.
@@ -145,8 +145,8 @@ async def test_resume_reschedules_dead_lease_to_completed(
     outcome2 = await driver2.run(run_id)
 
     events = await _events(session_factory, run_id)
-    assert project_task_states(events) == {"step-1/task-1": "accepted"}
-    assert project_run_state(events) == "completed"
+    assert project_task_states(build_graph_catalog(), events) == {"step-1/task-1": "accepted"}
+    assert project_run_state(build_graph_catalog(), events) == "completed"
     assert outcome2.completed is True
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
     # The recovered worker and the verifier both ran on the second drive.
@@ -173,7 +173,10 @@ async def test_resume_after_clean_completion_is_idempotent_noop(
     )
     assert (await driver.run(run_id)).completed is True
     async with session_factory() as session:
-        position_after_first = await GraphEventStore(session).current_position(run_id)
+        position_after_first = await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).current_position(run_id)
 
     # Re-arm: a second run() over a completed graph adds no new graph mutation
     # events (no re-seed, nothing to dispatch) and the run stays completed.
@@ -185,9 +188,12 @@ async def test_resume_after_clean_completion_is_idempotent_noop(
     )
     await driver2.run(run_id)
     async with session_factory() as session:
-        position_after_second = await GraphEventStore(session).current_position(run_id)
+        position_after_second = await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).current_position(run_id)
 
     events = await _events(session_factory, run_id)
-    assert project_run_state(events) == "completed"
+    assert project_run_state(build_graph_catalog(), events) == "completed"
     assert position_after_second == position_after_first
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED

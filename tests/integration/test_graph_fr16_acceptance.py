@@ -293,7 +293,10 @@ async def _read_events(
     run_id: str,
 ):
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 async def _get_json(client: AsyncClient, path: str) -> Any:

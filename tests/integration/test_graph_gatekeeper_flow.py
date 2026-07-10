@@ -255,7 +255,7 @@ async def test_gatekeeper_flow_metadata_only_pattern_reuse_and_replay(
     assert len(fake.calls) == 1
 
     events = await _read_events(session_factory, run_id)
-    residue_report = project_residue_report(events)
+    residue_report = project_residue_report(build_graph_catalog(), events)
     assert residue_report["reports/first.xml"][-1]["classification"] == "test_artifact"
     assert residue_report["reports/first.xml"][-1]["needs_gatekeeper"] is False
     assert residue_report["reports/second.xml"][0]["matched_rule"] == (
@@ -263,7 +263,7 @@ async def test_gatekeeper_flow_metadata_only_pattern_reuse_and_replay(
     )
     assert residue_report["reports/second.xml"][0]["needs_gatekeeper"] is False
 
-    replayed_report = project_residue_report(events)
+    replayed_report = project_residue_report(build_graph_catalog(), events)
     assert replayed_report == residue_report
 
     gatekeeper_report = project_gatekeeper_report(events)[run_id]
@@ -302,7 +302,7 @@ async def test_gatekeeper_cap_leaves_remainder_flagged(
     assert len(fake.calls) == 1
     assert len(fake.calls[0]) == 3
     events = await _read_events(session_factory, run_id)
-    residue_report = project_residue_report(events)
+    residue_report = project_residue_report(build_graph_catalog(), events)
     resolved = [
         entries[0]
         for entries in residue_report.values()
@@ -391,7 +391,7 @@ async def test_gatekeeper_secret_verdict_scrubs_compromised_snapshot(
 
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     original_record = projection["file_state_records"][original.payload["record_id"]]
     superseding_record = projection["file_state_records"][superseding.payload["record_id"]]
     assert original_record.compromised is True
@@ -443,7 +443,10 @@ async def _read_events(
     run_id: str,
 ):
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 def _routine() -> RoutineConfig:

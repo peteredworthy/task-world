@@ -115,7 +115,10 @@ async def _seed_invalid_patch_graph_run(app: Any, run_id: str) -> GraphControlle
         ),
     ]
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, events)
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, events)
         await session.commit()
 
     return GraphController(
@@ -232,7 +235,10 @@ async def _seed_authority_denial_graph_run(app: Any, run_id: str) -> None:
         ),
     ]
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, events)
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, events)
         await session.commit()
 
 

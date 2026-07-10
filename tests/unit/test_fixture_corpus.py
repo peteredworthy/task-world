@@ -104,7 +104,10 @@ async def test_fixture_corpus_replay_matches_checkpoint_and_compact_projection()
 
 
 async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
-    store = GraphEventStore(session)
+    store = GraphEventStore(
+        session,
+        build_graph_catalog(),
+    )
     for index, (path, scenario) in enumerate(_all_scenarios(), start=1):
         result = run_scenario(
             scenario,
@@ -130,7 +133,9 @@ async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
         )
         await session.flush()
 
-        full_projection_checkpoint = projection_to_checkpoint(build_projection(stored_events))
+        full_projection_checkpoint = projection_to_checkpoint(
+            build_projection(build_graph_catalog(), stored_events)
+        )
 
         await store.rebuild_read_models(run_id)
         checkpoint = await store.read_projection_checkpoint(run_id)
@@ -140,7 +145,9 @@ async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
         )
 
         compact_events = await store.read_run_summary_rebuild(run_id)
-        compact_projection_checkpoint = projection_to_checkpoint(build_projection(compact_events))
+        compact_projection_checkpoint = projection_to_checkpoint(
+            build_projection(build_graph_catalog(), compact_events)
+        )
         assert compact_projection_checkpoint == full_projection_checkpoint, (
             f"{path.name}::{scenario['name']} compact projection replay diverged"
         )

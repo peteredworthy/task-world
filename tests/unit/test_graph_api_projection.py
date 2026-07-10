@@ -18,6 +18,7 @@ from orchestrator.api import (
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime.store import GraphEventStore, GraphNodeDetailSummary
 from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.graph import build_graph_catalog
 
 
 def _event(
@@ -636,7 +637,10 @@ def test_batch_graph_backed_detection_ignores_legacy_aggregates() -> None:
 async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_patches(
     session: AsyncSession,
 ) -> None:
-    store = GraphEventStore(session)
+    store = GraphEventStore(
+        session,
+        build_graph_catalog(),
+    )
     events = [
         _event(
             "graph_patch_proposed",

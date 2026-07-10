@@ -17,6 +17,7 @@ from orchestrator.graph import (
     initial_projection,
     reduce_event,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def test_lease_granted_payload_normalizes_legacy_keys_to_extra() -> None:
@@ -91,6 +92,7 @@ def test_terminal_lease_payloads_preserve_known_metadata_and_legacy_extra() -> N
 
 def test_lease_reducers_tolerate_legacy_payloads_through_typed_models() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "node_created",
@@ -106,6 +108,7 @@ def test_lease_reducers_tolerate_legacy_payloads_through_typed_models() -> None:
     )
 
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event(
             "lease_granted",
@@ -132,6 +135,7 @@ def test_lease_reducers_tolerate_legacy_payloads_through_typed_models() -> None:
     ]
 
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event(
             "lease_renewed",
@@ -152,6 +156,7 @@ def test_lease_reducers_tolerate_legacy_payloads_through_typed_models() -> None:
         start=4,
     ):
         projection = reduce_event(
+            build_graph_catalog(),
             projection,
             _event(
                 event_type,
@@ -210,7 +215,7 @@ def test_schedule_produces_lease_payload_validated_by_typed_model() -> None:
 def _project(events: list[EventEnvelope]) -> Any:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

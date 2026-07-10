@@ -11,6 +11,7 @@ from orchestrator.graph.models import FileStateRecord, GapClassificationRecord
 from orchestrator.graph.patch_validator import PLANNER_OPS
 from orchestrator.graph.projections import project_planner_freshness_packet
 from orchestrator.graph_runtime.horizon_templates import horizon_region_templates
+from orchestrator.graph import build_graph_catalog
 
 if TYPE_CHECKING:
     from orchestrator.graph_runtime.dispatch import GraphDispatchContext
@@ -472,7 +473,7 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
         "bound_requirements": list(context.requirements),
         "frontier": frontier,
         "evidence": evidence,
-        "freshness": project_planner_freshness_packet(events),
+        "freshness": project_planner_freshness_packet(build_graph_catalog(), events),
         "open_planner_proposals": proposals["open_proposals"],
         "accepted_planner_patches": proposals["accepted_patches"],
         "patch_rejections": proposals["patch_rejections"],

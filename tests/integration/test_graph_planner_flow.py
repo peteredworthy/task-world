@@ -75,12 +75,16 @@ async def test_planner_chain_two_horizons_end_to_end(tmp_path: Path) -> None:
         )
         events = await _drive_region(session_factory, controller, run_id, events, "h2")
 
-        assert project_run_state(events) == "completed"
-        assert project_planner_chain(events)[-1]["successor_node_id"] is None
+        assert project_run_state(build_graph_catalog(), events) == "completed"
+        assert project_planner_chain(build_graph_catalog(), events)[-1]["successor_node_id"] is None
 
         replayed = await _read_events(session_factory, run_id)
-        assert project_run_state(replayed) == project_run_state(events)
-        assert project_planner_chain(replayed) == project_planner_chain(events)
+        assert project_run_state(build_graph_catalog(), replayed) == project_run_state(
+            build_graph_catalog(), events
+        )
+        assert project_planner_chain(build_graph_catalog(), replayed) == project_planner_chain(
+            build_graph_catalog(), events
+        )
     finally:
         await engine.dispose()
 
@@ -135,7 +139,7 @@ async def test_budget_exhaustion_routes_to_gate_through_controller(tmp_path: Pat
             and event.payload.get("role") == "planner_generation_budget_gate"
             for event in events
         )
-        assert project_run_state(events) != "completed"
+        assert project_run_state(build_graph_catalog(), events) != "completed"
     finally:
         await engine.dispose()
 
@@ -351,7 +355,10 @@ async def _read_events(
     run_id: str,
 ) -> list[EventEnvelope]:
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 def _patch_payload(

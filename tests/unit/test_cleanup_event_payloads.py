@@ -14,6 +14,7 @@ from orchestrator.graph import (
     initial_projection,
     reduce_event,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def test_cleanup_requested_payload_normalizes_legacy_free_form_keys_to_extra() -> None:
@@ -68,11 +69,13 @@ def test_cleanup_applied_payload_normalizes_legacy_free_form_keys_to_extra() -> 
 
 def test_cleanup_reducers_tolerate_legacy_payloads_through_typed_models() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _file_state_event("file-state-1", "snapshot-1", ["secrets.env"]),
     )
 
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event(
             "cleanup_requested",
@@ -98,6 +101,7 @@ def test_cleanup_reducers_tolerate_legacy_payloads_through_typed_models() -> Non
     }
 
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event(
             "cleanup_applied",
@@ -167,7 +171,7 @@ def test_cleanup_producers_emit_payloads_validated_by_typed_models() -> None:
 def _project(events: list[EventEnvelope]) -> Any:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

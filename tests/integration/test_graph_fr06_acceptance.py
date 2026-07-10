@@ -309,7 +309,10 @@ async def _seed_fr06_graph(
     run_id: str,
 ) -> None:
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, _fr06_events(run_id))
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, _fr06_events(run_id))
         await session.commit()
 
 

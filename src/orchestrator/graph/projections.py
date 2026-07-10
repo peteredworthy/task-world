@@ -6,6 +6,7 @@ from typing import Any, Iterable, Literal, TypedDict, cast
 
 from pydantic import ConfigDict, field_validator
 
+from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.command_bindings import check_command_reference
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
@@ -1814,15 +1815,24 @@ def _pending_gate_decision_payload(
     return cast(PendingGateDecision, details.model_dump(mode="json"))
 
 
-def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
+def reduce_event(
+    catalog: GraphCatalog,
+    state: GraphProjection,
+    event: EventEnvelope,
+) -> GraphProjection:
     # Mixed persistence boundary: catalog-owned events hydrate exactly once;
     # future-domain events continue through the legacy raw reducer below.
-    from orchestrator.graph.catalog import build_graph_catalog
-
-    handled, reduced = build_graph_catalog().reduce_stored_event(state, event)
+    handled, reduced = catalog.reduce_stored_event(state, event)
     if handled:
         return cast(GraphProjection, reduced)
+    return reduce_legacy_event(state, event)
 
+
+def reduce_legacy_event(
+    state: GraphProjection,
+    event: EventEnvelope,
+) -> GraphProjection:
+    """Fold one event that is not owned by the injected typed catalog."""
     next_state: GraphProjection = {
         "run_state": state["run_state"],
         "node_states": dict(state["node_states"]),
@@ -2327,11 +2337,12 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
 
 
 def project_run_state(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
     *,
     projection: GraphProjection | None = None,
 ) -> str | None:
-    projection = projection if projection is not None else _project(events)
+    projection = projection if projection is not None else _project(catalog, events)
     run_state = projection["run_state"]
     blockers = final_invariant_blockers_for_events(events, projection)
     if run_state == "completed":
@@ -2349,11 +2360,12 @@ def project_run_state(
 
 
 def project_final_invariant_blockers(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
     *,
     projection: GraphProjection | None = None,
 ) -> list[FinalInvariantBlocker]:
-    proj = projection if projection is not None else _project(events)
+    proj = projection if projection is not None else _project(catalog, events)
     return final_invariant_blockers_for_events(events, proj)
 
 
@@ -3191,8 +3203,10 @@ def _requirement_priority(payload: dict[str, Any]) -> str | None:
     return None
 
 
-def project_planner_chain(events: list[EventEnvelope]) -> list[dict[str, Any]]:
-    projection = _project(events)
+def project_planner_chain(
+    catalog: GraphCatalog, events: list[EventEnvelope]
+) -> list[dict[str, Any]]:
+    projection = _project(catalog, events)
     planner_ids = [
         node_id
         for node_id, kind in projection["node_kinds"].items()
@@ -3220,8 +3234,8 @@ def project_planner_chain(events: list[EventEnvelope]) -> list[dict[str, Any]]:
     ]
 
 
-def project_planner_session(events: list[EventEnvelope]) -> dict[str, Any]:
-    projection = _project(events)
+def project_planner_session(catalog: GraphCatalog, events: list[EventEnvelope]) -> dict[str, Any]:
+    projection = _project(catalog, events)
     session_ids = list(projection["planner_session_states"])
     if not session_ids:
         session_ids = list(projection["planner_sessions"].values())
@@ -3264,20 +3278,22 @@ def project_planner_session(events: list[EventEnvelope]) -> dict[str, Any]:
 
 
 def project_node_states(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
     *,
     projection: GraphProjection | None = None,
 ) -> dict[str, str]:
-    proj = projection if projection is not None else _project(events)
+    proj = projection if projection is not None else _project(catalog, events)
     return proj["node_states"]
 
 
 def project_node_metadata(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
     *,
     projection: GraphProjection | None = None,
 ) -> dict[str, dict[str, Any]]:
-    projection = projection if projection is not None else _project(events)
+    projection = projection if projection is not None else _project(catalog, events)
     metadata: dict[str, dict[str, Any]] = {}
     for node_id in projection["node_states"]:
         kind = projection["node_kinds"].get(node_id)
@@ -3307,8 +3323,8 @@ def project_node_metadata(
     return metadata
 
 
-def project_graph_topology(events: list[EventEnvelope]) -> GraphTopologyView:
-    projection = _project(events)
+def project_graph_topology(catalog: GraphCatalog, events: list[EventEnvelope]) -> GraphTopologyView:
+    projection = _project(catalog, events)
     record_summaries = _record_summaries_by_id(projection)
     _add_record_summary_positions(record_summaries, events)
     nodes: list[GraphTopologyNode] = []
@@ -3464,18 +3480,21 @@ def _patch_id(payload: dict[str, Any]) -> str | None:
 
 
 def project_task_states(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
     *,
     projection: GraphProjection | None = None,
 ) -> dict[str, str]:
-    proj = projection if projection is not None else _project(events)
+    proj = projection if projection is not None else _project(catalog, events)
     return proj["task_states"]
 
 
-def project_requirement_revisions(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
+def project_requirement_revisions(
+    catalog: GraphCatalog, events: list[EventEnvelope]
+) -> dict[str, dict[str, Any]]:
     return {
         version_id: revision.model_dump(mode="json")
-        for version_id, revision in _project(events)["requirement_revisions"].items()
+        for version_id, revision in _project(catalog, events)["requirement_revisions"].items()
     }
 
 
@@ -3499,9 +3518,10 @@ def support_evidence_freshness_from_projection(
 
 
 def project_support_evidence_freshness(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
 ) -> dict[str, SupportEvidenceFreshness]:
-    return support_evidence_freshness_from_projection(_project(events))
+    return support_evidence_freshness_from_projection(_project(catalog, events))
 
 
 def requirement_freshness_facts_from_projection(
@@ -3553,14 +3573,17 @@ def requirement_freshness_facts_from_projection(
 
 
 def project_requirement_freshness_facts(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
 ) -> list[RequirementFreshnessFact]:
-    return requirement_freshness_facts_from_projection(_project(events))
+    return requirement_freshness_facts_from_projection(_project(catalog, events))
 
 
-def project_planner_freshness_packet(events: list[EventEnvelope]) -> dict[str, Any]:
+def project_planner_freshness_packet(
+    catalog: GraphCatalog, events: list[EventEnvelope]
+) -> dict[str, Any]:
     """Expose compact requirement/evidence freshness facts for gap planners."""
-    facts = project_requirement_freshness_facts(events)
+    facts = project_requirement_freshness_facts(catalog, events)
     return {
         "requirement_freshness": facts,
         "unsupported_requirement_ids": [
@@ -3576,24 +3599,27 @@ def project_planner_freshness_packet(events: list[EventEnvelope]) -> dict[str, A
 
 
 def project_leases(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
     *,
     projection: GraphProjection | None = None,
 ) -> dict[str, dict[str, Any]]:
-    proj = projection if projection is not None else _project(events)
+    proj = projection if projection is not None else _project(catalog, events)
     return {lease_id: lease.model_dump(mode="json") for lease_id, lease in proj["leases"].items()}
 
 
 def project_ready_nodes(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
     *,
     projection: GraphProjection | None = None,
 ) -> list[str]:
-    proj = projection if projection is not None else _project(events)
+    proj = projection if projection is not None else _project(catalog, events)
     return proj["ready_nodes"]
 
 
 def project_scheduler_view(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
     *,
     projection: GraphProjection | None = None,
@@ -3605,9 +3631,9 @@ def project_scheduler_view(
     even when a node is still ready but blocked by a transient scheduler
     precondition such as a resource conflict.
     """
-    proj = projection if projection is not None else _project(events)
-    node_states = project_node_states(events, projection=proj)
-    ready = sorted(project_ready_nodes(events, projection=proj))
+    proj = projection if projection is not None else _project(catalog, events)
+    node_states = project_node_states(catalog, events, projection=proj)
+    ready = sorted(project_ready_nodes(catalog, events, projection=proj))
     latest_deferrals = _latest_node_deferrals(events)
     view: SchedulerView = {
         "ready": ready,
@@ -3632,11 +3658,12 @@ def project_scheduler_view(
 
 
 def project_lease_view(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
     *,
     projection: GraphProjection | None = None,
 ) -> LeaseView:
-    leases = project_leases(events, projection=projection)
+    leases = project_leases(catalog, events, projection=projection)
     view: LeaseView = {"active": [], "suspended": []}
     for lease_id in sorted(leases):
         lease = leases[lease_id]
@@ -3662,12 +3689,13 @@ def project_lease_view(
 
 
 def project_decision_view(
+    catalog: GraphCatalog,
     events: list[EventEnvelope],
     *,
     projection: GraphProjection | None = None,
 ) -> DecisionView:
     """Project human decisions, appeal outcomes, and review readiness."""
-    projection = projection if projection is not None else _project(events)
+    projection = projection if projection is not None else _project(catalog, events)
     return project_decision_view_from_projection(projection)
 
 
@@ -3742,10 +3770,12 @@ def project_decision_view_from_projection(projection: GraphProjection) -> Decisi
     }
 
 
-def project_residue_report(events: list[EventEnvelope]) -> dict[str, list[dict[str, Any]]]:
+def project_residue_report(
+    catalog: GraphCatalog, events: list[EventEnvelope]
+) -> dict[str, list[dict[str, Any]]]:
     """Project accepted file-state residue classifications by path."""
     report: dict[str, list[dict[str, Any]]] = {}
-    for record in _project(events)["file_state_records"].values():
+    for record in _project(catalog, events)["file_state_records"].values():
         entries = record.residue or record.classifications
         for raw_entry in entries:
             entry = _file_entry_dict(raw_entry)
@@ -4098,14 +4128,14 @@ def project_gatekeeper_report(events: list[EventEnvelope]) -> dict[str, dict[str
     return reports
 
 
-def _project(events: list[EventEnvelope]) -> GraphProjection:
+def _project(catalog: GraphCatalog, events: list[EventEnvelope]) -> GraphProjection:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(catalog, projection, event)
     return projection
 
 
-def build_projection(events: list[EventEnvelope]) -> GraphProjection:
+def build_projection(catalog: GraphCatalog, events: list[EventEnvelope]) -> GraphProjection:
     """Fold *events* into a full :class:`GraphProjection`.
 
     Public entry point for callers (e.g. read-model presenters) that need to
@@ -4113,7 +4143,7 @@ def build_projection(events: list[EventEnvelope]) -> GraphProjection:
     ``project_*`` view functions via their ``projection=`` argument, avoiding
     a full re-fold per view.
     """
-    return _project(events)
+    return _project(catalog, events)
 
 
 def _has_full_event_history(events: list[EventEnvelope]) -> bool:

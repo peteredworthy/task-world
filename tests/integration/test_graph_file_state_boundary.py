@@ -213,7 +213,7 @@ async def test_file_state_boundary_accepts_residue_and_snapshots_captured_tree(
     assert not (repo / "__pycache__" / "app.cpython-312.pyc").exists()
     assert (repo / "ignored.log").read_text() == "ignored but captured\n"
 
-    report = project_residue_report(events)
+    report = project_residue_report(build_graph_catalog(), events)
     assert report["residue.txt"][0]["classification"] == "unknown_untracked"
     assert report["ignored.log"][0]["classification"] == "unknown_ignored"
 
@@ -251,16 +251,23 @@ async def test_secret_file_state_rejection_releases_lease_and_retries_clean_atte
         event.event_type == "node_state_changed" and event.payload.get("new_state") == "completed"
         for event in events
     )
-    assert project_node_states(events)["worker-step-1-task-1"] == "ready"
-    assert not any(lease.get("state") == "active" for lease in project_leases(events).values())
+    assert project_node_states(build_graph_catalog(), events)["worker-step-1-task-1"] == "ready"
+    assert not any(
+        lease.get("state") == "active"
+        for lease in project_leases(build_graph_catalog(), events).values()
+    )
 
     await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
 
     retried_events = await _read_events(session_factory, run_id)
     accepted = next(event for event in retried_events if event.event_type == "file_state_accepted")
-    assert project_node_states(retried_events)["worker-step-1-task-1"] == "completed"
+    assert (
+        project_node_states(build_graph_catalog(), retried_events)["worker-step-1-task-1"]
+        == "completed"
+    )
     assert not any(
-        lease.get("state") == "active" for lease in project_leases(retried_events).values()
+        lease.get("state") == "active"
+        for lease in project_leases(build_graph_catalog(), retried_events).values()
     )
     assert "fake_key.pem" not in _tree_paths(repo, str(accepted.payload["git"]["commit_sha"]))
 
@@ -378,7 +385,10 @@ async def _read_events(
     run_id: str,
 ):
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 def _routine() -> RoutineConfig:

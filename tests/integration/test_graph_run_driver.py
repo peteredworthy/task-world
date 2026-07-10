@@ -323,7 +323,10 @@ async def _events(
     run_id: str,
 ):
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 def _graph_event(
@@ -374,8 +377,8 @@ async def test_driver_runs_single_worker_verifier_to_accepted(
 
     events = await _events(session_factory, run_id)
     assert dispatch_order == ["worker", "verifier"]
-    assert project_task_states(events) == {"step-1/task-1": "accepted"}
-    assert project_run_state(events) == "completed"
+    assert project_task_states(build_graph_catalog(), events) == {"step-1/task-1": "accepted"}
+    assert project_run_state(build_graph_catalog(), events) == "completed"
     assert outcome.completed is True
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
 
@@ -524,7 +527,10 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
         ),
     ]
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, events)
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, events)
         await session.commit()
 
     controller = GraphController(
@@ -572,7 +578,10 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
         and event.payload.get("port") == "check_result"
         for event in final_events
     )
-    assert project_task_states(final_events)["region-final-invariant"] == "accepted"
+    assert (
+        project_task_states(build_graph_catalog(), final_events)["region-final-invariant"]
+        == "accepted"
+    )
     assert outcome.completed is False
     assert outcome.blocked_reason is not None
     assert "ready node(s) not dispatched" not in outcome.blocked_reason
@@ -702,7 +711,7 @@ async def test_driver_planner_run_completes_only_when_no_pending_planner(
 
     events = await _events(session_factory, run_id)
     assert dispatch_order == ["planner", "worker", "verifier"]
-    assert project_run_state(events) == "completed"
+    assert project_run_state(build_graph_catalog(), events) == "completed"
     assert outcome.completed is True
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
 
@@ -813,7 +822,9 @@ async def test_operator_resume_reopens_failed_graph_run(
     await _seed_and_force_failed_graph(
         session_factory, routine, run_id=run_id, clock=clock, ids=ids
     )
-    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+    assert (
+        project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) == "failed"
+    )
 
     # Drive the run row to FAILED (operator-visible terminal state).
     async with session_factory() as session:
@@ -828,7 +839,9 @@ async def test_operator_resume_reopens_failed_graph_run(
         service = WorkflowService(session)
         await service.apply_resume_run(run_id, resume_strategy="continue")
     assert await _run_status(session_factory, run_id) == RunStatus.ACTIVE
-    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+    assert (
+        project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) == "failed"
+    )
 
     # Re-arming the driver issues the kernel resume command so the graph reopens
     # and the previously-stranded worker node becomes schedulable again.
@@ -844,7 +857,7 @@ async def test_operator_resume_reopens_failed_graph_run(
     await driver.run(run_id)
 
     events_after = await _events(session_factory, run_id)
-    assert project_run_state(events_after) != "failed"
+    assert project_run_state(build_graph_catalog(), events_after) != "failed"
     assert "worker" in dispatch_order
 
 
@@ -886,7 +899,9 @@ async def test_driver_does_not_reopen_failed_graph_without_operator_resume(
 
     # The kernel stays failed and nothing dispatches: an un-resumed FAILED run
     # is never silently reopened by the driver.
-    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+    assert (
+        project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) == "failed"
+    )
     assert dispatch_order == []
 
 
@@ -924,7 +939,9 @@ async def test_driver_does_not_reopen_crash_window_stranded_active_run(
         service = WorkflowService(session)
         await service.apply_start_run(run_id)
     assert await _run_status(session_factory, run_id) == RunStatus.ACTIVE
-    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+    assert (
+        project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) == "failed"
+    )
     async with session_factory() as session:
         stranded = await RunRepository(session).get(run_id)
     assert stranded.pause_reason != GRAPH_OPERATOR_REOPEN_PAUSE_REASON
@@ -943,7 +960,7 @@ async def test_driver_does_not_reopen_crash_window_stranded_active_run(
     events_after = await _events(session_factory, run_id)
     # Kernel stays failed, nothing dispatched, no reopen (resuming) transition,
     # and the row self-heals to FAILED.
-    assert project_run_state(events_after) == "failed"
+    assert project_run_state(build_graph_catalog(), events_after) == "failed"
     assert dispatch_order == []
     # A "resuming" lifecycle transition is produced ONLY by the reopen path's
     # kernel resume command, so its absence proves no reopen was issued.
@@ -1009,7 +1026,9 @@ async def test_operator_reopen_marker_is_consumed_once(
     async with session_factory() as session:
         after = await RunRepository(session).get(run_id)
     assert after.pause_reason != GRAPH_OPERATOR_REOPEN_PAUSE_REASON
-    assert project_run_state(await _events(session_factory, run_id)) != "failed"
+    assert (
+        project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) != "failed"
+    )
     assert "worker" in dispatch_order
 
 
@@ -1060,7 +1079,9 @@ async def test_recover_run_then_resume_reopens_failed_graph_run(
         recovered = await RunRepository(session).get(run_id)
     assert recovered.status == RunStatus.PAUSED
     assert recovered.pause_reason == "recovered"
-    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+    assert (
+        project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) == "failed"
+    )
 
     # Operator resume takes the ordinary PAUSED -> ACTIVE branch, but the reopen
     # marker must still be stamped because this is a graph run.
@@ -1071,7 +1092,9 @@ async def test_recover_run_then_resume_reopens_failed_graph_run(
         resumed = await RunRepository(session).get(run_id)
     assert resumed.status == RunStatus.ACTIVE
     assert resumed.pause_reason == GRAPH_OPERATOR_REOPEN_PAUSE_REASON
-    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+    assert (
+        project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) == "failed"
+    )
 
     # Re-arming the driver issues the kernel resume: the graph reopens instead of
     # self-healing back to FAILED, and the worker node becomes schedulable again.
@@ -1086,7 +1109,9 @@ async def test_recover_run_then_resume_reopens_failed_graph_run(
     )
     await driver.run(run_id)
 
-    assert project_run_state(await _events(session_factory, run_id)) != "failed"
+    assert (
+        project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) != "failed"
+    )
     assert "worker" in dispatch_order
     async with session_factory() as session:
         after = await RunRepository(session).get(run_id)
@@ -1139,7 +1164,9 @@ async def test_clarification_resume_does_not_reopen_recovered_failed_graph(
         recovered = await RunRepository(session).get(run_id)
     assert recovered.status == RunStatus.PAUSED
     assert recovered.pause_reason == "recovered"
-    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+    assert (
+        project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) == "failed"
+    )
 
     # The clarification-response endpoint gates its auto-resume on this guard.
     # "recovered" is not a clarification/user-action pause reason, so the resume
@@ -1160,7 +1187,9 @@ async def test_clarification_resume_does_not_reopen_recovered_failed_graph(
     assert after.status == RunStatus.PAUSED
     assert after.pause_reason == "recovered"
     assert after.pause_reason != GRAPH_OPERATOR_REOPEN_PAUSE_REASON
-    assert project_run_state(await _events(session_factory, run_id)) == "failed"
+    assert (
+        project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) == "failed"
+    )
 
 
 def test_is_clarification_pause_reason_classification() -> None:

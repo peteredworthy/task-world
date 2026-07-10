@@ -12,6 +12,7 @@ from orchestrator.graph import (
     projection_from_checkpoint,
 )
 from orchestrator.graph_runtime.store import _lease_view_from_projection
+from orchestrator.graph import build_graph_catalog
 
 
 def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnvelope:
@@ -53,7 +54,7 @@ def test_scheduler_view_buckets_deferral_reasons() -> None:
         _event("node_state_changed", {"node_id": "ready-node", "new_state": "ready"}, 10),
     ]
 
-    view = project_scheduler_view(events)
+    view = project_scheduler_view(build_graph_catalog(), events)
 
     assert view["ready"] == ["ready-node"]
     assert view["blocked"] == [
@@ -80,7 +81,7 @@ def test_scheduler_view_buckets_ready_resource_deferral() -> None:
         ),
     ]
 
-    view = project_scheduler_view(events)
+    view = project_scheduler_view(build_graph_catalog(), events)
 
     assert view["ready"] == ["writer-b"]
     assert view["waiting_resources"] == [
@@ -121,7 +122,7 @@ def test_lease_view_reports_active_and_suspended() -> None:
         _event("lease_suspended", {"lease_id": "lease-suspended"}, 5),
     ]
 
-    view = project_lease_view(events)
+    view = project_lease_view(build_graph_catalog(), events)
 
     assert view["active"] == [
         {
@@ -159,5 +160,5 @@ def test_snapshot_lease_view_filters_partial_leases_like_public_projector() -> N
 
     expected = {"active": [], "suspended": []}
 
-    assert project_lease_view([], projection=projection) == expected
-    assert _lease_view_from_projection(projection) == expected
+    assert project_lease_view(build_graph_catalog(), [], projection=projection) == expected
+    assert _lease_view_from_projection(build_graph_catalog(), projection) == expected

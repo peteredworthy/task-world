@@ -12,6 +12,7 @@ from orchestrator.graph import (
     reduce_event,
 )
 from tests.graph_command_support import dispatch_graph_command
+from orchestrator.graph import build_graph_catalog
 
 
 def test_successor_inherits_session_id() -> None:
@@ -141,7 +142,7 @@ def test_project_planner_session() -> None:
     )
     events = [*events, *_append(events, schedule)]
 
-    assert project_planner_session(events) == {
+    assert project_planner_session(build_graph_catalog(), events) == {
         "session_id": "session-1",
         "state": "attached",
         "generations": [
@@ -280,7 +281,7 @@ def _apply(
 def _project(events: list[EventEnvelope]) -> Any:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

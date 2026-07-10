@@ -177,6 +177,7 @@ from orchestrator.git import (
 )
 from orchestrator.git.worktree import WorktreeManager
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
+from orchestrator.graph import build_graph_catalog
 
 
 @dataclass
@@ -1178,8 +1179,11 @@ class WorkflowService:
         # spurious reopen marker on an ordinary pause/resume cycle.
         reopen_marker: str | None = None
         if _is_graph_run(run):
-            graph_events = await GraphEventStore(self._session).read_run(run_id)
-            if project_run_state(graph_events) in {"failed", "resuming"}:
+            graph_events = await GraphEventStore(
+                self._session,
+                build_graph_catalog(),
+            ).read_run(run_id)
+            if project_run_state(build_graph_catalog(), graph_events) in {"failed", "resuming"}:
                 reopen_marker = GRAPH_OPERATOR_REOPEN_PAUSE_REASON
         events = await handle_update_run_status(
             UpdateRunStatusCommand(

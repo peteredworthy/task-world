@@ -563,7 +563,7 @@ def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loo
     ]
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     expired_snapshot = _snapshot_from_events(events)
     context = CommandExecutionContext(
         run_id="run-1",

@@ -111,7 +111,10 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
             source_ref="test-ref",
         )
         async with session_factory() as session:
-            stored_events = await GraphEventStore(session).read_run(run_id)
+            stored_events = await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).read_run(run_id)
             outbox_count_result = await session.execute(
                 select(func.count(GraphOutboxModel.outbox_id))
             )
@@ -119,7 +122,9 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
 
         assert result.projection_position == len(expected_events)
         assert stored_events == result.events
-        assert rebuild_projection(stored_events) == rebuild_projection(result.events)
+        assert rebuild_projection(build_graph_catalog(), stored_events) == rebuild_projection(
+            build_graph_catalog(), result.events
+        )
         snapshot = _node_event(stored_events, "routine-snapshot").payload["snapshot"]
         assert snapshot["source_path"] == "routines/demo-task.yaml"
         assert snapshot["source_ref"] == "test-ref"
@@ -193,7 +198,10 @@ async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) ->
             run_config=run_config,
         )
         async with session_factory() as session:
-            stored_events = await GraphEventStore(session).read_run("seed-dynamic-feature")
+            stored_events = await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).read_run("seed-dynamic-feature")
 
         planner = _node_event(stored_events, "planner-s-01").payload
         assert planner["dynamic_feature"] == run_config
@@ -419,9 +427,12 @@ async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(tmp_path
         elapsed_seconds = perf_counter() - started_at
 
         async with session_factory() as session:
-            stored_events = await GraphEventStore(session).read_run(run_id)
+            stored_events = await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).read_run(run_id)
 
-        projection = rebuild_projection(stored_events)
+        projection = rebuild_projection(build_graph_catalog(), stored_events)
         node_count = len(projection["node_kinds"])
         events_per_node = len(stored_events) / node_count
         ms_per_node = elapsed_seconds * 1000 / node_count
@@ -442,7 +453,7 @@ async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(tmp_path
 def _project(events: list[EventEnvelope]) -> GraphProjection:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

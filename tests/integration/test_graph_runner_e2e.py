@@ -358,7 +358,10 @@ async def _read_events(
     run_id: str,
 ):
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 async def _read_outbox_rows(
@@ -433,8 +436,8 @@ async def test_graph_runner_builder_verifier_pass_accepts_task(
     await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
 
     events = await _read_events(session_factory, run_id)
-    assert project_task_states(events) == {"step-1/task-1": "accepted"}
-    residue_report = project_residue_report(events)
+    assert project_task_states(build_graph_catalog(), events) == {"step-1/task-1": "accepted"}
+    residue_report = project_residue_report(build_graph_catalog(), events)
     assert residue_report["real-run-residue.txt"][0]["classification"] == "unknown_untracked"
 
 
@@ -507,7 +510,7 @@ async def test_graph_runner_verifier_fail_needs_revision(
     await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
 
     events = await _read_events(session_factory, run_id)
-    assert project_task_states(events) == {
+    assert project_task_states(build_graph_catalog(), events) == {
         "step-1/task-1": "needs_revision",
         "recovery-step-1-task-1": "pending",
     }
@@ -591,7 +594,7 @@ async def test_graph_runner_restart_reattaches_running_builder(
         )
 
         events = await _read_events(restarted_session_factory, run_id)
-        assert project_task_states(events) == {"step-1/task-1": "accepted"}
+        assert project_task_states(build_graph_catalog(), events) == {"step-1/task-1": "accepted"}
         assert not any(event.event_type == "agent_died" for event in events)
     finally:
         await restarted_engine.dispose()
@@ -664,7 +667,7 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
     )
 
     events = await _read_events(session_factory, run_id)
-    assert project_task_states(events) == {"step-1/task-1": "accepted"}
+    assert project_task_states(build_graph_catalog(), events) == {"step-1/task-1": "accepted"}
     assert any(event.event_type == "agent_died" for event in events)
 
 
@@ -763,7 +766,7 @@ async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
     dead_lease = next(
         event.payload for event in events_after_failure if event.event_type == "agent_died"
     )
-    leases_after_failure = project_leases(events_after_failure)
+    leases_after_failure = project_leases(build_graph_catalog(), events_after_failure)
     assert not any(
         lease.get("execution_id") == dead_lease["execution_id"] and lease.get("state") == "active"
         for lease in leases_after_failure.values()
@@ -786,7 +789,7 @@ async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
     await _schedule_dispatch_and_wait(controller, healthy_dispatcher, healthy_executor, run_id)
 
     events = await _read_events(session_factory, run_id)
-    assert project_task_states(events) == {"step-1/task-1": "accepted"}
+    assert project_task_states(build_graph_catalog(), events) == {"step-1/task-1": "accepted"}
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,7 @@ from orchestrator.graph import (
     project_residue_report,
     reduce_event,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
@@ -39,7 +40,7 @@ def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
         "gatekeeper_verdict_recorded",
         "gatekeeper_cost_recorded",
     ]
-    report = project_residue_report([*events, *emitted])
+    report = project_residue_report(build_graph_catalog(), [*events, *emitted])
     assert report["reports/result.xml"][0]["classification"] == "test_artifact"
     assert report["reports/result.xml"][0]["matched_rule"] == "gatekeeper:claude-test"
     assert report["reports/result.xml"][0]["needs_gatekeeper"] is False
@@ -385,7 +386,7 @@ def test_project_gatekeeper_report_hit_rate_and_growth() -> None:
 def _project(events: list[EventEnvelope]):
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

@@ -16,6 +16,7 @@ from orchestrator.graph import (
     initial_projection,
     reduce_event,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def test_appeal_opened_payload_normalizes_membership_and_patch_extras() -> None:
@@ -72,6 +73,7 @@ def test_decision_payloads_preserve_opaque_decider_scope_and_unknown_extra() -> 
 
 def test_decision_reducers_preserve_legacy_appeal_and_invalid_test_behavior() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "appeal_opened",
@@ -84,6 +86,7 @@ def test_decision_reducers_preserve_legacy_appeal_and_invalid_test_behavior() ->
         ),
     )
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event(
             "oversight_decision_recorded",
@@ -104,6 +107,7 @@ def test_decision_reducers_preserve_legacy_appeal_and_invalid_test_behavior() ->
 
 def test_oversight_reducer_uses_recognized_legacy_alias_after_obsolete_decision() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "oversight_decision_recorded",
@@ -156,6 +160,7 @@ def test_decision_producers_emit_typed_payloads() -> None:
 
 def test_sparse_oversight_decision_without_node_id_remains_replayable() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "oversight_decision_recorded",
@@ -170,7 +175,7 @@ def test_sparse_oversight_decision_without_node_id_remains_replayable() -> None:
 def _project(events: list[EventEnvelope]) -> Any:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

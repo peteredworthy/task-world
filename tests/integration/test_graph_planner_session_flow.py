@@ -79,7 +79,7 @@ async def test_two_horizon_chain_retains_one_session(tmp_path: Path) -> None:
         )
         events = await _drive_region(session_factory, controller, run_id, events, "h2")
 
-        session = project_planner_session(events)
+        session = project_planner_session(build_graph_catalog(), events)
         assert session["session_id"] == head_lease.payload["session_id"]
         assert successor_lease.payload["session_id"] == head_lease.payload["session_id"]
         assert successor_lease.payload["generation"] != head_lease.payload["generation"]
@@ -111,9 +111,15 @@ async def test_two_horizon_chain_retains_one_session(tmp_path: Path) -> None:
         )
 
         replayed = await _read_events(session_factory, run_id)
-        assert project_run_state(replayed) == project_run_state(events)
-        assert project_planner_session(replayed) == project_planner_session(events)
-        assert project_planner_chain(replayed) == project_planner_chain(events)
+        assert project_run_state(build_graph_catalog(), replayed) == project_run_state(
+            build_graph_catalog(), events
+        )
+        assert project_planner_session(build_graph_catalog(), replayed) == project_planner_session(
+            build_graph_catalog(), events
+        )
+        assert project_planner_chain(build_graph_catalog(), replayed) == project_planner_chain(
+            build_graph_catalog(), events
+        )
     finally:
         await engine.dispose()
 
@@ -192,8 +198,11 @@ async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> 
         )
         events = await _drive_region(session_factory, controller, run_id, events, "h2")
 
-        assert project_run_state(events) == "completed"
-        assert project_planner_session(events)["session_id"] == head_lease.payload["session_id"]
+        assert project_run_state(build_graph_catalog(), events) == "completed"
+        assert (
+            project_planner_session(build_graph_catalog(), events)["session_id"]
+            == head_lease.payload["session_id"]
+        )
     finally:
         await engine.dispose()
 
@@ -393,7 +402,10 @@ async def _read_events(
     run_id: str,
 ) -> list[EventEnvelope]:
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 def _patch_payload(

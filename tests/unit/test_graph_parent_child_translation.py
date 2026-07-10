@@ -15,6 +15,7 @@ from orchestrator.graph import (
     reduce_event,
 )
 from tests.graph_command_support import dispatch_graph_command
+from orchestrator.graph import build_graph_catalog
 
 
 def test_parent_child_routine_compiles_to_planner_chain() -> None:
@@ -103,7 +104,7 @@ def test_region_label_names_child_routine() -> None:
         ),
     ]
 
-    assert project_planner_chain(events) == [
+    assert project_planner_chain(build_graph_catalog(), events) == [
         {
             "node_id": "planner-parent",
             "generation_index": 0,
@@ -455,7 +456,7 @@ def _apply(
 def _project(events: list[EventEnvelope]) -> Any:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

@@ -15,6 +15,7 @@ from orchestrator.graph import (
     classify_file_state,
     project_residue_report,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def _path(
@@ -244,7 +245,7 @@ def test_project_residue_report_from_accepted_file_state_events() -> None:
         )
     ]
 
-    assert project_residue_report(events) == {
+    assert project_residue_report(build_graph_catalog(), events) == {
         "tmp.out": [
             {
                 "path": "tmp.out",

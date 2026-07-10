@@ -188,6 +188,7 @@ def test_empty_projection() -> None:
 
 def test_callback_idempotency_projection_uses_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "callback_accepted",
@@ -209,6 +210,7 @@ def test_callback_idempotency_projection_uses_typed_payload() -> None:
 
 def test_callback_idempotency_projection_checkpoint_round_trips_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "callback_accepted",
@@ -231,6 +233,7 @@ def test_callback_idempotency_projection_checkpoint_round_trips_typed_payload() 
 
 def test_malformed_callback_idempotency_payload_is_tolerated_without_raw_projection_entry() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "callback_accepted",
@@ -248,6 +251,7 @@ def test_malformed_callback_idempotency_payload_is_tolerated_without_raw_project
 
 def test_callback_idempotency_projection_allows_empty_callback_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "callback_accepted",
@@ -268,6 +272,7 @@ def test_callback_idempotency_projection_allows_empty_callback_payload() -> None
 
 def test_approval_decision_projection_uses_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "approval_decision_recorded",
@@ -291,6 +296,7 @@ def test_approval_decision_projection_uses_typed_payload() -> None:
 
 def test_authority_decision_projection_uses_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "authority_decision_recorded",
@@ -314,7 +320,9 @@ def test_authority_decision_projection_uses_typed_payload() -> None:
 
 def test_decision_projection_accepts_legacy_outcome_and_boolean_payloads() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         reduce_event(
+            build_graph_catalog(),
             initial_projection(),
             _event(
                 "approval_decision_recorded",
@@ -339,7 +347,9 @@ def test_decision_projection_accepts_legacy_outcome_and_boolean_payloads() -> No
 
 def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         reduce_event(
+            build_graph_catalog(),
             initial_projection(),
             _event(
                 "approval_decision_recorded",
@@ -374,6 +384,7 @@ def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
 
 def test_malformed_decision_payloads_are_tolerated_without_raw_projection_entries() -> None:
     folded = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "approval_decision_recorded",
@@ -384,6 +395,7 @@ def test_malformed_decision_payloads_are_tolerated_without_raw_projection_entrie
         ),
     )
     folded_oversight = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "oversight_decision_recorded",
@@ -456,7 +468,7 @@ def test_decision_view_behavior_is_preserved_with_typed_decision_projection() ->
 
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
 
     expected = [
@@ -467,7 +479,7 @@ def test_decision_view_behavior_is_preserved_with_typed_decision_projection() ->
         }
     ]
 
-    assert project_decision_view(events)["pending_gates"] == expected
+    assert project_decision_view(build_graph_catalog(), events)["pending_gates"] == expected
     assert project_decision_view_from_projection(restored)["pending_gates"] == expected
 
 
@@ -500,7 +512,7 @@ def test_decision_request_details_projection_checkpoint_round_trips_typed_payloa
             },
         ),
     ]:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     projected = projection["decision_request_details"]["human-gate-1"]
     assert isinstance(projected, PendingGateDecisionProjection)
@@ -549,6 +561,7 @@ def test_malformed_decision_request_details_checkpoint_entry_is_dropped() -> Non
 
 def test_environment_failure_projection_uses_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "environment_failure_accepted",
@@ -580,6 +593,7 @@ def test_environment_failure_projection_uses_typed_payload() -> None:
 
 def test_environment_failure_projection_checkpoint_round_trips_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "environment_failure_accepted",
@@ -624,7 +638,8 @@ def test_environment_failure_projection_preserves_missing_reason_as_typed_none()
         ),
     ]
     projection = reduce_event(
-        reduce_event(initial_projection(), events[0]),
+        build_graph_catalog(),
+        reduce_event(build_graph_catalog(), initial_projection(), events[0]),
         events[1],
     )
 
@@ -632,11 +647,12 @@ def test_environment_failure_projection_preserves_missing_reason_as_typed_none()
 
     assert isinstance(projected, EnvironmentFailureProjection)
     assert projected.reason is None
-    assert project_task_states(events)["task-1"] == "blocked_environment"
+    assert project_task_states(build_graph_catalog(), events)["task-1"] == "blocked_environment"
 
 
 def test_file_state_projection_uses_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _file_state_event("task-1", "cand-1", 21),
     )
@@ -652,8 +668,11 @@ def test_file_state_projection_uses_typed_payload() -> None:
 
 def test_file_state_projection_checkpoint_round_trips_typed_payload() -> None:
     projection = initial_projection()
-    projection = reduce_event(projection, _file_state_event("task-1", "cand-1", 21))
     projection = reduce_event(
+        build_graph_catalog(), projection, _file_state_event("task-1", "cand-1", 21)
+    )
+    projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event(
             "cleanup_requested",
@@ -679,6 +698,7 @@ def test_file_state_projection_checkpoint_round_trips_typed_payload() -> None:
 
 def test_residue_report_reads_typed_file_state_entries() -> None:
     report = project_residue_report(
+        build_graph_catalog(),
         [
             _event(
                 "file_state_accepted",
@@ -701,7 +721,7 @@ def test_residue_report_reads_typed_file_state_entries() -> None:
                     ],
                 },
             ).model_copy(update={"position": 22})
-        ]
+        ],
     )
 
     assert report["secrets.env"][0]["classification"] == "secret"
@@ -711,6 +731,7 @@ def test_residue_report_reads_typed_file_state_entries() -> None:
 
 def test_task_candidate_projection_uses_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "output_record_accepted",
@@ -737,6 +758,7 @@ def test_task_candidate_projection_uses_typed_payload() -> None:
 
 def test_task_candidate_projection_checkpoint_round_trips_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "output_record_accepted",
@@ -779,6 +801,7 @@ def test_malformed_task_candidate_checkpoint_entry_is_dropped() -> None:
 
 def test_verifier_verdict_projection_uses_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "verification_passed",
@@ -796,6 +819,7 @@ def test_verifier_verdict_projection_uses_typed_payload() -> None:
 
 def test_verifier_verdict_projection_checkpoint_round_trips_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "verification_failed",
@@ -830,6 +854,7 @@ def test_malformed_verifier_verdict_checkpoint_entry_is_dropped() -> None:
 
 def test_requirement_revision_projection_uses_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "requirement_revision_recorded",
@@ -885,7 +910,7 @@ def test_support_evidence_projection_checkpoint_round_trips_typed_payload() -> N
             },
         ).model_copy(update={"position": 39}),
     ]:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
     projected = restored["support_evidence"]["S-1"]
@@ -945,6 +970,7 @@ def test_malformed_requirement_and_support_checkpoint_entries_are_dropped() -> N
 
 def test_oversight_decision_projection_checkpoint_round_trips_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "oversight_decision_recorded",
@@ -1018,11 +1044,12 @@ def test_oversight_decision_approved_boolean_blocks_invalid_test() -> None:
         ).model_copy(update={"position": 2}),
     ]
 
-    assert project_task_states(events) == {"task-1": "blocked_invalid_test"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "blocked_invalid_test"}
 
 
 def test_malformed_file_state_payload_is_tolerated_without_raw_projection_entry() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "file_state_accepted",
@@ -1069,11 +1096,12 @@ def test_task_projection_accepts_file_state_via_producer_node_task_region_fallba
         ).model_copy(update={"position": 3}),
     ]
 
-    assert project_task_states(events) == {"task-1": "accepted"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "accepted"}
 
 
 def test_file_state_projection_normalizes_legacy_membership_candidate_id() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "file_state_accepted",
@@ -1095,6 +1123,7 @@ def test_file_state_projection_normalizes_legacy_membership_candidate_id() -> No
 
 def test_node_creation_projection_uses_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "node_created",
@@ -1134,6 +1163,7 @@ def test_node_creation_projection_uses_typed_payload() -> None:
 
 def test_node_creation_projection_checkpoint_round_trips_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "node_created",
@@ -1160,6 +1190,7 @@ def test_node_creation_projection_checkpoint_round_trips_typed_payload() -> None
 
 def test_malformed_node_created_payload_is_tolerated_without_raw_projection_entry() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "node_created",
@@ -1177,6 +1208,7 @@ def test_malformed_node_created_payload_is_tolerated_without_raw_projection_entr
 
 def test_malformed_environment_failure_payload_is_tolerated_without_raw_projection_entry() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "environment_failure_accepted",
@@ -1233,7 +1265,7 @@ def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
 
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     binding = projection["input_bindings"]["summarizer-1"]["source_records"]
     assert binding["binding_policy"] == "bind_all"
@@ -1281,7 +1313,7 @@ def test_edge_projection_uses_typed_payload_and_preserves_topology_shape() -> No
 
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     edge = projection["edges"]["edge-source-records"]
     assert isinstance(edge, EdgeProjection)
@@ -1291,7 +1323,7 @@ def test_edge_projection_uses_typed_payload_and_preserves_topology_shape() -> No
     }
     assert "unexpected_payload" not in edge
 
-    topology = project_graph_topology(events)
+    topology = project_graph_topology(build_graph_catalog(), events)
     topology_edge = topology["edges"][0]
     assert topology_edge["edge_id"] == "edge-source-records"
     assert topology_edge["required"] is False
@@ -1345,7 +1377,7 @@ def test_input_binding_projection_uses_typed_payload_and_drops_raw_event_extras(
             },
         ),
     ]:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     binding = projection["input_bindings"]["summarizer-1"]["source_records"]
     assert isinstance(binding, InputBindingProjection)
@@ -1384,7 +1416,7 @@ def test_edge_and_input_binding_projection_checkpoint_round_trips_typed_payloads
             },
         ),
     ]:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
 
@@ -1786,7 +1818,7 @@ def test_invalid_persisted_edge_selector_raises_projection_error() -> None:
     )
 
     with pytest.raises(ValueError, match="status"):
-        reduce_event(projection, event)
+        reduce_event(build_graph_catalog(), projection, event)
 
 
 def test_replay_determinism() -> None:
@@ -1800,13 +1832,13 @@ def test_replay_determinism() -> None:
     first = initial_projection()
     second = initial_projection()
     for event in events:
-        first = reduce_event(first, event)
-        second = reduce_event(second, event)
+        first = reduce_event(build_graph_catalog(), first, event)
+        second = reduce_event(build_graph_catalog(), second, event)
 
     assert first == second
-    assert project_run_state(events) == "active"
-    assert project_node_states(events) == {"worker-1": "ready"}
-    assert project_leases(events) == {
+    assert project_run_state(build_graph_catalog(), events) == "active"
+    assert project_node_states(build_graph_catalog(), events) == {"worker-1": "ready"}
+    assert project_leases(build_graph_catalog(), events) == {
         "lease-1": {
             "lease_id": "lease-1",
             "node_id": "worker-1",
@@ -1830,11 +1862,11 @@ def test_lease_projection_uses_typed_payload_and_preserves_public_shape() -> Non
         },
     )
 
-    projection = reduce_event(initial_projection(), event)
+    projection = reduce_event(build_graph_catalog(), initial_projection(), event)
     projected = projection["leases"]["lease-1"]
 
     assert isinstance(projected, LeaseProjection)
-    assert project_leases([], projection=projection) == {
+    assert project_leases(build_graph_catalog(), [], projection=projection) == {
         "lease-1": {
             "lease_id": "lease-1",
             "node_id": "worker-1",
@@ -1846,7 +1878,7 @@ def test_lease_projection_uses_typed_payload_and_preserves_public_shape() -> Non
             "kind": "worker",
         }
     }
-    assert project_lease_view([], projection=projection) == {
+    assert project_lease_view(build_graph_catalog(), [], projection=projection) == {
         "active": [
             {
                 "lease_id": "lease-1",
@@ -1865,6 +1897,7 @@ def test_lease_projection_checkpoint_round_trips_typed_payload_and_drops_malform
     None
 ):
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "lease_granted",
@@ -1931,7 +1964,7 @@ def test_output_record_payloads_are_typed_at_fold() -> None:
         },
     )
 
-    projection = reduce_event(initial_projection(), event)
+    projection = reduce_event(build_graph_catalog(), initial_projection(), event)
 
     payload = projection["output_record_payloads"]["summary-1"]
     assert isinstance(payload, OutputRecord)
@@ -1962,7 +1995,7 @@ def test_malformed_output_record_payload_is_tolerated_without_raw_projection_ent
         },
     )
 
-    projection = reduce_event(initial_projection(), event)
+    projection = reduce_event(build_graph_catalog(), initial_projection(), event)
 
     payload = projection["output_record_payloads"]["legacy-malformed-1"]
     assert isinstance(payload, LegacyOutputRecord)
@@ -2012,7 +2045,7 @@ def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
 
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
 
@@ -2062,7 +2095,7 @@ def test_verification_result_projections_are_typed_at_fold() -> None:
             },
         ),
     ]:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     passed = projection["passed_verification_results_by_record_id"]["verification-pass-1"]
     assert isinstance(passed, VerificationResultProjection)
@@ -2083,7 +2116,7 @@ def test_malformed_verification_result_payload_is_tolerated_without_projection_e
         _event("verification_passed", {"record_id": "missing-node"}),
         _event("verification_failed", {"node_id": "missing-record"}),
     ]:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     assert projection["passed_verification_results_by_record_id"] == {}
     assert projection["failed_verification_results_by_record_id"] == {}
@@ -2092,6 +2125,7 @@ def test_malformed_verification_result_payload_is_tolerated_without_projection_e
 def test_verification_result_checkpoint_round_trip_preserves_typed_payloads() -> None:
     projection = initial_projection()
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event(
             "verification_passed",
@@ -2116,6 +2150,7 @@ def test_verification_result_checkpoint_round_trip_preserves_typed_payloads() ->
 
 def test_check_result_projection_summary_is_typed_at_fold() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "output_record_accepted",
@@ -2154,6 +2189,7 @@ def test_check_result_projection_summary_is_typed_at_fold() -> None:
 
 def test_malformed_check_result_payload_folds_to_typed_unknown_summary() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "output_record_accepted",
@@ -2179,6 +2215,7 @@ def test_malformed_check_result_payload_folds_to_typed_unknown_summary() -> None
 
 def test_check_result_checkpoint_round_trip_preserves_typed_summary() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "output_record_accepted",
@@ -2459,7 +2496,7 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
     events = store.read_from("run-1")
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     legacy_accepted_by_port, legacy_failed_verifications, legacy_recovery_nodes = legacy_indexes(
         events
@@ -2532,7 +2569,7 @@ def test_residual_command_projection_fields_fold_incrementally() -> None:
 
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     assert projection["node_creation_positions"] == {"worker-1": 3}
     assert projection["completion_decision_passed"] is True
@@ -2576,7 +2613,7 @@ def test_cleanup_requested_events_checkpoint_round_trips_typed_envelopes() -> No
             },
         ).model_copy(update={"position": 9}),
     ]:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     projected = projection["cleanup_requested_events"]["cleanup-1"]
 
@@ -2637,7 +2674,7 @@ def test_requirement_revisions_replay_active_versions() -> None:
         ).model_copy(update={"position": 2}),
     ]
 
-    revisions = project_requirement_revisions(events)
+    revisions = project_requirement_revisions(build_graph_catalog(), events)
 
     assert revisions["R-1.v1"]["requirement_id"] == "R-1"
     assert revisions["R-1.v2"] == {
@@ -2650,7 +2687,7 @@ def test_requirement_revisions_replay_active_versions() -> None:
         "revision_index": 2,
         "validation_strengthening": True,
     }
-    assert project_requirement_freshness_facts(events) == [
+    assert project_requirement_freshness_facts(build_graph_catalog(), events) == [
         {
             "requirement_id": "R-1",
             "active_version_id": "R-1.v2",
@@ -2682,7 +2719,7 @@ def test_support_evidence_freshness_can_be_queried_from_projection() -> None:
         ).model_copy(update={"position": 2}),
     ]
     for event in events:
-        state = reduce_event(state, event)
+        state = reduce_event(build_graph_catalog(), state, event)
 
     assert support_evidence_freshness_from_projection(state) == {
         "S-1": {
@@ -2732,7 +2769,7 @@ def test_validation_strengthening_revision_invalidates_older_support_evidence() 
         ).model_copy(update={"position": 4}),
     ]
 
-    assert project_support_evidence_freshness(events) == {
+    assert project_support_evidence_freshness(build_graph_catalog(), events) == {
         "S-new": {
             "support_id": "S-new",
             "evidence_id": "E-new",
@@ -2777,7 +2814,7 @@ def test_semantic_and_new_behavior_revisions_require_explicit_authority() -> Non
         ).model_copy(update={"position": 2}),
     ]
 
-    facts = project_requirement_freshness_facts(events)
+    facts = project_requirement_freshness_facts(build_graph_catalog(), events)
 
     assert facts == [
         {
@@ -2828,7 +2865,7 @@ def test_planner_freshness_packet_is_compact_gap_planner_input() -> None:
         ).model_copy(update={"position": 3}),
     ]
 
-    assert project_planner_freshness_packet(events) == {
+    assert project_planner_freshness_packet(build_graph_catalog(), events) == {
         "requirement_freshness": [
             {
                 "requirement_id": "R-1",
@@ -2898,6 +2935,7 @@ def test_projection_immutability() -> None:
     }
 
     next_state = reduce_event(
+        build_graph_catalog(),
         state,
         _event("node_state_changed", {"node_id": "worker-1", "new_state": "running"}),
     )
@@ -2955,7 +2993,7 @@ def test_run_state_transitions() -> None:
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_run_state(events) == "completed"
+    assert project_run_state(build_graph_catalog(), events) == "completed"
 
 
 def test_final_invariant_blockers_are_projected_from_graph_events() -> None:
@@ -2990,7 +3028,9 @@ def test_final_invariant_blockers_are_projected_from_graph_events() -> None:
         ),
     ]
 
-    blockers: list[FinalInvariantBlocker] = project_final_invariant_blockers(events)
+    blockers: list[FinalInvariantBlocker] = project_final_invariant_blockers(
+        build_graph_catalog(), events
+    )
     assert blockers == [
         {
             "kind": "pending_planner_generation_budget_gate",
@@ -3052,7 +3092,9 @@ def test_final_invariant_blockers_include_generic_non_terminal_nodes() -> None:
         ),
     ]
 
-    blockers: list[FinalInvariantBlocker] = project_final_invariant_blockers(events)
+    blockers: list[FinalInvariantBlocker] = project_final_invariant_blockers(
+        build_graph_catalog(), events
+    )
 
     assert blockers == [
         {
@@ -3116,10 +3158,10 @@ def test_check_only_task_region_uses_contract_fulfillment() -> None:
         ),
     ]
 
-    blockers = project_final_invariant_blockers(events)
+    blockers = project_final_invariant_blockers(build_graph_catalog(), events)
 
     assert blockers == []
-    assert project_task_states(events) == {"task-check-only": "accepted"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-check-only": "accepted"}
 
 
 def test_check_only_task_region_missing_contract_output_is_blocked() -> None:
@@ -3136,7 +3178,7 @@ def test_check_only_task_region_missing_contract_output_is_blocked() -> None:
         ),
     ]
 
-    blockers = project_final_invariant_blockers(events)
+    blockers = project_final_invariant_blockers(build_graph_catalog(), events)
 
     assert {
         "kind": "node_unfulfilled",
@@ -3180,7 +3222,7 @@ def test_final_invariant_blockers_explain_required_edge_with_missing_producer() 
         ),
     ]
 
-    blockers = project_final_invariant_blockers(events)
+    blockers = project_final_invariant_blockers(build_graph_catalog(), events)
 
     assert {
         "kind": "impossible_input",
@@ -3228,7 +3270,7 @@ def test_gap_planner_task_region_uses_contract_fulfillment() -> None:
         ),
     ]
 
-    blockers = project_final_invariant_blockers(events)
+    blockers = project_final_invariant_blockers(build_graph_catalog(), events)
 
     assert {
         "kind": "task_not_accepted",
@@ -3237,7 +3279,7 @@ def test_gap_planner_task_region_uses_contract_fulfillment() -> None:
         "state": "pending",
     } in blockers
     assert all(blocker.get("task_region_id") != "task-gap-only" for blocker in blockers)
-    assert project_task_states(events) == {
+    assert project_task_states(build_graph_catalog(), events) == {
         "task-gap-only": "accepted",
         "task-planner-only": "pending",
     }
@@ -3267,7 +3309,7 @@ def test_active_nonterminal_random_graph_shapes_have_explicit_blockers() -> None
             events.append(_event("node_created", payload))
             expected_node_ids.add(node_id)
 
-        blockers = project_final_invariant_blockers(events)
+        blockers = project_final_invariant_blockers(build_graph_catalog(), events)
         blocker_node_ids = {
             node_id for blocker in blockers if isinstance((node_id := blocker.get("node_id")), str)
         }
@@ -3298,7 +3340,7 @@ def test_decision_view_projects_human_gate_and_authority_request() -> None:
         ),
     ]
 
-    view = project_decision_view(events)
+    view = project_decision_view(build_graph_catalog(), events)
 
     assert view["pending_gates"] == [
         {
@@ -3335,7 +3377,7 @@ def test_decision_view_clears_resolved_authority_request() -> None:
         ),
     ]
 
-    assert project_decision_view(events)["pending_gates"] == []
+    assert project_decision_view(build_graph_catalog(), events)["pending_gates"] == []
 
 
 def test_completed_lifecycle_projects_active_while_final_blockers_remain() -> None:
@@ -3353,7 +3395,7 @@ def test_completed_lifecycle_projects_active_while_final_blockers_remain() -> No
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_final_invariant_blockers(events) == [
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
         {
             "kind": "task_not_accepted",
             "reason": "task region has not reached accepted",
@@ -3361,7 +3403,7 @@ def test_completed_lifecycle_projects_active_while_final_blockers_remain() -> No
             "state": "pending",
         }
     ]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_final_blockers_report_dead_required_input_from_terminal_source() -> None:
@@ -3407,7 +3449,7 @@ def test_final_blockers_report_dead_required_input_from_terminal_source() -> Non
         "to_port": "candidate_under_test",
         "state": "blocked",
         "task_region_id": "task-1",
-    } in project_final_invariant_blockers(events)
+    } in project_final_invariant_blockers(build_graph_catalog(), events)
 
 
 def test_final_gate_requires_passed_completion_decision_for_projected_completion() -> None:
@@ -3420,7 +3462,7 @@ def test_final_gate_requires_passed_completion_decision_for_projected_completion
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_final_invariant_blockers(events) == [
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
         {
             "kind": "missing_completion_decision",
             "reason": "final gate has not produced a completion_decision",
@@ -3428,7 +3470,7 @@ def test_final_gate_requires_passed_completion_decision_for_projected_completion
             "state": "completed",
         }
     ]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_blocked_final_gate_completion_decision_keeps_projected_run_active() -> None:
@@ -3462,14 +3504,14 @@ def test_blocked_final_gate_completion_decision_keeps_projected_run_active() -> 
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_final_invariant_blockers(events) == [
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
         {
             "kind": "open_planner_proposal",
             "reason": "planner proposal has not been accepted or rejected",
             "proposal_id": "proposal-1",
         }
     ]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_passed_final_gate_completion_decision_allows_projected_completion() -> None:
@@ -3494,8 +3536,8 @@ def test_passed_final_gate_completion_decision_allows_projected_completion() -> 
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_final_invariant_blockers(events) == []
-    assert project_run_state(events) == "completed"
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == []
+    assert project_run_state(build_graph_catalog(), events) == "completed"
 
 
 def test_pending_gap_planner_blocks_projected_completion() -> None:
@@ -3513,7 +3555,7 @@ def test_pending_gap_planner_blocks_projected_completion() -> None:
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_final_invariant_blockers(events) == [
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
         {
             "kind": "pending_gap_planner",
             "reason": "planner node has not completed",
@@ -3521,7 +3563,7 @@ def test_pending_gap_planner_blocks_projected_completion() -> None:
             "state": "leased",
         }
     ]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_pending_check_blocks_projected_completion_after_task_acceptance() -> None:
@@ -3566,8 +3608,8 @@ def test_pending_check_blocks_projected_completion_after_task_acceptance() -> No
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_task_states(events) == {"task-1": "accepted"}
-    assert project_final_invariant_blockers(events) == [
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "accepted"}
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
         {
             "kind": "pending_check",
             "reason": "check node has not completed",
@@ -3575,7 +3617,7 @@ def test_pending_check_blocks_projected_completion_after_task_acceptance() -> No
             "state": "planned",
         }
     ]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_failed_check_result_blocks_projected_completion_after_task_acceptance() -> None:
@@ -3644,13 +3686,13 @@ def test_failed_check_result_blocks_projected_completion_after_task_acceptance()
 
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     check_result = projection["check_results"]["check-final-1"]
     assert check_result.candidate_record_ids == ["candidate-1"]
     assert check_result.file_state_record_ids == ["file-state-candidate-1"]
     assert check_result.evaluated_record_ids == ["candidate-1", "file-state-candidate-1"]
-    assert project_task_states(events) == {"task-1": "pending"}
-    assert project_final_invariant_blockers(events) == [
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "pending"}
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
         {
             "kind": "failed_check_result",
             "reason": "check result did not pass",
@@ -3665,7 +3707,7 @@ def test_failed_check_result_blocks_projected_completion_after_task_acceptance()
             "state": "pending",
         },
     ]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_failed_check_result_recovery_lineage_unblocks_original_task() -> None:
@@ -3799,10 +3841,10 @@ def test_failed_check_result_recovery_lineage_unblocks_original_task() -> None:
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_task_states(events)["task-1"] == "accepted"
+    assert project_task_states(build_graph_catalog(), events)["task-1"] == "accepted"
     assert not any(
         blocker["kind"] == "failed_check_result"
-        for blocker in project_final_invariant_blockers(events)
+        for blocker in project_final_invariant_blockers(build_graph_catalog(), events)
     )
 
 
@@ -3905,7 +3947,7 @@ def test_failed_verification_recovery_lineage_unblocks_original_task() -> None:
         ),
     ]
 
-    assert project_task_states(events)["task-1"] == "accepted"
+    assert project_task_states(build_graph_catalog(), events)["task-1"] == "accepted"
 
 
 def test_task_state_projection_matches_full_projection_for_recovery_supersession() -> None:
@@ -3977,9 +4019,11 @@ def test_task_state_projection_matches_full_projection_for_recovery_supersession
 
     full_projection = initial_projection()
     for event in events:
-        full_projection = reduce_event(full_projection, event)
+        full_projection = reduce_event(build_graph_catalog(), full_projection, event)
 
-    assert project_task_states(events, projection=full_projection) == project_task_states(events)
+    assert project_task_states(
+        build_graph_catalog(), events, projection=full_projection
+    ) == project_task_states(build_graph_catalog(), events)
 
 
 def test_failed_verification_recovery_without_corrective_file_state_does_not_accept_origin() -> (
@@ -4051,7 +4095,7 @@ def test_failed_verification_recovery_without_corrective_file_state_does_not_acc
         ),
     ]
 
-    assert project_task_states(events)["task-1"] == "needs_revision"
+    assert project_task_states(build_graph_catalog(), events)["task-1"] == "needs_revision"
 
 
 def test_check_result_candidate_id_does_not_replace_latest_task_candidate() -> None:
@@ -4122,7 +4166,7 @@ def test_check_result_candidate_id_does_not_replace_latest_task_candidate() -> N
 
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     candidate = projection["task_candidates"]["task-1"][0]
     assert isinstance(candidate, CandidateProjection)
@@ -4131,9 +4175,9 @@ def test_check_result_candidate_id_does_not_replace_latest_task_candidate() -> N
     assert candidate.position == 1
     assert candidate.file_state_record_ids == []
     assert candidate.supersedes_task_region_ids == []
-    assert project_task_states(events) == {"task-1": "accepted"}
-    assert project_final_invariant_blockers(events) == []
-    assert project_run_state(events) == "completed"
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "accepted"}
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == []
+    assert project_run_state(build_graph_catalog(), events) == "completed"
 
 
 def test_uncited_check_result_does_not_accept_task_region() -> None:
@@ -4198,8 +4242,8 @@ def test_uncited_check_result_does_not_accept_task_region() -> None:
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_task_states(events) == {"task-1": "pending"}
-    assert project_final_invariant_blockers(events) == [
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "pending"}
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
         {
             "kind": "task_not_accepted",
             "reason": "task region has not reached accepted",
@@ -4207,7 +4251,7 @@ def test_uncited_check_result_does_not_accept_task_region() -> None:
             "state": "pending",
         }
     ]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_check_result_must_cite_latest_candidate_file_state() -> None:
@@ -4294,8 +4338,8 @@ def test_check_result_must_cite_latest_candidate_file_state() -> None:
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_task_states(events) == {"task-1": "pending"}
-    assert project_run_state(events) == "active"
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "pending"}
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_open_proposal_blocks_projected_completion_until_resolved() -> None:
@@ -4305,22 +4349,22 @@ def test_open_proposal_blocks_projected_completion_until_resolved() -> None:
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_final_invariant_blockers(events) == [
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
         {
             "kind": "open_planner_proposal",
             "reason": "planner proposal has not been accepted or rejected",
             "proposal_id": "proposal-1",
         }
     ]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
     resolved = [
         *events[:2],
         _event("proposal_accepted", {"proposal_id": "proposal-1"}),
         events[2],
     ]
-    assert project_final_invariant_blockers(resolved) == []
-    assert project_run_state(resolved) == "completed"
+    assert project_final_invariant_blockers(build_graph_catalog(), resolved) == []
+    assert project_run_state(build_graph_catalog(), resolved) == "completed"
 
 
 def test_accepted_graph_patch_does_not_leave_open_proposal_blocker() -> None:
@@ -4331,8 +4375,8 @@ def test_accepted_graph_patch_does_not_leave_open_proposal_blocker() -> None:
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_final_invariant_blockers(events) == []
-    assert project_run_state(events) == "completed"
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == []
+    assert project_run_state(build_graph_catalog(), events) == "completed"
 
 
 def test_freshness_and_authority_facts_block_projected_completion() -> None:
@@ -4370,7 +4414,7 @@ def test_freshness_and_authority_facts_block_projected_completion() -> None:
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_final_invariant_blockers(events) == [
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
         {
             "kind": "stale_support_evidence",
             "reason": "active requirement is supported only by stale evidence",
@@ -4396,7 +4440,7 @@ def test_freshness_and_authority_facts_block_projected_completion() -> None:
             "requirement_id": "R-02",
         },
     ]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_later_fresh_support_clears_requirement_freshness_blocker() -> None:
@@ -4435,8 +4479,8 @@ def test_later_fresh_support_clears_requirement_freshness_blocker() -> None:
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_final_invariant_blockers(events) == []
-    assert project_run_state(events) == "completed"
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == []
+    assert project_run_state(build_graph_catalog(), events) == "completed"
 
 
 def test_suspect_and_blocked_requirement_facts_block_projected_completion() -> None:
@@ -4459,7 +4503,7 @@ def test_suspect_and_blocked_requirement_facts_block_projected_completion() -> N
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
-    assert project_final_invariant_blockers(events) == [
+    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
         {
             "kind": "suspect_active_node",
             "reason": "requirement_changed",
@@ -4474,12 +4518,14 @@ def test_suspect_and_blocked_requirement_facts_block_projected_completion() -> N
             "state": "blocked",
         },
     ]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 def test_run_unknown_event_ignored() -> None:
     initial = initial_projection()
-    next_state = reduce_event(initial, _event("unknown_event", {"to_state": "failed"}))
+    next_state = reduce_event(
+        build_graph_catalog(), initial, _event("unknown_event", {"to_state": "failed"})
+    )
 
     assert next_state == initial
     assert next_state is not initial
@@ -4488,7 +4534,7 @@ def test_run_unknown_event_ignored() -> None:
 def test_node_created_sets_planned() -> None:
     events = [_event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "planned"})]
 
-    assert project_node_states(events) == {"worker-1": "planned"}
+    assert project_node_states(build_graph_catalog(), events) == {"worker-1": "planned"}
 
 
 def test_node_state_transitions() -> None:
@@ -4499,7 +4545,7 @@ def test_node_state_transitions() -> None:
         _event("node_state_changed", {"node_id": "worker-1", "new_state": "completed"}),
     ]
 
-    assert project_node_states(events) == {"worker-1": "completed"}
+    assert project_node_states(build_graph_catalog(), events) == {"worker-1": "completed"}
 
 
 def test_ready_nodes_derived() -> None:
@@ -4510,7 +4556,7 @@ def test_ready_nodes_derived() -> None:
         _event("node_state_changed", {"node_id": "worker-1", "new_state": "running"}),
     ]
 
-    assert project_ready_nodes(events) == ["worker-2"]
+    assert project_ready_nodes(build_graph_catalog(), events) == ["worker-2"]
 
 
 def test_lease_lifecycle() -> None:
@@ -4525,7 +4571,7 @@ def test_lease_lifecycle() -> None:
         _event("lease_released", {"lease_id": "lease-1"}),
     ]
 
-    assert project_leases(events) == {
+    assert project_leases(build_graph_catalog(), events) == {
         "lease-1": {
             "lease_id": "lease-1",
             "node_id": "worker-1",
@@ -4551,7 +4597,7 @@ def test_task_projection_accepted() -> None:
         ).model_copy(update={"position": 3}),
     ]
 
-    assert project_task_states(events) == {"task-1": "accepted"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "accepted"}
 
 
 def test_task_projection_accepts_no_verifier_region_after_file_state() -> None:
@@ -4573,7 +4619,7 @@ def test_task_projection_accepts_no_verifier_region_after_file_state() -> None:
         _file_state_event("task-1", "candidate-1", 2),
     ]
 
-    assert project_task_states(events) == {"task-1": "accepted"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "accepted"}
 
 
 def test_task_projection_configured_gate_requires_decision() -> None:
@@ -4596,7 +4642,7 @@ def test_task_projection_configured_gate_requires_decision() -> None:
         _file_state_event("task-1", "cand-1", 3),
     ]
 
-    assert project_task_states(events) == {"task-1": "pending"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "pending"}
 
     approved_events = [
         *events,
@@ -4605,7 +4651,7 @@ def test_task_projection_configured_gate_requires_decision() -> None:
             {"node_id": "gate-1", "decision": "approved"},
         ).model_copy(update={"position": 3}),
     ]
-    assert project_task_states(approved_events) == {"task-1": "accepted"}
+    assert project_task_states(build_graph_catalog(), approved_events) == {"task-1": "accepted"}
 
     rejected_events = [
         *events,
@@ -4614,7 +4660,7 @@ def test_task_projection_configured_gate_requires_decision() -> None:
             {"node_id": "gate-1", "decision": "rejected"},
         ).model_copy(update={"position": 3}),
     ]
-    assert project_task_states(rejected_events) == {"task-1": "pending"}
+    assert project_task_states(build_graph_catalog(), rejected_events) == {"task-1": "pending"}
 
 
 def test_task_projection_needs_revision() -> None:
@@ -4628,7 +4674,7 @@ def test_task_projection_needs_revision() -> None:
         ),
     ]
 
-    assert project_task_states(events) == {"task-1": "needs_revision"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "needs_revision"}
 
 
 def test_corrective_region_pass_supersedes_origin_needs_revision() -> None:
@@ -4655,7 +4701,7 @@ def test_corrective_region_pass_supersedes_origin_needs_revision() -> None:
         _file_state_event("corrective", "cand-fix", 4),
     ]
 
-    assert project_task_states(events) == {
+    assert project_task_states(build_graph_catalog(), events) == {
         "corrective": "accepted",
         "origin": "accepted",
     }
@@ -4689,7 +4735,7 @@ def test_verification_output_record_is_not_projected_as_candidate() -> None:
         _file_state_event("task-1", "candidate-1", 3),
     ]
 
-    assert project_task_states(events) == {"task-1": "accepted"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "accepted"}
 
 
 def test_task_projection_blocked_invalid_test() -> None:
@@ -4712,7 +4758,7 @@ def test_task_projection_blocked_invalid_test() -> None:
         ).model_copy(update={"position": 2}),
     ]
 
-    assert project_task_states(events) == {"task-1": "blocked_invalid_test"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "blocked_invalid_test"}
 
 
 def test_invalid_test_block_projection_uses_typed_payload_and_preserves_task_state_behavior() -> (
@@ -4739,19 +4785,20 @@ def test_invalid_test_block_projection_uses_typed_payload_and_preserves_task_sta
 
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     projected = projection["invalid_test_blocks"]["task-1"]
 
     assert isinstance(projected, InvalidTestBlockProjection)
     assert projected.accepted is True
-    assert project_task_states(events) == {"task-1": "blocked_invalid_test"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "blocked_invalid_test"}
 
 
 def test_invalid_test_block_checkpoint_round_trips_typed_payload_and_drops_malformed_entries() -> (
     None
 ):
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "oversight_decision_recorded",
@@ -4801,7 +4848,7 @@ def test_task_projection_blocked_environment() -> None:
         ).model_copy(update={"position": 1}),
     ]
 
-    assert project_task_states(events) == {"task-1": "blocked_environment"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "blocked_environment"}
 
 
 def test_task_projection_in_progress() -> None:
@@ -4812,7 +4859,7 @@ def test_task_projection_in_progress() -> None:
         _event("lease_granted", {"node_id": "worker-1", "lease_id": "lease-1"}),
     ]
 
-    assert project_task_states(events) == {"task-1": "in_progress"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "in_progress"}
 
 
 def test_task_projection_pending() -> None:
@@ -4822,7 +4869,7 @@ def test_task_projection_pending() -> None:
         )
     ]
 
-    assert project_task_states(events) == {"task-1": "pending"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "pending"}
 
 
 def test_task_projection_latest_candidate_by_attempt_then_position() -> None:
@@ -4847,7 +4894,7 @@ def test_task_projection_latest_candidate_by_attempt_then_position() -> None:
         ),
     ]
 
-    assert project_task_states(events) == {"task-1": "needs_revision"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "needs_revision"}
 
 
 def test_task_projection_latest_candidate_position_tiebreak() -> None:
@@ -4869,7 +4916,7 @@ def test_task_projection_latest_candidate_position_tiebreak() -> None:
         ),
     ]
 
-    assert project_task_states(events) == {"task-1": "accepted"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "accepted"}
 
 
 def test_task_projection_ignores_mismatched_verdict_candidate() -> None:
@@ -4883,7 +4930,7 @@ def test_task_projection_ignores_mismatched_verdict_candidate() -> None:
         ),
     ]
 
-    assert project_task_states(events) == {"task-1": "pending"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "pending"}
 
 
 def test_task_projection_active_appeal_overrides_latest_failure() -> None:
@@ -4905,7 +4952,7 @@ def test_task_projection_active_appeal_overrides_latest_failure() -> None:
         ).model_copy(update={"position": 2}),
     ]
 
-    assert project_task_states(events) == {"task-1": "pending"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "pending"}
 
 
 def test_task_projection_invalid_test_block_exits_after_replacement_pass() -> None:
@@ -4936,7 +4983,7 @@ def test_task_projection_invalid_test_block_exits_after_replacement_pass() -> No
         _file_state_event("task-1", "cand-2", 5),
     ]
 
-    assert project_task_states(events) == {"task-1": "accepted"}
+    assert project_task_states(build_graph_catalog(), events) == {"task-1": "accepted"}
 
 
 def test_fixture_corpus_then_projections_satisfied() -> None:

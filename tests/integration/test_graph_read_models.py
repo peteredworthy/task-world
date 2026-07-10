@@ -19,6 +19,7 @@ from orchestrator.db import (
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, project_task_states
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph_runtime.store import graph_aggregate_id
+from orchestrator.graph import build_graph_catalog
 
 
 @pytest.fixture(scope="module")
@@ -362,10 +363,16 @@ async def test_append_keeps_graph_read_models_synchronized(
     run_id = "read-model-sync"
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, _sample_events(run_id))
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, _sample_events(run_id))
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         summaries = await store.read_run_summaries(run_id)
         snapshot = await store.read_projection_snapshot(run_id)
 
@@ -399,7 +406,10 @@ async def test_graph_read_models_roll_back_with_event_append(
     run_id = "read-model-rollback"
     async with session_factory() as session:
         transaction = await session.begin()
-        await GraphEventStore(session).append_events(run_id, 0, _sample_events(run_id))
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, _sample_events(run_id))
         await transaction.rollback()
 
     async with session_factory() as session:
@@ -423,10 +433,16 @@ async def test_graph_read_models_are_rebuildable_and_idempotent(
     run_id = "read-model-rebuild"
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, _sample_events(run_id))
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, _sample_events(run_id))
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         before_summaries = await store.read_run_summaries(run_id)
         before_snapshot = await store.read_projection_snapshot(run_id)
         await store.delete_read_models(run_id)
@@ -443,7 +459,10 @@ async def test_graph_read_models_are_rebuildable_and_idempotent(
         assert await _count_model(session, GraphProjectionSnapshotModel, run_id) == 0
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         rebuilt_snapshot = await store.rebuild_read_models(run_id)
         first_rebuild_summaries = await store.read_run_summaries(run_id)
         await store.rebuild_read_models(run_id)
@@ -468,26 +487,38 @@ async def test_projection_read_model_preserves_corrective_supersession_task_stat
 ) -> None:
     run_id = "read-model-corrective-supersession"
     events = _corrective_supersession_events(run_id)
-    expected_task_states = project_task_states(events)
+    expected_task_states = project_task_states(build_graph_catalog(), events)
 
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, events)
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, events)
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         snapshot_before_rebuild = await store.read_projection_snapshot(run_id)
         await store.delete_read_models(run_id)
         await session.commit()
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         compact_projection_events = await store.read_run_projection(run_id)
         rebuilt_snapshot = await store.rebuild_read_models(run_id)
         await session.commit()
 
     assert expected_task_states == {"corrective": "accepted", "origin": "accepted"}
-    assert project_task_states(compact_projection_events) == expected_task_states
+    assert (
+        project_task_states(build_graph_catalog(), compact_projection_events)
+        == expected_task_states
+    )
     assert snapshot_before_rebuild is not None
     assert snapshot_before_rebuild.task_states == expected_task_states
     assert rebuilt_snapshot is not None
@@ -509,25 +540,37 @@ async def test_projection_read_model_preserves_task_state_matrix(
         for task_region_id in cases
     }
 
-    assert project_task_states(events) == expected_task_states
+    assert project_task_states(build_graph_catalog(), events) == expected_task_states
 
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, events)
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, events)
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         snapshot_before_rebuild = await store.read_projection_snapshot(run_id)
         await store.delete_read_models(run_id)
         await session.commit()
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         compact_projection_events = await store.read_run_projection(run_id)
         rebuilt_snapshot = await store.rebuild_read_models(run_id)
         await session.commit()
 
-    assert project_task_states(compact_projection_events) == expected_task_states
+    assert (
+        project_task_states(build_graph_catalog(), compact_projection_events)
+        == expected_task_states
+    )
     assert snapshot_before_rebuild is not None
     assert snapshot_before_rebuild.task_states == expected_task_states
     assert rebuilt_snapshot is not None
@@ -541,10 +584,16 @@ async def test_graph_event_summaries_are_paged_from_read_model(
     run_id = "read-model-paging"
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, _sample_events(run_id))
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, _sample_events(run_id))
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         first_page = await store.read_run_summaries(run_id, from_position=1, limit=2)
         second_page = await store.read_run_summaries(run_id, from_position=3, limit=2)
 

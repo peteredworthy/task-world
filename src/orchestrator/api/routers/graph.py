@@ -524,15 +524,15 @@ def build_graph_projection_response(
 
     # Fold once and reuse across every view below, instead of each project_*
     # call re-folding the full event stream from scratch.
-    projection = build_projection(events)
+    projection = build_projection(build_graph_catalog(), events)
     return GraphProjectionResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
-        run_state=project_run_state(events, projection=projection),
-        node_states=project_node_states(events, projection=projection),
-        task_states=project_task_states(events, projection=projection),
-        leases=project_leases(events, projection=projection),
-        ready_nodes=project_ready_nodes(events, projection=projection),
+        run_state=project_run_state(build_graph_catalog(), events, projection=projection),
+        node_states=project_node_states(build_graph_catalog(), events, projection=projection),
+        task_states=project_task_states(build_graph_catalog(), events, projection=projection),
+        leases=project_leases(build_graph_catalog(), events, projection=projection),
+        ready_nodes=project_ready_nodes(build_graph_catalog(), events, projection=projection),
     )
 
 
@@ -585,7 +585,7 @@ def build_graph_topology_response(
     if not events:
         return GraphTopologyResponse(run_id=run_id, event_count=0, nodes=[], edges=[])
 
-    topology = project_graph_topology(events)
+    topology = project_graph_topology(build_graph_catalog(), events)
     return GraphTopologyResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
@@ -629,7 +629,7 @@ def build_final_invariant_blockers_response(
         event_count=max((event.position for event in events), default=0),
         blockers=[
             FinalInvariantBlockerResponse(**cast(dict[str, Any], blocker))
-            for blocker in project_final_invariant_blockers(events)
+            for blocker in project_final_invariant_blockers(build_graph_catalog(), events)
         ]
         + _failed_outbox_blocker_responses(run_id, failed_outbox_rows or []),
     )
@@ -679,9 +679,11 @@ def build_graph_regions_response(
     if not events:
         return GraphRegionsResponse(run_id=run_id, event_count=0, regions=[])
     # Fold once and reuse across both views below.
-    projection = build_projection(events)
-    task_states = project_task_states(events, projection=projection)
-    blockers = project_final_invariant_blockers(events, projection=projection)
+    projection = build_projection(build_graph_catalog(), events)
+    task_states = project_task_states(build_graph_catalog(), events, projection=projection)
+    blockers = project_final_invariant_blockers(
+        build_graph_catalog(), events, projection=projection
+    )
     blockers_by_region: dict[str, list[FinalInvariantBlockerResponse]] = {}
     for blocker in blockers:
         task_region_id = blocker.get("task_region_id")
@@ -723,9 +725,9 @@ def build_scheduler_view_response(
         )
 
     # Fold once and reuse across both views below.
-    projection = build_projection(events)
-    scheduler_view = project_scheduler_view(events, projection=projection)
-    lease_view = project_lease_view(events, projection=projection)
+    projection = build_projection(build_graph_catalog(), events)
+    scheduler_view = project_scheduler_view(build_graph_catalog(), events, projection=projection)
+    lease_view = project_lease_view(build_graph_catalog(), events, projection=projection)
     return SchedulerViewResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
@@ -812,7 +814,7 @@ def build_decision_view_response(
             review=ReviewReadinessResponse(ready=False, blockers=[]),
         )
 
-    view = project_decision_view(events)
+    view = project_decision_view(build_graph_catalog(), events)
     return DecisionViewResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
@@ -1119,7 +1121,7 @@ def build_file_state_report_response(
     if not events:
         return FileStateReportResponse(run_id=run_id, event_count=0, nodes=[], gatekeeper=None)
 
-    residue_report = project_residue_report(events)
+    residue_report = project_residue_report(build_graph_catalog(), events)
     gatekeeper_report = project_gatekeeper_report(events).get(run_id)
     residue_by_path = _residue_by_record_path(residue_report)
     gatekeeper_verdicts = _gatekeeper_verdicts_by_record(events)
@@ -1189,10 +1191,10 @@ def build_node_detail_response(
         return None
 
     # Fold once and reuse across every view below.
-    projection = build_projection(events)
-    node_states = project_node_states(events, projection=projection)
-    node_metadata = project_node_metadata(events, projection=projection)
-    leases = project_leases(events, projection=projection)
+    projection = build_projection(build_graph_catalog(), events)
+    node_states = project_node_states(build_graph_catalog(), events, projection=projection)
+    node_metadata = project_node_metadata(build_graph_catalog(), events, projection=projection)
+    leases = project_leases(build_graph_catalog(), events, projection=projection)
     state = node_states.get(node_id)
     metadata = node_metadata.get(node_id, {})
     output_records = _pick_output_records(events, node_id)
@@ -1555,7 +1557,7 @@ async def get_graph_projection(
     await graph_store.commit_read_model_changes()
     response = build_graph_projection_response_from_snapshot(run_id, snapshot)
     projection_events = await graph_store.read_run_projection(run_id)
-    projected_task_states = project_task_states(projection_events)
+    projected_task_states = project_task_states(build_graph_catalog(), projection_events)
     try:
         run = await service.get_run(run_id)
     except RunNotFoundError:
@@ -1706,7 +1708,10 @@ async def requeue_failed_outbox_row(
             if row.status != "failed":
                 raise HTTPException(status_code=409, detail="Outbox row is not failed")
 
-            store = GraphEventStore(session)
+            store = GraphEventStore(
+                session,
+                build_graph_catalog(),
+            )
             current_position = await store.current_position(run_id)
             if current_position == 0:
                 raise HTTPException(status_code=404, detail="Graph not found for run")
@@ -1846,7 +1851,7 @@ async def record_graph_decision(
 
     response_events = list(result.events)
     events = await graph_store.read_run_light(run_id)
-    if project_run_state(events) == "active":
+    if project_run_state(build_graph_catalog(), events) == "active":
         schedule_result = await controller.handle_command(
             run_id,
             result.projection_position,

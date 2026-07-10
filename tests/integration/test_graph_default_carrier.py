@@ -318,7 +318,10 @@ async def _events(
     run_id: str,
 ):
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 async def _run_status(
@@ -440,8 +443,8 @@ async def test_common_routine_shapes_seed_and_complete_as_graph(
 
         assert outcome.completed is True
         assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
-        assert project_run_state(events) == "completed"
-        assert project_task_states(events)["step-1/task-1"] == "accepted"
+        assert project_run_state(build_graph_catalog(), events) == "completed"
+        assert project_task_states(build_graph_catalog(), events)["step-1/task-1"] == "accepted"
         assert "worker" in dispatch_order
         if routine.id == "auto-verify":
             assert any(

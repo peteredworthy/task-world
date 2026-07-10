@@ -94,7 +94,7 @@ class GraphController:
         # time on a large graph history, so it must not hold BEGIN IMMEDIATE
         # while it runs.
         async with self._session_factory() as read_session:
-            read_store = GraphEventStore(read_session)
+            read_store = GraphEventStore(read_session, self._catalog)
             (
                 projection,
                 existing_events,
@@ -112,7 +112,7 @@ class GraphController:
         patch_base_position = _patch_base_graph_position(command_type, command_payload)
         if patch_base_position is not None and patch_base_position < current_position:
             async with self._session_factory() as read_session:
-                command_events = await GraphEventStore(read_session).read_run(
+                command_events = await GraphEventStore(read_session, self._catalog).read_run(
                     run_id,
                     patch_base_position + 1,
                 )
@@ -171,7 +171,7 @@ class GraphController:
         async with self._session_factory() as session:
             await session.execute(text("BEGIN IMMEDIATE"))
             try:
-                store = GraphEventStore(session)
+                store = GraphEventStore(session, self._catalog)
                 head_position = await store.current_position(run_id)
                 if head_position != expected_position:
                     msg = (
@@ -203,13 +203,13 @@ class GraphController:
     async def current_position(self, run_id: str) -> int:
         """Return the current durable graph position for a run."""
         async with self._session_factory() as session:
-            return await GraphEventStore(session).current_position(run_id)
+            return await GraphEventStore(session, self._catalog).current_position(run_id)
 
     async def read_projection(self, run_id: str) -> GraphProjection:
         """Return the current durable graph projection for a run."""
         async with self._session_factory() as session:
-            events = await GraphEventStore(session).read_run(run_id)
-        return rebuild_projection(events)
+            events = await GraphEventStore(session, self._catalog).read_run(run_id)
+        return rebuild_projection(self._catalog, events)
 
     def _add_dispatch_intent_events(
         self,
@@ -278,10 +278,13 @@ def _to_legacy_envelope(event: EventEnvelope | HydratedEvent) -> EventEnvelope:
     )
 
 
-def rebuild_projection(events: list[EventEnvelope]) -> GraphProjection:
+def rebuild_projection(
+    catalog: GraphCatalog,
+    events: list[EventEnvelope],
+) -> GraphProjection:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(catalog, projection, event)
     return projection
 
 

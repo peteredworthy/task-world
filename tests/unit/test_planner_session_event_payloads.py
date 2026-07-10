@@ -12,6 +12,7 @@ from orchestrator.graph import (
     reduce_event,
 )
 from tests.graph_command_support import dispatch_graph_command
+from orchestrator.graph import build_graph_catalog
 
 
 def test_session_state_changed_payload_normalizes_legacy_free_form_keys_to_extra() -> None:
@@ -61,6 +62,7 @@ def test_session_state_changed_payload_moves_invalid_legacy_scalars_to_extra() -
 
 def test_session_state_changed_reducer_tolerates_legacy_payloads_through_typed_model() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "session_state_changed",
@@ -136,14 +138,14 @@ def test_session_state_changed_producer_emits_explicit_null_to_clear_stale_carry
     assert "carryover_record_id" in suspended_event.payload
     assert suspended_event.payload["carryover_record_id"] is None
 
-    cleared_projection = reduce_event(projection, suspended_event)
+    cleared_projection = reduce_event(build_graph_catalog(), projection, suspended_event)
     assert cleared_projection["planner_session_carryovers"] == {"session-1": None}
 
 
 def _project(events: list[EventEnvelope]) -> Any:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

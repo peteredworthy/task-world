@@ -149,7 +149,10 @@ async def _read_events(
     run_id: str,
 ):
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 async def _delete_read_models(
@@ -157,7 +160,10 @@ async def _delete_read_models(
     run_id: str,
 ) -> None:
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         await store.delete_read_models(run_id)
         await session.commit()
 

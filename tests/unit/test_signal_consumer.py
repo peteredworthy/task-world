@@ -23,6 +23,7 @@ from orchestrator.workflow import (
     WorkflowSignal,
 )
 from orchestrator.state.errors import RunNotFoundError
+from orchestrator.graph import build_graph_catalog
 
 
 @dataclass
@@ -465,7 +466,10 @@ async def test_cancel_graph_run_appends_graph_cancel_before_run_row_failure(
     consumer = _consumer(session_factory, service)
     consumer._active_graph_runs.add(run_id)
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(
             run_id,
             0,
             [
@@ -502,7 +506,10 @@ async def test_cancel_graph_run_appends_graph_cancel_before_run_row_failure(
         (("graph-cancel-run",), {"reason": "user_cancel"})
     ]
     async with session_factory() as session:
-        events = await GraphEventStore(session).read_run(run_id)
+        events = await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
     event_types = [event.event_type for event in events]
     assert event_types[-4:] == [
         "run_lifecycle_changed",

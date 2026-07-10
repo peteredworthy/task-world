@@ -33,6 +33,7 @@ from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.git import TestRunner
 from orchestrator.runners import AgentRunnerExecutor, fetch_codex_models
 from orchestrator.runners.agent_detector import ToolDetector
+from orchestrator.graph import build_graph_catalog
 
 if TYPE_CHECKING:
     from orchestrator.graph_runtime import GraphDispatchContext
@@ -92,7 +93,10 @@ async def get_graph_store(
 ) -> GraphEventStore:
     from orchestrator.graph_runtime.store import GraphEventStore
 
-    return GraphEventStore(session)
+    return GraphEventStore(
+        session,
+        build_graph_catalog(),
+    )
 
 
 def get_env_lifecycle(request: Request) -> EnvFileLifecycle | None:

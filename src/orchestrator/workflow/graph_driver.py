@@ -724,7 +724,7 @@ class GraphRunDriver:
         # run ACTIVE with no driver (see the graph_driver_crashed comment
         # below for the analogous risk in the main drive loop).
         events = await self._read_events(run_id)
-        run_state = project_run_state(events)
+        run_state = project_run_state(build_graph_catalog(), events)
         controller = GraphController(
             self._session_factory,
             self._clock,
@@ -755,7 +755,7 @@ class GraphRunDriver:
         failed kernel (mirrors _bootstrap_graph_lifecycle).
         """
         events = await self._read_events(run_id)
-        run_state = project_run_state(events)
+        run_state = project_run_state(build_graph_catalog(), events)
         if run_state not in {"failed", "resuming"}:
             return False
         controller = GraphController(
@@ -777,11 +777,17 @@ class GraphRunDriver:
 
     async def _read_events(self, run_id: str) -> list[EventEnvelope]:
         async with self._session_factory() as session:
-            return await GraphEventStore(session).read_run(run_id)
+            return await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).read_run(run_id)
 
     async def _current_position(self, run_id: str) -> int:
         async with self._session_factory() as session:
-            return await GraphEventStore(session).current_position(run_id)
+            return await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).current_position(run_id)
 
     async def _get_run(self, run_id: str) -> Any:
         async with self._session_factory() as session:
@@ -1034,22 +1040,22 @@ def _align_datetime_timezone(value: datetime, reference: datetime) -> datetime:
 def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapshot:
     # Fold once and reuse across every view below, instead of each project_*
     # call (plus a separate inline fold) re-folding the full event stream.
-    projection = build_projection(events)
-    leases = project_leases(events, projection=projection)
-    node_states = project_node_states(events, projection=projection)
+    projection = build_projection(build_graph_catalog(), events)
+    leases = project_leases(build_graph_catalog(), events, projection=projection)
+    node_states = project_node_states(build_graph_catalog(), events, projection=projection)
     active_leases = {
         lease_id: lease for lease_id, lease in leases.items() if lease.get("state") == "active"
     }
     return GraphProjectionSnapshot(
-        run_state=project_run_state(events, projection=projection),
-        ready_nodes=project_ready_nodes(events, projection=projection),
+        run_state=project_run_state(build_graph_catalog(), events, projection=projection),
+        ready_nodes=project_ready_nodes(build_graph_catalog(), events, projection=projection),
         active_leases=active_leases,
         schedulable_nodes=[
             node_id
             for node_id, state in node_states.items()
             if state in {"planned", "blocked", "ready"}
         ],
-        task_states=project_task_states(events, projection=projection),
+        task_states=project_task_states(build_graph_catalog(), events, projection=projection),
         node_states=node_states,
         failed_node_reasons=_failed_node_reasons(events),
         node_deferral_reasons=_node_deferral_reasons(events),

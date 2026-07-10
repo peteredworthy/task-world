@@ -13,6 +13,7 @@ from orchestrator.graph import (
     reduce_event,
     validate_patch,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def _patch(payload: dict[str, Any]) -> PatchEnvelope:
@@ -227,7 +228,7 @@ def test_submit_patch_command_accepts_macro_invocations() -> None:
 
     projection = initial_projection()
     for event in output:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
 
     assert output[0].event_type == "graph_patch_accepted"
     assert projection["node_kinds"]["worker-feature-region"] == "worker"

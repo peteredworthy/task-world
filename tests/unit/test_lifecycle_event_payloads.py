@@ -48,7 +48,7 @@ def _typed_apply(events: list[EventEnvelope], command_type: str, payload: dict[s
     clock = FakeClock()
     ids = SequentialIdGenerator()
     return apply_command(
-        build_projection(events),
+        build_projection(build_graph_catalog(), events),
         events,
         command_type,
         {key: value for key, value in payload.items() if key != "run_id"},
@@ -281,6 +281,7 @@ def test_callback_payloads_preserve_explicit_none_and_duplicate_prior_result() -
 
 def test_callback_accepted_reducer_records_idempotency_through_typed_payload() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "callback_accepted",
@@ -312,6 +313,7 @@ def test_runtime_retry_payload_preserves_retry_backoff_projection() -> None:
         }
     )
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event("runtime_retry_scheduled", payload.model_dump(mode="json"), position=1),
     )
@@ -340,6 +342,7 @@ def test_unconverted_dead_input_audit_remains_projection_neutral() -> None:
     for position, (event_type, payload) in enumerate(audit_payloads, start=1):
         assert payload.extra == {"legacy": 1}
         projected = reduce_event(
+            build_graph_catalog(),
             initial_projection(),
             _event(event_type, payload.model_dump(mode="json"), position=position),
         )
@@ -409,7 +412,7 @@ def test_declared_lifecycle_and_callback_events_remain_replayable() -> None:
         ),
     ]
 
-    projection = build_projection(events)
+    projection = build_projection(build_graph_catalog(), events)
 
     assert projection["run_state"] == "active"
     assert set(projection["callback_idempotency_events"]) == {"worker-1\0key-1"}
@@ -443,7 +446,9 @@ def test_compact_runtime_retry_reconstructs_scheduler_backoff() -> None:
         SUMMARY_REBUILD_PAYLOAD_FIELDS,
     )
 
-    projection = build_projection([_event("runtime_retry_scheduled", payload, position=1)])
+    projection = build_projection(
+        build_graph_catalog(), [_event("runtime_retry_scheduled", payload, position=1)]
+    )
 
     assert projection["retry_not_before_by_node"] == {"worker-1": retry_not_before}
 
@@ -478,7 +483,10 @@ async def test_sqlite_compact_readers_retain_runtime_retry_not_before() -> None:
                 )
             )
             await session.flush()
-            store = GraphEventStore(session)
+            store = GraphEventStore(
+                session,
+                build_graph_catalog(),
+            )
             readers = (
                 store.read_run_projection,
                 store.read_run_light,
@@ -488,9 +496,9 @@ async def test_sqlite_compact_readers_retain_runtime_retry_not_before() -> None:
             for reader in readers:
                 compact_events = await reader("run-1")
                 assert compact_events[0].payload["retry_not_before"] == retry_not_before
-                assert build_projection(compact_events)["retry_not_before_by_node"] == {
-                    "worker-1": retry_not_before
-                }
+                assert build_projection(build_graph_catalog(), compact_events)[
+                    "retry_not_before_by_node"
+                ] == {"worker-1": retry_not_before}
     finally:
         await engine.dispose()
 

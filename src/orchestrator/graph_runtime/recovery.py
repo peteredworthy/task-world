@@ -8,6 +8,7 @@ from sqlalchemy import distinct, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.db import EventV2Model
+from orchestrator.graph import build_graph_catalog
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem
 from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, GraphEventStore
@@ -37,11 +38,14 @@ async def recover(
     awaiting_start_ack: list[dict[str, object]] = []
     awaiting_callback: list[dict[str, object]] = []
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         run_ids = [run_id] if run_id is not None else await _run_ids(session)
         for current_run_id in run_ids:
             events = await store.read_run(current_run_id)
-            projection = rebuild_projection(events)
+            projection = rebuild_projection(build_graph_catalog(), events)
             for lease in projection["leases"].values():
                 if lease.get("state") != "active":
                     continue
@@ -91,7 +95,10 @@ async def _run_ids(session: AsyncSession) -> list[str]:
             EventV2Model.aggregate_id.like(f"{GRAPH_AGGREGATE_PREFIX}%")
         )
     )
-    store = GraphEventStore(session)
+    store = GraphEventStore(
+        session,
+        build_graph_catalog(),
+    )
     run_ids: list[str] = []
     for aggregate_id in result.scalars():
         run_id = str(aggregate_id).removeprefix(GRAPH_AGGREGATE_PREFIX)

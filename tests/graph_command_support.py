@@ -31,7 +31,7 @@ def dispatch_graph_command(
     id_generator = SequentialIdGenerator()
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     context = CommandExecutionContext(
         run_id=run_id,
         current_position=max((event.position for event in events), default=-1),

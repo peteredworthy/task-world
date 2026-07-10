@@ -23,6 +23,7 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
+    GraphCatalog,
     GraphProjection,
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
     PROJECTION_SCHEMA_VERSION,
@@ -577,8 +578,9 @@ class GraphEventStore:
     controller's transaction boundary.
     """
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, catalog: GraphCatalog) -> None:
         self._session = session
+        self._catalog = catalog
 
     async def append_events(
         self,
@@ -932,7 +934,7 @@ class GraphEventStore:
         checkpoint = await self.read_projection_checkpoint(run_id)
         if checkpoint is None:
             events = await self.read_run(run_id)
-            projection = _projection_from_events(events)
+            projection = _projection_from_events(self._catalog, events)
             position = _events_position(events)
             if position > 0:
                 await self.persist_projection_snapshot(run_id, projection, position)
@@ -942,7 +944,7 @@ class GraphEventStore:
         tail = await self.read_run(run_id, checkpoint.position + 1)
         projection = checkpoint.projection
         for event in tail:
-            projection = reduce_event(projection, event)
+            projection = reduce_event(self._catalog, projection, event)
         position = max(checkpoint.position, _events_position(tail))
         if position != checkpoint.position:
             await self.persist_projection_snapshot(run_id, projection, position)
@@ -1104,7 +1106,7 @@ class GraphEventStore:
             await self._session.flush()
             return
         for event in events:
-            projection = reduce_event(projection, event)
+            projection = reduce_event(self._catalog, projection, event)
         await self.persist_projection_snapshot(
             run_id,
             projection,
@@ -1122,7 +1124,7 @@ class GraphEventStore:
         if row is None:
             row = GraphProjectionSnapshotModel(run_id=run_id)
             self._session.add(row)
-        _assign_projection_snapshot(row, run_id, projection, position)
+        _assign_projection_snapshot(self._catalog, row, run_id, projection, position)
         await self._session.flush()
         return row
 
@@ -1176,7 +1178,7 @@ class GraphEventStore:
                 for summary in (summarize_graph_event(event) for event in events)
             ]
         )
-        snapshot = _projection_snapshot_from_events(run_id, events)
+        snapshot = _projection_snapshot_from_events(self._catalog, run_id, events)
         self._session.add(snapshot)
         _add_node_detail_summaries(
             self._session,
@@ -1395,14 +1397,16 @@ def _summary_from_event(event: EventEnvelope) -> GraphEventSummary:
 
 
 def _projection_snapshot_from_events(
+    catalog: GraphCatalog,
     run_id: str,
     events: list[EventEnvelope],
 ) -> GraphProjectionSnapshotModel:
     row = GraphProjectionSnapshotModel(run_id=run_id)
     _assign_projection_snapshot(
+        catalog,
         row,
         run_id,
-        _projection_from_events(events),
+        _projection_from_events(catalog, events),
         _events_position(events),
         events=events,
     )
@@ -1410,6 +1414,7 @@ def _projection_snapshot_from_events(
 
 
 def _assign_projection_snapshot(
+    catalog: GraphCatalog,
     row: GraphProjectionSnapshotModel,
     run_id: str,
     projection: GraphProjection,
@@ -1422,23 +1427,26 @@ def _assign_projection_snapshot(
     row.run_state = projection["run_state"]
     row.node_states = dict(projection["node_states"])
     row.task_states = dict(projection["task_states"])
-    row.leases = project_leases([], projection=projection)
+    row.leases = project_leases(catalog, [], projection=projection)
     row.ready_nodes = list(projection["ready_nodes"])
     if events is None:
         row.scheduler = _scheduler_view_from_projection(projection)
-        row.lease_view = _lease_view_from_projection(projection)
+        row.lease_view = _lease_view_from_projection(catalog, projection)
         decisions = dict(project_decision_view_from_projection(projection))
     else:
-        row.scheduler = dict(project_scheduler_view(events))
-        row.lease_view = dict(project_lease_view(events))
-        decisions = dict(project_decision_view(events))
+        row.scheduler = dict(project_scheduler_view(catalog, events))
+        row.lease_view = dict(project_lease_view(catalog, events))
+        decisions = dict(project_decision_view(catalog, events))
     row.decisions = _decisions_with_projection_checkpoint(decisions, projection)
 
 
-def _projection_from_events(events: list[EventEnvelope]) -> GraphProjection:
+def _projection_from_events(
+    catalog: GraphCatalog,
+    events: list[EventEnvelope],
+) -> GraphProjection:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(catalog, projection, event)
     return projection
 
 
@@ -1525,8 +1533,11 @@ def _scheduler_view_from_projection(projection: GraphProjection) -> dict[str, An
     return view
 
 
-def _lease_view_from_projection(projection: GraphProjection) -> dict[str, Any]:
-    return dict(project_lease_view([], projection=projection))
+def _lease_view_from_projection(
+    catalog: GraphCatalog,
+    projection: GraphProjection,
+) -> dict[str, Any]:
+    return dict(project_lease_view(catalog, [], projection=projection))
 
 
 def _add_node_detail_summaries(

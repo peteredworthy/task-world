@@ -174,3 +174,41 @@ existed. GREEN passed the 252-test lifecycle/callback/framework/graph-command sl
 regression exposed mixed typed/raw position ordering and the explicit mixed-position policy
 fixed it. Lifecycle `--assert-clean`, lifecycle inventory `--check-domain`, Ruff, formatting,
 and Pyright also passed.
+
+## Explicit Replay Catalog (re-review wave 3, slice B)
+
+Mixed projection replay now requires the caller's `GraphCatalog` at every folding boundary.
+`reduce_event(catalog, projection, event)` asks that catalog to hydrate catalog-owned events
+exactly once and routes only unresolved future-domain events through the isolated legacy raw
+reducer. `build_projection`, all projectors capable of folding an event stream,
+`rebuild_projection`, and `GraphEventStore` snapshot/tail/read-model rebuild paths likewise have
+no optional or implicit catalog. `GraphController` reuses its existing injected catalog for
+reads, command projection, persistence, and public projection reads.
+
+Defect-specific RED first proved that the projection module constructed a default catalog and
+that the desired three-argument reducer API did not exist. GREEN proves an empty custom catalog
+is honored (the Task-2 lifecycle event follows the raw unknown-event path), while the composed
+catalog applies its typed reducer. A separate legacy reducer remains for the narrow
+future-effect repair path, so no hidden default was introduced there.
+
+Repeated call-site changes were performed by the LibCST replay-catalog codemod. Its first
+dry-run identified 65 test modules; the expanded projector pass identified eleven production
+modules plus the remaining projector-focused tests. Golden tests cover reducer injection,
+store-constructor argument order, import insertion, and idempotency. The final assert-clean pass
+exited zero after a second apply, and ambiguous dependency-bearing controller/store sites were
+threaded manually with their existing catalog rather than rewritten to construct one.
+
+Final slice-B evidence:
+
+- Projection and custom-catalog architecture/behavior focus: `129 passed`.
+- Store/API projection focus: `33 passed`.
+- Callback/command/mixed replay regression focus: `207 passed`.
+- Codemod/snapshot-helper focus: `6 passed`.
+- Full unit suite: `3368 passed`, with the same three SQLite datetime-adapter warnings.
+- Full serial integration suite: `1283 passed, 5 skipped in 419.57s`.
+- Lifecycle codemod `--assert-clean`, lifecycle inventory `--check-domain`, and replay-catalog
+  codemod `--assert-clean`: exit 0.
+- Ruff format/check clean; Pyright: 0 errors, 0 warnings.
+
+The reviewed mixed inventory remains 44 events and 23 commands. This slice deliberately does
+not change the public future-effects export; that remains the separate wave-three finding.

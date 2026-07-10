@@ -3,6 +3,7 @@
 from typing import Any
 
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, project_decision_view
+from orchestrator.graph import build_graph_catalog
 
 
 def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnvelope:
@@ -67,7 +68,7 @@ def test_decision_view_lists_pending_gates_and_appeals() -> None:
         ),
     ]
 
-    view = project_decision_view(events)
+    view = project_decision_view(build_graph_catalog(), events)
 
     assert view == {
         "pending_gates": [
@@ -112,7 +113,7 @@ def test_planner_budget_gate_surfaces_as_pending_decision() -> None:
         ),
     ]
 
-    view = project_decision_view(events)
+    view = project_decision_view(build_graph_catalog(), events)
 
     assert view["pending_gates"] == [
         {
@@ -186,7 +187,7 @@ def test_decision_view_includes_typed_request_details() -> None:
         ),
     ]
 
-    view = project_decision_view(events)
+    view = project_decision_view(build_graph_catalog(), events)
 
     assert view["pending_gates"] == [
         {

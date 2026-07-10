@@ -67,7 +67,7 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
         )
         events = await _drive_region(session_factory, controller, run_id, events, "one")
 
-        assert project_run_state(events) == "active"
+        assert project_run_state(build_graph_catalog(), events) == "active"
         events = await _complete_node(
             session_factory, controller, run_id, "planner-child-two", events
         )
@@ -85,19 +85,30 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
         )
         events = await _drive_region(session_factory, controller, run_id, events, "two")
 
-        assert project_run_state(events) == "completed"
-        assert [entry["region_label"] for entry in project_planner_chain(events)] == [
+        assert project_run_state(build_graph_catalog(), events) == "completed"
+        assert [
+            entry["region_label"] for entry in project_planner_chain(build_graph_catalog(), events)
+        ] == [
             "child-one",
             "child-two",
         ]
-        assert project_planner_session(events)["carryover_record_id"] == "summary-one"
+        assert (
+            project_planner_session(build_graph_catalog(), events)["carryover_record_id"]
+            == "summary-one"
+        )
         assert {event.run_id for event in events} == {run_id}
         assert not any(_contains_legacy_child_artifact(event.payload) for event in events)
 
         replayed = await _read_events(session_factory, run_id)
-        assert project_run_state(replayed) == project_run_state(events)
-        assert project_planner_chain(replayed) == project_planner_chain(events)
-        assert project_planner_session(replayed) == project_planner_session(events)
+        assert project_run_state(build_graph_catalog(), replayed) == project_run_state(
+            build_graph_catalog(), events
+        )
+        assert project_planner_chain(build_graph_catalog(), replayed) == project_planner_chain(
+            build_graph_catalog(), events
+        )
+        assert project_planner_session(build_graph_catalog(), replayed) == project_planner_session(
+            build_graph_catalog(), events
+        )
     finally:
         await engine.dispose()
 
@@ -142,7 +153,7 @@ async def test_child_oversight_maps_to_in_chain_appeal(tmp_path: Path) -> None:
             ),
         )
 
-        projection = project_decision_view(events)
+        projection = project_decision_view(build_graph_catalog(), events)
         assert projection["appeals"] == [
             {"node_id": "appeal-child-one", "state": "planned", "outcome": None}
         ]
@@ -356,7 +367,10 @@ async def _read_events(
     run_id: str,
 ) -> list[EventEnvelope]:
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 def _patch_payload(

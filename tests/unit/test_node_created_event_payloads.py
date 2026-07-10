@@ -28,6 +28,7 @@ from orchestrator.graph_runtime.store import (
     GraphEventStore,
     graph_aggregate_id,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def test_node_created_payload_normalizes_membership_authority_and_unknown_keys_to_extra() -> None:
@@ -94,7 +95,7 @@ def test_node_created_malformed_nested_input_keeps_node_and_valid_ports() -> Non
         ],
     }
 
-    projection = build_projection([_event(raw, position=1)])
+    projection = build_projection(build_graph_catalog(), [_event(raw, position=1)])
 
     assert projection["node_states"] == {"legacy-inputs": "planned"}
     projected = projection["node_creation_payloads"]["legacy-inputs"].model_dump(mode="json")
@@ -122,7 +123,7 @@ def test_node_created_malformed_nested_output_keeps_node_and_valid_ports() -> No
         ],
     }
 
-    projection = build_projection([_event(raw, position=1)])
+    projection = build_projection(build_graph_catalog(), [_event(raw, position=1)])
 
     assert projection["node_states"] == {"legacy-outputs": "completed"}
     projected = projection["node_creation_payloads"]["legacy-outputs"].model_dump(mode="json")
@@ -157,7 +158,7 @@ def test_node_created_malformed_nested_claim_and_planner_region_keep_node() -> N
         },
     }
 
-    projection = build_projection([_event(raw, position=1)])
+    projection = build_projection(build_graph_catalog(), [_event(raw, position=1)])
 
     assert projection["node_states"] == {"legacy-nested-shapes": "planned"}
     normalized = NodeCreatedPayload.model_validate(raw)
@@ -202,7 +203,7 @@ def test_node_created_extra_collisions_preserve_old_and_new_evidence() -> None:
     }
 
     normalized = NodeCreatedPayload.model_validate(raw)
-    projection = build_projection([_event(raw, position=1)])
+    projection = build_projection(build_graph_catalog(), [_event(raw, position=1)])
 
     assert projection["node_states"] == {"legacy-collisions": "planned"}
     projected = projection["node_creation_payloads"]["legacy-collisions"].model_dump(mode="json")
@@ -414,7 +415,7 @@ def test_node_created_reducer_preserves_planner_recovery_and_authority_indexes()
         ),
     ]
 
-    projection = build_projection(events)
+    projection = build_projection(build_graph_catalog(), events)
 
     assert projection["planner_generation_budget"] == 4
     assert projection["planner_generations"] == {"planner-1": 1}
@@ -424,7 +425,7 @@ def test_node_created_reducer_preserves_planner_recovery_and_authority_indexes()
     assert projection["node_resource_claims"]["planner-1"][0].scope == "repo"
     recovery_nodes = projection["recovery_nodes_by_record_id"]["verification-1"]
     assert [entry.node_id for entry in recovery_nodes] == ["recovery-1"]
-    planner_rows = project_planner_chain(events)
+    planner_rows = project_planner_chain(build_graph_catalog(), events)
     assert planner_rows[0]["region_label"] == "repair"
 
 
@@ -556,7 +557,7 @@ async def test_hidden_oracle_command_survives_all_sqlite_compact_readers() -> No
         },
         position=1,
     )
-    full_checkpoint = projection_to_checkpoint(build_projection([event]))
+    full_checkpoint = projection_to_checkpoint(build_projection(build_graph_catalog(), [event]))
     for fields in (
         GRAPH_PROJECTION_PAYLOAD_FIELDS,
         LIGHT_GRAPH_PAYLOAD_FIELDS,
@@ -580,7 +581,10 @@ async def test_hidden_oracle_command_survives_all_sqlite_compact_readers() -> No
                 )
             )
             await session.flush()
-            store = GraphEventStore(session)
+            store = GraphEventStore(
+                session,
+                build_graph_catalog(),
+            )
             for reader in (
                 store.read_run_projection,
                 store.read_run_light,
@@ -589,7 +593,12 @@ async def test_hidden_oracle_command_survives_all_sqlite_compact_readers() -> No
             ):
                 compact_events = await reader("run-1")
                 assert compact_events[0].payload["hidden_oracle_command"] == hidden_oracle_command
-                assert projection_to_checkpoint(build_projection(compact_events)) == full_checkpoint
+                assert (
+                    projection_to_checkpoint(
+                        build_projection(build_graph_catalog(), compact_events)
+                    )
+                    == full_checkpoint
+                )
     finally:
         await engine.dispose()
 
@@ -629,7 +638,7 @@ async def test_node_created_compact_replay_matches_full_replay() -> None:
             position=1,
         )
     ]
-    full_checkpoint = projection_to_checkpoint(build_projection(events))
+    full_checkpoint = projection_to_checkpoint(build_projection(build_graph_catalog(), events))
     engine = create_engine(":memory:")
     await init_db(engine)
     session_factory = create_session_factory(engine)
@@ -646,7 +655,10 @@ async def test_node_created_compact_replay_matches_full_replay() -> None:
                 )
             )
             await session.flush()
-            store = GraphEventStore(session)
+            store = GraphEventStore(
+                session,
+                build_graph_catalog(),
+            )
             for reader in (
                 store.read_run_projection,
                 store.read_run_light,
@@ -654,7 +666,12 @@ async def test_node_created_compact_replay_matches_full_replay() -> None:
                 store.read_run_node_detail,
             ):
                 compact_events = await reader("run-1")
-                assert projection_to_checkpoint(build_projection(compact_events)) == full_checkpoint
+                assert (
+                    projection_to_checkpoint(
+                        build_projection(build_graph_catalog(), compact_events)
+                    )
+                    == full_checkpoint
+                )
     finally:
         await engine.dispose()
 

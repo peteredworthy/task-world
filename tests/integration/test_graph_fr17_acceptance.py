@@ -24,6 +24,7 @@ from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
+from orchestrator.graph import build_graph_catalog
 
 
 @pytest.fixture
@@ -121,7 +122,10 @@ async def _seed_less_used_readback_graph(
 ) -> None:
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, _less_used_events(run_id))
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, _less_used_events(run_id))
 
 
 def _less_used_events(run_id: str) -> list[EventEnvelope]:

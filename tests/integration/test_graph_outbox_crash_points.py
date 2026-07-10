@@ -97,7 +97,10 @@ class VisibilityAssertingExecutor:
         try:
             own_session_factory = create_session_factory(own_engine)
             async with own_session_factory() as session:
-                events = await GraphEventStore(session).read_run(item.run_id)
+                events = await GraphEventStore(
+                    session,
+                    build_graph_catalog(),
+                ).read_run(item.run_id)
                 outbox_row = await session.execute(
                     select(GraphOutboxModel).where(GraphOutboxModel.event_id == item.event_id)
                 )
@@ -205,7 +208,10 @@ async def _seed_runnable_worker(
     ]
     async with session_factory() as session:
         async with session.begin():
-            return await GraphEventStore(session).append_events(run_id, 0, events)
+            return await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, events)
 
 
 async def _read_events(
@@ -213,7 +219,10 @@ async def _read_events(
     run_id: str,
 ) -> list[EventEnvelope]:
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 async def _outbox_statuses(
@@ -349,7 +358,10 @@ async def _seed_cleanup_request(
     old_snapshot_id = str(boundary.output_record["snapshot_id"])
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(
                 run_id,
                 0,
                 [_event("file-state-event", run_id, "file_state_accepted", boundary.output_record)],
@@ -540,7 +552,9 @@ async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_
     ]
     assert report.awaiting_start_ack == second_report.awaiting_start_ack
     lease_id = str(report.awaiting_start_ack[0]["lease_id"])
-    projection = rebuild_projection(await _read_events(session_factory, run_id))
+    projection = rebuild_projection(
+        build_graph_catalog(), await _read_events(session_factory, run_id)
+    )
     assert projection["leases"][lease_id]["state"] == "active"
     assert projection["node_states"]["worker-1"] == "leased"
 
@@ -565,7 +579,10 @@ async def test_recover_without_run_id_skips_terminal_snapshot_without_replay(
 
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(
                 terminal_run_id,
                 0,
                 [
@@ -620,7 +637,10 @@ async def test_recover_without_run_id_skips_terminal_run_when_snapshot_missing(
 
     async with session_factory() as session:
         async with session.begin():
-            store = GraphEventStore(session)
+            store = GraphEventStore(
+                session,
+                build_graph_catalog(),
+            )
             await store.append_events(
                 terminal_run_id,
                 0,
@@ -712,14 +732,18 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         "agent_died",
         {"lease_id": lease_id, "execution_id": execution_id, "reason": "process_exited"},
     )
-    projection_after_death = rebuild_projection(await _read_events(session_factory, run_id))
+    projection_after_death = rebuild_projection(
+        build_graph_catalog(), await _read_events(session_factory, run_id)
+    )
     relearnt = await controller.handle_command(
         run_id,
         died.projection_position,
         "schedule_tick",
         {"lease_seconds": 60, "base_snapshot_id": "S0"},
     )
-    projection_after_relearn = rebuild_projection(await _read_events(session_factory, run_id))
+    projection_after_relearn = rebuild_projection(
+        build_graph_catalog(), await _read_events(session_factory, run_id)
+    )
 
     assert [event.event_type for event in died.events] == [
         "agent_died",
@@ -1074,7 +1098,7 @@ async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
     await restarted_dispatcher.dispatch_pending()
 
     events = await _read_events(session_factory, "cleanup-before-side-effect")
-    projection = rebuild_projection(events)
+    projection = rebuild_projection(build_graph_catalog(), events)
     original = projection["file_state_records"][record_id]
     superseding_id = str(original.superseded_by_record_id)
     superseding = projection["file_state_records"][superseding_id]
@@ -1113,7 +1137,9 @@ async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
     cleanup_event = next(
         event for event in events_before if event.event_type == "cleanup_requested"
     )
-    compromised_record = rebuild_projection(events_before)["file_state_records"][record_id]
+    compromised_record = rebuild_projection(build_graph_catalog(), events_before)[
+        "file_state_records"
+    ][record_id]
     first_cleanup = apply_cleanup_requested(
         worktree_path=repo,
         cleanup_request=cleanup_event.payload,
@@ -1138,7 +1164,7 @@ async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
     await dispatcher.dispatch_pending()
 
     events_after = await _read_events(session_factory, "cleanup-after-ref-delete")
-    projection = rebuild_projection(events_after)
+    projection = rebuild_projection(build_graph_catalog(), events_after)
     original = projection["file_state_records"][record_id]
     superseding_records = [
         event
@@ -1218,7 +1244,10 @@ async def test_compromised_file_state_binding_is_refused_before_cleanup_complete
     ]
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, events)
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, events)
 
     clock = FixedClock()
     controller = GraphController(
@@ -1299,7 +1328,10 @@ async def test_events_and_outbox_rows_commit_atomically_on_outbox_failure(
     with pytest.raises(OutboxAppendError):
         async with session_factory() as session:
             async with session.begin():
-                stored = await GraphEventStore(session).append_events(run_id, 0, [dispatch_event])
+                stored = await GraphEventStore(
+                    session,
+                    build_graph_catalog(),
+                ).append_events(run_id, 0, [dispatch_event])
                 await append_outbox_rows(session, stored, clock)
 
     assert await _read_events(session_factory, run_id) == []
@@ -1467,4 +1499,6 @@ async def test_controller_round_trip_projection_matches_in_memory_projection(
     read_back = await _read_events(session_factory, run_id)
 
     assert read_back == seed_events + result.events
-    assert rebuild_projection(read_back) == rebuild_projection(seed_events + result.events)
+    assert rebuild_projection(build_graph_catalog(), read_back) == rebuild_projection(
+        build_graph_catalog(), seed_events + result.events
+    )

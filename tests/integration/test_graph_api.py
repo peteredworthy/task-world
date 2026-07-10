@@ -246,7 +246,10 @@ async def _seed_control_topology_graph_run(app: Any, run_id: str) -> None:
     ]
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, events)
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, events)
         await session.commit()
 
 
@@ -304,7 +307,10 @@ async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
     ]
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, events)
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, events)
         await session.commit()
 
     controller = GraphController(
@@ -384,7 +390,10 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
         future_effects=future_command_effects(),
     )
     async with session_factory() as session:
-        events = await GraphEventStore(session).read_run(run_id)
+        events = await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
     position = max(event.position for event in events)
     worker_lease = next(event for event in events if event.event_type == "lease_granted")
     worker_node = str(worker_lease.payload["node_id"])
@@ -672,7 +681,10 @@ async def test_operator_requeues_failed_outbox_row_with_audit_event(
     await _save_manual_graph_run(app, run_id)
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(
             run_id,
             0,
             [_event("run_lifecycle_changed", {"to_state": "active"})],
@@ -755,7 +767,10 @@ async def test_operator_requeue_failed_outbox_row_rejects_invalid_requests(
     await _save_manual_graph_run(app, run_id)
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(
             run_id,
             0,
             [_event("run_lifecycle_changed", {"to_state": "active"})],
@@ -798,7 +813,10 @@ async def test_requeue_audit_append_translates_stale_position_to_conflict(
     await _save_manual_graph_run(app, run_id)
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(
             run_id,
             0,
             [
@@ -820,7 +838,10 @@ async def test_requeue_audit_append_translates_stale_position_to_conflict(
 
         try:
             await append_requeue_audit_event(
-                GraphEventStore(session),
+                GraphEventStore(
+                    session,
+                    build_graph_catalog(),
+                ),
                 run_id=run_id,
                 current_position=1,
                 audit_event=audit_event,
@@ -840,7 +861,10 @@ async def test_operator_graph_patch_endpoint_accepts_human_patch(
     await _save_manual_graph_run(app, run_id)
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(
             run_id,
             0,
             [_event("run_lifecycle_changed", {"to_state": "active"})],
@@ -902,7 +926,10 @@ async def test_graph_projection_recomputes_task_states_from_events(
 
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
-        snapshot = await GraphEventStore(session).read_projection_snapshot(run_id)
+        snapshot = await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_projection_snapshot(run_id)
         assert snapshot is not None
         snapshot.task_states = {"task-1": "stale"}
         await session.commit()
@@ -1161,7 +1188,10 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
 
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, events)
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, events)
         await session.commit()
 
     async with session_factory() as session:

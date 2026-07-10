@@ -79,7 +79,7 @@ from orchestrator.graph.patch_validator import validate_patch
 from orchestrator.graph.projections import (
     GraphProjection,
     final_invariant_blockers_for_events,
-    reduce_event,
+    reduce_legacy_event,
 )
 from orchestrator.graph.scheduler import (
     InputEdgeInfo,
@@ -1672,7 +1672,7 @@ def _project_with_events(
 ) -> GraphProjection:
     output = projection
     for event in source_events:
-        output = reduce_event(output, event)
+        output = reduce_legacy_event(output, event)
     return output
 
 

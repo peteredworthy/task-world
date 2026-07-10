@@ -16,6 +16,7 @@ from orchestrator.graph import (
     initial_projection,
     reduce_event,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def test_node_state_changed_payload_normalizes_legacy_membership_and_extra() -> None:
@@ -46,12 +47,14 @@ def test_node_state_changed_payload_moves_malformed_fixed_values_to_extra() -> N
 
 def test_node_lifecycle_auxiliary_scans_preserve_legacy_suspect_and_deferral_facts() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "node_created", {"node_id": "worker-1", "kind": "worker", "state": "ready"}, position=1
         ),
     )
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event(
             "plan_region_marked_suspect",
@@ -60,6 +63,7 @@ def test_node_lifecycle_auxiliary_scans_preserve_legacy_suspect_and_deferral_fac
         ),
     )
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event("node_deferred", {"node_id": "worker-1", "reason": "blocked"}, position=3),
     )
@@ -122,6 +126,7 @@ def test_node_suspect_payload_preserves_node_and_region_aliases() -> None:
 
 def test_node_lifecycle_reducers_use_typed_legacy_payloads() -> None:
     projection = reduce_event(
+        build_graph_catalog(),
         initial_projection(),
         _event(
             "node_state_changed",
@@ -134,6 +139,7 @@ def test_node_lifecycle_reducers_use_typed_legacy_payloads() -> None:
         ),
     )
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event(
             "node_authority_changed",
@@ -148,20 +154,24 @@ def test_node_lifecycle_reducers_use_typed_legacy_payloads() -> None:
         ),
     )
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event("node_deferred", {"node_id": "worker-1", "reason": "blocked"}, position=3),
     )
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event("node_ready", {"node_id": "worker-1"}, position=4),
     )
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event(
             "node_marked_suspect", {"region_node_ids": ["worker-1"], "reason": "stale"}, position=5
         ),
     )
     projection = reduce_event(
+        build_graph_catalog(),
         projection,
         _event("node_suspect_cleared", {"node_id": "worker-1"}, position=6),
     )
@@ -199,7 +209,7 @@ def test_node_lifecycle_producers_emit_typed_payloads() -> None:
 def _project(events: list[EventEnvelope]) -> Any:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 

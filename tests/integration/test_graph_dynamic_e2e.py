@@ -785,7 +785,10 @@ def _driver(
 
 async def _events(session_factory: async_sessionmaker[AsyncSession], run_id: str):
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(run_id)
+        return await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
 
 
 async def _run_status(
@@ -849,7 +852,7 @@ async def test_dynamic_full_happy_path_completes(
     ]
     assert accepted_patches == ["patch-ds-root-plan"]
 
-    task_states = project_task_states(events)
+    task_states = project_task_states(build_graph_catalog(), events)
     assert task_states, "expected dynamic task regions to be projected"
     assert all(state == "accepted" for state in task_states.values()), task_states
     passed_reports = [
@@ -917,7 +920,7 @@ async def test_dynamic_macro_created_graph_skips_failure_branch_on_pass(
         if event.event_type == "graph_patch_accepted"
     ]
     assert accepted_patches == ["patch-macro-root-plan"]
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
 
 
 @pytest.mark.asyncio
@@ -957,7 +960,7 @@ async def test_passed_verifier_with_failure_only_gap_terminalizes_to_final_check
     events = await _events(session_factory, run_id)
     assert outcome.completed is True, outcome.blocked_reason
     assert dispatch_order == ["planner", "worker", "verifier"]
-    assert project_run_state(events) == "completed"
+    assert project_run_state(build_graph_catalog(), events) == "completed"
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
     assert any(
         event.event_type == "edge_created"
@@ -1012,7 +1015,7 @@ async def test_passed_verification_skips_gap_no_op_branch(
 
     events = await _events(session_factory, run_id)
     assert outcome.completed is True, outcome.blocked_reason
-    assert project_run_state(events) == "completed"
+    assert project_run_state(build_graph_catalog(), events) == "completed"
 
     accepted_patch_ids = [
         event.payload.get("patch_id")
@@ -1090,7 +1093,7 @@ async def test_failed_corrective_verifier_continues_through_recovery_gap(
     ]
     assert len(recovery_nodes) == 1
     assert recovery_nodes[0]["node_id"].startswith("planner-recover-verification-")
-    task_states = project_task_states(events)
+    task_states = project_task_states(build_graph_catalog(), events)
     assert task_states["recovery-corrective_work_region"] == "accepted"
     assert task_states["corrective_work_region"] in {"accepted", "pending"}
 
@@ -1130,7 +1133,7 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
     events = await _events(session_factory, run_id)
     assert outcome.completed is False
     assert outcome.blocked_reason is not None
-    assert project_run_state(events) == "active"
+    assert project_run_state(build_graph_catalog(), events) == "active"
     assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
     failed_check_results = [
         event.payload
@@ -1183,4 +1186,4 @@ async def test_dynamic_root_planner_accepted_patch_then_no_submit_does_not_dupli
     ]
     assert len(root_patches) == 1, "root planner must not produce a duplicate accepted patch"
     assert outcome.completed is True, outcome.blocked_reason
-    assert project_run_state(events) == "completed"
+    assert project_run_state(build_graph_catalog(), events) == "completed"

@@ -13,6 +13,7 @@ from orchestrator.db.access.mutations import save_run
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
+from orchestrator.graph import build_graph_catalog
 
 
 def _routine() -> RoutineConfig:
@@ -148,7 +149,10 @@ async def _seed_file_state_report_run(app: Any, run_id: str) -> None:
         ),
     ]
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, events)
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, events)
         await session.commit()
 
 

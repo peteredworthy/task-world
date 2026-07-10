@@ -18,6 +18,7 @@ from orchestrator.graph_runtime.dispatch import (
     _planner_packet,
     _prompt_for_node,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def _event(
@@ -43,7 +44,7 @@ def _event(
 def _projection(events: list[EventEnvelope]) -> GraphProjection:
     projection = initial_projection()
     for evt in sorted(events, key=lambda item: item.position):
-        projection = reduce_event(projection, evt)
+        projection = reduce_event(build_graph_catalog(), projection, evt)
     return projection
 
 

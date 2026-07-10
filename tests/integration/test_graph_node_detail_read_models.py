@@ -24,6 +24,7 @@ from orchestrator.db import (
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph_runtime.store import graph_aggregate_id
+from orchestrator.graph import build_graph_catalog
 
 
 @pytest.fixture(scope="module")
@@ -219,7 +220,10 @@ async def _materialized_response(
     run_id: str,
     node_id: str,
 ) -> dict[str, Any]:
-    summary = await GraphEventStore(session).read_node_detail_summary(run_id, node_id)
+    summary = await GraphEventStore(
+        session,
+        build_graph_catalog(),
+    ).read_node_detail_summary(run_id, node_id)
     assert summary is not None
     return build_node_detail_response_from_summary(summary).model_dump(mode="json")
 
@@ -260,7 +264,10 @@ async def test_append_creates_and_updates_node_detail_summaries(
     events = _representative_events(run_id)
     async with session_factory() as session:
         async with session.begin():
-            store = GraphEventStore(session)
+            store = GraphEventStore(
+                session,
+                build_graph_catalog(),
+            )
             await store.append_events(run_id, 0, events[:6])
             await store.append_events(run_id, 6, events[6:])
 
@@ -324,7 +331,10 @@ async def test_check_node_detail_summary_derives_command_precondition(
     ]
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, events)
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, events)
 
     async with session_factory() as session:
         check = await _materialized_response(session, run_id, node_id)
@@ -397,7 +407,10 @@ async def test_node_detail_summary_accumulates_bind_all_input_ports(
 
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, events)
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, events)
 
     async with session_factory() as session:
         summarizer = await _materialized_response(session, run_id, "summarizer-1")
@@ -412,7 +425,10 @@ async def test_node_detail_summaries_roll_back_with_append(
     run_id = "node-detail-rollback"
     async with session_factory() as session:
         transaction = await session.begin()
-        await GraphEventStore(session).append_events(run_id, 0, _representative_events(run_id))
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, _representative_events(run_id))
         await transaction.rollback()
 
     async with session_factory() as session:
@@ -440,7 +456,10 @@ async def test_deleted_node_detail_rows_rebuild_on_summary_read(
     run_id = "node-detail-rebuild-on-read"
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(
                 run_id,
                 0,
                 _representative_events(run_id),
@@ -468,7 +487,10 @@ async def test_deleted_node_detail_rows_do_not_partially_rebuild_on_append(
     run_id = "node-detail-delete-then-append"
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(
                 run_id,
                 0,
                 _representative_events(run_id),
@@ -478,7 +500,10 @@ async def test_deleted_node_detail_rows_do_not_partially_rebuild_on_append(
         )
         await session.commit()
         async with session.begin():
-            await GraphEventStore(session).append_events(
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(
                 run_id,
                 len(_representative_events(run_id)),
                 [
@@ -509,14 +534,20 @@ async def test_node_detail_rebuild_is_idempotent(
     run_id = "node-detail-idempotent"
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(
                 run_id,
                 0,
                 _representative_events(run_id),
             )
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         await store.rebuild_node_detail_summaries(run_id)
         first_rows = await _stored_rows(session, run_id)
         first_response = await _materialized_response(session, run_id, "worker-1")
@@ -535,14 +566,20 @@ async def test_node_detail_summary_matches_existing_light_builder(
     run_id = "node-detail-parity"
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(
                 run_id,
                 0,
                 _representative_events(run_id),
             )
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         light_events = await store.read_run_node_detail(run_id)
         old_response = build_node_detail_response(
             run_id,
@@ -601,10 +638,16 @@ async def test_completed_sequential_leases_match_existing_summary_selection(
     ]
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(run_id, 0, events)
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(run_id, 0, events)
 
     async with session_factory() as session:
-        store = GraphEventStore(session)
+        store = GraphEventStore(
+            session,
+            build_graph_catalog(),
+        )
         light_events = await store.read_run_node_detail(run_id)
         old_response = build_node_detail_response(
             run_id,
@@ -626,14 +669,20 @@ async def test_full_node_detail_path_keeps_heavy_output_and_file_state_detail(
     run_id = "node-detail-full"
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(
                 run_id,
                 0,
                 _representative_events(run_id),
             )
 
     async with session_factory() as session:
-        events = await GraphEventStore(session).read_run(run_id)
+        events = await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).read_run(run_id)
         response = build_node_detail_response(
             run_id,
             "worker-1",
@@ -655,7 +704,10 @@ async def test_compact_node_detail_rows_do_not_store_heavy_value_bodies(
     run_id = "node-detail-compact"
     async with session_factory() as session:
         async with session.begin():
-            await GraphEventStore(session).append_events(
+            await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).append_events(
                 run_id,
                 0,
                 _representative_events(run_id),

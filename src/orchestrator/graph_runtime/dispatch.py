@@ -375,9 +375,12 @@ class GraphDispatchExecutor(SideEffectExecutor):
         payload = item.payload
         node_id = str(payload["node_id"])
         async with self._session_factory() as session:
-            events = await GraphEventStore(session).read_run(item.run_id)
+            events = await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).read_run(item.run_id)
 
-        projection = rebuild_projection(events)
+        projection = rebuild_projection(build_graph_catalog(), events)
         _guard_no_pending_compromised_file_state_bindings(projection, node_id)
         node_payload = _node_payload(events, node_id)
         node_kind = str(node_payload.get("kind", "worker"))
@@ -685,11 +688,17 @@ class GraphDispatchExecutor(SideEffectExecutor):
 
     async def _current_position(self, run_id: str) -> int:
         async with self._session_factory() as session:
-            return await GraphEventStore(session).current_position(run_id)
+            return await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).current_position(run_id)
 
     async def _events(self, run_id: str) -> list[EventEnvelope]:
         async with self._session_factory() as session:
-            return await GraphEventStore(session).read_run(run_id)
+            return await GraphEventStore(
+                session,
+                build_graph_catalog(),
+            ).read_run(run_id)
 
     async def _record_gatekeeper_verdicts(
         self,
@@ -744,7 +753,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         if not isinstance(record_id, str):
             msg = f"cleanup_requested missing file_state_record_id: {cleanup_id}"
             raise ValueError(msg)
-        projection = rebuild_projection(events)
+        projection = rebuild_projection(build_graph_catalog(), events)
         compromised_record = projection["file_state_records"].get(record_id)
         if compromised_record is None:
             msg = f"unknown cleanup file_state record: {record_id}"
@@ -888,7 +897,7 @@ def _node_payload(events: list[EventEnvelope], node_id: str) -> dict[str, Any]:
 
 
 def _requirements_for_node(events: list[EventEnvelope], node_id: str) -> list[str]:
-    projection = rebuild_projection(events)
+    projection = rebuild_projection(build_graph_catalog(), events)
     _guard_no_pending_compromised_file_state_bindings(projection, node_id)
     bound_record_ids: set[str] = set()
     for port, binding in projection["input_bindings"].get(node_id, {}).items():

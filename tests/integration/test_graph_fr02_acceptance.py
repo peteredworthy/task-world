@@ -241,7 +241,10 @@ async def _seed_base_graph(
         ),
     ]
     async with session_factory() as session:
-        await GraphEventStore(session).append_events(run_id, 0, events)
+        await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, events)
         await session.commit()
 
 

@@ -66,7 +66,7 @@ def test_converted_commands_require_catalog_and_context(command_type: str) -> No
 def _project(events: list[EventEnvelope]):
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 
@@ -1003,7 +1003,7 @@ def test_record_requirement_revision_command_emits_replayable_policy_event() -> 
     )
 
     assert [event.event_type for event in output] == ["requirement_revision_recorded"]
-    assert project_requirement_freshness_facts(output) == [
+    assert project_requirement_freshness_facts(build_graph_catalog(), output) == [
         {
             "requirement_id": "R-1",
             "active_version_id": "R-1.v1",
@@ -1042,7 +1042,12 @@ def test_record_support_evidence_command_uses_active_requirement_version() -> No
 
     assert [event.event_type for event in output] == ["support_evidence_recorded"]
     assert output[0].payload["requirement_version_id"] == "R-1.v1"
-    assert project_requirement_freshness_facts([*events, *output])[0]["unsupported"] is False
+    assert (
+        project_requirement_freshness_facts(build_graph_catalog(), [*events, *output])[0][
+            "unsupported"
+        ]
+        is False
+    )
 
 
 def test_record_support_evidence_rejects_unknown_active_requirement_version() -> None:
@@ -3313,7 +3318,9 @@ def test_worker_smuggled_verification_record_rejected_atomically() -> None:
     projected = _project([*events, *output])
     assert projected["node_states"]["worker-1"] == "running"
     assert projected["leases"]["lease-1"]["state"] == "active"
-    assert project_task_states([*events, *output]).get("task-1") != "accepted"
+    assert (
+        project_task_states(build_graph_catalog(), [*events, *output]).get("task-1") != "accepted"
+    )
 
 
 def test_callback_rejects_output_record_producer_forgery_without_partial_events() -> None:
@@ -5010,7 +5017,7 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
         ),
     ]
 
-    assert project_task_states(events) == {"region-r1-final": "pending"}
+    assert project_task_states(build_graph_catalog(), events) == {"region-r1-final": "pending"}
 
     output = _apply_from_checkpoint(events, "reconcile", {"run_id": "run-1"})
 
@@ -5099,7 +5106,7 @@ def test_reconcile_recovers_runtime_failed_check_without_check_result() -> None:
         ),
     ]
 
-    assert project_task_states(events) == {"region-r1-final": "pending"}
+    assert project_task_states(build_graph_catalog(), events) == {"region-r1-final": "pending"}
 
     output = _apply_from_checkpoint(events, "reconcile", {"run_id": "run-1"})
 
@@ -5160,7 +5167,7 @@ def test_reconcile_recovers_runtime_failed_check_without_check_result() -> None:
         ),
     ]
 
-    recovered_task_states = project_task_states(recovered_events)
+    recovered_task_states = project_task_states(build_graph_catalog(), recovered_events)
     assert recovered_task_states["region-r1-final"] == "accepted"
 
 
@@ -6249,7 +6256,10 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
         ),
     ]
 
-    assert project_task_states(events)["corrective_work_region"] == "needs_revision"
+    assert (
+        project_task_states(build_graph_catalog(), events)["corrective_work_region"]
+        == "needs_revision"
+    )
 
     output = _apply_from_checkpoint(events, "reconcile", {"run_id": "run-1"})
 
@@ -6770,7 +6780,7 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
         event.event_type == "lease_granted" and event.payload["node_id"] == "check-final"
         for event in next_output
     )
-    task_states = project_task_states([*events, *output])
+    task_states = project_task_states(build_graph_catalog(), [*events, *output])
     assert task_states["gap-region"] == "accepted"
     assert task_states["corrective-region"] == "accepted"
 
@@ -7109,7 +7119,7 @@ def test_passed_final_check_retires_failure_continuation() -> None:
     assert [event.payload["node_id"] for event in output if event.event_type == "node_retired"] == [
         "planner-gap-final"
     ]
-    task_states = project_task_states([*events, *output])
+    task_states = project_task_states(build_graph_catalog(), [*events, *output])
     assert task_states["final-gap-region"] == "accepted"
 
 

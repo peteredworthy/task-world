@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import SqliteEventStore, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, build_graph_catalog
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.workflow import AgentOutputEvent, InMemorySignalTransport
 from tests.integration.conftest import cleanup_runs_for_repo
@@ -99,7 +99,10 @@ async def _append_graph_events(
     events: list[EventEnvelope],
 ) -> list[int]:
     async with app.state.session_factory() as session:
-        stored = await GraphEventStore(session).append_events(run_id, 0, events)
+        stored = await GraphEventStore(
+            session,
+            build_graph_catalog(),
+        ).append_events(run_id, 0, events)
         await session.commit()
     return [event.position for event in stored]
 

@@ -23,6 +23,7 @@ from orchestrator.graph_runtime.store import (
     LIGHT_GRAPH_PAYLOAD_FIELDS,
     _json_extract_payload_value,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 def test_requirement_revision_payload_preserves_all_authority_classification_inputs() -> None:
@@ -164,7 +165,7 @@ def test_requirement_reducers_tolerate_recorded_and_replay_only_aliases() -> Non
         ),
     ]
 
-    projection = build_projection(events)
+    projection = build_projection(build_graph_catalog(), events)
 
     assert projection["active_requirement_versions"] == {"R-1": "R-1.v2"}
     assert projection["support_evidence"]["S-1"].requirement_version_id == "R-1.v2"
@@ -181,7 +182,7 @@ def test_authority_resolution_aliases_clear_full_history_and_checkpoint_blockers
         },
         position=1,
     )
-    checkpoint = projection_to_checkpoint(build_projection([revision]))
+    checkpoint = projection_to_checkpoint(build_projection(build_graph_catalog(), [revision]))
 
     for event_type, identifier in (
         ("authority_resolution_recorded", {"proposal_id": "proposal-1"}),
@@ -218,7 +219,7 @@ def test_requirement_and_support_producers_emit_typed_payloads() -> None:
     assert revision.requirement_id == "R-1"
     assert revision.extra == {}
 
-    projection = build_projection(revision_events)
+    projection = build_projection(build_graph_catalog(), revision_events)
     support_events = apply_command(
         projection,
         revision_events,
@@ -266,7 +267,7 @@ def test_validation_strengthening_still_stales_prior_support() -> None:
         ),
     ]
 
-    support = build_projection(events)["support_evidence"]["S-1"]
+    support = build_projection(build_graph_catalog(), events)["support_evidence"]["S-1"]
     assert support.status == "stale"
     assert support.stale_reason is not None
 
@@ -281,7 +282,8 @@ def test_light_graph_payload_retains_change_classification_for_requirement_repla
     )
 
     projection = build_projection(
-        [_event("requirement_revision_recorded", compact_payload, position=1)]
+        build_graph_catalog(),
+        [_event("requirement_revision_recorded", compact_payload, position=1)],
     )
     revision = projection["requirement_revisions"]["R-1.v2"]
 
@@ -302,7 +304,8 @@ def test_light_graph_payload_normalizes_sqlite_new_behavior_boolean_for_requirem
 
     assert compact_payload["new_behavior"] is True
     projection = build_projection(
-        [_event("requirement_revision_recorded", compact_payload, position=1)]
+        build_graph_catalog(),
+        [_event("requirement_revision_recorded", compact_payload, position=1)],
     )
     revision = projection["requirement_revisions"]["R-1.v2"]
 
@@ -313,7 +316,7 @@ def test_light_graph_payload_normalizes_sqlite_new_behavior_boolean_for_requirem
 def project_final_invariants(events: list[EventEnvelope]) -> list[dict[str, Any]]:
     return [
         blocker
-        for blocker in project_final_invariant_blockers(events)
+        for blocker in project_final_invariant_blockers(build_graph_catalog(), events)
         if blocker.get("kind") == "unresolved_authority_required_revision"
     ]
 
@@ -332,7 +335,7 @@ def project_final_invariants_from_checkpoint(
 ) -> list[dict[str, Any]]:
     projection = projection_from_checkpoint(checkpoint)
     for event in tail_events:
-        projection = reduce_event(projection, event)
+        projection = reduce_event(build_graph_catalog(), projection, event)
     return [
         projection["authority_revision_blockers"][key]
         for key in sorted(projection["authority_revision_blockers"])
