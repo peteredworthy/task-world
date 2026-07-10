@@ -26,7 +26,7 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from orchestrator.graph_runtime.controller import rebuild_projection
-from orchestrator.graph import build_graph_catalog, future_command_effects
+from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 
 ROUTINE_PATHS = [
     Path("routines/demo-task.yaml"),
@@ -243,7 +243,7 @@ async def test_controller_two_step_callback_completion_unblocks_next_step(tmp_pa
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     try:
@@ -300,7 +300,7 @@ async def test_controller_upstream_failure_blocks_next_step(tmp_path: Path) -> N
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     try:
@@ -349,7 +349,7 @@ async def test_demo_task_traverses_all_workers_in_step_order(tmp_path: Path) -> 
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     try:
@@ -396,7 +396,7 @@ async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(tmp_path
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     started_at = perf_counter()

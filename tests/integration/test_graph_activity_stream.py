@@ -34,7 +34,7 @@ from orchestrator.runners.types import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import AgentOutputEvent, WorkflowService
 from orchestrator.workflow.graph_driver import GraphRunDriver
-from orchestrator.graph import future_command_effects
+from orchestrator.graph import build_graph_command_dependencies
 
 
 class FakeConnectionManager:
@@ -221,7 +221,7 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=future_command_effects(),
+            future_effects=build_graph_command_dependencies().future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,

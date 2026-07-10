@@ -11,7 +11,7 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.graph import EventEnvelope, compile_routine
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime.controller import GraphController
-from orchestrator.graph import build_graph_catalog, future_command_effects
+from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 
 
 @dataclass(frozen=True)
@@ -54,7 +54,7 @@ async def seed_run(
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     ).handle_command(
         run_id,
         expected_position,

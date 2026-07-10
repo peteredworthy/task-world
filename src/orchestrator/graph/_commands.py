@@ -5050,10 +5050,6 @@ class LegacyFutureCommandEffects:
     recovery_plan_record_payload: Callable[..., Any] = _recovery_plan_record_payload
 
 
-def future_command_effects() -> LegacyFutureCommandEffects:
-    return LegacyFutureCommandEffects()
-
-
 command_rejected = _command_rejected
 event_factory = _event_factory
 run_id = _run_id

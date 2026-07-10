@@ -38,7 +38,7 @@ from orchestrator.graph import (
     VerifierVerdictProjection,
     VerificationResultProjection,
     build_graph_catalog,
-    future_command_effects,
+    build_graph_command_dependencies,
     initial_projection,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
@@ -5003,7 +5003,7 @@ def test_fixture_corpus_then_projections_satisfied() -> None:
                 FakeClock(),
                 SequentialIdGenerator(),
                 catalog=build_graph_catalog(),
-                future_effects=future_command_effects(),
+                future_effects=build_graph_command_dependencies().future_effects,
             )
 
             assert result.passed, f"{typed_scenario['name']}: {result.failures}"

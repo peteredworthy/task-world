@@ -30,7 +30,7 @@ from orchestrator.graph_runtime import (
     OutboxItem,
     seed_run,
 )
-from orchestrator.graph import future_command_effects
+from orchestrator.graph import build_graph_command_dependencies
 
 
 def _routine() -> RoutineConfig:
@@ -147,7 +147,7 @@ async def _seed_graph_run(
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
     started = await controller.handle_command(run_id, accepted.projection_position, "start")
@@ -319,7 +319,7 @@ async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
         _RunSeedIdGenerator(run_id),
         catalog=build_graph_catalog(),
         auto_dispatch=False,
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     heartbeat = await controller.handle_command(
         run_id,
@@ -343,7 +343,7 @@ async def _seed_rejected_patch_graph_run(app: Any, run_id: str) -> None:
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     await controller.handle_command(
         run_id,
@@ -387,7 +387,7 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     async with session_factory() as session:
         events = await GraphEventStore(

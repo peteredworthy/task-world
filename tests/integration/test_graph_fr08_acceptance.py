@@ -12,7 +12,7 @@ from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphController, GraphEventStore
-from orchestrator.graph import build_graph_catalog, future_command_effects
+from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 
 
 SECRET_COMMAND = "uv run pytest tests/oracle -q"
@@ -127,7 +127,7 @@ async def _seed_invalid_patch_graph_run(app: Any, run_id: str) -> GraphControlle
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
 

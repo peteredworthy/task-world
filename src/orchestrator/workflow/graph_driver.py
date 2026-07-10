@@ -44,7 +44,7 @@ from orchestrator.graph_runtime import (
     reconcile_runtime,
     seed_run,
 )
-from orchestrator.graph import future_command_effects
+from orchestrator.graph import build_graph_command_dependencies
 
 if TYPE_CHECKING:
     from orchestrator.workflow.service import WorkflowService
@@ -123,7 +123,7 @@ async def apply_graph_cancel_until_terminal(
         UuidIdGenerator(),
         catalog=build_graph_catalog(),
         auto_dispatch=False,
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     payload: dict[str, object] = {}
     delay_seconds = 0.05
@@ -730,7 +730,7 @@ class GraphRunDriver:
             self._clock,
             self._id_gen,
             catalog=build_graph_catalog(),
-            future_effects=future_command_effects(),
+            future_effects=build_graph_command_dependencies().future_effects,
         )
         if run_state is None or run_state == "draft":
             await self._handle_command_at_head(controller, run_id, "accept_run")
@@ -763,7 +763,7 @@ class GraphRunDriver:
             self._clock,
             self._id_gen,
             catalog=build_graph_catalog(),
-            future_effects=future_command_effects(),
+            future_effects=build_graph_command_dependencies().future_effects,
         )
         payload: dict[str, object] = {"actor_role": "operator"}
         if run_state == "failed":

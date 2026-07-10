@@ -34,7 +34,7 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from orchestrator.graph_runtime.store import graph_aggregate_id
-from orchestrator.graph import build_graph_catalog, future_command_effects
+from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 
 
 @pytest.fixture(scope="module")
@@ -127,7 +127,7 @@ async def test_projection_snapshot_tail_matches_full_rebuild(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
@@ -167,7 +167,7 @@ async def test_handle_command_uses_valid_snapshot_without_parsing_old_events(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
@@ -207,7 +207,7 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
         SequentialIdGenerator(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -268,7 +268,7 @@ async def test_schedule_tick_uses_valid_snapshot_without_parsing_old_events(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
@@ -305,7 +305,7 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
         SequentialIdGenerator(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -375,7 +375,7 @@ async def test_projection_snapshot_schema_mismatch_is_rebuilt(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
@@ -421,7 +421,7 @@ async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
         SequentialIdGenerator(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),

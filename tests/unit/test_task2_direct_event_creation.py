@@ -6,7 +6,11 @@ from pathlib import Path
 from orchestrator.graph.events.lifecycle import COMMAND_REJECTED, CommandRejectedPayload
 from orchestrator.graph.models import Actor, ActorKind
 from orchestrator.graph.specifications import CommandExecutionContext, HydratedEvent
-from tests.graph_command_support import FakeClock, SequentialIdGenerator, future_command_effects
+from tests.graph_command_support import (
+    FakeClock,
+    SequentialIdGenerator,
+    build_graph_command_dependencies,
+)
 
 
 COMMAND_MODULES = (
@@ -44,7 +48,7 @@ def test_typed_event_creator_returns_hydrated_events_with_ordered_unique_metadat
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     creator = TypedEventCreator(context)
 

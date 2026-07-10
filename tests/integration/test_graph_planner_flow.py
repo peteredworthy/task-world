@@ -16,7 +16,7 @@ from orchestrator.graph import (
     project_run_state,
 )
 from orchestrator.graph_runtime import GraphController, GraphEventStore
-from orchestrator.graph import build_graph_catalog, future_command_effects
+from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 
 
 class FixedClock:
@@ -43,7 +43,7 @@ async def test_planner_chain_two_horizons_end_to_end(tmp_path: Path) -> None:
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     run_id = "planner-flow"
     try:
@@ -98,7 +98,7 @@ async def test_budget_exhaustion_routes_to_gate_through_controller(tmp_path: Pat
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     run_id = "planner-budget"
     try:

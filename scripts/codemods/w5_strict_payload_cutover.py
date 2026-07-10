@@ -376,7 +376,10 @@ class _MechanicalTransformer(cst.CSTTransformer):
                         (
                             cst.Call(cst.Name("build_graph_catalog"))
                             if name == "catalog"
-                            else cst.Call(cst.Name("future_command_effects"))
+                            else cst.Attribute(
+                                cst.Call(cst.Name("build_graph_command_dependencies")),
+                                cst.Name("future_effects"),
+                            )
                         )
                         if route.factory_arguments
                         else cst.Name(name),
@@ -1078,7 +1081,7 @@ class StrictPayloadCutoverCodemod:
                     RequiredImport(
                         path,
                         "orchestrator.graph",
-                        ("build_graph_catalog", "future_command_effects"),
+                        ("build_graph_catalog", "build_graph_command_dependencies"),
                     ),
                 )
                 if "GraphController(" in working[path]

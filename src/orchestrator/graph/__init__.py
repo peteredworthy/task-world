@@ -7,7 +7,11 @@ from orchestrator.graph.command_bindings import (
     check_command_uses_acceptance_fallback,
     resolve_check_command_definition,
 )
-from orchestrator.graph.commands import apply_command, future_command_effects
+from orchestrator.graph.commands import apply_command
+from orchestrator.graph.composition import (
+    GraphCommandDependencies,
+    build_graph_command_dependencies,
+)
 from orchestrator.graph.compiler import compile_routine
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
@@ -211,6 +215,7 @@ __all__ = [
     "GraphPatchRejectedPayload",
     "GraphPatchStatusPayload",
     "GraphCatalog",
+    "GraphCommandDependencies",
     "HydratedEvent",
     "HeartbeatRecordedPayload",
     "HEARTBEAT_RECORDED",
@@ -271,7 +276,7 @@ __all__ = [
     "VerifierVerdictProjection",
     "WorktreeStatus",
     "apply_command",
-    "future_command_effects",
+    "build_graph_command_dependencies",
     "build_projection",
     "check_command_reference",
     "check_command_uses_acceptance_fallback",

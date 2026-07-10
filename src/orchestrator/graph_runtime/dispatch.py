@@ -47,7 +47,7 @@ from orchestrator.graph_runtime.outbox import OutboxItem, SideEffectExecutor
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner, create_agent_runner
 from orchestrator.runners.types import ExecutionContext
-from orchestrator.graph import future_command_effects
+from orchestrator.graph import build_graph_command_dependencies
 
 MAX_GRAPH_PROMPT_CHARS = _prompts.MAX_GRAPH_PROMPT_CHARS
 MAX_GRAPH_JSON_SECTION_CHARS = _prompts.MAX_GRAPH_JSON_SECTION_CHARS
@@ -874,7 +874,7 @@ def build_graph_runtime(
         id_gen,
         catalog=build_graph_catalog(),
         auto_dispatch=False,
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     executor = GraphDispatchExecutor(
         session_factory,

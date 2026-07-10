@@ -18,7 +18,7 @@ from orchestrator.graph import (
     project_run_state,
 )
 from orchestrator.graph_runtime import GraphController, GraphEventStore
-from orchestrator.graph import build_graph_catalog, future_command_effects
+from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 
 
 class FixedClock:
@@ -45,7 +45,7 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     run_id = "parent-child-flow"
     try:
@@ -122,7 +122,7 @@ async def test_child_oversight_maps_to_in_chain_appeal(tmp_path: Path) -> None:
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     run_id = "parent-child-appeal"
     try:

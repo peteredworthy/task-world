@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.db import EventV2Model, create_engine, create_session_factory, init_db
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
-from orchestrator.graph import build_graph_catalog, future_command_effects
+from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 from orchestrator.graph.models import EventEnvelope
 from orchestrator.graph.projections import build_projection, projection_to_checkpoint
 from orchestrator.graph.scenario import run_scenario
@@ -54,7 +54,7 @@ def test_all_fixtures_run_through_harness() -> None:
             FakeClock(),
             SequentialIdGenerator(),
             catalog=build_graph_catalog(),
-            future_effects=future_command_effects(),
+            future_effects=build_graph_command_dependencies().future_effects,
         )
         assert result.scenario_name == scenario["name"], path.name
         assert result.passed, f"{path.name}::{scenario['name']}: {result.failures}"
@@ -115,7 +115,7 @@ async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
             FakeClock(),
             SequentialIdGenerator(),
             catalog=build_graph_catalog(),
-            future_effects=future_command_effects(),
+            future_effects=build_graph_command_dependencies().future_effects,
         )
         assert result.passed, f"{path.name}::{scenario['name']}: {result.failures}"
 

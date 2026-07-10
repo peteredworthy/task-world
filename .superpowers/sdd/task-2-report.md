@@ -212,3 +212,19 @@ Final slice-B evidence:
 
 The reviewed mixed inventory remains 44 events and 23 commands. This slice deliberately does
 not change the public future-effects export; that remains the separate wave-three finding.
+
+## Composition-root dependency enforcement (re-review wave 3, slices C/D)
+
+Removed the legacy `future_command_effects` factory and both public re-export paths. Graph
+composition now owns an immutable `GraphCommandDependencies` bundle containing the explicitly
+composed catalog and future-domain effects adapter; runtime, workflow, API, and test composition
+sites obtain effects only through that public bundle. Command handlers, the controller, and the
+store retain required explicit injection and contain no singleton or default construction.
+
+Static architecture coverage proves the old symbol is absent from both public APIs and production
+calls, while retaining the prior raw-roundtrip, injected-replay-catalog, and legacy agent-death
+naming checks. The lifecycle codemod now emits the composition bundle API instead of recreating
+the removed factory. Focused architecture/codemod coverage passed 57 tests, the command/runtime
+focus passed 203 tests, full unit passed 3372 tests with the same three SQLite adapter warnings,
+and the focused serial integration slice passed 39 tests. The authoritative full serial
+integration run passed 1283 tests with 5 credential-dependent skips in 400.07 seconds.

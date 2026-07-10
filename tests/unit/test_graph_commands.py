@@ -19,7 +19,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     apply_command,
     build_graph_catalog,
-    future_command_effects,
+    build_graph_command_dependencies,
     initial_projection,
     project_requirement_freshness_facts,
     project_task_states,
@@ -118,7 +118,7 @@ def _apply(
                 else None,
             ),
             events=(),
-            future_effects=future_command_effects(),
+            future_effects=build_graph_command_dependencies().future_effects,
         )
         output = apply_command(
             _project(events),
@@ -519,7 +519,7 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     output = apply_command(
@@ -620,7 +620,7 @@ def test_record_heartbeat_temporary_renewal_preserves_domain_rejections(
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     output = apply_command(
@@ -650,7 +650,7 @@ def test_record_heartbeat_public_path_rejects_legacy_shape() -> None:
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     with pytest.raises(ValidationError):
@@ -688,7 +688,7 @@ def test_typed_acknowledge_start_uses_projection_and_emits_start_effect() -> Non
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     output = apply_command(
@@ -722,7 +722,7 @@ def test_typed_submit_callback_emits_strict_outcome_and_unconverted_effects() ->
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     payload = _callback_payload(complete_node=True)

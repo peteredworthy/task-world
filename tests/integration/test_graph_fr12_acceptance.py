@@ -26,7 +26,7 @@ from orchestrator.graph_runtime import (
 from orchestrator.runners import AgentRunner
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
-from orchestrator.graph import build_graph_catalog, future_command_effects
+from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 
 
 @pytest.fixture
@@ -197,7 +197,7 @@ async def test_fr12_recovery_reentry_skips_stale_report_and_rebuilds_readbacks(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
     await seed_run(session_factory, routine, run_id=run_id, clock=clock, id_gen=ids)
     accepted = await controller.handle_command(

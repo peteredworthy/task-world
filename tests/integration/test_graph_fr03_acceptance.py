@@ -14,7 +14,7 @@ from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel, init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphController, GraphEventStore
-from orchestrator.graph import build_graph_catalog, future_command_effects
+from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 
 
 @pytest.fixture
@@ -51,7 +51,7 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=future_command_effects(),
+        future_effects=build_graph_command_dependencies().future_effects,
     )
 
     accepted = await controller.handle_command(
