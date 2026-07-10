@@ -334,3 +334,65 @@ GREEN (independently rerun by a fresh final verifier):
   - Result: 4,508 backend tests passed, 4 skipped; Ruff, formatting, secret
     detection, Pyright, module-import, signal-routing, UI lint, and UI
     typecheck hooks passed.
+
+## Lifecycle, Callback, Retry, and Audit Event Payload Slice
+
+Status: complete.
+
+Implementation commit:
+- `ad25bfa9b4c4a34fc7d88b1ec8c84fcebfd57aec` — typed lifecycle,
+  command-rejection, callback, retry, heartbeat, agent-death, and dead-input
+  event payloads.
+
+Scope:
+- Added and exported `RunLifecycleChangedPayload`, `CommandRejectedPayload`,
+  `CallbackAcceptedPayload`, `CallbackRejectedPayload`,
+  `CallbackDuplicateReturnedPayload`, `RuntimeRetryScheduledPayload`,
+  `HeartbeatRecordedPayload`, `AgentDiedPayload`, and
+  `DeadInputDetectedPayload`.
+- Routed all ten current event names through typed validation and JSON dumping.
+- Parsed lifecycle, accepted-callback, and runtime-retry payloads in reducers;
+  audit-only and rejected/duplicate events remain projection-neutral.
+- Retained `retry_not_before` across graph, light, summary-rebuild, and
+  node-detail reconstruction.
+
+Legacy normalization:
+- All historical fields remain optional and unknown/malformed top-level keys
+  move under the single inherited `extra` map.
+- Explicit callback `payload=None` remains present in JSON output.
+- Malformed blocker lists remain preserved under `extra`.
+- `CommandRejectedPayload.base_graph_position` intentionally accepts integer
+  or string rejected-submit evidence; boolean impostors move under `extra`.
+- Sparse lifecycle/callback/retry history retains its prior skip/default
+  behavior.
+
+Dropped write-only keys:
+- None. Legacy top-level evidence is preserved under `extra`.
+
+RED:
+- `uv run pytest tests/unit/test_lifecycle_event_payloads.py -q`
+  - Result: failed during collection with
+    `ImportError: cannot import name 'AgentDiedPayload' from 'orchestrator.graph'`.
+- Focused malformed-blocker replay test initially failed with a Pydantic
+  validation error before whole-list preservation was added.
+
+GREEN (independently rerun on the final formatted diff):
+- `uv run pytest tests/unit/test_lifecycle_event_payloads.py -q`
+  - Result: passed, 11 tests.
+- `uv run pytest tests/unit/test_fixture_corpus.py -q`
+  - Result: passed, 7 tests.
+- `uv run pytest tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_lifecycle_event_payloads.py -q`
+  - Result: passed, 149 tests.
+- `uv run pytest tests/ -k graph -q`
+  - Result: passed, 844 tests.
+- `uv run ruff check .`
+  - Result: passed.
+- `uv run ruff format --check src/orchestrator/graph/__init__.py src/orchestrator/graph/_commands.py src/orchestrator/graph/models.py src/orchestrator/graph/projections.py src/orchestrator/graph_runtime/store.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_lifecycle_event_payloads.py`
+  - Result: 7 files already formatted.
+- `uv run pyright src/orchestrator/graph tests/unit`
+  - Result: passed, 0 errors.
+- `git diff --check`
+  - Result: passed.
+- Commit hooks:
+  - Result: backend pytest, Ruff, formatting, secret detection, Pyright,
+    module-import, signal-routing, UI lint, and UI typecheck hooks passed.
