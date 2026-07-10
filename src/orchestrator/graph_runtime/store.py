@@ -311,6 +311,7 @@ NODE_DETAIL_PAYLOAD_FIELDS = (
     "task_region_id",
     "to_node_id",
     "to_port",
+    "to_state",
     "trigger",
     "verdict",
     "classifications",

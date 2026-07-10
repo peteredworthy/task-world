@@ -152,6 +152,19 @@ def test_command_raw_event_scan_count_is_bounded() -> None:
     assert commands_source.count("for event in events") <= 2
 
 
+def test_converted_command_implementations_are_physically_owned_by_domain_modules() -> None:
+    commands_source = (
+        Path(__file__).resolve().parents[2] / "src" / "orchestrator" / "graph" / "_commands.py"
+    ).read_text()
+
+    for implementation in (
+        "def _apply_lifecycle_command(",
+        "def _apply_callback_command(",
+        "def _apply_acknowledge_start(",
+    ):
+        assert implementation not in commands_source
+
+
 def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None:
     completion_events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -520,6 +533,84 @@ def test_record_heartbeat_public_path_rejects_legacy_shape() -> None:
             catalog=build_graph_catalog(),
             context=context,
         )
+
+
+def test_typed_acknowledge_start_uses_projection_and_emits_start_effect() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "leased"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "lease_id": "lease-1",
+                "node_id": "worker-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+            },
+            2,
+        ),
+    ]
+    context = CommandExecutionContext(
+        run_id="run-1",
+        current_position=2,
+        clock=FakeClock(),
+        id_generator=SequentialIdGenerator(),
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        events=(),
+    )
+
+    output = apply_command(
+        _project(events),
+        events,
+        "acknowledge_start",
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "execution_id": "exec-1",
+        },
+        context.clock,
+        context.id_generator,
+        catalog=build_graph_catalog(),
+        context=context,
+    )
+
+    assert len(output) == 1
+    assert isinstance(output[0], EventEnvelope)
+    assert output[0].event_type == "node_state_changed"
+    assert output[0].payload["new_state"] == "running"
+
+
+def test_typed_submit_callback_emits_strict_outcome_and_unconverted_effects() -> None:
+    events = _active_lease_events()
+    context = CommandExecutionContext(
+        run_id="run-1",
+        current_position=len(events) - 1,
+        clock=FakeClock(),
+        id_generator=SequentialIdGenerator(),
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        events=(),
+    )
+
+    payload = _callback_payload(complete_node=True)
+    payload.pop("run_id")
+    output = apply_command(
+        _project(events),
+        events,
+        "submit_callback",
+        payload,
+        context.clock,
+        context.id_generator,
+        catalog=build_graph_catalog(),
+        context=context,
+    )
+
+    assert isinstance(output[0], HydratedEvent)
+    assert output[0].metadata.event_type == "callback_accepted"
+    assert any(
+        isinstance(event, EventEnvelope) and event.event_type == "node_state_changed"
+        for event in output
+    )
 
 
 def test_lifecycle_illegal_transition_rejected() -> None:

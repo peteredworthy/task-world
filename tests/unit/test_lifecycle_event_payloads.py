@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+from pydantic import ValidationError
 
 from orchestrator.db import EventV2Model, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
@@ -24,19 +25,141 @@ from orchestrator.graph import (
     initial_projection,
     projection_to_checkpoint,
     reduce_event,
+    build_graph_catalog,
+    ProjectionParticipation,
 )
 from orchestrator.graph_runtime.store import (
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
     LIGHT_GRAPH_PAYLOAD_FIELDS,
     NODE_DETAIL_PAYLOAD_FIELDS,
     SUMMARY_REBUILD_PAYLOAD_FIELDS,
-    _json_extract_payload_value,
     GraphEventStore,
+    _json_extract_payload_value,
     graph_aggregate_id,
 )
 
 
-def test_run_lifecycle_payload_accepts_sparse_legacy_and_recovery_shapes() -> None:
+STRICT_LIFECYCLE_EVENT_SAMPLES: dict[str, tuple[dict[str, Any], str]] = {
+    "run_lifecycle_changed": ({"to_state": "active"}, "to_state"),
+    "command_rejected": ({"command_type": "start", "reason": "illegal transition"}, "command_type"),
+    "callback_accepted": (
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "idempotency_key": "key-1",
+            "payload": None,
+            "reason": "accepted",
+        },
+        "node_id",
+    ),
+    "callback_rejected_stale": (
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "idempotency_key": "key-1",
+            "payload": None,
+            "reason": "lease revoked",
+        },
+        "node_id",
+    ),
+    "callback_rejected_conflict": (
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "idempotency_key": "key-1",
+            "payload": None,
+            "reason": "node not running",
+        },
+        "node_id",
+    ),
+    "callback_duplicate_returned": (
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "idempotency_key": "key-1",
+            "payload": None,
+            "reason": "duplicate idempotent callback",
+            "prior_result": None,
+        },
+        "node_id",
+    ),
+    "runtime_retry_scheduled": (
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "generation": 1,
+            "policy": "v1_requeue_same_node_after_agent_death",
+            "reason": "process_exit",
+        },
+        "generation",
+    ),
+    "heartbeat_recorded": (
+        {
+            "node_id": "worker-1",
+            "lease_id": "lease-1",
+            "lease_generation": 1,
+            "observed_at": FakeClock().now(),
+        },
+        "lease_generation",
+    ),
+    "agent_died": (
+        {
+            "lease_id": "lease-1",
+            "node_id": "worker-1",
+            "generation": 1,
+            "execution_id": "exec-1",
+            "reason": "process_exit",
+        },
+        "generation",
+    ),
+    "agent_dispatch_requested": (
+        {
+            "lease_granted_event_id": "event-1",
+            "lease_id": "lease-1",
+            "node_id": "worker-1",
+            "generation": 1,
+            "execution_id": "exec-1",
+            "base_snapshot_id": "S0",
+            "resource_claims": [],
+        },
+        "generation",
+    ),
+}
+
+
+@pytest.mark.parametrize("event_name", STRICT_LIFECYCLE_EVENT_SAMPLES)
+def test_lifecycle_event_specs_are_strict(event_name: str) -> None:
+    sample, scalar_field = STRICT_LIFECYCLE_EVENT_SAMPLES[event_name]
+    spec = build_graph_catalog().resolve_event(event_name)
+    assert spec.validate_payload(sample).model_dump(mode="json")
+    with pytest.raises(ValidationError):
+        spec.validate_payload({**sample, "unknown_field": "forbidden"})
+    with pytest.raises(ValidationError):
+        spec.validate_payload({**sample, scalar_field: [sample[scalar_field]]})
+
+
+@pytest.mark.parametrize(
+    "event_name",
+    (
+        "command_rejected",
+        "callback_rejected_stale",
+        "callback_rejected_conflict",
+        "callback_duplicate_returned",
+        "heartbeat_recorded",
+        "agent_died",
+        "agent_dispatch_requested",
+    ),
+)
+def test_lifecycle_audit_event_specs_are_projection_neutral(event_name: str) -> None:
+    spec = build_graph_catalog().resolve_event(event_name)
+    assert spec.projection_participation is ProjectionParticipation.NEUTRAL
+
+
+def test_run_lifecycle_payload_accepts_declared_recovery_shape() -> None:
     sparse = RunLifecycleChangedPayload.model_validate({"to_state": "active"})
     recovery = RunLifecycleChangedPayload.model_validate(
         {
@@ -48,19 +171,13 @@ def test_run_lifecycle_payload_accepts_sparse_legacy_and_recovery_shapes() -> No
             "patch_id": "patch-1",
             "recovery_of_record_id": "failure-1",
             "recovery_reason": "verification_failed",
-            "legacy_note": "preserved",
         }
     )
-    malformed = RunLifecycleChangedPayload.model_validate({"to_state": 7, "from_state": ["active"]})
-
     assert sparse.to_state == "active"
     assert recovery.recovery_of_record_id == "failure-1"
-    assert recovery.extra == {"legacy_note": "preserved"}
-    assert malformed.to_state is None
-    assert malformed.extra == {"to_state": 7, "from_state": ["active"]}
 
 
-def test_command_rejected_payload_preserves_blockers_and_patch_diagnostics() -> None:
+def test_command_rejected_payload_models_blockers_and_patch_diagnostics() -> None:
     payload = CommandRejectedPayload.model_validate(
         {
             "command_type": "submit_patch",
@@ -72,7 +189,6 @@ def test_command_rejected_payload_preserves_blockers_and_patch_diagnostics() -> 
             "proposed_by_node_id": "planner-1",
             "diagnostics": {"op_index": 2},
             "read_set_diff": {"missing": ["node-1"]},
-            "legacy_note": True,
         }
     )
 
@@ -80,19 +196,12 @@ def test_command_rejected_payload_preserves_blockers_and_patch_diagnostics() -> 
     assert payload.base_graph_position == 12
     assert payload.diagnostics == {"op_index": 2}
     assert payload.read_set_diff == {"missing": ["node-1"]}
-    assert payload.extra == {"legacy_note": True}
-
-    malformed = CommandRejectedPayload.model_validate(
-        {"command_type": "complete", "blockers": ["legacy-blocker"]}
-    )
-    assert malformed.blockers is None
-    assert malformed.extra == {"blockers": ["legacy-blocker"]}
 
 
 def test_callback_payloads_preserve_explicit_none_and_duplicate_prior_result() -> None:
-    dumped = CallbackAcceptedPayload(node_id="n", idempotency_key="k", payload=None).model_dump(
-        mode="json"
-    )
+    dumped = CallbackAcceptedPayload(
+        node_id="n", idempotency_key="k", payload=None, reason="accepted"
+    ).model_dump(mode="json")
     duplicate = CallbackDuplicateReturnedPayload.model_validate(
         {
             "node_id": "n",
@@ -100,18 +209,17 @@ def test_callback_payloads_preserve_explicit_none_and_duplicate_prior_result() -
             "lease_generation": 2,
             "idempotency_key": "k",
             "payload": None,
+            "reason": "duplicate idempotency key",
             "prior_result": {"outcome": "callback_accepted", "payload": None},
-            "legacy_note": "kept",
         }
     )
     rejected = CallbackRejectedPayload.model_validate(
-        {"node_id": "n", "idempotency_key": "k", "reason": "stale"}
+        {"node_id": "n", "idempotency_key": "k", "payload": None, "reason": "stale"}
     )
 
     assert "payload" in dumped
     assert dumped["payload"] is None
     assert duplicate.prior_result == {"outcome": "callback_accepted", "payload": None}
-    assert duplicate.extra == {"legacy_note": "kept"}
     assert rejected.reason == "stale"
 
 
@@ -124,7 +232,7 @@ def test_callback_accepted_reducer_records_idempotency_through_typed_payload() -
                 "node_id": "worker-1",
                 "idempotency_key": "key-1",
                 "payload": None,
-                "legacy_note": "kept",
+                "reason": "accepted",
             },
             position=1,
         ),
@@ -145,7 +253,6 @@ def test_runtime_retry_payload_preserves_retry_backoff_projection() -> None:
             "reason": "process_exit",
             "retry_after_seconds": 60,
             "retry_not_before": "2026-07-09T12:01:00+00:00",
-            "legacy_note": "kept",
         }
     )
     projection = reduce_event(
@@ -154,25 +261,11 @@ def test_runtime_retry_payload_preserves_retry_backoff_projection() -> None:
     )
 
     assert payload.retry_after_seconds == 60
-    assert payload.extra == {"legacy_note": "kept"}
     assert projection["retry_not_before_by_node"] == {"worker-1": "2026-07-09T12:01:00+00:00"}
 
 
-def test_unconverted_audit_payloads_normalize_unknown_keys_without_projection_effect() -> None:
+def test_unconverted_dead_input_audit_remains_projection_neutral() -> None:
     audit_payloads = [
-        (
-            "agent_died",
-            AgentDiedPayload.model_validate(
-                {
-                    "lease_id": "lease-1",
-                    "node_id": "worker-1",
-                    "generation": 1,
-                    "execution_id": "exec-1",
-                    "reason": "process_exit",
-                    "legacy": 1,
-                }
-            ),
-        ),
         (
             "dead_input_detected",
             DeadInputDetectedPayload.model_validate(
@@ -206,7 +299,7 @@ def test_lifecycle_callback_and_runtime_producers_emit_typed_payloads() -> None:
         FakeClock(),
         SequentialIdGenerator(),
     )
-    assert RunLifecycleChangedPayload.model_validate(lifecycle[0].payload).extra == {}
+    assert RunLifecycleChangedPayload.model_validate(lifecycle[0].payload).to_state == "active"
 
     events = _active_lease_events()
     callback = apply_command(
@@ -229,7 +322,7 @@ def test_lifecycle_callback_and_runtime_producers_emit_typed_payloads() -> None:
         SequentialIdGenerator(),
     )
     accepted = next(event for event in callback if event.event_type == "callback_accepted")
-    assert CallbackAcceptedPayload.model_validate(accepted.payload).extra == {}
+    assert CallbackAcceptedPayload.model_validate(accepted.payload).reason == "accepted"
     assert "payload" in accepted.payload and accepted.payload["payload"] is None
 
     death_events = apply_command(
@@ -248,20 +341,23 @@ def test_lifecycle_callback_and_runtime_producers_emit_typed_payloads() -> None:
     )
     died = next(event for event in death_events if event.event_type == "agent_died")
     retry = next(event for event in death_events if event.event_type == "runtime_retry_scheduled")
-    assert AgentDiedPayload.model_validate(died.payload).extra == {}
+    assert AgentDiedPayload.model_validate(died.payload).reason == "process_exit"
     assert RuntimeRetryScheduledPayload.model_validate(retry.payload).retry_after_seconds == 60
 
 
-def test_sparse_fixture_lifecycle_and_callback_events_remain_replayable() -> None:
+def test_declared_lifecycle_and_callback_events_remain_replayable() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, position=1),
         _event(
             "callback_accepted",
-            {"node_id": "worker-1", "idempotency_key": "key-1", "payload": None},
+            {
+                "node_id": "worker-1",
+                "idempotency_key": "key-1",
+                "payload": None,
+                "reason": "accepted",
+            },
             position=2,
         ),
-        _event("run_lifecycle_changed", {"to_state": 7}, position=3),
-        _event("callback_accepted", {"node_id": "worker-2", "payload": {}}, position=4),
     ]
 
     projection = build_projection(events)

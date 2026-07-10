@@ -14,8 +14,147 @@ from scripts.codemods.w5_strict_payload_cutover import (
     StrictPayloadCutoverCodemod,
     SymbolRelocation,
     VERTICAL_SLICE_MIGRATION,
+    DOMAIN_MIGRATIONS,
     run_migration,
 )
+
+
+def test_lifecycle_domain_routes_cover_complete_slice() -> None:
+    migration = DOMAIN_MIGRATIONS["lifecycle"]
+
+    assert {route.event_name for route in migration.event_routes} == {
+        "run_lifecycle_changed",
+        "command_rejected",
+        "callback_accepted",
+        "callback_rejected_stale",
+        "callback_rejected_conflict",
+        "callback_duplicate_returned",
+        "runtime_retry_scheduled",
+        "heartbeat_recorded",
+        "agent_died",
+        "agent_dispatch_requested",
+    }
+    assert {route.command_name for route in migration.command_routes} == {
+        "accept_run",
+        "start",
+        "pause",
+        "resume",
+        "cancel",
+        "complete",
+        "fail",
+        "record_heartbeat",
+        "agent_died",
+        "acknowledge_start",
+        "submit_callback",
+    }
+    assert {relocation.symbol for relocation in migration.relocations} == {
+        "RunLifecycleChangedPayload",
+        "CommandRejectedPayload",
+        "CallbackAcceptedPayload",
+        "CallbackRejectedPayload",
+        "CallbackDuplicateReturnedPayload",
+        "RuntimeRetryScheduledPayload",
+        "AgentDiedPayload",
+    }
+
+
+def test_lifecycle_bridge_entries_become_composed_specifications() -> None:
+    migration = DomainMigration(
+        domain="lifecycle",
+        paths=("commands.py",),
+        command_routes=(
+            CommandRoute("start", "handle_start", "START", "EmptyLifecycleCommand"),
+            CommandRoute(
+                "submit_callback",
+                "handle_submit_callback",
+                "SUBMIT_CALLBACK",
+                "SubmitCallbackCommand",
+            ),
+        ),
+    )
+    source = """\
+_UNCONVERTED_W5_BRIDGE: dict[str, object] = {
+    "start": handle_lifecycle_command,
+    "submit_callback": handle_submit_callback,
+    "submit_patch": handle_submit_patch,
+}
+
+COMMAND_SPECIFICATIONS = (RECORD_HEARTBEAT,)
+"""
+
+    transformed = apply_codemod(source, migration)
+
+    assert '"start"' not in transformed
+    assert '"submit_callback"' not in transformed
+    assert '"submit_patch": handle_submit_patch' in transformed
+    assert "COMMAND_SPECIFICATIONS = (RECORD_HEARTBEAT, START, SUBMIT_CALLBACK,)" in transformed
+
+
+def test_multiple_relocations_deduplicate_shared_target_imports() -> None:
+    migration = DomainMigration(
+        domain="lifecycle",
+        paths=("models.py", "events.py"),
+        relocations=(
+            SymbolRelocation("FirstPayload", "models.py", "events.py", "models"),
+            SymbolRelocation("SecondPayload", "models.py", "events.py", "models"),
+        ),
+    )
+    sources = {
+        "models.py": """\
+from pydantic import model_validator
+
+class SharedBase: pass
+
+class FirstPayload(SharedBase):
+    @model_validator(mode=\"before\")
+    @classmethod
+    def validate_first(cls, value): return value
+
+class SecondPayload(SharedBase):
+    @model_validator(mode=\"before\")
+    @classmethod
+    def validate_second(cls, value): return value
+""",
+        "events.py": "",
+    }
+
+    result = StrictPayloadCutoverCodemod(migration).transform_files(sources)
+
+    assert result.sources["events.py"].count("from pydantic import model_validator") == 1
+    assert result.sources["events.py"].count("from models import SharedBase") == 1
+
+
+def test_direct_event_envelope_becomes_named_specification_creation() -> None:
+    migration = DomainMigration(
+        domain="lifecycle",
+        paths=("controller.py",),
+        event_routes=(
+            EventRoute(
+                "agent_dispatch_requested",
+                "AgentDispatchRequestedPayload",
+                "AGENT_DISPATCH_REQUESTED",
+            ),
+        ),
+    )
+    source = """EventEnvelope(event_id="e", run_id="r", position=-1, event_type="agent_dispatch_requested", schema_version=1, actor=actor, timestamp=now, payload=payload)\n"""
+
+    transformed = apply_codemod(source, migration)
+
+    assert "AGENT_DISPATCH_REQUESTED.create(" in transformed
+    assert "EventMetadata(" in transformed
+    assert "AgentDispatchRequestedPayload.model_validate(payload)" in transformed
+
+
+def test_converted_event_registry_entries_are_removed() -> None:
+    migration = DomainMigration(
+        domain="lifecycle",
+        paths=("graph.py",),
+        event_routes=(EventRoute("agent_died", "AgentDiedPayload", "AGENT_DIED"),),
+    )
+    source = '_LIFECYCLE_EVENT_PAYLOAD_MODELS = {"agent_died": AgentDiedPayload, "dead_input_detected": DeadInputDetectedPayload}\n'
+    transformed = apply_codemod(source, migration)
+    assert '"agent_died"' not in transformed
+    assert '"dead_input_detected"' in transformed
 
 
 LIFECYCLE_MIGRATION = DomainMigration(

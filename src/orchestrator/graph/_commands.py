@@ -25,7 +25,6 @@ from orchestrator.graph.macros import expand_patch_macros
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
-    AgentDiedPayload,
     AnalysisSummaryRecord,
     AppealOpenedPayload,
     ApprovalDecisionRecordedPayload,
@@ -34,14 +33,10 @@ from orchestrator.graph.models import (
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
     CandidateRecord,
-    CallbackAcceptedPayload,
-    CallbackDuplicateReturnedPayload,
-    CallbackRejectedPayload,
     CheckResultRecord,
     CleanupAppliedPayload,
     CleanupRequestedPayload,
     CleanupRequestedProjection,
-    CommandRejectedPayload,
     CompletionDecisionRecord,
     DecisionRequestRecord,
     DecisionRecord,
@@ -57,7 +52,7 @@ from orchestrator.graph.models import (
     LeaseExpiredPayload,
     LeaseEventPayloadBase,
     LeaseGrantedPayload,
-    LifecycleEventPayloadBase,
+    LegacyDeadInputPayloadBase,
     LeaseReleasedPayload,
     LeaseRenewedPayload,
     LeaseRevokedPayload,
@@ -75,8 +70,6 @@ from orchestrator.graph.models import (
     PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
     RequirementRevisionPayload,
-    RunLifecycleChangedPayload,
-    RuntimeRetryScheduledPayload,
     SupportEvidencePayload,
     VerificationResultProjection,
     VerificationReportRecord,
@@ -98,6 +91,17 @@ from orchestrator.graph.scheduler import (
     evaluate_readiness,
     schedule,
 )
+from orchestrator.graph.events.lifecycle import (
+    RUN_LIFECYCLE_CHANGED,
+    COMMAND_REJECTED,
+    CALLBACK_ACCEPTED,
+    CALLBACK_REJECTED_STALE,
+    CALLBACK_REJECTED_CONFLICT,
+    CALLBACK_DUPLICATE_RETURNED,
+    RUNTIME_RETRY_SCHEDULED,
+    AGENT_DIED,
+)
+from orchestrator.graph.specifications import EventSpecification
 
 
 class Clock(Protocol):
@@ -106,6 +110,18 @@ class Clock(Protocol):
 
 class IdGenerator(Protocol):
     def next_id(self, prefix: str = "") -> str: ...
+
+
+def _make_strict_event(
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    specification: EventSpecification[Any],
+    payload: dict[str, Any],
+) -> EventEnvelope:
+    validated = specification.validate_payload(payload)
+    return make_event(
+        specification.name,
+        cast(dict[str, Any], validated.model_dump(mode="json", by_alias=True, exclude_unset=True)),
+    )
 
 
 RUN_LIFECYCLE_TRANSITIONS: dict[str, dict[str, str]] = {
@@ -151,15 +167,7 @@ def _typed_lease_event_payload(event_type: str, payload: dict[str, Any]) -> dict
     return model.model_validate(payload).model_dump(mode="json")
 
 
-_LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[LifecycleEventPayloadBase]] = {
-    "run_lifecycle_changed": RunLifecycleChangedPayload,
-    "command_rejected": CommandRejectedPayload,
-    "callback_accepted": CallbackAcceptedPayload,
-    "callback_rejected_stale": CallbackRejectedPayload,
-    "callback_rejected_conflict": CallbackRejectedPayload,
-    "callback_duplicate_returned": CallbackDuplicateReturnedPayload,
-    "runtime_retry_scheduled": RuntimeRetryScheduledPayload,
-    "agent_died": AgentDiedPayload,
+_LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[LegacyDeadInputPayloadBase]] = {
     "dead_input_detected": DeadInputDetectedPayload,
 }
 
@@ -201,7 +209,7 @@ def apply_command(
     make_event = _event_factory(run_id, command_type, clock, id_gen)
 
     if command_type in RUN_LIFECYCLE_TRANSITIONS or command_type == "fail":
-        return _apply_lifecycle_command(
+        return temporary_unconverted_lifecycle_effects(
             projection,
             events,
             command_type,
@@ -212,7 +220,7 @@ def apply_command(
     if command_type == "seed_compiled_events":
         return _apply_seed_compiled_events(projection, payload, make_event)
     if command_type == "submit_callback":
-        return _apply_callback_command(projection, events, payload, make_event)
+        return temporary_unconverted_callback_effects(projection, events, payload, make_event)
     if command_type == "submit_patch":
         return _apply_patch_command(projection, events, payload, make_event)
     if command_type == "schedule_tick":
@@ -220,7 +228,7 @@ def apply_command(
     if command_type == "reconcile":
         return _apply_reconcile(projection, events, make_event)
     if command_type == "acknowledge_start":
-        return _apply_acknowledge_start(projection, payload, make_event)
+        return temporary_unconverted_acknowledge_start_effects(projection, payload, make_event)
     if command_type == "agent_died":
         return _apply_agent_died(projection, payload, clock, make_event)
     if command_type == "raise_appeal":
@@ -240,8 +248,9 @@ def apply_command(
     if command_type == "record_cleanup_applied":
         return _apply_record_cleanup_applied(projection, payload, make_event)
     return [
-        make_event(
-            "command_rejected",
+        _make_strict_event(
+            make_event,
+            COMMAND_REJECTED,
             {
                 "command_type": command_type,
                 "reason": f"unknown command: {command_type}",
@@ -250,7 +259,7 @@ def apply_command(
     ]
 
 
-def _apply_lifecycle_command(
+def temporary_unconverted_lifecycle_effects(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
@@ -295,8 +304,9 @@ def _apply_lifecycle_command(
         blockers = final_invariant_blockers_for_events(events, projection)
         if blockers:
             return [
-                make_event(
-                    "command_rejected",
+                _make_strict_event(
+                    make_event,
+                    COMMAND_REJECTED,
                     {
                         "command_type": command_type,
                         "reason": "final invariant blockers remain",
@@ -648,7 +658,7 @@ def _validated_seed_output_record_payload(payload: dict[str, Any]) -> dict[str, 
     return record.model_dump(mode="json")
 
 
-def _apply_callback_command(
+def temporary_unconverted_callback_effects(
     projection: GraphProjection,
     events: list[EventEnvelope],
     payload: dict[str, Any],
@@ -705,16 +715,17 @@ def _apply_callback_command(
         "reason": result.reason,
     }
     if result.outcome == CallbackOutcome.REJECTED_STALE:
-        return [make_event("callback_rejected_stale", event_payload)]
+        return [_make_strict_event(make_event, CALLBACK_REJECTED_STALE, event_payload)]
     if result.outcome in {
         CallbackOutcome.REJECTED_CONFLICT,
         CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT,
     }:
-        return [make_event("callback_rejected_conflict", event_payload)]
+        return [_make_strict_event(make_event, CALLBACK_REJECTED_CONFLICT, event_payload)]
     if result.outcome == CallbackOutcome.DUPLICATE_IDEMPOTENT:
         return [
-            make_event(
-                "callback_duplicate_returned",
+            _make_strict_event(
+                make_event,
+                CALLBACK_DUPLICATE_RETURNED,
                 {**event_payload, "prior_result": result.prior_result},
             )
         ]
@@ -723,8 +734,9 @@ def _apply_callback_command(
     expected_producer_node_id = lease_node_id or request.node_id
     if lease_node_id is not None and request.node_id != lease_node_id:
         return [
-            make_event(
-                "callback_rejected_conflict",
+            _make_strict_event(
+                make_event,
+                CALLBACK_REJECTED_CONFLICT,
                 {
                     **event_payload,
                     "reason": (
@@ -737,8 +749,9 @@ def _apply_callback_command(
     provenance_conflict = _output_record_provenance_conflict(request, expected_producer_node_id)
     if provenance_conflict is not None:
         return [
-            make_event(
-                "callback_rejected_conflict",
+            _make_strict_event(
+                make_event,
+                CALLBACK_REJECTED_CONFLICT,
                 {**event_payload, "reason": provenance_conflict},
             )
         ]
@@ -748,8 +761,9 @@ def _apply_callback_command(
     )
     if file_state_rejection_conflict is not None:
         return [
-            make_event(
-                "callback_rejected_conflict",
+            _make_strict_event(
+                make_event,
+                CALLBACK_REJECTED_CONFLICT,
                 {**event_payload, "reason": file_state_rejection_conflict},
             )
         ]
@@ -759,8 +773,9 @@ def _apply_callback_command(
     )
     if file_state_authority_conflict is not None:
         return [
-            make_event(
-                "callback_rejected_conflict",
+            _make_strict_event(
+                make_event,
+                CALLBACK_REJECTED_CONFLICT,
                 {**event_payload, "reason": file_state_authority_conflict},
             )
         ]
@@ -771,8 +786,9 @@ def _apply_callback_command(
     )
     if verification_conflict is not None:
         return [
-            make_event(
-                "callback_rejected_conflict",
+            _make_strict_event(
+                make_event,
+                CALLBACK_REJECTED_CONFLICT,
                 {**event_payload, "reason": verification_conflict},
             )
         ]
@@ -783,8 +799,9 @@ def _apply_callback_command(
     )
     if output_contract_conflict is not None:
         return [
-            make_event(
-                "callback_rejected_conflict",
+            _make_strict_event(
+                make_event,
+                CALLBACK_REJECTED_CONFLICT,
                 {**event_payload, "reason": output_contract_conflict},
             )
         ]
@@ -799,13 +816,14 @@ def _apply_callback_command(
     )
     if missing_output_conflict is not None:
         return [
-            make_event(
-                "callback_rejected_conflict",
+            _make_strict_event(
+                make_event,
+                CALLBACK_REJECTED_CONFLICT,
                 {**event_payload, "reason": missing_output_conflict},
             )
         ]
 
-    accepted = make_event("callback_accepted", event_payload)
+    accepted = _make_strict_event(make_event, CALLBACK_ACCEPTED, event_payload)
     output: list[EventEnvelope] = [accepted]
     output.extend(_file_state_rejected_events(request, make_event))
     output.extend(
@@ -2064,8 +2082,9 @@ def _apply_patch_command(
         )
     except (KeyError, TypeError, ValueError) as exc:
         return [
-            make_event(
-                "command_rejected",
+            _make_strict_event(
+                make_event,
+                COMMAND_REJECTED,
                 {
                     "command_type": "submit_patch",
                     "reason": f"malformed patch: {exc}",
@@ -3023,8 +3042,9 @@ def _no_successor_recovery_terminal_failure_events(
     if terminal.get("environment_failure") == "true":
         return []
     return [
-        make_event(
-            "run_lifecycle_changed",
+        _make_strict_event(
+            make_event,
+            RUN_LIFECYCLE_CHANGED,
             {
                 "command_type": "schedule_tick",
                 "from_state": "active",
@@ -3725,7 +3745,7 @@ def _is_chain_planner(projection: GraphProjection, node_id: str) -> bool:
     )
 
 
-def _apply_acknowledge_start(
+def temporary_unconverted_acknowledge_start_effects(
     projection: GraphProjection,
     payload: dict[str, Any],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
@@ -3805,7 +3825,7 @@ def _apply_agent_died(
 
     if _non_gap_planner_has_accepted_patch(projection, node_id):
         return [
-            make_event("agent_died", event_payload),
+            _make_strict_event(make_event, AGENT_DIED, event_payload),
             make_event(
                 "lease_revoked",
                 _typed_lease_event_payload(
@@ -3830,7 +3850,7 @@ def _apply_agent_died(
 
     if _is_rate_limit_death(reason):
         return [
-            make_event("agent_died", event_payload),
+            _make_strict_event(make_event, AGENT_DIED, event_payload),
             make_event(
                 "lease_revoked",
                 _typed_lease_event_payload(
@@ -3869,7 +3889,7 @@ def _apply_agent_died(
 
     if _is_non_retryable_runtime_death(reason):
         return [
-            make_event("agent_died", event_payload),
+            _make_strict_event(make_event, AGENT_DIED, event_payload),
             make_event(
                 "lease_revoked",
                 _typed_lease_event_payload(
@@ -3910,7 +3930,7 @@ def _apply_agent_died(
     attempt_number = projection["node_attempts"].get(node_id, 0)
     if max_attempts > 0 and attempt_number >= max_attempts:
         return [
-            make_event("agent_died", event_payload),
+            _make_strict_event(make_event, AGENT_DIED, event_payload),
             make_event(
                 "lease_revoked",
                 _typed_lease_event_payload(
@@ -3980,7 +4000,7 @@ def _apply_agent_died(
             "attempt_number": next_attempt_number,
         }
     return [
-        make_event("agent_died", event_payload),
+        _make_strict_event(make_event, AGENT_DIED, event_payload),
         make_event(
             "lease_revoked",
             _typed_lease_event_payload(
@@ -3993,10 +4013,7 @@ def _apply_agent_died(
                 },
             ),
         ),
-        make_event(
-            "runtime_retry_scheduled",
-            retry_payload,
-        ),
+        _make_strict_event(make_event, RUNTIME_RETRY_SCHEDULED, retry_payload),
         make_event(
             "output_record_accepted",
             _recovery_plan_record_payload(
@@ -5239,8 +5256,9 @@ def _lifecycle_event(
     to_state: str,
     trigger: Any,
 ) -> EventEnvelope:
-    return make_event(
-        "run_lifecycle_changed",
+    return _make_strict_event(
+        make_event,
+        RUN_LIFECYCLE_CHANGED,
         {
             "command_type": command_type,
             "from_state": from_state,
@@ -5255,8 +5273,9 @@ def _command_rejected(
     command_type: str,
     reason: str,
 ) -> EventEnvelope:
-    return make_event(
-        "command_rejected",
+    return _make_strict_event(
+        make_event,
+        COMMAND_REJECTED,
         {
             "command_type": command_type,
             "reason": reason,
@@ -5557,13 +5576,13 @@ command_rejected = _command_rejected
 event_factory = _event_factory
 run_id = _run_id
 
-apply_lifecycle_command = _apply_lifecycle_command
+apply_lifecycle_command = temporary_unconverted_lifecycle_effects
 apply_seed_compiled_events = _apply_seed_compiled_events
-apply_callback_command = _apply_callback_command
+apply_callback_command = temporary_unconverted_callback_effects
 apply_patch_command = _apply_patch_command
 apply_schedule_tick = _apply_schedule_tick
 apply_reconcile = _apply_reconcile
-apply_acknowledge_start = _apply_acknowledge_start
+apply_acknowledge_start = temporary_unconverted_acknowledge_start_effects
 apply_agent_died = _apply_agent_died
 apply_raise_appeal = _apply_raise_appeal
 apply_record_decision = _apply_record_decision

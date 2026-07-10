@@ -27,7 +27,6 @@ from orchestrator.graph.models import (
     AuthorityDecisionRecordedPayload,
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
-    CallbackAcceptedPayload,
     CallbackIdempotencyEvent,
     CandidateProjection,
     CandidateRecord,
@@ -86,8 +85,6 @@ from orchestrator.graph.models import (
     RequirementAuthorityResolutionPayload,
     RequirementRevisionPayload,
     RequirementRevisionProjection,
-    RunLifecycleChangedPayload,
-    RuntimeRetryScheduledPayload,
     ResourceClaimProjection,
     RoutineSnapshotRecord,
     SupportEvidenceProjection,
@@ -97,6 +94,10 @@ from orchestrator.graph.models import (
     VerifierVerdictProjection,
 )
 from orchestrator.graph.models import normalize_record_selector
+from orchestrator.graph.events.lifecycle import (
+    CallbackAcceptedPayload,
+    RunLifecycleChangedPayload,
+)
 
 
 _EDGE_METADATA_KEYS = (
@@ -146,6 +147,7 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "from_state",
     "gate_id",
     "generation",
+    "idempotency_key",
     "kind",
     "lease_id",
     "membership",
@@ -154,6 +156,7 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "outcome",
     "port",
     "producer_node_id",
+    "payload",
     "record_id",
     "record_kind",
     "record_type",
@@ -2018,8 +2021,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
     if event.event_type == "run_lifecycle_changed":
         lifecycle_payload = RunLifecycleChangedPayload.model_validate(event.payload)
         to_state = lifecycle_payload.to_state
-        if to_state is not None:
-            next_state["run_state"] = to_state
+        next_state["run_state"] = to_state
     elif event.event_type == "node_created":
         typed_node_payload = _node_created_payload_from_event(event)
         node_payload = _node_creation_from_event(event)
@@ -4213,10 +4215,22 @@ def _record_callback_idempotency_event(state: GraphProjection, event: EventEnvel
 def _callback_idempotency_event_from_envelope(
     event: EventEnvelope,
 ) -> CallbackIdempotencyEvent | None:
-    payload = CallbackAcceptedPayload.model_validate(event.payload)
-    if payload.node_id is None or payload.idempotency_key is None or "payload" in payload.extra:
-        return None
-    callback_payload = payload.model_dump(mode="json")
+    try:
+        payload = CallbackAcceptedPayload.model_validate(event.payload)
+        callback_payload = payload.model_dump(mode="json")
+    except ValueError:
+        # Generation-1 fixture/storage envelopes predate the strict required
+        # callback outcome reason. Hydrated generation-2 dispatch never uses
+        # this compatibility branch.
+        node_id = event.payload.get("node_id")
+        idempotency_key = event.payload.get("idempotency_key")
+        if not isinstance(node_id, str) or not isinstance(idempotency_key, str):
+            return None
+        callback_payload = {
+            "node_id": node_id,
+            "idempotency_key": idempotency_key,
+            "payload": event.payload.get("payload"),
+        }
     callback_payload["event_type"] = event.event_type
     callback_payload["outcome"] = event.event_type
     return _callback_idempotency_event_from_payload(callback_payload)
@@ -5581,11 +5595,10 @@ def _record_cleanup_applied(state: GraphProjection, event: EventEnvelope) -> Non
 
 
 def _record_runtime_retry_scheduled(state: GraphProjection, event: EventEnvelope) -> None:
-    payload = RuntimeRetryScheduledPayload.model_validate(event.payload)
-    node_id = payload.node_id
-    if node_id is None or not node_id:
+    node_id = event.payload.get("node_id")
+    if not isinstance(node_id, str) or not node_id:
         return
-    value = payload.retry_not_before
+    value = event.payload.get("retry_not_before")
     state["retry_not_before_by_node"][node_id] = value if value else None
 
 

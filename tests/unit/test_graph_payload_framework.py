@@ -120,7 +120,14 @@ def test_event_specification_requires_exact_payload_class_and_round_trips_json()
 def test_command_specification_validates_once_and_requires_exact_class_at_dispatch() -> None:
     seen: list[ExamplePayload] = []
 
-    def handle(payload: ExamplePayload, context: CommandExecutionContext) -> list[object]:
+    def handle(
+        payload: ExamplePayload,
+        projection: object,
+        events: object,
+        context: CommandExecutionContext,
+    ) -> list[object]:
+        del projection
+        del events
         del context
         seen.append(payload)
         return []
@@ -136,10 +143,10 @@ def test_command_specification_validates_once_and_requires_exact_class_at_dispat
         events=(),
     )
 
-    assert spec.handle(command, context) == []
+    assert spec.handle(command, {}, (), context) == []
     assert seen == [command]
     with pytest.raises(TypeError, match="exact command class ExamplePayload"):
-        spec.handle(DerivedExamplePayload(node_id="n-1", generation=1), context)
+        spec.handle(DerivedExamplePayload(node_id="n-1", generation=1), {}, (), context)
 
 
 def test_catalog_rejects_duplicate_names() -> None:
@@ -214,7 +221,7 @@ def test_heartbeat_command_emits_projection_neutral_typed_event() -> None:
         events=(),
     )
 
-    events = catalog.resolve_command("record_heartbeat").handle(command, context)
+    events = catalog.resolve_command("record_heartbeat").handle(command, {}, (), context)
     event = events[0]
     spec = catalog.resolve_event(event.metadata.event_type)
 

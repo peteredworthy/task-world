@@ -23,6 +23,11 @@ from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime.errors import StaleProjectionError
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, append_outbox_rows
 from orchestrator.graph_runtime.store import GraphEventStore
+from orchestrator.graph.events.lifecycle import (
+    AGENT_DISPATCH_REQUESTED,
+    AgentDispatchRequestedPayload,
+)
+from orchestrator.graph.specifications import EventMetadata
 
 
 @dataclass(frozen=True)
@@ -213,25 +218,31 @@ class GraphController:
                 continue
             node_id = event.payload.get("node_id")
             expanded.append(
-                EventEnvelope(
-                    event_id=self._id_gen.next_id("event"),
-                    run_id=run_id,
-                    position=-1,
-                    event_type="agent_dispatch_requested",
-                    schema_version=1,
-                    actor=Actor(kind=ActorKind.CONTROLLER),
-                    causation_id=command_type,
-                    correlation_id=str(node_id) if isinstance(node_id, str) else None,
-                    timestamp=self._clock.now(),
-                    payload={
-                        "lease_granted_event_id": event.event_id,
-                        "lease_id": event.payload.get("lease_id"),
-                        "node_id": node_id,
-                        "generation": event.payload.get("generation"),
-                        "execution_id": event.payload.get("execution_id"),
-                        "base_snapshot_id": event.payload.get("base_snapshot_id"),
-                        "resource_claims": event.payload.get("resource_claims", []),
-                    },
+                _to_legacy_envelope(
+                    AGENT_DISPATCH_REQUESTED.create(
+                        EventMetadata(
+                            event_id=self._id_gen.next_id("event"),
+                            run_id=run_id,
+                            position=-1,
+                            event_type="agent_dispatch_requested",
+                            actor=Actor(kind=ActorKind.CONTROLLER),
+                            causation_id=command_type,
+                            correlation_id=str(node_id) if isinstance(node_id, str) else None,
+                            timestamp=self._clock.now(),
+                            payload_schema_generation=1,
+                        ),
+                        AgentDispatchRequestedPayload.model_validate(
+                            {
+                                "lease_granted_event_id": event.event_id,
+                                "lease_id": event.payload.get("lease_id"),
+                                "node_id": node_id,
+                                "generation": event.payload.get("generation"),
+                                "execution_id": event.payload.get("execution_id"),
+                                "base_snapshot_id": event.payload.get("base_snapshot_id"),
+                                "resource_claims": event.payload.get("resource_claims", []),
+                            }
+                        ),
+                    )
                 )
             )
         return expanded

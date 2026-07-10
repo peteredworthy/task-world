@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
@@ -10,7 +10,7 @@ from typing import Any, Generic, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, SerializeAsAny
 
-from orchestrator.graph.models import Actor
+from orchestrator.graph.models import Actor, EventEnvelope
 from orchestrator.graph.payloads import JsonValue, StrictPayload
 
 
@@ -75,7 +75,14 @@ class ProjectionParticipation(str, Enum):
 
 
 EventReducer = Callable[[Any, PayloadT, EventMetadata], Any]
-CommandHandler = Callable[[CommandT, "CommandExecutionContext"], list[HydratedEvent]]
+# Task 9 deletes this temporary mixed-result bridge after the remaining event
+# domains have strict specifications.  Projection and history are explicit
+# execution inputs; they are deliberately not command payload fields.
+CommandResult = HydratedEvent | EventEnvelope
+CommandHandler = Callable[
+    [CommandT, Any, tuple[EventEnvelope, ...], "CommandExecutionContext"],
+    Sequence[CommandResult],
+]
 
 
 @dataclass(frozen=True)
@@ -159,12 +166,14 @@ class CommandSpecification(Generic[CommandT]):
     def handle(
         self,
         command: StrictPayload,
+        projection: Any,
+        events: tuple[EventEnvelope, ...],
         context: CommandExecutionContext,
-    ) -> list[HydratedEvent]:
+    ) -> list[CommandResult]:
         if type(command) is not self.payload_type:
             msg = f"{self.name} requires exact command class {self.payload_type.__name__}"
             raise TypeError(msg)
-        return self.handler(cast(CommandT, command), context)
+        return list(self.handler(cast(CommandT, command), projection, events, context))
 
 
 def projection_neutral(
@@ -179,6 +188,7 @@ def projection_neutral(
 
 __all__ = [
     "CommandExecutionContext",
+    "CommandResult",
     "CommandSpecification",
     "EventMetadata",
     "EventSpecification",

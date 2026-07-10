@@ -92,10 +92,14 @@ class GraphCatalog:
 def build_graph_catalog() -> GraphCatalog:
     """Compose a fresh catalog from immutable domain declarations."""
 
+    from orchestrator.graph.commands.callbacks import CALLBACK_COMMAND_SPECIFICATIONS
     from orchestrator.graph.commands.lifecycle import COMMAND_SPECIFICATIONS
     from orchestrator.graph.events import EVENT_SPECIFICATIONS
 
-    return GraphCatalog.compose(EVENT_SPECIFICATIONS, COMMAND_SPECIFICATIONS)
+    return GraphCatalog.compose(
+        EVENT_SPECIFICATIONS,
+        (*COMMAND_SPECIFICATIONS, *CALLBACK_COMMAND_SPECIFICATIONS),
+    )
 
 
 __all__ = [

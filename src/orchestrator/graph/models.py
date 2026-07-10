@@ -1063,7 +1063,7 @@ def _empty_lifecycle_event_extra() -> dict[str, Any]:
     return {}
 
 
-class LifecycleEventPayloadBase(BaseModel):
+class LegacyDeadInputPayloadBase(BaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     extra: dict[str, Any] = Field(default_factory=_empty_lifecycle_event_extra)
@@ -1076,7 +1076,7 @@ class LifecycleEventPayloadBase(BaseModel):
         return data
 
 
-def _normalize_lifecycle_event_payload(
+def _normalize_dead_input_payload(
     value: Any,
     field_types: dict[str, type[Any] | tuple[type[Any], ...]],
 ) -> Any:
@@ -1111,186 +1111,7 @@ def _normalize_lifecycle_event_payload(
     return payload
 
 
-class RunLifecycleChangedPayload(LifecycleEventPayloadBase):
-    command_type: str | None = None
-    from_state: str | None = None
-    to_state: str | None = None
-    trigger: str | None = None
-    node_id: str | None = None
-    patch_id: str | None = None
-    recovery_of_node_id: str | None = None
-    recovery_of_record_id: str | None = None
-    recovery_reason: str | None = None
-    reason: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "command_type": str,
-                "from_state": str,
-                "to_state": str,
-                "trigger": str,
-                "node_id": str,
-                "patch_id": str,
-                "recovery_of_node_id": str,
-                "recovery_of_record_id": str,
-                "recovery_reason": str,
-                "reason": str,
-            },
-        )
-
-
-class CommandRejectedPayload(LifecycleEventPayloadBase):
-    command_type: str | None = None
-    reason: str | None = None
-    blockers: list[dict[str, Any]] | None = None
-    patch_id: str | None = None
-    base_graph_position: int | str | None = None
-    actor_role: str | None = None
-    proposed_by_node_id: str | None = None
-    rejection_reason: str | None = None
-    diagnostics: dict[str, Any] | list[Any] | None = None
-    read_set_diff: dict[str, Any] | None = None
-    budget: int | None = None
-    count: int | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            payload = dict(cast(dict[str, Any], value))
-            blockers = payload.get("blockers")
-            if isinstance(blockers, list) and any(
-                not isinstance(blocker, dict) for blocker in cast(list[Any], blockers)
-            ):
-                raw_extra = payload.get("extra")
-                extra = dict(cast(dict[str, Any], raw_extra)) if isinstance(raw_extra, dict) else {}
-                extra.setdefault("blockers", payload.pop("blockers"))
-                payload["extra"] = extra
-                value = payload
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "command_type": str,
-                "reason": str,
-                "blockers": list,
-                "patch_id": str,
-                "base_graph_position": (int, str),
-                "actor_role": str,
-                "proposed_by_node_id": str,
-                "rejection_reason": str,
-                "diagnostics": (dict, list),
-                "read_set_diff": dict,
-                "budget": int,
-                "count": int,
-            },
-        )
-
-
-class CallbackPayloadBase(LifecycleEventPayloadBase):
-    node_id: str | None = None
-    lease_id: str | None = None
-    lease_generation: int | None = None
-    idempotency_key: str | None = None
-    payload: dict[str, Any] | None = None
-    reason: str | None = None
-
-    @classmethod
-    def _field_types(cls) -> dict[str, type[Any] | tuple[type[Any], ...]]:
-        return {
-            "node_id": str,
-            "lease_id": str,
-            "lease_generation": int,
-            "idempotency_key": str,
-            "payload": dict,
-            "reason": str,
-        }
-
-    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        data = super().model_dump(*args, **kwargs)
-        if "payload" in self.model_fields_set and "payload" not in self.extra:
-            data["payload"] = self.payload
-        return data
-
-
-class CallbackAcceptedPayload(CallbackPayloadBase):
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(value, cls._field_types())
-
-
-class CallbackRejectedPayload(CallbackPayloadBase):
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(value, cls._field_types())
-
-
-class CallbackDuplicateReturnedPayload(CallbackPayloadBase):
-    prior_result: dict[str, Any] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {**cls._field_types(), "prior_result": dict},
-        )
-
-
-class RuntimeRetryScheduledPayload(LifecycleEventPayloadBase):
-    node_id: str | None = None
-    lease_id: str | None = None
-    generation: int | None = None
-    policy: str | None = None
-    reason: str | None = None
-    retry_after_seconds: int | None = None
-    retry_not_before: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "node_id": str,
-                "lease_id": str,
-                "generation": int,
-                "policy": str,
-                "reason": str,
-                "retry_after_seconds": int,
-                "retry_not_before": str,
-            },
-        )
-
-
-class AgentDiedPayload(LifecycleEventPayloadBase):
-    lease_id: str | None = None
-    node_id: str | None = None
-    generation: int | None = None
-    execution_id: str | None = None
-    reason: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "lease_id": str,
-                "node_id": str,
-                "generation": int,
-                "execution_id": str,
-                "reason": str,
-            },
-        )
-
-
-class DeadInputDetectedPayload(LifecycleEventPayloadBase):
+class DeadInputDetectedPayload(LegacyDeadInputPayloadBase):
     node_id: str | None = None
     edge_id: str | None = None
     from_node_id: str | None = None
@@ -1303,7 +1124,7 @@ class DeadInputDetectedPayload(LifecycleEventPayloadBase):
     @model_validator(mode="before")
     @classmethod
     def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
+        return _normalize_dead_input_payload(
             value,
             {
                 "node_id": str,

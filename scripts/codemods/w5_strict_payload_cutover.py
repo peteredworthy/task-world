@@ -260,6 +260,51 @@ class _MechanicalTransformer(cst.CSTTransformer):
     ) -> cst.Call | None:
         if not isinstance(original_node.func, (cst.Name, cst.Attribute)):
             return None
+        if isinstance(original_node.func, cst.Name) and original_node.func.value == "EventEnvelope":
+            arguments = {
+                argument.keyword.value: argument
+                for argument in updated_node.args
+                if argument.keyword is not None
+            }
+            event_type = arguments.get("event_type")
+            event_name = _simple_string(event_type.value) if event_type is not None else None
+            route = self._events.get(event_name or "")
+            payload = arguments.get("payload")
+            if route is not None and payload is not None:
+                metadata_arguments: list[cst.Arg] = []
+                for name in (
+                    "event_id",
+                    "run_id",
+                    "position",
+                    "event_type",
+                    "actor",
+                    "causation_id",
+                    "correlation_id",
+                    "timestamp",
+                ):
+                    argument = arguments.get(name)
+                    if argument is not None:
+                        metadata_arguments.append(argument)
+                schema = arguments.get("schema_version")
+                if schema is not None:
+                    metadata_arguments.append(
+                        schema.with_changes(keyword=cst.Name("payload_schema_generation"))
+                    )
+                self.changes += 1
+                return cst.Call(
+                    func=cst.Attribute(cst.Name(route.specification), cst.Name("create")),
+                    args=(
+                        cst.Arg(cst.Call(cst.Name("EventMetadata"), tuple(metadata_arguments))),
+                        cst.Arg(
+                            cst.Call(
+                                cst.Attribute(
+                                    cst.Name(route.payload_class), cst.Name("model_validate")
+                                ),
+                                (cst.Arg(payload.value),),
+                            )
+                        ),
+                    ),
+                )
         position = self._touch_metadata(original_node.func)
         resolved_names = self._resolved_names(original_node.func)
         if not resolved_names.intersection(self.migration.event_factory_qualified_names):
@@ -391,7 +436,19 @@ class _MechanicalTransformer(cst.CSTTransformer):
             return updated_node
         assignment = original_node.body[0]
         name = _assigned_name(assignment)
-        if name in {"COMMAND_HANDLERS", "COMMAND_SPECIFICATIONS"}:
+        if name == "_LIFECYCLE_EVENT_PAYLOAD_MODELS" and isinstance(assignment.value, cst.Dict):
+            remaining = tuple(
+                element
+                for element in assignment.value.elements
+                if element is not None and _simple_string(element.key) not in self._events
+            )
+            if len(remaining) != len(assignment.value.elements):
+                self.changes += 1
+                replacement = assignment.with_changes(
+                    value=assignment.value.with_changes(elements=remaining)
+                )
+                return updated_node.with_changes(body=(replacement,))
+        if name in {"COMMAND_HANDLERS", "_UNCONVERTED_W5_BRIDGE", "COMMAND_SPECIFICATIONS"}:
             target = (
                 assignment.target
                 if isinstance(assignment, cst.AnnAssign)
@@ -410,7 +467,9 @@ class _MechanicalTransformer(cst.CSTTransformer):
                 return updated_node
             self.changes += 1
             return cst.RemoveFromParent()
-        if name != "COMMAND_HANDLERS" or not isinstance(assignment.value, cst.Dict):
+        if name not in {"COMMAND_HANDLERS", "_UNCONVERTED_W5_BRIDGE"} or not isinstance(
+            assignment.value, cst.Dict
+        ):
             return updated_node
         routes: list[CommandRoute] = []
         remaining_elements: list[cst.DictElement] = []
@@ -669,7 +728,7 @@ class StrictPayloadCutoverCodemod:
                         noncanonical_specifications = True
                 if (
                     isinstance(item, (cst.Assign, cst.AnnAssign))
-                    and _assigned_name(item) == "COMMAND_HANDLERS"
+                    and _assigned_name(item) in {"COMMAND_HANDLERS", "_UNCONVERTED_W5_BRIDGE"}
                     and isinstance(item.value, cst.Dict)
                 ):
                     will_compose_command_specs = any(
@@ -862,11 +921,13 @@ class StrictPayloadCutoverCodemod:
                 for statement in module.body
                 if _imported_names(statement)
             }
-            imports = [
-                statement
-                for statement in target_imports.get(target_path, [])
-                if module.code_for_node(statement) not in existing_import_code
-            ]
+            imports: list[cst.BaseStatement] = []
+            for statement in target_imports.get(target_path, []):
+                import_code = module.code_for_node(statement)
+                if import_code in existing_import_code:
+                    continue
+                existing_import_code.add(import_code)
+                imports.append(statement)
             if imports:
                 insertion_index = 0
                 if (
@@ -1058,12 +1119,168 @@ DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
         domain="lifecycle",
         paths=(
             "src/orchestrator/graph/_commands.py",
+            "src/orchestrator/graph/__init__.py",
             "src/orchestrator/graph/commands/__init__.py",
+            "src/orchestrator/graph/commands/lifecycle.py",
+            "src/orchestrator/graph/commands/callbacks.py",
+            "src/orchestrator/graph/events/lifecycle.py",
+            "src/orchestrator/graph/models.py",
+            "src/orchestrator/graph/callbacks.py",
             "src/orchestrator/graph_runtime/controller.py",
+            "src/orchestrator/graph_runtime/outbox.py",
         ),
-        event_routes=VERTICAL_SLICE_MIGRATION.event_routes,
-        command_routes=VERTICAL_SLICE_MIGRATION.command_routes,
+        relocations=tuple(
+            SymbolRelocation(
+                symbol,
+                "src/orchestrator/graph/models.py",
+                "src/orchestrator/graph/events/lifecycle.py",
+                "orchestrator.graph.models",
+            )
+            for symbol in (
+                "RunLifecycleChangedPayload",
+                "CommandRejectedPayload",
+                "CallbackAcceptedPayload",
+                "CallbackRejectedPayload",
+                "CallbackDuplicateReturnedPayload",
+                "RuntimeRetryScheduledPayload",
+                "AgentDiedPayload",
+            )
+        ),
+        event_routes=(
+            EventRoute(
+                "run_lifecycle_changed", "RunLifecycleChangedPayload", "RUN_LIFECYCLE_CHANGED"
+            ),
+            EventRoute("command_rejected", "CommandRejectedPayload", "COMMAND_REJECTED"),
+            EventRoute("callback_accepted", "CallbackAcceptedPayload", "CALLBACK_ACCEPTED"),
+            EventRoute(
+                "callback_rejected_stale", "CallbackRejectedPayload", "CALLBACK_REJECTED_STALE"
+            ),
+            EventRoute(
+                "callback_rejected_conflict",
+                "CallbackRejectedPayload",
+                "CALLBACK_REJECTED_CONFLICT",
+            ),
+            EventRoute(
+                "callback_duplicate_returned",
+                "CallbackDuplicateReturnedPayload",
+                "CALLBACK_DUPLICATE_RETURNED",
+            ),
+            EventRoute(
+                "runtime_retry_scheduled", "RuntimeRetryScheduledPayload", "RUNTIME_RETRY_SCHEDULED"
+            ),
+            EventRoute("heartbeat_recorded", "HeartbeatRecordedPayload", "HEARTBEAT_RECORDED"),
+            EventRoute("agent_died", "AgentDiedPayload", "AGENT_DIED"),
+            EventRoute(
+                "agent_dispatch_requested",
+                "AgentDispatchRequestedPayload",
+                "AGENT_DISPATCH_REQUESTED",
+            ),
+        ),
+        command_routes=(
+            CommandRoute("accept_run", "handle_accept_run", "ACCEPT_RUN", "EmptyLifecycleCommand"),
+            CommandRoute("start", "handle_start", "START", "EmptyLifecycleCommand"),
+            CommandRoute("pause", "handle_pause", "PAUSE", "EmptyLifecycleCommand"),
+            CommandRoute("resume", "handle_resume", "RESUME", "EmptyLifecycleCommand"),
+            CommandRoute("cancel", "handle_cancel", "CANCEL", "EmptyLifecycleCommand"),
+            CommandRoute("complete", "handle_complete", "COMPLETE", "EmptyLifecycleCommand"),
+            CommandRoute("fail", "handle_fail", "FAIL", "FailCommand"),
+            CommandRoute(
+                "record_heartbeat",
+                "handle_record_heartbeat",
+                "RECORD_HEARTBEAT",
+                "RecordHeartbeatCommand",
+            ),
+            CommandRoute(
+                "agent_died", "handle_agent_died", "AGENT_DIED_COMMAND", "AgentDiedCommand"
+            ),
+            CommandRoute(
+                "acknowledge_start",
+                "handle_acknowledge_start",
+                "ACKNOWLEDGE_START",
+                "AcknowledgeStartCommand",
+            ),
+            CommandRoute(
+                "submit_callback",
+                "handle_submit_callback",
+                "SUBMIT_CALLBACK",
+                "SubmitCallbackCommand",
+            ),
+        ),
+        import_routes=(
+            ImportRoute(
+                "orchestrator.graph.models",
+                "orchestrator.graph.events.lifecycle",
+                (
+                    "RunLifecycleChangedPayload",
+                    "CommandRejectedPayload",
+                    "CallbackAcceptedPayload",
+                    "CallbackRejectedPayload",
+                    "CallbackDuplicateReturnedPayload",
+                    "RuntimeRetryScheduledPayload",
+                    "AgentDiedPayload",
+                ),
+            ),
+        ),
         catalog_injections=VERTICAL_SLICE_MIGRATION.catalog_injections,
+        event_factory_qualified_names=tuple(
+            f"{owner}.<locals>.make_event"
+            for owner in (
+                "apply_command",
+                "_apply_lifecycle_command",
+                "_apply_callback_command",
+                "_apply_patch_command",
+                "_no_successor_recovery_terminal_failure_events",
+                "_apply_agent_died",
+                "_lifecycle_event",
+                "_command_rejected",
+            )
+        ),
+        report_dynamic_emissions=True,
+        required_imports=(
+            RequiredImport(
+                "src/orchestrator/graph/_commands.py",
+                "orchestrator.graph.events.lifecycle",
+                (
+                    "RUN_LIFECYCLE_CHANGED",
+                    "COMMAND_REJECTED",
+                    "CALLBACK_ACCEPTED",
+                    "CALLBACK_REJECTED_STALE",
+                    "CALLBACK_REJECTED_CONFLICT",
+                    "CALLBACK_DUPLICATE_RETURNED",
+                    "RUNTIME_RETRY_SCHEDULED",
+                    "AGENT_DIED",
+                ),
+            ),
+            RequiredImport(
+                "src/orchestrator/graph/commands/__init__.py",
+                "orchestrator.graph.commands.lifecycle",
+                (
+                    "ACCEPT_RUN",
+                    "START",
+                    "PAUSE",
+                    "RESUME",
+                    "CANCEL",
+                    "COMPLETE",
+                    "FAIL",
+                    "AGENT_DIED_COMMAND",
+                ),
+            ),
+            RequiredImport(
+                "src/orchestrator/graph/commands/__init__.py",
+                "orchestrator.graph.commands.callbacks",
+                ("SUBMIT_CALLBACK", "ACKNOWLEDGE_START"),
+            ),
+            RequiredImport(
+                "src/orchestrator/graph_runtime/controller.py",
+                "orchestrator.graph.events.lifecycle",
+                ("AGENT_DISPATCH_REQUESTED", "AgentDispatchRequestedPayload"),
+            ),
+            RequiredImport(
+                "src/orchestrator/graph_runtime/controller.py",
+                "orchestrator.graph.specifications",
+                ("EventMetadata",),
+            ),
+        ),
     ),
 }
 

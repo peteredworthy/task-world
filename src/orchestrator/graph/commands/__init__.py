@@ -17,6 +17,8 @@ from orchestrator.graph._commands import (
 )
 from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.commands.callbacks import (
+    AcknowledgeStartCommand,
+    SubmitCallbackCommand,
     handle_acknowledge_start,
     handle_raise_appeal,
     handle_record_cleanup_applied,
@@ -44,6 +46,17 @@ from orchestrator.graph.commands.schedule import (
     handle_seed_compiled_events,
 )
 from orchestrator.graph.specifications import CommandExecutionContext, HydratedEvent
+from orchestrator.graph.commands.lifecycle import (
+    ACCEPT_RUN,
+    START,
+    PAUSE,
+    RESUME,
+    CANCEL,
+    COMPLETE,
+    FAIL,
+    AGENT_DIED_COMMAND,
+)
+from orchestrator.graph.commands.callbacks import SUBMIT_CALLBACK, ACKNOWLEDGE_START
 
 ApplyCommandHandler = Callable[
     [
@@ -60,20 +73,10 @@ ApplyCommandHandler = Callable[
 
 
 _UNCONVERTED_W5_BRIDGE: dict[str, ApplyCommandHandler] = {
-    "accept_run": handle_lifecycle_command,
-    "start": handle_lifecycle_command,
-    "pause": handle_lifecycle_command,
-    "resume": handle_lifecycle_command,
-    "cancel": handle_lifecycle_command,
-    "complete": handle_lifecycle_command,
-    "fail": handle_lifecycle_command,
     "seed_compiled_events": handle_seed_compiled_events,
-    "submit_callback": handle_submit_callback,
     "submit_patch": handle_submit_patch,
     "schedule_tick": handle_schedule_tick,
     "reconcile": handle_reconcile,
-    "acknowledge_start": handle_acknowledge_start,
-    "agent_died": handle_agent_died,
     "raise_appeal": handle_raise_appeal,
     "record_decision": handle_record_decision,
     "record_gatekeeper_verdicts": handle_record_gatekeeper_verdicts,
@@ -85,7 +88,19 @@ _UNCONVERTED_W5_BRIDGE: dict[str, ApplyCommandHandler] = {
 }
 
 
-COMMAND_SPECIFICATIONS = (RECORD_HEARTBEAT,)
+COMMAND_SPECIFICATIONS = (
+    RECORD_HEARTBEAT,
+    ACCEPT_RUN,
+    START,
+    PAUSE,
+    RESUME,
+    CANCEL,
+    COMPLETE,
+    FAIL,
+    SUBMIT_CALLBACK,
+    ACKNOWLEDGE_START,
+    AGENT_DIED_COMMAND,
+)
 
 
 @overload
@@ -147,8 +162,45 @@ def apply_command(
             )
             if renewal.event_type == "command_rejected":
                 return [renewal]
-            return [*specification.handle(typed_command, context), renewal]
-        return specification.handle(command, context)
+            return [
+                *specification.handle(typed_command, projection, tuple(events), context),
+                renewal,
+            ]
+        return specification.handle(command, projection, tuple(events), context)
+    if command_type in RUN_LIFECYCLE_TRANSITIONS or command_type == "fail":
+        return handle_lifecycle_command(
+            projection,
+            events,
+            command_type,
+            payload,
+            make_event,
+            clock,
+            id_gen,
+        )
+    if command_type == "submit_callback":
+        return handle_submit_callback(
+            projection,
+            events,
+            command_type,
+            cast(SubmitCallbackCommand, payload),
+            make_event,
+            clock,
+            id_gen,
+        )
+    if command_type == "acknowledge_start":
+        return handle_acknowledge_start(
+            projection,
+            events,
+            command_type,
+            cast(AcknowledgeStartCommand, payload),
+            make_event,
+            clock,
+            id_gen,
+        )
+    if command_type == "agent_died":
+        return handle_agent_died(
+            projection, events, command_type, payload, make_event, clock, id_gen
+        )
     handler = _UNCONVERTED_W5_BRIDGE.get(command_type)
     if handler is None:
         return [
