@@ -13,6 +13,7 @@ from orchestrator.graph import (
     CommandSpecification,
     DuplicateGraphSpecificationError,
     EventMetadata,
+    EventEnvelope,
     EventSpecification,
     GraphCatalog,
     HEARTBEAT_RECORDED,
@@ -237,7 +238,18 @@ def test_public_apply_command_dispatches_heartbeat_through_injected_catalog_cont
     )
 
     events = apply_command(
-        {},
+        {
+            "run_state": "active",
+            "leases": {
+                "lease-1": {
+                    "lease_id": "lease-1",
+                    "node_id": "worker-1",
+                    "generation": 2,
+                    "execution_id": "exec-1",
+                    "state": "active",
+                }
+            },
+        },
         [],
         "record_heartbeat",
         {"node_id": "worker-1", "lease_id": "lease-1", "lease_generation": 2},
@@ -254,3 +266,5 @@ def test_public_apply_command_dispatches_heartbeat_through_injected_catalog_cont
     assert event.metadata.position == 5
     assert type(event.payload) is HeartbeatRecordedPayload
     assert event.payload.observed_at == NOW
+    assert isinstance(events[1], EventEnvelope)
+    assert events[1].event_type == "lease_renewed"

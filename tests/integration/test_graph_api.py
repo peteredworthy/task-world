@@ -1276,7 +1276,7 @@ async def test_callback_lifecycle_readbacks_cover_heartbeat_cancel_artifact_and_
     assert graph["run_state"] == "cancelling"
     assert graph["node_states"]["worker-callback"] == "cancelled"
     assert graph["leases"]["lease-callback"]["state"] == "revoked"
-    assert graph["leases"]["lease-callback"]["expires_at"] == "2026-01-01T00:01:00+00:00"
+    assert graph["leases"]["lease-callback"]["expires_at"] == "2026-01-01T00:05:00+00:00"
     assert scheduler["leases"] == {"active": [], "suspended": []}
     assert scheduler["scheduler"] == {
         "ready": [],
@@ -1286,7 +1286,7 @@ async def test_callback_lifecycle_readbacks_cover_heartbeat_cancel_artifact_and_
     }
 
     assert "heartbeat_recorded" in event_types
-    assert "lease_renewed" not in event_types
+    assert "lease_renewed" in event_types
     assert "lease_revoked" in event_types
     assert any(record["record_type"] == "artifact_reference" for record in node["output_records"])
     assert any(record["record_type"] == "failure_record" for record in node["output_records"])

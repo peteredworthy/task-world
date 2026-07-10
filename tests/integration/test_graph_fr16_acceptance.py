@@ -341,7 +341,7 @@ async def test_fr16_supported_codex_callbacks_complete_and_read_back(
     assert graph["run_state"] == "completed"
     assert graph["node_states"]["worker-step-1-task-1"] == "completed"
     assert "heartbeat_recorded" in event_types
-    assert "lease_renewed" not in event_types
+    assert "lease_renewed" in event_types
     assert "callback_accepted" in event_types
     assert "candidate" in output_types
     assert "artifact_reference" in output_types

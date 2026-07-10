@@ -1,7 +1,7 @@
 """Pure command applier for execution graph fixtures."""
 
 from collections.abc import Callable
-from typing import Any, overload
+from typing import Any, cast, overload
 
 from orchestrator.graph._commands import (
     Clock,
@@ -26,7 +26,12 @@ from orchestrator.graph.commands.callbacks import (
     handle_record_support_evidence,
     handle_submit_callback,
 )
-from orchestrator.graph.commands.lifecycle import RECORD_HEARTBEAT, handle_lifecycle_command
+from orchestrator.graph.commands.lifecycle import (
+    RECORD_HEARTBEAT,
+    RecordHeartbeatCommand,
+    handle_lifecycle_command,
+)
+from orchestrator.graph.commands.lease_bridge import apply_temporary_unconverted_lease_renewal
 from orchestrator.graph.commands.patches import handle_submit_patch
 from orchestrator.graph.commands.records import (
     handle_agent_died,
@@ -108,7 +113,7 @@ def apply_command(
     *,
     catalog: GraphCatalog,
     context: CommandExecutionContext,
-) -> list[EventEnvelope] | list[HydratedEvent]: ...
+) -> list[EventEnvelope | HydratedEvent]: ...
 
 
 def apply_command(
@@ -121,7 +126,7 @@ def apply_command(
     *,
     catalog: GraphCatalog | None = None,
     context: CommandExecutionContext | None = None,
-) -> list[EventEnvelope] | list[HydratedEvent]:
+) -> list[EventEnvelope] | list[HydratedEvent] | list[EventEnvelope | HydratedEvent]:
     """Apply a pure graph command and return events a controller would append."""
 
     run_id_value = run_id(events, payload)
@@ -131,7 +136,19 @@ def apply_command(
         if context is None:
             msg = f"typed graph command {command_type!r} requires an execution context"
             raise ValueError(msg)
-        return specification.handle(specification.validate(payload), context)
+        command = specification.validate(payload)
+        if command_type == RECORD_HEARTBEAT.name:
+            typed_command = cast(RecordHeartbeatCommand, command)
+            renewal = apply_temporary_unconverted_lease_renewal(
+                projection,
+                typed_command,
+                context.clock,
+                make_event,
+            )
+            if renewal.event_type == "command_rejected":
+                return [renewal]
+            return [*specification.handle(typed_command, context), renewal]
+        return specification.handle(command, context)
     handler = _UNCONVERTED_W5_BRIDGE.get(command_type)
     if handler is None:
         return [

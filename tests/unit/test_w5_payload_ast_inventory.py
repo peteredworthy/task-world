@@ -297,6 +297,29 @@ def _to_legacy_envelope(event):
     }
 
 
+def test_inventory_classifies_temporary_lease_renewal_without_dirtying_vertical_slice(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "lease_bridge.py"
+    source.write_text(
+        """\
+HEARTBEAT_RECORDED = EventSpecification(name="heartbeat_recorded", payload_type=Payload)
+RECORD_HEARTBEAT = CommandSpecification(name="record_heartbeat", payload_type=Command)
+
+def temporary_bridge(emit_unconverted_event):
+    return emit_unconverted_event("lease_renewed", {})
+"""
+    )
+
+    report = scan_graph_payload_architecture([source])
+
+    assert any(
+        site.classification == "unconverted_bridge" and site.resolved_values == ("lease_renewed",)
+        for site in report.dynamic_event_sites
+    )
+    assert report.for_domain("vertical_slice").is_clean
+
+
 def test_inventory_resolves_positional_keyword_qualified_and_aliased_envelopes(
     tmp_path: Path,
 ) -> None:

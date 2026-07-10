@@ -894,9 +894,7 @@ async def _renew_running_expired_leases(
                 await asyncio.sleep(delay_seconds)
                 delay_seconds *= 2
                 continue
-            renewed = renewed or any(
-                event.event_type == "heartbeat_recorded" for event in result.events
-            )
+            renewed = renewed or any(event.event_type == "lease_renewed" for event in result.events)
             break
     return renewed
 

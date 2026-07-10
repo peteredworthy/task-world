@@ -353,9 +353,24 @@ def test_cancel_revokes_suspended_lease_without_reopening_terminal_node() -> Non
     assert projected["node_states"]["worker-1"] == "failed"
 
 
-def test_record_heartbeat_public_path_emits_strict_typed_audit_event() -> None:
+def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_renewal() -> None:
     clock = FakeClock()
     ids = SequentialIdGenerator()
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "lease_id": "lease-1",
+                "node_id": "worker-1",
+                "generation": 2,
+                "execution_id": "exec-1",
+                "expires_at": (clock.now() - timedelta(seconds=1)).isoformat(),
+            },
+            2,
+        ),
+    ]
     context = CommandExecutionContext(
         run_id="run-1",
         current_position=2,
@@ -366,8 +381,8 @@ def test_record_heartbeat_public_path_emits_strict_typed_audit_event() -> None:
     )
 
     output = apply_command(
-        {},
-        [],
+        _project(events),
+        events,
         "record_heartbeat",
         {"lease_id": "lease-1", "node_id": "worker-1", "lease_generation": 2},
         clock,
@@ -376,10 +391,110 @@ def test_record_heartbeat_public_path_emits_strict_typed_audit_event() -> None:
         context=context,
     )
 
-    assert len(output) == 1
+    assert [
+        event.metadata.event_type if isinstance(event, HydratedEvent) else event.event_type
+        for event in output
+    ] == ["heartbeat_recorded", "lease_renewed"]
     assert isinstance(output[0], HydratedEvent)
     assert type(output[0].payload) is HeartbeatRecordedPayload
     assert output[0].payload.lease_generation == 2
+    renewal = output[1]
+    assert isinstance(renewal, EventEnvelope)
+    assert renewal.payload["generation"] == 2
+    assert renewal.payload["execution_id"] == "exec-1"
+    assert renewal.payload["expires_at"] > events[-1].payload["expires_at"]
+
+
+@pytest.mark.parametrize(
+    ("events", "payload", "reason"),
+    [
+        (
+            [_event("run_lifecycle_changed", {"to_state": "active"}, 0)],
+            {"lease_id": "missing", "node_id": "worker-1", "lease_generation": 1},
+            "unknown lease: missing",
+        ),
+        (
+            [
+                _event("run_lifecycle_changed", {"to_state": "paused"}, 0),
+                _event(
+                    "lease_granted",
+                    {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+                    1,
+                ),
+            ],
+            {"lease_id": "lease-1", "node_id": "worker-1", "lease_generation": 1},
+            "run_not_active",
+        ),
+        (
+            [
+                _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+                _event(
+                    "lease_granted",
+                    {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+                    1,
+                ),
+            ],
+            {"lease_id": "lease-1", "node_id": "worker-1", "lease_generation": 2},
+            "lease_generation_mismatch",
+        ),
+        (
+            [
+                _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+                _event(
+                    "lease_granted",
+                    {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+                    1,
+                ),
+                _event(
+                    "lease_revoked",
+                    {"lease_id": "lease-1", "node_id": "worker-1"},
+                    2,
+                ),
+            ],
+            {"lease_id": "lease-1", "node_id": "worker-1", "lease_generation": 1},
+            "lease_not_active:revoked",
+        ),
+        (
+            [
+                _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+                _event(
+                    "lease_granted",
+                    {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+                    1,
+                ),
+            ],
+            {"lease_id": "lease-1", "node_id": "worker-2", "lease_generation": 1},
+            "node_id_mismatch",
+        ),
+    ],
+)
+def test_record_heartbeat_temporary_renewal_preserves_domain_rejections(
+    events: list[EventEnvelope], payload: dict[str, Any], reason: str
+) -> None:
+    context = CommandExecutionContext(
+        run_id="run-1",
+        current_position=len(events) - 1,
+        clock=FakeClock(),
+        id_generator=SequentialIdGenerator(),
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        events=(),
+    )
+
+    output = apply_command(
+        _project(events),
+        events,
+        "record_heartbeat",
+        payload,
+        context.clock,
+        context.id_generator,
+        catalog=build_graph_catalog(),
+        context=context,
+    )
+
+    assert len(output) == 1
+    assert isinstance(output[0], EventEnvelope)
+    assert output[0].event_type == "command_rejected"
+    assert output[0].payload["reason"] == reason
 
 
 def test_record_heartbeat_public_path_rejects_legacy_shape() -> None:

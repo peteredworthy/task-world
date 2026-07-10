@@ -24,9 +24,15 @@ from orchestrator.workflow.graph_driver import (
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    CommandExecutionContext,
     EnvironmentFailureProjection,
     EventEnvelope,
     FakeClock,
+    SequentialIdGenerator,
+    apply_command,
+    build_graph_catalog,
+    initial_projection,
+    reduce_event,
 )
 
 
@@ -86,6 +92,34 @@ class RecordingController:
         if command_type == "record_heartbeat":
             events = [type("Event", (), {"event_type": "heartbeat_recorded"})()]
         return type("Result", (), {"events": events})()
+
+
+class RenewingHeartbeatController(RecordingController):
+    async def handle_command(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, object] | None = None,
+    ) -> object:
+        result = await super().handle_command(
+            run_id,
+            expected_position,
+            command_type,
+            payload,
+        )
+        if command_type != "record_heartbeat":
+            return result
+        return type(
+            "Result",
+            (),
+            {
+                "events": [
+                    type("Event", (), {"event_type": "heartbeat_recorded"})(),
+                    type("Event", (), {"event_type": "lease_renewed"})(),
+                ]
+            },
+        )()
 
 
 class ReconcileProgressController(RecordingController):
@@ -454,7 +488,7 @@ async def test_driver_reaches_scheduler_after_expired_active_lease() -> None:
 
 @pytest.mark.asyncio
 async def test_driver_renews_expired_lease_when_execution_is_still_running() -> None:
-    controller = RecordingController()
+    controller = RenewingHeartbeatController()
     dispatcher = RecordingDispatcher()
     executor = RecordingExecutor(running_execution_ids={"exec-live"})
     expired_lease_snapshot = GraphProjectionSnapshot(
@@ -509,6 +543,57 @@ async def test_driver_renews_expired_lease_when_execution_is_still_running() -> 
     assert outcome.completed is True
 
 
+def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loop() -> None:
+    clock = FakeClock()
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event("node_created", {"node_id": "worker-1", "kind": "worker"}, 1),
+        _event(
+            "lease_granted",
+            {
+                "lease_id": "lease-1",
+                "node_id": "worker-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "expires_at": (clock.now() - timedelta(seconds=1)).isoformat(),
+            },
+            2,
+        ),
+    ]
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(projection, event)
+    expired_snapshot = _snapshot_from_events(events)
+    context = CommandExecutionContext(
+        run_id="run-1",
+        current_position=2,
+        clock=clock,
+        id_generator=SequentialIdGenerator(),
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        events=(),
+    )
+
+    output = apply_command(
+        projection,
+        events,
+        "record_heartbeat",
+        {"lease_id": "lease-1", "node_id": "worker-1", "lease_generation": 1},
+        clock,
+        context.id_generator,
+        catalog=build_graph_catalog(),
+        context=context,
+    )
+    renewal = next(
+        event
+        for event in output
+        if isinstance(event, EventEnvelope) and event.event_type == "lease_renewed"
+    )
+    renewed_snapshot = _snapshot_from_events([*events, renewal])
+
+    assert _active_lease_wait_plan(expired_snapshot, clock.now()).timeout_seconds == 0.0
+    assert _active_lease_wait_plan(renewed_snapshot, clock.now()).timeout_seconds == 3600.0
+
+
 @pytest.mark.asyncio
 async def test_driver_retries_locked_schedule_tick_at_new_head() -> None:
     controller = LockedOnceController(command_to_lock="schedule_tick")
@@ -542,7 +627,7 @@ async def test_driver_retries_locked_schedule_tick_at_new_head() -> None:
 
 
 @pytest.mark.asyncio
-async def test_driver_retries_locked_heartbeat_recording_at_new_head() -> None:
+async def test_driver_does_not_treat_neutral_heartbeat_as_lease_renewal() -> None:
     controller = LockedOnceController(command_to_lock="record_heartbeat")
     executor = RecordingExecutor(running_execution_ids={"exec-live"})
     expired_lease_snapshot = GraphProjectionSnapshot(
@@ -577,7 +662,7 @@ async def test_driver_retries_locked_heartbeat_recording_at_new_head() -> None:
         driver._clock.now(),
     )
 
-    assert renewed is True
+    assert renewed is False
     assert controller.commands == ["record_heartbeat"]
     assert controller.positions == [0, 1]
 
