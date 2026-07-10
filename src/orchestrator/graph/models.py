@@ -1333,14 +1333,20 @@ class AuthorityDecisionRecordedPayload(DecisionRecordedPayloadBase):
 class OversightDecisionRecordedPayload(DecisionRecordedPayloadBase):
     @model_validator(mode="after")
     def normalize_decision_aliases(self) -> "OversightDecisionRecordedPayload":
-        decision = self.decision or self.outcome or self.verdict
-        if decision == "approved":
-            decision = "accepted"
-        elif decision == "denied":
-            decision = "rejected"
-        elif decision is None and isinstance(self.approved, bool):
+        decision: str | None = None
+        for alias in (self.decision, self.outcome, self.verdict):
+            if alias in {"accepted", "rejected", "invalid_test_accepted"}:
+                decision = alias
+                break
+            if alias == "approved":
+                decision = "accepted"
+                break
+            if alias == "denied":
+                decision = "rejected"
+                break
+        if decision is None and isinstance(self.approved, bool):
             decision = "accepted" if self.approved else "rejected"
-        if decision in {"accepted", "rejected", "invalid_test_accepted"}:
+        if decision is not None:
             self.decision = decision
         return self
 

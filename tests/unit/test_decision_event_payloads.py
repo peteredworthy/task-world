@@ -102,6 +102,24 @@ def test_decision_reducers_preserve_legacy_appeal_and_invalid_test_behavior() ->
     assert projection["invalid_test_blocks"]["task-1"].accepted is True
 
 
+def test_oversight_reducer_uses_recognized_legacy_alias_after_obsolete_decision() -> None:
+    projection = reduce_event(
+        initial_projection(),
+        _event(
+            "oversight_decision_recorded",
+            {
+                "decision": "obsolete",
+                "outcome": "approved",
+                "task_region_id": "t",
+                "appeal_type": "invalid_test",
+            },
+            position=1,
+        ),
+    )
+
+    assert projection["invalid_test_blocks"]["t"].accepted is True
+
+
 def test_decision_producers_emit_typed_payloads() -> None:
     appeal_events = apply_command(
         initial_projection(),
