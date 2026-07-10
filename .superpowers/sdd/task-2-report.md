@@ -87,3 +87,40 @@ check for this slice. Dynamic future-domain emissions remain exposed in inventor
 The deliberately narrow mixed-result adapter remains until Tasks 3/4/6 define the remaining
 effect specifications and Task 9 deletes the compatibility union. No converted Task 2 outcome
 uses the raw result path.
+
+## Fix Review History
+
+The review repair replaced delegation back into `_commands.py` with physical domain ownership,
+moved converted reducers behind typed specifications, and made every Task-2 rejection hydrate
+through the named catalog. The compatibility bridge now accepts only the explicit 34-name
+Tasks 3/4/6 effect allowlist and fails closed for unknown or Task-2-owned names.
+
+Dependency inversion is enforced at both pure and effectful boundaries. Converted commands have
+no raw `apply_command` bypass. `GraphController` requires an explicit `GraphCatalog` and
+`FutureCommandEffects`; it has no implicit default. The lifecycle codemod now discovers real
+controller construction sites, injects `build_graph_catalog()` and `future_command_effects()`,
+and adds their public imports. Two consecutive final apply passes produced no edits.
+
+Reviewer follow-up exposed legacy test harnesses that bypassed typed dispatch. One shared real
+test utility now builds the catalog and execution context, injects a real fake clock, sequential
+ID generator, controller actor, projection, history, and future effects, and converts hydrated
+results to store envelopes. Compiler, planner, planner-session, parent/child, projection, direct
+callback, scenario-corpus, and signal-consumer paths use the same dependency-injected boundary.
+
+Compact replay now retains `idempotency_key` and required nullable callback `payload` for typed
+callback events in light, summary, and node-detail reads, while non-callback heavy payload bodies
+remain excluded. Strict controller dispatch removes universal `run_id` and `actor_role` before
+payload validation and places actor role on `CommandExecutionContext.actor`.
+
+Final evidence after all reviewer fixes:
+
+- Focused migrated harness suite: `208 passed`.
+- Codemod and inventory contract suites: `54 passed`.
+- Full unit suite: `3360 passed`, with three SQLite datetime-adapter warnings.
+- Full serial integration suite: `1283 passed, 5 skipped in 356.71s`.
+- Lifecycle `--assert-clean` and inventory `--check-domain lifecycle`: exit 0.
+- Two consecutive lifecycle codemod `--apply` runs: zero changes.
+- Final future-domain inventory: 34 event names and 13 command names; together with the ten
+  converted event and ten converted command routes this preserves the reviewed 44/23 surface,
+  with heartbeat represented at its temporary Task-4 renewal bridge.
+- Ruff format/check: clean. Pyright: 0 errors after the final context-role narrowing.

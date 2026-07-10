@@ -2,6 +2,7 @@
 
 import pytest
 
+from orchestrator.graph import build_graph_catalog, future_command_effects
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
 from orchestrator.graph.models import Actor, ActorKind, EventEnvelope
 from orchestrator.graph.scenario import run_scenario
@@ -51,6 +52,8 @@ def test_scenario_with_all_expected_events_passes() -> None:
         InMemoryEventStore(),
         FakeClock(),
         SequentialIdGenerator(),
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     assert result.passed is True
@@ -69,6 +72,8 @@ def test_scenario_detects_missing_then_event() -> None:
         InMemoryEventStore(),
         FakeClock(),
         SequentialIdGenerator(),
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     assert result.passed is False
@@ -85,6 +90,8 @@ def test_scenario_detects_wrong_payload_in_then_event() -> None:
         InMemoryEventStore(),
         FakeClock(),
         SequentialIdGenerator(),
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     assert result.passed is False

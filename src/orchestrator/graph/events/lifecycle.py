@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal, cast
 
 from pydantic import Field
 
 from orchestrator.graph.payloads import JsonValue, StrictPayload
+from orchestrator.graph.models import CallbackIdempotencyEvent
 from orchestrator.graph.specifications import (
     EventMetadata,
     EventSpecification,
@@ -116,9 +117,27 @@ def reduce_run_lifecycle_changed(
 def reduce_callback_accepted(
     state: Any, payload: CallbackAcceptedPayload, metadata: EventMetadata
 ) -> Any:
-    del payload
-    del metadata
-    return _copy_state(state)
+    next_state = _copy_state(state)
+    if payload.payload is not None and not isinstance(payload.payload, dict):
+        return next_state
+    callbacks = dict(next_state.get("callback_idempotency_events", {}))
+    callbacks[f"{payload.node_id}\0{payload.idempotency_key}"] = CallbackIdempotencyEvent(
+        event_type=cast(
+            Literal[
+                "callback_accepted",
+                "callback_rejected_stale",
+                "callback_rejected_conflict",
+                "callback_duplicate_returned",
+            ],
+            metadata.event_type,
+        ),
+        node_id=payload.node_id,
+        idempotency_key=payload.idempotency_key,
+        outcome=metadata.event_type,
+        payload=payload.payload if isinstance(payload.payload, dict) else None,
+    )
+    next_state["callback_idempotency_events"] = callbacks
+    return next_state
 
 
 def reduce_runtime_retry_scheduled(

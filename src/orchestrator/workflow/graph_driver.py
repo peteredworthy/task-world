@@ -22,6 +22,7 @@ from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktr
 from orchestrator.graph import (
     EnvironmentFailureProjection,
     EventEnvelope,
+    build_graph_catalog,
     build_projection,
     project_leases,
     project_node_states,
@@ -43,6 +44,7 @@ from orchestrator.graph_runtime import (
     reconcile_runtime,
     seed_run,
 )
+from orchestrator.graph import future_command_effects
 
 if TYPE_CHECKING:
     from orchestrator.workflow.service import WorkflowService
@@ -119,9 +121,11 @@ async def apply_graph_cancel_until_terminal(
         session_factory,
         SystemClock(),
         UuidIdGenerator(),
+        catalog=build_graph_catalog(),
         auto_dispatch=False,
+        future_effects=future_command_effects(),
     )
-    payload: dict[str, object] = {"reason": reason or "signal_cancel"}
+    payload: dict[str, object] = {}
     delay_seconds = 0.05
 
     for attempt in range(4):
@@ -721,7 +725,13 @@ class GraphRunDriver:
         # below for the analogous risk in the main drive loop).
         events = await self._read_events(run_id)
         run_state = project_run_state(events)
-        controller = GraphController(self._session_factory, self._clock, self._id_gen)
+        controller = GraphController(
+            self._session_factory,
+            self._clock,
+            self._id_gen,
+            catalog=build_graph_catalog(),
+            future_effects=future_command_effects(),
+        )
         if run_state is None or run_state == "draft":
             await self._handle_command_at_head(controller, run_id, "accept_run")
             await self._handle_command_at_head(controller, run_id, "start")
@@ -748,7 +758,13 @@ class GraphRunDriver:
         run_state = project_run_state(events)
         if run_state not in {"failed", "resuming"}:
             return False
-        controller = GraphController(self._session_factory, self._clock, self._id_gen)
+        controller = GraphController(
+            self._session_factory,
+            self._clock,
+            self._id_gen,
+            catalog=build_graph_catalog(),
+            future_effects=future_command_effects(),
+        )
         payload: dict[str, object] = {"actor_role": "operator"}
         if run_state == "failed":
             await self._handle_command_at_head(controller, run_id, "resume", payload)

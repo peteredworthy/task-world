@@ -37,7 +37,8 @@ from orchestrator.graph import (
     SupportEvidenceProjection,
     VerifierVerdictProjection,
     VerificationResultProjection,
-    apply_command,
+    build_graph_catalog,
+    future_command_effects,
     initial_projection,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
@@ -61,6 +62,7 @@ from orchestrator.graph import (
     reduce_event,
     support_evidence_freshness_from_projection,
 )
+from tests.graph_command_support import dispatch_graph_command
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "graph"
 
@@ -2291,25 +2293,13 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
         return accepted_by_port, current_failed, recovery_by_record_id
 
     store = InMemoryEventStore()
-    clock = FakeClock()
-    id_gen = SequentialIdGenerator()
 
     def append_event(event_type: str, payload: dict[str, Any]) -> None:
         store.append(_event(event_type, payload))
 
     def append_command(command_type: str, payload: dict[str, Any]) -> None:
         events_before = store.read_from("run-1")
-        command_projection = initial_projection()
-        for graph_event in events_before:
-            command_projection = reduce_event(command_projection, graph_event)
-        for graph_event in apply_command(
-            command_projection,
-            events_before,
-            command_type,
-            payload,
-            clock,
-            id_gen,
-        ):
+        for graph_event in dispatch_graph_command(events_before, command_type, payload):
             store.append(graph_event)
 
     append_event("run_lifecycle_changed", {"to_state": "active"})
@@ -4957,6 +4947,8 @@ def test_fixture_corpus_then_projections_satisfied() -> None:
                 InMemoryEventStore(),
                 FakeClock(),
                 SequentialIdGenerator(),
+                catalog=build_graph_catalog(),
+                future_effects=future_command_effects(),
             )
 
             assert result.passed, f"{typed_scenario['name']}: {result.failures}"

@@ -55,6 +55,10 @@ def test_lifecycle_domain_routes_cover_complete_slice() -> None:
         "CallbackDuplicateReturnedPayload",
         "RuntimeRetryScheduledPayload",
         "AgentDiedPayload",
+        "temporary_unconverted_lifecycle_effects",
+        "temporary_unconverted_callback_effects",
+        "temporary_unconverted_acknowledge_start_effects",
+        "_apply_agent_died",
     }
 
 
@@ -444,6 +448,118 @@ def test_relocation_can_preview_and_create_a_new_target_file(tmp_path: Path) -> 
     applied = run_migration(migration, tmp_path, mode="apply")
     assert applied.exit_code == 0
     assert "class OutputRecordPayload" in (tmp_path / "events/records.py").read_text()
+
+
+def test_relocation_moves_declared_transitive_dependency_closure() -> None:
+    sources = {
+        "commands.py": """\
+from package import External
+
+DOMAIN_STATES = {"active"}
+
+def _domain_helper(value):
+    return External(value) in DOMAIN_STATES
+
+def handle_domain(value):
+    return _domain_helper(value)
+
+def keep(value):
+    return value
+""",
+        "domain.py": '"""Domain commands."""\n',
+    }
+    migration = DomainMigration(
+        domain="domain",
+        paths=("commands.py", "domain.py"),
+        relocations=(
+            SymbolRelocation(
+                "handle_domain",
+                "commands.py",
+                "domain.py",
+                dependency_closure=("_domain_helper", "DOMAIN_STATES"),
+            ),
+        ),
+    )
+
+    result = StrictPayloadCutoverCodemod(migration).transform_files(sources)
+
+    assert "handle_domain" not in result.sources["commands.py"]
+    assert "_domain_helper" not in result.sources["commands.py"]
+    assert "DOMAIN_STATES" not in result.sources["commands.py"]
+    assert "def keep" in result.sources["commands.py"]
+    assert "from package import External" in result.sources["domain.py"]
+    assert "DOMAIN_STATES =" in result.sources["domain.py"]
+    assert "def _domain_helper" in result.sources["domain.py"]
+    assert "def handle_domain" in result.sources["domain.py"]
+    assert not result.diagnostics
+    assert (
+        StrictPayloadCutoverCodemod(migration).transform_files(result.sources).sources
+        == result.sources
+    )
+
+
+def test_relocation_dependency_closure_fails_closed_when_dependency_is_shared() -> None:
+    sources = {
+        "commands.py": """\
+def shared_helper(value):
+    return value
+
+def handle_domain(value):
+    return shared_helper(value)
+
+def keep(value):
+    return shared_helper(value)
+""",
+        "domain.py": "",
+    }
+    migration = DomainMigration(
+        domain="domain",
+        paths=("commands.py", "domain.py"),
+        relocations=(
+            SymbolRelocation(
+                "handle_domain",
+                "commands.py",
+                "domain.py",
+                dependency_closure=("shared_helper",),
+            ),
+        ),
+    )
+
+    result = StrictPayloadCutoverCodemod(migration).transform_files(sources)
+
+    assert any(item.code == "W5SHARED_RELOCATION_DEPENDENCY" for item in result.diagnostics)
+
+
+def test_relocation_routes_cross_target_dependencies_without_source_import() -> None:
+    sources = {
+        "commands.py": """\
+def shared_effect(value):
+    return value
+
+def handle_domain(value):
+    return shared_effect(value)
+""",
+        "domain.py": "",
+        "future_effects.py": "",
+    }
+    migration = DomainMigration(
+        domain="domain",
+        paths=("commands.py", "domain.py", "future_effects.py"),
+        relocations=(
+            SymbolRelocation("shared_effect", "commands.py", "future_effects.py"),
+            SymbolRelocation("handle_domain", "commands.py", "domain.py"),
+        ),
+    )
+
+    result = StrictPayloadCutoverCodemod(migration).transform_files(sources)
+
+    assert "from future_effects import shared_effect" in result.sources["domain.py"]
+    assert "from commands import" not in result.sources["domain.py"]
+    assert not result.diagnostics
+    assert (
+        StrictPayloadCutoverCodemod(migration).transform_files(result.sources).sources
+        == result.sources
+    )
 
 
 def test_symbol_resolution_rewrites_alias_and_ignores_unrelated_local() -> None:

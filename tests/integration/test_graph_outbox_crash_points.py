@@ -36,6 +36,7 @@ from orchestrator.graph_runtime import (
 from orchestrator.graph_runtime.controller import rebuild_projection
 from orchestrator.graph_runtime.outbox import append_outbox_rows
 from orchestrator.graph_runtime.store import graph_aggregate_id
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 
 class FixedClock:
@@ -354,7 +355,14 @@ async def _seed_cleanup_request(
                 [_event("file-state-event", run_id, "file_state_accepted", boundary.output_record)],
             )
 
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     result = await controller.handle_command(
         run_id,
         1,
@@ -380,7 +388,14 @@ async def test_crash_before_append_no_events_no_outbox_no_dispatch(
     call_log: list[str] = []
     clock = FixedClock()
     dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
-    controller = GraphController(session_factory, clock, SequentialIds(), dispatcher=dispatcher)
+    controller = GraphController(
+        session_factory,
+        clock,
+        SequentialIds(),
+        dispatcher=dispatcher,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     with pytest.raises(StaleProjectionError):
         await controller.handle_command(
@@ -404,7 +419,14 @@ async def test_crash_after_append_before_outbox_starts_agent_restarts_dispatch(
     run_id = "crash-after-append"
     await _seed_runnable_worker(session_factory, run_id)
     clock = FixedClock()
-    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     result = await controller.handle_command(
         run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
@@ -440,7 +462,14 @@ async def test_recover_run_dispatches_only_matching_outbox_rows(
     await _seed_runnable_worker(session_factory, other_run_id)
     clock = FixedClock()
     ids = SequentialIds()
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     target_result = await controller.handle_command(
         target_run_id,
@@ -484,6 +513,8 @@ async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_
         clock,
         SequentialIds(),
         dispatcher=dispatcher,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     await controller.handle_command(
@@ -523,7 +554,14 @@ async def test_recover_without_run_id_skips_terminal_snapshot_without_replay(
     active_run_id = "recover-reconcile-active"
     clock = FixedClock()
     ids = SequentialIds()
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     async with session_factory() as session:
         async with session.begin():
@@ -647,6 +685,8 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         clock,
         SequentialIds(),
         dispatcher=dispatcher,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     first = await controller.handle_command(
@@ -714,7 +754,14 @@ async def test_duplicate_dispatch_pending_invokes_executor_once(
     run_id = "duplicate-dispatch"
     await _seed_runnable_worker(session_factory, run_id)
     clock = FixedClock()
-    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     await controller.handle_command(
         run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
     )
@@ -736,7 +783,14 @@ async def test_restart_mid_dispatching_row_is_retried_idempotently(
     run_id = "restart-mid-dispatch"
     await _seed_runnable_worker(session_factory, run_id)
     clock = FixedClock()
-    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     result = await controller.handle_command(
         run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
     )
@@ -776,7 +830,14 @@ async def test_failed_dispatch_uses_backoff_before_retrying(
     run_id = "dispatch-backoff"
     await _seed_runnable_worker(session_factory, run_id)
     clock = FixedClock()
-    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     result = await controller.handle_command(
         run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
     )
@@ -874,7 +935,14 @@ async def test_retry_jitter_does_not_exceed_backoff_cap(
     run_id = "dispatch-backoff-cap"
     await _seed_runnable_worker(session_factory, run_id)
     clock = FixedClock()
-    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     await controller.handle_command(
         run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
     )
@@ -903,7 +971,14 @@ async def test_recovery_preserves_future_backoff_until_due(
     run_id = "dispatch-backoff-recovery"
     await _seed_runnable_worker(session_factory, run_id)
     clock = FixedClock()
-    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     result = await controller.handle_command(
         run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
     )
@@ -1146,7 +1221,13 @@ async def test_compromised_file_state_binding_is_refused_before_cleanup_complete
             await GraphEventStore(session).append_events(run_id, 0, events)
 
     clock = FixedClock()
-    controller = GraphController(session_factory, clock=clock, id_gen=SequentialIds())
+    controller = GraphController(
+        session_factory,
+        clock=clock,
+        id_gen=SequentialIds(),
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
@@ -1236,6 +1317,8 @@ async def test_controller_does_not_start_side_effect_before_commit(
         clock,
         SequentialIds(),
         dispatcher=dispatcher,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     result = await controller.handle_command(
@@ -1288,6 +1371,8 @@ async def test_controller_rolls_back_events_when_dispatch_outbox_insert_fails(
             ]
         ),
         dispatcher=dispatcher,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     with pytest.raises(OutboxAppendError):
@@ -1314,7 +1399,14 @@ async def test_agent_dispatch_requested_event_envelope_is_persisted_exactly(
     run_id = "dispatch-envelope"
     await _seed_runnable_worker(session_factory, run_id)
     clock = FixedClock()
-    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     result = await controller.handle_command(
         run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
@@ -1352,7 +1444,14 @@ async def test_controller_round_trip_projection_matches_in_memory_projection(
     run_id = "controller-round-trip"
     seed_events = await _seed_runnable_worker(session_factory, run_id)
     clock = FixedClock()
-    controller = GraphController(session_factory, clock, SequentialIds(), auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     result = await controller.handle_command(
         run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}

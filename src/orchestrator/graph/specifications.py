@@ -85,6 +85,36 @@ CommandHandler = Callable[
 ]
 
 
+class FutureCommandEffects(Protocol):
+    """Task 9 deletion seam for effects owned by future Tasks 3/4/6."""
+
+    accepted_output_record_events: Callable[..., Any]
+    callback_payload: Callable[..., Any]
+    command_rejected: Callable[..., Any]
+    file_state_authority_conflict: Callable[..., Any]
+    file_state_rejected_conflict: Callable[..., Any]
+    file_state_rejected_events: Callable[..., Any]
+    lease_node_id: Callable[..., Any]
+    make_strict_event: Callable[..., Any]
+    output_record_contract_conflict: Callable[..., Any]
+    output_record_provenance_conflict: Callable[..., Any]
+    planner_session_state_event: Callable[..., Any]
+    required_output_record_conflict: Callable[..., Any]
+    source_repair_events: Callable[..., Any]
+    typed_lease_event_payload: Callable[..., Any]
+    verification_record_conflict: Callable[..., Any]
+    cancel_active_lease_events: Callable[..., Any]
+    has_passed_completion_decision: Callable[..., Any]
+    lifecycle_completion_decision_event: Callable[..., Any]
+    lifecycle_event: Callable[..., Any]
+    failure_record_payload: Callable[..., Any]
+    is_non_retryable_runtime_death: Callable[..., Any]
+    is_rate_limit_death: Callable[..., Any]
+    non_gap_planner_has_accepted_patch: Callable[..., Any]
+    positive_int: Callable[..., Any]
+    recovery_plan_record_payload: Callable[..., Any]
+
+
 @dataclass(frozen=True)
 class CommandExecutionContext:
     """Injected capabilities and universal metadata for command execution."""
@@ -95,6 +125,7 @@ class CommandExecutionContext:
     id_generator: IdGenerator
     actor: Actor
     events: tuple[HydratedEvent, ...]
+    future_effects: FutureCommandEffects
 
     def event_metadata(self, event_type: str) -> EventMetadata:
         return EventMetadata(
@@ -192,6 +223,7 @@ __all__ = [
     "CommandSpecification",
     "EventMetadata",
     "EventSpecification",
+    "FutureCommandEffects",
     "HydratedEvent",
     "ProjectionParticipation",
     "StoredEventEnvelope",

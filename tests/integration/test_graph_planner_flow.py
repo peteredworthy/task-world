@@ -16,6 +16,7 @@ from orchestrator.graph import (
     project_run_state,
 )
 from orchestrator.graph_runtime import GraphController, GraphEventStore
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 
 class FixedClock:
@@ -37,7 +38,12 @@ class SequentialIds:
 async def test_planner_chain_two_horizons_end_to_end(tmp_path: Path) -> None:
     engine, session_factory = await _session_factory(tmp_path / "planner-flow.db")
     controller = GraphController(
-        session_factory, FixedClock(), SequentialIds(), auto_dispatch=False
+        session_factory,
+        FixedClock(),
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     run_id = "planner-flow"
     try:
@@ -83,7 +89,12 @@ async def test_planner_chain_two_horizons_end_to_end(tmp_path: Path) -> None:
 async def test_budget_exhaustion_routes_to_gate_through_controller(tmp_path: Path) -> None:
     engine, session_factory = await _session_factory(tmp_path / "planner-budget.db")
     controller = GraphController(
-        session_factory, FixedClock(), SequentialIds(), auto_dispatch=False
+        session_factory,
+        FixedClock(),
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     run_id = "planner-budget"
     try:

@@ -26,6 +26,7 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from orchestrator.graph_runtime.controller import rebuild_projection
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 ROUTINE_PATHS = [
     Path("routines/demo-task.yaml"),
@@ -228,7 +229,14 @@ async def test_controller_two_step_callback_completion_unblocks_next_step(tmp_pa
     engine = create_engine(tmp_path / "controller-two-step.db")
     await init_db(engine)
     session_factory = create_session_factory(engine)
-    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        id_gen,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     try:
         seed = await seed_run(
@@ -278,7 +286,14 @@ async def test_controller_upstream_failure_blocks_next_step(tmp_path: Path) -> N
     engine = create_engine(tmp_path / "controller-two-step-failed.db")
     await init_db(engine)
     session_factory = create_session_factory(engine)
-    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        id_gen,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     try:
         seed = await seed_run(
@@ -320,7 +335,14 @@ async def test_demo_task_traverses_all_workers_in_step_order(tmp_path: Path) -> 
     engine = create_engine(tmp_path / "demo-traversal.db")
     await init_db(engine)
     session_factory = create_session_factory(engine)
-    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        id_gen,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     try:
         seed = await seed_run(session_factory, routine, run_id="demo", clock=clock, id_gen=id_gen)
@@ -360,7 +382,14 @@ async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(tmp_path
     engine = create_engine(tmp_path / "overhead-demo.db")
     await init_db(engine)
     session_factory = create_session_factory(engine)
-    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        id_gen,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     started_at = perf_counter()
     try:

@@ -39,6 +39,7 @@ from orchestrator.runners.types import (
     LogLineCallback,
     SubmitCallback,
 )
+from orchestrator.graph import future_command_effects
 
 
 class FixedClock:
@@ -348,6 +349,7 @@ async def _seed_active_run(
         ids,
         catalog=build_graph_catalog(),
         auto_dispatch=False,
+        future_effects=future_command_effects(),
     )
     position = await controller.current_position(run_id)
     accepted = await controller.handle_command(run_id, position, "accept_run")

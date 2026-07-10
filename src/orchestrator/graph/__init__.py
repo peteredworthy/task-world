@@ -7,7 +7,7 @@ from orchestrator.graph.command_bindings import (
     check_command_uses_acceptance_fallback,
     resolve_check_command_definition,
 )
-from orchestrator.graph.commands import apply_command
+from orchestrator.graph.commands import apply_command, future_command_effects
 from orchestrator.graph.compiler import compile_routine
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
@@ -113,6 +113,7 @@ from orchestrator.graph.specifications import (
     CommandSpecification,
     EventMetadata,
     EventSpecification,
+    FutureCommandEffects,
     HydratedEvent,
     ProjectionParticipation,
     StoredEventEnvelope,
@@ -194,6 +195,7 @@ __all__ = [
     "EventEnvelope",
     "EventMetadata",
     "EventSpecification",
+    "FutureCommandEffects",
     "FakeClock",
     "FileStateRecord",
     "FileStateClassification",
@@ -269,6 +271,7 @@ __all__ = [
     "VerifierVerdictProjection",
     "WorktreeStatus",
     "apply_command",
+    "future_command_effects",
     "build_projection",
     "check_command_reference",
     "check_command_uses_acceptance_fallback",

@@ -13,30 +13,25 @@ from orchestrator.graph._commands import (
     TERMINAL_RUN_STATES,
     command_rejected,
     event_factory,
+    future_command_effects,
     run_id,
 )
 from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.commands.callbacks import (
-    AcknowledgeStartCommand,
-    SubmitCallbackCommand,
-    handle_acknowledge_start,
     handle_raise_appeal,
     handle_record_cleanup_applied,
     handle_record_decision,
     handle_record_gatekeeper_verdicts,
     handle_record_requirement_revision,
     handle_record_support_evidence,
-    handle_submit_callback,
 )
 from orchestrator.graph.commands.lifecycle import (
     RECORD_HEARTBEAT,
     RecordHeartbeatCommand,
-    handle_lifecycle_command,
 )
 from orchestrator.graph.commands.lease_bridge import apply_temporary_unconverted_lease_renewal
 from orchestrator.graph.commands.patches import handle_submit_patch
 from orchestrator.graph.commands.records import (
-    handle_agent_died,
     handle_evaluate_final_gate,
     handle_evaluate_join,
 )
@@ -45,7 +40,12 @@ from orchestrator.graph.commands.schedule import (
     handle_schedule_tick,
     handle_seed_compiled_events,
 )
-from orchestrator.graph.specifications import CommandExecutionContext, HydratedEvent
+from orchestrator.graph.specifications import (
+    CommandExecutionContext,
+    HydratedEvent,
+    StoredEventEnvelope,
+)
+from orchestrator.graph.events.lifecycle import COMMAND_REJECTED
 from orchestrator.graph.commands.lifecycle import (
     ACCEPT_RUN,
     START,
@@ -101,6 +101,7 @@ COMMAND_SPECIFICATIONS = (
     ACKNOWLEDGE_START,
     AGENT_DIED_COMMAND,
 )
+_CATALOG_COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECIFICATIONS)
 
 
 @overload
@@ -147,6 +148,8 @@ def apply_command(
     run_id_value = run_id(events, payload)
     make_event = event_factory(run_id_value, command_type, clock, id_gen)
     specification = catalog.command_specs.get(command_type) if catalog is not None else None
+    if catalog is None and command_type in _CATALOG_COMMAND_NAMES:
+        raise ValueError(f"typed graph command {command_type!r} requires a catalog and context")
     if specification is not None:
         if context is None:
             msg = f"typed graph command {command_type!r} requires an execution context"
@@ -161,46 +164,14 @@ def apply_command(
                 make_event,
             )
             if renewal.event_type == "command_rejected":
-                return [renewal]
+                stored = renewal.model_dump()
+                stored["payload_schema_generation"] = stored.pop("schema_version")
+                return [COMMAND_REJECTED.hydrate(StoredEventEnvelope.model_validate(stored))]
             return [
                 *specification.handle(typed_command, projection, tuple(events), context),
                 renewal,
             ]
         return specification.handle(command, projection, tuple(events), context)
-    if command_type in RUN_LIFECYCLE_TRANSITIONS or command_type == "fail":
-        return handle_lifecycle_command(
-            projection,
-            events,
-            command_type,
-            payload,
-            make_event,
-            clock,
-            id_gen,
-        )
-    if command_type == "submit_callback":
-        return handle_submit_callback(
-            projection,
-            events,
-            command_type,
-            cast(SubmitCallbackCommand, payload),
-            make_event,
-            clock,
-            id_gen,
-        )
-    if command_type == "acknowledge_start":
-        return handle_acknowledge_start(
-            projection,
-            events,
-            command_type,
-            cast(AcknowledgeStartCommand, payload),
-            make_event,
-            clock,
-            id_gen,
-        )
-    if command_type == "agent_died":
-        return handle_agent_died(
-            projection, events, command_type, payload, make_event, clock, id_gen
-        )
     handler = _UNCONVERTED_W5_BRIDGE.get(command_type)
     if handler is None:
         return [
@@ -222,4 +193,5 @@ __all__ = [
     "TERMINAL_RUN_STATES",
     "NONTERMINAL_RUN_STATES",
     "apply_command",
+    "future_command_effects",
 ]

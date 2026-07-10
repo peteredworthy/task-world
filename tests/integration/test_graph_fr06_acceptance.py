@@ -14,6 +14,7 @@ from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel, init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphController, GraphEventStore
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 
 @pytest.fixture
@@ -49,6 +50,8 @@ async def test_fr06_edges_bind_fanout_join_optional_bind_all_and_supersede(
         FakeClock(),
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     first_callback = await controller.handle_command(

@@ -95,9 +95,11 @@ from orchestrator.graph.models import (
 )
 from orchestrator.graph.models import normalize_record_selector
 from orchestrator.graph.events.lifecycle import (
-    CallbackAcceptedPayload,
-    RunLifecycleChangedPayload,
+    CALLBACK_ACCEPTED,
+    RUNTIME_RETRY_SCHEDULED,
+    RUN_LIFECYCLE_CHANGED,
 )
+from orchestrator.graph.specifications import StoredEventEnvelope
 
 
 _EDGE_METADATA_KEYS = (
@@ -2018,10 +2020,26 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         "cleanup_applied_ids": dict(state.get("cleanup_applied_ids", {})),
     }
 
-    if event.event_type == "run_lifecycle_changed":
-        lifecycle_payload = RunLifecycleChangedPayload.model_validate(event.payload)
-        to_state = lifecycle_payload.to_state
-        next_state["run_state"] = to_state
+    converted_spec = {
+        RUN_LIFECYCLE_CHANGED.name: RUN_LIFECYCLE_CHANGED,
+        RUNTIME_RETRY_SCHEDULED.name: RUNTIME_RETRY_SCHEDULED,
+        CALLBACK_ACCEPTED.name: CALLBACK_ACCEPTED,
+    }.get(event.event_type)
+    if converted_spec is not None:
+        stored = event.model_dump()
+        stored["payload_schema_generation"] = stored.pop("schema_version")
+        if converted_spec is RUNTIME_RETRY_SCHEDULED:
+            retry_payload = stored["payload"]
+            retry_payload.setdefault("lease_id", "compact-replay")
+            retry_payload.setdefault("generation", 0)
+            retry_payload.setdefault("policy", "compact-replay")
+            retry_payload.setdefault("reason", "compact-replay")
+        elif converted_spec is CALLBACK_ACCEPTED:
+            stored["payload"].setdefault("reason", "generation-1-replay")
+        next_state = converted_spec.reduce(
+            next_state,
+            converted_spec.hydrate(StoredEventEnvelope.model_validate(stored)),
+        )
     elif event.event_type == "node_created":
         typed_node_payload = _node_created_payload_from_event(event)
         node_payload = _node_creation_from_event(event)
@@ -2264,8 +2282,6 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_cleanup_requested(next_state, event)
     elif event.event_type == "cleanup_applied":
         _record_cleanup_applied(next_state, event)
-    elif event.event_type == "runtime_retry_scheduled":
-        _record_runtime_retry_scheduled(next_state, event)
     elif event.event_type in {"requirement_revision_recorded", "requirement_amended"}:
         _record_requirement_revision(next_state, event)
         _record_authority_revision_blocker(next_state, event)
@@ -2308,8 +2324,6 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         reason = payload.reason
         if isinstance(node_id, str) and isinstance(reason, str):
             next_state["last_deferred_reasons"][node_id] = reason
-    elif event.event_type == "callback_accepted":
-        _record_callback_idempotency_event(next_state, event)
     elif event.event_type == "node_ready":
         node_id = NodeReadyPayload.model_validate(event.payload).node_id
         if isinstance(node_id, str):
@@ -4201,41 +4215,6 @@ def _oversight_decision_from_payload(
         return None
 
 
-def _record_callback_idempotency_event(state: GraphProjection, event: EventEnvelope) -> None:
-    callback_event = _callback_idempotency_event_from_envelope(event)
-    if callback_event is None:
-        return
-    key = _callback_idempotency_projection_key(
-        callback_event.node_id,
-        callback_event.idempotency_key,
-    )
-    state["callback_idempotency_events"].setdefault(key, callback_event)
-
-
-def _callback_idempotency_event_from_envelope(
-    event: EventEnvelope,
-) -> CallbackIdempotencyEvent | None:
-    try:
-        payload = CallbackAcceptedPayload.model_validate(event.payload)
-        callback_payload = payload.model_dump(mode="json")
-    except ValueError:
-        # Generation-1 fixture/storage envelopes predate the strict required
-        # callback outcome reason. Hydrated generation-2 dispatch never uses
-        # this compatibility branch.
-        node_id = event.payload.get("node_id")
-        idempotency_key = event.payload.get("idempotency_key")
-        if not isinstance(node_id, str) or not isinstance(idempotency_key, str):
-            return None
-        callback_payload = {
-            "node_id": node_id,
-            "idempotency_key": idempotency_key,
-            "payload": event.payload.get("payload"),
-        }
-    callback_payload["event_type"] = event.event_type
-    callback_payload["outcome"] = event.event_type
-    return _callback_idempotency_event_from_payload(callback_payload)
-
-
 def _callback_idempotency_event_from_payload(
     payload: dict[str, Any],
 ) -> CallbackIdempotencyEvent | None:
@@ -4243,10 +4222,6 @@ def _callback_idempotency_event_from_payload(
         return CallbackIdempotencyEvent.model_validate(payload)
     except ValueError:
         return None
-
-
-def _callback_idempotency_projection_key(node_id: str, idempotency_key: str) -> str:
-    return f"{node_id}\0{idempotency_key}"
 
 
 def _record_decision_request_details(state: GraphProjection, event: EventEnvelope) -> None:
@@ -5592,14 +5567,6 @@ def _record_cleanup_applied(state: GraphProjection, event: EventEnvelope) -> Non
     record.superseded_by_record_id = payload.superseding_record_id
     record.cleanup_applied_event_id = event.event_id
     record.compromised_snapshot_deleted = payload.deleted_snapshot_ref is True
-
-
-def _record_runtime_retry_scheduled(state: GraphProjection, event: EventEnvelope) -> None:
-    node_id = event.payload.get("node_id")
-    if not isinstance(node_id, str) or not node_id:
-        return
-    value = event.payload.get("retry_not_before")
-    state["retry_not_before_by_node"][node_id] = value if value else None
 
 
 def _resolved_file_entry(

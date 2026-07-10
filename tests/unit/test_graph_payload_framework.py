@@ -29,6 +29,7 @@ from orchestrator.graph import (
     UnknownGraphEventError,
     apply_command,
     build_graph_catalog,
+    future_command_effects,
 )
 
 
@@ -141,6 +142,7 @@ def test_command_specification_validates_once_and_requires_exact_class_at_dispat
         id_generator=FixedIds(),
         actor=ACTOR,
         events=(),
+        future_effects=future_command_effects(),
     )
 
     assert spec.handle(command, {}, (), context) == []
@@ -219,6 +221,7 @@ def test_heartbeat_command_emits_projection_neutral_typed_event() -> None:
         id_generator=FixedIds(),
         actor=ACTOR,
         events=(),
+        future_effects=future_command_effects(),
     )
 
     events = catalog.resolve_command("record_heartbeat").handle(command, {}, (), context)
@@ -242,6 +245,7 @@ def test_public_apply_command_dispatches_heartbeat_through_injected_catalog_cont
         id_generator=FixedIds(),
         actor=ACTOR,
         events=(),
+        future_effects=future_command_effects(),
     )
 
     events = apply_command(

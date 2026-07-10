@@ -34,6 +34,7 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from orchestrator.graph_runtime.store import graph_aggregate_id
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 
 @pytest.fixture(scope="module")
@@ -114,7 +115,14 @@ async def test_projection_snapshot_tail_matches_full_rebuild(
     run_id = "store-snapshot-tail-parity"
     clock = FakeClock()
     ids = SequentialIdGenerator()
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
@@ -144,7 +152,14 @@ async def test_handle_command_uses_valid_snapshot_without_parsing_old_events(
     run_id = "store-command-valid-snapshot-no-replay"
     clock = FakeClock()
     ids = SequentialIdGenerator()
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
@@ -182,6 +197,8 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
         FakeClock(),
         SequentialIdGenerator(),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -233,7 +250,14 @@ async def test_schedule_tick_uses_valid_snapshot_without_parsing_old_events(
     run_id = "store-schedule-valid-snapshot-no-replay"
     clock = FakeClock()
     ids = SequentialIdGenerator()
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
@@ -268,6 +292,8 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
         FakeClock(),
         SequentialIdGenerator(),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -295,7 +321,6 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
             await GraphEventStore(session).append_events(run_id, 0, setup_events)
 
     payload = {
-        "run_id": run_id,
         "node_id": "planner-1",
         "execution_id": "exec-1",
         "lease_id": "lease-1",
@@ -303,6 +328,7 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
         "base_snapshot_id": "S0",
         "observed_graph_position": 3,
         "idempotency_key": "callback-key-1",
+        "payload": {},
     }
     first = await controller.handle_command(run_id, 3, "submit_callback", payload)
     second = await controller.handle_command(
@@ -328,7 +354,14 @@ async def test_projection_snapshot_schema_mismatch_is_rebuilt(
     run_id = "store-snapshot-version-rebuild"
     clock = FakeClock()
     ids = SequentialIdGenerator()
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
 
     seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
@@ -369,6 +402,8 @@ async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
         FakeClock(),
         SequentialIdGenerator(),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -1098,6 +1133,7 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
                         {
                             "node_id": "worker-1",
                             "lease_id": "lease-1",
+                            "idempotency_key": "summary-callback-1",
                             "payload": {
                                 "output_records": [
                                     {
@@ -1237,6 +1273,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                         {
                             "node_id": "worker-1",
                             "lease_id": "lease-1",
+                            "idempotency_key": "light-callback-1",
                             "payload": {"output_records": large_payload},
                         },
                     ),
@@ -1318,7 +1355,12 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "record_type": "candidate",
         "task_region_id": "step/task",
     }
-    assert events[2].payload == {"lease_id": "lease-1", "node_id": "worker-1"}
+    assert events[2].payload == {
+        "idempotency_key": "light-callback-1",
+        "lease_id": "lease-1",
+        "node_id": "worker-1",
+        "payload": {"output_records": large_payload},
+    }
     assert events[3].payload == {
         "bound_at_position": 2,
         "edge_id": "edge-candidate",
@@ -1349,4 +1391,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "task_region_id": "step/task",
     }
     assert all("value" not in event.payload for event in events)
-    assert all("payload" not in event.payload for event in events)
+    assert all(
+        "payload" not in event.payload or event.event_type == "callback_accepted"
+        for event in events
+    )

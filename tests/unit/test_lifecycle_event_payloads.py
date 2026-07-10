@@ -14,6 +14,7 @@ from orchestrator.graph import (
     CallbackDuplicateReturnedPayload,
     CallbackRejectedPayload,
     CommandRejectedPayload,
+    CommandExecutionContext,
     DeadInputDetectedPayload,
     EventEnvelope,
     FakeClock,
@@ -26,6 +27,7 @@ from orchestrator.graph import (
     projection_to_checkpoint,
     reduce_event,
     build_graph_catalog,
+    future_command_effects,
     ProjectionParticipation,
 )
 from orchestrator.graph_runtime.store import (
@@ -37,6 +39,33 @@ from orchestrator.graph_runtime.store import (
     _json_extract_payload_value,
     graph_aggregate_id,
 )
+
+
+def _typed_apply(events: list[EventEnvelope], command_type: str, payload: dict[str, Any]):
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    return apply_command(
+        build_projection(events),
+        events,
+        command_type,
+        {key: value for key, value in payload.items() if key != "run_id"},
+        clock,
+        ids,
+        catalog=build_graph_catalog(),
+        context=CommandExecutionContext(
+            run_id=str(payload.get("run_id", "run-1")),
+            current_position=max((e.position for e in events), default=-1),
+            clock=clock,
+            id_generator=ids,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            events=(),
+            future_effects=future_command_effects(),
+        ),
+    )
+
+
+def _typed_event_type(event: Any) -> str:
+    return event.event_type if isinstance(event, EventEnvelope) else event.metadata.event_type
 
 
 STRICT_LIFECYCLE_EVENT_SAMPLES: dict[str, tuple[dict[str, Any], str]] = {
@@ -291,19 +320,15 @@ def test_unconverted_dead_input_audit_remains_projection_neutral() -> None:
 
 
 def test_lifecycle_callback_and_runtime_producers_emit_typed_payloads() -> None:
-    lifecycle = apply_command(
-        build_projection([_event("run_lifecycle_changed", {"to_state": "queued"}, position=1)]),
+    lifecycle = _typed_apply(
         [_event("run_lifecycle_changed", {"to_state": "queued"}, position=1)],
         "start",
         {"run_id": "run-1"},
-        FakeClock(),
-        SequentialIdGenerator(),
     )
     assert RunLifecycleChangedPayload.model_validate(lifecycle[0].payload).to_state == "active"
 
     events = _active_lease_events()
-    callback = apply_command(
-        build_projection(events),
+    callback = _typed_apply(
         events,
         "submit_callback",
         {
@@ -318,15 +343,12 @@ def test_lifecycle_callback_and_runtime_producers_emit_typed_payloads() -> None:
             "payload": None,
             "complete_node": False,
         },
-        FakeClock(),
-        SequentialIdGenerator(),
     )
-    accepted = next(event for event in callback if event.event_type == "callback_accepted")
+    accepted = next(event for event in callback if _typed_event_type(event) == "callback_accepted")
     assert CallbackAcceptedPayload.model_validate(accepted.payload).reason == "accepted"
-    assert "payload" in accepted.payload and accepted.payload["payload"] is None
+    assert accepted.payload.payload is None
 
-    death_events = apply_command(
-        build_projection(events),
+    death_events = _typed_apply(
         events,
         "agent_died",
         {
@@ -336,11 +358,11 @@ def test_lifecycle_callback_and_runtime_producers_emit_typed_payloads() -> None:
             "reason": "process_exit",
             "retry_backoff_seconds": 60,
         },
-        FakeClock(),
-        SequentialIdGenerator(),
     )
-    died = next(event for event in death_events if event.event_type == "agent_died")
-    retry = next(event for event in death_events if event.event_type == "runtime_retry_scheduled")
+    died = next(event for event in death_events if _typed_event_type(event) == "agent_died")
+    retry = next(
+        event for event in death_events if _typed_event_type(event) == "runtime_retry_scheduled"
+    )
     assert AgentDiedPayload.model_validate(died.payload).reason == "process_exit"
     assert RuntimeRetryScheduledPayload.model_validate(retry.payload).retry_after_seconds == 60
 

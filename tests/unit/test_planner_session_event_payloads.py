@@ -8,11 +8,10 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     PlannerSessionStateChangedPayload,
-    SequentialIdGenerator,
-    apply_command,
     initial_projection,
     reduce_event,
 )
+from tests.graph_command_support import dispatch_graph_command
 
 
 def test_session_state_changed_payload_normalizes_legacy_free_form_keys_to_extra() -> None:
@@ -83,13 +82,10 @@ def test_session_state_changed_reducer_tolerates_legacy_payloads_through_typed_m
 
 def test_session_state_changed_producers_emit_payloads_validated_by_typed_model() -> None:
     events = _events_with_active_planner()
-    callback = apply_command(
-        _project(events),
+    callback = dispatch_graph_command(
         events,
         "submit_callback",
         _callback_payload("planner-0", "lease-planner-0", "exec-planner-0", 1),
-        FakeClock(),
-        SequentialIdGenerator(),
     )
 
     suspended_event = next(
@@ -126,13 +122,10 @@ def test_session_state_changed_producer_emits_explicit_null_to_clear_stale_carry
     projection = _project(events)
     assert projection["planner_session_carryovers"] == {"session-1": "summary-carryover-1"}
 
-    callback = apply_command(
-        projection,
+    callback = dispatch_graph_command(
         events,
         "submit_callback",
         _callback_payload("planner-0", "lease-planner-0", "exec-planner-0", 1),
-        FakeClock(),
-        SequentialIdGenerator(),
     )
 
     suspended_event = next(

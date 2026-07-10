@@ -9,11 +9,12 @@ from orchestrator.graph._commands import (
     Clock,
     GraphProjection,
     IdGenerator,
+    future_command_effects,
     EventEnvelope,
     apply_evaluate_final_gate,
     apply_evaluate_join,
-    apply_agent_died,
 )
+from orchestrator.graph.commands.lifecycle import build_agent_died_effects
 
 
 def handle_evaluate_join(
@@ -57,7 +58,9 @@ def handle_agent_died(
     del events
     del command_type
     del id_gen
-    return apply_agent_died(projection, payload, clock, make_event)
+    return build_agent_died_effects(
+        projection, payload, clock, make_event, future_command_effects()
+    )
 
 
 __all__ = [

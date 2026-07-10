@@ -1,5 +1,6 @@
 """Unit tests for the pure graph command applier."""
 
+import ast
 from datetime import timedelta
 from pathlib import Path
 from typing import Any
@@ -18,12 +19,17 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     apply_command,
     build_graph_catalog,
+    future_command_effects,
     initial_projection,
     project_requirement_freshness_facts,
     project_task_states,
     projection_from_checkpoint,
     projection_to_checkpoint,
     reduce_event,
+)
+from orchestrator.graph.commands.future_effects import (
+    FUTURE_EFFECT_EVENT_NAMES,
+    require_future_effect,
 )
 
 
@@ -38,6 +44,23 @@ def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> Even
         timestamp=FakeClock().now(),
         payload=payload,
     )
+
+
+def test_future_effect_adapter_is_explicit_and_fails_closed() -> None:
+    for event_type in FUTURE_EFFECT_EVENT_NAMES:
+        event = _event(event_type, {})
+        assert require_future_effect(event) is event
+    for event_type in ("command_rejected", "callback_accepted", "unknown_future_event"):
+        with pytest.raises(ValueError, match="future-effect adapter rejected"):
+            require_future_effect(_event(event_type, {}))
+
+
+@pytest.mark.parametrize("command_type", ["start", "submit_callback", "agent_died"])
+def test_converted_commands_require_catalog_and_context(command_type: str) -> None:
+    with pytest.raises(ValueError, match="requires a catalog and context"):
+        apply_command(
+            initial_projection(), [], command_type, {}, FakeClock(), SequentialIdGenerator()
+        )
 
 
 def _project(events: list[EventEnvelope]):
@@ -79,11 +102,58 @@ def _apply(
     payload: dict[str, Any] | None = None,
 ) -> list[EventEnvelope]:
     clock = FakeClock()
+    ids = SequentialIdGenerator()
+    catalog = build_graph_catalog()
+    raw_payload = payload or {"run_id": "run-1"}
+    if command_type in catalog.command_specs:
+        context = CommandExecutionContext(
+            run_id=str(raw_payload.get("run_id", "run-1")),
+            current_position=max((event.position for event in events), default=-1),
+            clock=clock,
+            id_generator=ids,
+            actor=Actor(
+                kind=ActorKind.CONTROLLER,
+                role=raw_payload.get("actor_role")
+                if isinstance(raw_payload.get("actor_role"), str)
+                else None,
+            ),
+            events=(),
+            future_effects=future_command_effects(),
+        )
+        output = apply_command(
+            _project(events),
+            events,
+            command_type,
+            {
+                key: value
+                for key, value in raw_payload.items()
+                if key not in {"run_id", "actor_role"}
+            },
+            clock,
+            ids,
+            catalog=catalog,
+            context=context,
+        )
+        return [
+            event
+            if isinstance(event, EventEnvelope)
+            else EventEnvelope(
+                event_id=event.metadata.event_id,
+                run_id=event.metadata.run_id,
+                position=event.metadata.position,
+                event_type=event.metadata.event_type,
+                schema_version=event.metadata.payload_schema_generation,
+                actor=event.metadata.actor,
+                timestamp=event.metadata.timestamp,
+                payload=event.payload.model_dump(mode="json", exclude_none=True),
+            )
+            for event in output
+        ]
     return apply_command(
         _project(events),
         events,
         command_type,
-        payload or {"run_id": "run-1"},
+        raw_payload,
         clock,
         SequentialIdGenerator(),
     )
@@ -165,6 +235,59 @@ def test_converted_command_implementations_are_physically_owned_by_domain_module
         assert implementation not in commands_source
 
 
+def test_converted_domain_handlers_do_not_delegate_to_legacy_appliers() -> None:
+    root = Path(__file__).resolve().parents[2] / "src" / "orchestrator" / "graph"
+    legacy = (root / "_commands.py").read_text()
+    lifecycle = (root / "commands" / "lifecycle.py").read_text()
+    callbacks = (root / "commands" / "callbacks.py").read_text()
+
+    for name in (
+        "temporary_unconverted_lifecycle_effects",
+        "temporary_unconverted_callback_effects",
+        "temporary_unconverted_acknowledge_start_effects",
+    ):
+        assert f"def {name}(" not in legacy
+    lifecycle_calls = {
+        node.func.id
+        for node in ast.walk(ast.parse(lifecycle))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    callback_calls = {
+        node.func.id
+        for node in ast.walk(ast.parse(callbacks))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    assert not {"apply_lifecycle_command", "apply_agent_died"} & lifecycle_calls
+    assert not {"apply_callback_command", "apply_acknowledge_start"} & callback_calls
+
+
+def test_converted_domain_modules_do_not_import_private_legacy_helpers() -> None:
+    root = Path(__file__).resolve().parents[2] / "src" / "orchestrator" / "graph" / "commands"
+    for module_name in ("lifecycle.py", "callbacks.py"):
+        tree = ast.parse((root / module_name).read_text())
+        legacy_imports = {
+            alias.name
+            for node in ast.walk(tree)
+            if isinstance(node, ast.ImportFrom) and node.module == "orchestrator.graph._commands"
+            for alias in node.names
+            if alias.name.startswith("_")
+        }
+        assert legacy_imports == set()
+
+
+def test_converted_event_reducers_are_not_central_raw_branches() -> None:
+    source = (
+        Path(__file__).resolve().parents[2] / "src" / "orchestrator" / "graph" / "projections.py"
+    ).read_text()
+
+    for event_name in (
+        "run_lifecycle_changed",
+        "callback_accepted",
+        "runtime_retry_scheduled",
+    ):
+        assert f'event.event_type == "{event_name}"' not in source
+
+
 def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None:
     completion_events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -199,9 +322,7 @@ def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None
             2,
         ),
     ]
-    clock = FakeClock()
-    retry_output = apply_command(
-        _project(retry_events),
+    retry_output = _apply(
         retry_events,
         "agent_died",
         {
@@ -211,8 +332,6 @@ def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None
             "reason": "process_exit",
             "retry_backoff_seconds": 60,
         },
-        clock,
-        SequentialIdGenerator(),
     )
     retry_stream = [*retry_events, *retry_output]
     retry_projection = _project(retry_stream)
@@ -391,6 +510,7 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
+        future_effects=future_command_effects(),
     )
 
     output = apply_command(
@@ -491,6 +611,7 @@ def test_record_heartbeat_temporary_renewal_preserves_domain_rejections(
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
+        future_effects=future_command_effects(),
     )
 
     output = apply_command(
@@ -505,9 +626,9 @@ def test_record_heartbeat_temporary_renewal_preserves_domain_rejections(
     )
 
     assert len(output) == 1
-    assert isinstance(output[0], EventEnvelope)
-    assert output[0].event_type == "command_rejected"
-    assert output[0].payload["reason"] == reason
+    assert isinstance(output[0], HydratedEvent)
+    assert output[0].metadata.event_type == "command_rejected"
+    assert output[0].payload.reason == reason
 
 
 def test_record_heartbeat_public_path_rejects_legacy_shape() -> None:
@@ -520,6 +641,7 @@ def test_record_heartbeat_public_path_rejects_legacy_shape() -> None:
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
+        future_effects=future_command_effects(),
     )
 
     with pytest.raises(ValidationError):
@@ -557,6 +679,7 @@ def test_typed_acknowledge_start_uses_projection_and_emits_start_effect() -> Non
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
+        future_effects=future_command_effects(),
     )
 
     output = apply_command(
@@ -590,6 +713,7 @@ def test_typed_submit_callback_emits_strict_outcome_and_unconverted_effects() ->
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
+        future_effects=future_command_effects(),
     )
 
     payload = _callback_payload(complete_node=True)
@@ -7743,8 +7867,7 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
     clock = FakeClock()
     id_gen = SequentialIdGenerator()
 
-    output = apply_command(
-        _project(events),
+    output = _apply(
         events,
         "agent_died",
         {
@@ -7754,8 +7877,6 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
             "reason": "process_exit",
             "retry_backoff_seconds": 60,
         },
-        clock,
-        id_gen,
     )
     retry_not_before = (clock.now() + timedelta(seconds=60)).isoformat()
     projection = _project([*events, *output])

@@ -12,6 +12,7 @@ from orchestrator.graph import (
     ActorKind,
     CommandExecutionContext,
     EventEnvelope,
+    FutureCommandEffects,
     GraphCatalog,
     GraphProjection,
     HydratedEvent,
@@ -46,7 +47,8 @@ class GraphController:
         clock: Clock,
         id_gen: IdGenerator,
         *,
-        catalog: GraphCatalog | None = None,
+        catalog: GraphCatalog,
+        future_effects: FutureCommandEffects,
         dispatcher: OutboxDispatcher | None = None,
         auto_dispatch: bool = True,
     ) -> None:
@@ -54,6 +56,7 @@ class GraphController:
         self._clock = clock
         self._id_gen = id_gen
         self._catalog = catalog
+        self._future_effects = future_effects
         self._dispatcher = dispatcher
         self._auto_dispatch = auto_dispatch
 
@@ -112,28 +115,28 @@ class GraphController:
                     run_id,
                     patch_base_position + 1,
                 )
-        if self._catalog is None:
-            planned_events = apply_command(
-                projection,
-                command_events,
-                command_type,
-                command_payload,
-                self._clock,
-                self._id_gen,
-            )
-        else:
-            typed_payload = (
-                dict(payload or {})
-                if command_type in self._catalog.command_specs
-                else command_payload
-            )
+        typed_payload = (
+            {
+                key: value
+                for key, value in dict(payload or {}).items()
+                if key not in {"run_id", "actor_role"}
+            }
+            if command_type in self._catalog.command_specs
+            else command_payload
+        )
+        if command_type in self._catalog.command_specs:
+            actor_role = command_payload.get("actor_role")
             context = CommandExecutionContext(
                 run_id=run_id,
                 current_position=current_position,
                 clock=self._clock,
                 id_generator=self._id_gen,
-                actor=Actor(kind=ActorKind.CONTROLLER),
+                actor=Actor(
+                    kind=ActorKind.CONTROLLER,
+                    role=actor_role if isinstance(actor_role, str) else None,
+                ),
                 events=(),
+                future_effects=self._future_effects,
             )
             planned_events = apply_command(
                 projection,
@@ -144,6 +147,15 @@ class GraphController:
                 self._id_gen,
                 catalog=self._catalog,
                 context=context,
+            )
+        else:
+            planned_events = apply_command(
+                projection,
+                command_events,
+                command_type,
+                typed_payload,
+                self._clock,
+                self._id_gen,
             )
         planned_events = [_to_legacy_envelope(event) for event in planned_events]
         planned_events = self._add_dispatch_intent_events(

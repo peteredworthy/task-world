@@ -7,13 +7,12 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     FakeClock,
-    SequentialIdGenerator,
-    apply_command,
     initial_projection,
     project_planner_chain,
     project_run_state,
     reduce_event,
 )
+from tests.graph_command_support import dispatch_graph_command
 
 
 def test_planner_lifecycle_states() -> None:
@@ -790,14 +789,7 @@ def _apply(
     command_type: str,
     payload: dict[str, Any],
 ) -> list[EventEnvelope]:
-    return apply_command(
-        _project(events),
-        events,
-        command_type,
-        payload,
-        FakeClock(),
-        SequentialIdGenerator(),
-    )
+    return dispatch_graph_command(events, command_type, payload)
 
 
 def _project(events: list[EventEnvelope]) -> Any:

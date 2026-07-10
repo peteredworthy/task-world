@@ -20,11 +20,11 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    apply_command,
     compile_routine,
     initial_projection,
     reduce_event,
 )
+from tests.graph_command_support import dispatch_graph_command
 
 
 def test_routine_maps_to_root_and_routine_snapshot_record_node() -> None:
@@ -709,14 +709,7 @@ def _apply(
     command_type: str,
     payload: dict[str, Any],
 ) -> list[EventEnvelope]:
-    return apply_command(
-        _project(events),
-        events,
-        command_type,
-        payload,
-        FakeClock(),
-        SequentialIdGenerator(),
-    )
+    return dispatch_graph_command(events, command_type, payload)
 
 
 def _with_lifecycle_started(events: list[EventEnvelope]) -> list[EventEnvelope]:

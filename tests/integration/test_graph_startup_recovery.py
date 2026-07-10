@@ -38,6 +38,7 @@ from tests.integration.test_graph_run_driver import (
 )
 from orchestrator.workflow.graph_driver import GraphRunDriver
 from orchestrator.graph_runtime.store import GraphEventStore
+from orchestrator.graph import future_command_effects
 
 
 def _build_driver(
@@ -59,6 +60,7 @@ def _build_driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
+            future_effects=future_command_effects(),
         )
         executor = GraphDispatchExecutor(
             sf, controller, AgentFactory(agents, dispatch_order), worktree_path=repo
@@ -81,7 +83,14 @@ async def _seed_active_worker_lease(
 ) -> None:
     clock = FixedClock()
     ids = SequentialIds()
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     await seed_run(
         session_factory,
         _routine(),

@@ -11,6 +11,7 @@ from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphController, GraphEventStore
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 
 BASE_SNAPSHOT_ID = "snapshot-fr10"
@@ -40,6 +41,8 @@ async def test_fr10_scheduler_readiness_command_precondition_and_retry_readbacks
         clock,
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     first_tick = await controller.handle_command(

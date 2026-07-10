@@ -40,6 +40,7 @@ from orchestrator.runners.types import (
 )
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import GraphRunDriver, WorkflowService
+from orchestrator.graph import future_command_effects
 
 
 @pytest.fixture
@@ -178,6 +179,8 @@ async def test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable(
         FixedClock(),
         SequentialIds(run_id),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     verdict = await controller.handle_command(
         run_id,
@@ -400,6 +403,7 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
+            future_effects=future_command_effects(),
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,

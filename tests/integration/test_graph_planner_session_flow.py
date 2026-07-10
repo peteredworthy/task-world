@@ -17,6 +17,7 @@ from orchestrator.graph import (
     project_run_state,
 )
 from orchestrator.graph_runtime import GraphController, GraphEventStore
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 
 class FixedClock:
@@ -38,7 +39,12 @@ class SequentialIds:
 async def test_two_horizon_chain_retains_one_session(tmp_path: Path) -> None:
     engine, session_factory = await _session_factory(tmp_path / "planner-session-flow.db")
     controller = GraphController(
-        session_factory, FixedClock(), SequentialIds(), auto_dispatch=False
+        session_factory,
+        FixedClock(),
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     run_id = "planner-session-flow"
     try:
@@ -116,7 +122,12 @@ async def test_two_horizon_chain_retains_one_session(tmp_path: Path) -> None:
 async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> None:
     engine, session_factory = await _session_factory(tmp_path / "planner-session-auth.db")
     controller = GraphController(
-        session_factory, FixedClock(), SequentialIds(), auto_dispatch=False
+        session_factory,
+        FixedClock(),
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     run_id = "planner-session-auth"
     try:
@@ -160,7 +171,6 @@ async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> 
             {
                 **_callback_payload("planner-1", successor_lease, []),
                 "lease_generation": head_lease.payload["generation"],
-                "session_id": head_lease.payload["session_id"],
                 "idempotency_key": "stale-planner-1",
             },
         )

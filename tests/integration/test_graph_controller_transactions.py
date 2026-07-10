@@ -8,6 +8,7 @@ from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, SequentialIdGenerator
 from orchestrator.graph_runtime import GraphController, StaleProjectionError
 from orchestrator.graph_runtime.store import graph_aggregate_id
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 
 async def test_graph_controller_write_commands_begin_immediate(tmp_path: Path) -> None:
@@ -32,6 +33,8 @@ async def test_graph_controller_write_commands_begin_immediate(tmp_path: Path) -
         FakeClock(),
         SequentialIdGenerator(),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     await controller.handle_command("run-begin-immediate", 0, "accept_run")
@@ -69,6 +72,8 @@ async def test_graph_controller_reads_run_before_taking_write_lock(tmp_path: Pat
         FakeClock(),
         SequentialIdGenerator(),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     await controller.handle_command("run-read-before-lock", 0, "accept_run")
     await engine.dispose()
@@ -103,7 +108,14 @@ async def test_handle_command_raises_stale_projection_error_when_position_moves_
     id_gen = SequentialIdGenerator()
     run_id = "run-race"
 
-    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        id_gen,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     seeded = await controller.handle_command(run_id, 0, "accept_run")
     position = seeded.projection_position
 

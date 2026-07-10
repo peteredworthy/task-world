@@ -12,7 +12,7 @@ import ast
 import builtins
 import difflib
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -28,6 +28,7 @@ class SymbolRelocation:
     source_path: str
     target_path: str
     source_module: str | None = None
+    dependency_closure: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,8 @@ class CatalogInjection:
     callable_name: str
     argument_name: str = "catalog"
     qualified_names: tuple[str, ...] = ()
+    additional_arguments: tuple[str, ...] = ()
+    factory_arguments: bool = False
 
 
 @dataclass(frozen=True)
@@ -355,22 +358,35 @@ class _MechanicalTransformer(cst.CSTTransformer):
         if len(routes) != 1:
             return None
         route = routes[0]
-        if any(
-            argument.keyword is not None and argument.keyword.value == route.argument_name
+        argument_names = (route.argument_name, *route.additional_arguments)
+        existing_names = {
+            argument.keyword.value
             for argument in original_node.args
-        ):
+            if argument.keyword is not None
+        }
+        missing_names = tuple(name for name in argument_names if name not in existing_names)
+        if not missing_names:
             return None
         self.changes += 1
         return updated_node.with_changes(
             args=(
                 *updated_node.args,
-                cst.Arg(
-                    cst.Name(route.argument_name),
-                    keyword=cst.Name(route.argument_name),
-                    equal=cst.AssignEqual(
-                        whitespace_before=cst.SimpleWhitespace(""),
-                        whitespace_after=cst.SimpleWhitespace(""),
-                    ),
+                *(
+                    cst.Arg(
+                        (
+                            cst.Call(cst.Name("build_graph_catalog"))
+                            if name == "catalog"
+                            else cst.Call(cst.Name("future_command_effects"))
+                        )
+                        if route.factory_arguments
+                        else cst.Name(name),
+                        keyword=cst.Name(name),
+                        equal=cst.AssignEqual(
+                            whitespace_before=cst.SimpleWhitespace(""),
+                            whitespace_after=cst.SimpleWhitespace(""),
+                        ),
+                    )
+                    for name in missing_names
                 ),
             )
         )
@@ -792,10 +808,13 @@ class StrictPayloadCutoverCodemod:
                     )
                 )
         relocation_changes = 0
+        relocation_by_symbol = {
+            relocation.symbol: relocation for relocation in self.migration.relocations
+        }
         by_source: dict[str, list[SymbolRelocation]] = {}
         for relocation in self.migration.relocations:
             by_source.setdefault(relocation.source_path, []).append(relocation)
-        moved: dict[str, cst.ClassDef | cst.FunctionDef] = {}
+        moved: dict[str, cst.BaseStatement] = {}
         target_imports: dict[str, list[cst.BaseStatement]] = {}
         for source_path, relocations in by_source.items():
             if source_path not in working:
@@ -808,20 +827,67 @@ class StrictPayloadCutoverCodemod:
                 and original_module.header
                 else None
             )
-            relocation_symbols = {item.symbol for item in relocations}
+            relocation_symbols = {
+                name for item in relocations for name in (item.symbol, *item.dependency_closure)
+            }
             removed = {
                 statement.name.value: statement
                 for statement in original_module.body
                 if isinstance(statement, (cst.ClassDef, cst.FunctionDef))
                 and statement.name.value in relocation_symbols
             }
+            removed.update(
+                {
+                    name: statement
+                    for statement in original_module.body
+                    if isinstance(statement, cst.SimpleStatementLine)
+                    and len(statement.body) == 1
+                    and isinstance(statement.body[0], (cst.Assign, cst.AnnAssign))
+                    and (name := _assigned_name(statement.body[0])) in relocation_symbols
+                }
+            )
+            for relocation in relocations:
+                remaining_code = "\n".join(
+                    original_module.code_for_node(statement)
+                    for statement in original_module.body
+                    if statement
+                    not in {
+                        removed.get(name)
+                        for name in (relocation.symbol, *relocation.dependency_closure)
+                    }
+                )
+                remaining_tree = ast.parse(remaining_code)
+                remaining_loads = {
+                    node.id
+                    for node in ast.walk(remaining_tree)
+                    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+                }
+                shared = sorted(remaining_loads.intersection(relocation.dependency_closure))
+                if shared:
+                    diagnostics.append(
+                        CodemodDiagnostic(
+                            source_path,
+                            1,
+                            0,
+                            "W5SHARED_RELOCATION_DEPENDENCY",
+                            f"{relocation.symbol} declares shared dependencies {shared}",
+                        )
+                    )
             module = original_module.with_changes(
                 body=tuple(
                     statement
                     for statement in original_module.body
                     if not (
-                        isinstance(statement, (cst.ClassDef, cst.FunctionDef))
-                        and statement.name.value in relocation_symbols
+                        (
+                            isinstance(statement, (cst.ClassDef, cst.FunctionDef))
+                            and statement.name.value in relocation_symbols
+                        )
+                        or (
+                            isinstance(statement, cst.SimpleStatementLine)
+                            and len(statement.body) == 1
+                            and isinstance(statement.body[0], (cst.Assign, cst.AnnAssign))
+                            and _assigned_name(statement.body[0]) in relocation_symbols
+                        )
                     )
                 )
             )
@@ -847,25 +913,45 @@ class StrictPayloadCutoverCodemod:
                 module = module.with_changes(header=())
             module = module.visit(_RemoveExports(item.symbol for item in relocations))
             for relocation in relocations:
+                closure_nodes = [
+                    removed[name]
+                    for name in (*relocation.dependency_closure, relocation.symbol)
+                    if name in removed
+                ]
                 moved_node = removed.get(relocation.symbol)
                 if moved_node is None:
                     continue
                 collector = _NameCollector()
-                moved_node.visit(collector)
+                for node in closure_nodes:
+                    node.visit(collector)
                 target_imports.setdefault(relocation.target_path, []).extend(
                     statement
                     for statement in original_module.body
                     if _imported_names(statement).intersection(collector.names)
                 )
-                moved_tree = ast.parse(original_module.code_for_node(moved_node))
+                moved_tree = ast.parse(
+                    "\n".join(original_module.code_for_node(node) for node in closure_nodes)
+                )
                 loaded_names = {
                     node.id
                     for node in ast.walk(moved_tree)
                     if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
                 }
+                for dependency in sorted(loaded_names.intersection(relocation_by_symbol)):
+                    dependency_relocation = relocation_by_symbol[dependency]
+                    if dependency_relocation.target_path == relocation.target_path:
+                        continue
+                    module_name = dependency_relocation.target_path.removesuffix(".py").replace(
+                        "/", "."
+                    )
+                    if module_name.startswith("src."):
+                        module_name = module_name.removeprefix("src.")
+                    target_imports.setdefault(relocation.target_path, []).append(
+                        cst.parse_statement(f"from {module_name} import {dependency}\n")
+                    )
                 local_dependencies = sorted(
                     loaded_names.intersection(top_level_names)
-                    - {item.symbol for item in relocations}
+                    - relocation_symbols
                     - set(dir(builtins))
                 )
                 if local_dependencies and relocation.source_module is None:
@@ -960,7 +1046,12 @@ class StrictPayloadCutoverCodemod:
                 for statement in module.body
                 if isinstance(statement, (cst.ClassDef, cst.FunctionDef))
             }
-            additions = [moved[item.symbol] for item in relocations if item.symbol not in existing]
+            additions = [
+                moved[name]
+                for item in relocations
+                for name in (*item.dependency_closure, item.symbol)
+                if name in moved and name not in existing
+            ]
             has_exports = any(
                 isinstance(statement, cst.SimpleStatementLine)
                 and any(
@@ -982,9 +1073,21 @@ class StrictPayloadCutoverCodemod:
         changes = relocation_changes
         for path in sorted(working):
             result = self.transform_source(working[path], path)
+            dynamic_imports = (
+                (
+                    RequiredImport(
+                        path,
+                        "orchestrator.graph",
+                        ("build_graph_catalog", "future_command_effects"),
+                    ),
+                )
+                if "GraphController(" in working[path]
+                else ()
+            )
             transformed, import_changes = _ensure_required_imports(
                 result.source,
-                tuple(item for item in self.migration.required_imports if item.path == path),
+                tuple(item for item in self.migration.required_imports if item.path == path)
+                + dynamic_imports,
             )
             working[path] = transformed
             diagnostics.extend(result.diagnostics)
@@ -1107,7 +1210,12 @@ VERTICAL_SLICE_MIGRATION = DomainMigration(
     catalog_injections=(
         CatalogInjection(
             "GraphController",
-            qualified_names=("orchestrator.graph_runtime.GraphController",),
+            qualified_names=(
+                "orchestrator.graph_runtime.GraphController",
+                "orchestrator.graph_runtime.controller.GraphController",
+            ),
+            additional_arguments=("future_effects",),
+            factory_arguments=True,
         ),
     ),
     event_factory_qualified_names=("_apply_record_heartbeat.<locals>.make_event",),
@@ -1129,7 +1237,33 @@ DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
             "src/orchestrator/graph_runtime/controller.py",
             "src/orchestrator/graph_runtime/outbox.py",
         ),
-        relocations=tuple(
+        relocations=(
+            SymbolRelocation(
+                "temporary_unconverted_lifecycle_effects",
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/lifecycle.py",
+                "orchestrator.graph._commands",
+            ),
+            SymbolRelocation(
+                "temporary_unconverted_callback_effects",
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/callbacks.py",
+                "orchestrator.graph._commands",
+            ),
+            SymbolRelocation(
+                "temporary_unconverted_acknowledge_start_effects",
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/callbacks.py",
+                "orchestrator.graph._commands",
+            ),
+            SymbolRelocation(
+                "_apply_agent_died",
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/lifecycle.py",
+                "orchestrator.graph._commands",
+            ),
+        )
+        + tuple(
             SymbolRelocation(
                 symbol,
                 "src/orchestrator/graph/models.py",
@@ -1297,6 +1431,14 @@ def _diff(path: str, before: str, after: str) -> str:
 
 
 def run_migration(migration: DomainMigration, root: Path, mode: str) -> MigrationRunResult:
+    if migration.domain == "lifecycle":
+        discovered = tuple(
+            str(path.relative_to(root))
+            for base in (root / "src", root / "tests")
+            for path in base.rglob("*.py")
+            if "GraphController(" in path.read_text()
+        )
+        migration = replace(migration, paths=tuple(dict.fromkeys((*migration.paths, *discovered))))
     target_paths = {item.target_path for item in migration.relocations}
     original = {}
     for item in migration.paths:

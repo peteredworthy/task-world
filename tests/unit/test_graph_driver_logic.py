@@ -31,6 +31,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     apply_command,
     build_graph_catalog,
+    future_command_effects,
     initial_projection,
     reduce_event,
 )
@@ -571,6 +572,7 @@ def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loo
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
+        future_effects=future_command_effects(),
     )
 
     output = apply_command(

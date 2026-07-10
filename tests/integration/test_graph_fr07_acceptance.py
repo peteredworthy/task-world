@@ -14,6 +14,7 @@ from orchestrator.db import RunModel, StepModel, TaskModel
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.runners import route_tool_call
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 
 class _RunSeedIdGenerator:
@@ -40,6 +41,8 @@ async def test_fr07_macro_tools_route_expand_validate_and_read_back_patch_attemp
         clock,
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
 
     accepted_feedback = [

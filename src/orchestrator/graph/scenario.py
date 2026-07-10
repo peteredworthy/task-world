@@ -4,10 +4,16 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
+from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.commands import apply_command
 from orchestrator.graph.models import Actor, ActorKind, EventEnvelope
 from orchestrator.graph.projections import initial_projection, reduce_event
 from orchestrator.graph.store import InMemoryEventStore
+from orchestrator.graph.specifications import (
+    CommandExecutionContext,
+    FutureCommandEffects,
+    HydratedEvent,
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +30,9 @@ def run_scenario(
     store: InMemoryEventStore,
     clock: FakeClock,
     id_gen: SequentialIdGenerator,
+    *,
+    catalog: GraphCatalog,
+    future_effects: FutureCommandEffects,
 ) -> ScenarioResult:
     run_id = str(scenario.get("run_id", "run-1"))
     scenario_name = str(scenario.get("name", "unnamed"))
@@ -45,6 +54,11 @@ def run_scenario(
             )
         )
         events_before_command = store.read_from(run_id)
+        typed_command_payload = {
+            key: value
+            for key, value in command_payload.items()
+            if key not in {"run_id", "actor_role"}
+        }
         projection = initial_projection()
         for event in events_before_command:
             projection = reduce_event(projection, event)
@@ -52,11 +66,28 @@ def run_scenario(
             projection,
             events_before_command,
             command_type,
-            command_payload,
+            typed_command_payload,
             clock,
             id_gen,
+            catalog=catalog,
+            context=CommandExecutionContext(
+                run_id=run_id,
+                current_position=max(
+                    (event.position for event in events_before_command), default=-1
+                ),
+                clock=clock,
+                id_generator=id_gen,
+                actor=Actor(
+                    kind=ActorKind.CONTROLLER,
+                    role=command_payload.get("actor_role")
+                    if isinstance(command_payload.get("actor_role"), str)
+                    else None,
+                ),
+                events=(),
+                future_effects=future_effects,
+            ),
         ):
-            store.append(event)
+            store.append(_legacy_envelope(event))
 
     events = store.read_from(run_id)
     failures.extend(_check_then_events(scenario.get("then_events", []), events))
@@ -101,6 +132,21 @@ def _make_event(
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=clock.now(),
         payload=payload,
+    )
+
+
+def _legacy_envelope(event: EventEnvelope | HydratedEvent) -> EventEnvelope:
+    if isinstance(event, EventEnvelope):
+        return event
+    return EventEnvelope(
+        event_id=event.metadata.event_id,
+        run_id=event.metadata.run_id,
+        position=event.metadata.position,
+        event_type=event.metadata.event_type,
+        schema_version=event.metadata.payload_schema_generation,
+        actor=event.metadata.actor,
+        timestamp=event.metadata.timestamp,
+        payload=event.payload.model_dump(mode="json"),
     )
 
 

@@ -47,6 +47,7 @@ from orchestrator.workflow.graph_driver import (
     GraphRunDriver,
     _snapshot_from_events,
 )
+from orchestrator.graph import future_command_effects
 
 
 class FixedClock:
@@ -297,6 +298,7 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
+            future_effects=future_command_effects(),
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
@@ -525,7 +527,14 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
         await GraphEventStore(session).append_events(run_id, 0, events)
         await session.commit()
 
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     dispatch_order: list[str] = []
     executor = GraphDispatchExecutor(
         session_factory,
@@ -719,7 +728,14 @@ async def _seed_and_force_failed_graph(
         id_gen=ids,
         run_config={},
     )
-    controller = GraphController(session_factory, clock, ids, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        ids,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     for command in ("accept_run", "start"):
         position = await controller.current_position(run_id)
         await controller.handle_command(run_id, position, command, {})
@@ -755,7 +771,12 @@ def _shared_driver(
         runner_config: dict[str, Any] | None = None,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
-            session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
+            session_factory_arg,
+            clock_arg,
+            id_gen_arg,
+            auto_dispatch=False,
+            catalog=build_graph_catalog(),
+            future_effects=future_command_effects(),
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,

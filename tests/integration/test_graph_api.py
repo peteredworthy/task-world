@@ -30,6 +30,7 @@ from orchestrator.graph_runtime import (
     OutboxItem,
     seed_run,
 )
+from orchestrator.graph import future_command_effects
 
 
 def _routine() -> RoutineConfig:
@@ -140,7 +141,14 @@ async def _seed_graph_run(
 
     # Append lifecycle ticks directly through the controller so projection mirrors
     # existing graph-runner execution flow.
-    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        id_gen,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
     started = await controller.handle_command(run_id, accepted.projection_position, "start")
     await controller.handle_command(
@@ -305,6 +313,7 @@ async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
         _RunSeedIdGenerator(run_id),
         catalog=build_graph_catalog(),
         auto_dispatch=False,
+        future_effects=future_command_effects(),
     )
     heartbeat = await controller.handle_command(
         run_id,
@@ -327,6 +336,8 @@ async def _seed_rejected_patch_graph_run(app: Any, run_id: str) -> None:
         FakeClock(),
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     await controller.handle_command(
         run_id,
@@ -364,7 +375,14 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     clock = FakeClock()
     id_gen: IdGenerator = _RunSeedIdGenerator(run_id)
-    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        id_gen,
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
+    )
     async with session_factory() as session:
         events = await GraphEventStore(session).read_run(run_id)
     position = max(event.position for event in events)
@@ -395,7 +413,6 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
         acknowledged.projection_position,
         "submit_callback",
         {
-            "run_id": run_id,
             "node_id": worker_node,
             "execution_id": worker_lease.payload["execution_id"],
             "lease_id": worker_lease.payload["lease_id"],
@@ -468,7 +485,6 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
         acknowledged_verifier.projection_position,
         "submit_callback",
         {
-            "run_id": run_id,
             "node_id": verifier_node,
             "execution_id": verifier_lease.payload["execution_id"],
             "lease_id": verifier_lease.payload["lease_id"],

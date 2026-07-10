@@ -46,6 +46,7 @@ from orchestrator.graph_runtime.store import (
     GraphNodeDetailSummary,
 )
 from orchestrator.state import RunNotFoundError
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
 
@@ -1626,6 +1627,8 @@ async def submit_operator_graph_patch(
         _ApiGraphClock(),
         _ApiGraphIdGenerator(),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     try:
         result = await controller.handle_command(
@@ -1823,6 +1826,8 @@ async def record_graph_decision(
         _ApiGraphClock(),
         _ApiGraphIdGenerator(),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     try:
         result = await controller.handle_command(

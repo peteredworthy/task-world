@@ -18,6 +18,7 @@ from orchestrator.graph import (
     project_run_state,
 )
 from orchestrator.graph_runtime import GraphController, GraphEventStore
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 
 class FixedClock:
@@ -39,7 +40,12 @@ class SequentialIds:
 async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
     engine, session_factory = await _session_factory(tmp_path / "parent-child-flow.db")
     controller = GraphController(
-        session_factory, FixedClock(), SequentialIds(), auto_dispatch=False
+        session_factory,
+        FixedClock(),
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     run_id = "parent-child-flow"
     try:
@@ -100,7 +106,12 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
 async def test_child_oversight_maps_to_in_chain_appeal(tmp_path: Path) -> None:
     engine, session_factory = await _session_factory(tmp_path / "parent-child-appeal.db")
     controller = GraphController(
-        session_factory, FixedClock(), SequentialIds(), auto_dispatch=False
+        session_factory,
+        FixedClock(),
+        SequentialIds(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     run_id = "parent-child-appeal"
     try:

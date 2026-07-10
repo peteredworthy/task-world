@@ -20,7 +20,7 @@
 - name: check_leased_to_running
   given_events:
     - node_created: {node_id: check-3, kind: check, state: leased}
-    - callback_accepted: {node_id: check-3, callback_type: check_started}
+    - callback_accepted: {node_id: check-3, idempotency_key: check-3-started, payload: {callback_type: check_started}}
     - node_state_changed: {node_id: check-3, new_state: running, trigger: check_command_starts}
   when_command: null
   then_events: []
@@ -38,7 +38,7 @@
 - name: check_running_to_failed
   given_events:
     - node_created: {node_id: check-5, kind: check, state: running}
-    - callback_accepted: {node_id: check-5, callback_type: runner_crashed}
+    - callback_accepted: {node_id: check-5, idempotency_key: check-5-crashed, payload: {callback_type: runner_crashed}}
     - node_state_changed: {node_id: check-5, new_state: failed, trigger: runner_crashed}
   when_command: null
   then_events: []

@@ -42,6 +42,7 @@ from orchestrator.runners.types import (
     LogLineCallback,
     SubmitCallback,
 )
+from orchestrator.graph import future_command_effects
 
 
 class FixedClock:
@@ -384,6 +385,7 @@ async def _seed_active_run(
         ids,
         catalog=build_graph_catalog(),
         auto_dispatch=False,
+        future_effects=future_command_effects(),
     )
     position = await controller.current_position(run_id)
     accepted = await controller.handle_command(run_id, position, "accept_run")
@@ -563,6 +565,7 @@ async def test_graph_runner_restart_reattaches_running_builder(
             restarted_ids,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
+            future_effects=future_command_effects(),
         )
         restarted_executor = GraphDispatchExecutor(
             restarted_session_factory,
@@ -635,6 +638,7 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
         ids,
         catalog=build_graph_catalog(),
         auto_dispatch=False,
+        future_effects=future_command_effects(),
     )
     restarted_executor = GraphDispatchExecutor(
         session_factory,

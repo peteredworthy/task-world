@@ -52,6 +52,7 @@ from orchestrator.runners.types import (
 )
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import GraphRunDriver, WorkflowService
+from orchestrator.graph import future_command_effects
 
 
 # --------------------------------------------------------------------------- #
@@ -179,6 +180,29 @@ class MultiTaskWorkerAgent:
         artifact = Path(context.working_dir) / artifact_file
         artifact.parent.mkdir(parents=True, exist_ok=True)
         artifact.write_text(f"{node_id} completed\n")
+        subprocess.run(
+            ["git", "add", artifact_file],
+            cwd=context.working_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-m",
+                f"complete {node_id}",
+            ],
+            cwd=context.working_dir,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
         await on_submit()
         return ExecutionResult(success=True)
 
@@ -307,7 +331,11 @@ def _init_repo(path: Path) -> None:
     (path / "README.md").write_text("# fr-e2e acceptance\n")
     subprocess.run(["git", "init"], cwd=path, check=True, capture_output=True, text=True)
     subprocess.run(
-        ["git", "add", "README.md"], cwd=path, check=True, capture_output=True, text=True
+        ["git", "add", "README.md"],
+        cwd=path,
+        check=True,
+        capture_output=True,
+        text=True,
     )
     subprocess.run(
         [
@@ -374,6 +402,7 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
+            future_effects=future_command_effects(),
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
@@ -573,9 +602,9 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
     blockers_before = await _get_json(client, f"/api/runs/{run_id}/graph/final-blockers")
     scheduler = await _get_json(client, f"/api/runs/{run_id}/graph/scheduler")
 
-    assert run["status"] == RunStatus.FAILED.value
+    assert run["status"] == RunStatus.PAUSED.value
     assert run["is_graph_backed"] is True
-    assert graph["run_state"] == "failed"
+    assert graph["run_state"] == "paused"
 
     # FR-13 criterion b: T-01 is accepted, T-02 is pending
     region_states = {r["task_region_id"]: r["state"] for r in regions["regions"]}
@@ -604,6 +633,8 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
         FakeClock(),
         SequentialIds(f"{run_id}-probe"),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     current_position = await controller.current_position(run_id)
     await controller.handle_command(
@@ -656,9 +687,9 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
         f"expected T-02 blockers to persist, got {blocker_ids_after}"
     )
 
-    # Run must remain failed (invalid patch did not unblock anything)
+    # Run must remain paused (invalid patch did not unblock anything)
     run_after = await _get_json(client, f"/api/runs/{run_id}")
-    assert run_after["status"] == RunStatus.FAILED.value
+    assert run_after["status"] == RunStatus.PAUSED.value
 
     # /graph/patches shows any durable rejected attempt
     patches = await _get_json(client, f"/api/runs/{run_id}/graph/patches")

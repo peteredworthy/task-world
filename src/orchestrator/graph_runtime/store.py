@@ -141,6 +141,7 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "input",
     "input_tokens",
     "id",
+    "idempotency_key",
     "kind",
     "lease_generation",
     "lease_id",
@@ -155,6 +156,7 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "output_tokens",
     "path",
     "port",
+    "payload",
     "patch_id",
     "planner_chain",
     "planner_generation_budget",
@@ -287,6 +289,7 @@ NODE_DETAIL_PAYLOAD_FIELDS = (
     "from_node_role",
     "file_state_record_ids",
     "generation",
+    "idempotency_key",
     "input",
     "kind",
     "lease_generation",
@@ -295,6 +298,7 @@ NODE_DETAIL_PAYLOAD_FIELDS = (
     "node_id",
     "outcome",
     "port",
+    "payload",
     "producer_node_id",
     "prompt_summary",
     "record_id",
@@ -762,7 +766,10 @@ class GraphEventStore:
                 field: _json_extract_payload_value(field, row[field])
                 for field in fields
                 if row.get(field) is not None
+                and (field != "payload" or str(row["event_type"]).startswith("callback_"))
             }
+            if str(row["event_type"]).startswith("callback_") and "payload" in fields:
+                payload.setdefault("payload", None)
             if (
                 include_nested_value_fallbacks
                 and "status" in fields
@@ -1840,8 +1847,13 @@ def _is_callback_history_event(event: EventEnvelope) -> bool:
 
 def _node_detail_light_event(event: EventEnvelope) -> EventEnvelope:
     payload = {
-        key: value for key, value in event.payload.items() if key in NODE_DETAIL_PAYLOAD_FIELDS
+        key: value
+        for key, value in event.payload.items()
+        if key in NODE_DETAIL_PAYLOAD_FIELDS
+        and (key != "payload" or event.event_type.startswith("callback_"))
     }
+    if event.event_type.startswith("callback_"):
+        payload.setdefault("payload", None)
     value = event.payload.get("value")
     if _is_verification_report_payload(event.payload) and isinstance(value, dict):
         typed_value = cast(dict[str, Any], value)

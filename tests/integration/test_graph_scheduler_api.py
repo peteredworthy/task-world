@@ -11,6 +11,7 @@ from orchestrator.db.access.mutations import save_run
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
+from orchestrator.graph import build_graph_catalog, future_command_effects
 
 
 def _routine() -> RoutineConfig:
@@ -191,6 +192,8 @@ async def _seed_path_scoped_write_graph_run(app: Any, run_id: str) -> None:
         FakeClock(),
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=future_command_effects(),
     )
     await controller.handle_command(
         run_id,
