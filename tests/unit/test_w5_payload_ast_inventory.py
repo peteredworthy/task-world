@@ -332,3 +332,28 @@ COMMAND_HANDLERS = {"record_heartbeat": handle_record_heartbeat}
         "partial payload consumer",
     ]
     assert all(f"{source}:" in item for item in diagnostics)
+
+
+def test_explicit_domain_owns_heartbeat_compatibility_models(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "models.py"
+    source.write_text(
+        """\
+from pydantic import BaseModel
+
+class LifecycleEventPayloadBase(BaseModel):
+    pass
+
+class HeartbeatRecordedPayload(LifecycleEventPayloadBase):
+    node_id: str | None = None
+"""
+    )
+
+    domain = scan_graph_payload_architecture([source]).for_domain("vertical_slice")
+
+    assert [model.name for model in domain.compatibility_models] == [
+        "LifecycleEventPayloadBase",
+        "HeartbeatRecordedPayload",
+    ]
+    assert not domain.is_clean

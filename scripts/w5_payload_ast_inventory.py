@@ -137,6 +137,11 @@ DOMAIN_COMMAND_NAMES: dict[str, frozenset[str]] = {
     ),
 }
 
+DOMAIN_COMPATIBILITY_MODEL_NAMES: dict[str, frozenset[str]] = {
+    "vertical_slice": frozenset({"HeartbeatRecordedPayload", "LifecycleEventPayloadBase"}),
+    "lifecycle": frozenset({"HeartbeatRecordedPayload", "LifecycleEventPayloadBase"}),
+}
+
 
 @dataclass(frozen=True, order=True)
 class SourceSite:
@@ -261,6 +266,7 @@ class InventoryReport:
         needle = domain.casefold()
         domain_events = DOMAIN_EVENT_NAMES.get(needle)
         domain_commands = DOMAIN_COMMAND_NAMES.get(needle)
+        domain_models = DOMAIN_COMPATIBILITY_MODEL_NAMES.get(needle, frozenset())
 
         def relevant(value: Any) -> bool:
             return needle in str(value).casefold()
@@ -301,9 +307,10 @@ class InventoryReport:
         models = tuple(
             site
             for site in self.payload_models
-            if relevant(site)
+            if (relevant(site) or site.name in domain_models)
             and (
-                site.before_validators
+                site.name == "LifecycleEventPayloadBase"
+                or site.before_validators
                 or any(
                     "extra='ignore'" in config or 'extra="ignore"' in config
                     for config in site.configuration

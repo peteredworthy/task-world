@@ -315,6 +315,40 @@ COMMAND_HANDLERS = {
     assert StrictPayloadCutoverCodemod(second).transform_source(after_second).source == after_second
 
 
+def test_command_specifications_compose_when_tuple_precedes_handlers() -> None:
+    migration = DomainMigration(
+        domain="second",
+        paths=("commands.py",),
+        command_routes=(CommandRoute("second", "handle_second", "SECOND", "SecondCommand"),),
+    )
+    source = """\
+COMMAND_SPECIFICATIONS = (FIRST,)
+COMMAND_HANDLERS = {"second": handle_second}
+"""
+
+    first = StrictPayloadCutoverCodemod(migration).transform_source(source)
+    second = StrictPayloadCutoverCodemod(migration).transform_source(first.source)
+
+    assert first.source.count("COMMAND_SPECIFICATIONS =") == 1
+    assert "COMMAND_SPECIFICATIONS = (FIRST, SECOND,)" in first.source
+    assert second.source == first.source
+    assert second.changes == 0
+    assert not second.diagnostics
+
+
+def test_duplicate_command_specification_assignments_are_diagnostic() -> None:
+    source = """\
+COMMAND_SPECIFICATIONS = (FIRST,)
+COMMAND_SPECIFICATIONS = (SECOND,)
+"""
+
+    result = StrictPayloadCutoverCodemod(
+        DomainMigration(domain="commands", paths=("commands.py",))
+    ).transform_source(source, "commands.py")
+
+    assert result.diagnostics[0].code == "W5DUPLICATE_COMMAND_SPECIFICATIONS"
+
+
 def test_missing_configured_file_and_relocation_symbol_fail_closed(tmp_path: Path) -> None:
     source = tmp_path / "models.py"
     source.write_text("class Present: pass\n")
@@ -373,3 +407,90 @@ filtered = {key: value for key, value in payload.items() if key in LIGHT_GRAPH_P
 
     assert "LIGHT_GRAPH_PAYLOAD_FIELDS =" in result.source
     assert result.diagnostics[0].code == "W5ALLOWLIST_REFERENCE"
+
+
+def test_allowlist_consumer_does_not_rewrite_same_named_nested_method() -> None:
+    migration = DomainMigration(
+        domain="reads",
+        paths=("store.py",),
+        allowlist_names=("LIGHT_GRAPH_PAYLOAD_FIELDS",),
+        allowlist_consumers=(
+            AllowlistConsumer(
+                function_name="compact_event",
+                replacement_expression="catalog.hydrate(event)",
+            ),
+        ),
+    )
+    source = """\
+LIGHT_GRAPH_PAYLOAD_FIELDS = ("node_id",)
+
+class Unrelated:
+    def compact_event(self, event):
+        return {key: value for key, value in event.payload.items() if key in LIGHT_GRAPH_PAYLOAD_FIELDS}
+"""
+
+    result = StrictPayloadCutoverCodemod(migration).transform_source(source, "store.py")
+
+    assert "class Unrelated:" in result.source
+    assert "return {key: value" in result.source
+    assert "LIGHT_GRAPH_PAYLOAD_FIELDS =" in result.source
+    assert result.diagnostics[0].code == "W5ALLOWLIST_REFERENCE"
+
+
+def test_relocation_does_not_move_same_named_nested_class() -> None:
+    migration = DomainMigration(
+        domain="records",
+        paths=("models.py", "records.py"),
+        relocations=(SymbolRelocation("OutputRecordPayload", "models.py", "records.py"),),
+    )
+    sources = {
+        "models.py": """\
+class Unrelated:
+    class OutputRecordPayload:
+        record_id: str
+""",
+        "records.py": "",
+    }
+
+    result = StrictPayloadCutoverCodemod(migration).transform_files(sources)
+
+    assert "class Unrelated:" in result.sources["models.py"]
+    assert "class OutputRecordPayload:" in result.sources["models.py"]
+    assert "OutputRecordPayload" not in result.sources["records.py"]
+    assert result.diagnostics[0].code == "W5MISSING_SYMBOL"
+
+
+def test_relocation_imports_follow_docstring_and_all_future_imports() -> None:
+    migration = DomainMigration(
+        domain="records",
+        paths=("models.py", "records.py"),
+        relocations=(SymbolRelocation("OutputRecordPayload", "models.py", "records.py"),),
+    )
+    sources = {
+        "models.py": """\
+from pydantic import BaseModel
+
+class OutputRecordPayload(BaseModel):
+    record_id: str
+""",
+        "records.py": '''\
+"""Record payload specifications."""
+
+from __future__ import annotations
+
+__all__ = ["EXISTING"]
+''',
+    }
+
+    result = StrictPayloadCutoverCodemod(migration).transform_files(sources)
+    target = result.sources["records.py"]
+
+    assert target.index('"""Record payload specifications."""') < target.index(
+        "from __future__ import annotations"
+    )
+    assert target.index("from __future__ import annotations") < target.index(
+        "from pydantic import BaseModel"
+    )
+    namespace: dict[str, object] = {}
+    exec(compile(target, "records.py", "exec"), namespace)
+    assert "OutputRecordPayload" in namespace
