@@ -53,6 +53,13 @@ class ImportRoute:
 
 
 @dataclass(frozen=True)
+class RequiredImport:
+    path: str
+    module: str
+    symbols: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class CatalogInjection:
     callable_name: str
     argument_name: str = "catalog"
@@ -74,6 +81,7 @@ class DomainMigration:
     event_routes: tuple[EventRoute, ...] = ()
     command_routes: tuple[CommandRoute, ...] = ()
     import_routes: tuple[ImportRoute, ...] = ()
+    required_imports: tuple[RequiredImport, ...] = ()
     catalog_injections: tuple[CatalogInjection, ...] = ()
     event_factory_qualified_names: tuple[str, ...] = ()
     allowlist_consumers: tuple[AllowlistConsumer, ...] = ()
@@ -913,10 +921,77 @@ class StrictPayloadCutoverCodemod:
         changes = relocation_changes
         for path in sorted(working):
             result = self.transform_source(working[path], path)
-            working[path] = result.source
+            transformed, import_changes = _ensure_required_imports(
+                result.source,
+                tuple(item for item in self.migration.required_imports if item.path == path),
+            )
+            working[path] = transformed
             diagnostics.extend(result.diagnostics)
-            changes += result.changes
+            changes += result.changes + import_changes
         return FileTransformResult(working, tuple(sorted(diagnostics)), changes)
+
+
+def _ensure_required_imports(
+    source: str, required_imports: tuple[RequiredImport, ...]
+) -> tuple[str, int]:
+    if not required_imports:
+        return source, 0
+    module = cst.parse_module(source)
+    syntax_tree = ast.parse(source)
+    referenced_names = {
+        node.id
+        for node in ast.walk(syntax_tree)
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+    }
+    additions: list[cst.BaseStatement] = []
+    changes = 0
+    for required in required_imports:
+        imported: set[str] = set()
+        for statement in module.body:
+            if not isinstance(statement, cst.SimpleStatementLine):
+                continue
+            for item in statement.body:
+                if not isinstance(item, cst.ImportFrom) or isinstance(item.names, cst.ImportStar):
+                    continue
+                if get_full_name_for_node(item.module) != required.module:
+                    continue
+                imported.update(
+                    alias.name.value for alias in item.names if isinstance(alias.name, cst.Name)
+                )
+        missing = tuple(
+            symbol
+            for symbol in required.symbols
+            if symbol in referenced_names and symbol not in imported
+        )
+        if not missing:
+            continue
+        additions.append(
+            cst.parse_statement(f"from {required.module} import {', '.join(missing)}\n")
+        )
+        changes += 1
+    if not additions:
+        return source, 0
+    insertion_index = 0
+    if (
+        module.body
+        and isinstance(module.body[0], cst.SimpleStatementLine)
+        and len(module.body[0].body) == 1
+        and isinstance(module.body[0].body[0], cst.Expr)
+        and isinstance(module.body[0].body[0].value, cst.SimpleString)
+    ):
+        insertion_index = 1
+    while insertion_index < len(module.body):
+        statement = module.body[insertion_index]
+        if not (
+            isinstance(statement, cst.SimpleStatementLine)
+            and all(isinstance(item, (cst.Import, cst.ImportFrom)) for item in statement.body)
+        ):
+            break
+        insertion_index += 1
+    module = module.with_changes(
+        body=(*module.body[:insertion_index], *additions, *module.body[insertion_index:])
+    )
+    return module.code, changes
 
 
 VERTICAL_SLICE_MIGRATION = DomainMigration(
@@ -954,6 +1029,18 @@ VERTICAL_SLICE_MIGRATION = DomainMigration(
             "orchestrator.graph.models",
             "orchestrator.graph.events.lifecycle",
             ("HeartbeatRecordedPayload",),
+        ),
+    ),
+    required_imports=(
+        RequiredImport(
+            "src/orchestrator/graph/_commands.py",
+            "orchestrator.graph.events.lifecycle",
+            ("HEARTBEAT_RECORDED",),
+        ),
+        RequiredImport(
+            "src/orchestrator/graph/commands/__init__.py",
+            "orchestrator.graph.commands.lifecycle",
+            ("RECORD_HEARTBEAT",),
         ),
     ),
     catalog_injections=(

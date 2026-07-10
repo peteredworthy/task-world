@@ -210,6 +210,47 @@ COMMAND_HANDLERS = {"record_heartbeat": handle_record_heartbeat}
     assert not domain.is_clean
 
 
+def test_inventory_counts_typed_event_and_command_specifications_without_raw_sites(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "specifications.py"
+    source.write_text(
+        """\
+HEARTBEAT_RECORDED = EventSpecification(name="heartbeat_recorded", payload_type=Payload)
+RECORD_HEARTBEAT = CommandSpecification(name="record_heartbeat", payload_type=Command)
+"""
+    )
+
+    report = scan_graph_payload_architecture([source])
+    domain = report.for_domain("vertical_slice")
+
+    assert report.produced_event_names == {"heartbeat_recorded"}
+    assert report.command_names == ("record_heartbeat",)
+    assert domain.raw_producers == ()
+    assert domain.raw_handler_boundaries == ()
+
+
+def test_inventory_combines_typed_specs_with_explicit_unconverted_bridge(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "mixed.py"
+    source.write_text(
+        """\
+HEARTBEAT_RECORDED = EventSpecification(name="heartbeat_recorded", payload_type=Payload)
+RECORD_HEARTBEAT = CommandSpecification(name="record_heartbeat", payload_type=Command)
+_UNCONVERTED_W5_BRIDGE = {"start": handle_start}
+
+def legacy(emit_unconverted_event):
+    return emit_unconverted_event("lease_renewed", {})
+"""
+    )
+
+    report = scan_graph_payload_architecture([source])
+
+    assert report.produced_event_names == {"heartbeat_recorded", "lease_renewed"}
+    assert report.command_names == ("record_heartbeat", "start")
+
+
 def test_inventory_resolves_positional_keyword_qualified_and_aliased_envelopes(
     tmp_path: Path,
 ) -> None:
@@ -357,3 +398,21 @@ class HeartbeatRecordedPayload(LifecycleEventPayloadBase):
         "HeartbeatRecordedPayload",
     ]
     assert not domain.is_clean
+
+
+def test_vertical_slice_does_not_own_shared_base_after_heartbeat_relocation(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "models.py"
+    source.write_text(
+        """\
+from pydantic import BaseModel
+
+class LifecycleEventPayloadBase(BaseModel):
+    pass
+"""
+    )
+
+    domain = scan_graph_payload_architecture([source]).for_domain("vertical_slice")
+
+    assert domain.compatibility_models == ()

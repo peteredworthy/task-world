@@ -54,7 +54,6 @@ from orchestrator.graph.models import (
     JoinResultRecord,
     GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
-    HeartbeatRecordedPayload,
     LeaseExpiredPayload,
     LeaseGrantedPayload,
     LifecycleEventPayloadBase,
@@ -169,7 +168,6 @@ _LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[LifecycleEventPayloadBase]] = {
     "callback_rejected_conflict": CallbackRejectedPayload,
     "callback_duplicate_returned": CallbackDuplicateReturnedPayload,
     "runtime_retry_scheduled": RuntimeRetryScheduledPayload,
-    "heartbeat_recorded": HeartbeatRecordedPayload,
     "agent_died": AgentDiedPayload,
     "dead_input_detected": DeadInputDetectedPayload,
 }
@@ -373,20 +371,32 @@ def _apply_record_heartbeat(
     projection: GraphProjection,
     payload: dict[str, Any],
     clock: Clock,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    emit_unconverted_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     lease_id = payload.get("lease_id")
     if not isinstance(lease_id, str) or not lease_id:
-        return [_command_rejected(make_event, "record_heartbeat", "heartbeat requires lease_id")]
+        return [
+            _command_rejected(
+                emit_unconverted_event,
+                "record_heartbeat",
+                "heartbeat requires lease_id",
+            )
+        ]
     lease = projection["leases"].get(lease_id)
     if lease is None:
-        return [_command_rejected(make_event, "record_heartbeat", f"unknown lease: {lease_id}")]
+        return [
+            _command_rejected(
+                emit_unconverted_event,
+                "record_heartbeat",
+                f"unknown lease: {lease_id}",
+            )
+        ]
     if projection["run_state"] != "active":
-        return [_command_rejected(make_event, "record_heartbeat", "run_not_active")]
+        return [_command_rejected(emit_unconverted_event, "record_heartbeat", "run_not_active")]
     if lease.get("state") != "active":
         return [
             _command_rejected(
-                make_event,
+                emit_unconverted_event,
                 "record_heartbeat",
                 f"lease_not_active:{lease.get('state')}",
             )
@@ -395,9 +405,15 @@ def _apply_record_heartbeat(
     node_id = lease.get("node_id")
     payload_node_id = payload.get("node_id")
     if isinstance(payload_node_id, str) and payload_node_id != node_id:
-        return [_command_rejected(make_event, "record_heartbeat", "node_id_mismatch")]
+        return [_command_rejected(emit_unconverted_event, "record_heartbeat", "node_id_mismatch")]
     if not isinstance(node_id, str):
-        return [_command_rejected(make_event, "record_heartbeat", "lease_missing_node_id")]
+        return [
+            _command_rejected(
+                emit_unconverted_event,
+                "record_heartbeat",
+                "lease_missing_node_id",
+            )
+        ]
 
     expected_generation = payload.get("generation")
     lease_generation = lease.get("generation")
@@ -407,7 +423,13 @@ def _apply_record_heartbeat(
         and isinstance(lease_generation, int)
         and expected_generation != lease_generation
     ):
-        return [_command_rejected(make_event, "record_heartbeat", "lease_generation_mismatch")]
+        return [
+            _command_rejected(
+                emit_unconverted_event,
+                "record_heartbeat",
+                "lease_generation_mismatch",
+            )
+        ]
 
     ttl_seconds = _positive_int(payload.get("ttl_seconds"), 300)
     expires_at = (clock.now() + timedelta(seconds=ttl_seconds)).isoformat()
@@ -423,8 +445,11 @@ def _apply_record_heartbeat(
     if isinstance(execution_id, str):
         heartbeat_payload["execution_id"] = execution_id
     return [
-        make_event("heartbeat_recorded", heartbeat_payload),
-        make_event("lease_renewed", _typed_lease_event_payload("lease_renewed", heartbeat_payload)),
+        emit_unconverted_event("heartbeat_recorded", heartbeat_payload),
+        emit_unconverted_event(
+            "lease_renewed",
+            _typed_lease_event_payload("lease_renewed", heartbeat_payload),
+        ),
     ]
 
 

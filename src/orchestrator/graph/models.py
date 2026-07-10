@@ -1268,30 +1268,6 @@ class RuntimeRetryScheduledPayload(LifecycleEventPayloadBase):
         )
 
 
-class HeartbeatRecordedPayload(LifecycleEventPayloadBase):
-    lease_id: str | None = None
-    node_id: str | None = None
-    generation: int | None = None
-    execution_id: str | None = None
-    observed_at: str | None = None
-    expires_at: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "lease_id": str,
-                "node_id": str,
-                "generation": int,
-                "execution_id": str,
-                "observed_at": str,
-                "expires_at": str,
-            },
-        )
-
-
 class AgentDiedPayload(LifecycleEventPayloadBase):
     lease_id: str | None = None
     node_id: str | None = None

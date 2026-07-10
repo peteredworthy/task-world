@@ -13,6 +13,7 @@ from orchestrator.graph._commands import (
     TERMINAL_RUN_STATES,
     command_rejected,
     event_factory,
+    apply_record_heartbeat,
     run_id,
 )
 from orchestrator.graph.commands.callbacks import (
@@ -25,10 +26,7 @@ from orchestrator.graph.commands.callbacks import (
     handle_record_support_evidence,
     handle_submit_callback,
 )
-from orchestrator.graph.commands.lifecycle import (
-    handle_lifecycle_command,
-    handle_record_heartbeat,
-)
+from orchestrator.graph.commands.lifecycle import RECORD_HEARTBEAT, handle_lifecycle_command
 from orchestrator.graph.commands.patches import handle_submit_patch
 from orchestrator.graph.commands.records import (
     handle_agent_died,
@@ -40,7 +38,6 @@ from orchestrator.graph.commands.schedule import (
     handle_schedule_tick,
     handle_seed_compiled_events,
 )
-
 
 ApplyCommandHandler = Callable[
     [
@@ -56,7 +53,7 @@ ApplyCommandHandler = Callable[
 ]
 
 
-COMMAND_HANDLERS: dict[str, ApplyCommandHandler] = {
+_UNCONVERTED_W5_BRIDGE: dict[str, ApplyCommandHandler] = {
     "accept_run": handle_lifecycle_command,
     "start": handle_lifecycle_command,
     "pause": handle_lifecycle_command,
@@ -71,7 +68,13 @@ COMMAND_HANDLERS: dict[str, ApplyCommandHandler] = {
     "reconcile": handle_reconcile,
     "acknowledge_start": handle_acknowledge_start,
     "agent_died": handle_agent_died,
-    "record_heartbeat": handle_record_heartbeat,
+    "record_heartbeat": lambda projection,
+    events,
+    command_type,
+    payload,
+    make_event,
+    clock,
+    id_gen: apply_record_heartbeat(projection, payload, clock, make_event),
     "raise_appeal": handle_raise_appeal,
     "record_decision": handle_record_decision,
     "record_gatekeeper_verdicts": handle_record_gatekeeper_verdicts,
@@ -81,6 +84,9 @@ COMMAND_HANDLERS: dict[str, ApplyCommandHandler] = {
     "evaluate_final_gate": handle_evaluate_final_gate,
     "record_cleanup_applied": handle_record_cleanup_applied,
 }
+
+
+COMMAND_SPECIFICATIONS = (RECORD_HEARTBEAT,)
 
 
 def apply_command(
@@ -95,7 +101,7 @@ def apply_command(
 
     run_id_value = run_id(events, payload)
     make_event = event_factory(run_id_value, command_type, clock, id_gen)
-    handler = COMMAND_HANDLERS.get(command_type)
+    handler = _UNCONVERTED_W5_BRIDGE.get(command_type)
     if handler is None:
         return [
             command_rejected(
@@ -116,5 +122,4 @@ __all__ = [
     "TERMINAL_RUN_STATES",
     "NONTERMINAL_RUN_STATES",
     "apply_command",
-    "COMMAND_HANDLERS",
 ]

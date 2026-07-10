@@ -13,6 +13,7 @@ from scripts.codemods.w5_strict_payload_cutover import (
     ImportRoute,
     StrictPayloadCutoverCodemod,
     SymbolRelocation,
+    VERTICAL_SLICE_MIGRATION,
     run_migration,
 )
 
@@ -231,6 +232,54 @@ COMMAND_HANDLERS = {
     assert '"record_heartbeat": handle_record_heartbeat' not in result.source
     assert "COMMAND_SPECIFICATIONS = (RECORD_HEARTBEAT,)" in result.source
     assert not result.diagnostics
+
+
+def test_vertical_slice_routes_generated_specification_imports() -> None:
+    sources = {
+        "src/orchestrator/graph/_commands.py": """\
+\"\"\"Command compatibility bridge.\"\"\"
+
+from orchestrator.graph.models import HeartbeatRecordedPayload
+
+def _apply_record_heartbeat(make_event, payload):
+    return make_event("heartbeat_recorded", payload)
+""",
+        "src/orchestrator/graph/commands/__init__.py": """\
+from orchestrator.graph.commands.lifecycle import handle_record_heartbeat
+
+COMMAND_HANDLERS = {"record_heartbeat": handle_record_heartbeat}
+""",
+    }
+
+    result = StrictPayloadCutoverCodemod(VERTICAL_SLICE_MIGRATION).transform_files(sources)
+
+    assert result.sources["src/orchestrator/graph/_commands.py"].startswith(
+        '"""Command compatibility bridge."""'
+    )
+    assert (
+        "from orchestrator.graph.events.lifecycle import HEARTBEAT_RECORDED"
+        in result.sources["src/orchestrator/graph/_commands.py"]
+    )
+    assert (
+        "from orchestrator.graph.commands.lifecycle import RECORD_HEARTBEAT"
+        in result.sources["src/orchestrator/graph/commands/__init__.py"]
+    )
+    assert (
+        StrictPayloadCutoverCodemod(VERTICAL_SLICE_MIGRATION)
+        .transform_files(result.sources)
+        .sources
+        == result.sources
+    )
+
+
+def test_vertical_slice_does_not_import_specification_without_generated_reference() -> None:
+    source = "def keep() -> None:\n    pass\n"
+
+    result = StrictPayloadCutoverCodemod(VERTICAL_SLICE_MIGRATION).transform_files(
+        {"src/orchestrator/graph/_commands.py": source}
+    )
+
+    assert result.sources["src/orchestrator/graph/_commands.py"] == source
 
 
 def test_relocation_can_preview_and_create_a_new_target_file(tmp_path: Path) -> None:

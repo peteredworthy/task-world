@@ -16,7 +16,6 @@ from orchestrator.graph import (
     DeadInputDetectedPayload,
     EventEnvelope,
     FakeClock,
-    HeartbeatRecordedPayload,
     RunLifecycleChangedPayload,
     RuntimeRetryScheduledPayload,
     SequentialIdGenerator,
@@ -159,22 +158,8 @@ def test_runtime_retry_payload_preserves_retry_backoff_projection() -> None:
     assert projection["retry_not_before_by_node"] == {"worker-1": "2026-07-09T12:01:00+00:00"}
 
 
-def test_audit_payloads_normalize_unknown_keys_without_affecting_projection() -> None:
+def test_unconverted_audit_payloads_normalize_unknown_keys_without_projection_effect() -> None:
     audit_payloads = [
-        (
-            "heartbeat_recorded",
-            HeartbeatRecordedPayload.model_validate(
-                {
-                    "lease_id": "lease-1",
-                    "node_id": "worker-1",
-                    "generation": 1,
-                    "execution_id": "exec-1",
-                    "observed_at": "2026-07-09T12:00:00+00:00",
-                    "expires_at": "2026-07-09T12:05:00+00:00",
-                    "legacy": 1,
-                }
-            ),
-        ),
         (
             "agent_died",
             AgentDiedPayload.model_validate(

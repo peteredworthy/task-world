@@ -267,6 +267,12 @@ class InventoryReport:
         domain_events = DOMAIN_EVENT_NAMES.get(needle)
         domain_commands = DOMAIN_COMMAND_NAMES.get(needle)
         domain_models = DOMAIN_COMPATIBILITY_MODEL_NAMES.get(needle, frozenset())
+        if needle == "vertical_slice" and not any(
+            model.name == "HeartbeatRecordedPayload"
+            and ("LifecycleEventPayloadBase" in model.bases or model.before_validators)
+            for model in self.payload_models
+        ):
+            domain_models = domain_models - {"LifecycleEventPayloadBase"}
 
         def relevant(value: Any) -> bool:
             return needle in str(value).casefold()
@@ -307,7 +313,11 @@ class InventoryReport:
         models = tuple(
             site
             for site in self.payload_models
-            if (relevant(site) or site.name in domain_models)
+            if (
+                site.name in domain_models
+                if needle in DOMAIN_COMPATIBILITY_MODEL_NAMES
+                else relevant(site)
+            )
             and (
                 site.name == "LifecycleEventPayloadBase"
                 or site.before_validators
@@ -346,7 +356,15 @@ class InventoryReport:
             command_names=command_names,
             raw_producers=tuple(
                 sorted(
-                    (*literal_sites, *dynamic_sites),
+                    (
+                        *literal_sites,
+                        *(
+                            site
+                            for site in dynamic_sites
+                            if site.classification
+                            not in {"typed_specification", "unconverted_bridge"}
+                        ),
+                    ),
                     key=lambda site: (site.path, site.line, site.column),
                 )
             ),
@@ -716,6 +734,38 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     for parsed in parsed_files:
         for node in ast.walk(parsed.tree):
             if isinstance(node, ast.Call):
+                specification_name = next(
+                    (keyword.value for keyword in node.keywords if keyword.arg == "name"),
+                    None,
+                )
+                if _call_name(node.func) == "EventSpecification" and specification_name:
+                    values = _literal_strings(specification_name)
+                    if values:
+                        dynamic_sites.append(
+                            DynamicSite(
+                                str(parsed.path),
+                                node.lineno,
+                                node.col_offset,
+                                ast.unparse(specification_name),
+                                "typed_specification",
+                                values,
+                            )
+                        )
+                elif _call_name(node.func) == "CommandSpecification" and specification_name:
+                    command_names.update(_literal_strings(specification_name))
+                if _call_name(node.func) == "emit_unconverted_event" and node.args:
+                    values = _literal_strings(node.args[0])
+                    if values:
+                        dynamic_sites.append(
+                            DynamicSite(
+                                str(parsed.path),
+                                node.lineno,
+                                node.col_offset,
+                                ast.unparse(node.args[0]),
+                                "unconverted_bridge",
+                                values,
+                            )
+                        )
                 argument = _event_argument(node, parsed)
                 if argument is not None:
                     values = _literal_strings(argument)
@@ -764,6 +814,10 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
                             NamedSite(str(parsed.path), node.lineno, node.col_offset, name)
                         )
                 value = node.value
+                if "_UNCONVERTED_W5_BRIDGE" in names and isinstance(value, ast.Dict):
+                    for key in value.keys:
+                        if key is not None:
+                            command_names.update(_literal_strings(key))
                 if "COMMAND_HANDLERS" in names and isinstance(value, ast.Dict):
                     for key, handler in zip(value.keys, value.values, strict=True):
                         values = _literal_strings(key) if key is not None else ()
