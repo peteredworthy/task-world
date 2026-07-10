@@ -25,6 +25,7 @@ from orchestrator.graph.macros import expand_patch_macros
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
+    AgentDiedPayload,
     AnalysisSummaryRecord,
     AppealOpenedPayload,
     ApprovalDecisionRecordedPayload,
@@ -33,13 +34,18 @@ from orchestrator.graph.models import (
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
     CandidateRecord,
+    CallbackAcceptedPayload,
+    CallbackDuplicateReturnedPayload,
+    CallbackRejectedPayload,
     CheckResultRecord,
     CleanupAppliedPayload,
     CleanupRequestedPayload,
     CleanupRequestedProjection,
+    CommandRejectedPayload,
     CompletionDecisionRecord,
     DecisionRequestRecord,
     DecisionRecord,
+    DeadInputDetectedPayload,
     EventEnvelope,
     FailureRecord,
     FileStateRecord,
@@ -47,8 +53,10 @@ from orchestrator.graph.models import (
     JoinResultRecord,
     GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
+    HeartbeatRecordedPayload,
     LeaseExpiredPayload,
     LeaseGrantedPayload,
+    LifecycleEventPayloadBase,
     LeaseReleasedPayload,
     LeaseRenewedPayload,
     LeaseRevokedPayload,
@@ -59,6 +67,8 @@ from orchestrator.graph.models import (
     PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
     RequirementRevisionPayload,
+    RunLifecycleChangedPayload,
+    RuntimeRetryScheduledPayload,
     SupportEvidencePayload,
     VerificationResultProjection,
     VerificationReportRecord,
@@ -138,6 +148,27 @@ def _typed_lease_event_payload(event_type: str, payload: dict[str, Any]) -> dict
         model = LeaseExpiredPayload
     else:
         model = None
+    if model is None:
+        return payload
+    return model.model_validate(payload).model_dump(mode="json")
+
+
+_LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[LifecycleEventPayloadBase]] = {
+    "run_lifecycle_changed": RunLifecycleChangedPayload,
+    "command_rejected": CommandRejectedPayload,
+    "callback_accepted": CallbackAcceptedPayload,
+    "callback_rejected_stale": CallbackRejectedPayload,
+    "callback_rejected_conflict": CallbackRejectedPayload,
+    "callback_duplicate_returned": CallbackDuplicateReturnedPayload,
+    "runtime_retry_scheduled": RuntimeRetryScheduledPayload,
+    "heartbeat_recorded": HeartbeatRecordedPayload,
+    "agent_died": AgentDiedPayload,
+    "dead_input_detected": DeadInputDetectedPayload,
+}
+
+
+def _typed_lifecycle_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    model = _LIFECYCLE_EVENT_PAYLOAD_MODELS.get(event_type)
     if model is None:
         return payload
     return model.model_validate(payload).model_dump(mode="json")
@@ -5476,7 +5507,7 @@ def _event_factory(
             actor=Actor(kind=ActorKind.CONTROLLER),
             causation_id=command_type,
             timestamp=clock.now(),
-            payload=payload,
+            payload=_typed_lifecycle_event_payload(event_type, payload),
         )
 
     return make_event

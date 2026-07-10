@@ -114,7 +114,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "freshness_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata "
     "(see binding_policy)",
     "id": "requirement id fallback helper, used only for authority_revision_blockers/support views",
-    "idempotency_key": "callback_idempotency_events bookkeeping",
     "input": "legacy scheduler input-binding fallback, not task_states",
     "metadata": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "new_behavior": "requirement revision classification helper",
@@ -141,7 +140,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "requirement_version_id": "requirement_revisions bookkeeping",
     "requires_authority": "requirement_revisions authority-resolution bookkeeping",
     "resource_claims": "node_resource_claims: scheduler-only substate",
-    "retry_not_before": "retry_not_before_by_node bookkeeping",
     "revision_id": "authority_revision_blockers bookkeeping",
     "revision_index": "requirement_revisions bookkeeping",
     "revision_type": "requirement revision classification helper",
