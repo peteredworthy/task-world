@@ -60,6 +60,7 @@ from orchestrator.graph.models import (
     LeaseReleasedPayload,
     LeaseRenewedPayload,
     LeaseRevokedPayload,
+    NodeCreatedPayload,
     OutputRecord,
     OversightDecisionRecordedPayload,
     PatchEnvelope,
@@ -652,6 +653,14 @@ def _apply_seed_compiled_events(
                         f"unsupported seed event: {event.event_type}",
                     )
                 ]
+            if event.event_type == "node_created":
+                event = event.model_copy(
+                    update={
+                        "payload": NodeCreatedPayload.model_validate(event.payload).model_dump(
+                            mode="json"
+                        )
+                    }
+                )
             if event.event_type == "edge_created":
                 event = event.model_copy(update={"payload": _validated_edge_payload(event.payload)})
             if event.event_type == "output_record_accepted":
@@ -5498,6 +5507,11 @@ def _event_factory(
     id_gen: IdGenerator,
 ) -> Callable[[str, dict[str, Any]], EventEnvelope]:
     def make_event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+        typed_payload = (
+            NodeCreatedPayload.model_validate(payload).model_dump(mode="json")
+            if event_type == "node_created"
+            else _typed_lifecycle_event_payload(event_type, payload)
+        )
         return EventEnvelope(
             event_id=id_gen.next_id("event"),
             run_id=run_id,
@@ -5507,7 +5521,7 @@ def _event_factory(
             actor=Actor(kind=ActorKind.CONTROLLER),
             causation_id=command_type,
             timestamp=clock.now(),
-            payload=_typed_lifecycle_event_payload(event_type, payload),
+            payload=typed_payload,
         )
 
     return make_event

@@ -34,6 +34,7 @@ from orchestrator.graph.models import (
     ActorKind,
     ArtifactReferenceRecord,
     EventEnvelope,
+    NodeCreatedPayload,
     RequirementRecord,
     RoutineSnapshotRecord,
     RunContextRecord,
@@ -888,7 +889,10 @@ class _Compiler:
 
     def _node(self, payload: dict[str, Any]) -> None:
         payload.setdefault("run_id", self._run_id)
-        self._event("node_created", payload)
+        self._event(
+            "node_created",
+            NodeCreatedPayload.model_validate(payload).model_dump(mode="json"),
+        )
 
     def _edge(
         self,

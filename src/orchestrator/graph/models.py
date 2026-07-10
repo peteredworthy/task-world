@@ -2042,6 +2042,445 @@ class CleanupAppliedPayload(CleanupEventPayloadBase):
         )
 
 
+class PlannerChainRegionPayload(GraphBaseModel):
+    generation_index: int | None = None
+    region_label: str | None = None
+    child_routine: str | None = None
+
+
+def _empty_planner_chain_regions() -> list[PlannerChainRegionPayload]:
+    return []
+
+
+class PlannerChainPayload(GraphBaseModel):
+    source: str | None = None
+    regions: list[PlannerChainRegionPayload] = Field(default_factory=_empty_planner_chain_regions)
+
+
+def _empty_node_created_resource_claims() -> list[ResourceClaimProjection]:
+    return []
+
+
+def _empty_node_created_ports() -> list[PortModel]:
+    return []
+
+
+_NODE_CREATED_RETAINED_VALUES = "_retained_values"
+
+
+def _retain_node_created_extra(extra: dict[str, Any], key: str, value: Any) -> None:
+    if key not in extra:
+        extra[key] = value
+        return
+    existing = extra[key]
+    existing_mapping = cast(dict[str, Any], existing) if isinstance(existing, dict) else None
+    if (
+        existing_mapping is not None
+        and set(existing_mapping) == {_NODE_CREATED_RETAINED_VALUES}
+        and isinstance(existing_mapping.get(_NODE_CREATED_RETAINED_VALUES), list)
+    ):
+        cast(list[Any], existing_mapping[_NODE_CREATED_RETAINED_VALUES]).append(value)
+        return
+    extra[key] = {_NODE_CREATED_RETAINED_VALUES: [existing, value]}
+
+
+def _strict_optional_string(mapping: dict[str, Any], key: str) -> bool:
+    return key not in mapping or mapping[key] is None or isinstance(mapping[key], str)
+
+
+def _validated_node_created_ports(value: Any) -> tuple[list[dict[str, Any]], list[Any]]:
+    valid: list[dict[str, Any]] = []
+    invalid: list[Any] = []
+    for item in cast(list[Any], value):
+        if not isinstance(item, dict):
+            invalid.append(item)
+            continue
+        mapping = cast(dict[str, Any], item)
+        direction = mapping.get("direction")
+        record_layers = mapping.get("record_layers")
+        required = mapping.get("required")
+        if not isinstance(mapping.get("port"), str):
+            invalid.append(item)
+            continue
+        if direction is not None and direction not in {"input", "output"}:
+            invalid.append(item)
+            continue
+        if not _strict_optional_string(mapping, "node_id") or not all(
+            _strict_optional_string(mapping, key) for key in ("schema", "schema_")
+        ):
+            invalid.append(item)
+            continue
+        if record_layers is not None and (
+            not isinstance(record_layers, list)
+            or not all(isinstance(layer, str) for layer in cast(list[Any], record_layers))
+        ):
+            invalid.append(item)
+            continue
+        if required is not None and not isinstance(required, bool):
+            invalid.append(item)
+            continue
+        try:
+            port = PortModel.model_validate(item)
+        except ValueError:
+            invalid.append(item)
+            continue
+        valid.append(port.model_dump(mode="json"))
+    return valid, invalid
+
+
+def _validated_node_created_claims(value: Any) -> tuple[list[dict[str, Any]], list[Any]]:
+    valid: list[dict[str, Any]] = []
+    invalid: list[Any] = []
+    for item in cast(list[Any], value):
+        if not isinstance(item, dict):
+            invalid.append(item)
+            continue
+        mapping = cast(dict[str, Any], item)
+        paths = mapping.get("paths")
+        if not all(
+            _strict_optional_string(mapping, key)
+            for key in ("mode", "scope", "external_resource_key")
+        ):
+            invalid.append(item)
+            continue
+        if "path" in mapping and not isinstance(mapping["path"], str):
+            invalid.append(item)
+            continue
+        if paths is not None and (
+            not isinstance(paths, list)
+            or not all(isinstance(path, str) for path in cast(list[Any], paths))
+        ):
+            invalid.append(item)
+            continue
+        try:
+            claim = ResourceClaimProjection.model_validate(item)
+        except ValueError:
+            invalid.append(item)
+            continue
+        valid.append(claim.model_dump(mode="json"))
+    return valid, invalid
+
+
+def _validated_planner_chain_regions(value: Any) -> tuple[list[dict[str, Any]], list[Any]]:
+    valid: list[dict[str, Any]] = []
+    invalid: list[Any] = []
+    for item in cast(list[Any], value):
+        if not isinstance(item, dict):
+            invalid.append(item)
+            continue
+        mapping = cast(dict[str, Any], item)
+        generation_index = mapping.get("generation_index")
+        if generation_index is not None and (
+            not isinstance(generation_index, int) or isinstance(generation_index, bool)
+        ):
+            invalid.append(item)
+            continue
+        if not all(
+            _strict_optional_string(mapping, key) for key in ("region_label", "child_routine")
+        ):
+            invalid.append(item)
+            continue
+        try:
+            region = PlannerChainRegionPayload.model_validate(item)
+        except ValueError:
+            invalid.append(item)
+            continue
+        valid.append(region.model_dump(mode="json"))
+    return valid, invalid
+
+
+class NodeCreatedPayload(GraphEventPayloadBase):
+    """Compatibility payload for every compiler and command-side node creation."""
+
+    run_id: str | None = None
+    node_id: str | None = None
+    kind: str | None = None
+    role: str | None = None
+    state: str | None = None
+    task_region_id: str | None = None
+    attempt_number: int | None = None
+    candidate_id: str | None = None
+    failed_candidate_id: str | None = None
+    membership: dict[str, Any] | None = None
+    authority: dict[str, Any] | None = None
+    resource_claims: list[ResourceClaimProjection] = Field(
+        default_factory=_empty_node_created_resource_claims,
+    )
+    allowed_actions: list[str] = Field(default_factory=list)
+    preconditions: list[str] = Field(default_factory=list)
+    planner_generation_budget: int | None = None
+    generation_index: int | None = None
+    region_label: str | None = None
+    session_id: str | None = None
+    carryover_record_id: str | None = None
+    session_intent: str | None = None
+    planner_chain: PlannerChainPayload | None = None
+    gate_type: str | None = None
+    approval_type: str | None = None
+    reason: str | None = None
+    prompt: str | None = None
+    approval_prompt: str | None = None
+    human_prompt: str | None = None
+    message: str | None = None
+    blocker: str | None = None
+    blocker_reason: str | None = None
+    decision_request: dict[str, Any] | None = None
+    authority_request_record: dict[str, Any] | None = None
+    authority_request: dict[str, Any] | None = None
+    decision_request_record_id: str | None = None
+    authority_request_record_id: str | None = None
+    command_definition: CommandDefinitionProjection | None = None
+    command_definition_id: str | None = None
+    hidden_oracle_command: str | None = None
+    command_binding: str | None = None
+    command: str | None = None
+    command_text: str | None = None
+    recovery_reason: str | None = None
+    recovery_of_node_id: str | None = None
+    recovery_of_record_id: str | None = None
+    guarded_planner_node_id: str | None = None
+    rejected_patch_id: str | None = None
+    requirement_id: str | None = None
+    id: str | None = None
+    priority: str | None = None
+    requirement: dict[str, Any] | None = None
+    inputs: list[PortModel] = Field(default_factory=_empty_node_created_ports)
+    outputs: list[PortModel] = Field(default_factory=_empty_node_created_ports)
+    artifact_reference_record: dict[str, Any] | None = None
+    artifacts: list[Any] | None = None
+    available_tools: list[Any] | None = None
+    builder_agent: str | None = None
+    candidate_record: dict[str, Any] | None = None
+    check_index: int | None = None
+    complexity: str | None = None
+    context_source: dict[str, Any] | None = None
+    dynamic_feature: dict[str, Any] | None = None
+    execution_id: str | None = None
+    fan_out: dict[str, Any] | None = None
+    gate: dict[str, Any] | None = None
+    max_attempts: int | None = None
+    mcp_servers: list[Any] | None = None
+    profile: str | None = None
+    requirement_record: dict[str, Any] | None = None
+    routine: dict[str, Any] | None = None
+    routine_snapshot_record: dict[str, Any] | None = None
+    rubric: list[Any] | None = None
+    run_context_record: dict[str, Any] | None = None
+    snapshot: dict[str, Any] | None = None
+    step_id: str | None = None
+    step_index: int | None = None
+    step_context: str | None = None
+    submission_template: dict[str, Any] | None = None
+    task_context: str | None = None
+    task_id: str | None = None
+    task_index: int | None = None
+    title: str | None = None
+    verifier_agent: str | None = None
+    work_mode: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+        payload = dict(cast(dict[str, Any], value))
+        raw_extra = payload.get("extra")
+        extra = dict(cast(dict[str, Any], raw_extra)) if isinstance(raw_extra, dict) else {}
+        if raw_extra is not None and not isinstance(raw_extra, dict):
+            extra["extra"] = raw_extra
+        payload.pop("extra", None)
+
+        string_fields = {
+            "run_id",
+            "node_id",
+            "kind",
+            "role",
+            "state",
+            "task_region_id",
+            "candidate_id",
+            "failed_candidate_id",
+            "region_label",
+            "session_id",
+            "carryover_record_id",
+            "session_intent",
+            "gate_type",
+            "approval_type",
+            "reason",
+            "prompt",
+            "approval_prompt",
+            "human_prompt",
+            "message",
+            "blocker",
+            "blocker_reason",
+            "decision_request_record_id",
+            "authority_request_record_id",
+            "command_definition_id",
+            "hidden_oracle_command",
+            "command_binding",
+            "command",
+            "command_text",
+            "recovery_reason",
+            "recovery_of_node_id",
+            "recovery_of_record_id",
+            "guarded_planner_node_id",
+            "rejected_patch_id",
+            "requirement_id",
+            "id",
+            "priority",
+            "builder_agent",
+            "complexity",
+            "execution_id",
+            "profile",
+            "step_id",
+            "step_context",
+            "task_context",
+            "task_id",
+            "title",
+            "verifier_agent",
+            "work_mode",
+        }
+        integer_fields = {
+            "attempt_number",
+            "planner_generation_budget",
+            "generation_index",
+            "check_index",
+            "max_attempts",
+            "step_index",
+            "task_index",
+        }
+        mapping_fields = {
+            "membership",
+            "authority",
+            "planner_chain",
+            "decision_request",
+            "authority_request_record",
+            "authority_request",
+            "command_definition",
+            "requirement",
+            "artifact_reference_record",
+            "candidate_record",
+            "context_source",
+            "dynamic_feature",
+            "fan_out",
+            "gate",
+            "requirement_record",
+            "routine",
+            "routine_snapshot_record",
+            "run_context_record",
+            "snapshot",
+            "submission_template",
+        }
+        list_fields = {
+            "resource_claims",
+            "allowed_actions",
+            "preconditions",
+            "inputs",
+            "outputs",
+            "artifacts",
+            "available_tools",
+            "mcp_servers",
+            "rubric",
+        }
+        for key in string_fields:
+            if key in payload and payload[key] is not None and not isinstance(payload[key], str):
+                _retain_node_created_extra(extra, key, payload.pop(key))
+        for key in integer_fields:
+            field_value = payload.get(key)
+            if field_value is not None and (
+                not isinstance(field_value, int) or isinstance(field_value, bool)
+            ):
+                _retain_node_created_extra(extra, key, payload.pop(key))
+        for key in mapping_fields:
+            if key in payload and payload[key] is not None and not isinstance(payload[key], dict):
+                _retain_node_created_extra(extra, key, payload.pop(key))
+        for key in list_fields:
+            if key in payload and not isinstance(payload[key], list):
+                _retain_node_created_extra(extra, key, payload.pop(key))
+
+        membership = payload.get("membership")
+        if isinstance(membership, dict):
+            typed_membership = cast(dict[str, Any], membership)
+            for key in ("task_region_id", "candidate_id", "failed_candidate_id"):
+                if payload.get(key) is None and isinstance(typed_membership.get(key), str):
+                    payload[key] = typed_membership[key]
+            membership_attempt = typed_membership.get("attempt_number")
+            if (
+                payload.get("attempt_number") is None
+                and isinstance(membership_attempt, int)
+                and not isinstance(membership_attempt, bool)
+            ):
+                payload["attempt_number"] = membership_attempt
+
+        authority = payload.get("authority")
+        if isinstance(authority, dict):
+            typed_authority = cast(dict[str, Any], authority)
+            for key in ("resource_claims", "allowed_actions", "preconditions"):
+                if payload.get(key) is None and isinstance(typed_authority.get(key), list):
+                    payload[key] = typed_authority[key]
+
+        if "resource_claims" in payload:
+            claims, invalid_claims = _validated_node_created_claims(payload["resource_claims"])
+            payload["resource_claims"] = claims
+            if invalid_claims:
+                _retain_node_created_extra(extra, "resource_claims", invalid_claims)
+        if "allowed_actions" in payload:
+            allowed_actions = cast(list[Any], payload["allowed_actions"])
+            payload["allowed_actions"] = [
+                action for action in allowed_actions if isinstance(action, str)
+            ]
+            invalid_actions = [action for action in allowed_actions if not isinstance(action, str)]
+            if invalid_actions:
+                _retain_node_created_extra(extra, "allowed_actions", invalid_actions)
+        if "preconditions" in payload:
+            preconditions = cast(list[Any], payload["preconditions"])
+            payload["preconditions"] = [
+                precondition for precondition in preconditions if isinstance(precondition, str)
+            ]
+            invalid_preconditions = [
+                precondition for precondition in preconditions if not isinstance(precondition, str)
+            ]
+            if invalid_preconditions:
+                _retain_node_created_extra(extra, "preconditions", invalid_preconditions)
+        for key in ("inputs", "outputs"):
+            if key in payload:
+                ports, invalid_ports = _validated_node_created_ports(payload[key])
+                payload[key] = ports
+                if invalid_ports:
+                    _retain_node_created_extra(extra, key, invalid_ports)
+        planner_chain = payload.get("planner_chain")
+        if isinstance(planner_chain, dict):
+            normalized_chain = dict(cast(dict[str, Any], planner_chain))
+            invalid_chain: dict[str, Any] = {}
+            source = normalized_chain.get("source")
+            if source is not None and not isinstance(source, str):
+                invalid_chain["source"] = normalized_chain.pop("source")
+            regions = normalized_chain.get("regions")
+            if isinstance(regions, list):
+                valid_regions, invalid_regions = _validated_planner_chain_regions(regions)
+                normalized_chain["regions"] = valid_regions
+                if invalid_regions:
+                    invalid_chain["regions"] = invalid_regions
+            elif regions is not None:
+                normalized_chain["regions"] = []
+                invalid_chain["regions"] = regions
+            if invalid_chain:
+                _retain_node_created_extra(extra, "planner_chain", invalid_chain)
+            payload["planner_chain"] = normalized_chain
+
+        known_keys = set(cls.model_fields)
+        for key in list(payload):
+            if key not in known_keys:
+                _retain_node_created_extra(extra, key, payload.pop(key))
+        payload["extra"] = extra
+        return payload
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        kwargs.setdefault("exclude_unset", True)
+        kwargs.setdefault("exclude_none", False)
+        kwargs.setdefault("by_alias", True)
+        return super().model_dump(*args, **kwargs)
+
+
 class CleanupRequestedProjection(GraphBaseModel):
     model_config = ConfigDict(extra="ignore", populate_by_name=True)
 

@@ -66,6 +66,7 @@ from orchestrator.graph.models import (
     LeaseSuspendedPayload,
     JoinResultRecord,
     NodeCreationProjection,
+    NodeCreatedPayload,
     NodeKind,
     NodeState,
     OversightDecisionProjection,
@@ -117,6 +118,9 @@ _NODE_KIND_VALUES = {kind.value for kind in NodeKind}
 PROJECTION_SCHEMA_VERSION = 10
 
 GRAPH_PROJECTION_PAYLOAD_FIELDS = (
+    "allowed_actions",
+    "approval_prompt",
+    "approval_type",
     "appeal_type",
     "attempt_number",
     "approved",
@@ -125,6 +129,8 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "carryover_record_id",
     "classification",
     "command_binding",
+    "command_definition",
+    "command_definition_id",
     "decision",
     "execution_id",
     "expires_at",
@@ -160,6 +166,35 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "to_state",
     "verdict",
     "verifier_node_id",
+    "authority",
+    "authority_request",
+    "authority_request_record",
+    "authority_request_record_id",
+    "blocker",
+    "blocker_reason",
+    "decision_request",
+    "decision_request_record_id",
+    "generation_index",
+    "gate_type",
+    "guarded_planner_node_id",
+    "human_prompt",
+    "hidden_oracle_command",
+    "inputs",
+    "id",
+    "message",
+    "outputs",
+    "planner_chain",
+    "planner_generation_budget",
+    "preconditions",
+    "priority",
+    "prompt",
+    "recovery_of_node_id",
+    "reason",
+    "region_label",
+    "rejected_patch_id",
+    "requirement",
+    "requirement_id",
+    "resource_claims",
 )
 
 
@@ -1526,12 +1561,27 @@ def _cleanup_requested_from_event(event: EventEnvelope) -> CleanupRequestedProje
 
 
 def _node_creation_from_event(event: EventEnvelope) -> NodeCreationProjection | None:
+    event_payload = _node_created_payload_from_event(event)
+    if event_payload is None:
+        return None
+    normalized = event_payload.model_dump(mode="json")
+    raw_extra = normalized.pop("extra", {})
+    extra = cast(dict[str, Any], raw_extra) if isinstance(raw_extra, dict) else {}
+    projection_payload: dict[str, Any] = dict(extra)
+    projection_payload.update(normalized)
     return _node_creation_from_payload(
         {
-            **event.payload,
+            **projection_payload,
             "position": event.position,
         }
     )
+
+
+def _node_created_payload_from_event(event: EventEnvelope) -> NodeCreatedPayload | None:
+    try:
+        return NodeCreatedPayload.model_validate(event.payload)
+    except ValueError:
+        return None
 
 
 def _node_creation_from_payload(payload: dict[str, Any]) -> NodeCreationProjection | None:
@@ -1965,8 +2015,9 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         if to_state is not None:
             next_state["run_state"] = to_state
     elif event.event_type == "node_created":
+        typed_node_payload = _node_created_payload_from_event(event)
         node_payload = _node_creation_from_event(event)
-        if node_payload is not None:
+        if node_payload is not None and typed_node_payload is not None:
             node_id = node_payload.node_id
             kind = node_payload.kind
             role = node_payload.role
@@ -1978,7 +2029,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 next_state["node_states"][node_id] = node_state
             next_state["node_creation_positions"].setdefault(node_id, event.position)
             next_state["node_creation_payloads"][node_id] = node_payload
-            _record_recovery_node(next_state, event)
+            _record_recovery_node(next_state, typed_node_payload)
             if kind == "root":
                 budget = node_payload.planner_generation_budget
                 if isinstance(budget, int) and not isinstance(budget, bool) and budget >= 0:
@@ -2024,7 +2075,6 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 next_state["node_command_definitions"][node_id] = command_definition
             if kind == "gate" and task_region_id is not None:
                 next_state["configured_gates"].setdefault(task_region_id, {})[node_id] = True
-            _record_recovery_node(next_state, event)
     elif event.event_type == "node_state_changed":
         node_id = event.payload.get("node_id")
         new_state = event.payload.get("new_state")
@@ -3324,8 +3374,9 @@ def project_graph_patch_attempts(
         if attempt is None:
             continue
         if event.event_type == "node_created":
-            node_id = payload.get("node_id")
-            if isinstance(node_id, str):
+            node_payload = _node_created_payload_from_event(event)
+            node_id = node_payload.node_id if node_payload is not None else None
+            if node_id is not None:
                 created = attempt.setdefault("created_node_ids", [])
                 created.append(node_id)
         elif event.event_type == "edge_created":
@@ -4332,7 +4383,10 @@ def _optional_str(value: Any) -> str | None:
 
 def _node_creation_position(events: list[EventEnvelope], node_id: str) -> int:
     for event in events:
-        if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
+        if event.event_type != "node_created":
+            continue
+        payload = _node_created_payload_from_event(event)
+        if payload is not None and payload.node_id == node_id:
             return event.position
     return 0
 
@@ -4368,19 +4422,12 @@ def _seeded_planner_chain_labels(events: list[EventEnvelope]) -> dict[int, str]:
     for event in events:
         if event.event_type != "node_created":
             continue
-        raw_planner_chain = event.payload.get("planner_chain")
-        if not isinstance(raw_planner_chain, dict):
+        payload = _node_created_payload_from_event(event)
+        if payload is None or payload.planner_chain is None:
             continue
-        planner_chain = cast(dict[str, Any], raw_planner_chain)
-        regions = planner_chain.get("regions")
-        if not isinstance(regions, list):
-            continue
-        for raw_region in cast(list[Any], regions):
-            if not isinstance(raw_region, dict):
-                continue
-            region = cast(dict[str, Any], raw_region)
-            generation_index = region.get("generation_index")
-            region_label = region.get("region_label")
+        for region in payload.planner_chain.regions:
+            generation_index = region.generation_index
+            region_label = region.region_label
             if (
                 isinstance(generation_index, int)
                 and not isinstance(generation_index, bool)
@@ -4494,18 +4541,22 @@ def _record_verdict(state: GraphProjection, event: EventEnvelope) -> None:
     state["verifier_verdicts"][candidate_id] = verdict
 
 
-def _record_recovery_node(state: GraphProjection, event: EventEnvelope) -> None:
-    node_id = event.payload.get("node_id")
-    recovery_reason = event.payload.get("recovery_reason")
-    record_id = event.payload.get("recovery_of_record_id")
-    if not all(isinstance(value, str) and value for value in (node_id, recovery_reason, record_id)):
+def _record_recovery_node(state: GraphProjection, payload: NodeCreatedPayload) -> None:
+    node_id = payload.node_id
+    recovery_reason = payload.recovery_reason
+    record_id = payload.recovery_of_record_id
+    if not isinstance(node_id, str) or not node_id:
+        return
+    if not isinstance(recovery_reason, str) or not recovery_reason:
+        return
+    if not isinstance(record_id, str) or not record_id:
         return
     if recovery_reason not in {"failed_required_check", "failed_verification"}:
         return
-    state["recovery_nodes_by_record_id"].setdefault(cast(str, record_id), []).append(
+    state["recovery_nodes_by_record_id"].setdefault(record_id, []).append(
         RecoveryNodeIndexEntry(
-            node_id=cast(str, node_id),
-            recovery_reason=cast(str, recovery_reason),
+            node_id=node_id,
+            recovery_reason=recovery_reason,
         )
     )
 

@@ -396,3 +396,40 @@ GREEN (independently rerun on the final formatted diff):
 - Commit hooks:
   - Result: backend pytest, Ruff, formatting, secret detection, Pyright,
     module-import, signal-routing, UI lint, and UI typecheck hooks passed.
+
+## Node Created Event Payload Slice
+
+Status: complete.
+
+Scope:
+- Added and exported `NodeCreatedPayload`; compiler seeding and command-side
+  node producers now validate and JSON-dump the typed payload.
+- Reducers parse the typed envelope while retaining all node creation,
+  planner, recovery, authority, and compact-replay fields.
+- Retained node-created fields across projection, light, summary, and
+  node-detail reconstruction. Recovery nodes are indexed exactly once.
+
+Legacy normalization:
+- Malformed and unknown legacy top-level values remain under the inherited
+  single `extra` map; no durable history was rewritten.
+
+RED:
+- `uv run pytest tests/unit/test_node_created_event_payloads.py -q`
+  - Result: 1 failed, 13 passed; the regression asserted that recovery index
+    entries were duplicated (`['recovery-1', 'recovery-1']`).
+
+GREEN (independently rerun by a fresh verifier):
+- `uv run pytest tests/unit/test_node_created_event_payloads.py -q`
+  - Result: passed, 14 tests.
+- `uv run pytest tests/unit/test_fixture_corpus.py -q`
+  - Result: passed, 7 tests.
+- `uv run pytest tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_node_created_event_payloads.py -q`
+  - Result: passed, 152 tests.
+- `uv run pytest tests/ -k graph -q`
+  - Result: passed (exit 0; 844 selected).
+- `uv run ruff check .`
+  - Result: passed.
+- `uv run pyright src/orchestrator/graph tests/unit/test_node_created_event_payloads.py`
+  - Result: passed, 0 errors.
+- `git diff --check`
+  - Result: passed.
