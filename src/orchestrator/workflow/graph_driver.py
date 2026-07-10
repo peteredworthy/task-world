@@ -205,7 +205,7 @@ class GraphProjectionSnapshot:
     # default 3), keyed by node_id. Needed so a driver-synthesized agent_died (see
     # _recover_orphaned_active_leases) passes the same max_attempts the kernel's
     # normal death path (graph_runtime.dispatch._agent_died) would have passed —
-    # without it, _apply_agent_died's v1 requeue-on-death policy never exhausts,
+    # without it, build_agent_died_effects' v1 requeue policy never exhausts,
     # and a chronically-orphaned node (new lease_id each retry) would defeat the
     # per-lease_id dedup and retry forever.
     node_max_attempts: dict[str, int] = field(default_factory=_empty_int_dict)
@@ -943,7 +943,7 @@ async def _recover_orphaned_active_leases(
        e.g. a race already resolved it) is never retried.
     2. Passing ``max_attempts`` (the node's compiled retry budget, when the
        node has one) lets the kernel's own agent_died-retry budget in
-       ``_apply_agent_died`` fail the node terminally — same as the runtime's
+       ``build_agent_died_effects`` fail the node terminally — same as the runtime's
        normal death path in ``graph_runtime.dispatch._agent_died``. This is
        the primary bound for compiled nodes.
     3. ``node_recovery_counts`` (per node_id, owned by the caller) caps

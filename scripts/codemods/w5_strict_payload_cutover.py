@@ -1254,7 +1254,7 @@ DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
         ),
         relocations=(
             SymbolRelocation(
-                "_apply_agent_died",
+                "build_agent_died_effects",
                 "src/orchestrator/graph/_commands.py",
                 "src/orchestrator/graph/commands/lifecycle.py",
                 "orchestrator.graph._commands",
@@ -1361,7 +1361,7 @@ DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
                 "_apply_callback_command",
                 "_apply_patch_command",
                 "_no_successor_recovery_terminal_failure_events",
-                "_apply_agent_died",
+                "build_agent_died_effects",
                 "_lifecycle_event",
                 "_command_rejected",
             )

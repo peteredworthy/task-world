@@ -20,8 +20,13 @@ from orchestrator.graph.events.lifecycle import (
     CALLBACK_REJECTED_CONFLICT,
     CALLBACK_DUPLICATE_RETURNED,
     COMMAND_REJECTED,
+    CallbackAcceptedPayload,
+    CallbackDuplicateReturnedPayload,
+    CallbackRejectedPayload,
+    CommandRejectedPayload,
 )
 from orchestrator.graph.commands.future_effects import require_future_effect
+from orchestrator.graph.commands.event_creator import TypedEventCreator
 from collections.abc import Callable
 
 from pydantic import Field
@@ -43,26 +48,13 @@ from orchestrator.graph.specifications import (
     CommandSpecification,
     HydratedEvent,
     FutureCommandEffects,
-    StoredEventEnvelope,
 )
 
 
-def _strict_event(
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    specification: Any,
-    payload: dict[str, Any],
-) -> EventEnvelope:
-    validated = specification.validate_payload(payload)
-    return make_event(specification.name, validated.to_json())
-
-
-def _command_rejected(
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope], command_type: str, reason: str
-) -> EventEnvelope:
-    return _strict_event(
-        make_event,
+def _command_rejected(creator: TypedEventCreator, command_type: str, reason: str) -> HydratedEvent:
+    return creator.create(
         COMMAND_REJECTED,
-        {"command_type": command_type, "reason": reason},
+        CommandRejectedPayload(command_type=command_type, reason=reason),
     )
 
 
@@ -89,35 +81,13 @@ class AcknowledgeStartCommand(StrictPayload):
     prompt_summary: dict[str, JsonValue] | None = None
 
 
-_CALLBACK_OUTCOME_SPECS = {
-    spec.name: spec
-    for spec in (
-        CALLBACK_ACCEPTED,
-        CALLBACK_REJECTED_STALE,
-        CALLBACK_REJECTED_CONFLICT,
-        CALLBACK_DUPLICATE_RETURNED,
-        COMMAND_REJECTED,
-    )
-}
-
-
-def _hydrate_converted_callback_outcomes(
-    output: list[EventEnvelope],
+def _require_future_outcomes(
+    output: list[EventEnvelope | HydratedEvent],
 ) -> list[EventEnvelope | HydratedEvent]:
-    """Task 9 deletes this adapter once every callback effect has an event spec."""
-
-    converted: list[EventEnvelope | HydratedEvent] = []
-    for event in output:
-        specification = _CALLBACK_OUTCOME_SPECS.get(event.event_type)
-        if specification is None:
-            # Tasks 3/4/6 own output, file-state, node, lease, and session
-            # specifications. Keep those effects isolated as legacy envelopes.
-            converted.append(require_future_effect(event))
-            continue
-        stored = event.model_dump()
-        stored["payload_schema_generation"] = stored.pop("schema_version")
-        converted.append(specification.hydrate(StoredEventEnvelope.model_validate(stored)))
-    return converted
+    return [
+        require_future_effect(event) if isinstance(event, EventEnvelope) else event
+        for event in output
+    ]
 
 
 def handle_submit_callback_command(
@@ -130,9 +100,15 @@ def handle_submit_callback_command(
         context.run_id, SUBMIT_CALLBACK.name, context.clock, context.id_generator
     )
     output = apply_callback_effects(
-        projection, list(events), command, context.run_id, make_event, context.future_effects
+        projection,
+        list(events),
+        command,
+        context.run_id,
+        make_event,
+        TypedEventCreator(context, assign_position=False),
+        context.future_effects,
     )
-    return _hydrate_converted_callback_outcomes(output)
+    return _require_future_outcomes(output)
 
 
 def handle_acknowledge_start_command(
@@ -145,8 +121,14 @@ def handle_acknowledge_start_command(
     make_event = event_factory(
         context.run_id, ACKNOWLEDGE_START.name, context.clock, context.id_generator
     )
-    return _hydrate_converted_callback_outcomes(
-        apply_acknowledge_start_effects(projection, command, make_event, context.future_effects)
+    return _require_future_outcomes(
+        apply_acknowledge_start_effects(
+            projection,
+            command,
+            make_event,
+            TypedEventCreator(context, assign_position=False),
+            context.future_effects,
+        )
     )
 
 
@@ -278,14 +260,14 @@ def apply_callback_effects(
     command: SubmitCallbackCommand,
     run_id: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    creator: TypedEventCreator,
     effects: FutureCommandEffects,
-) -> list[EventEnvelope]:
+) -> list[EventEnvelope | HydratedEvent]:
     _accepted_output_record_events = effects.accepted_output_record_events
     _file_state_authority_conflict = effects.file_state_authority_conflict
     _file_state_rejected_conflict = effects.file_state_rejected_conflict
     _file_state_rejected_events = effects.file_state_rejected_events
     _lease_node_id = effects.lease_node_id
-    _make_strict_event = _strict_event
     _output_record_contract_conflict = effects.output_record_contract_conflict
     _output_record_provenance_conflict = effects.output_record_provenance_conflict
     _planner_session_state_event = effects.planner_session_state_event
@@ -321,27 +303,36 @@ def apply_callback_effects(
     )
     result = validate_callback(request, projection, events)
 
-    event_payload = {
-        "node_id": request.node_id,
-        "lease_id": request.lease_id,
-        "lease_generation": request.lease_generation,
-        "idempotency_key": request.idempotency_key,
-        "payload": request.payload,
-        "reason": result.reason,
-    }
+    def rejected_payload(reason: str) -> CallbackRejectedPayload:
+        return CallbackRejectedPayload(
+            node_id=request.node_id,
+            lease_id=request.lease_id,
+            lease_generation=request.lease_generation,
+            idempotency_key=request.idempotency_key,
+            payload=request.payload,
+            reason=reason,
+        )
+
     if result.outcome == CallbackOutcome.REJECTED_STALE:
-        return [_make_strict_event(make_event, CALLBACK_REJECTED_STALE, event_payload)]
+        return [creator.create(CALLBACK_REJECTED_STALE, rejected_payload(result.reason))]
     if result.outcome in {
         CallbackOutcome.REJECTED_CONFLICT,
         CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT,
     }:
-        return [_make_strict_event(make_event, CALLBACK_REJECTED_CONFLICT, event_payload)]
+        return [creator.create(CALLBACK_REJECTED_CONFLICT, rejected_payload(result.reason))]
     if result.outcome == CallbackOutcome.DUPLICATE_IDEMPOTENT:
         return [
-            _make_strict_event(
-                make_event,
+            creator.create(
                 CALLBACK_DUPLICATE_RETURNED,
-                {**event_payload, "prior_result": result.prior_result},
+                CallbackDuplicateReturnedPayload(
+                    node_id=request.node_id,
+                    lease_id=request.lease_id,
+                    lease_generation=request.lease_generation,
+                    idempotency_key=request.idempotency_key,
+                    payload=request.payload,
+                    reason=result.reason,
+                    prior_result=result.prior_result,
+                ),
             )
         ]
 
@@ -349,37 +340,26 @@ def apply_callback_effects(
     expected_producer_node_id = lease_node_id or request.node_id
     if lease_node_id is not None and request.node_id != lease_node_id:
         return [
-            _make_strict_event(
-                make_event,
+            creator.create(
                 CALLBACK_REJECTED_CONFLICT,
-                {
-                    **event_payload,
-                    "reason": (
-                        "callback node_id does not match lease node: "
-                        f"{request.node_id} != {lease_node_id}"
-                    ),
-                },
+                rejected_payload(
+                    "callback node_id does not match lease node: "
+                    f"{request.node_id} != {lease_node_id}"
+                ),
             )
         ]
     provenance_conflict = _output_record_provenance_conflict(request, expected_producer_node_id)
     if provenance_conflict is not None:
-        return [
-            _make_strict_event(
-                make_event,
-                CALLBACK_REJECTED_CONFLICT,
-                {**event_payload, "reason": provenance_conflict},
-            )
-        ]
+        return [creator.create(CALLBACK_REJECTED_CONFLICT, rejected_payload(provenance_conflict))]
     file_state_rejection_conflict = _file_state_rejected_conflict(
         request,
         expected_producer_node_id,
     )
     if file_state_rejection_conflict is not None:
         return [
-            _make_strict_event(
-                make_event,
+            creator.create(
                 CALLBACK_REJECTED_CONFLICT,
-                {**event_payload, "reason": file_state_rejection_conflict},
+                rejected_payload(file_state_rejection_conflict),
             )
         ]
     file_state_authority_conflict = _file_state_authority_conflict(
@@ -388,10 +368,9 @@ def apply_callback_effects(
     )
     if file_state_authority_conflict is not None:
         return [
-            _make_strict_event(
-                make_event,
+            creator.create(
                 CALLBACK_REJECTED_CONFLICT,
-                {**event_payload, "reason": file_state_authority_conflict},
+                rejected_payload(file_state_authority_conflict),
             )
         ]
     verification_conflict = _verification_record_conflict(
@@ -400,13 +379,7 @@ def apply_callback_effects(
         expected_producer_node_id,
     )
     if verification_conflict is not None:
-        return [
-            _make_strict_event(
-                make_event,
-                CALLBACK_REJECTED_CONFLICT,
-                {**event_payload, "reason": verification_conflict},
-            )
-        ]
+        return [creator.create(CALLBACK_REJECTED_CONFLICT, rejected_payload(verification_conflict))]
     output_contract_conflict = _output_record_contract_conflict(
         projection,
         request,
@@ -414,10 +387,9 @@ def apply_callback_effects(
     )
     if output_contract_conflict is not None:
         return [
-            _make_strict_event(
-                make_event,
+            creator.create(
                 CALLBACK_REJECTED_CONFLICT,
-                {**event_payload, "reason": output_contract_conflict},
+                rejected_payload(output_contract_conflict),
             )
         ]
     missing_output_conflict = _required_output_record_conflict(
@@ -428,15 +400,24 @@ def apply_callback_effects(
     )
     if missing_output_conflict is not None:
         return [
-            _make_strict_event(
-                make_event,
+            creator.create(
                 CALLBACK_REJECTED_CONFLICT,
-                {**event_payload, "reason": missing_output_conflict},
+                rejected_payload(missing_output_conflict),
             )
         ]
 
-    accepted = _make_strict_event(make_event, CALLBACK_ACCEPTED, event_payload)
-    output: list[EventEnvelope] = [accepted]
+    accepted = creator.create(
+        CALLBACK_ACCEPTED,
+        CallbackAcceptedPayload(
+            node_id=request.node_id,
+            lease_id=request.lease_id,
+            lease_generation=request.lease_generation,
+            idempotency_key=request.idempotency_key,
+            payload=request.payload,
+            reason=result.reason,
+        ),
+    )
+    output: list[EventEnvelope | HydratedEvent] = [accepted]
     output.extend(_file_state_rejected_events(request, make_event))
     output.extend(
         _accepted_output_record_events(
@@ -479,7 +460,8 @@ def apply_callback_effects(
         )
         if session_event is not None:
             output.append(session_event)
-    output.extend(_source_repair_events(projection, events, output, make_event))
+    future_output = [event for event in output if isinstance(event, EventEnvelope)]
+    output.extend(_source_repair_events(projection, events, future_output, make_event))
     return output
 
 
@@ -487,8 +469,9 @@ def apply_acknowledge_start_effects(
     projection: GraphProjection,
     command: AcknowledgeStartCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    creator: TypedEventCreator,
     effects: FutureCommandEffects,
-) -> list[EventEnvelope]:
+) -> list[EventEnvelope | HydratedEvent]:
     del effects
     node_id = command.node_id
     lease_id = command.lease_id
@@ -497,16 +480,16 @@ def apply_acknowledge_start_effects(
 
     lease = projection["leases"].get(lease_id)
     if lease is None:
-        return [_command_rejected(make_event, "acknowledge_start", "unknown lease")]
+        return [_command_rejected(creator, "acknowledge_start", "unknown lease")]
     if lease.get("state") != "active":
-        return [_command_rejected(make_event, "acknowledge_start", "lease not active")]
+        return [_command_rejected(creator, "acknowledge_start", "lease not active")]
     if lease.get("node_id") != node_id:
-        return [_command_rejected(make_event, "acknowledge_start", "node_incompatible")]
+        return [_command_rejected(creator, "acknowledge_start", "node_incompatible")]
     if lease.get("generation") != lease_generation:
-        return [_command_rejected(make_event, "acknowledge_start", "generation_incompatible")]
+        return [_command_rejected(creator, "acknowledge_start", "generation_incompatible")]
     lease_execution_id = lease.get("execution_id")
     if isinstance(lease_execution_id, str) and lease_execution_id != execution_id:
-        return [_command_rejected(make_event, "acknowledge_start", "execution_incompatible")]
+        return [_command_rejected(creator, "acknowledge_start", "execution_incompatible")]
 
     event_payload: dict[str, Any] = {
         "node_id": node_id,

@@ -43,9 +43,10 @@ from orchestrator.graph.commands.schedule import (
 from orchestrator.graph.specifications import (
     CommandExecutionContext,
     HydratedEvent,
-    StoredEventEnvelope,
 )
-from orchestrator.graph.events.lifecycle import COMMAND_REJECTED
+from orchestrator.graph.events.lifecycle import COMMAND_REJECTED, CommandRejectedPayload
+from orchestrator.graph.commands.event_creator import TypedEventCreator
+from orchestrator.graph.commands.future_effects import require_future_effect
 from orchestrator.graph.commands.lifecycle import (
     ACCEPT_RUN,
     START,
@@ -164,12 +165,15 @@ def apply_command(
                 make_event,
             )
             if renewal.event_type == "command_rejected":
-                stored = renewal.model_dump()
-                stored["payload_schema_generation"] = stored.pop("schema_version")
-                return [COMMAND_REJECTED.hydrate(StoredEventEnvelope.model_validate(stored))]
+                return [
+                    TypedEventCreator(context).create(
+                        COMMAND_REJECTED,
+                        CommandRejectedPayload(**renewal.payload),
+                    )
+                ]
             return [
                 *specification.handle(typed_command, projection, tuple(events), context),
-                renewal,
+                require_future_effect(renewal),
             ]
         return specification.handle(command, projection, tuple(events), context)
     handler = _UNCONVERTED_W5_BRIDGE.get(command_type)

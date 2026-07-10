@@ -1063,7 +1063,7 @@ async def test_driver_stops_retrying_a_lease_that_never_clears() -> None:
     # "accepts" the agent_died but nothing about the projection ever changes,
     # standing in for a node that keeps dying under conditions this fixture
     # doesn't clear (in production, the kernel's own max_attempts budget in
-    # _apply_agent_died is what eventually stops requeuing a real node and
+    # build_agent_died_effects is what eventually stops requeuing a real node and
     # moves it to a terminal "failed" state).
     stuck_lease_snapshot = GraphProjectionSnapshot(
         run_state="active",

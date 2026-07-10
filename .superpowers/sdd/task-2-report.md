@@ -151,3 +151,26 @@ inventory passed with the explicit 34 future-event / 13 future-command inventory
 surface); Ruff format/check clean; Pyright 0 errors. Serial integration was started in foreground
 and reached the initial segment without a failure, but the execution transport returned before a
 pytest completion summary, so no complete integration count is claimed here.
+
+## Direct Event Fix (re-review wave 3, slice A)
+
+Task-2 command outcomes now construct each concrete strict payload once and pass it directly to
+the named `EventSpecification` through `TypedEventCreator`. The creator uses the injected clock,
+ID generator, actor, run identity, and current position and returns `HydratedEvent` immediately.
+Mixed handlers leave typed events unpositioned for the store only when interleaved with
+allowlisted Tasks 3/4/6 raw effects, preserving emission order; typed-only handlers allocate
+ordered positions directly. Event IDs remain unique and ordered in both cases.
+
+Lifecycle, callback, acknowledgement, heartbeat rejection, agent-death, and retry paths no
+longer contain `_strict_event`, `StoredEventEnvelope.model_validate`, or specification hydration
+round trips. Raw effects are checked by the explicit future-domain allowlist. The legacy
+`_apply_agent_died` alias/export was removed and migration ownership now names
+`build_agent_died_effects`.
+
+Defect-specific TDD evidence: the architecture test first failed on `_strict_event` and
+stored-envelope hydration, while the creator behavior test failed because no direct creator
+existed. GREEN passed the 252-test lifecycle/callback/framework/graph-command slice and the
+56-test codemod/inventory architecture slice. Full unit passed 3364 tests after a fixture
+regression exposed mixed typed/raw position ordering and the explicit mixed-position policy
+fixed it. Lifecycle `--assert-clean`, lifecycle inventory `--check-domain`, Ruff, formatting,
+and Pyright also passed.
