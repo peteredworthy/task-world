@@ -141,6 +141,7 @@ class _MechanicalTransformer(cst.CSTTransformer):
         path: str,
         existing_command_specs: tuple[str, ...],
         will_compose_command_specs: bool,
+        blocked_command_specs: bool,
         blocked_allowlists: frozenset[str],
         initial_diagnostics: tuple[CodemodDiagnostic, ...],
     ) -> None:
@@ -150,6 +151,7 @@ class _MechanicalTransformer(cst.CSTTransformer):
         self.diagnostics = list(initial_diagnostics)
         self._existing_command_specs = existing_command_specs
         self._will_compose_command_specs = will_compose_command_specs
+        self._blocked_command_specs = blocked_command_specs
         self._composed_command_specs = False
         self._events = {route.event_name: route for route in migration.event_routes}
         self._commands = {route.command_name: route for route in migration.command_routes}
@@ -248,7 +250,7 @@ class _MechanicalTransformer(cst.CSTTransformer):
     def _event_replacement(
         self, original_node: cst.Call, updated_node: cst.Call
     ) -> cst.Call | None:
-        if not isinstance(original_node.func, cst.Name):
+        if not isinstance(original_node.func, (cst.Name, cst.Attribute)):
             return None
         position = self._touch_metadata(original_node.func)
         resolved_names = self._resolved_names(original_node.func)
@@ -290,21 +292,12 @@ class _MechanicalTransformer(cst.CSTTransformer):
         )
 
     def _inject_catalog(self, original_node: cst.Call, updated_node: cst.Call) -> cst.Call | None:
-        callable_name: str | None = None
-        if isinstance(original_node.func, cst.Name):
-            callable_name = original_node.func.value
-        elif isinstance(original_node.func, cst.Attribute):
-            callable_name = original_node.func.attr.value
         self._touch_metadata(original_node.func)
         resolved_names = self._resolved_names(original_node.func)
         routes = [
             route
             for route in self._catalog_injections
-            if (
-                bool(resolved_names.intersection(route.qualified_names))
-                if route.qualified_names
-                else route.callable_name == callable_name
-            )
+            if route.qualified_names and bool(resolved_names.intersection(route.qualified_names))
         ]
         if len(routes) != 1:
             return None
@@ -390,6 +383,17 @@ class _MechanicalTransformer(cst.CSTTransformer):
             return updated_node
         assignment = original_node.body[0]
         name = _assigned_name(assignment)
+        if name in {"COMMAND_HANDLERS", "COMMAND_SPECIFICATIONS"}:
+            target = (
+                assignment.target
+                if isinstance(assignment, cst.AnnAssign)
+                else assignment.targets[0].target
+            )
+            scope = self.get_metadata(metadata.ScopeProvider, target)
+            if not isinstance(scope, GlobalScope):
+                return updated_node
+            if self._blocked_command_specs:
+                return updated_node
         if name == "COMMAND_SPECIFICATIONS" and self._will_compose_command_specs:
             self.changes += 1
             return cst.RemoveFromParent()
@@ -570,6 +574,17 @@ class StrictPayloadCutoverCodemod:
         }
         blocked_allowlists: set[str] = set()
         initial_diagnostics: list[CodemodDiagnostic] = []
+        initial_diagnostics.extend(
+            CodemodDiagnostic(
+                path,
+                1,
+                0,
+                "W5UNQUALIFIED_CATALOG_ROUTE",
+                f"catalog injection {route.callable_name} requires qualified_names",
+            )
+            for route in self.migration.catalog_injections
+            if not route.qualified_names
+        )
         for node in ast.walk(tree):
             if not (
                 isinstance(node, ast.Name)
@@ -607,6 +622,7 @@ class StrictPayloadCutoverCodemod:
             )
         existing_command_specs: tuple[str, ...] = ()
         specification_assignments: list[cst.Assign | cst.AnnAssign] = []
+        noncanonical_specifications = False
         specification_assignment_lines = [
             node.lineno
             for node in tree.body
@@ -625,14 +641,24 @@ class StrictPayloadCutoverCodemod:
                 if (
                     isinstance(item, (cst.Assign, cst.AnnAssign))
                     and _assigned_name(item) == "COMMAND_SPECIFICATIONS"
-                    and isinstance(item.value, cst.Tuple)
                 ):
                     specification_assignments.append(item)
-                    existing_command_specs = tuple(
-                        element.value.value
+                    canonical = isinstance(item.value, cst.Tuple) and all(
+                        element is not None
+                        and isinstance(element, cst.Element)
+                        and isinstance(element.value, cst.Name)
                         for element in item.value.elements
-                        if element is not None and isinstance(element.value, cst.Name)
                     )
+                    if canonical and isinstance(item.value, cst.Tuple):
+                        existing_command_specs = tuple(
+                            element.value.value
+                            for element in item.value.elements
+                            if element is not None
+                            and isinstance(element, cst.Element)
+                            and isinstance(element.value, cst.Name)
+                        )
+                    else:
+                        noncanonical_specifications = True
                 if (
                     isinstance(item, (cst.Assign, cst.AnnAssign))
                     and _assigned_name(item) == "COMMAND_HANDLERS"
@@ -655,11 +681,24 @@ class StrictPayloadCutoverCodemod:
                 )
                 for line in specification_assignment_lines
             )
+        if noncanonical_specifications:
+            initial_diagnostics.extend(
+                CodemodDiagnostic(
+                    path,
+                    line,
+                    0,
+                    "W5NONCANONICAL_COMMAND_SPECIFICATIONS",
+                    "COMMAND_SPECIFICATIONS must be a tuple of bare specification names",
+                )
+                for line in specification_assignment_lines
+            )
+            will_compose_command_specs = False
         transformer = _MechanicalTransformer(
             self.migration,
             path,
             existing_command_specs,
             will_compose_command_specs,
+            noncanonical_specifications or len(specification_assignments) > 1,
             frozenset(blocked_allowlists),
             tuple(initial_diagnostics),
         )

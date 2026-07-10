@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from scripts.codemods.w5_strict_payload_cutover import (
     AllowlistConsumer,
     CatalogInjection,
@@ -273,6 +275,32 @@ graph = graph_make_event("heartbeat_recorded", payload)
     assert "graph = HEARTBEAT_RECORDED.create(payload)" in result.source
 
 
+def test_qualified_event_factory_and_module_alias_are_rewritten(
+    tmp_path: Path,
+) -> None:
+    migration = DomainMigration(
+        domain="qualified",
+        paths=("events.py",),
+        event_routes=(EventRoute("started", "StartedPayload", "STARTED"),),
+        event_factory_qualified_names=("pkg.make_event",),
+    )
+    source = """\
+import pkg
+import pkg as alias
+
+first = pkg.make_event("started", payload)
+second = alias.make_event("started", payload)
+"""
+
+    result = StrictPayloadCutoverCodemod(migration).transform_source(source, "events.py")
+
+    assert "first = STARTED.create(payload)" in result.source
+    assert "second = STARTED.create(payload)" in result.source
+    assert result.changes == 2
+    (tmp_path / "events.py").write_text(source)
+    assert run_migration(migration, tmp_path, mode="assert-clean").exit_code == 1
+
+
 def test_catalog_injection_rewrites_alias_and_ignores_unrelated_local() -> None:
     source = """\
 from orchestrator.graph_runtime import GraphController as RuntimeController
@@ -288,6 +316,26 @@ runtime = RuntimeController(store=store)
 
     assert "local = GraphController(store=store)" in result.source
     assert "runtime = RuntimeController(store=store, catalog=catalog)" in result.source
+
+
+def test_catalog_injection_without_qualified_contract_refuses_local_collision() -> None:
+    migration = DomainMigration(
+        domain="catalog",
+        paths=("controller.py",),
+        catalog_injections=(CatalogInjection("GraphController"),),
+    )
+    source = """\
+def GraphController(**kwargs):
+    return kwargs
+
+controller = GraphController(store=store)
+"""
+
+    result = StrictPayloadCutoverCodemod(migration).transform_source(source, "controller.py")
+
+    assert result.source == source
+    assert result.changes == 0
+    assert result.diagnostics[0].code == "W5UNQUALIFIED_CATALOG_ROUTE"
 
 
 def test_command_specifications_compose_across_sequential_domain_passes() -> None:
@@ -347,6 +395,51 @@ COMMAND_SPECIFICATIONS = (SECOND,)
     ).transform_source(source, "commands.py")
 
     assert result.diagnostics[0].code == "W5DUPLICATE_COMMAND_SPECIFICATIONS"
+
+
+def test_nested_command_handler_registry_is_not_rewritten() -> None:
+    migration = DomainMigration(
+        domain="second",
+        paths=("commands.py",),
+        command_routes=(CommandRoute("second", "handle_second", "SECOND", "SecondCommand"),),
+    )
+    source = """\
+def local_registry():
+    COMMAND_HANDLERS = {"second": handle_second}
+    return COMMAND_HANDLERS
+"""
+
+    result = StrictPayloadCutoverCodemod(migration).transform_source(source, "commands.py")
+
+    assert result.source == source
+    assert result.changes == 0
+
+
+@pytest.mark.parametrize(
+    "existing",
+    (
+        "COMMAND_SPECIFICATIONS = [FIRST]",
+        "COMMAND_SPECIFICATIONS = (*BASE,)",
+        "COMMAND_SPECIFICATIONS = (specs.FIRST,)",
+    ),
+)
+def test_noncanonical_command_specifications_fail_closed(tmp_path: Path, existing: str) -> None:
+    migration = DomainMigration(
+        domain="second",
+        paths=("commands.py",),
+        command_routes=(CommandRoute("second", "handle_second", "SECOND", "SecondCommand"),),
+    )
+    source = f'{existing}\nCOMMAND_HANDLERS = {{"second": handle_second}}\n'
+    path = tmp_path / "commands.py"
+    path.write_text(source)
+
+    dry_run = run_migration(migration, tmp_path, mode="dry-run")
+    applied = run_migration(migration, tmp_path, mode="apply")
+    assert_clean = run_migration(migration, tmp_path, mode="assert-clean")
+
+    assert dry_run.exit_code == applied.exit_code == assert_clean.exit_code == 1
+    assert "commands.py:1:0: W5NONCANONICAL_COMMAND_SPECIFICATIONS" in dry_run.output
+    assert path.read_text() == source
 
 
 def test_missing_configured_file_and_relocation_symbol_fail_closed(tmp_path: Path) -> None:
