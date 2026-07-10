@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from scripts.codemods.w5_strict_payload_cutover import (
+    AllowlistConsumer,
     CatalogInjection,
     CommandRoute,
     DomainMigration,
@@ -39,15 +40,24 @@ LIFECYCLE_MIGRATION = DomainMigration(
             symbols=("HeartbeatRecordedPayload",),
         ),
     ),
-    catalog_injections=(CatalogInjection(callable_name="GraphController"),),
+    catalog_injections=(
+        CatalogInjection(
+            callable_name="GraphController",
+            qualified_names=("orchestrator.graph_runtime.GraphController",),
+        ),
+    ),
+    event_factory_qualified_names=("orchestrator.graph._commands.make_event",),
     report_dynamic_emissions=True,
+    allowlist_names=("LIGHT_GRAPH_PAYLOAD_FIELDS",),
 )
 
 
 BEFORE_LIFECYCLE_SOURCE = """\
 from typing import Any
 
+from orchestrator.graph._commands import make_event
 from orchestrator.graph.models import HeartbeatRecordedPayload
+from orchestrator.graph_runtime import GraphController
 
 __all__ = ["HeartbeatRecordedPayload", "keep"]
 
@@ -74,7 +84,9 @@ COMMAND_HANDLERS: dict[str, object] = {
 AFTER_LIFECYCLE_SOURCE = """\
 from typing import Any
 
+from orchestrator.graph._commands import make_event
 from orchestrator.graph.events.lifecycle import HeartbeatRecordedPayload
+from orchestrator.graph_runtime import GraphController
 
 __all__ = ["HeartbeatRecordedPayload", "keep"]
 
@@ -117,6 +129,10 @@ def test_relocation_moves_class_and_repairs_target_export() -> None:
     )
     sources = {
         "models.py": """\
+from pydantic import BaseModel
+
+__all__ = ["OutputRecordPayload", "KeepMe"]
+
 # Payload explanation stays with the class.
 class OutputRecordPayload(BaseModel):
     record_id: str
@@ -132,23 +148,28 @@ class KeepMe(BaseModel):
 
     assert "class OutputRecordPayload" not in result.sources["models.py"]
     assert "class KeepMe" in result.sources["models.py"]
+    assert '"OutputRecordPayload"' not in result.sources["models.py"]
     assert "# Payload explanation stays with the class." in result.sources["events/records.py"]
     assert '"OutputRecordPayload"' in result.sources["events/records.py"]
-    assert (
-        StrictPayloadCutoverCodemod(migration).transform_files(result.sources).sources
-        == result.sources
-    )
+    assert "from pydantic import BaseModel" in result.sources["events/records.py"]
+    namespace: dict[str, object] = {}
+    exec(result.sources["events/records.py"], namespace)
+    assert "OutputRecordPayload" in namespace
+    second = StrictPayloadCutoverCodemod(migration).transform_files(result.sources)
+    assert second.sources == result.sources
+    assert second.changes == 0
+    assert not second.diagnostics
 
 
 def test_ambiguous_dynamic_emission_is_reported_without_editing() -> None:
-    source = "event = make_event(event_name, payload)\n"
+    source = "from orchestrator.graph._commands import make_event\nevent = make_event(event_name, payload)\n"
 
     result = StrictPayloadCutoverCodemod(LIFECYCLE_MIGRATION).transform_source(source)
 
     assert result.source == source
     assert len(result.diagnostics) == 1
     assert result.diagnostics[0].code == "W5AMBIGUOUS_EVENT"
-    assert result.diagnostics[0].line == 1
+    assert result.diagnostics[0].line == 2
 
 
 def test_cli_dry_run_apply_assert_clean_and_idempotency(tmp_path: Path) -> None:
@@ -175,13 +196,17 @@ def test_cli_dry_run_apply_assert_clean_and_idempotency(tmp_path: Path) -> None:
 
 def test_assert_clean_lists_every_remaining_ambiguous_site(tmp_path: Path) -> None:
     source = tmp_path / "graph.py"
-    source.write_text("first = make_event(first_name, {})\nsecond = make_event(second_name, {})\n")
+    source.write_text(
+        "from orchestrator.graph._commands import make_event\n"
+        "first = make_event(first_name, {})\n"
+        "second = make_event(second_name, {})\n"
+    )
 
     result = run_migration(LIFECYCLE_MIGRATION, tmp_path, mode="assert-clean")
 
     assert result.exit_code == 1
-    assert "graph.py:1" in result.output
     assert "graph.py:2" in result.output
+    assert "graph.py:3" in result.output
 
 
 def test_mixed_import_and_registry_entries_are_split_mechanically() -> None:
@@ -229,3 +254,122 @@ def test_relocation_can_preview_and_create_a_new_target_file(tmp_path: Path) -> 
     applied = run_migration(migration, tmp_path, mode="apply")
     assert applied.exit_code == 0
     assert "class OutputRecordPayload" in (tmp_path / "events/records.py").read_text()
+
+
+def test_symbol_resolution_rewrites_alias_and_ignores_unrelated_local() -> None:
+    source = """\
+from orchestrator.graph._commands import make_event as graph_make_event
+
+def make_event(name, payload):
+    return (name, payload)
+
+local = make_event("heartbeat_recorded", payload)
+graph = graph_make_event("heartbeat_recorded", payload)
+"""
+
+    result = StrictPayloadCutoverCodemod(LIFECYCLE_MIGRATION).transform_source(source)
+
+    assert 'local = make_event("heartbeat_recorded", payload)' in result.source
+    assert "graph = HEARTBEAT_RECORDED.create(payload)" in result.source
+
+
+def test_catalog_injection_rewrites_alias_and_ignores_unrelated_local() -> None:
+    source = """\
+from orchestrator.graph_runtime import GraphController as RuntimeController
+
+def GraphController(**kwargs):
+    return kwargs
+
+local = GraphController(store=store)
+runtime = RuntimeController(store=store)
+"""
+
+    result = StrictPayloadCutoverCodemod(LIFECYCLE_MIGRATION).transform_source(source)
+
+    assert "local = GraphController(store=store)" in result.source
+    assert "runtime = RuntimeController(store=store, catalog=catalog)" in result.source
+
+
+def test_command_specifications_compose_across_sequential_domain_passes() -> None:
+    first = DomainMigration(
+        domain="first",
+        paths=("commands.py",),
+        command_routes=(CommandRoute("first", "handle_first", "FIRST", "FirstCommand"),),
+    )
+    second = DomainMigration(
+        domain="second",
+        paths=("commands.py",),
+        command_routes=(CommandRoute("second", "handle_second", "SECOND", "SecondCommand"),),
+    )
+    source = """\
+COMMAND_HANDLERS = {
+    "first": handle_first,
+    "second": handle_second,
+}
+"""
+
+    after_first = StrictPayloadCutoverCodemod(first).transform_source(source).source
+    after_second = StrictPayloadCutoverCodemod(second).transform_source(after_first).source
+
+    assert "COMMAND_SPECIFICATIONS = (FIRST, SECOND,)" in after_second
+    assert StrictPayloadCutoverCodemod(second).transform_source(after_second).source == after_second
+
+
+def test_missing_configured_file_and_relocation_symbol_fail_closed(tmp_path: Path) -> None:
+    source = tmp_path / "models.py"
+    source.write_text("class Present: pass\n")
+    migration = DomainMigration(
+        domain="missing",
+        paths=("models.py", "required.py", "events.py"),
+        relocations=(SymbolRelocation("MissingPayload", "models.py", "events.py"),),
+    )
+
+    result = run_migration(migration, tmp_path, mode="assert-clean")
+
+    assert result.exit_code == 1
+    assert "W5MISSING_FILE configured path does not exist: required.py" in result.output
+    assert "W5MISSING_SYMBOL expected relocation symbol MissingPayload" in result.output
+
+
+def test_allowlist_consumer_is_replaced_before_constant_removal() -> None:
+    migration = DomainMigration(
+        domain="reads",
+        paths=("store.py",),
+        allowlist_names=("LIGHT_GRAPH_PAYLOAD_FIELDS",),
+        allowlist_consumers=(
+            AllowlistConsumer(
+                function_name="compact_event",
+                replacement_expression="catalog.hydrate(event)",
+            ),
+        ),
+    )
+    source = """\
+LIGHT_GRAPH_PAYLOAD_FIELDS = ("node_id",)
+
+def compact_event(event, catalog):
+    return {key: value for key, value in event.payload.items() if key in LIGHT_GRAPH_PAYLOAD_FIELDS}
+"""
+
+    result = StrictPayloadCutoverCodemod(migration).transform_source(source)
+
+    assert "LIGHT_GRAPH_PAYLOAD_FIELDS" not in result.source
+    assert "return catalog.hydrate(event)" in result.source
+    assert not result.diagnostics
+
+
+def test_allowlist_with_unknown_consumer_is_retained_and_reported() -> None:
+    source = """\
+LIGHT_GRAPH_PAYLOAD_FIELDS = ("node_id",)
+filtered = {key: value for key, value in payload.items() if key in LIGHT_GRAPH_PAYLOAD_FIELDS}
+"""
+
+    result = StrictPayloadCutoverCodemod(
+        DomainMigration(
+            domain="reads",
+            paths=("store.py",),
+            allowlist_names=("LIGHT_GRAPH_PAYLOAD_FIELDS",),
+        )
+    ).transform_source(source, "store.py")
+
+    assert "LIGHT_GRAPH_PAYLOAD_FIELDS =" in result.source
+    assert result.diagnostics[0].code == "W5ALLOWLIST_REFERENCE"

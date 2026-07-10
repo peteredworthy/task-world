@@ -8,6 +8,8 @@ runtime schemas remain owned by the domain implementation.
 from __future__ import annotations
 
 import argparse
+import ast
+import builtins
 import difflib
 import sys
 from dataclasses import dataclass
@@ -17,6 +19,7 @@ from typing import Iterable, Mapping, Sequence
 import libcst as cst
 from libcst import metadata
 from libcst.helpers import get_full_name_for_node
+from libcst.metadata.scope_provider import GlobalScope
 
 
 @dataclass(frozen=True)
@@ -24,6 +27,7 @@ class SymbolRelocation:
     symbol: str
     source_path: str
     target_path: str
+    source_module: str | None = None
 
 
 @dataclass(frozen=True)
@@ -52,6 +56,13 @@ class ImportRoute:
 class CatalogInjection:
     callable_name: str
     argument_name: str = "catalog"
+    qualified_names: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class AllowlistConsumer:
+    function_name: str
+    replacement_expression: str
 
 
 @dataclass(frozen=True)
@@ -63,13 +74,10 @@ class DomainMigration:
     command_routes: tuple[CommandRoute, ...] = ()
     import_routes: tuple[ImportRoute, ...] = ()
     catalog_injections: tuple[CatalogInjection, ...] = ()
+    event_factory_qualified_names: tuple[str, ...] = ()
+    allowlist_consumers: tuple[AllowlistConsumer, ...] = ()
     report_dynamic_emissions: bool = False
-    allowlist_names: tuple[str, ...] = (
-        "GRAPH_PROJECTION_PAYLOAD_FIELDS",
-        "LIGHT_GRAPH_PAYLOAD_FIELDS",
-        "SUMMARY_REBUILD_PAYLOAD_FIELDS",
-        "NODE_DETAIL_PAYLOAD_FIELDS",
-    )
+    allowlist_names: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, order=True)
@@ -126,20 +134,39 @@ class _MechanicalTransformer(cst.CSTTransformer):
         metadata.ScopeProvider,
     )
 
-    def __init__(self, migration: DomainMigration, path: str) -> None:
+    def __init__(
+        self,
+        migration: DomainMigration,
+        path: str,
+        existing_command_specs: tuple[str, ...],
+        blocked_allowlists: frozenset[str],
+        initial_diagnostics: tuple[CodemodDiagnostic, ...],
+    ) -> None:
         self.migration = migration
         self.path = path
         self.changes = 0
-        self.diagnostics: list[CodemodDiagnostic] = []
+        self.diagnostics = list(initial_diagnostics)
+        self._existing_command_specs = existing_command_specs
+        self._composed_command_specs = False
         self._events = {route.event_name: route for route in migration.event_routes}
         self._commands = {route.command_name: route for route in migration.command_routes}
         self._handlers = {route.handler: route for route in migration.command_routes}
         self._imports = {route.old_module: route for route in migration.import_routes}
-        self._injections = {route.callable_name: route for route in migration.catalog_injections}
+        self._catalog_injections = migration.catalog_injections
+        self._allowlist_consumers = {
+            consumer.function_name: consumer for consumer in migration.allowlist_consumers
+        }
+        self._blocked_allowlists = blocked_allowlists
+
+    def _resolved_names(self, node: cst.CSTNode) -> frozenset[str]:
+        return frozenset(
+            qualified.name
+            for qualified in self.get_metadata(metadata.QualifiedNameProvider, node, set())
+        )
 
     def _touch_metadata(self, node: cst.CSTNode) -> metadata.CodeRange:
         position = self.get_metadata(metadata.PositionProvider, node)
-        self.get_metadata(metadata.QualifiedNameProvider, node, set())
+        self._resolved_names(node)
         self.get_metadata(metadata.ScopeProvider, node)
         return position
 
@@ -164,8 +191,26 @@ class _MechanicalTransformer(cst.CSTTransformer):
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.BaseStatement:
+        consumer = self._allowlist_consumers.get(original_node.name.value)
+        if consumer is not None:
+            self.changes += 1
+            return updated_node.with_changes(
+                body=cst.IndentedBlock(
+                    body=(
+                        cst.SimpleStatementLine(
+                            body=(
+                                cst.Return(cst.parse_expression(consumer.replacement_expression)),
+                            )
+                        ),
+                    )
+                )
+            )
         route = self._handlers.get(original_node.name.value)
         if route is None:
+            return updated_node
+        resolved_names = self._resolved_names(original_node.name)
+        scope = self.get_metadata(metadata.ScopeProvider, original_node.name)
+        if route.handler not in resolved_names or not isinstance(scope, GlobalScope):
             return updated_node
         changed = False
         parameters: list[cst.Param] = []
@@ -192,9 +237,12 @@ class _MechanicalTransformer(cst.CSTTransformer):
     def _event_replacement(
         self, original_node: cst.Call, updated_node: cst.Call
     ) -> cst.Call | None:
-        if not isinstance(original_node.func, cst.Name) or original_node.func.value != "make_event":
+        if not isinstance(original_node.func, cst.Name):
             return None
         position = self._touch_metadata(original_node.func)
+        resolved_names = self._resolved_names(original_node.func)
+        if not resolved_names.intersection(self.migration.event_factory_qualified_names):
+            return None
         if not original_node.args:
             return None
         event_name = _simple_string(original_node.args[0].value)
@@ -236,10 +284,20 @@ class _MechanicalTransformer(cst.CSTTransformer):
             callable_name = original_node.func.value
         elif isinstance(original_node.func, cst.Attribute):
             callable_name = original_node.func.attr.value
-        route = self._injections.get(callable_name or "")
-        if route is None:
-            return None
         self._touch_metadata(original_node.func)
+        resolved_names = self._resolved_names(original_node.func)
+        routes = [
+            route
+            for route in self._catalog_injections
+            if (
+                bool(resolved_names.intersection(route.qualified_names))
+                if route.qualified_names
+                else route.callable_name == callable_name
+            )
+        ]
+        if len(routes) != 1:
+            return None
+        route = routes[0]
         if any(
             argument.keyword is not None and argument.keyword.value == route.argument_name
             for argument in original_node.args
@@ -321,7 +379,12 @@ class _MechanicalTransformer(cst.CSTTransformer):
             return updated_node
         assignment = original_node.body[0]
         name = _assigned_name(assignment)
+        if name == "COMMAND_SPECIFICATIONS" and self._composed_command_specs:
+            self.changes += 1
+            return cst.RemoveFromParent()
         if name in self.migration.allowlist_names:
+            if name in self._blocked_allowlists:
+                return updated_node
             self.changes += 1
             return cst.RemoveFromParent()
         if name != "COMMAND_HANDLERS" or not isinstance(assignment.value, cst.Dict):
@@ -339,14 +402,31 @@ class _MechanicalTransformer(cst.CSTTransformer):
                 routes.append(route)
         if not routes:
             return updated_node
+        specification_names = list(self._existing_command_specs)
+        specification_names.extend(
+            route.specification
+            for route in routes
+            if route.specification not in specification_names
+        )
         elements = tuple(
-            cst.Element(cst.Name(route.specification), comma=cst.Comma()) for route in routes
+            cst.Element(
+                cst.Name(specification),
+                comma=cst.Comma(
+                    whitespace_after=(
+                        cst.SimpleWhitespace(" ")
+                        if index < len(specification_names) - 1
+                        else cst.SimpleWhitespace("")
+                    )
+                ),
+            )
+            for index, specification in enumerate(specification_names)
         )
         specification_assignment = cst.Assign(
             targets=(cst.AssignTarget(cst.Name("COMMAND_SPECIFICATIONS")),),
             value=cst.Tuple(elements),
         )
         self.changes += 1
+        self._composed_command_specs = True
         specification_line = updated_node.with_changes(body=(specification_assignment,))
         if not remaining_elements:
             return specification_line
@@ -421,6 +501,66 @@ class _AddExports(cst.CSTTransformer):
         )
 
 
+class _RemoveExports(cst.CSTTransformer):
+    def __init__(self, symbols: Iterable[str]) -> None:
+        self.symbols = frozenset(symbols)
+
+    def leave_SimpleStatementLine(
+        self,
+        original_node: cst.SimpleStatementLine,
+        updated_node: cst.SimpleStatementLine,
+    ) -> cst.BaseStatement | cst.RemovalSentinel:
+        if len(original_node.body) != 1 or not isinstance(
+            original_node.body[0], (cst.Assign, cst.AnnAssign)
+        ):
+            return updated_node
+        assignment = original_node.body[0]
+        if _assigned_name(assignment) != "__all__" or not isinstance(
+            assignment.value, (cst.List, cst.Tuple)
+        ):
+            return updated_node
+        elements = tuple(
+            element
+            for element in assignment.value.elements
+            if element is not None and _simple_string(element.value) not in self.symbols
+        )
+        if not elements:
+            return cst.RemoveFromParent()
+        replacement = updated_node.body[0].with_changes(
+            value=assignment.value.with_changes(elements=elements)
+        )
+        return updated_node.with_changes(body=(replacement,))
+
+
+class _NameCollector(cst.CSTVisitor):
+    def __init__(self) -> None:
+        self.names: set[str] = set()
+
+    def visit_Name(self, node: cst.Name) -> None:
+        self.names.add(node.value)
+
+
+def _imported_names(statement: cst.BaseStatement) -> frozenset[str]:
+    if not isinstance(statement, cst.SimpleStatementLine) or len(statement.body) != 1:
+        return frozenset()
+    item = statement.body[0]
+    if isinstance(item, cst.ImportFrom) and not isinstance(item.names, cst.ImportStar):
+        return frozenset(
+            alias.asname.name.value
+            if alias.asname is not None
+            else get_full_name_for_node(alias.name).split(".")[-1]
+            for alias in item.names
+        )
+    if isinstance(item, cst.Import):
+        return frozenset(
+            alias.asname.name.value
+            if alias.asname is not None
+            else get_full_name_for_node(alias.name).split(".")[0]
+            for alias in item.names
+        )
+    return frozenset()
+
+
 class StrictPayloadCutoverCodemod:
     """Apply one domain's mechanically safe LibCST transformations."""
 
@@ -429,7 +569,64 @@ class StrictPayloadCutoverCodemod:
 
     def transform_source(self, source: str, path: str = "<memory>") -> TransformResult:
         module = cst.parse_module(source)
-        transformer = _MechanicalTransformer(self.migration, path)
+        tree = ast.parse(source, filename=path)
+        ast_parents: dict[ast.AST, ast.AST] = {}
+        for parent in ast.walk(tree):
+            for child in ast.iter_child_nodes(parent):
+                ast_parents[child] = parent
+        configured_consumers = {
+            consumer.function_name for consumer in self.migration.allowlist_consumers
+        }
+        blocked_allowlists: set[str] = set()
+        initial_diagnostics: list[CodemodDiagnostic] = []
+        for node in ast.walk(tree):
+            if not (
+                isinstance(node, ast.Name)
+                and isinstance(node.ctx, ast.Load)
+                and node.id in self.migration.allowlist_names
+            ):
+                continue
+            current: ast.AST = node
+            owner: str | None = None
+            while current in ast_parents:
+                current = ast_parents[current]
+                if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    owner = current.name
+                    break
+            if owner in configured_consumers:
+                continue
+            blocked_allowlists.add(node.id)
+            initial_diagnostics.append(
+                CodemodDiagnostic(
+                    path,
+                    node.lineno,
+                    node.col_offset,
+                    "W5ALLOWLIST_REFERENCE",
+                    f"unconfigured consumer of {node.id}",
+                )
+            )
+        existing_command_specs: tuple[str, ...] = ()
+        for statement in module.body:
+            if not isinstance(statement, cst.SimpleStatementLine):
+                continue
+            for item in statement.body:
+                if (
+                    isinstance(item, (cst.Assign, cst.AnnAssign))
+                    and _assigned_name(item) == "COMMAND_SPECIFICATIONS"
+                    and isinstance(item.value, cst.Tuple)
+                ):
+                    existing_command_specs = tuple(
+                        element.value.value
+                        for element in item.value.elements
+                        if element is not None and isinstance(element.value, cst.Name)
+                    )
+        transformer = _MechanicalTransformer(
+            self.migration,
+            path,
+            existing_command_specs,
+            frozenset(blocked_allowlists),
+            tuple(initial_diagnostics),
+        )
         transformed = metadata.MetadataWrapper(module).visit(transformer)
         return TransformResult(
             source=transformed.code,
@@ -439,11 +636,25 @@ class StrictPayloadCutoverCodemod:
 
     def transform_files(self, sources: Mapping[str, str]) -> FileTransformResult:
         working = dict(sources)
+        diagnostics: list[CodemodDiagnostic] = []
+        relocation_targets = {relocation.target_path for relocation in self.migration.relocations}
+        for path in self.migration.paths:
+            if path not in working and path not in relocation_targets:
+                diagnostics.append(
+                    CodemodDiagnostic(
+                        path,
+                        1,
+                        0,
+                        "W5MISSING_FILE",
+                        f"configured path does not exist: {path}",
+                    )
+                )
         relocation_changes = 0
         by_source: dict[str, list[SymbolRelocation]] = {}
         for relocation in self.migration.relocations:
             by_source.setdefault(relocation.source_path, []).append(relocation)
         moved: dict[str, cst.ClassDef | cst.FunctionDef] = {}
+        target_imports: dict[str, list[cst.BaseStatement]] = {}
         for source_path, relocations in by_source.items():
             if source_path not in working:
                 continue
@@ -457,15 +668,89 @@ class StrictPayloadCutoverCodemod:
             )
             remover = _RemoveRelocations({item.symbol for item in relocations})
             module = original_module.visit(remover)
+            top_level_names = {
+                statement.name.value
+                for statement in original_module.body
+                if isinstance(statement, (cst.ClassDef, cst.FunctionDef))
+            }
+            for statement in original_module.body:
+                if not isinstance(statement, cst.SimpleStatementLine):
+                    continue
+                top_level_names.update(
+                    name
+                    for item in statement.body
+                    if isinstance(item, (cst.Assign, cst.AnnAssign))
+                    and (name := _assigned_name(item)) is not None
+                )
             if header_symbol in remover.removed:
                 moved_node = remover.removed[header_symbol]
                 remover.removed[header_symbol] = moved_node.with_changes(
                     leading_lines=(*original_module.header, *moved_node.leading_lines)
                 )
                 module = module.with_changes(header=())
+            module = module.visit(_RemoveExports(item.symbol for item in relocations))
+            for relocation in relocations:
+                moved_node = remover.removed.get(relocation.symbol)
+                if moved_node is None:
+                    continue
+                collector = _NameCollector()
+                moved_node.visit(collector)
+                target_imports.setdefault(relocation.target_path, []).extend(
+                    statement
+                    for statement in original_module.body
+                    if _imported_names(statement).intersection(collector.names)
+                )
+                moved_tree = ast.parse(original_module.code_for_node(moved_node))
+                loaded_names = {
+                    node.id
+                    for node in ast.walk(moved_tree)
+                    if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load)
+                }
+                local_dependencies = sorted(
+                    loaded_names.intersection(top_level_names)
+                    - {item.symbol for item in relocations}
+                    - set(dir(builtins))
+                )
+                if local_dependencies and relocation.source_module is None:
+                    diagnostics.append(
+                        CodemodDiagnostic(
+                            source_path,
+                            moved_node.name.start.line if hasattr(moved_node.name, "start") else 1,
+                            0,
+                            "W5UNRESOLVED_RELOCATION_DEPENDENCY",
+                            f"{relocation.symbol} requires local symbols {local_dependencies}",
+                        )
+                    )
+                elif local_dependencies:
+                    target_imports.setdefault(relocation.target_path, []).append(
+                        cst.parse_statement(
+                            f"from {relocation.source_module} import "
+                            + ", ".join(local_dependencies)
+                            + "\n"
+                        )
+                    )
             working[source_path] = module.code
             moved.update(remover.removed)
             relocation_changes += len(remover.removed)
+            for relocation in relocations:
+                if relocation.symbol not in remover.removed:
+                    target_source = working.get(relocation.target_path, "")
+                    target_has_symbol = any(
+                        isinstance(statement, (cst.ClassDef, cst.FunctionDef))
+                        and statement.name.value == relocation.symbol
+                        for statement in cst.parse_module(target_source).body
+                    )
+                    if target_has_symbol:
+                        continue
+                    diagnostics.append(
+                        CodemodDiagnostic(
+                            source_path,
+                            1,
+                            0,
+                            "W5MISSING_SYMBOL",
+                            f"expected relocation symbol {relocation.symbol}",
+                        )
+                    )
         by_target: dict[str, list[SymbolRelocation]] = {}
         for relocation in self.migration.relocations:
             if relocation.symbol in moved:
@@ -474,6 +759,18 @@ class StrictPayloadCutoverCodemod:
             if target_path not in working:
                 continue
             module = cst.parse_module(working[target_path])
+            existing_import_code = {
+                module.code_for_node(statement)
+                for statement in module.body
+                if _imported_names(statement)
+            }
+            imports = [
+                statement
+                for statement in target_imports.get(target_path, [])
+                if module.code_for_node(statement) not in existing_import_code
+            ]
+            if imports:
+                module = module.with_changes(body=(*imports, *module.body))
             existing = {
                 statement.name.value
                 for statement in module.body
@@ -498,7 +795,6 @@ class StrictPayloadCutoverCodemod:
             module = module.with_changes(has_trailing_newline=True)
             working[target_path] = module.code
 
-        diagnostics: list[CodemodDiagnostic] = []
         changes = relocation_changes
         for path in sorted(working):
             result = self.transform_source(working[path], path)
@@ -524,6 +820,7 @@ VERTICAL_SLICE_MIGRATION = DomainMigration(
             "HeartbeatRecordedPayload",
             "src/orchestrator/graph/models.py",
             "src/orchestrator/graph/events/lifecycle.py",
+            "orchestrator.graph.models",
         ),
     ),
     event_routes=(
@@ -544,7 +841,13 @@ VERTICAL_SLICE_MIGRATION = DomainMigration(
             ("HeartbeatRecordedPayload",),
         ),
     ),
-    catalog_injections=(CatalogInjection("GraphController"),),
+    catalog_injections=(
+        CatalogInjection(
+            "GraphController",
+            qualified_names=("orchestrator.graph_runtime.GraphController",),
+        ),
+    ),
+    event_factory_qualified_names=("_apply_record_heartbeat.<locals>.make_event",),
 )
 
 DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
@@ -593,12 +896,14 @@ def run_migration(migration: DomainMigration, root: Path, mode: str) -> Migratio
     if diagnostics:
         diagnostics += "\n"
     if mode == "dry-run":
-        return MigrationRunResult(0, diffs + diagnostics)
+        return MigrationRunResult(1 if diagnostics else 0, diffs + diagnostics)
     if mode == "assert-clean":
         output = diffs + diagnostics
         return MigrationRunResult(1 if output else 0, output)
     if mode != "apply":
         raise ValueError(f"unknown migration mode: {mode}")
+    if diagnostics:
+        return MigrationRunResult(1, diffs + diagnostics)
     for relative_path, transformed in result.sources.items():
         path = root / relative_path
         current = path.read_text() if path.exists() else ""

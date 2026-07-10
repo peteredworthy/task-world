@@ -134,6 +134,8 @@ def test_inventory_resolves_local_branches_and_method_factory_callers(
     source = tmp_path / "branches.py"
     source.write_text(
         """\
+from orchestrator.graph.models import EventEnvelope
+
 def decide(flag, payload):
     event_type = "passed" if flag else "failed"
     return make_event(event_type, payload)
@@ -158,6 +160,8 @@ def test_inventory_classifies_stored_event_hydration(tmp_path: Path) -> None:
     source = tmp_path / "store.py"
     source.write_text(
         """\
+from orchestrator.graph.models import EventEnvelope
+
 def rows_to_events(rows):
     return [
         EventEnvelope(event_type=str(row["event_type"]), payload=row["payload"])
@@ -204,3 +208,127 @@ COMMAND_HANDLERS = {"record_heartbeat": handle_record_heartbeat}
     assert len(domain.raw_producers) == 1
     assert len(domain.raw_handler_boundaries) == 1
     assert not domain.is_clean
+
+
+def test_inventory_resolves_positional_keyword_qualified_and_aliased_envelopes(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "direct.py"
+    source.write_text(
+        """\
+from orchestrator.graph.models import EventEnvelope as Envelope
+import orchestrator.graph.models as graph_models
+
+def EventEnvelope(*args, **kwargs):
+    return (args, kwargs)
+
+local = EventEnvelope(event_type="not_a_graph_event", payload={})
+aliased = Envelope("event-1", "run-1", 0, "aliased_event", payload={})
+qualified = graph_models.EventEnvelope(event_type="qualified_event", payload={})
+"""
+    )
+
+    report = scan_graph_payload_architecture([source])
+
+    assert report.literal_event_names == {"aliased_event", "qualified_event"}
+
+
+def test_call_graph_resolution_does_not_merge_same_named_functions(
+    tmp_path: Path,
+) -> None:
+    first = tmp_path / "first.py"
+    second = tmp_path / "second.py"
+    first.write_text(
+        """\
+def emit(name, payload):
+    return make_event(name, payload)
+
+emit("first_event", {})
+"""
+    )
+    second.write_text(
+        """\
+def emit(name, payload):
+    return make_event(name, payload)
+
+emit("second_event", {})
+"""
+    )
+
+    report = scan_graph_payload_architecture([first, second])
+
+    resolved_by_path = {
+        Path(site.path).name: site.resolved_values for site in report.dynamic_event_sites
+    }
+    assert resolved_by_path == {
+        "first.py": ("first_event",),
+        "second.py": ("second_event",),
+    }
+
+
+def test_call_graph_resolution_scopes_same_named_methods_by_class(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "classes.py"
+    source.write_text(
+        """\
+from orchestrator.graph.models import EventEnvelope
+
+class First:
+    def _event(self, event_type, payload):
+        return EventEnvelope(event_type=event_type, payload=payload)
+    def emit(self):
+        self._event("first_event", {})
+
+class Second:
+    def _event(self, event_type, payload):
+        return EventEnvelope(event_type=event_type, payload=payload)
+    def emit(self):
+        self._event("second_event", {})
+"""
+    )
+
+    report = scan_graph_payload_architecture([source])
+
+    assert [site.resolved_values for site in report.dynamic_event_sites] == [
+        ("first_event",),
+        ("second_event",),
+    ]
+
+
+def test_domain_cleanliness_lists_every_remaining_category_and_location(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "lifecycle.py"
+    source.write_text(
+        """\
+from pydantic import BaseModel, model_validator
+
+LIGHT_GRAPH_PAYLOAD_FIELDS = ("node_id",)
+
+class HeartbeatRecordedPayload(BaseModel):
+    node_id: str
+    @model_validator(mode="before")
+    @classmethod
+    def normalize(cls, value):
+        return value
+
+def handle_record_heartbeat(payload: dict[str, object]):
+    filtered = {key: value for key, value in payload.items() if key in LIGHT_GRAPH_PAYLOAD_FIELDS}
+    return make_event("heartbeat_recorded", filtered)
+
+COMMAND_HANDLERS = {"record_heartbeat": handle_record_heartbeat}
+"""
+    )
+
+    domain = scan_graph_payload_architecture([source]).for_domain("lifecycle")
+    diagnostics = domain.remaining_diagnostics()
+
+    assert [item.split(": ", 1)[0] for item in diagnostics] == [
+        "raw producer",
+        "raw handler boundary",
+        "compatibility model",
+        "allowlist",
+        "partial payload consumer",
+    ]
+    assert all(f"{source}:" in item for item in diagnostics)

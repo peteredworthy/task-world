@@ -190,6 +190,7 @@ class DomainInventory:
     raw_handler_boundaries: tuple[CommandHandler, ...]
     compatibility_models: tuple[PayloadModel, ...]
     allowlists: tuple[NamedSite, ...]
+    partial_payload_consumers: tuple[SourceSite, ...]
 
     @property
     def is_clean(self) -> bool:
@@ -198,7 +199,35 @@ class DomainInventory:
             or self.raw_handler_boundaries
             or self.compatibility_models
             or self.allowlists
+            or self.partial_payload_consumers
         )
+
+    def remaining_diagnostics(self) -> tuple[str, ...]:
+        diagnostics: list[str] = []
+        diagnostics.extend(
+            f"raw producer: {site.path}:{site.line}:{site.column}: "
+            f"{getattr(site, 'name', getattr(site, 'expression', 'event construction'))}"
+            for site in self.raw_producers
+        )
+        diagnostics.extend(
+            f"raw handler boundary: {site.path}:{site.line}:{site.column}: "
+            f"{site.command_name} -> {site.handler_expression} ({site.payload_annotation})"
+            for site in self.raw_handler_boundaries
+        )
+        diagnostics.extend(
+            f"compatibility model: {site.path}:{site.line}:{site.column}: {site.name}"
+            for site in self.compatibility_models
+        )
+        diagnostics.extend(
+            f"allowlist: {site.path}:{site.line}:{site.column}: {site.name}"
+            for site in self.allowlists
+        )
+        diagnostics.extend(
+            f"partial payload consumer: {site.path}:{site.line}:{site.column}: "
+            "allowlist-based extraction"
+            for site in self.partial_payload_consumers
+        )
+        return tuple(diagnostics)
 
 
 @dataclass(frozen=True)
@@ -286,6 +315,7 @@ class InventoryReport:
             )
         )
         allowlists = tuple(site for site in self.allowlists if relevant(site))
+        partial_consumers = tuple(site for site in self.partial_payload_consumers if relevant(site))
         event_names = tuple(
             sorted(
                 {site.name for site in literal_sites}
@@ -316,6 +346,7 @@ class InventoryReport:
             raw_handler_boundaries=handlers,
             compatibility_models=models,
             allowlists=allowlists,
+            partial_payload_consumers=partial_consumers,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -370,6 +401,7 @@ class _ParsedFile:
     parents: dict[ast.AST, ast.AST]
     functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef]
     calls: dict[str, list[ast.Call]]
+    imports: dict[str, str]
 
 
 def _parse(path: Path) -> _ParsedFile:
@@ -377,16 +409,50 @@ def _parse(path: Path) -> _ParsedFile:
     parents: dict[ast.AST, ast.AST] = {}
     functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
     calls: dict[str, list[ast.Call]] = {}
+    imports: dict[str, str] = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
             parents[child] = parent
         if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
             functions[parent.name] = parent
-        if isinstance(parent, ast.Call):
-            name = _call_name(parent.func)
-            if name is not None:
-                calls.setdefault(name, []).append(parent)
-    return _ParsedFile(path, tree, parents, functions, calls)
+        if isinstance(parent, ast.ImportFrom) and parent.module is not None:
+            for alias in parent.names:
+                imports[alias.asname or alias.name] = f"{parent.module}.{alias.name}"
+        if isinstance(parent, ast.Import):
+            for alias in parent.names:
+                imports[alias.asname or alias.name.split(".")[0]] = alias.name
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            imports.pop(node.name, None)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            key = _scoped_call_key(node, parents)
+            if key is not None:
+                calls.setdefault(key, []).append(node)
+    return _ParsedFile(path, tree, parents, functions, calls, imports)
+
+
+def _enclosing_classes(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> tuple[str, ...]:
+    classes: list[str] = []
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, ast.ClassDef):
+            classes.append(current.name)
+    return tuple(reversed(classes))
+
+
+def _scoped_call_key(call: ast.Call, parents: dict[ast.AST, ast.AST]) -> str | None:
+    if isinstance(call.func, ast.Name):
+        return call.func.id
+    if not isinstance(call.func, ast.Attribute):
+        return None
+    if isinstance(call.func.value, ast.Name):
+        if call.func.value.id in {"self", "cls"}:
+            classes = _enclosing_classes(call, parents)
+            return ".".join((*classes, call.func.attr))
+        return f"{call.func.value.id}.{call.func.attr}"
+    return call.func.attr
 
 
 def _call_name(node: ast.expr) -> str | None:
@@ -422,6 +488,7 @@ def _resolve_parameter(
     expression: ast.expr,
     owner: ast.FunctionDef | ast.AsyncFunctionDef | None,
     all_calls: dict[str, list[ast.Call]],
+    owner_key: str,
 ) -> tuple[str, ...]:
     direct = _literal_strings(expression)
     if direct:
@@ -450,7 +517,7 @@ def _resolve_parameter(
     if parameter_names and parameter_names[0] in {"self", "cls"}:
         index -= 1
     values: set[str] = set()
-    for call in all_calls.get(owner.name, []):
+    for call in all_calls.get(owner_key, []):
         argument: ast.expr | None = call.args[index] if index < len(call.args) else None
         if argument is None:
             argument = next((kw.value for kw in call.keywords if kw.arg == expression.id), None)
@@ -464,10 +531,31 @@ def _site(path: Path, node: ast.AST) -> SourceSite:
     return SourceSite(str(path), located.lineno, located.col_offset)
 
 
-def _event_argument(call: ast.Call) -> ast.expr | None:
+def _qualified_call_name(node: ast.expr, imports: dict[str, str]) -> str | None:
+    if isinstance(node, ast.Name):
+        return imports.get(node.id)
+    if isinstance(node, ast.Attribute):
+        parts: list[str] = []
+        current: ast.expr = node
+        while isinstance(current, ast.Attribute):
+            parts.append(current.attr)
+            current = current.value
+        if isinstance(current, ast.Name) and current.id in imports:
+            return ".".join((imports[current.id], *reversed(parts)))
+    return None
+
+
+def _event_argument(call: ast.Call, parsed: _ParsedFile) -> ast.expr | None:
     name = _call_name(call.func)
-    if name == "EventEnvelope":
-        return next((kw.value for kw in call.keywords if kw.arg == "event_type"), None)
+    qualified_name = _qualified_call_name(call.func, parsed.imports)
+    if qualified_name in {
+        "orchestrator.graph.EventEnvelope",
+        "orchestrator.graph.models.EventEnvelope",
+    }:
+        keyword = next((kw.value for kw in call.keywords if kw.arg == "event_type"), None)
+        if keyword is not None:
+            return keyword
+        return call.args[3] if len(call.args) > 3 else None
     if name == "make_event":
         return call.args[0] if call.args else None
     return None
@@ -477,13 +565,17 @@ def _dynamic_classification(
     call: ast.Call,
     expression: ast.expr,
     parsed: _ParsedFile,
-    all_calls: dict[str, list[ast.Call]],
 ) -> tuple[str, tuple[str, ...]]:
     owner = _owner_function(call, parsed)
     owner_name = owner.name if owner is not None else ""
     if owner_name in {"make_event", "event_factory"}:
         return "generic_factory_definition", ()
-    values = _resolve_parameter(expression, owner, all_calls)
+    owner_key = (
+        owner_name
+        if owner is None
+        else ".".join((*_enclosing_classes(owner, parsed.parents), owner_name))
+    )
+    values = _resolve_parameter(expression, owner, parsed.calls, owner_key)
     if values:
         return "resolved_finite", values
     if _call_name(call.func) == "EventEnvelope":
@@ -603,13 +695,6 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     for path in paths:
         expanded.extend(path.rglob("*.py") if path.is_dir() else [path])
     parsed_files = [_parse(path) for path in sorted(set(expanded), key=lambda p: str(p))]
-    all_calls: dict[str, list[ast.Call]] = {}
-    all_functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
-    for parsed in parsed_files:
-        all_functions.update(parsed.functions)
-        for name, calls in parsed.calls.items():
-            all_calls.setdefault(name, []).extend(calls)
-
     literal_sites: list[NamedSite] = []
     nonproduction_sites: list[NamedSite | DynamicSite] = []
     dynamic_sites: list[DynamicSite] = []
@@ -624,7 +709,7 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     for parsed in parsed_files:
         for node in ast.walk(parsed.tree):
             if isinstance(node, ast.Call):
-                argument = _event_argument(node)
+                argument = _event_argument(node, parsed)
                 if argument is not None:
                     values = _literal_strings(argument)
                     if values:
@@ -636,9 +721,7 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
                         if parsed.path.name == "scenario.py":
                             nonproduction_sites.extend(new_sites)
                     else:
-                        classification, resolved = _dynamic_classification(
-                            node, argument, parsed, all_calls
-                        )
+                        classification, resolved = _dynamic_classification(node, argument, parsed)
                         dynamic_site = DynamicSite(
                             str(parsed.path),
                             node.lineno,
@@ -687,7 +770,7 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
                                         handler.col_offset,
                                         command_name,
                                         ast.unparse(handler),
-                                        _handler_annotation(handler, all_functions),
+                                        _handler_annotation(handler, parsed.functions),
                                     )
                                 )
                         elif key is not None:
@@ -773,7 +856,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.check_domain:
         domain = report.for_domain(args.check_domain)
         if not domain.is_clean:
-            errors.append(f"domain {args.check_domain!r} still has raw payload architecture sites")
+            errors.extend(domain.remaining_diagnostics())
     for error in errors:
         print(error, file=sys.stderr)
     return 1 if errors else 0
