@@ -1173,6 +1173,178 @@ class CleanupEventPayloadBase(GraphEventPayloadBase):
     pass
 
 
+def _normalize_decision_event_payload(value: Any, known_keys: set[str]) -> Any:
+    if not isinstance(value, dict):
+        return value
+    payload = dict(cast(dict[str, Any], value))
+    normalized_extra = payload.get("extra")
+    extra = (
+        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
+    )
+    string_keys = {
+        "run_id",
+        "decision_type",
+        "node_id",
+        "decision",
+        "outcome",
+        "verdict",
+        "task_region_id",
+        "gate_id",
+        "appeal_node_id",
+        "appealed_node_id",
+        "candidate_id",
+        "appeal_type",
+        "expires_at",
+        "reason",
+        "record_id",
+        "lease_id",
+    }
+    for key in string_keys & known_keys:
+        if payload.get(key) is not None and not isinstance(payload[key], str):
+            extra.setdefault(key, payload.pop(key))
+    if (
+        "approved" in known_keys
+        and payload.get("approved") is not None
+        and not isinstance(payload["approved"], bool)
+    ):
+        extra.setdefault("approved", payload.pop("approved"))
+    membership = payload.get("membership")
+    if membership is not None and not isinstance(membership, dict):
+        extra.setdefault("membership", payload.pop("membership"))
+        membership = None
+    if isinstance(membership, dict):
+        typed_membership = cast(dict[str, Any], membership)
+        for key in ("task_region_id", "candidate_id"):
+            if payload.get(key) is None and isinstance(typed_membership.get(key), str):
+                payload[key] = typed_membership[key]
+    for key in list(payload):
+        if key not in known_keys:
+            extra.setdefault(key, payload.pop(key))
+    payload["extra"] = extra
+    return payload
+
+
+class AppealOpenedPayload(GraphEventPayloadBase):
+    run_id: str | None = None
+    node_id: str | None = None
+    appealed_node_id: str | None = None
+    candidate_id: str | None = None
+    task_region_id: str | None = None
+    appeal_type: str | None = None
+    lease_id: str | None = None
+    membership: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_decision_event_payload(
+            value,
+            {
+                "run_id",
+                "node_id",
+                "appealed_node_id",
+                "candidate_id",
+                "task_region_id",
+                "appeal_type",
+                "lease_id",
+                "membership",
+                "extra",
+            },
+        )
+
+
+class DecisionRecordedPayloadBase(GraphEventPayloadBase):
+    run_id: str | None = None
+    decision_type: str | None = None
+    node_id: str | None = None
+    decision: str | None = None
+    outcome: str | None = None
+    verdict: str | None = None
+    approved: bool | None = None
+    task_region_id: str | None = None
+    gate_id: str | None = None
+    appeal_node_id: str | None = None
+    appealed_node_id: str | None = None
+    candidate_id: str | None = None
+    appeal_type: str | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+    record_id: str | None = None
+    membership: dict[str, Any] | None = None
+    decider: Any | None = None
+    scope: Any | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_decision_event_payload(
+            value,
+            {
+                "run_id",
+                "decision_type",
+                "node_id",
+                "decision",
+                "outcome",
+                "verdict",
+                "approved",
+                "task_region_id",
+                "gate_id",
+                "appeal_node_id",
+                "appealed_node_id",
+                "candidate_id",
+                "appeal_type",
+                "expires_at",
+                "reason",
+                "record_id",
+                "membership",
+                "decider",
+                "scope",
+                "extra",
+            },
+        )
+
+
+class ApprovalDecisionRecordedPayload(DecisionRecordedPayloadBase):
+    @model_validator(mode="after")
+    def normalize_decision_aliases(self) -> "ApprovalDecisionRecordedPayload":
+        decision = _normalize_approval_decision(self.decision) or _normalize_approval_decision(
+            self.outcome
+        )
+        if decision is None and isinstance(self.approved, bool):
+            decision = "approved" if self.approved else "rejected"
+        if decision is not None:
+            self.decision = decision
+        return self
+
+
+class AuthorityDecisionRecordedPayload(DecisionRecordedPayloadBase):
+    @model_validator(mode="after")
+    def normalize_decision_aliases(self) -> "AuthorityDecisionRecordedPayload":
+        decision = _normalize_authority_decision(self.decision) or _normalize_authority_decision(
+            self.outcome
+        )
+        if decision is None and isinstance(self.approved, bool):
+            decision = "granted" if self.approved else "denied"
+        if decision is not None:
+            self.decision = decision
+        return self
+
+
+class OversightDecisionRecordedPayload(DecisionRecordedPayloadBase):
+    @model_validator(mode="after")
+    def normalize_decision_aliases(self) -> "OversightDecisionRecordedPayload":
+        decision = self.decision or self.outcome or self.verdict
+        if decision == "approved":
+            decision = "accepted"
+        elif decision == "denied":
+            decision = "rejected"
+        elif decision is None and isinstance(self.approved, bool):
+            decision = "accepted" if self.approved else "rejected"
+        if decision in {"accepted", "rejected", "invalid_test_accepted"}:
+            self.decision = decision
+        return self
+
+
 def _normalize_cleanup_event_payload(value: Any, known_keys: set[str]) -> Any:
     if not isinstance(value, dict):
         return value

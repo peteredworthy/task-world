@@ -19,9 +19,12 @@ from orchestrator.graph.contracts import (
 )
 from orchestrator.graph.models import (
     AnalysisSummaryRecord,
+    AppealOpenedPayload,
+    ApprovalDecisionRecordedPayload,
     ApprovalDecisionProjection,
     ArtifactReferenceRecord,
     AuthorityDecisionProjection,
+    AuthorityDecisionRecordedPayload,
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
     CallbackIdempotencyEvent,
@@ -65,6 +68,7 @@ from orchestrator.graph.models import (
     NodeKind,
     NodeState,
     OversightDecisionProjection,
+    OversightDecisionRecordedPayload,
     OutputRecord,
     OutputRecordPayload,
     PendingGateDecisionProjection,
@@ -2128,16 +2132,25 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_verdict(next_state, event)
         _record_verification_result(next_state, event)
     elif event.event_type == "appeal_opened":
-        _record_open_appeal(next_state, event)
+        _record_open_appeal(
+            next_state,
+            AppealOpenedPayload.model_validate(event.payload),
+            event.position,
+        )
     elif event.event_type == "oversight_decision_recorded":
-        _record_latest_decision(next_state["oversight_decisions"], event)
-        _record_oversight_decision(next_state, event)
+        oversight_payload = OversightDecisionRecordedPayload.model_validate(event.payload)
+        _record_latest_decision(
+            next_state["oversight_decisions"], oversight_payload, event.position
+        )
+        _record_oversight_decision(next_state, oversight_payload, event.position)
     elif event.event_type == "approval_decision_recorded":
-        _record_latest_approval_decision(next_state["approval_decisions"], event)
-        _record_gate_decision(next_state, event)
+        approval_payload = ApprovalDecisionRecordedPayload.model_validate(event.payload)
+        _record_latest_approval_decision(next_state["approval_decisions"], approval_payload)
+        _record_gate_decision(next_state, approval_payload)
     elif event.event_type == "authority_decision_recorded":
-        _record_latest_authority_decision(next_state["authority_decisions"], event)
-        _record_authority_decision(next_state, event)
+        authority_payload = AuthorityDecisionRecordedPayload.model_validate(event.payload)
+        _record_latest_authority_decision(next_state["authority_decisions"], authority_payload)
+        _record_authority_decision(next_state, authority_payload)
     elif event.event_type == "node_authority_changed":
         _record_authority_change(next_state, event)
     elif event.event_type in {"environment_failure_accepted", "check_result_classified"}:
@@ -4027,38 +4040,43 @@ def _latest_node_creation_payloads(
 
 def _record_latest_decision(
     decisions: dict[str, OversightDecisionProjection],
-    event: EventEnvelope,
+    payload: OversightDecisionRecordedPayload,
+    position: int,
 ) -> None:
-    payload = _oversight_decision_from_event(event)
-    if payload is None:
+    projection_payload = payload.model_dump(mode="json")
+    projection_payload["position"] = position
+    if projection_payload.get("node_id") is None and payload.appeal_node_id is not None:
+        projection_payload["node_id"] = payload.appeal_node_id
+    decision = _oversight_decision_from_payload(projection_payload)
+    if decision is None:
         return
-    decisions[payload.node_id] = payload
-    if payload.appeal_node_id is not None:
-        decisions[payload.appeal_node_id] = payload
+    decisions[decision.node_id] = decision
+    if decision.appeal_node_id is not None:
+        decisions[decision.appeal_node_id] = decision
 
 
 def _record_latest_approval_decision(
     decisions: dict[str, ApprovalDecisionProjection],
-    event: EventEnvelope,
+    payload: ApprovalDecisionRecordedPayload,
 ) -> None:
-    payload = _approval_decision_from_payload(dict(event.payload))
-    if payload is None:
+    decision = _approval_decision_from_payload(payload.model_dump(mode="json"))
+    if decision is None:
         return
-    decisions[payload.node_id] = payload
-    if payload.appeal_node_id is not None:
-        decisions[payload.appeal_node_id] = payload
+    decisions[decision.node_id] = decision
+    if decision.appeal_node_id is not None:
+        decisions[decision.appeal_node_id] = decision
 
 
 def _record_latest_authority_decision(
     decisions: dict[str, AuthorityDecisionProjection],
-    event: EventEnvelope,
+    payload: AuthorityDecisionRecordedPayload,
 ) -> None:
-    payload = _authority_decision_from_payload(dict(event.payload))
-    if payload is None:
+    decision = _authority_decision_from_payload(payload.model_dump(mode="json"))
+    if decision is None:
         return
-    decisions[payload.node_id] = payload
-    if payload.appeal_node_id is not None:
-        decisions[payload.appeal_node_id] = payload
+    decisions[decision.node_id] = decision
+    if decision.appeal_node_id is not None:
+        decisions[decision.appeal_node_id] = decision
 
 
 def _approval_decision_from_payload(
@@ -4077,18 +4095,6 @@ def _authority_decision_from_payload(
         return AuthorityDecisionProjection.model_validate(payload)
     except ValueError:
         return None
-
-
-def _oversight_decision_from_event(event: EventEnvelope) -> OversightDecisionProjection | None:
-    payload = {
-        **event.payload,
-        "position": event.position,
-    }
-    node_id = payload.get("node_id")
-    appeal_node_id = payload.get("appeal_node_id")
-    if not isinstance(node_id, str) and isinstance(appeal_node_id, str):
-        payload["node_id"] = appeal_node_id
-    return _oversight_decision_from_payload(payload)
 
 
 def _oversight_decision_from_payload(
@@ -4805,22 +4811,22 @@ def _record_latest_routine_snapshot(state: GraphProjection, event: EventEnvelope
     )
 
 
-def _record_open_appeal(state: GraphProjection, event: EventEnvelope) -> None:
-    appealed_node_id = event.payload.get("appealed_node_id")
-    if not isinstance(appealed_node_id, str):
-        node_id = event.payload.get("node_id")
-        if isinstance(node_id, str) and node_id in state["node_states"]:
-            appealed_node_id = node_id
+def _record_open_appeal(
+    state: GraphProjection, payload: AppealOpenedPayload, position: int
+) -> None:
+    appealed_node_id = payload.appealed_node_id
+    if appealed_node_id is None and payload.node_id in state["node_states"]:
+        appealed_node_id = payload.node_id
     if isinstance(appealed_node_id, str):
         state["node_pending_appeals"][appealed_node_id] = True
 
-    task_region_id = _task_region_id(event.payload)
-    candidate_id = _candidate_id(event.payload)
+    task_region_id = payload.task_region_id
+    candidate_id = payload.candidate_id
     if task_region_id is None and candidate_id is not None:
         task_region_id = _task_region_for_candidate(state, candidate_id)
     if task_region_id is None:
         return
-    if event.payload.get("appeal_type") == "invalid_test":
+    if payload.appeal_type == "invalid_test":
         block_payload = _invalid_test_block_payload(
             state["invalid_test_blocks"].get(task_region_id)
         )
@@ -4828,7 +4834,7 @@ def _record_open_appeal(state: GraphProjection, event: EventEnvelope) -> None:
             {
                 "appeal_open": True,
                 "candidate_id": candidate_id,
-                "position": event.position,
+                "position": position,
             }
         )
         block = _invalid_test_block_from_payload(block_payload)
@@ -4836,20 +4842,24 @@ def _record_open_appeal(state: GraphProjection, event: EventEnvelope) -> None:
             state["invalid_test_blocks"][task_region_id] = block
 
 
-def _record_oversight_decision(state: GraphProjection, event: EventEnvelope) -> None:
-    appealed_node_id = event.payload.get("appealed_node_id")
+def _record_oversight_decision(
+    state: GraphProjection,
+    payload: OversightDecisionRecordedPayload,
+    position: int,
+) -> None:
+    appealed_node_id = payload.appealed_node_id
     if isinstance(appealed_node_id, str):
         state["node_pending_appeals"][appealed_node_id] = False
 
-    task_region_id = _task_region_id(event.payload)
-    candidate_id = _candidate_id(event.payload)
+    task_region_id = payload.task_region_id
+    candidate_id = payload.candidate_id
     if task_region_id is None and candidate_id is not None:
         task_region_id = _task_region_for_candidate(state, candidate_id)
     if task_region_id is None:
         return
 
-    decision = _normalized_oversight_decision(event.payload)
-    appeal_type = event.payload.get("appeal_type")
+    decision = payload.decision
+    appeal_type = payload.appeal_type
     accepted_invalid_test = decision in {"accepted", "invalid_test_accepted"} and (
         appeal_type in {None, "invalid_test"} or decision == "invalid_test_accepted"
     )
@@ -4858,33 +4868,18 @@ def _record_oversight_decision(state: GraphProjection, event: EventEnvelope) -> 
             {
                 "accepted": True,
                 "candidate_id": candidate_id,
-                "position": event.position,
+                "position": position,
             }
         )
         if block is not None:
             state["invalid_test_blocks"][task_region_id] = block
 
 
-def _normalized_oversight_decision(payload: dict[str, Any]) -> str | None:
-    for key in ("decision", "outcome", "verdict"):
-        value = payload.get(key)
-        if value in {"accepted", "invalid_test_accepted", "rejected"}:
-            return cast(str, value)
-        if value == "approved":
-            return "accepted"
-        if value == "denied":
-            return "rejected"
-    approved = payload.get("approved")
-    if isinstance(approved, bool):
-        return "accepted" if approved else "rejected"
-    return None
-
-
-def _record_gate_decision(state: GraphProjection, event: EventEnvelope) -> None:
-    task_region_id = _task_region_id(event.payload)
-    node_id = event.payload.get("node_id")
-    decision = event.payload.get("decision")
-    approved = event.payload.get("approved")
+def _record_gate_decision(state: GraphProjection, payload: ApprovalDecisionRecordedPayload) -> None:
+    task_region_id = payload.task_region_id
+    node_id = payload.node_id
+    decision = payload.decision
+    approved = payload.approved
     passed = approved is True or decision in {"approved", "passed", "accepted"}
     if isinstance(node_id, str):
         state["node_gate_decisions"][node_id] = passed
@@ -4892,7 +4887,7 @@ def _record_gate_decision(state: GraphProjection, event: EventEnvelope) -> None:
         task_region_id = state["node_task_regions"].get(node_id)
     if task_region_id is None:
         return
-    gate_id = event.payload.get("gate_id")
+    gate_id = payload.gate_id
     if not isinstance(gate_id, str):
         gate_id = node_id
     if not isinstance(gate_id, str):
@@ -4900,9 +4895,11 @@ def _record_gate_decision(state: GraphProjection, event: EventEnvelope) -> None:
     state["gate_decisions"].setdefault(task_region_id, {})[gate_id] = passed
 
 
-def _record_authority_decision(state: GraphProjection, event: EventEnvelope) -> None:
-    node_id = event.payload.get("node_id")
-    decision = event.payload.get("decision")
+def _record_authority_decision(
+    state: GraphProjection, payload: AuthorityDecisionRecordedPayload
+) -> None:
+    node_id = payload.node_id
+    decision = payload.decision
     passed = decision in {"granted", "approved", "passed", "accepted"}
     if isinstance(node_id, str):
         state["node_gate_decisions"][node_id] = passed

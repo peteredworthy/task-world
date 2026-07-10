@@ -87,8 +87,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "only reads from_node_id/to_node_id",
     "active": "requirement_revisions/active_requirement_versions bookkeeping",
     "allowed_actions": "node_allowed_actions: scheduler-only substate",
-    "appeal_node_id": "decision_request_details/decision-view bookkeeping (_record_latest_decision)",
-    "appealed_node_id": "node_pending_appeals: scheduler-only substate",
     "authority": "decision_request_details authority payload, not read by task_states",
     "authority_required_reason": "requirement_revisions / decision_request_details bookkeeping",
     "behavior_change": "requirement revision classification helper, not task_states",

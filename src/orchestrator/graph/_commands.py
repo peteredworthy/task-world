@@ -26,7 +26,10 @@ from orchestrator.graph.models import (
     Actor,
     ActorKind,
     AnalysisSummaryRecord,
+    AppealOpenedPayload,
+    ApprovalDecisionRecordedPayload,
     ArtifactReferenceRecord,
+    AuthorityDecisionRecordedPayload,
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
     CandidateRecord,
@@ -50,6 +53,7 @@ from orchestrator.graph.models import (
     LeaseRenewedPayload,
     LeaseRevokedPayload,
     OutputRecord,
+    OversightDecisionRecordedPayload,
     PatchEnvelope,
     PatchOp,
     PlannerSessionStateChangedPayload,
@@ -4133,14 +4137,16 @@ def _apply_raise_appeal(
     return [
         make_event(
             "appeal_opened",
-            {
-                "node_id": str(payload.get("appeal_node_id", id_gen.next_id("appeal"))),
-                "appealed_node_id": node_id,
-                "candidate_id": payload.get("candidate_id"),
-                "task_region_id": payload.get("task_region_id"),
-                "appeal_type": appeal_type,
-                "lease_id": payload.get("lease_id"),
-            },
+            AppealOpenedPayload.model_validate(
+                {
+                    "node_id": str(payload.get("appeal_node_id", id_gen.next_id("appeal"))),
+                    "appealed_node_id": node_id,
+                    "candidate_id": payload.get("candidate_id"),
+                    "task_region_id": payload.get("task_region_id"),
+                    "appeal_type": appeal_type,
+                    "lease_id": payload.get("lease_id"),
+                }
+            ).model_dump(mode="json"),
         ),
         make_event(
             "node_created",
@@ -4214,7 +4220,14 @@ def _apply_record_decision(
         decision_record = _decision_output_record(projection, node_id, event_payload, decision_type)
     except ValueError as exc:
         return [_command_rejected(make_event, "record_decision", f"invalid decision record: {exc}")]
-    output = [make_event(event_type, event_payload)]
+    payload_model = {
+        "approval_decision_recorded": ApprovalDecisionRecordedPayload,
+        "authority_decision_recorded": AuthorityDecisionRecordedPayload,
+        "oversight_decision_recorded": OversightDecisionRecordedPayload,
+    }[event_type]
+    output = [
+        make_event(event_type, payload_model.model_validate(event_payload).model_dump(mode="json"))
+    ]
     if decision_record is not None:
         output.append(make_event("output_record_accepted", decision_record))
         output.extend(
