@@ -75,10 +75,13 @@ from orchestrator.graph.models import (
     PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
     RequirementRecord,
+    RequirementAuthorityResolutionPayload,
+    RequirementRevisionPayload,
     RequirementRevisionProjection,
     ResourceClaimProjection,
     RoutineSnapshotRecord,
     SupportEvidenceProjection,
+    SupportEvidencePayload,
     VerificationReportRecord,
     VerificationResultProjection,
     VerifierVerdictProjection,
@@ -2863,7 +2866,10 @@ def _authority_revision_blockers(
         ]
     unresolved: dict[str, FinalInvariantBlocker] = {}
     for event in events:
-        revision_id = _revision_id(event.payload)
+        payload = _authority_revision_payload_for_event(event)
+        if payload is None:
+            continue
+        revision_id = _revision_id(payload)
         if revision_id is None:
             continue
         if event.event_type in {
@@ -2871,14 +2877,14 @@ def _authority_revision_blockers(
             "requirement_amended",
             "requirement_revision_proposed",
         }:
-            if not _requires_authority_resolution(event.payload):
+            if not _requires_authority_resolution(payload):
                 continue
             blocker: FinalInvariantBlocker = {
                 "kind": "unresolved_authority_required_revision",
                 "reason": "semantic or new-behavior requirement revision lacks authority resolution",
                 "revision_id": revision_id,
             }
-            requirement_id = _requirement_id(event.payload)
+            requirement_id = _requirement_id(payload)
             if requirement_id is not None:
                 blocker["requirement_id"] = requirement_id
             unresolved[revision_id] = blocker
@@ -2974,7 +2980,10 @@ def _record_suspect_node_reason(state: GraphProjection, event: EventEnvelope) ->
 
 
 def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvelope) -> None:
-    revision_id = _revision_id(event.payload)
+    payload = _authority_revision_payload_for_event(event)
+    if payload is None:
+        return
+    revision_id = _revision_id(payload)
     if revision_id is None:
         return
     if event.event_type in {
@@ -2982,7 +2991,7 @@ def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvel
         "requirement_amended",
         "requirement_revision_proposed",
     }:
-        if not _requires_authority_resolution(event.payload):
+        if not _requires_authority_resolution(payload):
             state["authority_revision_blockers"].pop(revision_id, None)
             return
         blocker: FinalInvariantBlocker = {
@@ -2990,7 +2999,7 @@ def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvel
             "reason": "semantic or new-behavior requirement revision lacks authority resolution",
             "revision_id": revision_id,
         }
-        requirement_id = _requirement_id(event.payload)
+        requirement_id = _requirement_id(payload)
         if requirement_id is not None:
             blocker["requirement_id"] = requirement_id
         state["authority_revision_blockers"][revision_id] = blocker
@@ -3000,6 +3009,24 @@ def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvel
         "requirement_revision_authorized",
     }:
         state["authority_revision_blockers"].pop(revision_id, None)
+
+
+def _authority_revision_payload_for_event(event: EventEnvelope) -> dict[str, Any] | None:
+    if event.event_type in {
+        "requirement_revision_recorded",
+        "requirement_amended",
+        "requirement_revision_proposed",
+    }:
+        return RequirementRevisionPayload.model_validate(event.payload).model_dump(mode="json")
+    if event.event_type in {
+        "authority_resolution_recorded",
+        "authority_resolved",
+        "requirement_revision_authorized",
+    }:
+        return RequirementAuthorityResolutionPayload.model_validate(event.payload).model_dump(
+            mode="json"
+        )
+    return None
 
 
 def _revision_id(payload: dict[str, Any]) -> str | None:
@@ -4960,18 +4987,19 @@ def _edge_required(value: Any) -> bool:
 
 
 def _record_requirement_revision(state: GraphProjection, event: EventEnvelope) -> None:
-    requirement_id = event.payload.get("requirement_id")
+    payload = RequirementRevisionPayload.model_validate(event.payload).model_dump(mode="json")
+    requirement_id = payload.get("requirement_id")
     if not isinstance(requirement_id, str):
         return
 
-    version_id = event.payload.get("version_id")
+    version_id = payload.get("version_id")
     if not isinstance(version_id, str):
-        version_id = event.payload.get("requirement_version_id")
+        version_id = payload.get("requirement_version_id")
     if not isinstance(version_id, str):
         version_id = f"{requirement_id}.v{event.position}"
 
-    classification = _requirement_revision_classification(event.payload)
-    requires_authority = _requires_explicit_requirement_authority(event.payload, classification)
+    classification = _requirement_revision_classification(payload)
+    requires_authority = _requires_explicit_requirement_authority(payload, classification)
     revision_payload: dict[str, Any] = {
         "requirement_id": requirement_id,
         "version_id": version_id,
@@ -4979,17 +5007,17 @@ def _record_requirement_revision(state: GraphProjection, event: EventEnvelope) -
         "requires_authority": requires_authority,
         "position": event.position,
     }
-    previous_version_id = event.payload.get("previous_version_id")
+    previous_version_id = payload.get("previous_version_id")
     if isinstance(previous_version_id, str):
         revision_payload["previous_version_id"] = previous_version_id
-    revision_index = event.payload.get("revision_index")
+    revision_index = payload.get("revision_index")
     if isinstance(revision_index, int) and not isinstance(revision_index, bool):
         revision_payload["revision_index"] = revision_index
-    authority_reason = _authority_required_reason(event.payload, classification)
+    authority_reason = _authority_required_reason(payload, classification)
     if authority_reason is not None:
         revision_payload["authority_required_reason"] = authority_reason
     validation_strengthening = (
-        event.payload.get("validation_strengthening") is True
+        payload.get("validation_strengthening") is True
         or classification == "validation_strengthening"
     )
     revision_payload["validation_strengthening"] = validation_strengthening
@@ -4998,33 +5026,34 @@ def _record_requirement_revision(state: GraphProjection, event: EventEnvelope) -
     if revision is None:
         return
     state["requirement_revisions"][version_id] = revision
-    if event.payload.get("active") is not False:
+    if payload.get("active") is not False:
         state["active_requirement_versions"][requirement_id] = version_id
     if validation_strengthening:
         _mark_superseded_support_stale(state, requirement_id, version_id)
 
 
 def _record_support_evidence(state: GraphProjection, event: EventEnvelope) -> None:
-    support_id = event.payload.get("support_id")
+    payload = SupportEvidencePayload.model_validate(event.payload).model_dump(mode="json")
+    support_id = payload.get("support_id")
     if not isinstance(support_id, str):
-        support_id = event.payload.get("edge_id")
+        support_id = payload.get("edge_id")
     if not isinstance(support_id, str):
         return
 
-    evidence_id = event.payload.get("evidence_id")
-    requirement_id = event.payload.get("requirement_id")
+    evidence_id = payload.get("evidence_id")
+    requirement_id = payload.get("requirement_id")
     if not isinstance(evidence_id, str) or not isinstance(requirement_id, str):
         return
 
-    requirement_version_id = event.payload.get("requirement_version_id")
+    requirement_version_id = payload.get("requirement_version_id")
     if not isinstance(requirement_version_id, str):
-        requirement_version_id = event.payload.get("version_id")
+        requirement_version_id = payload.get("version_id")
     if not isinstance(requirement_version_id, str):
         requirement_version_id = state["active_requirement_versions"].get(requirement_id)
     if not isinstance(requirement_version_id, str):
         return
 
-    status = event.payload.get("status", "active")
+    status = payload.get("status", "active")
     if not isinstance(status, str):
         status = "active"
     support_payload: dict[str, Any] = {
@@ -5035,10 +5064,10 @@ def _record_support_evidence(state: GraphProjection, event: EventEnvelope) -> No
         "status": status,
         "position": event.position,
     }
-    stale_reason = event.payload.get("stale_reason")
+    stale_reason = payload.get("stale_reason")
     if isinstance(stale_reason, str):
         support_payload["stale_reason"] = stale_reason
-    confidence = event.payload.get("confidence")
+    confidence = payload.get("confidence")
     if isinstance(confidence, str):
         support_payload["confidence"] = confidence
     support = _support_evidence_from_payload(support_payload)

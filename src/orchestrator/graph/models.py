@@ -1563,6 +1563,140 @@ class GraphPatchStatusPayload(GraphEventPayloadBase):
         )
 
 
+def _normalize_requirement_event_payload(value: Any, known_keys: set[str]) -> Any:
+    if not isinstance(value, dict):
+        return value
+
+    payload = dict(cast(dict[str, Any], value))
+    normalized_extra = payload.get("extra")
+    extra = (
+        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
+    )
+    string_keys = {
+        "run_id",
+        "requirement_id",
+        "id",
+        "node_id",
+        "revision_id",
+        "version_id",
+        "requirement_version_id",
+        "proposal_id",
+        "patch_id",
+        "change_classification",
+        "classification",
+        "revision_type",
+        "previous_version_id",
+        "authority_required_reason",
+        "support_id",
+        "edge_id",
+        "evidence_id",
+        "status",
+        "stale_reason",
+        "confidence",
+    }
+    boolean_keys = {
+        "requires_authority",
+        "explicit_authority_required",
+        "new_behavior",
+        "behavior_change",
+        "semantic_change",
+        "validation_strengthening",
+        "active",
+    }
+
+    for key in string_keys & known_keys:
+        field_value = payload.get(key)
+        if field_value is not None and not isinstance(field_value, str):
+            extra.setdefault(key, payload.pop(key))
+    for key in boolean_keys & known_keys:
+        field_value = payload.get(key)
+        if field_value is not None and not isinstance(field_value, bool):
+            extra.setdefault(key, payload.pop(key))
+    if "revision_index" in known_keys:
+        revision_index = payload.get("revision_index")
+        if revision_index is not None and (
+            not isinstance(revision_index, int) or isinstance(revision_index, bool)
+        ):
+            extra.setdefault("revision_index", payload.pop("revision_index"))
+    if "requirement" in known_keys:
+        requirement = payload.get("requirement")
+        if requirement is not None and not isinstance(requirement, dict):
+            extra.setdefault("requirement", payload.pop("requirement"))
+
+    for key in list(payload):
+        if key not in known_keys:
+            extra.setdefault(key, payload.pop(key))
+    payload["extra"] = extra
+    return payload
+
+
+class RequirementRevisionPayload(GraphEventPayloadBase):
+    run_id: str | None = None
+    requirement_id: str | None = None
+    id: str | None = None
+    node_id: str | None = None
+    revision_id: str | None = None
+    version_id: str | None = None
+    requirement_version_id: str | None = None
+    proposal_id: str | None = None
+    patch_id: str | None = None
+    change_classification: str | None = None
+    classification: str | None = None
+    revision_type: str | None = None
+    requires_authority: bool | None = None
+    explicit_authority_required: bool | None = None
+    new_behavior: bool | None = None
+    behavior_change: bool | None = None
+    semantic_change: bool | None = None
+    validation_strengthening: bool | None = None
+    active: bool | None = None
+    previous_version_id: str | None = None
+    revision_index: int | None = None
+    authority_required_reason: str | None = None
+    requirement: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_requirement_event_payload(value, set(cls.model_fields))
+
+
+class SupportEvidencePayload(GraphEventPayloadBase):
+    run_id: str | None = None
+    support_id: str | None = None
+    edge_id: str | None = None
+    evidence_id: str | None = None
+    requirement_id: str | None = None
+    requirement_version_id: str | None = None
+    version_id: str | None = None
+    status: str | None = None
+    stale_reason: str | None = None
+    confidence: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_requirement_event_payload(value, set(cls.model_fields))
+
+
+class RequirementAuthorityResolutionPayload(GraphEventPayloadBase):
+    run_id: str | None = None
+    requirement_id: str | None = None
+    id: str | None = None
+    node_id: str | None = None
+    revision_id: str | None = None
+    version_id: str | None = None
+    requirement_version_id: str | None = None
+    proposal_id: str | None = None
+    patch_id: str | None = None
+    requirement: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_legacy_fields(cls, value: Any) -> Any:
+        return _normalize_requirement_event_payload(value, set(cls.model_fields))
+
+
 class CleanupRequestedPayload(CleanupEventPayloadBase):
     cleanup_id: str
     file_state_record_id: str | None = None

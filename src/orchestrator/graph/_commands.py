@@ -58,6 +58,8 @@ from orchestrator.graph.models import (
     PatchOp,
     PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
+    RequirementRevisionPayload,
+    SupportEvidencePayload,
     VerificationResultProjection,
     VerificationReportRecord,
     normalize_record_selector,
@@ -4602,9 +4604,13 @@ def _apply_record_requirement_revision(
             )
         ]
 
-    event_payload = dict(payload)
-    event_payload["requirement_id"] = requirement_id
-    event_payload["version_id"] = version_id
+    event_payload = RequirementRevisionPayload.model_validate(
+        {
+            **payload,
+            "requirement_id": requirement_id,
+            "version_id": version_id,
+        }
+    ).model_dump(mode="json")
     return [make_event("requirement_revision_recorded", event_payload)]
 
 
@@ -4645,11 +4651,15 @@ def _apply_record_support_evidence(
             )
         ]
 
-    event_payload = dict(payload)
-    event_payload["support_id"] = support_id
-    event_payload["evidence_id"] = evidence_id
-    event_payload["requirement_id"] = requirement_id
-    event_payload["requirement_version_id"] = requirement_version_id
+    event_payload = SupportEvidencePayload.model_validate(
+        {
+            **payload,
+            "support_id": support_id,
+            "evidence_id": evidence_id,
+            "requirement_id": requirement_id,
+            "requirement_version_id": requirement_version_id,
+        }
+    ).model_dump(mode="json")
     return [make_event("support_evidence_recorded", event_payload)]
 
 
