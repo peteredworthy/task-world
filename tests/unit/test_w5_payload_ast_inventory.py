@@ -485,3 +485,163 @@ class LifecycleEventPayloadBase(BaseModel):
     domain = scan_graph_payload_architecture([source]).for_domain("vertical_slice")
 
     assert domain.compatibility_models == ()
+
+
+def test_lifecycle_domain_rejects_task2_architecture_backdoors(tmp_path: Path) -> None:
+    source = tmp_path / "commands.py"
+    source.write_text(
+        """\
+def temporary_unconverted_callback(command):
+    return _renamed_raw_callback(command.model_dump())
+
+def apply_command(name, payload, catalog=None):
+    if name == "submit_callback" and catalog is None:
+        return _renamed_raw_callback(payload)
+
+def reduce_event(projection, event):
+    if event.event_type == "callback_accepted":
+        payload = CallbackAcceptedPayload.model_validate(event.payload)
+        return projection.with_value(payload.get("node_id"))
+
+def wrapper(command):
+    effects = future_command_effects()
+    return effects.callback(command)
+"""
+    )
+
+    domain = scan_graph_payload_architecture([source]).for_domain("lifecycle")
+
+    categories = {item.split(":", 1)[0] for item in domain.remaining_diagnostics()}
+    assert categories == {
+        "central reducer validation",
+        "converted reducer branch",
+        "converted payload.get",
+        "implicit future effects",
+        "raw converted command bypass",
+        "strict model delegation",
+        "temporary unconverted marker",
+    }
+    assert not domain.is_clean
+
+
+def test_lifecycle_domain_rejects_delegated_raw_handler_even_without_model_dump(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "callbacks.py"
+    source.write_text(
+        """\
+def handle_submit_callback(command: SubmitCallbackCommand):
+    return _renamed_raw_callback(command)
+
+def _renamed_raw_callback(payload: dict[str, object]):
+    return payload.get("node_id")
+"""
+    )
+
+    diagnostics = (
+        scan_graph_payload_architecture([source]).for_domain("lifecycle").remaining_diagnostics()
+    )
+
+    assert any(item.startswith("delegated raw handler:") for item in diagnostics)
+
+
+def test_graph_payload_architecture_checker_reports_real_fixture(tmp_path: Path) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    source = tmp_path / "projection.py"
+    source.write_text(
+        """\
+def reduce_event(projection, event):
+    if event.event_type == "agent_died":
+        return AgentDiedPayload.model_validate(event.payload)
+"""
+    )
+
+    diagnostics = check_paths([source], domain="lifecycle")
+
+    assert {item.category for item in diagnostics} == {
+        "central reducer validation",
+        "converted reducer branch",
+    }
+    assert {item.path for item in diagnostics} == {str(source)}
+
+
+def test_topology_domain_rejects_the_same_architecture_backdoors(tmp_path: Path) -> None:
+    source = tmp_path / "topology.py"
+    source.write_text(
+        """\
+def handle_seed_compiled_events(command: SeedCompiledEventsCommand):
+    return raw_seed(command.model_dump())
+
+def raw_seed(payload: dict[str, object]):
+    return payload
+
+def apply_command(name, payload, catalog=None):
+    if name == "seed_compiled_events" and catalog is None:
+        return raw_seed(payload)
+
+def reduce_event(projection, event):
+    if event.event_type == "node_created":
+        payload = NodeCreatedPayload.model_validate(event.payload)
+        return payload.get("node_id")
+"""
+    )
+
+    categories = {
+        item.split(":", 1)[0]
+        for item in scan_graph_payload_architecture([source])
+        .for_domain("topology")
+        .remaining_diagnostics()
+    }
+
+    assert categories == {
+        "central reducer validation",
+        "converted payload.get",
+        "converted reducer branch",
+        "raw converted command bypass",
+        "strict model delegation",
+    }
+
+
+def test_checker_ignores_runtime_command_callers_and_unrelated_payload_reads(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "dispatch.py"
+    source.write_text(
+        """\
+class Dispatcher:
+    async def _submit_callback(self, context):
+        return await self._handle_command_retry_stale("submit_callback", {})
+
+    async def _agent_died(self, context):
+        return await self._handle_command_retry_stale("agent_died", {})
+
+    async def _submit_graph_patch_callback(self, patch_payload):
+        payload = dict(patch_payload)
+        return payload.get("patch_id", "unknown")
+
+    async def _handle_command_retry_stale(self, command_type, payload: dict[str, object]):
+        return command_type, payload
+"""
+    )
+
+    from scripts.check_graph_payload_architecture import check_paths
+
+    assert check_paths([source], domain="lifecycle") == ()
+
+
+def test_temporary_marker_blocks_its_own_domain_only(tmp_path: Path) -> None:
+    source = tmp_path / "lease_bridge.py"
+    source.write_text(
+        """\
+def apply_temporary_unconverted_lease_renewal(command):
+    return emit_unconverted_event("lease_renewed", command)
+"""
+    )
+
+    from scripts.check_graph_payload_architecture import check_paths
+
+    assert check_paths([source], domain="topology") == ()
+    assert {item.category for item in check_paths([source], domain="leases")} == {
+        "temporary unconverted marker"
+    }

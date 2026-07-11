@@ -15,6 +15,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
+from scripts.check_graph_payload_architecture import (
+    DOMAIN_COMMAND_NAMES as ARCHITECTURE_DOMAIN_COMMAND_NAMES,
+    DOMAIN_EVENT_NAMES as ARCHITECTURE_DOMAIN_EVENT_NAMES,
+    ArchitectureDiagnostic,
+    check_paths,
+)
+
 
 BASELINE_EVENT_NAMES = frozenset(
     {
@@ -137,6 +144,9 @@ DOMAIN_COMMAND_NAMES: dict[str, frozenset[str]] = {
     ),
 }
 
+DOMAIN_EVENT_NAMES.update(ARCHITECTURE_DOMAIN_EVENT_NAMES)
+DOMAIN_COMMAND_NAMES.update(ARCHITECTURE_DOMAIN_COMMAND_NAMES)
+
 DOMAIN_COMPATIBILITY_MODEL_NAMES: dict[str, frozenset[str]] = {
     "vertical_slice": frozenset({"HeartbeatRecordedPayload", "LifecycleEventPayloadBase"}),
     "lifecycle": frozenset({"HeartbeatRecordedPayload", "LifecycleEventPayloadBase"}),
@@ -196,6 +206,7 @@ class DomainInventory:
     compatibility_models: tuple[PayloadModel, ...]
     allowlists: tuple[NamedSite, ...]
     partial_payload_consumers: tuple[SourceSite, ...]
+    architecture_diagnostics: tuple[ArchitectureDiagnostic, ...] = ()
 
     @property
     def is_clean(self) -> bool:
@@ -205,6 +216,7 @@ class DomainInventory:
             or self.compatibility_models
             or self.allowlists
             or self.partial_payload_consumers
+            or self.architecture_diagnostics
         )
 
     def remaining_diagnostics(self) -> tuple[str, ...]:
@@ -232,6 +244,7 @@ class DomainInventory:
             "allowlist-based extraction"
             for site in self.partial_payload_consumers
         )
+        diagnostics.extend(site.render() for site in self.architecture_diagnostics)
         return tuple(diagnostics)
 
 
@@ -248,6 +261,7 @@ class InventoryReport:
     command_handlers: tuple[CommandHandler, ...]
     allowlists: tuple[NamedSite, ...]
     partial_payload_consumers: tuple[SourceSite, ...]
+    scanned_paths: tuple[Path, ...] = ()
 
     @property
     def produced_event_names(self) -> frozenset[str]:
@@ -385,6 +399,7 @@ class InventoryReport:
             compatibility_models=models,
             allowlists=allowlists,
             partial_payload_consumers=partial_consumers,
+            architecture_diagnostics=check_paths(self.scanned_paths, domain=domain),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -920,6 +935,7 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
         command_handlers=tuple(sorted(handlers)),
         allowlists=tuple(sorted(allowlists)),
         partial_payload_consumers=tuple(sorted(set(partial_consumers))),
+        scanned_paths=tuple(parsed.path for parsed in parsed_files),
     )
 
 
