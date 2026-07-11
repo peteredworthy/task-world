@@ -80,6 +80,7 @@ class AllowlistConsumer:
 class DomainMigration:
     domain: str
     paths: tuple[str, ...]
+    target_module: str | None = None
     relocations: tuple[SymbolRelocation, ...] = ()
     event_routes: tuple[EventRoute, ...] = ()
     command_routes: tuple[CommandRoute, ...] = ()
@@ -1417,6 +1418,270 @@ DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
         ),
     ),
 }
+
+DOMAIN_MIGRATIONS.update(
+    {
+        "topology": DomainMigration(
+            domain="topology",
+            target_module="src/orchestrator/graph/events/topology.py",
+            paths=(
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/__init__.py",
+                "src/orchestrator/graph/commands/schedule.py",
+                "src/orchestrator/graph/compiler.py",
+                "src/orchestrator/graph/models.py",
+                "src/orchestrator/graph/projections.py",
+            ),
+            event_routes=(
+                EventRoute("node_created", "NodeCreatedPayload", "NODE_CREATED"),
+                EventRoute("node_state_changed", "NodeStateChangedPayload", "NODE_STATE_CHANGED"),
+                EventRoute("node_retired", "NodeRetiredPayload", "NODE_RETIRED"),
+                EventRoute("node_ready", "NodeReadyPayload", "NODE_READY"),
+                EventRoute("node_deferred", "NodeDeferredPayload", "NODE_DEFERRED"),
+                EventRoute(
+                    "node_authority_changed",
+                    "NodeAuthorityChangedPayload",
+                    "NODE_AUTHORITY_CHANGED",
+                ),
+                EventRoute(
+                    "plan_region_marked_suspect", "NodeSuspectPayload", "PLAN_REGION_MARKED_SUSPECT"
+                ),
+                EventRoute("edge_created", "EdgeCreatedPayload", "EDGE_CREATED"),
+                EventRoute("input_bound", "InputBoundPayload", "INPUT_BOUND"),
+                EventRoute(
+                    "session_state_changed",
+                    "PlannerSessionStateChangedPayload",
+                    "SESSION_STATE_CHANGED",
+                ),
+                EventRoute(
+                    "dead_input_detected", "DeadInputDetectedPayload", "DEAD_INPUT_DETECTED"
+                ),
+                EventRoute("revision_created", "RevisionCreatedPayload", "REVISION_CREATED"),
+            ),
+            command_routes=(
+                CommandRoute(
+                    "seed_compiled_events",
+                    "handle_seed_compiled_events",
+                    "SEED_COMPILED_EVENTS",
+                    "SeedCompiledEventsCommand",
+                ),
+            ),
+            report_dynamic_emissions=True,
+        ),
+        "leases": DomainMigration(
+            domain="leases",
+            target_module="src/orchestrator/graph/events/leases.py",
+            paths=(
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/__init__.py",
+                "src/orchestrator/graph/commands/schedule.py",
+                "src/orchestrator/graph/commands/lease_bridge.py",
+                "src/orchestrator/graph/models.py",
+                "src/orchestrator/graph/projections.py",
+            ),
+            event_routes=(
+                EventRoute("lease_granted", "LeaseGrantedPayload", "LEASE_GRANTED"),
+                EventRoute("lease_renewed", "LeaseRenewedPayload", "LEASE_RENEWED"),
+                EventRoute("lease_released", "LeaseReleasedPayload", "LEASE_RELEASED"),
+                EventRoute("lease_revoked", "LeaseRevokedPayload", "LEASE_REVOKED"),
+                EventRoute("lease_expired", "LeaseExpiredPayload", "LEASE_EXPIRED"),
+            ),
+            command_routes=(
+                CommandRoute(
+                    "schedule_tick", "handle_schedule_tick", "SCHEDULE_TICK", "ScheduleTickCommand"
+                ),
+                CommandRoute("reconcile", "handle_reconcile", "RECONCILE", "ReconcileCommand"),
+            ),
+            report_dynamic_emissions=True,
+        ),
+        "records": DomainMigration(
+            domain="records",
+            target_module="src/orchestrator/graph/events/records.py",
+            paths=(
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/__init__.py",
+                "src/orchestrator/graph/commands/records.py",
+                "src/orchestrator/graph/models.py",
+                "src/orchestrator/graph/projections.py",
+            ),
+            event_routes=(
+                EventRoute(
+                    "output_record_accepted",
+                    "OutputRecordAcceptedPayload",
+                    "OUTPUT_RECORD_ACCEPTED",
+                ),
+                EventRoute(
+                    "verification_passed", "VerificationOutcomePayload", "VERIFICATION_PASSED"
+                ),
+                EventRoute(
+                    "verification_failed", "VerificationOutcomePayload", "VERIFICATION_FAILED"
+                ),
+            ),
+            command_routes=(
+                CommandRoute(
+                    "evaluate_join", "handle_evaluate_join", "EVALUATE_JOIN", "EvaluateJoinCommand"
+                ),
+                CommandRoute(
+                    "evaluate_final_gate",
+                    "handle_evaluate_final_gate",
+                    "EVALUATE_FINAL_GATE",
+                    "EvaluateFinalGateCommand",
+                ),
+            ),
+            report_dynamic_emissions=True,
+        ),
+        "patches": DomainMigration(
+            domain="patches",
+            target_module="src/orchestrator/graph/events/patches.py",
+            paths=(
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/__init__.py",
+                "src/orchestrator/graph/commands/patches.py",
+                "src/orchestrator/graph/models.py",
+                "src/orchestrator/graph/projections.py",
+            ),
+            event_routes=(
+                EventRoute(
+                    "graph_patch_accepted", "GraphPatchAcceptedPayload", "GRAPH_PATCH_ACCEPTED"
+                ),
+                EventRoute(
+                    "graph_patch_rejected", "GraphPatchRejectedPayload", "GRAPH_PATCH_REJECTED"
+                ),
+            ),
+            command_routes=(
+                CommandRoute(
+                    "submit_patch", "handle_submit_patch", "SUBMIT_PATCH", "SubmitPatchCommand"
+                ),
+            ),
+            report_dynamic_emissions=True,
+        ),
+        "decisions": DomainMigration(
+            domain="decisions",
+            target_module="src/orchestrator/graph/events/decisions.py",
+            paths=(
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/__init__.py",
+                "src/orchestrator/graph/commands/callbacks.py",
+                "src/orchestrator/graph/models.py",
+                "src/orchestrator/graph/projections.py",
+            ),
+            event_routes=(
+                EventRoute("appeal_opened", "AppealOpenedPayload", "APPEAL_OPENED"),
+                EventRoute(
+                    "approval_decision_recorded",
+                    "ApprovalDecisionRecordedPayload",
+                    "APPROVAL_DECISION_RECORDED",
+                ),
+                EventRoute(
+                    "authority_decision_recorded",
+                    "AuthorityDecisionRecordedPayload",
+                    "AUTHORITY_DECISION_RECORDED",
+                ),
+                EventRoute(
+                    "oversight_decision_recorded",
+                    "OversightDecisionRecordedPayload",
+                    "OVERSIGHT_DECISION_RECORDED",
+                ),
+            ),
+            command_routes=(
+                CommandRoute(
+                    "raise_appeal", "handle_raise_appeal", "RAISE_APPEAL", "RaiseAppealCommand"
+                ),
+                CommandRoute(
+                    "record_decision",
+                    "handle_record_decision",
+                    "RECORD_DECISION",
+                    "RecordDecisionCommand",
+                ),
+            ),
+            report_dynamic_emissions=True,
+        ),
+        "requirements": DomainMigration(
+            domain="requirements",
+            target_module="src/orchestrator/graph/events/requirements.py",
+            paths=(
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/__init__.py",
+                "src/orchestrator/graph/commands/callbacks.py",
+                "src/orchestrator/graph/models.py",
+                "src/orchestrator/graph/projections.py",
+            ),
+            event_routes=(
+                EventRoute(
+                    "requirement_revision_recorded",
+                    "RequirementRevisionPayload",
+                    "REQUIREMENT_REVISION_RECORDED",
+                ),
+                EventRoute(
+                    "support_evidence_recorded",
+                    "SupportEvidencePayload",
+                    "SUPPORT_EVIDENCE_RECORDED",
+                ),
+            ),
+            command_routes=(
+                CommandRoute(
+                    "record_requirement_revision",
+                    "handle_record_requirement_revision",
+                    "RECORD_REQUIREMENT_REVISION",
+                    "RecordRequirementRevisionCommand",
+                ),
+                CommandRoute(
+                    "record_support_evidence",
+                    "handle_record_support_evidence",
+                    "RECORD_SUPPORT_EVIDENCE",
+                    "RecordSupportEvidenceCommand",
+                ),
+            ),
+            report_dynamic_emissions=True,
+        ),
+        "file_state": DomainMigration(
+            domain="file_state",
+            target_module="src/orchestrator/graph/events/file_state.py",
+            paths=(
+                "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/__init__.py",
+                "src/orchestrator/graph/commands/callbacks.py",
+                "src/orchestrator/graph/models.py",
+                "src/orchestrator/graph/projections.py",
+            ),
+            event_routes=(
+                EventRoute(
+                    "file_state_accepted", "FileStateAcceptedPayload", "FILE_STATE_ACCEPTED"
+                ),
+                EventRoute(
+                    "file_state_rejected", "FileStateRejectedPayload", "FILE_STATE_REJECTED"
+                ),
+                EventRoute(
+                    "gatekeeper_verdict_recorded",
+                    "GatekeeperVerdictRecordedPayload",
+                    "GATEKEEPER_VERDICT_RECORDED",
+                ),
+                EventRoute(
+                    "gatekeeper_cost_recorded",
+                    "GatekeeperCostRecordedPayload",
+                    "GATEKEEPER_COST_RECORDED",
+                ),
+                EventRoute("cleanup_requested", "CleanupRequestedPayload", "CLEANUP_REQUESTED"),
+                EventRoute("cleanup_applied", "CleanupAppliedPayload", "CLEANUP_APPLIED"),
+            ),
+            command_routes=(
+                CommandRoute(
+                    "record_gatekeeper_verdicts",
+                    "handle_record_gatekeeper_verdicts",
+                    "RECORD_GATEKEEPER_VERDICTS",
+                    "RecordGatekeeperVerdictsCommand",
+                ),
+                CommandRoute(
+                    "record_cleanup_applied",
+                    "handle_record_cleanup_applied",
+                    "RECORD_CLEANUP_APPLIED",
+                    "RecordCleanupAppliedCommand",
+                ),
+            ),
+            report_dynamic_emissions=True,
+        ),
+    }
+)
 
 
 def _diff(path: str, before: str, after: str) -> str:

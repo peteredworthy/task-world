@@ -59,6 +59,77 @@ def test_lifecycle_domain_routes_cover_complete_slice() -> None:
     }
 
 
+def test_remaining_domain_migrations_cover_authoritative_routing_surface() -> None:
+    expected = {
+        "topology": (
+            {
+                "node_created",
+                "node_state_changed",
+                "node_retired",
+                "node_ready",
+                "node_deferred",
+                "node_authority_changed",
+                "plan_region_marked_suspect",
+                "edge_created",
+                "input_bound",
+                "session_state_changed",
+                "dead_input_detected",
+                "revision_created",
+            },
+            {"seed_compiled_events"},
+            "src/orchestrator/graph/events/topology.py",
+        ),
+        "leases": (
+            {"lease_granted", "lease_renewed", "lease_released", "lease_revoked", "lease_expired"},
+            {"schedule_tick", "reconcile"},
+            "src/orchestrator/graph/events/leases.py",
+        ),
+        "records": (
+            {"output_record_accepted", "verification_passed", "verification_failed"},
+            {"evaluate_join", "evaluate_final_gate"},
+            "src/orchestrator/graph/events/records.py",
+        ),
+        "patches": (
+            {"graph_patch_accepted", "graph_patch_rejected"},
+            {"submit_patch"},
+            "src/orchestrator/graph/events/patches.py",
+        ),
+        "decisions": (
+            {
+                "appeal_opened",
+                "approval_decision_recorded",
+                "authority_decision_recorded",
+                "oversight_decision_recorded",
+            },
+            {"raise_appeal", "record_decision"},
+            "src/orchestrator/graph/events/decisions.py",
+        ),
+        "requirements": (
+            {"requirement_revision_recorded", "support_evidence_recorded"},
+            {"record_requirement_revision", "record_support_evidence"},
+            "src/orchestrator/graph/events/requirements.py",
+        ),
+        "file_state": (
+            {
+                "file_state_accepted",
+                "file_state_rejected",
+                "gatekeeper_verdict_recorded",
+                "gatekeeper_cost_recorded",
+                "cleanup_requested",
+                "cleanup_applied",
+            },
+            {"record_gatekeeper_verdicts", "record_cleanup_applied"},
+            "src/orchestrator/graph/events/file_state.py",
+        ),
+    }
+
+    for domain, (event_names, command_names, target_module) in expected.items():
+        migration = DOMAIN_MIGRATIONS[domain]
+        assert {route.event_name for route in migration.event_routes} == event_names
+        assert {route.command_name for route in migration.command_routes} == command_names
+        assert migration.target_module == target_module
+
+
 def test_lifecycle_bridge_entries_become_composed_specifications() -> None:
     migration = DomainMigration(
         domain="lifecycle",
