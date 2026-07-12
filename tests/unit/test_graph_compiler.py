@@ -159,7 +159,7 @@ def test_same_step_artifact_scoped_workers_can_schedule_without_conflict() -> No
     schedule_events = _apply(
         active_events,
         "schedule_tick",
-        {"run_id": "run-1", "max_grants": 10},
+        {"run_id": "run-1", "max_grants": 10, "lease_seconds": 300},
     )
 
     lease_grants = schedule_events_by_type(schedule_events, "lease_granted")
@@ -465,7 +465,9 @@ def test_minimal_single_task_graph_has_exact_minimum_executable_node_set_and_sch
     assert _node_ids_by_kind(projection, "gate") == []
 
     active_events = _with_lifecycle_started(events)
-    schedule_events = _apply(active_events, "schedule_tick", {"run_id": "run-1", "max_grants": 1})
+    schedule_events = _apply(
+        active_events, "schedule_tick", {"run_id": "run-1", "max_grants": 1, "lease_seconds": 300}
+    )
 
     assert "lease_granted" in [event.event_type for event in schedule_events]
     assert schedule_events_by_type(schedule_events, "lease_granted")[0].payload["node_id"] == (
@@ -595,7 +597,9 @@ def test_compiled_projection_schedules_first_worker_and_blocks_downstream_step()
     )
     active_events = _with_lifecycle_started(_compile(routine))
 
-    schedule_events = _apply(active_events, "schedule_tick", {"run_id": "run-1", "max_grants": 10})
+    schedule_events = _apply(
+        active_events, "schedule_tick", {"run_id": "run-1", "max_grants": 10, "lease_seconds": 300}
+    )
 
     lease_grants = schedule_events_by_type(schedule_events, "lease_granted")
     assert [event.payload["node_id"] for event in lease_grants] == ["worker-s-01-t-01"]
@@ -612,7 +616,9 @@ def test_two_step_routine_worker_completion_unblocks_next_step_worker() -> None:
 
     first_tick = _append(
         events,
-        _apply(events, "schedule_tick", {"run_id": "run-1", "max_grants": 10}),
+        _apply(
+            events, "schedule_tick", {"run_id": "run-1", "max_grants": 10, "lease_seconds": 300}
+        ),
     )
     first_lease = schedule_events_by_type(first_tick, "lease_granted")[0]
     assert first_lease.payload["node_id"] == "worker-s-01-t-01"
@@ -633,7 +639,9 @@ def test_two_step_routine_worker_completion_unblocks_next_step_worker() -> None:
     ]
     events = [*events, *completed]
 
-    second_tick = _apply(events, "schedule_tick", {"run_id": "run-1", "max_grants": 10})
+    second_tick = _apply(
+        events, "schedule_tick", {"run_id": "run-1", "max_grants": 10, "lease_seconds": 300}
+    )
     second_grants = schedule_events_by_type(second_tick, "lease_granted")
     assert [event.payload["node_id"] for event in second_grants] == ["worker-s-02-t-02"]
 
@@ -642,7 +650,9 @@ def test_two_step_routine_worker_failure_blocks_next_step_worker() -> None:
     events = _with_positions(_with_lifecycle_started(_compile(_two_step_routine())))
     first_tick = _append(
         events,
-        _apply(events, "schedule_tick", {"run_id": "run-1", "max_grants": 10}),
+        _apply(
+            events, "schedule_tick", {"run_id": "run-1", "max_grants": 10, "lease_seconds": 300}
+        ),
     )
     first_lease = schedule_events_by_type(first_tick, "lease_granted")[0]
     events = [*events, *first_tick]
@@ -657,7 +667,9 @@ def test_two_step_routine_worker_failure_blocks_next_step_worker() -> None:
     )
     events = [*events, *failed]
 
-    second_tick = _apply(events, "schedule_tick", {"run_id": "run-1", "max_grants": 10})
+    second_tick = _apply(
+        events, "schedule_tick", {"run_id": "run-1", "max_grants": 10, "lease_seconds": 300}
+    )
 
     assert schedule_events_by_type(second_tick, "lease_granted") == []
     assert any(

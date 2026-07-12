@@ -1,7 +1,7 @@
 """Lifecycle command specifications and compatibility handlers."""
 
 from __future__ import annotations
-from datetime import timedelta
+from datetime import datetime, timedelta
 from orchestrator.graph._commands import Clock
 from typing import Any
 from orchestrator.graph.models import (
@@ -21,6 +21,7 @@ from orchestrator.graph.events.lifecycle import (
     RunLifecycleChangedPayload,
     RuntimeRetryScheduledPayload,
 )
+from orchestrator.graph.events.leases import LEASE_RENEWED, LeaseRenewedPayload
 from orchestrator.graph._commands import (
     IdGenerator,
     NONTERMINAL_RUN_STATES,
@@ -50,6 +51,8 @@ from orchestrator.graph.specifications import (
     FutureCommandEffects,
 )
 from orchestrator.graph._commands import typed_topology_event
+from orchestrator.graph.events.leases import LEASE_REVOKED
+from orchestrator.graph._commands import make_strict_event
 
 
 def _command_rejected(
@@ -168,15 +171,77 @@ def handle_record_heartbeat(
     events: tuple[EventEnvelope, ...],
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
-    del projection
     del events
-    payload = HeartbeatRecordedPayload(
+    heartbeat = HeartbeatRecordedPayload(
         node_id=command.node_id,
         lease_id=command.lease_id,
         lease_generation=command.lease_generation,
         observed_at=context.clock.now(),
     )
-    return [TypedEventCreator(context).create(HEARTBEAT_RECORDED, payload)]
+    creator = TypedEventCreator(context)
+    lease = projection["leases"].get(command.lease_id)
+    if lease is None:
+        return [
+            creator.create(
+                COMMAND_REJECTED,
+                CommandRejectedPayload(
+                    command_type="record_heartbeat", reason=f"unknown lease: {command.lease_id}"
+                ),
+            )
+        ]
+    if projection["run_state"] != "active":
+        return [
+            creator.create(
+                COMMAND_REJECTED,
+                CommandRejectedPayload(command_type="record_heartbeat", reason="run_not_active"),
+            )
+        ]
+    if lease.get("state") != "active":
+        return [
+            creator.create(
+                COMMAND_REJECTED,
+                CommandRejectedPayload(
+                    command_type="record_heartbeat", reason=f"lease_not_active:{lease.get('state')}"
+                ),
+            )
+        ]
+    if lease.get("node_id") != command.node_id:
+        return [
+            creator.create(
+                COMMAND_REJECTED,
+                CommandRejectedPayload(command_type="record_heartbeat", reason="node_id_mismatch"),
+            )
+        ]
+    generation = lease.get("generation")
+    execution_id = lease.get("execution_id")
+    if generation != command.lease_generation or not isinstance(execution_id, str):
+        return [
+            creator.create(
+                COMMAND_REJECTED,
+                CommandRejectedPayload(
+                    command_type="record_heartbeat", reason="lease_generation_mismatch"
+                ),
+            )
+        ]
+    observed_at = context.clock.now()
+    renewal_seconds = 300
+    expires_at = lease.get("expires_at")
+    if isinstance(expires_at, str) and datetime.fromisoformat(expires_at) <= observed_at:
+        renewal_seconds = 3600
+    return [
+        creator.create(HEARTBEAT_RECORDED, heartbeat),
+        creator.create(
+            LEASE_RENEWED,
+            LeaseRenewedPayload(
+                lease_id=command.lease_id,
+                node_id=command.node_id,
+                generation=command.lease_generation,
+                execution_id=execution_id,
+                observed_at=observed_at,
+                expires_at=observed_at + timedelta(seconds=renewal_seconds),
+            ),
+        ),
+    ]
 
 
 ACCEPT_RUN = CommandSpecification(
@@ -374,14 +439,17 @@ def build_agent_died_effects(
     if _non_gap_planner_has_accepted_patch(projection, node_id):
         return [
             creator.create(AGENT_DIED, agent_died_payload),
-            make_event(
-                "lease_revoked",
+            make_strict_event(
+                make_event,
+                LEASE_REVOKED,
                 _typed_lease_event_payload(
                     "lease_revoked",
                     {
                         "lease_id": lease_id,
                         "node_id": node_id,
                         "generation": generation,
+                        "execution_id": agent_died_payload.execution_id,
+                        "trigger": "agent_died",
                         "reason": reason,
                     },
                 ),
@@ -400,14 +468,17 @@ def build_agent_died_effects(
     if _is_rate_limit_death(reason):
         return [
             creator.create(AGENT_DIED, agent_died_payload),
-            make_event(
-                "lease_revoked",
+            make_strict_event(
+                make_event,
+                LEASE_REVOKED,
                 _typed_lease_event_payload(
                     "lease_revoked",
                     {
                         "lease_id": lease_id,
                         "node_id": node_id,
                         "generation": generation,
+                        "execution_id": agent_died_payload.execution_id,
+                        "trigger": "agent_died",
                         "reason": reason,
                     },
                 ),
@@ -442,14 +513,17 @@ def build_agent_died_effects(
     if _is_non_retryable_runtime_death(reason):
         return [
             creator.create(AGENT_DIED, agent_died_payload),
-            make_event(
-                "lease_revoked",
+            make_strict_event(
+                make_event,
+                LEASE_REVOKED,
                 _typed_lease_event_payload(
                     "lease_revoked",
                     {
                         "lease_id": lease_id,
                         "node_id": node_id,
                         "generation": generation,
+                        "execution_id": agent_died_payload.execution_id,
+                        "trigger": "agent_died",
                         "reason": reason,
                     },
                 ),
@@ -486,14 +560,17 @@ def build_agent_died_effects(
     if max_attempts > 0 and attempt_number >= max_attempts:
         return [
             creator.create(AGENT_DIED, agent_died_payload),
-            make_event(
-                "lease_revoked",
+            make_strict_event(
+                make_event,
+                LEASE_REVOKED,
                 _typed_lease_event_payload(
                     "lease_revoked",
                     {
                         "lease_id": lease_id,
                         "node_id": node_id,
                         "generation": generation,
+                        "execution_id": agent_died_payload.execution_id,
+                        "trigger": "agent_died",
                         "reason": reason,
                     },
                 ),
@@ -559,14 +636,17 @@ def build_agent_died_effects(
         }
     return [
         creator.create(AGENT_DIED, agent_died_payload),
-        make_event(
-            "lease_revoked",
+        make_strict_event(
+            make_event,
+            LEASE_REVOKED,
             _typed_lease_event_payload(
                 "lease_revoked",
                 {
                     "lease_id": lease_id,
                     "node_id": node_id,
                     "generation": generation,
+                    "execution_id": agent_died_payload.execution_id,
+                    "trigger": "agent_died",
                     "reason": reason,
                 },
             ),

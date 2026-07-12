@@ -1514,6 +1514,9 @@ def summarize_graph_event(event: EventEnvelope) -> GraphEventSummary:
         source_payload = OutputRecordAcceptedPayload.model_validate(
             event.payload
         ).record.model_dump(mode="json", by_alias=True, exclude_none=True)
+    diagnostics = source_payload.get("diagnostics")
+    if isinstance(diagnostics, dict):
+        source_payload = {**source_payload, **cast(dict[str, Any], diagnostics)}
     payload = {
         key: value
         for key, value in source_payload.items()

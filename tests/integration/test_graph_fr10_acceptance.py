@@ -280,6 +280,8 @@ async def _seed_fr10_graph(
                 "generation": 1,
                 "execution_id": "exec-worker-retry",
                 "base_snapshot_id": BASE_SNAPSHOT_ID,
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
         ),
     ]

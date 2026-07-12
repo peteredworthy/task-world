@@ -151,6 +151,8 @@ def _events_with_active_planner() -> list[EventEnvelope]:
                 "execution_id": "exec-planner-0",
                 "base_snapshot_id": "snapshot-0",
                 "session_id": "session-1",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             3,
         ),

@@ -414,7 +414,10 @@ async def test_crash_before_append_no_events_no_outbox_no_dispatch(
 
     with pytest.raises(StaleProjectionError):
         await controller.handle_command(
-            run_id, 1, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+            run_id,
+            1,
+            "schedule_tick",
+            {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
         )
 
     events = await _read_events(session_factory, run_id)
@@ -444,7 +447,10 @@ async def test_crash_after_append_before_outbox_starts_agent_restarts_dispatch(
     )
 
     result = await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
     assert [item.status for item in result.outbox_items] == ["pending"]
 
@@ -490,13 +496,13 @@ async def test_recover_run_dispatches_only_matching_outbox_rows(
         target_run_id,
         2,
         "schedule_tick",
-        {"lease_seconds": 60, "base_snapshot_id": "S0"},
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
     other_result = await controller.handle_command(
         other_run_id,
         2,
         "schedule_tick",
-        {"lease_seconds": 60, "base_snapshot_id": "S0"},
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
 
     call_log: list[str] = []
@@ -533,7 +539,10 @@ async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_
     )
 
     await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
     assert len(call_log) == 1
 
@@ -602,7 +611,7 @@ async def test_recover_without_run_id_skips_terminal_snapshot_without_replay(
         active_run_id,
         2,
         "schedule_tick",
-        {"lease_seconds": 60, "base_snapshot_id": "S0"},
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
 
     async with session_factory() as session:
@@ -669,6 +678,9 @@ async def test_recover_without_run_id_skips_terminal_run_when_snapshot_missing(
                             "node_id": "worker-1",
                             "generation": 1,
                             "execution_id": "exec-terminal",
+                            "base_snapshot_id": "S0",
+                            "expires_at": "2026-01-01T00:05:00+00:00",
+                            "resource_claims": [],
                         },
                     ),
                     _event(
@@ -713,7 +725,10 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
     )
 
     first = await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
     lease_id = str(first.outbox_items[0].payload["lease_id"])
     execution_id = str(first.outbox_items[0].payload["execution_id"])
@@ -742,7 +757,7 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         run_id,
         died.projection_position,
         "schedule_tick",
-        {"lease_seconds": 60, "base_snapshot_id": "S0"},
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
     projection_after_relearn = rebuild_projection(
         build_graph_catalog(), await _read_events(session_factory, run_id)
@@ -790,7 +805,10 @@ async def test_duplicate_dispatch_pending_invokes_executor_once(
         future_effects=build_graph_command_dependencies().future_effects,
     )
     await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
 
     call_log: list[str] = []
@@ -819,7 +837,10 @@ async def test_restart_mid_dispatching_row_is_retried_idempotently(
         future_effects=build_graph_command_dependencies().future_effects,
     )
     result = await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
 
     call_log: list[str] = []
@@ -866,7 +887,10 @@ async def test_failed_dispatch_uses_backoff_before_retrying(
         future_effects=build_graph_command_dependencies().future_effects,
     )
     result = await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
 
     call_log: list[str] = []
@@ -971,7 +995,10 @@ async def test_retry_jitter_does_not_exceed_backoff_cap(
         future_effects=build_graph_command_dependencies().future_effects,
     )
     await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
     dispatcher = OutboxDispatcher(
         session_factory,
@@ -1007,7 +1034,10 @@ async def test_recovery_preserves_future_backoff_until_due(
         future_effects=build_graph_command_dependencies().future_effects,
     )
     result = await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
     event_id = result.outbox_items[0].event_id
     call_log: list[str] = []
@@ -1367,7 +1397,10 @@ async def test_controller_does_not_start_side_effect_before_commit(
     )
 
     result = await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
 
     assert call_log == [result.outbox_items[0].event_id]
@@ -1422,7 +1455,10 @@ async def test_controller_rolls_back_events_when_dispatch_outbox_insert_fails(
 
     with pytest.raises(OutboxAppendError):
         await controller.handle_command(
-            run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+            run_id,
+            2,
+            "schedule_tick",
+            {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
         )
 
     events = await _read_events(session_factory, run_id)
@@ -1454,7 +1490,10 @@ async def test_agent_dispatch_requested_event_envelope_is_persisted_exactly(
     )
 
     result = await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
     read_back = await _read_events(session_factory, run_id)
     lease_event = next(event for event in read_back if event.event_type == "lease_granted")
@@ -1499,7 +1538,10 @@ async def test_controller_round_trip_projection_matches_in_memory_projection(
     )
 
     result = await controller.handle_command(
-        run_id, 2, "schedule_tick", {"lease_seconds": 60, "base_snapshot_id": "S0"}
+        run_id,
+        2,
+        "schedule_tick",
+        {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
     read_back = await _read_events(session_factory, run_id)
 

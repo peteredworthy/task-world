@@ -11,7 +11,7 @@
   given_events:
     - run_lifecycle_changed: {to_state: active}
     - node_created: {node_id: review-2, kind: review, state: ready, resource_claims: [{mode: review_write, scope: repo, paths: [docs/review.md]}]}
-  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0}}
+  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
   then_events:
     - lease_granted: {node_id: review-2}
     - node_state_changed: {node_id: review-2, new_state: leased}
@@ -28,7 +28,7 @@
 - name: review_leased_to_running
   given_events:
     - node_created: {node_id: review-4, kind: review, state: leased}
-    - lease_granted: {node_id: review-4, lease_id: lease-review-4, generation: 1, execution_id: exec-review-4}
+    - lease_granted: {node_id: review-4, lease_id: lease-review-4, generation: 1, execution_id: exec-review-4, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     acknowledge_start: {run_id: run-1, node_id: review-4, lease_id: lease-review-4, lease_generation: 1, execution_id: exec-review-4}
   then_events:
@@ -38,7 +38,7 @@
 - name: review_running_to_completed
   given_events:
     - node_created: {node_id: review-5, kind: review, state: running}
-    - lease_granted: {node_id: review-5, lease_id: lease-review-5, generation: 1, execution_id: exec-review-5, base_snapshot_id: S0}
+    - lease_granted: {node_id: review-5, lease_id: lease-review-5, generation: 1, execution_id: exec-review-5, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback:
       run_id: run-1
@@ -66,7 +66,7 @@
 - name: review_running_to_failed
   given_events:
     - node_created: {node_id: review-6, kind: review, state: running}
-    - lease_granted: {node_id: review-6, lease_id: lease-review-6, generation: 1, execution_id: exec-review-6, base_snapshot_id: S0}
+    - lease_granted: {node_id: review-6, lease_id: lease-review-6, generation: 1, execution_id: exec-review-6, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback: {run_id: run-1, node_id: review-6, execution_id: exec-review-6, lease_id: lease-review-6, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-review-6, new_state: failed, payload: {error: review_action_failed}}
   then_events:

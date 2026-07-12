@@ -101,7 +101,7 @@ def _file_state_event(task_region_id: str, candidate_id: str, position: int) -> 
     ).model_copy(update={"position": position})
 
 
-def test_graph_patch_attempt_projection_rejects_malformed_result() -> None:
+def test_graph_patch_attempt_projection_uses_strict_rejection_reason() -> None:
     events = [
         _event(
             "graph_patch_rejected",
@@ -109,12 +109,14 @@ def test_graph_patch_attempt_projection_rejects_malformed_result() -> None:
                 "patch_id": "patch-1",
                 "proposed_by_node_id": "planner-1",
                 "base_graph_position": 2,
+                "actor_role": "planner",
+                "reason": "test_rejection",
             },
         ).model_copy(update={"position": 2})
     ]
 
-    with pytest.raises(ValueError, match="requires rejection_reason"):
-        project_graph_patch_attempts(events, run_id="run-1", current_graph_position=3)
+    view = project_graph_patch_attempts(events, run_id="run-1", current_graph_position=3)
+    assert view["attempts"][0]["rejection_reason"] == "test_rejection"
 
 
 def test_empty_projection() -> None:
@@ -1894,7 +1896,18 @@ def test_replay_determinism() -> None:
         _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "planned"}),
         _event("node_state_changed", {"node_id": "worker-1", "new_state": "ready"}),
-        _event("lease_granted", {"node_id": "worker-1", "lease_id": "lease-1"}),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 0,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
+            },
+        ),
     ]
 
     first = initial_projection()
@@ -1912,11 +1925,22 @@ def test_replay_determinism() -> None:
             "node_id": "worker-1",
             "kind": "worker",
             "state": "active",
+            "generation": 0,
+            "execution_id": "exec-1",
+            "base_snapshot_id": "S0",
+            "expires_at": "2026-01-01T00:05:00+00:00",
         }
     }
 
 
 def test_lease_projection_uses_typed_payload_and_preserves_public_shape() -> None:
+    projection = reduce_event(
+        build_graph_catalog(),
+        initial_projection(),
+        _event(
+            "node_created", {"node_id": "worker-1", "kind": "worker", "task_region_id": "task-1"}
+        ),
+    )
     event = _event(
         "lease_granted",
         {
@@ -1925,12 +1949,12 @@ def test_lease_projection_uses_typed_payload_and_preserves_public_shape() -> Non
             "generation": 2,
             "execution_id": "exec-1",
             "expires_at": "2026-01-02T00:00:00+00:00",
-            "task_region_id": "task-1",
-            "kind": "worker",
+            "base_snapshot_id": "S0",
+            "resource_claims": [],
         },
     )
 
-    projection = reduce_event(build_graph_catalog(), initial_projection(), event)
+    projection = reduce_event(build_graph_catalog(), projection, event)
     projected = projection["leases"]["lease-1"]
 
     assert isinstance(projected, LeaseProjection)
@@ -1942,6 +1966,7 @@ def test_lease_projection_uses_typed_payload_and_preserves_public_shape() -> Non
             "state": "active",
             "execution_id": "exec-1",
             "expires_at": "2026-01-02T00:00:00+00:00",
+            "base_snapshot_id": "S0",
             "task_region_id": "task-1",
             "kind": "worker",
         }
@@ -1968,8 +1993,23 @@ def test_lease_projection_checkpoint_round_trips_typed_payload_and_drops_malform
         build_graph_catalog(),
         initial_projection(),
         _event(
+            "node_created", {"node_id": "worker-1", "kind": "worker", "task_region_id": "task-1"}
+        ),
+    )
+    projection = reduce_event(
+        build_graph_catalog(),
+        projection,
+        _event(
             "lease_granted",
-            {"node_id": "worker-1", "lease_id": "lease-1", "task_region_id": "task-1"},
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 0,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
+            },
         ),
     )
 
@@ -2469,6 +2509,8 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
             "generation": 1,
             "execution_id": "exec-worker",
             "base_snapshot_id": "S0",
+            "expires_at": "2026-01-01T00:05:00+00:00",
+            "resource_claims": [],
         },
     )
     append_command(
@@ -2515,6 +2557,8 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
             "generation": 1,
             "execution_id": "exec-verifier",
             "base_snapshot_id": "S0",
+            "expires_at": "2026-01-01T00:05:00+00:00",
+            "resource_claims": [],
         },
     )
     append_command(
@@ -4632,7 +4676,16 @@ def test_accepted_graph_patch_does_not_leave_open_proposal_blocker() -> None:
     events = [
         _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
         _event("graph_patch_proposed", {"patch_id": "patch-1"}),
-        _event("graph_patch_accepted", {"patch_id": "patch-1"}),
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-1",
+                "base_graph_position": -1,
+                "actor_role": "planner",
+                "proposed_by_node_id": "planner-test",
+                "successor_planner_node_ids": [],
+            },
+        ),
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
@@ -4824,12 +4877,39 @@ def test_lease_lifecycle() -> None:
     events = [
         _event(
             "lease_granted",
-            {"node_id": "worker-1", "lease_id": "lease-1", "generation": 2},
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 2,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
+            },
         ),
-        _event("lease_suspended", {"lease_id": "lease-1"}),
-        _event("lease_revoked", {"lease_id": "lease-1"}),
-        _event("lease_expired", {"lease_id": "lease-1"}),
-        _event("lease_released", {"lease_id": "lease-1"}),
+        _event(
+            "lease_revoked",
+            {
+                "lease_id": "lease-1",
+                "node_id": "worker-1",
+                "generation": 2,
+                "execution_id": "exec-1",
+                "reason": "test_revocation",
+                "trigger": "test_revocation",
+            },
+        ),
+        _event(
+            "lease_expired",
+            {
+                "lease_id": "lease-1",
+                "node_id": "worker-1",
+                "generation": 2,
+                "execution_id": "exec-1",
+                "expires_at": "2026-01-01T00:00:00+00:00",
+                "reason": "test_expiry",
+            },
+        ),
+        _event("lease_released", {"lease_id": "lease-1", "node_id": "worker-1", "generation": 2}),
     ]
 
     assert project_leases(build_graph_catalog(), events) == {
@@ -4838,6 +4918,9 @@ def test_lease_lifecycle() -> None:
             "node_id": "worker-1",
             "generation": 2,
             "state": "released",
+            "execution_id": "exec-1",
+            "base_snapshot_id": "S0",
+            "expires_at": "2026-01-01T00:05:00+00:00",
         }
     }
 
@@ -5236,7 +5319,18 @@ def test_task_projection_in_progress() -> None:
         _event(
             "node_created", {"node_id": "worker-1", "kind": "worker", "task_region_id": "task-1"}
         ),
-        _event("lease_granted", {"node_id": "worker-1", "lease_id": "lease-1"}),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 0,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
+            },
+        ),
     ]
 
     assert project_task_states(build_graph_catalog(), events) == {"task-1": "in_progress"}

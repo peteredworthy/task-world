@@ -704,7 +704,13 @@ class _MechanicalTransformer(cst.CSTTransformer):
         }
         if (
             self.migration.domain in {"records", "task3_fixtures"}
-            and self.path.endswith("tests/unit/test_graph_commands.py")
+            and self.path.endswith(
+                (
+                    "tests/unit/test_graph_commands.py",
+                    "src/orchestrator/graph/scenario.py",
+                    "src/orchestrator/graph_runtime/controller.py",
+                )
+            )
             and len(original_node.targets) == 1
             and isinstance(original_node.targets[0].target, cst.Name)
             and original_node.targets[0].target.value in record_fixture_names
@@ -925,6 +931,12 @@ class _MechanicalTransformer(cst.CSTTransformer):
     ) -> cst.Call | None:
         if not isinstance(original_node.func, (cst.Name, cst.Attribute)):
             return None
+        if (
+            self.path.startswith("tests/")
+            and isinstance(original_node.func, cst.Name)
+            and original_node.func.value == "EventEnvelope"
+        ):
+            return None
         if isinstance(original_node.func, cst.Name) and original_node.func.value == "EventEnvelope":
             arguments = {
                 argument.keyword.value: argument
@@ -972,13 +984,20 @@ class _MechanicalTransformer(cst.CSTTransformer):
                 )
         position = self._touch_metadata(original_node.func)
         resolved_names = self._resolved_names(original_node.func)
-        if not resolved_names.intersection(self.migration.event_factory_qualified_names):
+        direct_legacy_factory = (
+            isinstance(original_node.func, cst.Name)
+            and original_node.func.value == "make_event"
+            and self.migration.domain in {"leases", "patches"}
+        )
+        if not direct_legacy_factory and not resolved_names.intersection(
+            self.migration.event_factory_qualified_names
+        ):
             return None
         if not original_node.args:
             return None
         event_name = _simple_string(original_node.args[0].value)
         if event_name is None:
-            if self.migration.report_dynamic_emissions:
+            if self.migration.report_dynamic_emissions and not direct_legacy_factory:
                 self.diagnostics.append(
                     CodemodDiagnostic(
                         self.path,
@@ -1003,6 +1022,7 @@ class _MechanicalTransformer(cst.CSTTransformer):
         ):
             payload = payload.func.value
         self.changes += 1
+        replacement_arg = updated_node.args[1].with_changes(value=payload)
         if self.migration.domain == "topology":
             return updated_node.with_changes(
                 func=cst.Name("typed_topology_event"),
@@ -1012,7 +1032,15 @@ class _MechanicalTransformer(cst.CSTTransformer):
                     updated_node.args[1].with_changes(value=payload),
                 ),
             )
-        replacement_arg = updated_node.args[1].with_changes(value=payload)
+        if self.migration.domain in {"leases", "patches"}:
+            return cst.Call(
+                func=cst.Name("make_strict_event"),
+                args=(
+                    cst.Arg(updated_node.func),
+                    cst.Arg(cst.Name(route.specification)),
+                    replacement_arg,
+                ),
+            )
         return updated_node.with_changes(
             func=cst.Attribute(cst.Name(route.specification), cst.Name("create")),
             args=(replacement_arg,),
@@ -1065,7 +1093,281 @@ class _MechanicalTransformer(cst.CSTTransformer):
             )
         )
 
+    def _complete_lease_fixture(self, updated_node: cst.Call) -> cst.Call | None:
+        """Make literal lease event and scheduling test seeds fully strict."""
+
+        if self.migration.domain != "leases" or not self.path.startswith("tests/"):
+            return None
+        if not isinstance(updated_node.func, cst.Name) or updated_node.func.value not in {
+            "_event",
+            "_graph_event",
+            "append_event",
+        }:
+            return None
+        event_index = next(
+            (
+                index
+                for index, argument in enumerate(updated_node.args)
+                if _simple_string(argument.value)
+                in {
+                    "lease_granted",
+                    "lease_renewed",
+                    "lease_released",
+                    "lease_revoked",
+                    "lease_expired",
+                }
+            ),
+            None,
+        )
+        if event_index is None or len(updated_node.args) <= event_index + 1:
+            return None
+        payload_argument = updated_node.args[event_index + 1]
+        if not isinstance(payload_argument.value, cst.Dict):
+            return None
+        event_type = _simple_string(updated_node.args[event_index].value)
+        additions_by_event = {
+            "lease_granted": (
+                ("lease_id", cst.SimpleString('"lease-test"')),
+                ("node_id", cst.SimpleString('"node-test"')),
+                ("generation", cst.Integer("0")),
+                ("execution_id", cst.SimpleString('"exec-1"')),
+                ("base_snapshot_id", cst.SimpleString('"S0"')),
+                ("expires_at", cst.SimpleString('"2026-01-01T00:05:00+00:00"')),
+                ("resource_claims", cst.List(elements=())),
+            ),
+            "lease_renewed": (
+                ("lease_id", cst.SimpleString('"lease-test"')),
+                ("node_id", cst.SimpleString('"node-test"')),
+                ("generation", cst.Integer("0")),
+                ("execution_id", cst.SimpleString('"exec-test"')),
+                ("observed_at", cst.SimpleString('"2026-01-01T00:00:00+00:00"')),
+                ("expires_at", cst.SimpleString('"2026-01-01T00:05:00+00:00"')),
+            ),
+            "lease_released": (
+                ("lease_id", cst.SimpleString('"lease-test"')),
+                ("node_id", cst.SimpleString('"node-test"')),
+                ("generation", cst.Integer("0")),
+            ),
+            "lease_revoked": (
+                ("lease_id", cst.SimpleString('"lease-test"')),
+                ("node_id", cst.SimpleString('"node-test"')),
+                ("generation", cst.Integer("0")),
+                ("execution_id", cst.SimpleString('"exec-test"')),
+                ("trigger", cst.SimpleString('"test_revocation"')),
+                ("reason", cst.SimpleString('"test_revocation"')),
+            ),
+            "lease_expired": (
+                ("lease_id", cst.SimpleString('"lease-test"')),
+                ("node_id", cst.SimpleString('"node-test"')),
+                ("generation", cst.Integer("0")),
+                ("execution_id", cst.SimpleString('"exec-test"')),
+                ("expires_at", cst.SimpleString('"2026-01-01T00:00:00+00:00"')),
+                ("reason", cst.SimpleString('"test_expiry"')),
+            ),
+        }
+        completed = _append_missing_dict_fields(
+            payload_argument.value, additions_by_event.get(event_type, ())
+        )
+        if event_type == "lease_granted":
+            lease_id = next(
+                (
+                    _simple_string(element.value)
+                    for element in completed.elements
+                    if element is not None and _simple_string(element.key) == "lease_id"
+                ),
+                None,
+            )
+            inferred_execution_id = (
+                f"exec-{lease_id.removeprefix('lease-')}" if lease_id is not None else "exec-1"
+            )
+            completed = completed.with_changes(
+                elements=tuple(
+                    element.with_changes(value=cst.SimpleString(f'"{inferred_execution_id}"'))
+                    if element is not None
+                    and _simple_string(element.key) == "execution_id"
+                    and _simple_string(element.value) in {"exec-test", "exec-1"}
+                    else element
+                    for element in completed.elements
+                )
+            )
+        if completed == payload_argument.value:
+            return None
+        self.changes += 1
+        return updated_node.with_changes(
+            args=(
+                *updated_node.args[: event_index + 1],
+                payload_argument.with_changes(value=completed),
+                *updated_node.args[event_index + 2 :],
+            )
+        )
+
+    def _complete_schedule_fixture(self, updated_node: cst.Call) -> cst.Call | None:
+        if self.migration.domain != "leases" or not self.path.startswith("tests/"):
+            return None
+        command_index = next(
+            (
+                index
+                for index, argument in enumerate(updated_node.args)
+                if _simple_string(argument.value) == "schedule_tick"
+            ),
+            None,
+        )
+        if command_index is None or len(updated_node.args) <= command_index + 1:
+            return None
+        payload_argument = updated_node.args[command_index + 1]
+        if not isinstance(payload_argument.value, cst.Dict):
+            return None
+        completed = _append_missing_dict_fields(
+            payload_argument.value,
+            (
+                ("lease_seconds", cst.Integer("300")),
+                ("max_grants", cst.Integer("10")),
+            ),
+        )
+        if completed == payload_argument.value:
+            return None
+        self.changes += 1
+        return updated_node.with_changes(
+            args=(
+                *updated_node.args[: command_index + 1],
+                payload_argument.with_changes(value=completed),
+                *updated_node.args[command_index + 2 :],
+            )
+        )
+
+    def _complete_patch_fixture(self, updated_node: cst.Call) -> cst.Call | None:
+        if self.migration.domain != "patches" or not self.path.startswith("tests/"):
+            return None
+        if not isinstance(updated_node.func, cst.Name) or updated_node.func.value not in {
+            "_event",
+            "_graph_event",
+            "append_event",
+        }:
+            return None
+        event_index = next(
+            (
+                index
+                for index, argument in enumerate(updated_node.args)
+                if _simple_string(argument.value)
+                in {"graph_patch_accepted", "graph_patch_rejected"}
+            ),
+            None,
+        )
+        if event_index is None or len(updated_node.args) <= event_index + 1:
+            return None
+        payload_argument = updated_node.args[event_index + 1]
+        if not isinstance(payload_argument.value, cst.Dict):
+            return None
+        event_type = _simple_string(updated_node.args[event_index].value)
+        additions = (
+            ("patch_id", cst.SimpleString('"patch-test"')),
+            ("base_graph_position", cst.UnaryOperation(cst.Minus(), cst.Integer("1"))),
+            ("actor_role", cst.SimpleString('"planner"')),
+            ("proposed_by_node_id", cst.SimpleString('"planner-test"')),
+        )
+        if event_type == "graph_patch_accepted":
+            additions = (*additions, ("successor_planner_node_ids", cst.List(elements=())))
+        else:
+            additions = (*additions, ("reason", cst.SimpleString('"test_rejection"')))
+        completed = _append_missing_dict_fields(payload_argument.value, additions)
+        if completed == payload_argument.value:
+            return None
+        self.changes += 1
+        return updated_node.with_changes(
+            args=(
+                *updated_node.args[: event_index + 1],
+                payload_argument.with_changes(value=completed),
+                *updated_node.args[event_index + 2 :],
+            )
+        )
+
+    def _complete_submit_patch_fixture(self, updated_node: cst.Call) -> cst.Call | None:
+        if self.migration.domain != "patches" or not self.path.startswith("tests/"):
+            return None
+        command_index = next(
+            (
+                index
+                for index, argument in enumerate(updated_node.args)
+                if _simple_string(argument.value) == "submit_patch"
+            ),
+            None,
+        )
+        if command_index is None or len(updated_node.args) <= command_index + 1:
+            return None
+        payload_argument = updated_node.args[command_index + 1]
+        if not isinstance(payload_argument.value, cst.Dict):
+            return None
+        completed = _append_missing_dict_fields(
+            payload_argument.value,
+            (("actor_role", cst.SimpleString('"planner"')),),
+        )
+        if completed == payload_argument.value:
+            return None
+        self.changes += 1
+        return updated_node.with_changes(
+            args=(
+                *updated_node.args[: command_index + 1],
+                payload_argument.with_changes(value=completed),
+                *updated_node.args[command_index + 2 :],
+            )
+        )
+
+    def leave_DictComp(
+        self, original_node: cst.DictComp, updated_node: cst.DictComp
+    ) -> cst.BaseExpression:
+        normalized = "".join(cst.Module(body=()).code_for_node(original_node).split())
+        if self.migration.domain == "patches" and self.path.endswith(
+            "src/orchestrator/graph_runtime/controller.py"
+        ):
+            if normalized == (
+                '{key:valueforkey,valueindict(payloador{}).items()ifkey!="run_id"and'
+                '(command_type=="submit_patch"orkey!="actor_role")}'
+            ):
+                return updated_node
+            self.changes += 1
+            return cst.parse_expression(
+                "{key: value for key, value in dict(payload or {}).items() "
+                'if key != "run_id" and (command_type == "submit_patch" or key != "actor_role")}'
+            )
+        if (
+            self.migration.domain == "patches"
+            and self.path.endswith(
+                ("tests/unit/test_graph_commands.py", "src/orchestrator/graph/scenario.py")
+            )
+            and normalized
+            in {
+                '{key:valueforkey,valueinraw_payload.items()ifkeynotin{"run_id","actor_role"}}',
+                '{key:valueforkey,valueincommand_payload.items()ifkeynotin{"run_id","actor_role"}}',
+                '{key:valueforkey,valueindict(payloador{}).items()ifkeynotin{"run_id","actor_role"}}',
+            }
+        ):
+            self.changes += 1
+            payload_source = (
+                "command_payload"
+                if "command_payload.items()" in normalized
+                else "dict(payload or {})"
+                if "dict(payloador{}).items()" in normalized
+                else "raw_payload"
+            )
+            return cst.parse_expression(
+                f"{{key: value for key, value in {payload_source}.items() "
+                'if key != "run_id" and (command_type == "submit_patch" or key != "actor_role")}'
+            )
+        return updated_node
+
     def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.BaseExpression:
+        completed_lease_fixture = self._complete_lease_fixture(updated_node)
+        if completed_lease_fixture is not None:
+            return completed_lease_fixture
+        completed_patch_fixture = self._complete_patch_fixture(updated_node)
+        if completed_patch_fixture is not None:
+            return completed_patch_fixture
+        completed_submit_patch_fixture = self._complete_submit_patch_fixture(updated_node)
+        if completed_submit_patch_fixture is not None:
+            return completed_submit_patch_fixture
+        completed_schedule_fixture = self._complete_schedule_fixture(updated_node)
+        if completed_schedule_fixture is not None:
+            return completed_schedule_fixture
         if (
             self.migration.domain == "task3_fixtures"
             and self.path.endswith(
@@ -1448,6 +1750,22 @@ class _MechanicalTransformer(cst.CSTTransformer):
         original_node: cst.SimpleStatementLine,
         updated_node: cst.SimpleStatementLine,
     ) -> cst.BaseStatement | cst.RemovalSentinel:
+        if (
+            self.migration.domain == "patches"
+            and self.path == "tests/graph_command_support.py"
+            and cst.Module(body=()).code_for_node(original_node).strip()
+            == 'actor_role = raw_payload.pop("actor_role", None)'
+        ):
+            self.changes += 1
+            return cst.FlattenSentinel(
+                (
+                    cst.parse_statement('actor_role = raw_payload.get("actor_role")\n'),
+                    cst.parse_statement(
+                        'if command_type != "submit_patch":\n'
+                        '    raw_payload.pop("actor_role", None)\n'
+                    ),
+                )
+            )
         if len(original_node.body) == 1 and isinstance(original_node.body[0], cst.ImportFrom):
             original_import = original_node.body[0]
             module_name = get_full_name_for_node(original_import.module)
@@ -2560,7 +2878,9 @@ DOMAIN_MIGRATIONS.update(
             target_module="src/orchestrator/graph/events/topology.py",
             paths=(
                 "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/callbacks.py",
                 "src/orchestrator/graph/commands/__init__.py",
+                "src/orchestrator/graph/commands/lifecycle.py",
                 "src/orchestrator/graph/commands/schedule.py",
                 "src/orchestrator/graph/commands/callbacks.py",
                 "src/orchestrator/graph/commands/lifecycle.py",
@@ -2683,11 +3003,57 @@ DOMAIN_MIGRATIONS.update(
             target_module="src/orchestrator/graph/events/leases.py",
             paths=(
                 "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/commands/callbacks.py",
                 "src/orchestrator/graph/commands/__init__.py",
+                "src/orchestrator/graph/commands/lifecycle.py",
                 "src/orchestrator/graph/commands/schedule.py",
-                "src/orchestrator/graph/commands/lease_bridge.py",
                 "src/orchestrator/graph/models.py",
                 "src/orchestrator/graph/projections.py",
+                "tests/integration/test_graph_api.py",
+                "tests/integration/test_graph_controller_transactions.py",
+                "tests/integration/test_graph_decisions_api.py",
+                "tests/integration/test_graph_event_store.py",
+                "tests/integration/test_graph_file_state_boundary.py",
+                "tests/integration/test_graph_fr06_acceptance.py",
+                "tests/integration/test_graph_fr08_acceptance.py",
+                "tests/integration/test_graph_fr09_acceptance.py",
+                "tests/integration/test_graph_fr10_acceptance.py",
+                "tests/integration/test_graph_fr11_acceptance.py",
+                "tests/integration/test_graph_fr12_acceptance.py",
+                "tests/integration/test_graph_fr15_acceptance.py",
+                "tests/integration/test_graph_fr16_acceptance.py",
+                "tests/integration/test_graph_fr17_acceptance.py",
+                "tests/integration/test_graph_gatekeeper_flow.py",
+                "tests/integration/test_graph_node_detail_read_models.py",
+                "tests/integration/test_graph_outbox_crash_points.py",
+                "tests/integration/test_graph_parent_child_flow.py",
+                "tests/integration/test_graph_planner_flow.py",
+                "tests/integration/test_graph_planner_session_flow.py",
+                "tests/integration/test_graph_read_models.py",
+                "tests/integration/test_graph_routine_compile.py",
+                "tests/integration/test_graph_run_driver.py",
+                "tests/integration/test_graph_run_start_routing.py",
+                "tests/integration/test_graph_runner_e2e.py",
+                "tests/integration/test_graph_scheduler_api.py",
+                "tests/integration/test_graph_startup_recovery.py",
+                "tests/unit/test_callbacks.py",
+                "tests/unit/test_graph_commands.py",
+                "tests/unit/test_graph_compiler.py",
+                "tests/unit/test_graph_driver_logic.py",
+                "tests/unit/test_graph_models.py",
+                "tests/unit/test_graph_parent_child_translation.py",
+                "tests/unit/test_graph_payload_framework.py",
+                "tests/unit/test_graph_planner.py",
+                "tests/unit/test_graph_planner_session.py",
+                "tests/unit/test_graph_projections.py",
+                "tests/unit/test_graph_scheduler_view.py",
+                "tests/unit/test_lease_event_payloads.py",
+                "tests/unit/test_lifecycle_event_payloads.py",
+                "tests/unit/test_patch_validator.py",
+                "tests/unit/test_planner_session_event_payloads.py",
+                "tests/unit/test_signal_consumer.py",
+                "tests/unit/test_w5_payload_ast_inventory.py",
+                "tests/unit/test_w5_strict_payload_codemod.py",
             ),
             event_routes=(
                 EventRoute("lease_granted", "LeaseGrantedPayload", "LEASE_GRANTED"),
@@ -2701,6 +3067,39 @@ DOMAIN_MIGRATIONS.update(
                     "schedule_tick", "handle_schedule_tick", "SCHEDULE_TICK", "ScheduleTickCommand"
                 ),
                 CommandRoute("reconcile", "handle_reconcile", "RECONCILE", "ReconcileCommand"),
+            ),
+            required_imports=(
+                RequiredImport(
+                    "src/orchestrator/graph/_commands.py",
+                    "orchestrator.graph.events.leases",
+                    (
+                        "LEASE_EXPIRED",
+                        "LEASE_GRANTED",
+                        "LEASE_RELEASED",
+                        "LEASE_RENEWED",
+                        "LEASE_REVOKED",
+                    ),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/callbacks.py",
+                    "orchestrator.graph.events.leases",
+                    ("LEASE_RELEASED",),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/callbacks.py",
+                    "orchestrator.graph._commands",
+                    ("make_strict_event",),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/lifecycle.py",
+                    "orchestrator.graph.events.leases",
+                    ("LEASE_REVOKED",),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/lifecycle.py",
+                    "orchestrator.graph._commands",
+                    ("make_strict_event",),
+                ),
             ),
             report_dynamic_emissions=True,
         ),
@@ -2775,6 +3174,13 @@ DOMAIN_MIGRATIONS.update(
                     "EvaluateFinalGateCommand",
                 ),
             ),
+            required_imports=(
+                RequiredImport(
+                    "src/orchestrator/graph/_commands.py",
+                    "orchestrator.graph.events.patches",
+                    ("GRAPH_PATCH_ACCEPTED", "GRAPH_PATCH_REJECTED"),
+                ),
+            ),
             report_dynamic_emissions=True,
         ),
         "patches": DomainMigration(
@@ -2786,6 +3192,40 @@ DOMAIN_MIGRATIONS.update(
                 "src/orchestrator/graph/commands/patches.py",
                 "src/orchestrator/graph/models.py",
                 "src/orchestrator/graph/projections.py",
+                "src/orchestrator/graph/scenario.py",
+                "src/orchestrator/graph_runtime/controller.py",
+                "tests/graph_command_support.py",
+                "tests/integration/test_api_activity.py",
+                "tests/integration/test_graph_api.py",
+                "tests/integration/test_graph_dynamic_e2e.py",
+                "tests/integration/test_graph_event_store.py",
+                "tests/integration/test_graph_fr01_fr13_fr18_acceptance.py",
+                "tests/integration/test_graph_fr02_acceptance.py",
+                "tests/integration/test_graph_fr03_acceptance.py",
+                "tests/integration/test_graph_fr06_acceptance.py",
+                "tests/integration/test_graph_fr07_acceptance.py",
+                "tests/integration/test_graph_fr08_acceptance.py",
+                "tests/integration/test_graph_fr09_acceptance.py",
+                "tests/integration/test_graph_fr16_acceptance.py",
+                "tests/integration/test_graph_fr17_acceptance.py",
+                "tests/integration/test_graph_parent_child_flow.py",
+                "tests/integration/test_graph_planner_flow.py",
+                "tests/integration/test_graph_planner_session_flow.py",
+                "tests/integration/test_graph_read_models.py",
+                "tests/unit/test_compare_carriers.py",
+                "tests/unit/test_graph_api_projection.py",
+                "tests/unit/test_graph_commands.py",
+                "tests/unit/test_graph_macros.py",
+                "tests/unit/test_graph_models.py",
+                "tests/unit/test_graph_parent_child_translation.py",
+                "tests/unit/test_graph_planner.py",
+                "tests/unit/test_graph_planner_packet.py",
+                "tests/unit/test_graph_planner_session.py",
+                "tests/unit/test_graph_projections.py",
+                "tests/unit/test_lifecycle_event_payloads.py",
+                "tests/unit/test_node_created_event_payloads.py",
+                "tests/unit/test_patch_event_payloads.py",
+                "tests/unit/test_w5_strict_payload_codemod.py",
             ),
             event_routes=(
                 EventRoute(
@@ -2951,6 +3391,21 @@ def run_migration(migration: DomainMigration, root: Path, mode: str) -> Migratio
             if "GraphController(" in path.read_text()
         )
         migration = replace(migration, paths=tuple(dict.fromkeys((*migration.paths, *discovered))))
+    if migration.domain == "leases":
+        migration = replace(
+            migration,
+            paths=tuple(
+                dict.fromkeys(
+                    (
+                        *migration.paths,
+                        *(
+                            str(path.relative_to(root))
+                            for path in (root / "tests/fixtures/graph").glob("*.yaml")
+                        ),
+                    )
+                )
+            ),
+        )
     target_paths = {item.target_path for item in migration.relocations}
     original = {}
     for item in migration.paths:
@@ -2959,11 +3414,23 @@ def run_migration(migration: DomainMigration, root: Path, mode: str) -> Migratio
             original[item] = path.read_text()
         elif item in target_paths:
             original[item] = ""
-    result = StrictPayloadCutoverCodemod(migration).transform_files(original)
+    python_sources = {path: source for path, source in original.items() if path.endswith(".py")}
+    yaml_sources = {path: source for path, source in original.items() if path.endswith(".yaml")}
+    python_migration = (
+        replace(migration, paths=tuple(python_sources))
+        if migration.domain == "leases"
+        else migration
+    )
+    result = StrictPayloadCutoverCodemod(python_migration).transform_files(python_sources)
+    transformed_sources = dict(result.sources)
+    if migration.domain == "leases":
+        transformed_sources.update(
+            {path: _complete_lease_yaml_fixtures(source) for path, source in yaml_sources.items()}
+        )
     diffs = "".join(
-        _diff(path, original[path], result.sources[path])
+        _diff(path, original[path], transformed_sources[path])
         for path in sorted(original)
-        if original[path] != result.sources[path]
+        if original[path] != transformed_sources[path]
     )
     diagnostics = "\n".join(item.render() for item in result.diagnostics)
     if diagnostics:
@@ -2977,13 +3444,82 @@ def run_migration(migration: DomainMigration, root: Path, mode: str) -> Migratio
         raise ValueError(f"unknown migration mode: {mode}")
     if diagnostics:
         return MigrationRunResult(1, diffs + diagnostics)
-    for relative_path, transformed in result.sources.items():
+    for relative_path, transformed in transformed_sources.items():
         path = root / relative_path
         current = path.read_text() if path.exists() else ""
         if current != transformed:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(transformed)
     return MigrationRunResult(0, diffs + diagnostics)
+
+
+def _complete_lease_yaml_fixtures(source: str) -> str:
+    section: str | None = None
+    output: list[str] = []
+    for line in source.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("given_events:"):
+            section = "given_events"
+        elif stripped.startswith(("when_command:", "then_events:", "then_projection:")):
+            section = None
+        if section == "given_events" and "lease_granted: {" in line:
+            marker = line.index("lease_granted: {")
+            body_start = line.index("{", marker) + 1
+            depth = 1
+            body_end = body_start
+            while body_end < len(line) and depth:
+                if line[body_end] == "{":
+                    depth += 1
+                elif line[body_end] == "}":
+                    depth -= 1
+                body_end += 1
+            if depth == 0:
+                body = line[body_start : body_end - 1]
+                lease_match = re.search(r"lease_id:\s*([^, }]+)", body)
+                lease_id = lease_match.group(1) if lease_match is not None else "lease-test"
+                additions = (
+                    ("generation", "0"),
+                    ("execution_id", f"exec-{lease_id.removeprefix('lease-')}"),
+                    ("base_snapshot_id", "S0"),
+                    ("expires_at", "2026-01-01T00:05:00+00:00"),
+                    ("resource_claims", "[]"),
+                )
+                for key, value in additions:
+                    if re.search(rf"(?:^|,\s*){re.escape(key)}:", body) is None:
+                        body += f", {key}: {value}"
+                line = line[:body_start] + body + line[body_end - 1 :]
+        if section == "given_events":
+            for event_type, additions in (
+                ("lease_released", (("generation", "1"),)),
+                (
+                    "lease_revoked",
+                    (
+                        ("generation", "1"),
+                        ("execution_id", "exec-1"),
+                        ("trigger", "test_revocation"),
+                        ("reason", "fixture_revocation"),
+                    ),
+                ),
+            ):
+                match = re.search(rf"{event_type}: \{{(?P<body>[^}}]*)\}}", line)
+                if match is None:
+                    continue
+                body = match.group("body")
+                for key, value in additions:
+                    if re.search(rf"(?:^|,\s*){re.escape(key)}:", body) is None:
+                        body += f", {key}: {value}"
+                line = line[: match.start("body")] + body + line[match.end("body") :]
+        if "schedule_tick: {" in line:
+            match = re.search(r"schedule_tick: \{(?P<body>[^}]*)\}", line)
+            if match is not None:
+                body = match.group("body")
+                if "lease_seconds:" not in body:
+                    body += ", lease_seconds: 300"
+                if "max_grants:" not in body:
+                    body += ", max_grants: 10"
+                line = line[: match.start("body")] + body + line[match.end("body") :]
+        output.append(line)
+    return "".join(output)
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:

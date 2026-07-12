@@ -334,6 +334,8 @@ def test_node_created_reducer_preserves_planner_recovery_and_authority_indexes()
 
 
 def test_node_created_producers_emit_payloads_validated_by_typed_model() -> None:
+    from tests.graph_command_support import dispatch_graph_command
+
     routine = RoutineConfig(
         id="typed-nodes",
         name="Typed nodes",
@@ -346,8 +348,7 @@ def test_node_created_producers_emit_payloads_validated_by_typed_model() -> None
         catalog=build_graph_catalog(),
         run_id="run-1",
     )
-    patch_events = apply_command(
-        initial_projection(),
+    patch_events = dispatch_graph_command(
         [],
         "submit_patch",
         {
@@ -367,8 +368,6 @@ def test_node_created_producers_emit_payloads_validated_by_typed_model() -> None
                 }
             ],
         },
-        FakeClock(),
-        SequentialIdGenerator(),
     )
     appeal_events = apply_command(
         initial_projection(),

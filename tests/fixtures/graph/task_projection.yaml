@@ -36,7 +36,7 @@
 - name: task_projection_in_progress
   given_events:
     - node_created: {node_id: worker-in-progress, kind: worker, state: running, task_region_id: task-in-progress}
-    - lease_granted: {node_id: worker-in-progress, lease_id: lease-in-progress}
+    - lease_granted: {node_id: worker-in-progress, lease_id: lease-in-progress, generation: 0, execution_id: exec-in-progress, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command: null
   then_events: []
   then_projection: {task-in-progress: in_progress, lease-in-progress: active}

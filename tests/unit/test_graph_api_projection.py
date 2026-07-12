@@ -787,6 +787,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
                     "patch_read_set": ["worker-1"],
                     "conflicting_event_ids": ["event-9"],
                 },
+                "actor_role": "planner",
             },
             position=7,
         ),

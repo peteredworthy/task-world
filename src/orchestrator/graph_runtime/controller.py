@@ -120,7 +120,7 @@ class GraphController:
             {
                 key: value
                 for key, value in dict(payload or {}).items()
-                if key not in {"run_id", "actor_role"}
+                if key != "run_id" and (command_type == "submit_patch" or key != "actor_role")
             }
             if command_type in self._catalog.command_specs
             else command_payload

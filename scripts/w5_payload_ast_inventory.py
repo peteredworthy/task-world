@@ -620,6 +620,17 @@ def _event_argument(call: ast.Call, parsed: _ParsedFile) -> ast.expr | None:
     return None
 
 
+_STRICT_SPEC_EVENT_NAMES = {
+    "LEASE_GRANTED": "lease_granted",
+    "LEASE_RENEWED": "lease_renewed",
+    "LEASE_RELEASED": "lease_released",
+    "LEASE_REVOKED": "lease_revoked",
+    "LEASE_EXPIRED": "lease_expired",
+    "GRAPH_PATCH_ACCEPTED": "graph_patch_accepted",
+    "GRAPH_PATCH_REJECTED": "graph_patch_rejected",
+}
+
+
 def _specification_name_argument(call: ast.Call) -> ast.expr | None:
     keyword = next((item.value for item in call.keywords if item.arg == "name"), None)
     if keyword is not None:
@@ -808,6 +819,22 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     for parsed in parsed_files:
         for node in ast.walk(parsed.tree):
             if isinstance(node, ast.Call):
+                if _call_name(node.func) == "_make_strict_event" and len(node.args) >= 2:
+                    specification = node.args[1]
+                    if isinstance(specification, ast.Name) and (
+                        event_name := _STRICT_SPEC_EVENT_NAMES.get(specification.id)
+                    ):
+                        dynamic_sites.append(
+                            DynamicSite(
+                                str(parsed.path),
+                                node.lineno,
+                                node.col_offset,
+                                specification.id,
+                                "typed_specification",
+                                (event_name,),
+                            )
+                        )
+                    continue
                 specification_name = _specification_name_argument(node)
                 if _call_name(node.func) == "EventSpecification" and specification_name:
                     values = _literal_strings(specification_name)

@@ -60,7 +60,12 @@ def test_child_order_is_chain_order() -> None:
     blocked = _apply(
         events,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "snapshot-0", "max_grants": 10},
+        {
+            "run_id": "run-1",
+            "base_snapshot_id": "snapshot-0",
+            "max_grants": 10,
+            "lease_seconds": 300,
+        },
     )
     assert not any(
         _event_type(event) == "lease_granted" and _payload(event)["node_id"] == "planner-child-two"
@@ -84,7 +89,12 @@ def test_child_order_is_chain_order() -> None:
     scheduled = _apply(
         events,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "snapshot-one", "max_grants": 10},
+        {
+            "run_id": "run-1",
+            "base_snapshot_id": "snapshot-one",
+            "max_grants": 10,
+            "lease_seconds": 300,
+        },
     )
 
     assert any(
@@ -299,6 +309,8 @@ def _drive_region_to_accepted(
                 "generation": 1,
                 "execution_id": f"exec-{worker_id}",
                 "base_snapshot_id": "snapshot-0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
         ),
     ]
@@ -349,6 +361,8 @@ def _drive_region_to_accepted(
                 "generation": 1,
                 "execution_id": f"exec-{verifier_id}",
                 "base_snapshot_id": f"snapshot-{prefix}",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
         ),
     ]

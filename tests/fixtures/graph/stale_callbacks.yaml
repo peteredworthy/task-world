@@ -1,8 +1,8 @@
 - name: stale_duplicate_same_payload
   given_events:
     - node_state_changed: {node_id: worker-stale-1, new_state: completed}
-    - lease_granted: {node_id: worker-stale-1, lease_id: lease-1, generation: 1}
-    - lease_released: {node_id: worker-stale-1, lease_id: lease-1}
+    - lease_granted: {node_id: worker-stale-1, lease_id: lease-1, generation: 1, execution_id: exec-1, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
+    - lease_released: {node_id: worker-stale-1, lease_id: lease-1, generation: 1}
     - callback_accepted: {node_id: worker-stale-1, idempotency_key: key-1, payload: {payload_hash: hash-a}, reason: accepted}
   when_command:
     submit_callback: {run_id: run-1, node_id: worker-stale-1, execution_id: exec-1, lease_id: lease-1, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-1, payload_hash: hash-a}
@@ -13,8 +13,8 @@
 - name: stale_duplicate_different_payload
   given_events:
     - node_state_changed: {node_id: worker-stale-2, new_state: completed}
-    - lease_granted: {node_id: worker-stale-2, lease_id: lease-2, generation: 1}
-    - lease_released: {node_id: worker-stale-2, lease_id: lease-2}
+    - lease_granted: {node_id: worker-stale-2, lease_id: lease-2, generation: 1, execution_id: exec-2, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
+    - lease_released: {node_id: worker-stale-2, lease_id: lease-2, generation: 1}
     - callback_accepted: {node_id: worker-stale-2, idempotency_key: key-2, payload: {payload_hash: hash-a}, reason: accepted}
   when_command:
     submit_callback: {run_id: run-1, node_id: worker-stale-2, execution_id: exec-2, lease_id: lease-2, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-2, payload_hash: hash-b}
@@ -24,8 +24,8 @@
 
 - name: stale_callback_for_revoked_lease
   given_events:
-    - lease_granted: {node_id: worker-stale-3, lease_id: lease-3, generation: 1}
-    - lease_revoked: {node_id: worker-stale-3, lease_id: lease-3}
+    - lease_granted: {node_id: worker-stale-3, lease_id: lease-3, generation: 1, execution_id: exec-3, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
+    - lease_revoked: {node_id: worker-stale-3, lease_id: lease-3, generation: 1, execution_id: exec-1, reason: fixture_revocation, trigger: test_revocation}
   when_command:
     submit_callback: {run_id: run-1, node_id: worker-stale-3, execution_id: exec-3, lease_id: lease-3, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-3}
   then_events:
@@ -34,7 +34,7 @@
 
 - name: stale_callback_for_old_generation
   given_events:
-    - lease_granted: {node_id: worker-stale-4, lease_id: lease-4, generation: 2}
+    - lease_granted: {node_id: worker-stale-4, lease_id: lease-4, generation: 2, execution_id: exec-4, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback: {run_id: run-1, node_id: worker-stale-4, execution_id: exec-4, lease_id: lease-4, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-4}
   then_events:
@@ -44,7 +44,7 @@
 - name: stale_callback_for_future_generation
   given_events:
     - node_created: {node_id: worker-stale-4f, kind: worker, state: running}
-    - lease_granted: {node_id: worker-stale-4f, lease_id: lease-4f, generation: 1, execution_id: exec-4f, base_snapshot_id: S0}
+    - lease_granted: {node_id: worker-stale-4f, lease_id: lease-4f, generation: 1, execution_id: exec-4f, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback: {run_id: run-1, node_id: worker-stale-4f, execution_id: exec-4f, lease_id: lease-4f, lease_generation: 999, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-4f}
   then_events:
@@ -55,7 +55,7 @@
   given_events:
     - node_state_changed: {node_id: worker-stale-5a, new_state: failed}
     - node_created: {node_id: worker-stale-5b, kind: worker, state: ready}
-    - lease_granted: {node_id: worker-stale-5a, lease_id: lease-5a, generation: 1}
+    - lease_granted: {node_id: worker-stale-5a, lease_id: lease-5a, generation: 1, execution_id: exec-5a, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback: {run_id: run-1, node_id: worker-stale-5a, execution_id: exec-5a, lease_id: lease-5a, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 3, idempotency_key: key-5a}
   then_events:
@@ -65,7 +65,7 @@
 - name: stale_failure_after_completed
   given_events:
     - node_state_changed: {node_id: worker-stale-6, new_state: completed}
-    - lease_granted: {node_id: worker-stale-6, lease_id: lease-6, generation: 1}
+    - lease_granted: {node_id: worker-stale-6, lease_id: lease-6, generation: 1, execution_id: exec-6, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback: {run_id: run-1, node_id: worker-stale-6, execution_id: exec-6, lease_id: lease-6, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-6}
   then_events:
@@ -75,7 +75,7 @@
 - name: stale_approval_after_cancellation
   given_events:
     - run_lifecycle_changed: {to_state: cancelled}
-    - lease_granted: {node_id: gate-stale-7, lease_id: lease-7, generation: 1}
+    - lease_granted: {node_id: gate-stale-7, lease_id: lease-7, generation: 1, execution_id: exec-7, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback: {run_id: run-1, node_id: gate-stale-7, execution_id: exec-7, lease_id: lease-7, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-7}
   then_events:
@@ -94,7 +94,7 @@
   given_events:
     - run_lifecycle_changed: {to_state: active}
     - node_created: {node_id: worker-stale-9a, kind: worker, state: running}
-    - lease_granted: {node_id: worker-stale-9a, lease_id: lease-9a, generation: 1}
+    - lease_granted: {node_id: worker-stale-9a, lease_id: lease-9a, generation: 1, execution_id: exec-9a, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback:
       run_id: run-1
@@ -128,10 +128,10 @@
 
 - name: stale_pause_callback_race_pause_first
   given_events:
-    - lease_granted: {node_id: worker-stale-9b, lease_id: lease-9b, generation: 1}
-    - lease_suspended: {node_id: worker-stale-9b, lease_id: lease-9b, reason: pause}
+    - lease_granted: {node_id: worker-stale-9b, lease_id: lease-9b, generation: 1, execution_id: exec-9b, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
+    - lease_revoked: {node_id: worker-stale-9b, lease_id: lease-9b, generation: 1, execution_id: exec-9b, reason: run_paused, trigger: test_revocation}
   when_command:
     submit_callback: {run_id: run-1, node_id: worker-stale-9b, execution_id: exec-9b, lease_id: lease-9b, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-9b}
   then_events:
     - callback_rejected_stale: {node_id: worker-stale-9b, lease_id: lease-9b}
-  then_projection: {lease-9b: suspended}
+  then_projection: {lease-9b: revoked}

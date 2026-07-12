@@ -530,6 +530,8 @@ def _active_lease_events() -> list[EventEnvelope]:
                 "generation": 1,
                 "execution_id": "exec-1",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             position=3,
         ),

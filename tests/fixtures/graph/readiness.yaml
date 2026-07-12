@@ -32,7 +32,7 @@
   given_events:
     - run_lifecycle_changed: {from_state: queued, to_state: active}
     - node_created: {node_id: writer-active, kind: worker, state: leased}
-    - lease_granted: {node_id: writer-active, lease_id: lease-writer-active}
+    - lease_granted: {node_id: writer-active, lease_id: lease-writer-active, generation: 0, execution_id: exec-writer-active, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
     - node_created: {node_id: writer-waiting, kind: worker, state: blocked}
   when_command: null
   then_events: []
@@ -42,7 +42,7 @@
   given_events:
     - run_lifecycle_changed: {from_state: queued, to_state: active}
     - node_created: {node_id: reader-active, kind: worker, state: leased}
-    - lease_granted: {node_id: reader-active, lease_id: lease-reader-active}
+    - lease_granted: {node_id: reader-active, lease_id: lease-reader-active, generation: 0, execution_id: exec-reader-active, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
     - node_created: {node_id: reader-waiting, kind: worker, state: planned}
     - node_state_changed: {node_id: reader-waiting, new_state: ready, trigger: read_read_compatible}
   when_command: null

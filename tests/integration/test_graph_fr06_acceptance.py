@@ -164,7 +164,7 @@ async def test_fr06_edges_bind_fanout_join_optional_bind_all_and_supersede(
         run_id,
         third_rejection.projection_position,
         "schedule_tick",
-        {"max_grants": 0, "base_snapshot_id": "S0"},
+        {"max_grants": 0, "base_snapshot_id": "S0", "lease_seconds": 300},
     )
     assert any(
         event.event_type == "node_ready" and event.payload["node_id"] == "optional-worker"
@@ -337,6 +337,8 @@ def _fr06_events(run_id: str) -> list[EventEnvelope]:
                 "generation": 1,
                 "execution_id": "exec-worker-1",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
         ),
         _event(

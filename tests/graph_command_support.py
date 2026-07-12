@@ -33,7 +33,9 @@ def dispatch_graph_command(
         else "run-1"
     )
     run_id = str(raw_payload.pop("run_id", first_run_id))
-    actor_role = raw_payload.pop("actor_role", None)
+    actor_role = raw_payload.get("actor_role")
+    if command_type != "submit_patch":
+        raw_payload.pop("actor_role", None)
     clock = FakeClock()
     id_generator = SequentialIdGenerator()
     projection = initial_projection()

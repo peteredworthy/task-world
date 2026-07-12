@@ -280,6 +280,8 @@ def _less_used_events(run_id: str) -> list[EventEnvelope]:
                 "generation": 1,
                 "execution_id": "exec-recovery",
                 "expires_at": "2026-01-01T00:05:00+00:00",
+                "base_snapshot_id": "S0",
+                "resource_claims": [],
             },
         ),
         _event(
@@ -406,12 +408,9 @@ def _less_used_events(run_id: str) -> list[EventEnvelope]:
                 "patch_id": "patch-fr17-rejected",
                 "proposed_by_node_id": "planner-fr17",
                 "base_graph_position": 3,
-                "current_graph_position": 25,
                 "actor_role": "planner",
                 "reason": "invalid macro expansion for FR-17 fixture",
                 "diagnostics": {"macro": "create_join", "valid": False},
-                "created_node_ids": [],
-                "created_edge_ids": [],
             },
         ),
     ]
@@ -525,7 +524,8 @@ async def _assert_fr17_surfaces(run_id: str, surfaces: dict[str, Any]) -> None:
     assert patches["attempts"][0]["patch_id"] == "patch-fr17-rejected"
     assert patches["attempts"][0]["status"] == "rejected"
     assert patches["attempts"][0]["diagnostics"]["actor_role"] == "planner"
-    assert patches["attempts"][0]["diagnostics"]["diagnostics"] == {
+    assert patches["attempts"][0]["diagnostics"] == {
+        "actor_role": "planner",
         "macro": "create_join",
         "valid": False,
     }

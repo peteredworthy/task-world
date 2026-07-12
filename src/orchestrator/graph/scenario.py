@@ -57,7 +57,7 @@ def run_scenario(
         typed_command_payload = {
             key: value
             for key, value in command_payload.items()
-            if key not in {"run_id", "actor_role"}
+            if key != "run_id" and (command_type == "submit_patch" or key != "actor_role")
         }
         projection = initial_projection()
         for event in events_before_command:

@@ -13,7 +13,6 @@ from orchestrator.graph import (
     CommandSpecification,
     DuplicateGraphSpecificationError,
     EventMetadata,
-    EventEnvelope,
     EventSpecification,
     GraphCatalog,
     HEARTBEAT_RECORDED,
@@ -224,7 +223,23 @@ def test_heartbeat_command_emits_projection_neutral_typed_event() -> None:
         future_effects=build_graph_command_dependencies().future_effects,
     )
 
-    events = catalog.resolve_command("record_heartbeat").handle(command, {}, (), context)
+    events = catalog.resolve_command("record_heartbeat").handle(
+        command,
+        {
+            "run_state": "active",
+            "leases": {
+                "lease-1": {
+                    "lease_id": "lease-1",
+                    "node_id": "worker-1",
+                    "generation": 2,
+                    "execution_id": "exec-1",
+                    "state": "active",
+                }
+            },
+        },
+        (),
+        context,
+    )
     event = events[0]
     spec = catalog.resolve_event(event.metadata.event_type)
 
@@ -277,5 +292,5 @@ def test_public_apply_command_dispatches_heartbeat_through_injected_catalog_cont
     assert event.metadata.position == 5
     assert type(event.payload) is HeartbeatRecordedPayload
     assert event.payload.observed_at == NOW
-    assert isinstance(events[1], EventEnvelope)
-    assert events[1].event_type == "lease_renewed"
+    assert isinstance(events[1], HydratedEvent)
+    assert events[1].metadata.event_type == "lease_renewed"

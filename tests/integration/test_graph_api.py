@@ -274,6 +274,8 @@ async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
                 "generation": 1,
                 "execution_id": "exec-callback",
                 "expires_at": "2026-01-01T00:01:00+00:00",
+                "base_snapshot_id": "S0",
+                "resource_claims": [],
             },
         ),
         _event(

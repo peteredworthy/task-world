@@ -166,7 +166,18 @@ def test_required_pass_gated_final_check_from_recoverable_verifier_rejected() ->
 def test_patch_stale_neutral_events_only_accepted() -> None:
     patch = _patch([{"op": "retire_node", "node_id": "worker-1"}], base_graph_position=10)
     events = [
-        _event("lease_granted", {"node_id": "worker-1", "lease_id": "lease-1"}),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 0,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
+            },
+        ),
         _event("cost_recorded", {"node_id": "worker-1", "tokens": 100}, event_id="event-2"),
         _event("heartbeat_recorded", {"node_id": "worker-1"}, event_id="event-3"),
     ]

@@ -197,6 +197,7 @@ def test_expired_uncontested_lease_with_matching_execution_accepted() -> None:
                 "generation": 1,
                 "execution_id": "exec-1",
                 "reason": "lease_expired_without_callback",
+                "expires_at": "2026-01-01T00:00:00+00:00",
             },
         ),
         _event(
@@ -239,7 +240,14 @@ def test_expired_redispatched_lease_rejected_as_contested() -> None:
         [
             _event(
                 "lease_expired",
-                {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+                {
+                    "lease_id": "lease-1",
+                    "node_id": "worker-1",
+                    "generation": 1,
+                    "execution_id": "exec-test",
+                    "expires_at": "2026-01-01T00:00:00+00:00",
+                    "reason": "test_expiry",
+                },
             ),
             _event(
                 "lease_granted",
@@ -248,6 +256,9 @@ def test_expired_redispatched_lease_rejected_as_contested() -> None:
                     "node_id": "worker-1",
                     "generation": 2,
                     "execution_id": "exec-2",
+                    "base_snapshot_id": "S0",
+                    "expires_at": "2026-01-01T00:05:00+00:00",
+                    "resource_claims": [],
                 },
             ),
         ],

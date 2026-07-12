@@ -155,7 +155,7 @@ async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> 
             controller,
             run_id,
             "schedule_tick",
-            {"base_snapshot_id": "snapshot-h1", "max_grants": 10},
+            {"base_snapshot_id": "snapshot-h1", "max_grants": 10, "lease_seconds": 300},
         )
         successor_lease = next(
             event
@@ -248,7 +248,7 @@ async def _complete_node(
         controller,
         run_id,
         "schedule_tick",
-        {"base_snapshot_id": "snapshot-0", "max_grants": 10},
+        {"base_snapshot_id": "snapshot-0", "max_grants": 10, "lease_seconds": 300},
     )
     lease = next(
         event
@@ -280,7 +280,7 @@ async def _drive_region(
         controller,
         run_id,
         "schedule_tick",
-        {"base_snapshot_id": "snapshot-0", "max_grants": 10},
+        {"base_snapshot_id": "snapshot-0", "max_grants": 10, "lease_seconds": 300},
     )
     worker_lease = next(
         event
@@ -331,7 +331,7 @@ async def _drive_region(
         controller,
         run_id,
         "schedule_tick",
-        {"base_snapshot_id": f"snapshot-{prefix}", "max_grants": 10},
+        {"base_snapshot_id": f"snapshot-{prefix}", "max_grants": 10, "lease_seconds": 300},
     )
     verifier_lease = next(
         event
@@ -426,7 +426,7 @@ def _patch_payload(
         "ops": ops,
     }
     if carryover_record_id is not None:
-        payload["carryover_summary"] = carryover_record_id
+        payload["carryover_record_id"] = carryover_record_id
     return payload
 
 

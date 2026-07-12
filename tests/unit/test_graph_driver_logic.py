@@ -27,6 +27,7 @@ from orchestrator.graph import (
     CommandExecutionContext,
     EnvironmentFailureProjection,
     EventEnvelope,
+    HydratedEvent,
     FakeClock,
     SequentialIdGenerator,
     apply_command,
@@ -557,6 +558,8 @@ def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loo
                 "generation": 1,
                 "execution_id": "exec-1",
                 "expires_at": (clock.now() - timedelta(seconds=1)).isoformat(),
+                "base_snapshot_id": "S0",
+                "resource_claims": [],
             },
             2,
         ),
@@ -588,9 +591,23 @@ def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loo
     renewal = next(
         event
         for event in output
-        if isinstance(event, EventEnvelope) and event.event_type == "lease_renewed"
+        if isinstance(event, HydratedEvent) and event.metadata.event_type == "lease_renewed"
     )
-    renewed_snapshot = _snapshot_from_events([*events, renewal])
+    renewed_snapshot = _snapshot_from_events(
+        [
+            *events,
+            EventEnvelope(
+                event_id=renewal.metadata.event_id,
+                run_id=renewal.metadata.run_id,
+                position=renewal.metadata.position,
+                event_type=renewal.metadata.event_type,
+                schema_version=renewal.metadata.payload_schema_generation,
+                actor=renewal.metadata.actor,
+                timestamp=renewal.metadata.timestamp,
+                payload=renewal.payload.model_dump(mode="json"),
+            ),
+        ]
+    )
 
     assert _active_lease_wait_plan(expired_snapshot, clock.now()).timeout_seconds == 0.0
     assert _active_lease_wait_plan(renewed_snapshot, clock.now()).timeout_seconds == 3600.0

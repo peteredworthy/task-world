@@ -26,25 +26,20 @@ from orchestrator.graph.commands.callbacks import (
 )
 from orchestrator.graph.commands.lifecycle import (
     RECORD_HEARTBEAT,
-    RecordHeartbeatCommand,
 )
-from orchestrator.graph.commands.lease_bridge import apply_temporary_unconverted_lease_renewal
-from orchestrator.graph.commands.patches import handle_submit_patch
+from orchestrator.graph.commands.patches import SUBMIT_PATCH
 from orchestrator.graph.commands.records import (
     handle_evaluate_final_gate,
     handle_evaluate_join,
 )
 from orchestrator.graph.commands.schedule import (
-    handle_reconcile,
-    handle_schedule_tick,
+    RECONCILE,
+    SCHEDULE_TICK,
 )
 from orchestrator.graph.specifications import (
     CommandExecutionContext,
     HydratedEvent,
 )
-from orchestrator.graph.events.lifecycle import COMMAND_REJECTED, CommandRejectedPayload
-from orchestrator.graph.commands.event_creator import TypedEventCreator
-from orchestrator.graph.commands.future_effects import require_future_effect
 from orchestrator.graph.commands.lifecycle import (
     ACCEPT_RUN,
     START,
@@ -73,9 +68,6 @@ ApplyCommandHandler = Callable[
 
 
 _UNCONVERTED_W5_BRIDGE: dict[str, ApplyCommandHandler] = {
-    "submit_patch": handle_submit_patch,
-    "schedule_tick": handle_schedule_tick,
-    "reconcile": handle_reconcile,
     "raise_appeal": handle_raise_appeal,
     "record_decision": handle_record_decision,
     "record_gatekeeper_verdicts": handle_record_gatekeeper_verdicts,
@@ -100,6 +92,9 @@ COMMAND_SPECIFICATIONS = (
     ACKNOWLEDGE_START,
     AGENT_DIED_COMMAND,
     SEED_COMPILED_EVENTS,
+    SCHEDULE_TICK,
+    RECONCILE,
+    SUBMIT_PATCH,
 )
 _CATALOG_COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECIFICATIONS)
 
@@ -160,25 +155,6 @@ def apply_command(
             typed_command = cast(SeedCompiledEventsCommand, command)
             for event in typed_command.events:
                 catalog.resolve_event(event.metadata.event_type).serialize(event)
-        if command_type == RECORD_HEARTBEAT.name:
-            typed_command = cast(RecordHeartbeatCommand, command)
-            renewal = apply_temporary_unconverted_lease_renewal(
-                projection,
-                typed_command,
-                context.clock,
-                make_event,
-            )
-            if renewal.event_type == "command_rejected":
-                return [
-                    TypedEventCreator(context).create(
-                        COMMAND_REJECTED,
-                        CommandRejectedPayload(**renewal.payload),
-                    )
-                ]
-            return [
-                *specification.handle(typed_command, projection, tuple(events), context),
-                require_future_effect(renewal),
-            ]
         return specification.handle(command, projection, tuple(events), context)
     handler = _UNCONVERTED_W5_BRIDGE.get(command_type)
     if handler is None:

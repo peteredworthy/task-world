@@ -11,7 +11,7 @@
   given_events:
     - run_lifecycle_changed: {to_state: active}
     - node_created: {node_id: planner-2, kind: planner, state: ready}
-  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0}}
+  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
   then_events:
     - lease_granted: {node_id: planner-2}
     - node_state_changed: {node_id: planner-2, new_state: leased}
@@ -20,7 +20,7 @@
 - name: planner_leased_to_running
   given_events:
     - node_created: {node_id: planner-3, kind: planner, state: leased}
-    - lease_granted: {node_id: planner-3, lease_id: lease-planner-3, generation: 1, execution_id: exec-planner-3}
+    - lease_granted: {node_id: planner-3, lease_id: lease-planner-3, generation: 1, execution_id: exec-planner-3, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     acknowledge_start: {run_id: run-1, node_id: planner-3, lease_id: lease-planner-3, lease_generation: 1, execution_id: exec-planner-3}
   then_events:
@@ -30,7 +30,7 @@
 - name: planner_running_to_completed
   given_events:
     - node_created: {node_id: planner-4, kind: planner, state: running}
-    - lease_granted: {node_id: planner-4, lease_id: lease-planner-4, generation: 1, execution_id: exec-planner-4, base_snapshot_id: S0}
+    - lease_granted: {node_id: planner-4, lease_id: lease-planner-4, generation: 1, execution_id: exec-planner-4, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback: {run_id: run-1, node_id: planner-4, execution_id: exec-planner-4, lease_id: lease-planner-4, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-planner-4, payload: {patch_id: patch-planner-4}}
   then_events:
@@ -41,7 +41,7 @@
 - name: planner_running_to_failed
   given_events:
     - node_created: {node_id: planner-5, kind: planner, state: running}
-    - lease_granted: {node_id: planner-5, lease_id: lease-planner-5, generation: 1, execution_id: exec-planner-5, base_snapshot_id: S0}
+    - lease_granted: {node_id: planner-5, lease_id: lease-planner-5, generation: 1, execution_id: exec-planner-5, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback: {run_id: run-1, node_id: planner-5, execution_id: exec-planner-5, lease_id: lease-planner-5, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-planner-5, new_state: failed, payload: {error: planner_runtime_failure}}
   then_events:

@@ -4,10 +4,8 @@ from typing import Any
 
 from orchestrator.graph import (
     EventEnvelope,
-    FakeClock,
     PatchEnvelope,
     PatchOp,
-    apply_command,
     expand_patch_macros,
     initial_projection,
     reduce_event,
@@ -206,8 +204,9 @@ def test_request_gate_macro_expands_authority_request() -> None:
 
 def test_submit_patch_command_accepts_macro_invocations() -> None:
     events: list[EventEnvelope] = []
-    output = apply_command(
-        initial_projection(),
+    from tests.graph_command_support import dispatch_graph_command
+
+    output = dispatch_graph_command(
         events,
         "submit_patch",
         {
@@ -222,8 +221,6 @@ def test_submit_patch_command_accepts_macro_invocations() -> None:
                 }
             ],
         },
-        FakeClock(),
-        _Ids(),
     )
 
     projection = initial_projection()

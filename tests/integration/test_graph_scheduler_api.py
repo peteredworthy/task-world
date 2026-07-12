@@ -93,6 +93,8 @@ async def _seed_scheduler_graph_run(app: Any, run_id: str) -> None:
                 "generation": 1,
                 "execution_id": "exec-worker-1",
                 "expires_at": "2026-06-13T12:05:00+00:00",
+                "base_snapshot_id": "S0",
+                "resource_claims": [],
             },
         ),
         _event(
@@ -141,6 +143,7 @@ async def _seed_resource_conflict_graph_run(app: Any, run_id: str) -> None:
                 "execution_id": "exec-writer-a",
                 "expires_at": "2026-06-13T12:05:00+00:00",
                 "resource_claims": [{"mode": "write", "scope": "repo"}],
+                "base_snapshot_id": "S0",
             },
         ),
         _event(

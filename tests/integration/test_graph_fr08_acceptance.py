@@ -215,6 +215,9 @@ async def _seed_authority_denial_graph_run(app: Any, run_id: str) -> None:
                 "node_id": "authority-1",
                 "generation": 1,
                 "execution_id": "exec-authority-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
         ),
         _event(

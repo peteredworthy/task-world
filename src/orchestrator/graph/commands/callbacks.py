@@ -50,6 +50,8 @@ from orchestrator.graph.specifications import (
     FutureCommandEffects,
 )
 from orchestrator.graph._commands import typed_topology_event
+from orchestrator.graph.events.leases import LEASE_RELEASED
+from orchestrator.graph._commands import make_strict_event
 
 
 def _command_rejected(creator: TypedEventCreator, command_type: str, reason: str) -> HydratedEvent:
@@ -441,8 +443,9 @@ def apply_callback_effects(
             )
         )
         output.append(
-            make_event(
-                "lease_released",
+            make_strict_event(
+                make_event,
+                LEASE_RELEASED,
                 _typed_lease_event_payload(
                     "lease_released",
                     {

@@ -82,11 +82,17 @@ def _sample_events(run_id: str) -> list[EventEnvelope]:
             "graph_patch_accepted",
             {
                 "patch_id": "patch-summary",
-                "blockers": ["waiting-for-input"],
-                "graph_verifier_grades": {"req-1": "pass"},
-                "tokens_by_node": {"worker-1": 30},
-                "tokens_by_node_kind": {"worker": 30},
-                "operations": [{"op": "replace"}, {"op": "add"}],
+                "diagnostics": {
+                    "blockers": ["waiting-for-input"],
+                    "graph_verifier_grades": {"req-1": "pass"},
+                    "tokens_by_node": {"worker-1": 30},
+                    "tokens_by_node_kind": {"worker": 30},
+                },
+                "ops": [{"op": "replace"}, {"op": "add"}],
+                "base_graph_position": -1,
+                "actor_role": "planner",
+                "proposed_by_node_id": "planner-test",
+                "successor_planner_node_ids": [],
             },
         ),
         _event(
@@ -354,7 +360,15 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                 "in-progress-lease",
                 run_id,
                 "lease_granted",
-                {"node_id": "worker-in-progress", "lease_id": "lease-in-progress"},
+                {
+                    "node_id": "worker-in-progress",
+                    "lease_id": "lease-in-progress",
+                    "generation": 0,
+                    "execution_id": "exec-in-progress",
+                    "base_snapshot_id": "S0",
+                    "expires_at": "2026-01-01T00:05:00+00:00",
+                    "resource_claims": [],
+                },
             ),
         ],
         "pending": [
@@ -406,6 +420,8 @@ async def test_append_keeps_graph_read_models_synchronized(
     }
     assert summaries[3].payload == {
         "patch_id": "patch-summary",
+        "actor_role": "planner",
+        "proposed_by_node_id": "planner-test",
         "blockers": ["waiting-for-input"],
         "graph_verifier_grades": {"req-1": "pass"},
         "tokens_by_node": {"worker-1": 30},

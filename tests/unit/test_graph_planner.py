@@ -40,7 +40,11 @@ def test_horizon_patch_creates_region_and_successor() -> None:
     assert projection["node_kinds"]["planner-1"] == "planner"
     assert "region_summary" not in projection["input_bindings"].get("planner-1", {})
 
-    scheduled = _apply([*events, *accepted], "schedule_tick", {"run_id": "run-1"})
+    scheduled = _apply(
+        [*events, *accepted],
+        "schedule_tick",
+        {"run_id": "run-1", "lease_seconds": 300, "max_grants": 10},
+    )
     assert any(
         event.event_type == "node_deferred"
         and event.payload
@@ -373,7 +377,12 @@ def test_successor_readiness_via_milestone_records() -> None:
     scheduled = _apply(
         events,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "snapshot-1", "max_grants": 10},
+        {
+            "run_id": "run-1",
+            "base_snapshot_id": "snapshot-1",
+            "max_grants": 10,
+            "lease_seconds": 300,
+        },
     )
     assert any(
         event.event_type == "lease_granted" and event.payload["node_id"] == "planner-1"
@@ -659,6 +668,8 @@ def _drive_region_to_accepted(events: list[EventEnvelope]) -> list[EventEnvelope
                 "generation": 1,
                 "execution_id": "exec-worker",
                 "base_snapshot_id": "snapshot-0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
         ),
     ]
@@ -705,6 +716,8 @@ def _drive_region_to_accepted(events: list[EventEnvelope]) -> list[EventEnvelope
                 "generation": 1,
                 "execution_id": "exec-verifier",
                 "base_snapshot_id": "snapshot-1",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
         ),
     ]

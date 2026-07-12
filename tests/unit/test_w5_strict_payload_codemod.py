@@ -130,6 +130,72 @@ def test_remaining_domain_migrations_cover_authoritative_routing_surface() -> No
         assert migration.target_module == target_module
 
 
+def test_lease_cutover_does_not_require_deleted_compatibility_bridge() -> None:
+    assert (
+        "src/orchestrator/graph/commands/lease_bridge.py" not in DOMAIN_MIGRATIONS["leases"].paths
+    )
+
+
+def test_lease_codemod_wraps_routed_make_event_with_strict_validator() -> None:
+    source = """\
+def _apply_schedule_tick(make_event, payload):
+    return make_event("lease_granted", payload)
+"""
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["leases"]).transform_source(
+        source, "src/orchestrator/graph/_commands.py"
+    )
+    assert "make_strict_event(make_event, LEASE_GRANTED, payload)" in result.source
+
+
+def test_lease_fixture_codemod_completes_sparse_grants_and_schedule_commands() -> None:
+    source = """\
+event = _event("lease_granted", {"lease_id": "lease-1", "node_id": "node-1", "generation": 1, "execution_id": "exec-1"})
+result = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+"""
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["leases"]).transform_source(
+        source, "tests/unit/test_graph_commands.py"
+    )
+    assert '"base_snapshot_id": "S0"' in result.source
+    assert '"expires_at": "2026-01-01T00:05:00+00:00"' in result.source
+    assert '"resource_claims": []' in result.source
+    assert '"lease_seconds": 300' in result.source
+    assert '"max_grants": 10' in result.source
+
+
+def test_patch_fixture_codemod_preserves_actor_role_for_submit_patch_only() -> None:
+    source = """\
+command_payload = {key: value for key, value in raw_payload.items() if key not in {"run_id", "actor_role"}}
+"""
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["patches"]).transform_source(
+        source, "tests/unit/test_graph_commands.py"
+    )
+    assert 'command_type == "submit_patch"' in result.source
+
+
+def test_patch_fixture_codemod_preserves_actor_role_in_shared_dispatch_helper() -> None:
+    source = """\
+raw_payload = dict(payload or {})
+actor_role = raw_payload.pop("actor_role", None)
+"""
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["patches"]).transform_source(
+        source, "tests/graph_command_support.py"
+    )
+    assert 'raw_payload.get("actor_role")' in result.source
+    assert 'if command_type != "submit_patch":' in result.source
+    assert 'raw_payload.pop("actor_role", None)' in result.source
+
+
+def test_patch_fixture_codemod_completes_strict_event_fields() -> None:
+    source = """\
+event = _event("graph_patch_accepted", {"patch_id": "patch-1", "proposed_by_node_id": "planner-1", "successor_planner_node_ids": []})
+"""
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["patches"]).transform_source(
+        source, "tests/unit/test_graph_commands.py"
+    )
+    assert '"base_graph_position": -1' in result.source
+    assert '"actor_role": "planner"' in result.source
+
+
 def test_complete_reads_migration_removes_partial_read_helpers() -> None:
     migration = DOMAIN_MIGRATIONS["complete_reads"]
     assert set(migration.allowlist_names) == {

@@ -141,7 +141,7 @@ async def test_projection_snapshot_tail_matches_full_rebuild(
         run_id,
         started.projection_position,
         "schedule_tick",
-        {"max_grants": 0, "base_snapshot_id": "S0"},
+        {"max_grants": 0, "base_snapshot_id": "S0", "lease_seconds": 300},
     )
 
     async with session_factory() as session:
@@ -248,6 +248,7 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
             "proposed_by_node_id": "planner-1",
             "base_graph_position": 2,
             "ops": [{"op": "retire_node", "node_id": "worker-stale"}],
+            "actor_role": "planner",
         },
     )
 
@@ -291,7 +292,7 @@ async def test_schedule_tick_uses_valid_snapshot_without_parsing_old_events(
         run_id,
         started.projection_position,
         "schedule_tick",
-        {"max_grants": 0, "base_snapshot_id": "S0"},
+        {"max_grants": 0, "base_snapshot_id": "S0", "lease_seconds": 300},
     )
 
     assert all(event.event_type != "command_rejected" for event in result.events)
@@ -328,6 +329,8 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
                 "generation": 1,
                 "execution_id": "exec-1",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
         ),
     ]
@@ -446,13 +449,13 @@ async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
         run_id,
         2,
         "schedule_tick",
-        {"max_grants": 0, "base_snapshot_id": "S0"},
+        {"max_grants": 0, "base_snapshot_id": "S0", "lease_seconds": 300},
     )
     second = await controller.handle_command(
         run_id,
         first.projection_position,
         "schedule_tick",
-        {"max_grants": 0, "base_snapshot_id": "S0"},
+        {"max_grants": 0, "base_snapshot_id": "S0", "lease_seconds": 300},
     )
 
     first_deferrals = [event for event in first.events if event.event_type == "node_deferred"]

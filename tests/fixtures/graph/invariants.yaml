@@ -10,9 +10,9 @@
   given_events:
     - run_lifecycle_changed: {to_state: active}
     - node_created: {node_id: writer-active, kind: worker, state: leased, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
-    - lease_granted: {node_id: writer-active, lease_id: lease-writer-active, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
+    - lease_granted: {node_id: writer-active, lease_id: lease-writer-active, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}], generation: 0, execution_id: exec-writer-active, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00}
     - node_created: {node_id: writer-conflict, kind: worker, state: ready, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
-  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0}}
+  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
   then_events:
     - command_recorded: {command_type: schedule_tick}
   then_projection: {writer-conflict: ready, lease-writer-active: active}
@@ -32,7 +32,7 @@
     - node_created: {node_id: producer-invariant-4, kind: worker, state: completed}
     - node_created: {node_id: successor-invariant-4, kind: worker, state: blocked}
     - edge_created: {edge_id: edge-invariant-4, from_node_id: producer-invariant-4, from_port: candidate, to_node_id: successor-invariant-4, to_port: candidate, required: true}
-  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0}}
+  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
   then_events:
     - command_recorded: {command_type: schedule_tick}
     - node_deferred: {node_id: successor-invariant-4, reason: missing_required_input:candidate}
@@ -45,7 +45,7 @@
     - node_created: {node_id: successor-invariant-4b, kind: worker, state: blocked}
     - edge_created: {edge_id: edge-invariant-4b, from_node_id: producer-invariant-4b, from_port: candidate, to_node_id: successor-invariant-4b, to_port: candidate, required: true}
     - input_bound: {edge_id: edge-invariant-4b, to_node_id: successor-invariant-4b, to_port: candidate, record_ids: [], bound_at_position: 4}
-  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0}}
+  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
   then_events:
     - node_ready: {node_id: successor-invariant-4b}
     - lease_granted: {node_id: successor-invariant-4b}
@@ -54,7 +54,7 @@
 - name: invariant_retired_nodes_cannot_run
   given_events:
     - node_state_changed: {node_id: retired-invariant-5, new_state: retired}
-    - lease_granted: {node_id: retired-invariant-5, lease_id: lease-retired-5, generation: 1}
+    - lease_granted: {node_id: retired-invariant-5, lease_id: lease-retired-5, generation: 1, execution_id: exec-retired-5, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback: {run_id: run-1, node_id: retired-invariant-5, execution_id: exec-5, lease_id: lease-retired-5, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-5}
   then_events:
@@ -99,7 +99,7 @@
 - name: invariant_snapshot_mismatch_not_consumed
   given_events:
     - node_created: {node_id: reader-invariant-8, kind: worker, state: running}
-    - lease_granted: {node_id: reader-invariant-8, lease_id: lease-reader-8, generation: 1, execution_id: exec-8, base_snapshot_id: S1}
+    - lease_granted: {node_id: reader-invariant-8, lease_id: lease-reader-8, generation: 1, execution_id: exec-8, base_snapshot_id: S1, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
   when_command:
     submit_callback: {run_id: run-1, node_id: reader-invariant-8, execution_id: exec-8, lease_id: lease-reader-8, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-8}
   then_events:
@@ -113,7 +113,7 @@
     - node_created: {node_id: successor-invariant-9, kind: worker, state: blocked}
     - edge_created: {edge_id: edge-invariant-9, from_node_id: gate-invariant-9, from_port: decision, to_node_id: successor-invariant-9, to_port: approval, required: true}
     - input_bound: {edge_id: edge-invariant-9, to_node_id: successor-invariant-9, to_port: approval, record_ids: [], bound_at_position: 4}
-  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0}}
+  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
   then_events:
     - command_recorded: {command_type: schedule_tick}
     - node_deferred: {node_id: successor-invariant-9, reason: gate_not_approved:gate-invariant-9}
@@ -127,7 +127,7 @@
     - node_created: {node_id: successor-invariant-9b, kind: worker, state: blocked}
     - edge_created: {edge_id: edge-invariant-9b, from_node_id: gate-invariant-9b, from_port: decision, to_node_id: successor-invariant-9b, to_port: approval, required: true}
     - input_bound: {edge_id: edge-invariant-9b, to_node_id: successor-invariant-9b, to_port: approval, record_ids: [], bound_at_position: 5}
-  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0}}
+  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
   then_events:
     - node_ready: {node_id: successor-invariant-9b}
     - lease_granted: {node_id: successor-invariant-9b}

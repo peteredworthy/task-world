@@ -106,6 +106,8 @@ def test_lease_view_reports_active_and_suspended() -> None:
                 "generation": 2,
                 "execution_id": "exec-active",
                 "expires_at": "2026-06-13T12:05:00+00:00",
+                "base_snapshot_id": "S0",
+                "resource_claims": [],
             },
             2,
         ),
@@ -120,10 +122,23 @@ def test_lease_view_reports_active_and_suspended() -> None:
                 "generation": 1,
                 "execution_id": "exec-suspended",
                 "expires_at": "2026-06-13T12:10:00+00:00",
+                "base_snapshot_id": "S0",
+                "resource_claims": [],
             },
             4,
         ),
-        _event("lease_suspended", {"lease_id": "lease-suspended"}, 5),
+        _event(
+            "lease_revoked",
+            {
+                "lease_id": "lease-suspended",
+                "node_id": "worker-suspended",
+                "generation": 1,
+                "execution_id": "exec-suspended",
+                "reason": "run_paused",
+                "trigger": "test_revocation",
+            },
+            5,
+        ),
     ]
 
     view = project_lease_view(build_graph_catalog(), events)
@@ -138,16 +153,7 @@ def test_lease_view_reports_active_and_suspended() -> None:
             "expires_at": "2026-06-13T12:05:00+00:00",
         }
     ]
-    assert view["suspended"] == [
-        {
-            "lease_id": "lease-suspended",
-            "node_id": "worker-suspended",
-            "generation": 1,
-            "state": "suspended",
-            "execution_id": "exec-suspended",
-            "expires_at": "2026-06-13T12:10:00+00:00",
-        }
-    ]
+    assert view["suspended"] == []
 
 
 def test_snapshot_lease_view_filters_partial_leases_like_public_projector() -> None:

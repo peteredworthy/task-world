@@ -111,12 +111,21 @@ def build_graph_catalog() -> GraphCatalog:
 
     from orchestrator.graph.commands.callbacks import CALLBACK_COMMAND_SPECIFICATIONS
     from orchestrator.graph.commands.lifecycle import COMMAND_SPECIFICATIONS
+    from orchestrator.graph.commands.schedule import SCHEDULE_TICK, RECONCILE
+    from orchestrator.graph.commands.patches import SUBMIT_PATCH
     from orchestrator.graph.events import EVENT_SPECIFICATIONS
     from orchestrator.graph.events.topology import SEED_COMPILED_EVENTS
 
     return GraphCatalog.compose(
         EVENT_SPECIFICATIONS,
-        (*COMMAND_SPECIFICATIONS, *CALLBACK_COMMAND_SPECIFICATIONS, SEED_COMPILED_EVENTS),
+        (
+            *COMMAND_SPECIFICATIONS,
+            *CALLBACK_COMMAND_SPECIFICATIONS,
+            SEED_COMPILED_EVENTS,
+            SCHEDULE_TICK,
+            RECONCILE,
+            SUBMIT_PATCH,
+        ),
     )
 
 

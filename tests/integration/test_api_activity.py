@@ -364,6 +364,7 @@ async def test_activity_includes_compact_graph_patch_decision_summaries(
                     "proposed_by_node_id": "planner-1",
                     "reason": "read_set_changed",
                     "read_set_diff": {"changed": ["node-a"]},
+                    "base_graph_position": -1,
                 },
             ),
         ],
@@ -537,6 +538,7 @@ async def test_graph_activity_summaries_preserve_filtering_and_pagination(
                     "actor_role": "planner",
                     "proposed_by_node_id": "planner-1",
                     "successor_planner_node_ids": [],
+                    "base_graph_position": -1,
                 },
             ),
             _graph_event(

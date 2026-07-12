@@ -154,6 +154,8 @@ async def test_graph_cancel_route_appends_graph_cancel_before_signal_drain(
                         "generation": 1,
                         "execution_id": "exec-worker-1",
                         "expires_at": "2026-06-22T12:05:00+00:00",
+                        "base_snapshot_id": "S0",
+                        "resource_claims": [],
                     },
                 ),
             ],

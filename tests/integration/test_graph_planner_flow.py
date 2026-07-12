@@ -186,7 +186,7 @@ async def _complete_node(
         controller,
         run_id,
         "schedule_tick",
-        {"base_snapshot_id": "snapshot-0", "max_grants": 10},
+        {"base_snapshot_id": "snapshot-0", "max_grants": 10, "lease_seconds": 300},
     )
     lease = next(
         event
@@ -233,7 +233,7 @@ async def _drive_region(
         controller,
         run_id,
         "schedule_tick",
-        {"base_snapshot_id": "snapshot-0", "max_grants": 10},
+        {"base_snapshot_id": "snapshot-0", "max_grants": 10, "lease_seconds": 300},
     )
     worker_lease = next(
         event
@@ -284,7 +284,7 @@ async def _drive_region(
         controller,
         run_id,
         "schedule_tick",
-        {"base_snapshot_id": f"snapshot-{prefix}", "max_grants": 10},
+        {"base_snapshot_id": f"snapshot-{prefix}", "max_grants": 10, "lease_seconds": 300},
     )
     verifier_lease = next(
         event

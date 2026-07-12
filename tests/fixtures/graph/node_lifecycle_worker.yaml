@@ -10,7 +10,7 @@
   given_events:
     - run_lifecycle_changed: {to_state: active}
     - node_created: {node_id: worker-2, kind: worker, state: ready}
-  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0}}
+  when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
   then_events:
     - lease_granted: {node_id: worker-2}
     - node_state_changed: {node_id: worker-2, new_state: leased}
@@ -47,7 +47,7 @@
 - name: worker_suspended_to_leased
   given_events:
     - node_created: {node_id: worker-6, kind: worker, state: suspended}
-    - lease_granted: {node_id: worker-6, lease_id: lease-worker-6b, generation: 2}
+    - lease_granted: {node_id: worker-6, lease_id: lease-worker-6b, generation: 2, execution_id: exec-worker-6b, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00, resource_claims: []}
     - node_state_changed: {node_id: worker-6, new_state: leased, trigger: resume_renew_lease}
   when_command: null
   then_events: []
@@ -65,7 +65,7 @@
 - name: worker_planned_to_retired
   given_events:
     - node_created: {node_id: worker-8, kind: worker, state: planned}
-    - graph_patch_accepted: {retired_node_id: worker-8, reason: superseded}
+    - graph_patch_accepted: {patch_id: patch-retire-worker-8, base_graph_position: 0, actor_role: planner, proposed_by_node_id: planner-1, successor_planner_node_ids: []}
     - node_state_changed: {node_id: worker-8, new_state: retired, trigger: planner_patch_accepted}
   when_command: null
   then_events: []

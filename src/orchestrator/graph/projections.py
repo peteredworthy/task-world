@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from copy import deepcopy
+from datetime import datetime
 from typing import Any, Iterable, Literal, Sequence, TypedDict, cast
 
-from pydantic import ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator
 
 from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.command_bindings import check_command_reference
@@ -59,13 +59,7 @@ from orchestrator.graph.models import (
     InvalidTestBlockProjection,
     InputBindingProjection,
     LegacyOutputRecord,
-    LeaseExpiredPayload,
-    LeaseGrantedPayload,
     LeaseProjection,
-    LeaseReleasedPayload,
-    LeaseRenewedPayload,
-    LeaseRevokedPayload,
-    LeaseSuspendedPayload,
     JoinResultRecord,
     NodeCreationProjection,
     NodeKind,
@@ -88,6 +82,13 @@ from orchestrator.graph.models import (
     VerificationReportRecord,
     VerificationResultProjection,
     VerifierVerdictProjection,
+)
+from orchestrator.graph.events.leases import (
+    LeaseExpiredPayload,
+    LeaseGrantedPayload,
+    LeaseReleasedPayload,
+    LeaseRenewedPayload,
+    LeaseRevokedPayload,
 )
 from orchestrator.graph.events.records import OutputRecordAcceptedPayload
 from orchestrator.graph.events.topology import (
@@ -221,7 +222,21 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
 
 def copy_projection(state: GraphProjection) -> GraphProjection:
     """Return a fully isolated projection for catalog-owned reducers."""
-    return deepcopy(state)
+
+    def copy_value(value: Any) -> Any:
+        if isinstance(value, BaseModel):
+            return value.model_copy()
+        if isinstance(value, dict):
+            return {key: copy_value(item) for key, item in cast(dict[Any, Any], value).items()}
+        if isinstance(value, list):
+            return [copy_value(item) for item in cast(list[Any], value)]
+        if isinstance(value, tuple):
+            return tuple(copy_value(item) for item in cast(tuple[Any, ...], value))
+        if isinstance(value, set):
+            return {copy_value(item) for item in cast(set[Any], value)}
+        return value
+
+    return cast(GraphProjection, copy_value(state))
 
 
 # Bump this whenever reduce_event semantics or GraphProjection shape changes.
@@ -1440,24 +1455,14 @@ def _lease_renewed_from_payload(payload: dict[str, Any]) -> LeaseRenewedPayload 
 def _lease_terminal_from_event(
     event_type: str,
     payload: dict[str, Any],
-) -> (
-    LeaseReleasedPayload | LeaseRevokedPayload | LeaseExpiredPayload | LeaseSuspendedPayload | None
-):
-    model: (
-        type[LeaseReleasedPayload]
-        | type[LeaseRevokedPayload]
-        | type[LeaseExpiredPayload]
-        | type[LeaseSuspendedPayload]
-        | None
-    )
+) -> LeaseReleasedPayload | LeaseRevokedPayload | LeaseExpiredPayload | None:
+    model: type[LeaseReleasedPayload] | type[LeaseRevokedPayload] | type[LeaseExpiredPayload] | None
     if event_type == "lease_released":
         model = LeaseReleasedPayload
     elif event_type == "lease_revoked":
         model = LeaseRevokedPayload
     elif event_type == "lease_expired":
         model = LeaseExpiredPayload
-    elif event_type == "lease_suspended":
-        model = LeaseSuspendedPayload
     else:
         model = None
     if model is None:
@@ -2131,20 +2136,17 @@ def reduce_legacy_event(
             for key in ("generation", "expires_at", "execution_id", "base_snapshot_id"):
                 value = getattr(granted_payload, key)
                 if value is not None:
+                    if key == "expires_at" and isinstance(value, datetime):
+                        value = value.isoformat()
                     lease_payload[key] = value
             session_id = granted_payload.session_id
             if session_id is not None:
                 lease_payload["session_id"] = session_id
                 next_state["planner_sessions"][node_id] = session_id
-            task_region_id = _task_region_id(granted_payload.extra) or next_state[
-                "node_task_regions"
-            ].get(node_id)
+            task_region_id = next_state["node_task_regions"].get(node_id)
             if task_region_id is not None:
                 lease_payload["task_region_id"] = task_region_id
-            kind = granted_payload.extra.get("kind")
-            if isinstance(kind, str):
-                lease_payload["kind"] = kind
-            elif node_id in next_state["node_kinds"]:
+            if node_id in next_state["node_kinds"]:
                 lease_payload["kind"] = next_state["node_kinds"][node_id]
             resource_claims = granted_payload.resource_claims
             if not resource_claims:
@@ -2179,6 +2181,8 @@ def reduce_legacy_event(
             for key in ("node_id", "generation", "execution_id", "expires_at"):
                 value = getattr(renewed_payload, key)
                 if value is not None:
+                    if key == "expires_at" and isinstance(value, datetime):
+                        value = value.isoformat()
                     lease_payload[key] = value
             lease = _lease_from_payload(lease_payload)
             if lease is not None:
@@ -3369,18 +3373,22 @@ def _apply_patch_payload(attempt: GraphPatchAttempt, payload: dict[str, Any]) ->
     read_set_diff = payload.get("read_set_diff")
     if isinstance(read_set_diff, dict):
         attempt["read_set_diff"] = cast(dict[str, Any], read_set_diff)
-    diagnostics = {
-        key: value
-        for key, value in payload.items()
-        if key
-        not in {
-            "patch_id",
-            "proposed_by_node_id",
-            "base_graph_position",
-            "reason",
-            "read_set_diff",
+    diagnostics = dict(payload.get("diagnostics") or {})
+    diagnostics.update(
+        {
+            key: value
+            for key, value in payload.items()
+            if key
+            not in {
+                "patch_id",
+                "proposed_by_node_id",
+                "base_graph_position",
+                "reason",
+                "read_set_diff",
+                "diagnostics",
+            }
         }
-    }
+    )
     if diagnostics:
         attempt["diagnostics"] = diagnostics
 
@@ -4302,6 +4310,11 @@ def _refresh_derived_topology_state(state: GraphProjection) -> None:
     state["task_states"] = _derive_task_states(state)
 
 
+def refresh_derived_topology_state(state: Any) -> None:
+    """Synchronize derived topology views after a domain-owned reducer mutation."""
+    _refresh_derived_topology_state(cast(GraphProjection, state))
+
+
 def _authority_decision_from_payload(
     payload: dict[str, Any],
 ) -> AuthorityDecisionProjection | None:
@@ -4771,7 +4784,7 @@ def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
 
 
 def _copy_output_record_payload(payload: OutputRecordPayload) -> OutputRecordPayload:
-    return payload.model_copy(deep=True)
+    return payload.model_copy(deep=False)
 
 
 def _output_record_payload_dict(payload: OutputRecordPayload) -> dict[str, Any]:

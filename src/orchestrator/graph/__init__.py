@@ -32,6 +32,14 @@ from orchestrator.graph.file_state import (
     secret_name_matches,
 )
 from orchestrator.graph.macros import expand_patch_macros
+from orchestrator.graph.events.leases import (
+    LeaseExpiredPayload,
+    LeaseGrantedPayload,
+    LeaseReleasedPayload,
+    LeaseRenewedPayload,
+    LeaseRevokedPayload,
+)
+from orchestrator.graph.events.patches import GraphPatchAcceptedPayload, GraphPatchRejectedPayload
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -52,19 +60,11 @@ from orchestrator.graph.models import (
     EnvironmentFailureProjection,
     EventEnvelope,
     FileStateRecord,
-    GraphPatchAcceptedPayload,
-    GraphPatchRejectedPayload,
     GraphPatchStatusPayload,
     InputBindingProjection,
     InvalidTestBlockProjection,
     LegacyOutputRecord,
-    LeaseExpiredPayload,
-    LeaseGrantedPayload,
     LeaseProjection,
-    LeaseReleasedPayload,
-    LeaseRenewedPayload,
-    LeaseRevokedPayload,
-    LeaseSuspendedPayload,
     NodeCreationProjection,
     OutputRecord,
     OversightDecisionRecordedPayload,
@@ -239,7 +239,6 @@ __all__ = [
     "LeaseReleasedPayload",
     "LeaseRenewedPayload",
     "LeaseRevokedPayload",
-    "LeaseSuspendedPayload",
     "JsonValue",
     "NodeScheduleInfo",
     "NodeCreationProjection",

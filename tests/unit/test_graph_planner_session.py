@@ -28,7 +28,12 @@ def test_successor_inherits_session_id() -> None:
         _apply(
             events,
             "schedule_tick",
-            {"run_id": "run-1", "base_snapshot_id": "snapshot-1", "max_grants": 10},
+            {
+                "run_id": "run-1",
+                "base_snapshot_id": "snapshot-1",
+                "max_grants": 10,
+                "lease_seconds": 300,
+            },
         ),
         "lease_granted",
         "planner-1",
@@ -58,6 +63,8 @@ def test_resume_emits_new_generation_same_session() -> None:
             "run_id": "run-1",
             "base_snapshot_id": "snapshot-1",
             "lease_ids": {"planner-0": "lease-planner-0-resume"},
+            "lease_seconds": 300,
+            "max_grants": 10,
         },
     )
 
@@ -93,7 +100,8 @@ def test_carryover_binds_as_optional_input() -> None:
         "submit_patch",
         {
             **_patch_payload(events, "planner-0", _region_ops("planner-1")),
-            "carryover_summary": "summary-carryover-1",
+            "carryover_record_id": "summary-carryover-1",
+            "actor_role": "planner",
         },
     )
     projection = _project([*events, *_append(events, patch)])
@@ -119,7 +127,12 @@ def test_carryover_binds_as_optional_input() -> None:
     scheduled = _apply(
         [*events, *_append(events, without_carryover)],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "snapshot-1", "max_grants": 10},
+        {
+            "run_id": "run-1",
+            "base_snapshot_id": "snapshot-1",
+            "max_grants": 10,
+            "lease_seconds": 300,
+        },
     )
     assert _only(scheduled, "lease_granted", "planner-2").payload["generation"] == 2
 
@@ -131,14 +144,20 @@ def test_project_planner_session() -> None:
         "submit_patch",
         {
             **_patch_payload(events, "planner-0", _region_ops("planner-1")),
-            "carryover_summary": "summary-carryover-1",
+            "carryover_record_id": "summary-carryover-1",
+            "actor_role": "planner",
         },
     )
     events = [*events, *_append(events, patch)]
     schedule = _apply(
         events,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "snapshot-1", "max_grants": 10},
+        {
+            "run_id": "run-1",
+            "base_snapshot_id": "snapshot-1",
+            "max_grants": 10,
+            "lease_seconds": 300,
+        },
     )
     events = [*events, *_append(events, schedule)]
 
@@ -189,6 +208,8 @@ def _events_with_active_planner() -> list[EventEnvelope]:
                     "execution_id": "exec-planner-0",
                     "base_snapshot_id": "snapshot-0",
                     "session_id": "session-1",
+                    "expires_at": "2026-01-01T00:05:00+00:00",
+                    "resource_claims": [],
                 },
             ),
             _event(

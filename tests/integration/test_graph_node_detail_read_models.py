@@ -197,7 +197,12 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
                 "reason": "accepted",
             },
         ),
-        _event("evt-release", run_id, "lease_released", {"lease_id": "lease-1"}),
+        _event(
+            "evt-release",
+            run_id,
+            "lease_released",
+            {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+        ),
         _event(
             "evt-input",
             run_id,
@@ -655,9 +660,17 @@ async def test_completed_sequential_leases_match_existing_summary_selection(
                 "node_id": "worker-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
         ),
-        _event("evt-release-1", run_id, "lease_released", {"lease_id": "lease-1"}),
+        _event(
+            "evt-release-1",
+            run_id,
+            "lease_released",
+            {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+        ),
         _event(
             "evt-lease-2",
             run_id,
@@ -667,9 +680,17 @@ async def test_completed_sequential_leases_match_existing_summary_selection(
                 "node_id": "worker-1",
                 "generation": 2,
                 "execution_id": "exec-2",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
         ),
-        _event("evt-release-2", run_id, "lease_released", {"lease_id": "lease-2"}),
+        _event(
+            "evt-release-2",
+            run_id,
+            "lease_released",
+            {"lease_id": "lease-2", "node_id": "worker-1", "generation": 2},
+        ),
     ]
     async with session_factory() as session:
         async with session.begin():
@@ -693,7 +714,9 @@ async def test_completed_sequential_leases_match_existing_summary_selection(
         new_response = await _materialized_response(session, run_id, "worker-1")
 
     assert old_response is not None
-    assert new_response["active_lease"] == old_response.model_dump(mode="json")["active_lease"]
+    expected_lease = old_response.model_dump(mode="json")["active_lease"]
+    expected_lease["resource_claims"] = []
+    assert new_response["active_lease"] == expected_lease
     assert new_response["active_lease"]["lease_id"] == "lease-1"
 
 

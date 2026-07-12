@@ -45,13 +45,7 @@ from orchestrator.graph.models import (
     JoinResultRecord,
     GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
-    LeaseExpiredPayload,
-    LeaseEventPayloadBase,
-    LeaseGrantedPayload,
     LegacyDeadInputPayloadBase,
-    LeaseReleasedPayload,
-    LeaseRenewedPayload,
-    LeaseRevokedPayload,
     OutputRecord,
     OversightDecisionRecordedPayload,
     PatchEnvelope,
@@ -88,7 +82,6 @@ from orchestrator.graph.projections import (
     reduce_legacy_event,
 )
 from orchestrator.graph.scheduler import (
-    InputEdgeInfo,
     NodeScheduleInfo,
     ResourceClaim,
     claims_conflict,
@@ -100,6 +93,14 @@ from orchestrator.graph.events.lifecycle import (
     COMMAND_REJECTED,
 )
 from orchestrator.graph.specifications import EventMetadata, EventSpecification, HydratedEvent
+from orchestrator.graph.events.leases import (
+    LEASE_EXPIRED,
+    LEASE_GRANTED,
+    LEASE_RELEASED,
+    LEASE_RENEWED,
+    LEASE_REVOKED,
+)
+from orchestrator.graph.events.patches import GRAPH_PATCH_ACCEPTED, GRAPH_PATCH_REJECTED
 
 
 class Clock(Protocol):
@@ -137,12 +138,15 @@ NONTERMINAL_RUN_STATES = {
 }
 
 
-_UNCONVERTED_LEASE_EVENT_PAYLOAD_MODELS: dict[str, type[LeaseEventPayloadBase]] = {
-    "lease_granted": LeaseGrantedPayload,
-    "lease_renewed": LeaseRenewedPayload,
-    "lease_released": LeaseReleasedPayload,
-    "lease_revoked": LeaseRevokedPayload,
-    "lease_expired": LeaseExpiredPayload,
+_LEASE_EVENT_SPECS: dict[str, EventSpecification[Any]] = {
+    specification.name: specification
+    for specification in (
+        LEASE_GRANTED,
+        LEASE_RENEWED,
+        LEASE_RELEASED,
+        LEASE_REVOKED,
+        LEASE_EXPIRED,
+    )
 }
 
 
@@ -203,7 +207,7 @@ def apply_command(
     if command_type == "submit_patch":
         return _apply_patch_command(projection, events, payload, make_event)
     if command_type == "schedule_tick":
-        return _apply_schedule_tick(projection, events, payload, clock, id_gen, make_event)
+        return schedule_tick_effects(projection, events, payload, clock, id_gen, make_event)
     if command_type == "reconcile":
         return _apply_reconcile(projection, events, make_event)
     if command_type == "raise_appeal":
@@ -360,8 +364,9 @@ def _maybe_release_lease(
     if not isinstance(lease_id, str) or not isinstance(generation, int):
         return []
     return [
-        make_event(
-            "lease_released",
+        _make_strict_event(
+            make_event,
+            LEASE_RELEASED,
             _typed_lease_event_payload(
                 "lease_released",
                 {
@@ -391,7 +396,9 @@ def _release_active_node_leases(
         if isinstance(generation, int) and not isinstance(generation, bool):
             payload["generation"] = generation
         output.append(
-            make_event("lease_released", _typed_lease_event_payload("lease_released", payload))
+            _make_strict_event(
+                make_event, LEASE_RELEASED, _typed_lease_event_payload("lease_released", payload)
+            )
         )
     return output
 
@@ -1159,8 +1166,9 @@ def _apply_patch_command(
     result = validate_patch(patch, current_position, events_since_base, projection, actor_role)
     if not result.accepted:
         return [
-            make_event(
-                "graph_patch_rejected",
+            _make_strict_event(
+                make_event,
+                GRAPH_PATCH_REJECTED,
                 _patch_rejected_payload(
                     patch,
                     actor_role,
@@ -1173,8 +1181,9 @@ def _apply_patch_command(
     successor_planner_node_ids = _successor_planner_node_ids(patch)
     if actor_role == "planner" and len(successor_planner_node_ids) > 1:
         return [
-            make_event(
-                "graph_patch_rejected",
+            _make_strict_event(
+                make_event,
+                GRAPH_PATCH_REJECTED,
                 _patch_rejected_payload(
                     patch,
                     actor_role,
@@ -1193,8 +1202,9 @@ def _apply_patch_command(
                 )
             )
             return [
-                make_event(
-                    "graph_patch_rejected",
+                _make_strict_event(
+                    make_event,
+                    GRAPH_PATCH_REJECTED,
                     {
                         **_patch_rejected_payload(
                             patch,
@@ -1233,8 +1243,9 @@ def _apply_patch_command(
     request_record_error = _request_record_validation_error(patch)
     if request_record_error is not None:
         return [
-            make_event(
-                "graph_patch_rejected",
+            _make_strict_event(
+                make_event,
+                GRAPH_PATCH_REJECTED,
                 _patch_rejected_payload(
                     patch,
                     actor_role,
@@ -1247,8 +1258,9 @@ def _apply_patch_command(
     parent_session_id = projection["planner_sessions"].get(patch.proposed_by_node_id)
     carryover_record_id = _carryover_record_id(payload)
     output = [
-        make_event(
-            "graph_patch_accepted",
+        _make_strict_event(
+            make_event,
+            GRAPH_PATCH_ACCEPTED,
             GraphPatchAcceptedPayload.model_validate(
                 {
                     "patch_id": patch.patch_id,
@@ -1355,7 +1367,7 @@ def _planner_budget_rejection(
     return {"budget": budget, "count": attempted_generation}
 
 
-def _apply_schedule_tick(
+def schedule_tick_effects(
     projection: GraphProjection,
     events: list[EventEnvelope],
     payload: dict[str, Any],
@@ -1363,6 +1375,8 @@ def _apply_schedule_tick(
     id_gen: IdGenerator,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
+    from orchestrator.graph.commands.schedule import node_schedule_info
+
     output = _expired_lease_events(projection, clock.now(), make_event)
     expired_lease_ids = _expired_active_lease_ids(projection, clock.now())
     active_claims = [
@@ -1393,7 +1407,7 @@ def _apply_schedule_tick(
             continue
         if node_state not in {"planned", "blocked", "ready"}:
             continue
-        node = _node_schedule_info(projection, payload, node_id)
+        node = node_schedule_info(projection, payload, node_id)
         backoff_reason = _retry_backoff_deferred_reason(projection, node_id, clock.now())
         if backoff_reason is not None:
             _append_node_deferred_if_changed(
@@ -1484,17 +1498,12 @@ def _apply_schedule_tick(
             "generation": lease_generation,
             "execution_id": id_gen.next_id("exec"),
             "base_snapshot_id": base_snapshot_id,
-            "expires_at": (clock.now() + timedelta(seconds=lease_seconds)).isoformat(),
-            "resource_claims": [_resource_claim_payload(claim) for claim in claims],
+            "expires_at": clock.now() + timedelta(seconds=lease_seconds),
+            "resource_claims": tuple(_resource_claim_payload(claim) for claim in claims),
         }
         if planner_session_id is not None:
             lease_payload["session_id"] = planner_session_id
-        output.append(
-            make_event(
-                "lease_granted",
-                _typed_lease_event_payload("lease_granted", lease_payload),
-            )
-        )
+        output.append(_make_strict_event(make_event, LEASE_GRANTED, lease_payload))
         if planner_session_id is not None:
             session_payload = PlannerSessionStateChangedPayload.model_validate(
                 {
@@ -3691,8 +3700,9 @@ def _expired_lease_events(
             continue
         node_id = lease.get("node_id")
         expired.append(
-            make_event(
-                "lease_expired",
+            _make_strict_event(
+                make_event,
+                LEASE_EXPIRED,
                 _typed_lease_event_payload(
                     "lease_expired",
                     {
@@ -3700,7 +3710,7 @@ def _expired_lease_events(
                         "node_id": node_id,
                         "generation": lease.get("generation"),
                         "execution_id": lease.get("execution_id"),
-                        "expires_at": lease.get("expires_at"),
+                        "expires_at": datetime.fromisoformat(cast(str, lease.get("expires_at"))),
                         "reason": "lease_expired_without_callback",
                     },
                 ),
@@ -3757,86 +3767,6 @@ def _lease_is_expired(lease: dict[str, Any], now: datetime) -> bool:
     if not isinstance(expires_at, str):
         return False
     return datetime.fromisoformat(expires_at) <= now
-
-
-def _node_schedule_info(
-    projection: GraphProjection,
-    payload: dict[str, Any],
-    node_id: str,
-) -> NodeScheduleInfo:
-    priorities = (
-        cast(dict[str, Any], payload.get("priorities"))
-        if isinstance(payload.get("priorities"), dict)
-        else {}
-    )
-    region_order = (
-        cast(dict[str, Any], payload.get("region_order"))
-        if isinstance(payload.get("region_order"), dict)
-        else {}
-    )
-    required_edges = _required_edges_for_node(projection, node_id)
-    upstream_node_ids = {edge.from_node_id for edge in required_edges}
-    return NodeScheduleInfo(
-        node_id=node_id,
-        kind=projection["node_kinds"].get(node_id, "worker"),
-        state=projection["node_states"][node_id],
-        priority=int(priorities.get(node_id, 0)),
-        region_order=int(region_order.get(node_id, 0)),
-        creation_position=_node_creation_position(projection, node_id),
-        resource_claims=[
-            _claim_from_dict(claim) for claim in projection["node_resource_claims"].get(node_id, [])
-        ],
-        required_edges=required_edges,
-        satisfied_input_ports=set(projection["input_bindings"].get(node_id, {})),
-        upstream_states={
-            upstream_node_id: projection["node_states"][upstream_node_id]
-            for upstream_node_id in upstream_node_ids
-            if upstream_node_id in projection["node_states"]
-        },
-        upstream_kinds={
-            upstream_node_id: projection["node_kinds"][upstream_node_id]
-            for upstream_node_id in upstream_node_ids
-            if upstream_node_id in projection["node_kinds"]
-        },
-        upstream_pending_appeals={
-            upstream_node_id
-            for upstream_node_id in upstream_node_ids
-            if projection["node_pending_appeals"].get(upstream_node_id) is True
-        },
-        gate_decisions={
-            gate_node_id: decision
-            for gate_node_id, decision in projection["node_gate_decisions"].items()
-            if gate_node_id in upstream_node_ids
-        },
-        failed_candidate_id=projection["node_failed_candidates"].get(node_id),
-        preconditions=projection["node_preconditions"].get(node_id, []),
-        command_definition_present=node_id in projection["node_command_definitions"],
-    )
-
-
-def _node_creation_position(projection: GraphProjection, node_id: str) -> int:
-    return projection["node_creation_positions"].get(node_id, 0)
-
-
-def _required_edges_for_node(
-    projection: GraphProjection,
-    node_id: str,
-) -> list[InputEdgeInfo]:
-    edges: list[InputEdgeInfo] = []
-    for edge in projection["edges"].values():
-        if edge.get("to_node_id") != node_id:
-            continue
-        edges.append(
-            InputEdgeInfo(
-                from_node_id=str(edge.get("from_node_id", "")),
-                from_port=str(edge.get("from_port", "")),
-                to_node_id=str(edge.get("to_node_id", "")),
-                to_port=str(edge.get("to_port", "")),
-                required=edge.get("required") is not False,
-                dependency_type=str(edge.get("dependency_type", "input_binding")),
-            )
-        )
-    return edges
 
 
 def _node_exists(projection: GraphProjection, node_id: str) -> bool:
@@ -4128,7 +4058,7 @@ def _resource_claim_payload(claim: Any) -> dict[str, Any]:
 
 apply_seed_compiled_events = _apply_seed_compiled_events
 apply_patch_command = _apply_patch_command
-apply_schedule_tick = _apply_schedule_tick
+apply_schedule_tick = schedule_tick_effects
 apply_reconcile = _apply_reconcile
 apply_raise_appeal = _apply_raise_appeal
 apply_record_decision = _apply_record_decision
@@ -4190,11 +4120,17 @@ def _make_strict_event(
     )
 
 
+def make_strict_event(
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    specification: EventSpecification[Any],
+    payload: dict[str, Any],
+) -> EventEnvelope:
+    return _make_strict_event(make_event, specification, payload)
+
+
 def _typed_lease_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    model = _UNCONVERTED_LEASE_EVENT_PAYLOAD_MODELS.get(event_type)
-    if model is None:
-        return payload
-    return model.model_validate(payload).model_dump(mode="json")
+    del event_type
+    return payload
 
 
 def _has_passed_completion_decision(projection: GraphProjection) -> bool:
@@ -4255,7 +4191,11 @@ def _cancel_active_lease_events(
         if isinstance(execution_id, str):
             revoke_payload["execution_id"] = execution_id
         output.append(
-            make_event("lease_revoked", _typed_lease_event_payload("lease_revoked", revoke_payload))
+            _make_strict_event(
+                make_event,
+                LEASE_REVOKED,
+                _typed_lease_event_payload("lease_revoked", revoke_payload),
+            )
         )
 
         node_state = projection["node_states"].get(node_id)

@@ -124,9 +124,12 @@ def _apply(
     events: list[EventEnvelope],
     command_type: str,
     payload: dict[str, Any] | None = None,
+    *,
+    clock: FakeClock | None = None,
+    ids: SequentialIdGenerator | None = None,
 ) -> list[EventEnvelope]:
-    clock = FakeClock()
-    ids = SequentialIdGenerator()
+    clock = clock or FakeClock()
+    ids = ids or SequentialIdGenerator()
     catalog = build_graph_catalog()
     raw_payload = payload or {"run_id": "run-1"}
     if command_type in catalog.command_specs:
@@ -151,7 +154,7 @@ def _apply(
             {
                 key: value
                 for key, value in raw_payload.items()
-                if key not in {"run_id", "actor_role"}
+                if key != "run_id" and (command_type == "submit_patch" or key != "actor_role")
             },
             clock,
             ids,
@@ -189,14 +192,44 @@ def _apply_from_checkpoint(
     payload: dict[str, Any] | None = None,
 ) -> list[EventEnvelope]:
     projection = projection_from_checkpoint(projection_to_checkpoint(_project(events)))
-    return apply_command(
+    raw_payload = payload or {"run_id": "run-1"}
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    catalog = build_graph_catalog()
+    context = CommandExecutionContext(
+        run_id=str(raw_payload.get("run_id", "run-1")),
+        current_position=max((event.position for event in events), default=-1),
+        clock=clock,
+        id_generator=ids,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        events=(),
+        future_effects=build_graph_command_dependencies().future_effects,
+    )
+    output = apply_command(
         projection,
         events,
         command_type,
-        payload or {"run_id": "run-1"},
-        FakeClock(),
-        SequentialIdGenerator(),
+        {key: value for key, value in raw_payload.items() if key != "run_id"},
+        clock,
+        ids,
+        catalog=catalog,
+        context=context,
     )
+    return [
+        event
+        if isinstance(event, EventEnvelope)
+        else EventEnvelope(
+            event_id=event.metadata.event_id,
+            run_id=event.metadata.run_id,
+            position=event.metadata.position,
+            event_type=event.metadata.event_type,
+            schema_version=event.metadata.payload_schema_generation,
+            actor=event.metadata.actor,
+            timestamp=event.metadata.timestamp,
+            payload=event.payload.model_dump(mode="json", exclude_none=True),
+        )
+        for event in output
+    ]
 
 
 def _callback_payload(**overrides: Any) -> dict[str, Any]:
@@ -352,6 +385,9 @@ def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -379,7 +415,19 @@ def _active_lease_events() -> list[EventEnvelope]:
     return [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
-        _event("lease_granted", {"node_id": "worker-1", "lease_id": "lease-1", "generation": 1}, 2),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
+            },
+            2,
+        ),
     ]
 
 
@@ -396,6 +444,9 @@ def _active_lease_events_with_resource_claims(
                 "lease_id": "lease-1",
                 "generation": 1,
                 "resource_claims": resource_claims,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
             },
             2,
         ),
@@ -412,7 +463,15 @@ def _planner_active_lease_events() -> list[EventEnvelope]:
         ),
         _event(
             "lease_granted",
-            {"node_id": "planner-1", "lease_id": "lease-1", "generation": 1},
+            {
+                "node_id": "planner-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
+            },
             2,
         ),
     ]
@@ -430,6 +489,8 @@ def _leased_lease_events() -> list[EventEnvelope]:
                 "generation": 1,
                 "execution_id": "exec-1",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -471,6 +532,9 @@ def test_cancel_revokes_active_lease_and_cancels_running_node() -> None:
                 "lease_id": "lease-1",
                 "generation": 2,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -507,7 +571,19 @@ def test_cancel_revokes_suspended_lease_without_reopening_terminal_node() -> Non
     events = [
         _event("run_lifecycle_changed", {"to_state": "paused"}, 0),
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "failed"}, 1),
-        _event("lease_granted", {"node_id": "worker-1", "lease_id": "lease-1"}, 2),
+        _event(
+            "lease_granted",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 0,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
+            },
+            2,
+        ),
         _event("lease_suspended", {"node_id": "worker-1", "lease_id": "lease-1"}, 3),
     ]
 
@@ -533,6 +609,8 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
                 "generation": 2,
                 "execution_id": "exec-1",
                 "expires_at": (clock.now() - timedelta(seconds=1)).isoformat(),
+                "base_snapshot_id": "S0",
+                "resource_claims": [],
             },
             2,
         ),
@@ -566,10 +644,10 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
     assert type(output[0].payload) is HeartbeatRecordedPayload
     assert output[0].payload.lease_generation == 2
     renewal = output[1]
-    assert isinstance(renewal, EventEnvelope)
-    assert renewal.payload["generation"] == 2
-    assert renewal.payload["execution_id"] == "exec-1"
-    assert renewal.payload["expires_at"] > events[-1].payload["expires_at"]
+    assert isinstance(renewal, HydratedEvent)
+    assert renewal.payload.generation == 2
+    assert renewal.payload.execution_id == "exec-1"
+    assert renewal.payload.expires_at.isoformat() > events[-1].payload["expires_at"]
 
 
 @pytest.mark.parametrize(
@@ -585,7 +663,15 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
                 _event("run_lifecycle_changed", {"to_state": "paused"}, 0),
                 _event(
                     "lease_granted",
-                    {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+                    {
+                        "lease_id": "lease-1",
+                        "node_id": "worker-1",
+                        "generation": 1,
+                        "execution_id": "exec-1",
+                        "base_snapshot_id": "S0",
+                        "expires_at": "2026-01-01T00:05:00+00:00",
+                        "resource_claims": [],
+                    },
                     1,
                 ),
             ],
@@ -597,7 +683,15 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
                 _event("run_lifecycle_changed", {"to_state": "active"}, 0),
                 _event(
                     "lease_granted",
-                    {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+                    {
+                        "lease_id": "lease-1",
+                        "node_id": "worker-1",
+                        "generation": 1,
+                        "execution_id": "exec-1",
+                        "base_snapshot_id": "S0",
+                        "expires_at": "2026-01-01T00:05:00+00:00",
+                        "resource_claims": [],
+                    },
                     1,
                 ),
             ],
@@ -609,12 +703,27 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
                 _event("run_lifecycle_changed", {"to_state": "active"}, 0),
                 _event(
                     "lease_granted",
-                    {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+                    {
+                        "lease_id": "lease-1",
+                        "node_id": "worker-1",
+                        "generation": 1,
+                        "execution_id": "exec-1",
+                        "base_snapshot_id": "S0",
+                        "expires_at": "2026-01-01T00:05:00+00:00",
+                        "resource_claims": [],
+                    },
                     1,
                 ),
                 _event(
                     "lease_revoked",
-                    {"lease_id": "lease-1", "node_id": "worker-1"},
+                    {
+                        "lease_id": "lease-1",
+                        "node_id": "worker-1",
+                        "generation": 0,
+                        "execution_id": "exec-test",
+                        "reason": "test_revocation",
+                        "trigger": "test_revocation",
+                    },
                     2,
                 ),
             ],
@@ -626,7 +735,15 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
                 _event("run_lifecycle_changed", {"to_state": "active"}, 0),
                 _event(
                     "lease_granted",
-                    {"lease_id": "lease-1", "node_id": "worker-1", "generation": 1},
+                    {
+                        "lease_id": "lease-1",
+                        "node_id": "worker-1",
+                        "generation": 1,
+                        "execution_id": "exec-1",
+                        "base_snapshot_id": "S0",
+                        "expires_at": "2026-01-01T00:05:00+00:00",
+                        "resource_claims": [],
+                    },
                     1,
                 ),
             ],
@@ -702,6 +819,9 @@ def test_typed_acknowledge_start_uses_projection_and_emits_start_effect() -> Non
                 "node_id": "worker-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -1403,7 +1523,9 @@ def test_schedule_tick_defers_node_without_base_snapshot() -> None:
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "ready"}, 1),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(
+        events, "schedule_tick", {"run_id": "run-1", "lease_seconds": 300, "max_grants": 10}
+    )
 
     assert not any(event.event_type == "lease_granted" for event in output)
     assert any(
@@ -1446,13 +1568,10 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
         ),
     ]
 
-    output = apply_command(
-        _project(events),
+    output = _apply(
         events,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
-        clock,
-        SequentialIdGenerator(),
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
     assert [event.event_type for event in output[:3]] == [
@@ -1471,7 +1590,7 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
         "node_id": "verifier-1",
         "generation": 1,
         "execution_id": "exec-1",
-        "expires_at": expired_at.isoformat(),
+        "expires_at": expired_at.isoformat().replace("+00:00", "Z"),
         "reason": "lease_expired_without_callback",
     }
     assert output[1].payload["record"]["record_type"] == "failure_record"
@@ -1538,6 +1657,7 @@ def test_late_callback_after_uncontested_lease_expiry_is_accepted() -> None:
                 "generation": 1,
                 "execution_id": "exec-1",
                 "reason": "lease_expired_without_callback",
+                "expires_at": "2026-01-01T00:00:00+00:00",
             },
             3,
         ),
@@ -1651,14 +1771,10 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
         "bound_at_position": 0,
     }
 
-    projected = _project([*events, *output])
-    schedule_output = apply_command(
-        projected,
+    schedule_output = _apply(
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
-        FakeClock(),
-        SequentialIdGenerator(),
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
     assert any(
         event.event_type == "lease_granted" and event.payload["node_id"] == "verifier-1"
@@ -2338,6 +2454,8 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                 "generation": 1,
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             9,
         ),
@@ -2411,14 +2529,10 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         "bound_at_position": 0,
     }
 
-    projected = _project([*events, *output])
-    schedule_output = apply_command(
-        projected,
+    schedule_output = _apply(
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
-        FakeClock(),
-        SequentialIdGenerator(),
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
     assert any(
         event.event_type == "lease_granted" and event.payload["node_id"] == "planner-gap"
@@ -2468,6 +2582,8 @@ def test_verifier_callback_rejects_verification_record_with_status_key() -> None
                 "generation": 1,
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             5,
         ),
@@ -2551,6 +2667,8 @@ def test_verifier_callback_failed_output_has_explicit_failed_outcome() -> None:
                 "generation": 1,
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             5,
         ),
@@ -2652,6 +2770,8 @@ def test_verifier_callback_rejects_completion_without_grades() -> None:
                 "generation": 1,
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             5,
         ),
@@ -2736,6 +2856,8 @@ def test_verifier_callback_rejects_stale_status_with_outcome() -> None:
                 "generation": 1,
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             4,
         ),
@@ -2824,6 +2946,8 @@ def test_verifier_callback_rejects_report_shaped_output_with_value_status() -> N
                 "generation": 1,
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             4,
         ),
@@ -2961,6 +3085,8 @@ def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding
                 "generation": 1,
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             7,
         ),
@@ -3017,14 +3143,10 @@ def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding
         "bound_at_position": 0,
     }
 
-    projected = _project([*events, *output])
-    schedule_output = apply_command(
-        projected,
+    schedule_output = _apply(
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
-        FakeClock(),
-        SequentialIdGenerator(),
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
     assert any(
         event.event_type == "lease_granted" and event.payload["node_id"] == "check-final"
@@ -3064,6 +3186,8 @@ def test_verifier_callback_rejects_unbound_verification_candidate() -> None:
                 "generation": 1,
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             3,
         ),
@@ -3130,6 +3254,8 @@ def test_verifier_callback_rejects_mismatched_candidate_record_citation() -> Non
                 "generation": 1,
                 "execution_id": "exec-v",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             3,
         ),
@@ -3217,6 +3343,8 @@ def test_check_result_rejects_mismatched_evaluated_record_citation() -> None:
                 "generation": 1,
                 "execution_id": "exec-c",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             4,
         ),
@@ -3281,6 +3409,8 @@ def test_callback_rejects_malformed_check_result_record() -> None:
                 "generation": 1,
                 "execution_id": "exec-c",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -3363,6 +3493,8 @@ def test_worker_smuggled_verification_record_rejected_atomically() -> None:
                 "generation": 1,
                 "execution_id": "exec-1",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -3432,7 +3564,15 @@ def test_callback_rejects_output_record_producer_forgery_without_partial_events(
         ),
         _event(
             "lease_granted",
-            {"node_id": "verifier-evil", "lease_id": "lease-evil", "generation": 1},
+            {
+                "node_id": "verifier-evil",
+                "lease_id": "lease-evil",
+                "generation": 1,
+                "execution_id": "exec-evil",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
+            },
             5,
         ),
     ]
@@ -3470,13 +3610,10 @@ def test_callback_rejects_output_record_producer_forgery_without_partial_events(
     projected = _project([*events, *output])
     assert "consumer-1" not in projected["input_bindings"]
 
-    schedule_output = apply_command(
-        projected,
+    schedule_output = _apply(
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1", "max_grants": 10},
-        FakeClock(),
-        SequentialIdGenerator(),
+        {"run_id": "run-1", "max_grants": 10, "lease_seconds": 300},
     )
 
     assert not any(
@@ -4008,7 +4145,18 @@ def test_callback_rejects_explicit_record_run_id_mismatch() -> None:
 def test_callback_rejected_stale() -> None:
     events = [
         *_active_lease_events(),
-        _event("lease_revoked", {"node_id": "worker-1", "lease_id": "lease-1"}, 3),
+        _event(
+            "lease_revoked",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 0,
+                "execution_id": "exec-test",
+                "reason": "test_revocation",
+                "trigger": "test_revocation",
+            },
+            3,
+        ),
     ]
 
     output = _apply(
@@ -4128,7 +4276,9 @@ def test_patch_create_edge_preserves_producer_class_constraints() -> None:
 
 
 def test_submit_patch_rejects_verification_selector_with_status_before_acceptance() -> None:
-    output = _apply(
+    pytest.raises(
+        ValidationError,
+        _apply,
         [
             _event("run_lifecycle_changed", {"to_state": "active"}, 0),
             _event(
@@ -4177,14 +4327,11 @@ def test_submit_patch_rejects_verification_selector_with_status_before_acceptanc
         },
     )
 
-    assert [event.event_type for event in output] == ["command_rejected"]
-    assert output[0].payload["command_type"] == "submit_patch"
-    assert "accepted_record_selector" in output[0].payload["reason"]
-    assert "status" in output[0].payload["reason"]
-
 
 def test_submit_patch_rejects_legacy_verification_selector_value_status() -> None:
-    output = _apply(
+    pytest.raises(
+        ValidationError,
+        _apply,
         [
             _event("run_lifecycle_changed", {"to_state": "active"}, 0),
             _event(
@@ -4231,9 +4378,6 @@ def test_submit_patch_rejects_legacy_verification_selector_value_status() -> Non
             ],
         },
     )
-
-    assert [event.event_type for event in output] == ["command_rejected"]
-    assert "unsupported selector value match: status" in output[0].payload["reason"]
 
 
 def test_seed_compiled_events_hydrates_edge_selector_as_named_opaque_policy() -> None:
@@ -4854,7 +4998,9 @@ def test_patch_reject_emits_rejection() -> None:
 
 
 def test_malformed_patch_rejection_preserves_submitter_evidence() -> None:
-    output = _apply(
+    pytest.raises(
+        ValidationError,
+        _apply,
         [],
         "submit_patch",
         {
@@ -4866,13 +5012,6 @@ def test_malformed_patch_rejection_preserves_submitter_evidence() -> None:
             "ops": [],
         },
     )
-
-    assert output[0].event_type == "command_rejected"
-    assert output[0].payload["command_type"] == "submit_patch"
-    assert output[0].payload["patch_id"] == "patch-bad"
-    assert output[0].payload["proposed_by_node_id"] == "planner-1"
-    assert output[0].payload["actor_role"] == "planner"
-    assert output[0].payload["base_graph_position"] == "not-an-int"
 
 
 def test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_run() -> None:
@@ -5000,7 +5139,11 @@ def test_schedule_tick_grants_leases() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -5066,7 +5209,11 @@ def test_schedule_tick_path_in_scope_write_claim_allows_disjoint_path() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     granted_node_ids = [
         event.payload["node_id"] for event in output if event.event_type == "lease_granted"
@@ -5176,7 +5323,11 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
     assert output[4].payload["to_port"] == "routine_snapshot"
     assert output[4].payload["record_ids"] == ["routine-snapshot-record"]
 
-    next_output = _apply(events + output, "schedule_tick", {"run_id": "run-1"})
+    next_output = _apply(
+        events + output,
+        "schedule_tick",
+        {"run_id": "run-1", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert any(
         event.event_type == "lease_granted"
@@ -5417,7 +5568,9 @@ def test_schedule_tick_does_not_repair_failed_required_check() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(
+        events, "schedule_tick", {"run_id": "run-1", "lease_seconds": 300, "max_grants": 10}
+    )
 
     assert output == []
 
@@ -5570,6 +5723,8 @@ def test_callback_check_result_emits_scoped_failed_check_recovery() -> None:
                 "generation": 1,
                 "execution_id": "exec-check",
                 "base_snapshot_id": "routine-snapshot-record",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             4,
         ),
@@ -5746,7 +5901,9 @@ def test_schedule_tick_does_not_duplicate_existing_failed_check_recovery() -> No
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(
+        events, "schedule_tick", {"run_id": "run-1", "lease_seconds": 300, "max_grants": 10}
+    )
 
     assert output == []
 
@@ -5818,6 +5975,8 @@ def test_reconcile_fails_after_no_successor_failed_check_recovery() -> None:
                 "patch_id": "patch-no-safe-mutation",
                 "proposed_by_node_id": "planner-recover-check-result-r1",
                 "successor_planner_node_ids": [],
+                "base_graph_position": -1,
+                "actor_role": "planner",
             },
             4,
         ),
@@ -5901,6 +6060,8 @@ def test_reconcile_does_not_fail_after_environment_no_successor_recovery() -> No
                 "patch_id": "patch-no-safe-mutation",
                 "proposed_by_node_id": "planner-recover-check-result-r1",
                 "successor_planner_node_ids": [],
+                "base_graph_position": -1,
+                "actor_role": "planner",
             },
             4,
         ),
@@ -6019,6 +6180,8 @@ def test_reconcile_no_successor_skips_recovery_with_executable_successors() -> N
                 "patch_id": "patch-corrective-work",
                 "proposed_by_node_id": "planner-recover-check-result-r1",
                 "successor_planner_node_ids": [],
+                "base_graph_position": -1,
+                "actor_role": "planner",
             },
             4,
         ),
@@ -6137,6 +6300,8 @@ def test_reconcile_no_successor_skips_superseded_failed_verification() -> None:
                 "patch_id": "patch-no-planner-successor",
                 "proposed_by_node_id": "planner-recover-vf-1",
                 "successor_planner_node_ids": [],
+                "base_graph_position": -1,
+                "actor_role": "planner",
             },
             6,
         ),
@@ -6259,6 +6424,8 @@ def test_reconcile_does_not_fail_recovered_run_w2_shape() -> None:
                 "patch_id": "patch-source-scope-corrective-v2",
                 "proposed_by_node_id": "planner-recover-vf-impl-1",
                 "successor_planner_node_ids": [],
+                "base_graph_position": -1,
+                "actor_role": "planner",
             },
             6,
         ),
@@ -6668,7 +6835,11 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
     assert output[4].payload["to_port"] == "routine_snapshot"
     assert output[4].payload["record_ids"] == ["routine-snapshot-record"]
 
-    next_output = _apply(events + output, "schedule_tick", {"run_id": "run-1"})
+    next_output = _apply(
+        events + output,
+        "schedule_tick",
+        {"run_id": "run-1", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert any(
         event.event_type == "lease_granted"
@@ -6810,7 +6981,9 @@ def test_schedule_tick_does_not_duplicate_existing_failed_verification_recovery(
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(
+        events, "schedule_tick", {"run_id": "run-1", "lease_seconds": 300, "max_grants": 10}
+    )
 
     assert output == []
 
@@ -6960,7 +7133,11 @@ def test_passed_corrective_verifier_releases_final_check_without_recovery() -> N
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert not any(
         event.event_type == "node_created"
@@ -7162,7 +7339,7 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     recovery_edge = next(
         event
@@ -7192,7 +7369,7 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
     next_output = _apply(
         events + output,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
     assert any(
@@ -7558,7 +7735,7 @@ def test_passed_final_check_retires_failure_continuation() -> None:
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     assert [event.payload["node_id"] for event in output if event.event_type == "node_retired"] == [
         "planner-gap-final"
@@ -7599,7 +7776,11 @@ def test_schedule_tick_marks_planned_node_ready_when_required_input_bound() -> N
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -7630,6 +7811,9 @@ def test_output_record_binds_to_producer_class_edge() -> None:
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -7719,6 +7903,8 @@ def test_output_record_does_not_bind_to_non_matching_producer_class_edge() -> No
                 "generation": 1,
                 "execution_id": "exec-1",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -7774,12 +7960,20 @@ def test_schedule_tick_defers_missing_required_input() -> None:
                 "lease_id": "lease-authority-1",
                 "node_id": "authority-1",
                 "generation": 1,
+                "execution_id": "exec-authority-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             4,
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [(event.event_type, event.payload) for event in output] == [
         ("node_deferred", {"node_id": "worker-1", "reason": "missing_required_input:candidate"})
@@ -7816,7 +8010,11 @@ def test_schedule_tick_emits_dead_input_for_terminal_failed_source() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [(event.event_type, event.payload) for event in output] == [
         (
@@ -7853,11 +8051,15 @@ def test_schedule_tick_dedupes_unchanged_missing_required_input() -> None:
         ),
     ]
 
-    first = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    first = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
     second = _apply(
         [*events, *first],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
     assert [(event.event_type, event.payload) for event in first] == [
@@ -7896,7 +8098,11 @@ def test_schedule_tick_defers_unapproved_gate_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [(event.event_type, event.payload) for event in output] == [
         ("node_deferred", {"node_id": "worker-1", "reason": "gate_not_approved:gate-1"})
@@ -7934,7 +8140,11 @@ def test_schedule_tick_allows_approved_gate_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -7978,7 +8188,11 @@ def test_schedule_tick_defers_ungranted_authority_request_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [(event.event_type, event.payload) for event in output] == [
         (
@@ -8023,7 +8237,11 @@ def test_schedule_tick_allows_granted_authority_request_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -8039,7 +8257,9 @@ def test_schedule_tick_projection_ready_state_comes_from_node_state_changed() ->
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "planned"}, 1),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "max_grants": 0})
+    output = _apply(
+        events, "schedule_tick", {"run_id": "run-1", "max_grants": 0, "lease_seconds": 300}
+    )
     projection = _project([*events, *output])
 
     assert [event.event_type for event in output] == [
@@ -8059,7 +8279,11 @@ def test_schedule_tick_check_precondition_requires_command_definition() -> None:
         _event("node_created", {"node_id": "check-1", "kind": "check", "state": "planned"}, 1),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [(event.event_type, event.payload) for event in output] == [
         (
@@ -8075,7 +8299,11 @@ def test_schedule_tick_rechecks_ready_check_precondition_requires_command_defini
         _event("node_created", {"node_id": "check-1", "kind": "check", "state": "ready"}, 1),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [(event.event_type, event.payload) for event in output] == [
         (
@@ -8100,7 +8328,11 @@ def test_schedule_tick_check_precondition_passes_with_command_definition() -> No
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -8125,7 +8357,11 @@ def test_schedule_tick_check_precondition_passes_with_known_command_binding() ->
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -8150,7 +8386,11 @@ def test_schedule_tick_external_claim_missing_key_is_invalid() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [(event.event_type, event.payload) for event in output] == [
         ("node_deferred", {"node_id": "external-1", "reason": "invalid_claim:external_missing_key"})
@@ -8168,6 +8408,9 @@ def test_acknowledge_start_validates_lease_identity_and_marks_running() -> None:
                 "lease_id": "lease-planner-1",
                 "generation": 1,
                 "execution_id": "exec-planner-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8208,6 +8451,9 @@ def test_acknowledge_start_rejects_wrong_execution_id() -> None:
                 "lease_id": "lease-planner-1",
                 "generation": 1,
                 "execution_id": "exec-planner-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8240,6 +8486,9 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8307,6 +8556,9 @@ def test_agent_died_check_missing_command_fails_without_retry() -> None:
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8362,6 +8614,9 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8405,13 +8660,10 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
     }
     assert projection["node_states"]["worker-1"] == "blocked"
 
-    immediate = apply_command(
-        projection,
+    immediate = _apply(
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
-        clock,
-        id_gen,
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
     assert [(event.event_type, event.payload) for event in immediate] == [
         (
@@ -8424,13 +8676,12 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
     ]
 
     clock.advance(61)
-    later = apply_command(
-        _project([*events, *output, *immediate]),
+    later = _apply(
         [*events, *output, *immediate],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
-        clock,
-        id_gen,
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+        clock=clock,
+        ids=id_gen,
     )
     assert [event.event_type for event in later] == [
         "node_ready",
@@ -8466,6 +8717,9 @@ def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8526,6 +8780,9 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8584,6 +8841,9 @@ def test_agent_died_usage_limit_revokes_lease_and_fails_without_retry() -> None:
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8634,6 +8894,9 @@ def test_agent_died_completes_non_gap_planner_after_accepted_patch() -> None:
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8643,6 +8906,8 @@ def test_agent_died_completes_non_gap_planner_after_accepted_patch() -> None:
                 "patch_id": "patch-1",
                 "proposed_by_node_id": "planner-1",
                 "successor_planner_node_ids": ["planner-gap"],
+                "base_graph_position": -1,
+                "actor_role": "planner",
             },
             3,
         ),
@@ -8693,6 +8958,9 @@ def test_agent_died_requeues_gap_planner_after_accepted_patch() -> None:
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8702,6 +8970,8 @@ def test_agent_died_requeues_gap_planner_after_accepted_patch() -> None:
                 "patch_id": "patch-1",
                 "proposed_by_node_id": "planner-gap",
                 "successor_planner_node_ids": [],
+                "base_graph_position": -1,
+                "actor_role": "planner",
             },
             3,
         ),
@@ -8734,10 +9004,29 @@ def test_agent_died_rejects_unknown_or_inactive_lease() -> None:
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 0),
         _event(
             "lease_granted",
-            {"node_id": "worker-1", "lease_id": "lease-1", "generation": 1},
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 1,
+                "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
+            },
             1,
         ),
-        _event("lease_revoked", {"node_id": "worker-1", "lease_id": "lease-1"}, 2),
+        _event(
+            "lease_revoked",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "generation": 0,
+                "execution_id": "exec-test",
+                "reason": "test_revocation",
+                "trigger": "test_revocation",
+            },
+            2,
+        ),
     ]
 
     unknown_output = _apply([], "agent_died", {"run_id": "run-1", "lease_id": "missing-lease"})
@@ -8765,6 +9054,9 @@ def test_agent_died_requires_execution_id_when_lease_records_one() -> None:
                 "lease_id": "lease-1",
                 "generation": 1,
                 "execution_id": "exec-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             2,
         ),
@@ -8797,23 +9089,36 @@ def test_schedule_tick_expires_past_leases_only() -> None:
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event(
             "lease_granted",
-            {"node_id": "worker-1", "lease_id": "past-lease", "expires_at": past},
+            {
+                "node_id": "worker-1",
+                "lease_id": "past-lease",
+                "expires_at": past,
+                "generation": 0,
+                "execution_id": "exec-past-lease",
+                "base_snapshot_id": "S0",
+                "resource_claims": [],
+            },
             1,
         ),
         _event(
             "lease_granted",
-            {"node_id": "worker-2", "lease_id": "future-lease", "expires_at": future},
+            {
+                "node_id": "worker-2",
+                "lease_id": "future-lease",
+                "expires_at": future,
+                "generation": 0,
+                "execution_id": "exec-future-lease",
+                "base_snapshot_id": "S0",
+                "resource_claims": [],
+            },
             2,
         ),
     ]
 
-    output = apply_command(
-        _project(events),
+    output = _apply(
         events,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
-        clock,
-        SequentialIdGenerator(),
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
     assert [
@@ -8958,6 +9263,10 @@ def test_record_decision_binds_authority_decision_to_worker_input() -> None:
                 "lease_id": "lease-authority-1",
                 "node_id": "authority-1",
                 "generation": 1,
+                "execution_id": "exec-authority-1",
+                "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             3,
         ),
@@ -9300,6 +9609,8 @@ def test_callback_binds_required_input_by_wildcard_producer_class_edge() -> None
                 "generation": 1,
                 "execution_id": "exec-replacement",
                 "base_snapshot_id": "S0",
+                "expires_at": "2026-01-01T00:05:00+00:00",
+                "resource_claims": [],
             },
             8,
         ),
@@ -9365,7 +9676,11 @@ def test_schedule_tick_marks_dead_required_input_when_required_source_failed_unb
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
+    )
 
     assert [(event.event_type, event.payload) for event in output] == [
         (
