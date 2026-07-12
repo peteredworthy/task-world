@@ -8,7 +8,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query
-from pydantic import Field, model_validator
+from pydantic import Field, ValidationError, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -21,6 +21,7 @@ from orchestrator.graph import (
     ActorKind,
     CompactEventEnvelope,
     EventEnvelope,
+    OutputRecordAcceptedPayload,
     RecordSelector,
     build_projection,
     check_command_reference,
@@ -48,7 +49,6 @@ from orchestrator.graph_runtime.store import (
 )
 from orchestrator.state import RunNotFoundError
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
-from orchestrator.graph.events.records import OutputRecordAcceptedPayload
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
 
@@ -877,13 +877,22 @@ def _pick_output_records(events: list[EventEnvelope], node_id: str) -> list[dict
     for event in events:
         if event.event_type != "output_record_accepted":
             continue
-        payload = (
-            dict(event.payload["record"])
-            if isinstance(event, CompactEventEnvelope)
-            else OutputRecordAcceptedPayload.model_validate(event.payload).record.model_dump(
-                mode="json", by_alias=True, exclude_none=True
-            )
-        )
+        if isinstance(event, CompactEventEnvelope):
+            payload = dict(event.payload["record"])
+        else:
+            try:
+                payload = OutputRecordAcceptedPayload.model_validate(
+                    event.payload
+                ).record.model_dump(mode="json", by_alias=True, exclude_none=True)
+            except ValidationError:
+                # Task 5 D3: detail scans retain raw historical record payloads
+                # until the Task 13 durable-history cutover.
+                if event.schema_version != 1:
+                    raise
+                raw_record = event.payload.get("record")
+                if not isinstance(raw_record, dict):
+                    continue
+                payload = dict(cast(dict[str, Any], raw_record))
         if payload.get("record_kind") == "file_state":
             continue
         if payload.get("producer_node_id") != node_id:

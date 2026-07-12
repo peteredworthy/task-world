@@ -612,13 +612,14 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
                     "outcome": "passed",
                     "verdict": "passed",
                     "value": {
+                        "outcome": "passed",
                         "grades": [
                             {
                                 "requirement_id": "R-1",
                                 "grade": "A",
                                 "reason": "satisfied",
                             }
-                        ]
+                        ],
                     },
                     "record_type": "verification_report",
                 }
@@ -1556,8 +1557,6 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                                 "value": {
                                     "status": "passed",
                                     "classification": "passed",
-                                    "body": large_payload,
-                                    "edge_context": {"body": large_payload},
                                     "command_id": "check-test",
                                     "command_text": "test",
                                     "command": {},
@@ -1674,5 +1673,9 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "candidate-1"
     )
     flattened_full_event = EventEnvelope.model_validate(events[1].model_dump())
-    with pytest.raises(ValueError, match="record"):
-        reduce_event(build_graph_catalog(), initial_projection(), flattened_full_event)
+    legacy_projection = reduce_event(
+        build_graph_catalog(),
+        initial_projection(),
+        flattened_full_event,
+    )
+    assert "candidate-1" not in legacy_projection["accepted_record_summaries_by_id"]

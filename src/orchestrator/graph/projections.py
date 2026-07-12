@@ -59,6 +59,7 @@ from orchestrator.graph.models import (
     InvalidTestBlockProjection,
     InputBindingProjection,
     LegacyOutputRecord,
+    LegacyReplayOutputRecordPayload,
     LeaseProjection,
     JoinResultRecord,
     NodeCreationProjection,
@@ -67,7 +68,6 @@ from orchestrator.graph.models import (
     OversightDecisionProjection,
     OversightDecisionRecordedPayload,
     OutputRecord,
-    OutputRecordPayload,
     PendingGateDecisionProjection,
     RecoveryPlanRecord,
     RequirementRecord,
@@ -255,7 +255,7 @@ class GraphRecordSummary(TypedDict, total=False):
 
 class AcceptedOutputRecord(TypedDict):
     record_id: str
-    payload: OutputRecordPayload
+    payload: LegacyReplayOutputRecordPayload
 
 
 class RecoveryNodeIndexEntry(GraphBaseModel):
@@ -309,7 +309,7 @@ class GraphProjection(TypedDict):
     node_output_ports: dict[str, dict[str, list[str]]]
     accepted_output_records_by_node_port: dict[str, dict[str, list[AcceptedOutputRecord]]]
     accepted_record_summaries_by_id: dict[str, GraphRecordSummary]
-    output_records_by_node_port: dict[str, dict[str, list[OutputRecordPayload]]]
+    output_records_by_node_port: dict[str, dict[str, list[LegacyReplayOutputRecordPayload]]]
     edges: dict[str, EdgeProjection]
     input_bindings: dict[str, dict[str, InputBindingProjection]]
     node_pending_appeals: dict[str, bool]
@@ -346,7 +346,7 @@ class GraphProjection(TypedDict):
     last_deferred_reasons: dict[str, str]
     retry_not_before_by_node: dict[str, str | None]
     node_creation_payloads: dict[str, NodeCreationProjection]
-    output_record_payloads: dict[str, OutputRecordPayload]
+    output_record_payloads: dict[str, LegacyReplayOutputRecordPayload]
     approval_decisions: dict[str, ApprovalDecisionProjection]
     authority_decisions: dict[str, AuthorityDecisionProjection]
     oversight_decisions: dict[str, OversightDecisionProjection]
@@ -1717,14 +1717,14 @@ def _accepted_output_records_from_checkpoint(
 
 def _output_records_from_checkpoint(
     raw_ports_by_node: Any,
-) -> dict[str, dict[str, list[OutputRecordPayload]]]:
+) -> dict[str, dict[str, list[LegacyReplayOutputRecordPayload]]]:
     if not isinstance(raw_ports_by_node, dict):
         return {}
-    typed: dict[str, dict[str, list[OutputRecordPayload]]] = {}
+    typed: dict[str, dict[str, list[LegacyReplayOutputRecordPayload]]] = {}
     for node_id, raw_ports in cast(dict[Any, Any], raw_ports_by_node).items():
         if not isinstance(node_id, str) or not isinstance(raw_ports, dict):
             continue
-        ports: dict[str, list[OutputRecordPayload]] = {}
+        ports: dict[str, list[LegacyReplayOutputRecordPayload]] = {}
         for port, raw_records in cast(dict[Any, Any], raw_ports).items():
             if not isinstance(port, str) or not isinstance(raw_records, list):
                 continue
@@ -1738,10 +1738,12 @@ def _output_records_from_checkpoint(
     return typed
 
 
-def _output_payloads_from_checkpoint(raw_payloads: Any) -> dict[str, OutputRecordPayload]:
+def _output_payloads_from_checkpoint(
+    raw_payloads: Any,
+) -> dict[str, LegacyReplayOutputRecordPayload]:
     if not isinstance(raw_payloads, dict):
         return {}
-    typed: dict[str, OutputRecordPayload] = {}
+    typed: dict[str, LegacyReplayOutputRecordPayload] = {}
     for record_id, raw_payload in cast(dict[Any, Any], raw_payloads).items():
         if not isinstance(record_id, str):
             continue
@@ -1756,9 +1758,15 @@ def _checkpoint_record_id(raw_record: dict[str, Any]) -> str | None:
     return record_id if isinstance(record_id, str) else None
 
 
-def _checkpoint_output_record_payload(raw_payload: Any) -> OutputRecordPayload | None:
+def _checkpoint_output_record_payload(raw_payload: Any) -> LegacyReplayOutputRecordPayload | None:
     if not isinstance(raw_payload, dict):
         return None
+    try:
+        return OutputRecordAcceptedPayload.model_validate(
+            {"record": cast(dict[str, Any], raw_payload)}
+        ).record
+    except ValueError:
+        pass
     return _parse_output_record_payload(cast(dict[str, Any], raw_payload))
 
 
@@ -1851,7 +1859,7 @@ def reduce_typed_output_record_accepted(
         timestamp=metadata.timestamp,
         payload=record_payload,
     )
-    typed_record = cast(OutputRecordPayload, record)
+    typed_record = cast(LegacyReplayOutputRecordPayload, record)
     _record_output_record(next_state, typed_record)
     _record_node_output_port(next_state, event)
     _record_accepted_output_record(next_state, typed_record)
@@ -1863,6 +1871,37 @@ def reduce_typed_output_record_accepted(
     _record_candidate(next_state, event)
     _record_check_result(next_state, event)
     _record_environment_failure(next_state, event)
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_typed_verification_outcome(
+    state: GraphProjection,
+    payload: Any,
+    metadata: Any,
+) -> GraphProjection:
+    """Project a catalog-hydrated verifier outcome without raw event parsing."""
+
+    next_state = copy_projection(state)
+    verdict = VerifierVerdictProjection(
+        candidate_id=payload.candidate_id,
+        verdict=payload.outcome,
+        position=metadata.position,
+    )
+    next_state["verifier_verdicts"][payload.candidate_id] = verdict
+    result = VerificationResultProjection(
+        node_id=payload.verifier_node_id,
+        record_id=payload.record_id,
+        candidate_id=payload.candidate_id,
+        task_region_id=payload.task_region_id,
+    )
+    if payload.outcome == "passed":
+        if payload.candidate_id not in next_state["passed_verification_candidate_ids"]:
+            next_state["passed_verification_candidate_ids"].append(payload.candidate_id)
+        next_state["passed_verification_results_by_record_id"][payload.record_id] = result
+    else:
+        next_state["failed_verification_candidate_ids"][payload.candidate_id] = True
+        next_state["failed_verification_results_by_record_id"][payload.record_id] = result
     _refresh_derived_topology_state(next_state)
     return next_state
 
@@ -1894,6 +1933,67 @@ def reduce_compact_output_record_accepted(
     return next_state
 
 
+_D3_LEGACY_RECORD_EVENT_TYPES = frozenset(
+    {
+        "output_record_accepted",
+        "verification_passed",
+        "verification_failed",
+        "file_state_accepted",
+    }
+)
+
+
+def _normalize_d3_file_state_membership(record: dict[str, Any]) -> dict[str, Any]:
+    """Lift historical file-state membership only while replaying generation 1."""
+
+    if record.get("record_type") != "file_state" and record.get("record_kind") != "file_state":
+        return record
+    membership = record.get("membership")
+    if not isinstance(membership, dict):
+        return record
+    typed_membership = cast(dict[str, Any], membership)
+    normalized = dict(record)
+    for key in ("task_region_id", "candidate_id"):
+        value = typed_membership.get(key)
+        if normalized.get(key) is None and isinstance(value, str):
+            normalized[key] = value
+    return normalized
+
+
+def reduce_d3_legacy_record_replay(
+    state: GraphProjection,
+    event: EventEnvelope,
+) -> GraphProjection:
+    """Replay the pre-strict record envelope generation until Task 13 cutover."""
+
+    if event.schema_version != 1 or event.event_type not in _D3_LEGACY_RECORD_EVENT_TYPES:
+        msg = "D3 legacy replay accepts only schema generation 1 record events"
+        raise ValueError(msg)
+    if event.event_type == "output_record_accepted":
+        raw_record = event.payload.get("record")
+        if isinstance(raw_record, dict):
+            return reduce_legacy_event(
+                state,
+                event.model_copy(
+                    update={
+                        "payload": _normalize_d3_file_state_membership(
+                            cast(dict[str, Any], raw_record)
+                        )
+                    }
+                ),
+            )
+    return reduce_legacy_event(
+        state,
+        event.model_copy(update={"payload": _normalize_d3_file_state_membership(event.payload)}),
+    )
+
+
+def _is_d3_legacy_record_replay_event(event: EventEnvelope) -> bool:
+    """Identify the only durable generation eligible for the D3 replay adapter."""
+
+    return event.schema_version == 1 and event.event_type in _D3_LEGACY_RECORD_EVENT_TYPES
+
+
 def reduce_event(
     catalog: GraphCatalog,
     state: GraphProjection,
@@ -1906,9 +2006,16 @@ def reduce_event(
         return reduce_compact_output_record_accepted(state, event)
     # Mixed persistence boundary: catalog-owned events hydrate exactly once;
     # future-domain events continue through the legacy raw reducer below.
-    handled, reduced = catalog.reduce_stored_event(state, event)
+    try:
+        handled, reduced = catalog.reduce_stored_event(state, event)
+    except ValueError:
+        if _is_d3_legacy_record_replay_event(event):
+            return reduce_d3_legacy_record_replay(state, event)
+        raise
     if handled:
         return cast(GraphProjection, reduced)
+    if _is_d3_legacy_record_replay_event(event):
+        return reduce_d3_legacy_record_replay(state, event)
     return reduce_legacy_event(state, event)
 
 
@@ -4783,21 +4890,25 @@ def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
     state["check_results"][node_id] = result
 
 
-def _copy_output_record_payload(payload: OutputRecordPayload) -> OutputRecordPayload:
+def _copy_output_record_payload(
+    payload: LegacyReplayOutputRecordPayload,
+) -> LegacyReplayOutputRecordPayload:
     return payload.model_copy(deep=False)
 
 
-def _output_record_payload_dict(payload: OutputRecordPayload) -> dict[str, Any]:
+def _output_record_payload_dict(payload: LegacyReplayOutputRecordPayload) -> dict[str, Any]:
     return payload.model_dump(mode="json")
 
 
-def _parse_output_record_payload(payload: dict[str, Any]) -> OutputRecordPayload | None:
+def _parse_output_record_payload(
+    payload: dict[str, Any],
+) -> LegacyReplayOutputRecordPayload | None:
     model = _output_record_model_for_payload(payload)
     if model is None:
         return None
     normalized = _normalized_output_record_payload(payload, model)
     try:
-        return cast(OutputRecordPayload, model.model_validate(normalized))
+        return cast(LegacyReplayOutputRecordPayload, model.model_validate(normalized))
     except ValueError:
         if model is OutputRecord:
             fallback = _legacy_output_record_payload(payload)
@@ -4937,7 +5048,7 @@ def _record_node_output_port(state: GraphProjection, event: EventEnvelope) -> No
 
 def _record_accepted_output_record(
     state: GraphProjection,
-    record: OutputRecordPayload | None,
+    record: LegacyReplayOutputRecordPayload | None,
 ) -> None:
     if record is None:
         return
@@ -4999,7 +5110,10 @@ def _stable_accepted_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _record_output_record(state: GraphProjection, record: OutputRecordPayload | None) -> None:
+def _record_output_record(
+    state: GraphProjection,
+    record: LegacyReplayOutputRecordPayload | None,
+) -> None:
     if record is None:
         return
     state["output_records_by_node_port"].setdefault(record.producer_node_id, {}).setdefault(
@@ -5008,7 +5122,10 @@ def _record_output_record(state: GraphProjection, record: OutputRecordPayload | 
     ).append(record)
 
 
-def _record_output_payload(state: GraphProjection, record: OutputRecordPayload | None) -> None:
+def _record_output_payload(
+    state: GraphProjection,
+    record: LegacyReplayOutputRecordPayload | None,
+) -> None:
     if record is None:
         return
     if record.record_id:

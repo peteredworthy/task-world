@@ -228,6 +228,45 @@ def emit(make_event, payload):
     assert second.changes == 0
 
 
+def test_records_migration_routes_raw_output_acceptance_through_existing_spec() -> None:
+    source = """\
+def emit(make_event, payload):
+    return make_event("output_record_accepted", {"record": payload})
+"""
+
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["records"]).transform_source(
+        source, "src/orchestrator/graph/_commands.py"
+    )
+
+    assert (
+        'make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": payload})'
+        in result.source
+    )
+
+
+def test_records_fixture_codemod_adds_explicit_verification_outcome() -> None:
+    source = """\
+event = _event("output_record_accepted", {"record": {"record_id": "verification-1", "record_kind": "verification", "record_type": "verification_report", "producer_node_id": "verifier-1", "port": "verification_report", "schema": "VerificationReport", "candidate_id": "candidate-1", "value": {"grades": []}}})
+"""
+
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["records"]).transform_source(
+        source, "tests/integration/test_graph_event_store.py"
+    )
+
+    assert '"outcome": "passed"' in result.source
+    assert '"value": {"grades": [], "outcome": "passed"}' in result.source
+
+
+def test_records_migration_transforms_yaml_fixture_paths(tmp_path: Path) -> None:
+    fixture = tmp_path / "tests/fixtures/graph/invariants.yaml"
+    fixture.parent.mkdir(parents=True)
+    fixture.write_text("given_events:\n  - output_record_accepted: {record_id: record-1}\n")
+
+    result = run_migration(DOMAIN_MIGRATIONS["records"], tmp_path, "dry-run")
+
+    assert "record: {record_id: record-1}" in result.output
+
+
 def test_task3_fixture_migration_completes_planner_session_generation_once() -> None:
     migration = DOMAIN_MIGRATIONS["task3_fixtures"]
     source = """\
@@ -859,7 +898,7 @@ event = _event(
     assert second.changes == 0
 
 
-def test_records_migration_does_not_reclassify_verification_fixture() -> None:
+def test_records_migration_completes_verification_fixture_with_explicit_outcome() -> None:
     source = """\
 event = _event(
     "output_record_accepted",
@@ -877,8 +916,10 @@ event = _event(
         source, "tests/unit/test_graph_commands.py"
     )
 
-    assert result.source == source
-    assert result.changes == 0
+    assert '"record_type": "verification_report"' in result.source
+    assert '"schema": "VerificationReport"' in result.source
+    assert result.source.count('"outcome": "passed"') == 2
+    assert result.changes == 1
 
 
 def test_records_migration_completes_candidate_value_summary_once() -> None:

@@ -54,10 +54,15 @@
         output_records:
           - record_id: recovery-plan-review-5
             record_kind: output
+            record_type: recovery_plan
             producer_node_id: review-5
             port: recovery_plan
             schema: RecoveryPlan
-            value: {summary: review completed}
+            value:
+              action: cleanup
+              responsible_actor: reviewer
+              graph_changes: []
+              reason: review completed
   then_events:
     - callback_accepted: {node_id: review-5}
     - node_state_changed: {node_id: review-5, new_state: completed}

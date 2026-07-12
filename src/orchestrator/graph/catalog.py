@@ -112,6 +112,7 @@ def build_graph_catalog() -> GraphCatalog:
     from orchestrator.graph.commands.callbacks import CALLBACK_COMMAND_SPECIFICATIONS
     from orchestrator.graph.commands.lifecycle import COMMAND_SPECIFICATIONS
     from orchestrator.graph.commands.schedule import SCHEDULE_TICK, RECONCILE
+    from orchestrator.graph.commands.records import EVALUATE_FINAL_GATE, EVALUATE_JOIN
     from orchestrator.graph.commands.patches import SUBMIT_PATCH
     from orchestrator.graph.events import EVENT_SPECIFICATIONS
     from orchestrator.graph.events.topology import SEED_COMPILED_EVENTS
@@ -125,6 +126,8 @@ def build_graph_catalog() -> GraphCatalog:
             SCHEDULE_TICK,
             RECONCILE,
             SUBMIT_PATCH,
+            EVALUATE_JOIN,
+            EVALUATE_FINAL_GATE,
         ),
     )
 

@@ -29,7 +29,6 @@ from orchestrator.graph import (
     InvalidTestBlockProjection,
     LeaseProjection,
     NodeCreationProjection,
-    OutputRecord,
     OversightDecisionProjection,
     PendingGateDecisionProjection,
     RequirementRevisionProjection,
@@ -2065,11 +2064,16 @@ def test_output_record_payloads_are_typed_at_fold() -> None:
             "record": {
                 "record_id": "summary-1",
                 "record_kind": "output",
-                "record_type": "opaque_summary",
+                "record_type": "analysis_summary",
                 "producer_node_id": "worker-1",
-                "port": "summary",
-                "schema": "OpaqueSummary",
-                "value": {"summary": "done"},
+                "port": "analysis_summary",
+                "schema": "AnalysisSummary",
+                "value": {
+                    "summary": "done",
+                    "source_record_ids": [],
+                    "lossy": False,
+                    "omitted_details": [],
+                },
             }
         },
     )
@@ -2077,21 +2081,21 @@ def test_output_record_payloads_are_typed_at_fold() -> None:
     projection = reduce_event(build_graph_catalog(), initial_projection(), event)
 
     payload = projection["output_record_payloads"]["summary-1"]
-    assert isinstance(payload, OutputRecord)
+    assert payload.__class__.__name__ == "StrictAnalysisSummaryRecord"
     assert payload.record_id == "summary-1"
     assert payload.producer_node_id == "worker-1"
-    assert payload.port == "summary"
+    assert payload.port == "analysis_summary"
 
-    by_port = projection["output_records_by_node_port"]["worker-1"]["summary"][0]
-    assert isinstance(by_port, OutputRecord)
-    assert by_port.value == {"summary": "done"}
+    by_port = projection["output_records_by_node_port"]["worker-1"]["analysis_summary"][0]
+    assert by_port.__class__.__name__ == "StrictAnalysisSummaryRecord"
+    assert by_port.value.summary == "done"
 
-    accepted = projection["accepted_output_records_by_node_port"]["worker-1"]["summary"][0]
-    assert isinstance(accepted["payload"], OutputRecord)
-    assert accepted["payload"].schema_ == "OpaqueSummary"
+    accepted = projection["accepted_output_records_by_node_port"]["worker-1"]["analysis_summary"][0]
+    assert accepted["payload"].__class__.__name__ == "StrictAnalysisSummaryRecord"
+    assert accepted["payload"].schema_ == "AnalysisSummary"
 
 
-def test_malformed_output_record_payload_is_rejected() -> None:
+def test_legacy_malformed_output_record_payload_is_ignored_during_replay() -> None:
     malformed_record = {
         "record_id": "legacy-malformed-1",
         "record_kind": "output",
@@ -2106,6 +2110,27 @@ def test_malformed_output_record_payload_is_rejected() -> None:
         {"record": malformed_record},
     )
 
+    projection = reduce_event(build_graph_catalog(), initial_projection(), event)
+
+    assert "legacy-malformed-1" not in projection["output_record_payloads"]
+
+
+def test_current_malformed_output_record_payload_is_not_replayed_as_legacy() -> None:
+    malformed_record = {
+        "record_id": "current-malformed-1",
+        "record_kind": "output",
+        "record_type": "candidate",
+        "producer_node_id": "worker-1",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "candidate_id": "candidate-1",
+        "value": {"summary": 7},
+    }
+    event = _event(
+        "output_record_accepted",
+        {"record": malformed_record},
+    ).model_copy(update={"schema_version": 2})
+
     with pytest.raises(ValueError):
         reduce_event(build_graph_catalog(), initial_projection(), event)
 
@@ -2118,11 +2143,16 @@ def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
                 "record": {
                     "record_id": "summary-1",
                     "record_kind": "output",
-                    "record_type": "opaque_summary",
+                    "record_type": "analysis_summary",
                     "producer_node_id": "worker-1",
-                    "port": "summary",
-                    "schema": "OpaqueSummary",
-                    "value": {"summary": "done"},
+                    "port": "analysis_summary",
+                    "schema": "AnalysisSummary",
+                    "value": {
+                        "summary": "done",
+                        "source_record_ids": [],
+                        "lossy": False,
+                        "omitted_details": [],
+                    },
                 }
             },
         ),
@@ -2135,15 +2165,19 @@ def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
 
     summary_payload = restored["output_record_payloads"]["summary-1"]
-    assert isinstance(summary_payload, OutputRecord)
-    assert summary_payload.value == {"summary": "done"}
-    assert isinstance(
-        restored["output_records_by_node_port"]["worker-1"]["summary"][0],
-        OutputRecord,
+    assert summary_payload.__class__.__name__ == "StrictAnalysisSummaryRecord"
+    assert summary_payload.value.summary == "done"
+    assert (
+        restored["output_records_by_node_port"]["worker-1"]["analysis_summary"][
+            0
+        ].__class__.__name__
+        == "StrictAnalysisSummaryRecord"
     )
-    assert isinstance(
-        restored["accepted_output_records_by_node_port"]["worker-1"]["summary"][0]["payload"],
-        OutputRecord,
+    assert (
+        restored["accepted_output_records_by_node_port"]["worker-1"]["analysis_summary"][0][
+            "payload"
+        ].__class__.__name__
+        == "StrictAnalysisSummaryRecord"
     )
 
 
@@ -2276,7 +2310,7 @@ def test_check_result_projection_summary_is_typed_at_fold() -> None:
     assert check_result.evaluated_record_ids == ["candidate-1", "file-state-candidate-1"]
 
 
-def test_malformed_check_result_payload_is_rejected() -> None:
+def test_legacy_malformed_check_result_payload_is_ignored_during_replay() -> None:
     malformed_record = {
         "record_id": "check-result-legacy",
         "record_kind": "check_result",
@@ -2287,8 +2321,9 @@ def test_malformed_check_result_payload_is_rejected() -> None:
         {"record": malformed_record},
     )
 
-    with pytest.raises(ValueError):
-        reduce_event(build_graph_catalog(), initial_projection(), event)
+    projection = reduce_event(build_graph_catalog(), initial_projection(), event)
+
+    assert "check-result-legacy" not in projection["output_record_payloads"]
 
 
 def test_check_result_checkpoint_round_trip_preserves_typed_summary() -> None:

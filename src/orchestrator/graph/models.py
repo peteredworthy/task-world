@@ -4,7 +4,7 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import BaseModel, ConfigDict, Discriminator, Field, RootModel, Tag, model_validator
 
 
 class GraphBaseModel(BaseModel):
@@ -17,6 +17,37 @@ class GraphBaseModel(BaseModel):
         kwargs.setdefault("by_alias", True)
         kwargs.setdefault("exclude_unset", True)
         return super().model_dump(*args, **kwargs)
+
+
+class StrictOutputRecordValue(BaseModel):
+    """Closed immutable value object used by strict output-record variants."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        kwargs.setdefault("by_alias", True)
+        kwargs.setdefault("exclude_unset", True)
+        return super().model_dump(*args, **kwargs)
+
+
+class StrictOutputRecordBase(StrictOutputRecordValue):
+    """Independent closed envelope shared by current output-record variants."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+
+    record_id: str
+    record_kind: str
+    record_type: str
+    producer_node_id: str
+    port: str
+    schema_: str = Field(alias="schema")
+    schema_version: int | None = Field(default=None, ge=1)
+    producer_port: str | None = None
+    created_at: str | None = None
+    graph_position: int | None = None
+    run_id: str | None = None
+    payload: dict[str, Any] | None = None
+    provenance: dict[str, Any] | None = None
 
 
 CommandDefinitionProjection: TypeAlias = dict[str, Any]
@@ -774,7 +805,7 @@ class ArtifactReferenceRecord(TypedRecordBase):
         return self
 
 
-def _empty_verification_grades() -> list[dict[str, Any]]:
+def _empty_verification_grades() -> list["GradeRow"]:
     return []
 
 
@@ -782,9 +813,19 @@ def _empty_verification_record_ids() -> list[str]:
     return []
 
 
+class GradeRow(BaseModel):
+    """One verifier grade with an intentionally closed durable shape."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    requirement_id: str
+    grade: str
+    reason: str | None = None
+
+
 class VerificationReportValue(GraphBaseModel):
     outcome: Literal["passed", "failed"]
-    grades: list[dict[str, Any]] = Field(default_factory=_empty_verification_grades)
+    grades: list[GradeRow] = Field(default_factory=_empty_verification_grades)
     reason: str | None = None
 
 
@@ -849,6 +890,36 @@ class VerificationReportRecord(TypedRecordBase):
             if verdict_outcome != self.outcome:
                 msg = "verdict must match outcome"
                 raise ValueError(msg)
+        return self
+
+
+class StrictVerificationReportRecord(StrictOutputRecordBase):
+    """Closed verification record used only by strict output-record events."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+
+    candidate_id: str
+    candidate_record_id: str | None = None
+    candidate_record_ids: list[str] = Field(default_factory=_empty_verification_record_ids)
+    file_state_record_ids: list[str] = Field(default_factory=_empty_verification_record_ids)
+    evaluated_record_ids: list[str] = Field(default_factory=_empty_verification_record_ids)
+    task_region_id: str | None = None
+    outcome: Literal["passed", "failed"]
+    verdict: Literal["passed", "failed"] | None = None
+    value: "StrictVerificationReportValue"
+    evidence: Any | None = None
+
+    @model_validator(mode="after")
+    def verification_report_fields_are_consistent(self) -> "StrictVerificationReportRecord":
+        if self.record_type != "verification_report":
+            msg = "record_type must be verification_report"
+            raise ValueError(msg)
+        if self.outcome != self.value.outcome:
+            msg = "outcome must match value.outcome"
+            raise ValueError(msg)
+        if self.verdict is not None and self.verdict != self.outcome:
+            msg = "verdict must match outcome"
+            raise ValueError(msg)
         return self
 
 
@@ -1756,7 +1827,11 @@ class CheckResultValue(GraphBaseModel):
     command_text: str
     command: dict[str, Any]
     worktree_path: str
+    source_worktree_path: str | None = None
+    execution_worktree_path: str | None = None
     base_snapshot_id: str
+    execution_snapshot_id: str | None = None
+    execution_snapshot_ref: str | None = None
     execution_id: str
     exit_code: int | None = None
     duration_ms: int = Field(ge=0)
@@ -1982,6 +2057,63 @@ class CandidateRecord(TypedRecordBase):
         return self
 
 
+class StrictCandidateBodyEntry(StrictOutputRecordValue):
+    path: str
+
+
+class StrictCandidateDetailContext(StrictOutputRecordValue):
+    body: str | list[StrictCandidateBodyEntry]
+
+
+class StrictCandidateValue(StrictOutputRecordValue):
+    """Closed candidate details emitted by active callbacks and read-model fixtures."""
+
+    summary: str
+    changed_paths: list[str] = Field(default_factory=_empty_candidate_changed_paths)
+    requirements_addressed: list[str] = Field(default_factory=_empty_candidate_requirements)
+    file_state_record_id: str | None = None
+    file_state_record_ids: list[str] = Field(default_factory=_empty_candidate_file_state_ids)
+    body: str | list[StrictCandidateBodyEntry] | None = None
+    grades: dict[str, str] = Field(default_factory=dict)
+    node_creation_context: StrictCandidateDetailContext | None = None
+    node_id: str | None = None
+
+
+class StrictCandidateRecord(StrictOutputRecordBase):
+    """Closed candidate record used by the strict output-record union."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+
+    candidate_id: str
+    task_region_id: str | None = None
+    attempt_number: int | None = Field(default=None, ge=0)
+    file_state_record_id: str | None = None
+    file_state_record_ids: list[str] = Field(default_factory=_empty_candidate_file_state_ids)
+    supersedes_task_region_ids: list[str] = Field(default_factory=_empty_superseded_task_region_ids)
+    value: StrictCandidateValue
+
+    @model_validator(mode="after")
+    def candidate_fields_are_consistent(self) -> "StrictCandidateRecord":
+        if self.record_type != "candidate":
+            msg = "record_type must be candidate"
+            raise ValueError(msg)
+        if self.port != "candidate":
+            msg = "port must be candidate"
+            raise ValueError(msg)
+        if self.schema_ != "ImplementationCandidate":
+            msg = "schema must be ImplementationCandidate"
+            raise ValueError(msg)
+        if self.file_state_record_ids != self.value.file_state_record_ids:
+            msg = "file_state_record_ids must match value.file_state_record_ids"
+            raise ValueError(msg)
+        if self.file_state_record_id is not None and self.file_state_record_ids != [
+            self.file_state_record_id
+        ]:
+            msg = "file_state_record_id must identify the sole file_state_record_ids entry"
+            raise ValueError(msg)
+        return self
+
+
 class GapClassificationValue(GraphBaseModel):
     milestone_kind: str
     classification: Literal[
@@ -1990,7 +2122,7 @@ class GapClassificationValue(GraphBaseModel):
         "human_decision_required",
         "graph_mutation_required",
     ]
-    source: str
+    source: str | None = None
     task_region_id: str
     attempt_number: int = Field(ge=0)
 
@@ -2005,13 +2137,13 @@ class GapClassificationRecord(TypedRecordBase):
 
     @model_validator(mode="after")
     def gap_classification_fields_are_consistent(self) -> "GapClassificationRecord":
-        if self.record_type not in {"gap_plan", "gap_classification", "classified_gap"}:
+        if self.record_type not in {None, "gap_plan", "gap_classification", "classified_gap"}:
             msg = "record_type must be a gap classification record type"
             raise ValueError(msg)
         if self.port not in {"gap_plan", "gap_classification", "classified_gap"}:
             msg = "port must be a gap classification port"
             raise ValueError(msg)
-        if self.record_type != self.port:
+        if self.record_type is not None and self.record_type != self.port:
             msg = "record_type must match port"
             raise ValueError(msg)
         if self.schema_ != "GapClassification":
@@ -2422,33 +2554,31 @@ class RecoveryPlanRecord(TypedRecordBase):
 
     @model_validator(mode="after")
     def recovery_plan_fields_are_consistent(self) -> "RecoveryPlanRecord":
-        if self.record_type != "recovery_plan":
+        if self.record_type not in {None, "recovery_plan"}:
             msg = "record_type must be recovery_plan"
             raise ValueError(msg)
         return self
 
 
-OutputRecordPayload = (
-    OutputRecord
-    | LegacyOutputRecord
-    | RoutineSnapshotRecord
-    | ArtifactReferenceRecord
-    | VerificationReportRecord
-    | CompletionDecisionRecord
-    | JoinResultRecord
-    | CheckResultRecord
-    | CandidateRecord
-    | GapClassificationRecord
-    | DecisionRecord
-    | AuthorityDecisionRecord
-    | AnalysisSummaryRecord
-    | GraphPatchProposalRecord
-    | RequirementRecord
-    | DecisionRequestRecord
-    | AuthorityRequestRecord
-    | FailureRecord
-    | RecoveryPlanRecord
-)
+class FanOutInputsValue(BaseModel):
+    """Closed value emitted by the planner's fan-out helper nodes."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    summary: str
+    candidate_id: str
+    task_region_id: str
+    attempt_number: int = Field(ge=0)
+
+
+class FanOutInputsRecord(TypedRecordBase):
+    record_id: str
+    record_kind: Literal["output"]
+    record_type: str | None = "fan_out_inputs"
+    producer_node_id: str
+    port: Literal["reader_output", "fan_out_inputs"]
+    schema_: Literal["FanOutInputs", "FanOutJoinedInputs"] = Field(alias="schema")
+    value: FanOutInputsValue
 
 
 class GitRef(GraphBaseModel):
@@ -2460,6 +2590,7 @@ class GitRef(GraphBaseModel):
 
 class FileEntry(GraphBaseModel):
     path: str
+    source: str | None = None
     status: str | None = None
     classification: str | None = None
     policy: str | None = None
@@ -2467,6 +2598,9 @@ class FileEntry(GraphBaseModel):
     needs_gatekeeper: bool | None = None
     rejected: bool | None = None
     reason: str | None = None
+    size_bytes: int | None = None
+    entropy: float | None = None
+    hash: str | None = None
 
 
 class ExternalArtifactManifest(GraphBaseModel):
@@ -2525,19 +2659,438 @@ class FileStateRecord(TypedRecordBase):
     compromised_snapshot_deleted: bool | None = None
     compromised_paths: list[str] | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_membership(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        payload = dict(cast(dict[str, Any], value))
-        membership = payload.get("membership")
-        if isinstance(membership, dict):
-            typed_membership = cast(dict[str, Any], membership)
-            for key in ("task_region_id", "candidate_id"):
-                if payload.get(key) is None and isinstance(typed_membership.get(key), str):
-                    payload[key] = typed_membership[key]
-        return payload
+
+class StrictRunContextValue(StrictOutputRecordValue):
+    routine_id: str
+    routine_name: str
+    planner_generation_budget: int | None = None
+
+
+class StrictRoutineSnapshotValue(StrictOutputRecordValue):
+    routine_id: str
+    name: str
+    description: str | None = None
+    content_hash: str
+    source_path: str | None = None
+    source_ref: str | None = None
+    step_count: int = Field(ge=0)
+    task_count: int = Field(ge=0)
+    builder_agent: str | None = None
+    verifier_agent: str | None = None
+    dynamic_feature: dict[str, Any] | None = None
+
+
+class StrictArtifactReferenceValue(StrictOutputRecordValue):
+    artifact_id: str
+    artifact_type: str
+    uri: str
+    summary: str | None = None
+    source_record_ids: list[str] = Field(default_factory=list)
+    required: bool | None = None
+    section: str | None = None
+    max_tokens: int | None = Field(default=None, ge=0)
+    summarize: bool | None = None
+    summarize_model: str | None = None
+
+
+class StrictVerificationReportValue(StrictOutputRecordValue):
+    outcome: Literal["passed", "failed"]
+    grades: list[GradeRow] = Field(default_factory=_empty_verification_grades)
+    reason: str | None = None
+    verdict: Literal["passed", "failed"] | None = None
+    candidate_id: str | None = None
+
+
+class StrictCompletionDecisionValue(StrictOutputRecordValue):
+    status: Literal["passed", "blocked"]
+    blockers: list[dict[str, Any]] = Field(default_factory=_empty_completion_blockers)
+
+
+class StrictJoinResultValue(StrictOutputRecordValue):
+    status: Literal["ready", "blocked"]
+    source_record_ids: list[str] = Field(default_factory=_empty_join_source_record_ids)
+    missing_optional_inputs: list[str] = Field(default_factory=_empty_missing_optional_inputs)
+
+
+class StrictCheckResultValue(StrictOutputRecordValue):
+    status: Literal["passed", "failed", "timeout"]
+    classification: Literal[
+        "passed", "failed", "timeout", "environment_error", "tool_error", "tool_unavailable"
+    ]
+    command_id: str
+    command_binding: Any | None = None
+    command_text: str
+    command: dict[str, Any]
+    worktree_path: str
+    source_worktree_path: str | None = None
+    execution_worktree_path: str | None = None
+    base_snapshot_id: str
+    execution_snapshot_id: str | None = None
+    execution_snapshot_ref: str | None = None
+    execution_id: str
+    exit_code: int | None = None
+    duration_ms: int = Field(ge=0)
+    stdout: str
+    stderr: str
+    stdout_truncated: bool
+    stderr_truncated: bool
+    timeout_seconds: int = Field(gt=0)
+    environment_policy: dict[str, Any]
+    candidate_record_ids: list[str] = Field(default_factory=_empty_check_result_citations)
+    file_state_record_ids: list[str] = Field(default_factory=_empty_check_result_citations)
+    verification_report_record_ids: list[str] = Field(default_factory=_empty_check_result_citations)
+    evaluated_record_ids: list[str] = Field(default_factory=_empty_check_result_citations)
+
+
+class StrictGapClassificationValue(StrictOutputRecordValue):
+    milestone_kind: str
+    classification: Literal[
+        "corrective_work_required", "no_gap", "human_decision_required", "graph_mutation_required"
+    ]
+    source: str
+    task_region_id: str
+    attempt_number: int = Field(ge=0)
+
+
+class StrictDecisionActor(StrictOutputRecordValue):
+    kind: str
+    id: str | None = None
+
+
+class StrictDecisionRecordValue(StrictOutputRecordValue):
+    decision: Literal["approved", "rejected", "deferred"]
+    decision_type: Literal["approval"]
+    decider: StrictDecisionActor | str
+    scope: dict[str, Any] | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+
+
+class StrictAuthorityDecisionValue(StrictOutputRecordValue):
+    decision: Literal["granted", "denied", "deferred"]
+    decision_type: Literal["authority"]
+    decider: StrictDecisionActor | str
+    scope: dict[str, Any] | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+
+
+class StrictAnalysisSummaryValue(StrictOutputRecordValue):
+    summary: str
+    source_record_ids: list[str]
+    lossy: bool
+    omitted_details: list[str]
+
+
+class StrictGraphPatchProposalValue(StrictOutputRecordValue):
+    patch_id: str
+    proposed_by_node_id: str
+    base_graph_position: int = Field(ge=0)
+    ops: list[dict[str, Any]] = Field(default_factory=_empty_graph_patch_ops)
+    macro_invocations: list[dict[str, Any]] = Field(
+        default_factory=_empty_graph_patch_macro_invocations
+    )
+    rationale: str | None = None
+    rationale_record_id: str | None = None
+    expected_downstream_effects: list[str] = Field(
+        default_factory=_empty_expected_downstream_effects
+    )
+
+
+class StrictRequirementRecordValue(StrictOutputRecordValue):
+    id: str
+    text: str
+    desc: str | None = None
+    priority: Literal["critical", "expected", "nice"] = "critical"
+    acceptance_criteria: list[str] = Field(default_factory=_empty_acceptance_criteria)
+    source: str | None = None
+    version: str | None = None
+    supersedes: str | None = None
+    must: bool = True
+
+
+class StrictDecisionRequestValue(StrictOutputRecordValue):
+    decision_type: str
+    options: list[str]
+    default_option: str | None = None
+    consequence_summary: str
+    expires_at: str | None = None
+    target_node_id: str | None = None
+    target_region_id: str | None = None
+    prompt: str | None = None
+
+
+class StrictAuthorityRequestValue(StrictOutputRecordValue):
+    requested_authority: list[str]
+    target_node_id: str | None = None
+    target_region_id: str | None = None
+    reason: str
+    expires_at: str | None = None
+
+
+class StrictFailureRecordValue(StrictOutputRecordValue):
+    failed_node_id: str
+    phase: str
+    error_class: str
+    retryable: bool
+    lease_id: str | None = None
+    execution_id: str | None = None
+    reason: str | None = None
+    lease_generation: int | None = Field(default=None, ge=0)
+    expires_at: str | None = None
+    attempt_number: int | None = Field(default=None, ge=0)
+    max_attempts: int | None = Field(default=None, ge=0)
+
+
+class StrictRecoveryPlanValue(StrictOutputRecordValue):
+    action: Literal["retry", "supersede", "cancel", "cleanup"]
+    responsible_actor: str
+    graph_changes: list[dict[str, Any]]
+    reason: str | None = None
+    retry_after_seconds: int | None = Field(default=None, ge=0)
+    retry_not_before: str | None = None
+
+
+class StrictGitRef(StrictOutputRecordValue):
+    commit_sha: str | None = None
+    tree_sha: str | None = None
+    no_commit_reason: str | None = None
+    ref: str | None = None
+
+
+class StrictFileEntry(StrictOutputRecordValue):
+    path: str
+    source: str | None = None
+    status: str | None = None
+    classification: str | None = None
+    policy: str | None = None
+    matched_rule: str | None = None
+    needs_gatekeeper: bool | None = None
+    rejected: bool | None = None
+    reason: str | None = None
+    size_bytes: int | None = None
+    entropy: float | None = None
+    hash: str | None = None
+
+
+class StrictExternalArtifactManifest(StrictOutputRecordValue):
+    path: str
+    hash: str
+    origin: str
+    retention: str
+
+
+class StrictExternalFileEntry(StrictFileEntry):
+    manifest: StrictExternalArtifactManifest
+
+
+def _empty_strict_file_entries() -> list[StrictFileEntry]:
+    return []
+
+
+def _empty_strict_external_file_entries() -> list[StrictExternalFileEntry]:
+    return []
+
+
+class StrictRunContextRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictRunContextValue
+
+
+class StrictRoutineSnapshotRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictRoutineSnapshotValue
+
+
+class StrictArtifactReferenceRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictArtifactReferenceValue
+
+
+class StrictCompletionDecisionRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictCompletionDecisionValue
+
+
+class StrictJoinResultRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictJoinResultValue
+
+
+class StrictCheckResultRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    candidate_id: str | None = None
+    candidate_record_id: str | None = None
+    task_region_id: str
+    attempt_number: int = Field(default=0, ge=0)
+    candidate_record_ids: list[str] = Field(default_factory=_empty_check_result_citations)
+    file_state_record_ids: list[str] = Field(default_factory=_empty_check_result_citations)
+    verification_report_record_ids: list[str] = Field(default_factory=_empty_check_result_citations)
+    evaluated_record_ids: list[str] = Field(default_factory=_empty_check_result_citations)
+    value: StrictCheckResultValue
+
+
+class StrictGapClassificationRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictGapClassificationValue
+
+
+class StrictDecisionRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictDecisionRecordValue
+
+
+class StrictAuthorityDecisionRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictAuthorityDecisionValue
+
+
+class StrictAnalysisSummaryRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictAnalysisSummaryValue
+
+
+class StrictGraphPatchProposalRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictGraphPatchProposalValue
+
+
+class StrictRequirementRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictRequirementRecordValue
+
+
+class StrictDecisionRequestRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictDecisionRequestValue
+
+
+class StrictAuthorityRequestRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictAuthorityRequestValue
+
+
+class StrictFailureRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictFailureRecordValue
+
+
+class StrictRecoveryPlanRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: StrictRecoveryPlanValue
+
+
+class StrictFanOutInputsRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    value: FanOutInputsValue
+
+
+class StrictFileStateRecord(StrictOutputRecordBase):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    snapshot_id: str | None = None
+    base_snapshot_id: str | None = None
+    verdict: Literal["captured", "rejected"] = "captured"
+    patch_bundle_id: str | None = None
+    tree_snapshot_id: str | None = None
+    position: int | None = None
+    task_region_id: str | None = None
+    candidate_id: str | None = None
+    compromised: bool | None = None
+    superseded_pending: bool | None = None
+    supersedes_record_id: str | None = None
+    superseded_by_record_id: str | None = None
+    cleanup_id: str | None = None
+    cleanup_reason: str | None = None
+    cleanup_excluded_paths: list[str] | None = None
+    cleanup_applied_event_id: str | None = None
+    compromised_snapshot_deleted: bool | None = None
+    compromised_paths: list[str] | None = None
+    git: StrictGitRef | None = None
+    tracked: list[StrictFileEntry] = Field(default_factory=_empty_strict_file_entries)
+    untracked: list[StrictFileEntry] = Field(default_factory=_empty_strict_file_entries)
+    ignored: list[StrictFileEntry] = Field(default_factory=_empty_strict_file_entries)
+    external: list[StrictExternalFileEntry] = Field(
+        default_factory=_empty_strict_external_file_entries
+    )
+    classifications: list[StrictFileEntry] = Field(default_factory=_empty_strict_file_entries)
+    residue: list[StrictFileEntry] = Field(default_factory=_empty_strict_file_entries)
+    rejected_paths: list[StrictFileEntry] = Field(default_factory=_empty_strict_file_entries)
+
+
+def _output_record_payload_discriminator(value: Any) -> str:
+    """Select one fixed strict output-record variant without normalization."""
+
+    if isinstance(value, dict):
+        record = cast(dict[str, Any], value)
+        record_type = record.get("record_type")
+        if record_type == "classified_gap":
+            return "gap_classification"
+        if isinstance(record_type, str):
+            return record_type
+        return "missing_record_type"
+
+    record_type = getattr(value, "record_type", None)
+    if record_type == "classified_gap":
+        return "gap_classification"
+    if isinstance(record_type, str):
+        return record_type
+    return "missing_record_type"
+
+
+OutputRecordPayload: TypeAlias = Annotated[
+    Annotated[StrictCandidateRecord, Tag("candidate")]
+    | Annotated[StrictCheckResultRecord, Tag("check_result")]
+    | Annotated[StrictCompletionDecisionRecord, Tag("completion_decision")]
+    | Annotated[StrictJoinResultRecord, Tag("join_result")]
+    | Annotated[StrictVerificationReportRecord, Tag("verification_report")]
+    | Annotated[StrictRunContextRecord, Tag("run_context")]
+    | Annotated[StrictRoutineSnapshotRecord, Tag("routine_snapshot")]
+    | Annotated[StrictArtifactReferenceRecord, Tag("artifact_reference")]
+    | Annotated[StrictGapClassificationRecord, Tag("gap_classification")]
+    | Annotated[StrictGapClassificationRecord, Tag("gap_plan")]
+    | Annotated[StrictDecisionRecord, Tag("decision_record")]
+    | Annotated[StrictAuthorityDecisionRecord, Tag("authority_decision")]
+    | Annotated[StrictAnalysisSummaryRecord, Tag("analysis_summary")]
+    | Annotated[StrictGraphPatchProposalRecord, Tag("graph_patch_proposal")]
+    | Annotated[StrictRequirementRecord, Tag("requirement_record")]
+    | Annotated[StrictDecisionRequestRecord, Tag("decision_request")]
+    | Annotated[StrictAuthorityRequestRecord, Tag("authority_request_record")]
+    | Annotated[StrictFailureRecord, Tag("failure_record")]
+    | Annotated[StrictRecoveryPlanRecord, Tag("recovery_plan")]
+    | Annotated[StrictFanOutInputsRecord, Tag("fan_out_inputs")]
+    | Annotated[StrictFileStateRecord, Tag("file_state")],
+    Discriminator(_output_record_payload_discriminator),
+]
+
+STRICT_OUTPUT_RECORD_BRANCHES: tuple[type[BaseModel], ...] = (
+    StrictCandidateRecord,
+    StrictCheckResultRecord,
+    StrictCompletionDecisionRecord,
+    StrictJoinResultRecord,
+    StrictVerificationReportRecord,
+    StrictRunContextRecord,
+    StrictRoutineSnapshotRecord,
+    StrictArtifactReferenceRecord,
+    StrictGapClassificationRecord,
+    StrictGapClassificationRecord,
+    StrictDecisionRecord,
+    StrictAuthorityDecisionRecord,
+    StrictAnalysisSummaryRecord,
+    StrictGraphPatchProposalRecord,
+    StrictRequirementRecord,
+    StrictDecisionRequestRecord,
+    StrictAuthorityRequestRecord,
+    StrictFailureRecord,
+    StrictRecoveryPlanRecord,
+    StrictFanOutInputsRecord,
+    StrictFileStateRecord,
+)
+
+StrictVerificationReportRecord.model_rebuild()
+
+# Historical event replay remains deliberately permissive until the Task 13
+# database cutover. Strict event specifications must use OutputRecordPayload.
+LegacyReplayOutputRecordPayload: TypeAlias = OutputRecordPayload | OutputRecord | LegacyOutputRecord
 
 
 class GraphRecordKind(str, Enum):
@@ -2589,7 +3142,7 @@ class EventEnvelope(GraphBaseModel):
     run_id: str
     position: int
     event_type: str
-    schema_version: int
+    schema_version: int = Field(ge=1)
     actor: Actor
     causation_id: str | None = None
     correlation_id: str | None = None
@@ -2686,3 +3239,4 @@ class CallbackEnvelope(GraphBaseModel):
     idempotency_key: str
     records: list[dict[str, Any]] = Field(default_factory=_empty_record_proposals)
     proposed_graph_patches: list[PatchEnvelope] = Field(default_factory=_empty_patch_envelopes)
+    schema_: str = Field(default="FileStateRecord", alias="schema")

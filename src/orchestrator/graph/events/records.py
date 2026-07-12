@@ -7,31 +7,12 @@ by the later records slice.
 
 from __future__ import annotations
 
-from typing import Any, TypeAlias, cast
+from typing import Any, Literal, cast
 
-from pydantic import field_validator
+from pydantic import Field, model_validator
 
 from orchestrator.graph.models import (
-    AnalysisSummaryRecord,
-    ArtifactReferenceRecord,
-    AuthorityDecisionRecord,
-    AuthorityRequestRecord,
-    CandidateRecord,
-    CheckResultRecord,
-    CompletionDecisionRecord,
-    DecisionRecord,
-    DecisionRequestRecord,
-    FailureRecord,
-    FileStateRecord,
-    GapClassificationRecord,
-    GraphPatchProposalRecord,
-    JoinResultRecord,
-    OutputRecord,
-    RecoveryPlanRecord,
-    RequirementRecord,
-    RunContextRecord,
-    RoutineSnapshotRecord,
-    VerificationReportRecord,
+    OutputRecordPayload,
 )
 from orchestrator.graph.payloads import JsonValue, StrictPayload
 from orchestrator.graph.specifications import (
@@ -41,83 +22,19 @@ from orchestrator.graph.specifications import (
 )
 
 
-StrictOutputRecord: TypeAlias = (
-    OutputRecord
-    | RunContextRecord
-    | RoutineSnapshotRecord
-    | ArtifactReferenceRecord
-    | VerificationReportRecord
-    | CompletionDecisionRecord
-    | JoinResultRecord
-    | CheckResultRecord
-    | CandidateRecord
-    | GapClassificationRecord
-    | DecisionRecord
-    | AuthorityDecisionRecord
-    | AnalysisSummaryRecord
-    | GraphPatchProposalRecord
-    | RequirementRecord
-    | DecisionRequestRecord
-    | AuthorityRequestRecord
-    | FailureRecord
-    | RecoveryPlanRecord
-    | FileStateRecord
-)
-
-
 class OutputRecordAcceptedPayload(StrictPayload):
     """Strict durable envelope for one already-validated output record."""
 
-    record: StrictOutputRecord
+    record: OutputRecordPayload
 
-    @field_validator("record", mode="before")
-    @classmethod
-    def validate_record_variant(cls, value: Any) -> StrictOutputRecord:
-        if not isinstance(value, dict):
-            raise TypeError("record must be an object")
-        typed_value = cast(dict[str, Any], value)
-        record_type = typed_value.get("record_type")
-        schema = typed_value.get("schema")
-        record_kind = typed_value.get("record_kind")
-        variants: dict[str, type[Any]] = {
-            "analysis_summary": AnalysisSummaryRecord,
-            "artifact_reference": ArtifactReferenceRecord,
-            "authority_decision": AuthorityDecisionRecord,
-            "authority_request_record": AuthorityRequestRecord,
-            "candidate": CandidateRecord,
-            "check_result": CheckResultRecord,
-            "completion_decision": CompletionDecisionRecord,
-            "decision_record": DecisionRecord,
-            "decision_request": DecisionRequestRecord,
-            "failure_record": FailureRecord,
-            "gap_classification": GapClassificationRecord,
-            "gap_plan": GapClassificationRecord,
-            "graph_patch_proposal": GraphPatchProposalRecord,
-            "join_result": JoinResultRecord,
-            "recovery_plan": RecoveryPlanRecord,
-            "requirement_record": RequirementRecord,
-            "run_context": RunContextRecord,
-            "routine_snapshot": RoutineSnapshotRecord,
-            "verification_report": VerificationReportRecord,
-        }
-        variant = variants.get(record_type) if isinstance(record_type, str) else None
-        if variant is None and record_kind == "file_state":
-            variant = FileStateRecord
-        if variant is None and schema == "ContextArtifact":
-            variant = ArtifactReferenceRecord
-        if variant is None and schema == "VerificationReport":
-            variant = VerificationReportRecord
-        if variant is None and record_kind == "output":
-            variant = OutputRecord
-        if variant is None:
-            raise ValueError("unknown strict output record variant")
-        allowed_fields = {name for name in variant.model_fields} | {
-            field.alias for field in variant.model_fields.values() if field.alias is not None
-        }
-        unknown = set(typed_value).difference(allowed_fields)
-        if unknown:
-            raise ValueError(f"unknown strict output record fields: {sorted(unknown)}")
-        return variant.model_validate(typed_value)
+    @model_validator(mode="after")
+    def record_has_durable_identity(self) -> "OutputRecordAcceptedPayload":
+        if not self.record.producer_node_id:
+            raise ValueError("record must include producer_node_id")
+        if self.record.model_extra:
+            fields = ", ".join(sorted(self.record.model_extra))
+            raise ValueError(f"record contains unknown strict output record fields: {fields}")
+        return self
 
     def to_json(self) -> dict[str, JsonValue]:
         """Serialize the explicit record envelope without legacy flattening."""
@@ -125,6 +42,30 @@ class OutputRecordAcceptedPayload(StrictPayload):
         return cast(
             dict[str, JsonValue], self.model_dump(mode="json", by_alias=True, exclude_none=True)
         )
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Keep the nested typed record's declared aliases at serialization boundaries."""
+
+        dumped = super().model_dump(*args, **kwargs)
+        dumped["record"] = self.record.model_dump(
+            mode=kwargs.get("mode", "python"),
+            by_alias=kwargs.get("by_alias") is not False,
+            exclude_none=kwargs.get("exclude_none", False),
+        )
+        return dumped
+
+
+class VerificationOutcomePayload(StrictPayload):
+    """Explicit verifier outcome facts; the record remains in its own event."""
+
+    node_id: str
+    verifier_node_id: str
+    candidate_id: str
+    outcome: Literal["passed", "failed"]
+    record_id: str
+    task_region_id: str | None = None
+    evaluated_record_ids: list[str] = Field(default_factory=list)
+    evidence: JsonValue | None = None
 
 
 def reduce_output_record_accepted(
@@ -137,20 +78,57 @@ def reduce_output_record_accepted(
     return reduce_typed_output_record_accepted(state, payload, metadata)
 
 
+def reduce_verification_passed(
+    state: Any,
+    payload: VerificationOutcomePayload,
+    metadata: EventMetadata,
+) -> Any:
+    from orchestrator.graph.projections import reduce_typed_verification_outcome
+
+    return reduce_typed_verification_outcome(state, payload, metadata)
+
+
+def reduce_verification_failed(
+    state: Any,
+    payload: VerificationOutcomePayload,
+    metadata: EventMetadata,
+) -> Any:
+    from orchestrator.graph.projections import reduce_typed_verification_outcome
+
+    return reduce_typed_verification_outcome(state, payload, metadata)
+
+
 OUTPUT_RECORD_ACCEPTED = EventSpecification(
     "output_record_accepted",
     OutputRecordAcceptedPayload,
     reduce_output_record_accepted,
     ProjectionParticipation.NEUTRAL,
 )
+VERIFICATION_PASSED = EventSpecification(
+    "verification_passed",
+    VerificationOutcomePayload,
+    reduce_verification_passed,
+    ProjectionParticipation.MUTATES,
+)
+VERIFICATION_FAILED = EventSpecification(
+    "verification_failed",
+    VerificationOutcomePayload,
+    reduce_verification_failed,
+    ProjectionParticipation.MUTATES,
+)
 
 
-EVENT_SPECIFICATIONS = (OUTPUT_RECORD_ACCEPTED,)
+EVENT_SPECIFICATIONS = (OUTPUT_RECORD_ACCEPTED, VERIFICATION_PASSED, VERIFICATION_FAILED)
 
 
 __all__ = [
     "EVENT_SPECIFICATIONS",
     "OUTPUT_RECORD_ACCEPTED",
     "OutputRecordAcceptedPayload",
+    "VERIFICATION_FAILED",
+    "VERIFICATION_PASSED",
+    "VerificationOutcomePayload",
     "reduce_output_record_accepted",
+    "reduce_verification_failed",
+    "reduce_verification_passed",
 ]

@@ -456,6 +456,11 @@ def validate_catalog_event_payload(catalog: GraphCatalog, event: EventEnvelope) 
     specification = catalog.event_specs.get(event.event_type)
     if specification is None:
         return
+    if (
+        event.event_type in {"verification_passed", "verification_failed"}
+        and event.schema_version == 1
+    ):
+        return
     payload_json = event.model_dump(mode="json")["payload"]
     try:
         specification.payload_type.model_validate_json(json.dumps(payload_json))

@@ -1513,6 +1513,7 @@ def _output_records_for_submit(
         {
             "record_id": candidate_id,
             "record_kind": "output",
+            "record_type": "candidate",
             "producer_node_id": context.node_id,
             "port": "candidate",
             "schema": "ImplementationCandidate",

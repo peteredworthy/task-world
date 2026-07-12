@@ -53,6 +53,7 @@ from orchestrator.graph.specifications import (
 from orchestrator.graph._commands import typed_topology_event
 from orchestrator.graph.events.leases import LEASE_REVOKED
 from orchestrator.graph._commands import make_strict_event
+from orchestrator.graph.events.records import OUTPUT_RECORD_ACCEPTED
 
 
 def _command_rejected(
@@ -483,8 +484,9 @@ def build_agent_died_effects(
                     },
                 ),
             ),
-            make_event(
-                "output_record_accepted",
+            make_strict_event(
+                make_event,
+                OUTPUT_RECORD_ACCEPTED,
                 {
                     "record": _failure_record_payload(
                         node_id=node_id,
@@ -528,8 +530,9 @@ def build_agent_died_effects(
                     },
                 ),
             ),
-            make_event(
-                "output_record_accepted",
+            make_strict_event(
+                make_event,
+                OUTPUT_RECORD_ACCEPTED,
                 {
                     "record": _failure_record_payload(
                         node_id=node_id,
@@ -575,8 +578,9 @@ def build_agent_died_effects(
                     },
                 ),
             ),
-            make_event(
-                "output_record_accepted",
+            make_strict_event(
+                make_event,
+                OUTPUT_RECORD_ACCEPTED,
                 {
                     "record": _failure_record_payload(
                         node_id=node_id,
@@ -655,8 +659,9 @@ def build_agent_died_effects(
             RUNTIME_RETRY_SCHEDULED,
             RuntimeRetryScheduledPayload(**retry_payload),
         ),
-        make_event(
-            "output_record_accepted",
+        make_strict_event(
+            make_event,
+            OUTPUT_RECORD_ACCEPTED,
             {
                 "record": _recovery_plan_record_payload(
                     node_id=node_id,

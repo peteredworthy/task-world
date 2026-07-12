@@ -1136,10 +1136,16 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
                 "record": {
                     "record_id": "plan-1",
                     "record_kind": "output",
+                    "record_type": "analysis_summary",
                     "producer_node_id": "planner-s-01",
-                    "port": "plan",
-                    "schema": "PlannerPacket",
-                    "value": {"body": "target planner body"},
+                    "port": "planning_summary",
+                    "schema": "AnalysisSummary",
+                    "value": {
+                        "summary": "target planner body",
+                        "source_record_ids": [],
+                        "lossy": False,
+                        "omitted_details": [],
+                    },
                 }
             },
         ),
@@ -1235,7 +1241,7 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
     full_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/planner-s-01?payload_mode=full")
     assert full_resp.status_code == 200
     full = full_resp.json()
-    assert full["output_records"][0]["value"]["body"] == "target planner body"
+    assert full["output_records"][0]["value"]["summary"] == "target planner body"
     assert all(record["producer_node_id"] == "planner-s-01" for record in full["output_records"])
     assert all(
         event["payload"]["record"].get("producer_node_id", "planner-s-01") == "planner-s-01"
@@ -1243,7 +1249,7 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
         if event["event_type"] == "output_record_accepted"
     )
     assert [
-        event["payload"]["record"]["value"]["body"]
+        event["payload"]["record"]["value"]["summary"]
         for event in full["events"]
         if event["event_type"] == "output_record_accepted"
     ] == ["target planner body"]

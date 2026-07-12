@@ -157,6 +157,45 @@ def _diagnostic(path: Path, node: ast.AST, category: str) -> ArchitectureDiagnos
     )
 
 
+def _has_schema_generation_one_boundary(node: ast.AST, operator: type[ast.cmpop]) -> bool:
+    return any(
+        isinstance(child, ast.Compare)
+        and isinstance(child.left, ast.Attribute)
+        and child.left.attr == "schema_version"
+        and len(child.ops) == 1
+        and isinstance(child.ops[0], operator)
+        and len(child.comparators) == 1
+        and isinstance(child.comparators[0], ast.Constant)
+        and child.comparators[0].value == 1
+        for child in ast.walk(node)
+    )
+
+
+def _is_d3_legacy_replay_branch(
+    branch: ast.If,
+    functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
+) -> bool:
+    predicate = functions.get("_is_d3_legacy_record_replay_event")
+    adapter = functions.get("reduce_d3_legacy_record_replay")
+    if predicate is None or adapter is None:
+        return False
+    test_calls = {
+        _call_name(call.func) for call in ast.walk(branch.test) if isinstance(call, ast.Call)
+    }
+    body_calls = {
+        _call_name(call.func)
+        for statement in branch.body
+        for call in ast.walk(statement)
+        if isinstance(call, ast.Call)
+    }
+    return (
+        "_is_d3_legacy_record_replay_event" in test_calls
+        and "reduce_d3_legacy_record_replay" in body_calls
+        and _has_schema_generation_one_boundary(predicate, ast.Eq)
+        and _has_schema_generation_one_boundary(adapter, ast.NotEq)
+    )
+
+
 def _temporary_marker_belongs_to_domain(
     function: ast.FunctionDef | ast.AsyncFunctionDef,
     command_names: frozenset[str],
@@ -223,9 +262,13 @@ def _scan_file(path: Path, domain: str) -> list[ArchitectureDiagnostic]:
             if node.name == "reduce_event":
                 found_converted_branch = False
                 for branch in (child for child in ast.walk(node) if isinstance(child, ast.If)):
-                    if _strings(branch.test).intersection(event_names):
+                    branch_events = _strings(branch.test).intersection(event_names)
+                    is_d3_legacy_replay = _is_d3_legacy_replay_branch(branch, functions)
+                    if branch_events and not is_d3_legacy_replay:
                         found_converted_branch = True
                         diagnostics.append(_diagnostic(path, branch, "converted reducer branch"))
+                    elif is_d3_legacy_replay:
+                        found_converted_branch = True
                 if not found_converted_branch and _strings(node).intersection(event_names):
                     diagnostics.append(_diagnostic(path, node, "converted reducer branch"))
                 reducer_calls = [child for child in ast.walk(node) if isinstance(child, ast.Call)]

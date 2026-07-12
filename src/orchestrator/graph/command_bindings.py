@@ -5,7 +5,11 @@ from __future__ import annotations
 from typing import Any, cast
 
 from orchestrator.graph.events.records import OutputRecordAcceptedPayload
-from orchestrator.graph.models import EventEnvelope, RoutineSnapshotRecord
+from orchestrator.graph.models import (
+    EventEnvelope,
+    RoutineSnapshotRecord,
+    StrictRoutineSnapshotRecord,
+)
 
 KNOWN_CHECK_COMMAND_BINDINGS = frozenset({"dynamic_feature_hidden_oracle"})
 
@@ -130,7 +134,7 @@ def _dynamic_feature_from_routine_snapshot(event: EventEnvelope) -> dict[str, An
         return None
     accepted = OutputRecordAcceptedPayload.model_validate(event.payload)
     record = accepted.record
-    if not isinstance(record, RoutineSnapshotRecord):
+    if not isinstance(record, (RoutineSnapshotRecord, StrictRoutineSnapshotRecord)):
         return None
     dynamic_feature = record.value.dynamic_feature
     return dynamic_feature if isinstance(dynamic_feature, dict) else None

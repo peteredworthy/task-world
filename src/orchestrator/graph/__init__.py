@@ -43,6 +43,7 @@ from orchestrator.graph.events.patches import GraphPatchAcceptedPayload, GraphPa
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
+    AnalysisSummaryRecord,
     AppealOpenedPayload,
     ApprovalDecisionProjection,
     ApprovalDecisionRecordedPayload,
@@ -67,6 +68,7 @@ from orchestrator.graph.models import (
     LeaseProjection,
     NodeCreationProjection,
     OutputRecord,
+    OutputRecordPayload,
     OversightDecisionRecordedPayload,
     OversightDecisionProjection,
     PatchEnvelope,
@@ -178,6 +180,7 @@ from orchestrator.graph.store import InMemoryEventStore
 __all__ = [
     "Actor",
     "ActorKind",
+    "AnalysisSummaryRecord",
     "AppealOpenedPayload",
     "ApprovalDecisionProjection",
     "ApprovalDecisionRecordedPayload",
@@ -251,6 +254,7 @@ __all__ = [
     "NodeSuspectPayload",
     "PlanRegionMarkedSuspectPayload",
     "OutputRecord",
+    "OutputRecordPayload",
     "OutputRecordAcceptedPayload",
     "OversightDecisionRecordedPayload",
     "OversightDecisionProjection",

@@ -1064,12 +1064,16 @@ def _cached_catalog() -> Any:
 
 
 def _payload_model_variants(annotation: Any, base_model: type) -> tuple[type, ...]:
-    candidates = get_args(annotation) or (annotation,)
-    return tuple(
-        candidate
-        for candidate in candidates
-        if isinstance(candidate, type) and issubclass(candidate, base_model)
-    )
+    candidates = get_args(annotation)
+    if candidates:
+        return tuple(
+            variant
+            for candidate in candidates
+            for variant in _payload_model_variants(candidate, base_model)
+        )
+    if isinstance(annotation, type) and issubclass(annotation, base_model):
+        return (annotation,)
+    return ()
 
 
 @lru_cache(maxsize=1)

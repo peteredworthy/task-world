@@ -411,10 +411,23 @@ def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None
     )
 
 
-def _active_lease_events() -> list[EventEnvelope]:
+def _active_lease_events(
+    *,
+    node_kind: str = "worker",
+    node_role: str | None = None,
+) -> list[EventEnvelope]:
     return [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
-        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "running"}, 1),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": node_kind,
+                "role": node_role,
+                "state": "running",
+            },
+            1,
+        ),
         _event(
             "lease_granted",
             {
@@ -993,6 +1006,37 @@ def test_evaluate_final_gate_emits_blocked_completion_decision() -> None:
         "completion_status": "blocked",
         "completion_decision_record_id": decision["record_id"],
     }
+
+
+@pytest.mark.parametrize(
+    ("command_type", "events", "payload", "reason"),
+    [
+        ("evaluate_join", [], {"node_id": "join-missing"}, "node is not a join"),
+        (
+            "evaluate_join",
+            [_event("node_created", {"node_id": "join-1", "kind": "join"}, 0)],
+            {"node_id": "join-1"},
+            "join has no bound source records",
+        ),
+        (
+            "evaluate_final_gate",
+            [_event("node_created", {"node_id": "worker-1", "kind": "worker"}, 0)],
+            {"node_id": "worker-1"},
+            "node is not a final_gate",
+        ),
+    ],
+)
+def test_record_evaluation_rejects_invalid_nodes_and_empty_joins(
+    command_type: str,
+    events: list[EventEnvelope],
+    payload: dict[str, Any],
+    reason: str,
+) -> None:
+    output = _apply(events, command_type, {"run_id": "run-1", **payload})
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload["command_type"] == command_type
+    assert output[0].payload["reason"] == reason
 
 
 def test_evaluate_final_gate_releases_runtime_lease_when_present() -> None:
@@ -2056,7 +2100,7 @@ def test_callback_rebinds_superseding_record_when_policy_allows() -> None:
 
 def test_callback_accepts_gap_analysis_output_and_binds_classified_gap() -> None:
     events = [
-        *_active_lease_events(),
+        *_active_lease_events(node_kind="planner", node_role="gap_planner"),
         _event(
             "node_created",
             {"node_id": "worker-2", "kind": "worker", "role": "fixer", "state": "planned"},
@@ -2090,12 +2134,16 @@ def test_callback_accepts_gap_analysis_output_and_binds_classified_gap() -> None
                     {
                         "record_id": "gap-classification-1",
                         "record_kind": "output",
+                        "record_type": "gap_classification",
                         "producer_node_id": "worker-1",
                         "port": "gap_classification",
                         "schema": "GapClassification",
                         "value": {
                             "milestone_kind": "gap_analysis",
                             "classification": "corrective_work_required",
+                            "source": "accepted_gap_planner_patch",
+                            "task_region_id": "region-1",
+                            "attempt_number": 0,
                         },
                     }
                 ],
@@ -2120,7 +2168,7 @@ def test_callback_accepts_gap_analysis_output_and_binds_classified_gap() -> None
 
 def test_callback_accepts_classified_gap_port_and_binds_classified_gap() -> None:
     events = [
-        *_active_lease_events(),
+        *_active_lease_events(node_kind="planner", node_role="gap_planner"),
         _event(
             "node_created",
             {"node_id": "worker-2", "kind": "worker", "role": "fixer", "state": "planned"},
@@ -2154,12 +2202,16 @@ def test_callback_accepts_classified_gap_port_and_binds_classified_gap() -> None
                     {
                         "record_id": "classified-gap-1",
                         "record_kind": "output",
+                        "record_type": "classified_gap",
                         "producer_node_id": "worker-1",
                         "port": "classified_gap",
                         "schema": "GapClassification",
                         "value": {
                             "milestone_kind": "gap_analysis",
                             "classification": "corrective_work_required",
+                            "source": "accepted_gap_planner_patch",
+                            "task_region_id": "region-1",
+                            "attempt_number": 0,
                         },
                     }
                 ],
@@ -2184,7 +2236,7 @@ def test_callback_accepts_classified_gap_port_and_binds_classified_gap() -> None
 
 def test_callback_value_selector_blocks_no_gap_from_corrective_worker() -> None:
     events = [
-        *_active_lease_events(),
+        *_active_lease_events(node_kind="planner", node_role="gap_planner"),
         _event(
             "node_created",
             {"node_id": "worker-2", "kind": "worker", "role": "fixer", "state": "planned"},
@@ -2219,6 +2271,7 @@ def test_callback_value_selector_blocks_no_gap_from_corrective_worker() -> None:
                     {
                         "record_id": "classified-gap-1",
                         "record_kind": "output",
+                        "record_type": "classified_gap",
                         "producer_node_id": "worker-1",
                         "port": "classified_gap",
                         "schema": "GapClassification",
@@ -2282,11 +2335,12 @@ def test_patch_create_edge_backfills_existing_verification_record() -> None:
                 "record": {
                     "record_id": "verification-1",
                     "record_kind": "verification",
+                    "record_type": "verification_report",
                     "producer_node_id": "verifier-1",
                     "port": "verification_report",
                     "candidate_id": "candidate-1",
+                    "outcome": "passed",
                     "verdict": "passed",
-                    "record_type": "verification_report",
                     "schema": "VerificationReport",
                     "value": {"outcome": "passed", "grades": []},
                 }
@@ -2475,6 +2529,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                     {
                         "record_id": "verification-1",
                         "record_kind": "verification",
+                        "record_type": "verification_report",
                         "producer_node_id": "verifier-1",
                         "port": "verification_report",
                         "schema": "VerificationReport",
@@ -4412,6 +4467,7 @@ def test_seed_compiled_events_rejects_invalid_verification_report_record() -> No
             {
                 "record_id": "verification-1",
                 "record_kind": "verification",
+                "record_type": "verification_report",
                 "producer_node_id": "verifier-1",
                 "port": "verification_report",
                 "schema": "VerificationReport",
@@ -6757,8 +6813,12 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
                     "port": "verification_report",
                     "schema": "VerificationReport",
                     "candidate_id": "candidate-old",
+                    "outcome": "passed",
                     "verdict": "passed",
-                    "value": {"grades": [{"requirement_id": "R-1", "grade": "A"}]},
+                    "value": {
+                        "outcome": "passed",
+                        "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                    },
                     "record_type": "verification_report",
                 }
             },
@@ -6774,8 +6834,12 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
                     "port": "verification_report",
                     "schema": "VerificationReport",
                     "candidate_id": "candidate-fix",
+                    "outcome": "failed",
                     "verdict": "failed",
-                    "value": {"grades": [{"requirement_id": "R-1", "grade": "C"}]},
+                    "value": {
+                        "outcome": "failed",
+                        "grades": [{"requirement_id": "R-1", "grade": "C"}],
+                    },
                     "record_type": "verification_report",
                 }
             },
@@ -6934,8 +6998,12 @@ def test_schedule_tick_does_not_duplicate_existing_failed_verification_recovery(
                     "schema": "VerificationReport",
                     "candidate_id": "candidate-1",
                     "verdict": "failed",
-                    "value": {"grades": [{"requirement_id": "R-1", "grade": "C"}]},
+                    "value": {
+                        "grades": [{"requirement_id": "R-1", "grade": "C"}],
+                        "outcome": "failed",
+                    },
                     "record_type": "verification_report",
+                    "outcome": "failed",
                 }
             },
             6,
@@ -7102,8 +7170,12 @@ def test_passed_corrective_verifier_releases_final_check_without_recovery() -> N
                     "schema": "VerificationReport",
                     "candidate_id": "candidate-fix",
                     "verdict": "passed",
-                    "value": {"grades": [{"requirement_id": "R-1", "grade": "A"}]},
+                    "value": {
+                        "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                        "outcome": "passed",
+                    },
                     "record_type": "verification_report",
+                    "outcome": "passed",
                 }
             },
             8,
@@ -7206,8 +7278,12 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
                     "schema": "VerificationReport",
                     "candidate_id": "candidate-1",
                     "task_region_id": "implementation-region",
+                    "outcome": "passed",
                     "verdict": "passed",
-                    "value": {"grades": [{"requirement_id": "R-1", "grade": "A"}]},
+                    "value": {
+                        "outcome": "passed",
+                        "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                    },
                 }
             },
             4,
@@ -7409,6 +7485,8 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
                     "candidate_id": "candidate-1",
                     "task_region_id": "implementation-region",
                     "verdict": "passed",
+                    "outcome": "passed",
+                    "value": {"outcome": "passed", "grades": []},
                 }
             },
             2,
@@ -7543,7 +7621,7 @@ def test_corrective_passed_verification_repoints_stranded_final_check() -> None:
                     "candidate_id": "candidate-primary",
                     "task_region_id": "primary-region",
                     "outcome": "failed",
-                    "value": {"outcome": "failed"},
+                    "value": {"outcome": "failed", "grades": []},
                 }
             },
             2,
@@ -7619,7 +7697,7 @@ def test_corrective_passed_verification_repoints_stranded_final_check() -> None:
                     "candidate_id": "candidate-corrective",
                     "task_region_id": "corrective-region",
                     "outcome": "passed",
-                    "value": {"outcome": "passed"},
+                    "value": {"outcome": "passed", "grades": []},
                 }
             },
             8,

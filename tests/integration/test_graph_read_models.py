@@ -103,10 +103,12 @@ def _sample_events(run_id: str) -> list[EventEnvelope]:
                 "record": {
                     "record_id": "record-1",
                     "record_kind": "output",
+                    "record_type": "candidate",
                     "producer_node_id": "worker-1",
-                    "port": "result",
-                    "value": {"large": "x" * 1024},
-                    "schema": "OutputRecord",
+                    "port": "candidate",
+                    "candidate_id": "record-1",
+                    "value": {"summary": "x" * 1024},
+                    "schema": "ImplementationCandidate",
                 }
             },
         ),
@@ -432,7 +434,7 @@ async def test_append_keeps_graph_read_models_synchronized(
         "producer_node_id": "worker-1",
         "record_id": "record-1",
         "record_kind": "output",
-        "port": "result",
+        "port": "candidate",
     }
     assert snapshot is not None
     assert snapshot.position == 5

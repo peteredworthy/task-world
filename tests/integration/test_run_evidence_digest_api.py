@@ -124,10 +124,12 @@ async def _seed_graph_run(app: Any, run_id: str) -> tuple[str, str]:
                 "record": {
                     "record_id": "output-1",
                     "record_kind": "output",
-                    "port": "output",
+                    "record_type": "candidate",
+                    "port": "candidate",
                     "producer_node_id": "node-a",
-                    "schema": "TestOutput",
-                    "value": {},
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "output-1",
+                    "value": {"summary": "completed"},
                 }
             },
             2,

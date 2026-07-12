@@ -489,6 +489,7 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
                 "port": "verification_report",
                 "schema": "VerificationReport",
                 "task_region_id": "region-implementation",
+                "outcome": "passed",
                 "value": {
                     "outcome": "passed",
                     "grades": [{"requirement_id": "req-1", "grade": "A"}],

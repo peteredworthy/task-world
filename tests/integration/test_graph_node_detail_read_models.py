@@ -23,7 +23,7 @@ from orchestrator.db import (
 )
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
-from orchestrator.graph_runtime.store import graph_aggregate_id
+from orchestrator.graph_runtime.store import GraphNodeDetailSummary, graph_aggregate_id
 from orchestrator.graph import build_graph_catalog
 
 
@@ -40,13 +40,20 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return create_session_factory(engine)
 
 
-def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+def _event(
+    event_id: str,
+    run_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    schema_version: int = 1,
+) -> EventEnvelope:
     return EventEnvelope(
         event_id=event_id,
         run_id=run_id,
         position=-1,
         event_type=event_type,
-        schema_version=1,
+        schema_version=schema_version,
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
@@ -55,6 +62,79 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         and not (isinstance(payload, dict) and "record" in payload)
         else payload,
     )
+
+
+def test_node_detail_replays_unknown_generation_one_output_record() -> None:
+    run_id = "legacy-output-record"
+    response = build_node_detail_response(
+        run_id,
+        "worker-1",
+        [
+            _event(
+                "evt-legacy-output",
+                run_id,
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_type": "totally_unknown",
+                        "record_id": "legacy-1",
+                        "record_kind": "output",
+                        "producer_node_id": "worker-1",
+                    }
+                },
+            )
+        ],
+    )
+
+    assert response.output_records == [
+        {
+            "record_type": "totally_unknown",
+            "record_id": "legacy-1",
+            "record_kind": "output",
+            "producer_node_id": "worker-1",
+        }
+    ]
+
+
+def test_node_detail_rejects_unknown_generation_two_output_record() -> None:
+    run_id = "strict-output-record"
+    summary = GraphNodeDetailSummary(
+        run_id=run_id,
+        node_id="worker-1",
+        position=1,
+        kind="worker",
+        role=None,
+        state=None,
+        task_region_id=None,
+        input_ports={},
+        output_records=[],
+        file_state_records=[],
+        leases=[],
+        active_lease=None,
+        callback_history=[],
+        events=[],
+    )
+
+    with pytest.raises(ValueError, match="totally_unknown"):
+        build_node_detail_response_from_summary(
+            summary,
+            full_events=[
+                _event(
+                    "evt-strict-output",
+                    run_id,
+                    "output_record_accepted",
+                    {
+                        "record": {
+                            "record_type": "totally_unknown",
+                            "record_id": "strict-1",
+                            "record_kind": "output",
+                            "producer_node_id": "worker-1",
+                        }
+                    },
+                    schema_version=2,
+                )
+            ],
+        )
 
 
 def _representative_events(run_id: str) -> list[EventEnvelope]:

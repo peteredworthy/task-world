@@ -638,6 +638,68 @@ def reduce_event(projection, event):
     assert {item.path for item in diagnostics} == {str(source)}
 
 
+def test_records_legacy_replay_requires_a_recognized_d3_branch(tmp_path: Path) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    source = tmp_path / "projection.py"
+    source.write_text(
+        """\
+def reduce_event(projection, event):
+    if event.event_type == "unrelated_event":
+        return projection
+    marker = "output_record_accepted"
+    return projection, marker
+"""
+    )
+
+    diagnostics = check_paths([source], domain="records")
+
+    assert {item.category for item in diagnostics} == {"converted reducer branch"}
+
+
+def test_records_random_verification_branch_is_not_a_d3_exemption(tmp_path: Path) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    source = tmp_path / "projection.py"
+    source.write_text(
+        """\
+def reduce_event(projection, event):
+    if event.event_type == "verification_passed":
+        return projection
+    return projection
+"""
+    )
+
+    diagnostics = check_paths([source], domain="records")
+
+    assert {item.category for item in diagnostics} == {"converted reducer branch"}
+
+
+def test_records_allows_only_named_generation_one_d3_adapter(tmp_path: Path) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    source = tmp_path / "projection.py"
+    source.write_text(
+        """\
+def _is_d3_legacy_record_replay_event(event):
+    return event.schema_version == 1 and event.event_type in {"verification_passed"}
+
+def reduce_d3_legacy_record_replay(projection, event):
+    if event.schema_version != 1:
+        raise ValueError
+    return reduce_legacy_event(projection, event)
+
+def reduce_event(projection, event):
+    marker = "output_record_accepted"
+    if _is_d3_legacy_record_replay_event(event):
+        return reduce_d3_legacy_record_replay(projection, event)
+    return projection, marker
+"""
+    )
+
+    assert check_paths([source], domain="records") == ()
+
+
 def test_topology_domain_rejects_the_same_architecture_backdoors(tmp_path: Path) -> None:
     source = tmp_path / "topology.py"
     source.write_text(

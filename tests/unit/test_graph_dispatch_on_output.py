@@ -1556,7 +1556,7 @@ async def test_execute_check_command_cites_verification_when_oracle_falls_back_t
                     "candidate_record_ids": ["candidate-1"],
                     "task_region_id": "task-1",
                     "outcome": "passed",
-                    "value": {"outcome": "passed"},
+                    "value": {"outcome": "passed", "grades": []},
                 }
             },
             2,
@@ -1636,6 +1636,7 @@ async def test_execute_check_command_cites_bound_verification_and_region_file_st
                         "outcome": "passed",
                         "grades": [{"requirement_id": "R1", "grade": "A"}],
                     },
+                    "outcome": "passed",
                 }
             },
             3,

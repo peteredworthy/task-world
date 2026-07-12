@@ -42,7 +42,6 @@ from orchestrator.graph.models import (
     FailureRecord,
     FileStateRecord,
     GraphPatchAcceptedPayload,
-    JoinResultRecord,
     GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
     LegacyDeadInputPayloadBase,
@@ -73,12 +72,15 @@ from orchestrator.graph.events.topology import (
     SESSION_STATE_CHANGED,
     PlannerSessionStateChangedPayload,
 )
-from orchestrator.graph.events.records import OUTPUT_RECORD_ACCEPTED
+from orchestrator.graph.events.records import (
+    OUTPUT_RECORD_ACCEPTED,
+    VERIFICATION_FAILED,
+    VERIFICATION_PASSED,
+)
 from orchestrator.graph.file_state import GATEKEEPER_TAXONOMY
 from orchestrator.graph.patch_validator import validate_patch
 from orchestrator.graph.projections import (
     GraphProjection,
-    final_invariant_blockers_for_events,
     reduce_legacy_event,
 )
 from orchestrator.graph.scheduler import (
@@ -220,10 +222,6 @@ def apply_command(
         return _apply_record_requirement_revision(payload, make_event)
     if command_type == "record_support_evidence":
         return _apply_record_support_evidence(projection, payload, make_event)
-    if command_type == "evaluate_join":
-        return _apply_evaluate_join(projection, payload, make_event, id_gen)
-    if command_type == "evaluate_final_gate":
-        return _apply_evaluate_final_gate(projection, events, payload, make_event, id_gen)
     if command_type == "record_cleanup_applied":
         return _apply_record_cleanup_applied(projection, payload, make_event)
     return [
@@ -234,147 +232,6 @@ def apply_command(
                 "command_type": command_type,
                 "reason": f"unknown command: {command_type}",
             },
-        )
-    ]
-
-
-def _apply_evaluate_final_gate(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    node_id = payload.get("node_id")
-    if not isinstance(node_id, str) or not node_id:
-        return [_command_rejected(make_event, "evaluate_final_gate", "missing node_id")]
-    if projection["node_kinds"].get(node_id) != "final_gate":
-        return [_command_rejected(make_event, "evaluate_final_gate", "node is not a final_gate")]
-
-    blockers = final_invariant_blockers_for_events(
-        events,
-        projection,
-        include_completion_decision=False,
-    )
-    status = "blocked" if blockers else "passed"
-    record_id = payload.get("record_id")
-    if not isinstance(record_id, str) or not record_id:
-        record_id = id_gen.next_id("completion-decision")
-    decision = {
-        "status": status,
-        "blockers": blockers,
-    }
-    output_record = CompletionDecisionRecord.model_validate(
-        {
-            "record_id": record_id,
-            "record_kind": "output",
-            "record_type": "completion_decision",
-            "producer_node_id": node_id,
-            "port": "completion_decision",
-            "schema": "CompletionDecision",
-            "value": decision,
-            "provenance": {"source": "final_gate_evaluated"},
-        }
-    ).model_dump(mode="json")
-    return [
-        make_event("output_record_accepted", {"record": output_record}),
-        typed_topology_event(
-            make_event,
-            "node_state_changed",
-            {
-                "node_id": node_id,
-                "new_state": "completed",
-                "trigger": "final_gate_evaluated",
-                "completion_status": status,
-                "completion_decision_record_id": record_id,
-            },
-        ),
-        *_maybe_release_lease(payload, make_event, node_id),
-    ]
-
-
-def _apply_evaluate_join(
-    projection: GraphProjection,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    node_id = payload.get("node_id")
-    if not isinstance(node_id, str) or not node_id:
-        return [_command_rejected(make_event, "evaluate_join", "missing node_id")]
-    if projection["node_kinds"].get(node_id) != "join":
-        return [_command_rejected(make_event, "evaluate_join", "node is not a join")]
-
-    source_record_ids = _join_source_record_ids(projection, node_id)
-    if not source_record_ids:
-        return [_command_rejected(make_event, "evaluate_join", "join has no bound source records")]
-    record_id = payload.get("record_id")
-    if not isinstance(record_id, str) or not record_id:
-        record_id = id_gen.next_id("join-result")
-    output_record = JoinResultRecord.model_validate(
-        {
-            "record_id": record_id,
-            "record_kind": "output",
-            "record_type": "join_result",
-            "producer_node_id": node_id,
-            "port": "join_result",
-            "schema": "JoinResult",
-            "value": {
-                "status": "ready",
-                "source_record_ids": source_record_ids,
-            },
-        }
-    ).model_dump(mode="json")
-    return [
-        make_event("output_record_accepted", {"record": output_record}),
-        typed_topology_event(
-            make_event,
-            "node_state_changed",
-            {
-                "node_id": node_id,
-                "new_state": "completed",
-                "trigger": "join_evaluated",
-                "join_result_record_id": record_id,
-            },
-        ),
-        *_maybe_release_lease(payload, make_event, node_id),
-    ]
-
-
-def _join_source_record_ids(projection: GraphProjection, node_id: str) -> list[str]:
-    bindings = projection["input_bindings"].get(node_id, {})
-    output: list[str] = []
-    for _, binding in sorted(bindings.items()):
-        record_ids = binding.get("record_ids")
-        if not isinstance(record_ids, list):
-            continue
-        for record_id in cast(list[Any], record_ids):
-            if isinstance(record_id, str) and record_id not in output:
-                output.append(record_id)
-    return output
-
-
-def _maybe_release_lease(
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    node_id: str,
-) -> list[EventEnvelope]:
-    lease_id = payload.get("lease_id")
-    generation = payload.get("lease_generation")
-    if not isinstance(lease_id, str) or not isinstance(generation, int):
-        return []
-    return [
-        _make_strict_event(
-            make_event,
-            LEASE_RELEASED,
-            _typed_lease_event_payload(
-                "lease_released",
-                {
-                    "node_id": node_id,
-                    "lease_id": lease_id,
-                    "generation": generation,
-                },
-            ),
         )
     ]
 
@@ -477,13 +334,15 @@ def _accepted_file_state_record_events(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     record_payload.setdefault("producer_node_id", expected_producer_node_id)
+    record_payload.setdefault("port", "file_state")
+    record_payload.setdefault("schema", "FileStateRecord")
     try:
         record = FileStateRecord.model_validate(record_payload)
     except ValueError:
         return []
     payload = record.model_dump(mode="json")
     output = [
-        make_event("output_record_accepted", {"record": payload}),
+        make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": payload}),
         make_event("file_state_accepted", payload),
     ]
     output.extend(
@@ -539,23 +398,25 @@ def _accepted_verification_record_events(
         return []
     payload = record.model_dump(mode="json")
     outcome = record.outcome
-    event_type = "verification_passed" if outcome == "passed" else "verification_failed"
     task_region_id = projection["node_task_regions"].get(expected_producer_node_id)
     event_payload = {
         "node_id": request.node_id,
         "verifier_node_id": expected_producer_node_id,
         "candidate_id": candidate_id,
-        "verdict": outcome,
         "outcome": outcome,
         "record_id": record.record_id,
+        "evaluated_record_ids": record.evaluated_record_ids,
         "evidence": payload.get("evidence"),
-        "value": payload.get("value"),
     }
     if task_region_id is not None:
         event_payload["task_region_id"] = task_region_id
     output = [
-        make_event("output_record_accepted", {"record": payload}),
-        make_event(event_type, event_payload),
+        make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": payload}),
+        _make_strict_event(
+            make_event,
+            VERIFICATION_PASSED if outcome == "passed" else VERIFICATION_FAILED,
+            event_payload,
+        ),
     ]
     output.extend(
         _input_bound_events_for_record(
@@ -2827,7 +2688,9 @@ def _apply_record_decision(
         make_event(event_type, payload_model.model_validate(event_payload).model_dump(mode="json"))
     ]
     if decision_record is not None:
-        output.append(make_event("output_record_accepted", {"record": decision_record}))
+        output.append(
+            make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": decision_record})
+        )
         output.extend(
             _input_bound_events_for_record(
                 projection,
@@ -3168,9 +3031,12 @@ def _apply_record_cleanup_applied(
         }
     ).model_dump(mode="json")
     accepted_payload = record.model_dump(mode="json")
+    accepted_payload["record_type"] = "file_state"
+    accepted_payload["port"] = record.port
+    accepted_payload["schema"] = record.schema_
     return [
         make_event("cleanup_applied", applied_payload),
-        make_event("output_record_accepted", {"record": accepted_payload}),
+        make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": accepted_payload}),
         make_event("file_state_accepted", accepted_payload),
     ]
 
@@ -3386,7 +3252,9 @@ def _request_record_events_for_node(
 ) -> list[EventEnvelope]:
     output: list[EventEnvelope] = []
     for record_payload, to_port in _request_record_bindings_for_node(node_payload):
-        output.append(make_event("output_record_accepted", {"record": record_payload}))
+        output.append(
+            make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": record_payload})
+        )
         record_id = record_payload["record_id"]
         node_id = record_payload["producer_node_id"]
         output.append(
@@ -3720,8 +3588,9 @@ def _expired_lease_events(
             lease_id = lease.get("lease_id")
             typed_lease_id = lease_id if isinstance(lease_id, str) else None
             expired.append(
-                make_event(
-                    "output_record_accepted",
+                make_strict_event(
+                    make_event,
+                    OUTPUT_RECORD_ACCEPTED,
                     {
                         "record": _failure_record_payload(
                             node_id=node_id,
@@ -4065,8 +3934,6 @@ apply_record_decision = _apply_record_decision
 apply_record_gatekeeper_verdicts = _apply_record_gatekeeper_verdicts
 apply_record_requirement_revision = _apply_record_requirement_revision
 apply_record_support_evidence = _apply_record_support_evidence
-apply_evaluate_join = _apply_evaluate_join
-apply_evaluate_final_gate = _apply_evaluate_final_gate
 
 
 def apply_record_cleanup_applied(
@@ -4160,8 +4027,9 @@ def _lifecycle_completion_decision_event(
             "provenance": {"source": "lifecycle_complete"},
         }
     )
-    return make_event(
-        "output_record_accepted",
+    return make_strict_event(
+        make_event,
+        OUTPUT_RECORD_ACCEPTED,
         {"record": record.model_dump(mode="json")},
     )
 
@@ -4494,7 +4362,9 @@ def _accepted_output_record_events(
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
-            output.append(make_event("output_record_accepted", {"record": payload}))
+            output.append(
+                make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": payload})
+            )
             output.extend(
                 _input_bound_events_for_record(
                     projection,
@@ -4520,7 +4390,9 @@ def _accepted_output_record_events(
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
-            output.append(make_event("output_record_accepted", {"record": payload}))
+            output.append(
+                make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": payload})
+            )
             output.extend(
                 _input_bound_events_for_record(
                     projection,
@@ -4542,7 +4414,9 @@ def _accepted_output_record_events(
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
-            output.append(make_event("output_record_accepted", {"record": payload}))
+            output.append(
+                make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": payload})
+            )
             output.extend(
                 _input_bound_events_for_record(
                     projection,
@@ -4564,7 +4438,9 @@ def _accepted_output_record_events(
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
-            output.append(make_event("output_record_accepted", {"record": payload}))
+            output.append(
+                make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": payload})
+            )
             output.extend(
                 _input_bound_events_for_record(
                     projection,
@@ -4586,7 +4462,9 @@ def _accepted_output_record_events(
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
-            output.append(make_event("output_record_accepted", {"record": payload}))
+            output.append(
+                make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": payload})
+            )
             output.extend(
                 _input_bound_events_for_record(
                     projection,
@@ -4603,7 +4481,9 @@ def _accepted_output_record_events(
         except ValueError:
             continue
         output.append(
-            make_event("output_record_accepted", {"record": record.model_dump(mode="json")})
+            make_strict_event(
+                make_event, OUTPUT_RECORD_ACCEPTED, {"record": record.model_dump(mode="json")}
+            )
         )
         output.extend(
             _input_bound_events_for_record(

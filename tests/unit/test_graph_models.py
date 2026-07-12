@@ -3,7 +3,7 @@
 from typing import Any, TypeVar
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from orchestrator.graph.models import (
     Actor,
@@ -25,6 +25,7 @@ from orchestrator.graph.models import (
     FileStateRecord,
     FailureRecord,
     GapClassificationRecord,
+    GradeRow,
     GraphRecord,
     GraphRecordKind,
     GraphPatchProposalRecord,
@@ -52,6 +53,7 @@ from orchestrator.graph.models import (
     VerificationReportRecord,
     VerifierVerdictProjection,
 )
+from orchestrator.graph.events.records import OutputRecordAcceptedPayload
 
 ModelT = TypeVar("ModelT", bound=BaseModel)
 
@@ -179,6 +181,20 @@ def test_output_record_round_trips() -> None:
             },
         },
     )
+
+
+def test_grade_row_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError):
+        GradeRow.model_validate({"requirement_id": "r-1", "grade": "pass", "typo": 1})
+
+
+def test_output_record_event_rejects_unknown_record_shape() -> None:
+    with pytest.raises(ValidationError):
+        OutputRecordAcceptedPayload.model_validate({"record": {"record_id": "x"}})
+
+
+def test_output_record_event_has_no_before_compatibility_validator() -> None:
+    assert OutputRecordAcceptedPayload.__pydantic_decorators__.field_validators == {}
 
 
 def test_output_record_optional_base_fields_round_trip() -> None:

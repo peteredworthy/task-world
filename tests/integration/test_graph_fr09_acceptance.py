@@ -416,6 +416,7 @@ async def _seed_fr09_base_events(
                             "port": "verification_report",
                             "schema": "VerificationReport",
                             "candidate_id": "candidate-source",
+                            "outcome": "failed",
                             "value": {"outcome": "failed"},
                         },
                     },

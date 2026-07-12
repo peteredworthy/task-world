@@ -288,7 +288,10 @@ def _complete_sparse_candidate_record_payload(
     record_type_field = fields.get("record_type")
     value_field = fields.get("value")
     if record_type_field is not None and _simple_string(record_type_field.value) == "candidate":
-        completed_record = record
+        completed_record = _append_missing_dict_fields(
+            record,
+            (("schema", cst.SimpleString('"ImplementationCandidate"')),),
+        )
         record_id_field = fields.get("record_id")
         if "candidate_id" not in fields and record_id_field is not None:
             completed_record = _append_missing_dict_fields(
@@ -327,7 +330,7 @@ def _complete_sparse_candidate_record_payload(
                     element.with_changes(value=completed_value)
                     if element is value_field
                     else element
-                    for element in record.elements
+                    for element in completed_record.elements
                 )
             )
         completed_fields = _dict_elements_by_key(completed_record)
@@ -493,28 +496,43 @@ def _complete_task3_strict_record_payload(
                     for element in completed_record.elements
                 )
             )
-    elif record_kind == "verification" and record_type is None:
+    elif record_kind == "verification" and record_type in {None, "verification_report"}:
         verdict_field = fields.get("verdict")
-        verdict = (
-            verdict_field.value
-            if verdict_field is not None
-            and _simple_string(verdict_field.value) in {"passed", "failed"}
-            else cst.SimpleString('"passed"')
+        outcome_field = fields.get("outcome")
+        value_field = fields.get("value")
+        value = value_field.value if value_field is not None else cst.Dict(elements=())
+        value_fields = _dict_elements_by_key(value) if isinstance(value, cst.Dict) else {}
+        value_outcome_field = value_fields.get("outcome")
+        outcome = next(
+            (
+                field.value
+                for field in (outcome_field, value_outcome_field, verdict_field)
+                if field is not None and _simple_string(field.value) in {"passed", "failed"}
+            ),
+            cst.SimpleString('"passed"'),
+        )
+        completed_value = (
+            _append_missing_dict_fields(
+                value,
+                (("outcome", outcome), ("grades", cst.List(elements=()))),
+            )
+            if isinstance(value, cst.Dict)
+            else value
         )
         completed_record = _append_missing_dict_fields(
-            record,
+            record.with_changes(
+                elements=tuple(
+                    element.with_changes(value=completed_value)
+                    if element is value_field
+                    else element
+                    for element in record.elements
+                )
+            ),
             (
                 ("record_type", cst.SimpleString('"verification_report"')),
                 ("schema", cst.SimpleString('"VerificationReport"')),
-                (
-                    "value",
-                    cst.Dict(
-                        elements=(
-                            cst.DictElement(cst.SimpleString('"outcome"'), verdict),
-                            cst.DictElement(cst.SimpleString('"grades"'), cst.List(elements=())),
-                        )
-                    ),
-                ),
+                ("outcome", outcome),
+                ("value", completed_value),
             ),
         )
     elif record_type == "candidate" and "schema" not in fields:
@@ -1645,7 +1663,40 @@ class _MechanicalTransformer(cst.CSTTransformer):
                         *updated_node.args[2:],
                     )
                 )
+            if self.migration.domain == "records":
+                completed_record = _complete_task3_strict_record_payload(payload)
+                if completed_record is not None:
+                    self.changes += 1
+                    return updated_node.with_changes(
+                        args=(
+                            updated_node.args[0],
+                            updated_node.args[1].with_changes(value=completed_record),
+                            *updated_node.args[2:],
+                        )
+                    )
             if not _is_nested_record_payload(payload):
+                if (
+                    self.migration.domain == "records"
+                    and isinstance(original_node.func, cst.Name)
+                    and original_node.func.value == "make_event"
+                ):
+                    self.changes += 1
+                    nested = cst.Dict(
+                        elements=(
+                            cst.DictElement(
+                                key=cst.SimpleString('"record"'),
+                                value=updated_node.args[1].value,
+                            ),
+                        )
+                    )
+                    return cst.Call(
+                        func=cst.Name("make_strict_event"),
+                        args=(
+                            cst.Arg(cst.Name("make_event")),
+                            cst.Arg(cst.Name("OUTPUT_RECORD_ACCEPTED")),
+                            cst.Arg(nested),
+                        ),
+                    )
                 self.changes += 1
                 nested = cst.Dict(
                     elements=(
@@ -1661,6 +1712,20 @@ class _MechanicalTransformer(cst.CSTTransformer):
                         updated_node.args[1].with_changes(value=nested),
                         *updated_node.args[2:],
                     )
+                )
+            if (
+                self.migration.domain == "records"
+                and isinstance(original_node.func, cst.Name)
+                and original_node.func.value == "make_event"
+            ):
+                self.changes += 1
+                return cst.Call(
+                    func=cst.Name("make_strict_event"),
+                    args=(
+                        cst.Arg(cst.Name("make_event")),
+                        cst.Arg(cst.Name("OUTPUT_RECORD_ACCEPTED")),
+                        updated_node.args[1],
+                    ),
                 )
         if self.migration.domain == "records" and isinstance(original_node.func, cst.Name):
             if original_node.func.value == "EventEnvelope":
@@ -2962,6 +3027,21 @@ DOMAIN_MIGRATIONS.update(
             ),
             required_imports=(
                 RequiredImport(
+                    "src/orchestrator/graph/_commands.py",
+                    "orchestrator.graph.events.records",
+                    ("OUTPUT_RECORD_ACCEPTED",),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/lifecycle.py",
+                    "orchestrator.graph._commands",
+                    ("make_strict_event",),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/lifecycle.py",
+                    "orchestrator.graph.events.records",
+                    ("OUTPUT_RECORD_ACCEPTED",),
+                ),
+                RequiredImport(
                     "src/orchestrator/graph/commands/__init__.py",
                     "orchestrator.graph.events.topology",
                     ("SEED_COMPILED_EVENTS",),
@@ -3175,6 +3255,21 @@ DOMAIN_MIGRATIONS.update(
                 ),
             ),
             required_imports=(
+                RequiredImport(
+                    "src/orchestrator/graph/_commands.py",
+                    "orchestrator.graph.events.records",
+                    ("OUTPUT_RECORD_ACCEPTED",),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/lifecycle.py",
+                    "orchestrator.graph._commands",
+                    ("make_strict_event",),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/lifecycle.py",
+                    "orchestrator.graph.events.records",
+                    ("OUTPUT_RECORD_ACCEPTED",),
+                ),
                 RequiredImport(
                     "src/orchestrator/graph/_commands.py",
                     "orchestrator.graph.events.patches",
@@ -3421,7 +3516,10 @@ def run_migration(migration: DomainMigration, root: Path, mode: str) -> Migratio
         if migration.domain == "leases"
         else migration
     )
-    result = StrictPayloadCutoverCodemod(python_migration).transform_files(python_sources)
+    sources = (
+        {**python_sources, **yaml_sources} if migration.domain == "records" else python_sources
+    )
+    result = StrictPayloadCutoverCodemod(python_migration).transform_files(sources)
     transformed_sources = dict(result.sources)
     if migration.domain == "leases":
         transformed_sources.update(

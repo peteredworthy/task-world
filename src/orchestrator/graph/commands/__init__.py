@@ -29,8 +29,8 @@ from orchestrator.graph.commands.lifecycle import (
 )
 from orchestrator.graph.commands.patches import SUBMIT_PATCH
 from orchestrator.graph.commands.records import (
-    handle_evaluate_final_gate,
-    handle_evaluate_join,
+    EVALUATE_FINAL_GATE,
+    EVALUATE_JOIN,
 )
 from orchestrator.graph.commands.schedule import (
     RECONCILE,
@@ -73,8 +73,6 @@ _UNCONVERTED_W5_BRIDGE: dict[str, ApplyCommandHandler] = {
     "record_gatekeeper_verdicts": handle_record_gatekeeper_verdicts,
     "record_requirement_revision": handle_record_requirement_revision,
     "record_support_evidence": handle_record_support_evidence,
-    "evaluate_join": handle_evaluate_join,
-    "evaluate_final_gate": handle_evaluate_final_gate,
     "record_cleanup_applied": handle_record_cleanup_applied,
 }
 
@@ -95,6 +93,8 @@ COMMAND_SPECIFICATIONS = (
     SCHEDULE_TICK,
     RECONCILE,
     SUBMIT_PATCH,
+    EVALUATE_JOIN,
+    EVALUATE_FINAL_GATE,
 )
 _CATALOG_COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECIFICATIONS)
 
