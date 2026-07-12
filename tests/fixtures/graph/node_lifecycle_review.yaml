@@ -1,7 +1,7 @@
 - name: review_planned_to_ready
   given_events:
     - node_created: {node_id: review-1, kind: review, state: planned}
-    - input_bound: {to_node_id: review-1, input: review_context}
+    - input_bound: {edge_id: edge-review-1-context, to_node_id: review-1, to_port: review_context, record_ids: [], bound_at_position: 1}
     - node_state_changed: {node_id: review-1, new_state: ready, trigger: review_inputs_available}
   when_command: null
   then_events: []

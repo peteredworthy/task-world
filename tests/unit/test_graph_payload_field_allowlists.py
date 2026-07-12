@@ -13,23 +13,17 @@ payload dict. This has happened twice in this codebase (a missing
 ``appeal_type`` -- see commit 4f2cb0f58 and
 ``docs/dynamic-graph/dynamic-graph-implementation-review.html`` P0 #1).
 
-This test closes the gap mechanically for ``GRAPH_PROJECTION_PAYLOAD_FIELDS``,
-the allowlist backing ``read_run_projection`` -> ``project_task_states`` (the
-``/{run_id}/graph`` endpoint's ``task_states`` field). It:
+Topology now dispatches through strict catalog specifications before the raw
+legacy reducer. This test therefore inventories only the remaining raw
+``reduce_legacy_event`` closure and keeps its temporary field contract honest
+until Task 11 removes the retired allowlists. ``read_run_projection`` itself
+already replays complete envelopes. It:
 
 1. Parses ``projections.py`` with ``ast`` and builds a call graph of its
    module-level functions.
-2. Computes every function transitively reachable from ``reduce_event`` --
-   the single fold function shared by every consumer of
-   ``read_run_projection``-backed events (today: ``project_task_states``; if
-   a second consumer is added later it also runs through ``reduce_event``,
-   so scoping to its call closure does not need to be revisited when that
-   happens). Functions *outside* this closure operate on separately-filtered
-   event lists (``read_run_light``, ``read_run_summary_rebuild``,
-   ``read_run_node_detail``, full ``read_run``) or on already-materialized
-   ``GraphProjection`` state, and are governed by their own allowlists
-   (``LIGHT_GRAPH_PAYLOAD_FIELDS``, ``SUMMARY_REBUILD_PAYLOAD_FIELDS``,
-   ``NODE_DETAIL_PAYLOAD_FIELDS``) -- not this test's concern.
+2. Computes every function transitively reachable from ``reduce_event``.
+   Strict topology events leave that raw closure through catalog dispatch;
+   unconverted domains continue through ``reduce_legacy_event``.
 3. Within that closure, over-approximates every string key read via
    ``.get("key")`` / ``["key"]`` on an expression named or attributed
    ``payload`` (covers ``event.payload.get(...)``, a local ``payload =
@@ -68,6 +62,7 @@ import inspect
 from pathlib import Path
 
 from orchestrator.graph import projections
+from orchestrator.graph.events import TOPOLOGY_EVENT_SPECIFICATIONS
 from orchestrator.graph_runtime import store
 from orchestrator.graph_runtime.store import GRAPH_PROJECTION_PAYLOAD_FIELDS
 
@@ -83,52 +78,30 @@ _ROOT_FUNCTION = "reduce_event"
 # transitive callees in projections.py; see the module docstring above for
 # why this is a manually-verified list rather than a second static slice.
 _EXCLUDED_KEYS: dict[str, str] = {
-    "accepted_record_selector": "edges: binding-selector metadata; recovery-lineage traversal "
-    "only reads from_node_id/to_node_id",
     "active": "requirement_revisions/active_requirement_versions bookkeeping",
+    "record": "strict output_record_accepted envelope; compact readers extract its typed contents",
     "authority_required_reason": "requirement_revisions / decision_request_details bookkeeping",
     "behavior_change": "requirement revision classification helper, not task_states",
-    "binding_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (_topology_edge); "
-    "not read by _derive_task_states/_task_file_state_accepted/_downstream_node_ids",
-    "bound_at_position": "input_bindings structural position metadata for topology/scheduler; "
-    "not read by task_states",
     "change_classification": "requirement_revisions bookkeeping",
     "command_text": "environment_failures/check_results informational field; only "
     "classification/status/key-existence matter to task_states",
     "confidence": "support_evidence bookkeeping",
-    "dependency_type": "edges metadata; downstream traversal only uses from_node_id/to_node_id",
-    "description": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "edge_id": "edges dict key/metadata; not read by the recovery-lineage traversal helper",
-    "evidence": "support_evidence bookkeeping",
+    "evidence": "record-id fallback container in _record_ids_from_payload; only reachable for "
+    "output_record_accepted, which is catalog-owned and never enters the legacy fold (Task 5)",
     "evidence_id": "support_evidence bookkeeping",
     "exit_code": "environment_failures/check_results informational field (see command_text)",
     "explicit_authority_required": "requirement revision authority-resolution bookkeeping",
     "file_state_record_id": "gatekeeper-verdict/cleanup lookups mutate file_state_records fields "
     "_task_file_state_accepted never reads (classifications/residue/compromised/cleanup_*)",
-    "from_node_kind": "edges metadata; recovery-lineage traversal only reads "
-    "from_node_id/to_node_id",
-    "from_node_role": "edges metadata; recovery-lineage traversal only reads "
-    "from_node_id/to_node_id",
-    "freshness_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata "
-    "(see binding_policy)",
     "id": "requirement id fallback helper, used only for authority_revision_blockers/support views",
-    "input": "legacy scheduler input-binding fallback, not task_states",
-    "metadata": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "new_behavior": "requirement revision classification helper",
     "patch_id": "accepted_no_successor_patches_by_node / graph-patch-attempt bookkeeping",
     "previous_version_id": "requirement_revisions bookkeeping",
     "proposal_id": "open_proposal_blockers bookkeeping",
-    "prompt_hydration_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata "
-    "(see binding_policy)",
-    "provenance": "support_evidence bookkeeping",
-    "purpose": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
+    "provenance": "record-id fallback container in _record_ids_from_payload (see evidence)",
     "reason": "informational annotation (environment_failures/cleanup/suspect-node); never "
     "gates a task_states branch",
-    "record_bound_positions": "input_bindings per-record topology metadata; not read by "
-    "task_states",
-    "record_ids": "input_bindings bound-record list for scheduler/topology/prompt hydration; "
-    "task_states reads accepted file-state records directly",
-    "required": 'edges metadata ("required" flag); traversal helper ignores it',
     "requirement": "requirement id/priority resolution helper, not task_states",
     "requirement_id": "requirement_revisions/authority_revision_blockers bookkeeping",
     "requirement_version_id": "requirement_revisions bookkeeping",
@@ -137,14 +110,10 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "revision_index": "requirement_revisions bookkeeping",
     "revision_type": "requirement revision classification helper",
     "schema": "node_command_definitions/record-type classification (topology/summary views)",
-    "selection": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "semantic_change": "requirement revision authority-resolution bookkeeping",
     "stale_reason": "support_evidence bookkeeping",
     "stderr": "environment_failures/check_results informational field (see command_text)",
-    "supersedes_record_id": "input_bindings merge policy helper; task_states does not read "
-    "bound input records",
     "support_id": "support_evidence bookkeeping",
-    "trigger": "input_bindings informational trigger metadata; not read by task_states",
     "validation_strengthening": "requirement_revisions bookkeeping",
     "value": "nested payload.value.* reads; status/classification fallbacks are already handled "
     "by the dedicated __value_status/__value_classification json_extract columns in "
@@ -153,6 +122,99 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "file_state_records fields _task_file_state_accepted never reads",
     "version_id": "requirement_revisions bookkeeping",
 }
+
+# Task 3 moves these fields behind immutable topology EventSpecifications.
+# They must not reappear in the raw reduce_legacy_event closure or be hidden
+# in its exclusions: their concrete payload models own validation and access.
+_TYPED_TOPOLOGY_RAW_FIELDS: dict[str, frozenset[str]] = {
+    "edge_created": frozenset(
+        {
+            "accepted_record_selector",
+            "binding_policy",
+            "dependency_type",
+            "description",
+            "freshness_policy",
+            "from_node_kind",
+            "from_node_role",
+            "metadata",
+            "prompt_hydration_policy",
+            "purpose",
+            "required",
+            "selection",
+        }
+    ),
+    "input_bound": frozenset(
+        {
+            "bound_at_position",
+            "input",
+            "record_bound_positions",
+            "record_ids",
+            "supersedes_record_id",
+            "trigger",
+        }
+    ),
+}
+
+# Exact remaining raw reducer inventory. This replaces the former numeric
+# floor: any added or lost raw field requires an explicit ownership decision.
+_EXPECTED_LEGACY_RAW_REDUCER_KEYS = frozenset(
+    {
+        "active",
+        "record",
+        # attempt_number/evidence/provenance/supersedes_task_region_id are
+        # records-domain fields read by candidate/check-result helpers that are
+        # shared with the compact output-record path; they leave this inventory
+        # when Task 5 converts the records domain.
+        "attempt_number",
+        "authority_required_reason",
+        "behavior_change",
+        "candidate_id",
+        "change_classification",
+        "classification",
+        "command_text",
+        "confidence",
+        "edge_id",
+        "evidence",
+        "evidence_id",
+        "exit_code",
+        "explicit_authority_required",
+        "file_state_record_id",
+        "id",
+        "membership",
+        "new_behavior",
+        "node_id",
+        "patch_id",
+        "port",
+        "previous_version_id",
+        "producer_node_id",
+        "proposal_id",
+        "provenance",
+        "reason",
+        "record_id",
+        "record_kind",
+        "record_type",
+        "requirement",
+        "requirement_id",
+        "requirement_version_id",
+        "requires_authority",
+        "revision_id",
+        "revision_index",
+        "revision_type",
+        "schema",
+        "semantic_change",
+        "stale_reason",
+        "status",
+        "stderr",
+        "supersedes_task_region_id",
+        "support_id",
+        "task_region_id",
+        "validation_strengthening",
+        "value",
+        "verdicts",
+        "verifier_node_id",
+        "version_id",
+    }
+)
 
 
 def test_graph_projection_payload_fields_are_owned_by_projection_module() -> None:
@@ -394,13 +456,8 @@ def _extract_reduce_event_payload_keys() -> set[str]:
     return keys
 
 
-def test_reduce_event_closure_extraction_finds_a_plausible_number_of_functions_and_keys() -> None:
-    """Sanity check that the AST walk isn't silently matching nothing.
-
-    If projections.py is refactored so heavily that this drops to near zero,
-    the coverage assertion below would trivially pass without guarding
-    anything -- so pin a floor.
-    """
+def test_reduce_event_closure_tracks_exact_legacy_fields_after_topology_cutover() -> None:
+    """The raw closure stays exact while topology dispatches through specs."""
     funcs = _module_functions()
     call_graph = _call_graph(funcs)
     scoped = _reachable_from(_ROOT_FUNCTION, call_graph)
@@ -409,11 +466,29 @@ def test_reduce_event_closure_extraction_finds_a_plausible_number_of_functions_a
         "expected the reduce_event fold to have a substantial call closure -- "
         "did the AST extraction break?"
     )
+    assert {spec.name for spec in TOPOLOGY_EVENT_SPECIFICATIONS} == {
+        "dead_input_detected",
+        "edge_created",
+        "input_bound",
+        "node_authority_changed",
+        "node_created",
+        "node_deferred",
+        "node_ready",
+        "node_retired",
+        "node_state_changed",
+        "plan_region_marked_suspect",
+        "revision_created",
+        "session_state_changed",
+    }
     keys = _extract_reduce_event_payload_keys()
-    assert len(keys) >= 50, (
-        f"only {len(keys)} payload keys extracted from the reduce_event closure; "
-        "expected many more -- did the AST extraction break?"
+    assert keys == _EXPECTED_LEGACY_RAW_REDUCER_KEYS, (
+        "the legacy raw reducer field inventory changed; confirm field ownership "
+        f"before updating this contract: missing={sorted(_EXPECTED_LEGACY_RAW_REDUCER_KEYS - keys)}, "
+        f"unexpected={sorted(keys - _EXPECTED_LEGACY_RAW_REDUCER_KEYS)}"
     )
+    typed_topology_fields = set().union(*_TYPED_TOPOLOGY_RAW_FIELDS.values())
+    assert not typed_topology_fields & keys
+    assert not typed_topology_fields & set(_EXCLUDED_KEYS)
 
 
 def test_graph_projection_payload_fields_cover_the_reduce_event_fold() -> None:

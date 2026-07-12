@@ -49,6 +49,7 @@ from orchestrator.graph.specifications import (
     HydratedEvent,
     FutureCommandEffects,
 )
+from orchestrator.graph._commands import typed_topology_event
 
 
 def _command_rejected(
@@ -385,7 +386,8 @@ def build_agent_died_effects(
                     },
                 ),
             ),
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_state_changed",
                 {
                     "node_id": node_id,
@@ -412,18 +414,21 @@ def build_agent_died_effects(
             ),
             make_event(
                 "output_record_accepted",
-                _failure_record_payload(
-                    node_id=node_id,
-                    phase="runtime",
-                    error_class="agent_rate_limited",
-                    retryable=False,
-                    lease_id=lease_id,
-                    execution_id=agent_died_payload.execution_id,
-                    generation=generation,
-                    reason=reason,
-                ),
+                {
+                    "record": _failure_record_payload(
+                        node_id=node_id,
+                        phase="runtime",
+                        error_class="agent_rate_limited",
+                        retryable=False,
+                        lease_id=lease_id,
+                        execution_id=agent_died_payload.execution_id,
+                        generation=generation,
+                        reason=reason,
+                    )
+                },
             ),
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_state_changed",
                 {
                     "node_id": node_id,
@@ -451,18 +456,21 @@ def build_agent_died_effects(
             ),
             make_event(
                 "output_record_accepted",
-                _failure_record_payload(
-                    node_id=node_id,
-                    phase="runtime",
-                    error_class="runtime_configuration_error",
-                    retryable=False,
-                    lease_id=lease_id,
-                    execution_id=agent_died_payload.execution_id,
-                    generation=generation,
-                    reason=reason,
-                ),
+                {
+                    "record": _failure_record_payload(
+                        node_id=node_id,
+                        phase="runtime",
+                        error_class="runtime_configuration_error",
+                        retryable=False,
+                        lease_id=lease_id,
+                        execution_id=agent_died_payload.execution_id,
+                        generation=generation,
+                        reason=reason,
+                    )
+                },
             ),
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_state_changed",
                 {
                     "node_id": node_id,
@@ -492,19 +500,22 @@ def build_agent_died_effects(
             ),
             make_event(
                 "output_record_accepted",
-                _failure_record_payload(
-                    node_id=node_id,
-                    phase="runtime",
-                    error_class="max_attempts_exhausted",
-                    retryable=False,
-                    lease_id=lease_id,
-                    execution_id=agent_died_payload.execution_id,
-                    generation=generation,
-                    reason=reason,
-                    metadata={"attempt_number": attempt_number, "max_attempts": max_attempts},
-                ),
+                {
+                    "record": _failure_record_payload(
+                        node_id=node_id,
+                        phase="runtime",
+                        error_class="max_attempts_exhausted",
+                        retryable=False,
+                        lease_id=lease_id,
+                        execution_id=agent_died_payload.execution_id,
+                        generation=generation,
+                        reason=reason,
+                        metadata={"attempt_number": attempt_number, "max_attempts": max_attempts},
+                    )
+                },
             ),
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_state_changed",
                 {
                     "node_id": node_id,
@@ -566,13 +577,16 @@ def build_agent_died_effects(
         ),
         make_event(
             "output_record_accepted",
-            _recovery_plan_record_payload(
-                node_id=node_id,
-                retry_payload=retry_payload,
-                retry_backoff_seconds=retry_backoff_seconds,
-            ),
+            {
+                "record": _recovery_plan_record_payload(
+                    node_id=node_id,
+                    retry_payload=retry_payload,
+                    retry_backoff_seconds=retry_backoff_seconds,
+                )
+            },
         ),
-        make_event(
+        typed_topology_event(
+            make_event,
             "node_state_changed",
             node_state_payload,
         ),

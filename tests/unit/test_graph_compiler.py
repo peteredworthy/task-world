@@ -19,6 +19,7 @@ from orchestrator.config.enums import GateType
 from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
+    HydratedEvent,
     SequentialIdGenerator,
     compile_routine,
     initial_projection,
@@ -35,18 +36,18 @@ def test_routine_maps_to_root_and_routine_snapshot_record_node() -> None:
     assert projection["node_kinds"]["root"] == "root"
     assert projection["node_kinds"]["routine-snapshot"] == "artifact"
     root_record = _accepted_record(events, "run-context")
-    assert root_record.payload["record_type"] == "run_context"
-    assert root_record.payload["port"] == "run_context"
-    assert root_record.payload["schema"] == "RunContext"
-    assert root_record.payload["value"]["routine_id"] == "minimal"
+    assert root_record.payload["record"]["record_type"] == "run_context"
+    assert root_record.payload["record"]["port"] == "run_context"
+    assert root_record.payload["record"]["schema"] == "RunContext"
+    assert root_record.payload["record"]["value"]["routine_id"] == "minimal"
     snapshot_event = _node_event(events, "routine-snapshot")
     assert snapshot_event.payload["role"] == "routine_snapshot"
     assert snapshot_event.payload["snapshot"]["routine_id"] == "minimal"
     assert len(snapshot_event.payload["snapshot"]["content_hash"]) == 64
     snapshot_record = _accepted_record(events, "routine-snapshot-record")
-    assert snapshot_record.payload["record_type"] == "routine_snapshot"
-    assert snapshot_record.payload["producer_node_id"] == "routine-snapshot"
-    assert snapshot_record.payload["value"] == snapshot_event.payload["snapshot"]
+    assert snapshot_record.payload["record"]["record_type"] == "routine_snapshot"
+    assert snapshot_record.payload["record"]["producer_node_id"] == "routine-snapshot"
+    assert snapshot_record.payload["record"]["value"] == snapshot_event.payload["snapshot"]
 
 
 def test_routine_snapshot_content_hash_is_deterministic_and_changes_with_content() -> None:
@@ -120,7 +121,7 @@ def test_worker_write_claims_are_scoped_to_declared_artifacts() -> None:
     events = _compile(routine)
     worker = _node_event(events, "worker-s-01-t-01").payload
 
-    assert worker["authority"]["resource_claims"] == [
+    assert worker["resource_claims"] == [
         {"mode": "write", "scope": "repo", "paths": ["docs/out.md", "tests/out.md"]}
     ]
 
@@ -282,13 +283,17 @@ def test_auto_verify_cmd_resolves_run_config_placeholders() -> None:
         )
     )
 
-    events = compile_routine(
-        routine,
-        FakeClock(),
-        SequentialIdGenerator(),
-        run_id="run-1",
-        run_config={"spec_path": "docs/spec.md", "slice_id": "2.6"},
-    )
+    events = [
+        _persisted_envelope(event)
+        for event in compile_routine(
+            routine,
+            FakeClock(),
+            SequentialIdGenerator(),
+            catalog=build_graph_catalog(),
+            run_id="run-1",
+            run_config={"spec_path": "docs/spec.md", "slice_id": "2.6"},
+        )
+    ]
     projection = _project(events)
 
     definitions = projection["node_command_definitions"]
@@ -401,9 +406,9 @@ def test_context_dependency_maps_to_bound_input_edge() -> None:
     )
     assert "context_0" in projection["input_bindings"]["worker-s-01-t-01"]
     artifact_record = _accepted_record(events, "artifact-reference-s-01-t-01-0")
-    assert artifact_record.payload["record_type"] == "artifact_reference"
-    assert artifact_record.payload["producer_node_id"] == context_id
-    assert artifact_record.payload["value"]["uri"] == "docs/plan.md"
+    assert artifact_record.payload["record"]["record_type"] == "artifact_reference"
+    assert artifact_record.payload["record"]["producer_node_id"] == context_id
+    assert artifact_record.payload["record"]["value"]["uri"] == "docs/plan.md"
     assert projection["input_bindings"]["worker-s-01-t-01"]["context_0"]["record_ids"] == [
         "artifact-reference-s-01-t-01-0"
     ]
@@ -502,22 +507,26 @@ def test_dynamic_graph_feature_run_inputs_seed_planner_context() -> None:
         ],
     )
 
-    events = compile_routine(
-        routine,
-        FakeClock(),
-        SequentialIdGenerator(),
-        run_id="run-1",
-        run_config={
-            "feature_spec_path": "docs/graph-approach/dynamic-smoke-feature-spec.md",
-            "feature_spec_content": "Build the dynamic-smoke artifact.",
-            "feature_spec_content_source": "worktree",
-            "acceptance_command": "uv run pytest tests/smoke -q",
-            "hidden_oracle_command": "uv run pytest tests/oracle -q",
-            "patch_budget": 4,
-            "gap_policy_profile": "standard",
-            "ignored": "not exposed",
-        },
-    )
+    events = [
+        _persisted_envelope(event)
+        for event in compile_routine(
+            routine,
+            FakeClock(),
+            SequentialIdGenerator(),
+            catalog=build_graph_catalog(),
+            run_id="run-1",
+            run_config={
+                "feature_spec_path": "docs/graph-approach/dynamic-smoke-feature-spec.md",
+                "feature_spec_content": "Build the dynamic-smoke artifact.",
+                "feature_spec_content_source": "worktree",
+                "acceptance_command": "uv run pytest tests/smoke -q",
+                "hidden_oracle_command": "uv run pytest tests/oracle -q",
+                "patch_budget": 4,
+                "gap_policy_profile": "standard",
+                "ignored": "not exposed",
+            },
+        )
+    ]
 
     planner = _node_event(events, "planner-s-01").payload
     dynamic_feature = planner["dynamic_feature"]
@@ -690,11 +699,31 @@ def _routine_with_task(task: TaskConfig) -> RoutineConfig:
 
 
 def _compile(routine: RoutineConfig) -> list[EventEnvelope]:
-    return compile_routine(
+    catalog = build_graph_catalog()
+    hydrated = compile_routine(
         routine,
         FakeClock(),
         SequentialIdGenerator(),
+        catalog=catalog,
         run_id="run-1",
+    )
+    return [_persisted_envelope(event) for event in hydrated]
+
+
+def _persisted_envelope(event: HydratedEvent) -> EventEnvelope:
+    """Exercise legacy projection and command fixtures at their storage boundary."""
+
+    return EventEnvelope(
+        event_id=event.metadata.event_id,
+        run_id=event.metadata.run_id,
+        position=event.metadata.position,
+        event_type=event.metadata.event_type,
+        schema_version=event.metadata.payload_schema_generation,
+        actor=event.metadata.actor,
+        causation_id=event.metadata.causation_id,
+        correlation_id=event.metadata.correlation_id,
+        timestamp=event.metadata.timestamp,
+        payload=event.payload.model_dump(mode="json", by_alias=True, exclude_unset=True),
     )
 
 
@@ -801,9 +830,11 @@ def _node_event(events: list[EventEnvelope], node_id: str) -> EventEnvelope:
 
 def _accepted_record(events: list[EventEnvelope], record_id: str) -> EventEnvelope:
     for event in events:
+        record = event.payload.get("record")
         if (
             event.event_type == "output_record_accepted"
-            and event.payload.get("record_id") == record_id
+            and isinstance(record, dict)
+            and record.get("record_id") == record_id
         ):
             return event
     raise AssertionError(f"missing output_record_accepted event for {record_id}")

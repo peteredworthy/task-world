@@ -15,7 +15,10 @@ def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnve
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -141,19 +144,21 @@ def test_decision_view_includes_typed_request_details() -> None:
         _event(
             "output_record_accepted",
             {
-                "record_id": "decision-request-1",
-                "record_kind": "graph_record",
-                "record_type": "decision_request",
-                "producer_node_id": "human-gate-1",
-                "port": "decision_request",
-                "schema": "DecisionRequest",
-                "value": {
-                    "decision_type": "approval",
-                    "options": ["approve", "reject", "defer"],
-                    "default_option": "defer",
-                    "consequence_summary": "Approval grants wider graph tooling.",
-                    "expires_at": "2026-01-02T00:00:00+00:00",
-                },
+                "record": {
+                    "record_id": "decision-request-1",
+                    "record_kind": "graph_record",
+                    "record_type": "decision_request",
+                    "producer_node_id": "human-gate-1",
+                    "port": "decision_request",
+                    "schema": "DecisionRequest",
+                    "value": {
+                        "decision_type": "approval",
+                        "options": ["approve", "reject", "defer"],
+                        "default_option": "defer",
+                        "consequence_summary": "Approval grants wider graph tooling.",
+                        "expires_at": "2026-01-02T00:00:00+00:00",
+                    },
+                }
             },
             2,
         ),
@@ -170,18 +175,20 @@ def test_decision_view_includes_typed_request_details() -> None:
         _event(
             "output_record_accepted",
             {
-                "record_id": "authority-request-1",
-                "record_kind": "graph_record",
-                "record_type": "authority_request_record",
-                "producer_node_id": "authority-1",
-                "port": "authority_request_record",
-                "schema": "AuthorityRequest",
-                "value": {
-                    "requested_authority": ["repo:docs/**:write"],
-                    "target_node_id": "worker-docs",
-                    "reason": "Needs docs write access.",
-                    "expires_at": "2026-01-02T00:00:00+00:00",
-                },
+                "record": {
+                    "record_id": "authority-request-1",
+                    "record_kind": "graph_record",
+                    "record_type": "authority_request_record",
+                    "producer_node_id": "authority-1",
+                    "port": "authority_request_record",
+                    "schema": "AuthorityRequest",
+                    "value": {
+                        "requested_authority": ["repo:docs/**:write"],
+                        "target_node_id": "worker-docs",
+                        "reason": "Needs docs write access.",
+                        "expires_at": "2026-01-02T00:00:00+00:00",
+                    },
+                }
             },
             4,
         ),

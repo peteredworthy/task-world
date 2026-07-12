@@ -211,9 +211,11 @@ async def test_fr07_macro_tools_route_expand_validate_and_read_back_patch_attemp
         for event in authority_gate["events"]
         if event["event_type"] == "output_record_accepted"
     ]
-    assert authority_records[0]["record_type"] == "authority_request_record"
-    assert authority_records[0]["value"]["requested_authority"] == ["repo:docs/fr07.md:write"]
-    assert authority_records[0]["value"]["target_node_id"] == "worker-authority-target"
+    assert authority_records[0]["record"]["record_type"] == "authority_request_record"
+    assert authority_records[0]["record"]["value"]["requested_authority"] == [
+        "repo:docs/fr07.md:write"
+    ]
+    assert authority_records[0]["record"]["value"]["target_node_id"] == "worker-authority-target"
     assert retired_node["state"] == "retired"
     assert superseded_node["state"] == "retired"
     assert replacement_node["kind"] == "worker"
@@ -394,7 +396,10 @@ def _event(
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=clock.now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 

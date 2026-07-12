@@ -8,14 +8,15 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     FakeClock,
+    HydratedEvent,
     SequentialIdGenerator,
+    build_graph_catalog,
     compile_routine,
     initial_projection,
     project_planner_chain,
     reduce_event,
 )
 from tests.graph_command_support import dispatch_graph_command
-from orchestrator.graph import build_graph_catalog
 
 
 def test_parent_child_routine_compiles_to_planner_chain() -> None:
@@ -24,7 +25,7 @@ def test_parent_child_routine_compiles_to_planner_chain() -> None:
     planner = _node_event(events, "planner-parent")
 
     assert projection["node_kinds"]["planner-parent"] == "planner"
-    assert planner.payload["planner_chain"] == {
+    assert _payload(planner)["planner_chain"] == {
         "source": "legacy_parent_child",
         "regions": [
             {
@@ -39,9 +40,9 @@ def test_parent_child_routine_compiles_to_planner_chain() -> None:
             },
         ],
     }
-    assert planner.payload["region_label"] == "child-one"
-    assert all(event.event_type != "run_lifecycle_changed" for event in events)
-    assert not any(_contains_legacy_child_artifact(event.payload) for event in events)
+    assert _payload(planner)["region_label"] == "child-one"
+    assert all(_event_type(event) != "run_lifecycle_changed" for event in events)
+    assert not any(_contains_legacy_child_artifact(_payload(event)) for event in events)
 
 
 def test_child_order_is_chain_order() -> None:
@@ -62,18 +63,18 @@ def test_child_order_is_chain_order() -> None:
         {"run_id": "run-1", "base_snapshot_id": "snapshot-0", "max_grants": 10},
     )
     assert not any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "planner-child-two"
+        _event_type(event) == "lease_granted" and _payload(event)["node_id"] == "planner-child-two"
         for event in blocked
     )
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "planner-parent"
+        _event_type(event) == "lease_granted" and _payload(event)["node_id"] == "planner-parent"
         for event in blocked
     )
     child_deferrals = [
-        event.payload
+        _payload(event)
         for event in blocked
-        if event.event_type == "node_deferred"
-        and event.payload.get("node_id") == "planner-child-two"
+        if _event_type(event) == "node_deferred"
+        and _payload(event).get("node_id") == "planner-child-two"
     ]
     assert all(
         payload["reason"] == "missing_required_input:region_summary" for payload in child_deferrals
@@ -87,7 +88,7 @@ def test_child_order_is_chain_order() -> None:
     )
 
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "planner-child-two"
+        _event_type(event) == "lease_granted" and _payload(event)["node_id"] == "planner-child-two"
         for event in scheduled
     )
 
@@ -133,9 +134,9 @@ def test_non_parent_routine_compiles_unchanged() -> None:
         steps=[StepConfig(id="Plan", kind="planner", title="Plan")],
     )
 
-    implicit_default = [event.model_dump(mode="json") for event in _compile(routine)]
+    implicit_default = [_event_snapshot(event) for event in _compile(routine)]
     explicit_empty = [
-        event.model_dump(mode="json")
+        _event_snapshot(event)
         for event in _compile(
             RoutineConfig(
                 id="plain-planner",
@@ -147,8 +148,8 @@ def test_non_parent_routine_compiles_unchanged() -> None:
 
     assert explicit_empty == implicit_default
     planner = _node_event(_compile(routine), "planner-plan")
-    assert "planner_chain" not in planner.payload
-    assert "region_label" not in planner.payload
+    assert "planner_chain" not in _payload(planner)
+    assert "region_label" not in _payload(planner)
 
 
 def _parent_child_routine() -> RoutineConfig:
@@ -169,13 +170,19 @@ def _parent_child_routine() -> RoutineConfig:
     )
 
 
-def _compile(routine: RoutineConfig) -> list[EventEnvelope]:
+def _compile(routine: RoutineConfig) -> list[HydratedEvent]:
     return _with_positions(
-        compile_routine(routine, FakeClock(), SequentialIdGenerator(), run_id="run-1")
+        compile_routine(
+            routine,
+            FakeClock(),
+            SequentialIdGenerator(),
+            catalog=build_graph_catalog(),
+            run_id="run-1",
+        )
     )
 
 
-def _compile_active_parent_child() -> list[EventEnvelope]:
+def _compile_active_parent_child() -> list[EventEnvelope | HydratedEvent]:
     events = _compile(_parent_child_routine())
     return [
         *_with_positions([_event("run_lifecycle_changed", {"to_state": "active"})]),
@@ -277,7 +284,9 @@ def _selector_edge(
     }
 
 
-def _drive_region_to_accepted(events: list[EventEnvelope], prefix: str) -> list[EventEnvelope]:
+def _drive_region_to_accepted(
+    events: list[EventEnvelope | HydratedEvent], prefix: str
+) -> list[EventEnvelope | HydratedEvent]:
     worker_id = f"worker-{prefix}"
     verifier_id = f"verifier-{prefix}"
     worker_events = [
@@ -393,7 +402,7 @@ def _drive_region_to_accepted(events: list[EventEnvelope], prefix: str) -> list[
 
 
 def _submit_patch(
-    events: list[EventEnvelope],
+    events: list[EventEnvelope | HydratedEvent],
     patch_id: str,
     planner_id: str,
     ops: list[dict[str, Any]],
@@ -446,26 +455,47 @@ def _contains_legacy_child_artifact(payload: dict[str, Any]) -> bool:
 
 
 def _apply(
-    events: list[EventEnvelope],
+    events: list[EventEnvelope | HydratedEvent],
     command_type: str,
     payload: dict[str, Any],
 ) -> list[EventEnvelope]:
     return dispatch_graph_command(events, command_type, payload)
 
 
-def _project(events: list[EventEnvelope]) -> Any:
+def _project(events: list[EventEnvelope | HydratedEvent]) -> Any:
     projection = initial_projection()
     for event in events:
         projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 
-def _node_event(events: list[EventEnvelope], node_id: str) -> EventEnvelope:
+def _node_event(
+    events: list[EventEnvelope | HydratedEvent], node_id: str
+) -> EventEnvelope | HydratedEvent:
     return next(
         event
         for event in events
-        if event.event_type == "node_created" and event.payload.get("node_id") == node_id
+        if _event_type(event) == "node_created" and _payload(event).get("node_id") == node_id
     )
+
+
+def _event_type(event: EventEnvelope | HydratedEvent) -> str:
+    if isinstance(event, HydratedEvent):
+        return event.metadata.event_type
+    return event.event_type
+
+
+def _payload(event: EventEnvelope | HydratedEvent) -> dict[str, Any]:
+    if isinstance(event, HydratedEvent):
+        return event.payload.model_dump(mode="json", exclude_none=True)
+    return event.payload
+
+
+def _event_snapshot(event: HydratedEvent) -> dict[str, Any]:
+    return {
+        "metadata": event.metadata.model_dump(mode="json"),
+        "payload": event.payload.model_dump(mode="json"),
+    }
 
 
 def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:

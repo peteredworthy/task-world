@@ -27,7 +27,10 @@ def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> Even
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -181,17 +184,19 @@ async def _seed_authority_denial_graph_run(app: Any, run_id: str) -> None:
         _event(
             "output_record_accepted",
             {
-                "record_id": "authority-request-1",
-                "record_kind": "graph_record",
-                "record_type": "authority_request_record",
-                "producer_node_id": "authority-1",
-                "port": "authority_request_record",
-                "schema": "AuthorityRequest",
-                "value": {
-                    "requested_authority": ["repo:docs/**:write"],
-                    "target_node_id": "worker-docs",
-                    "reason": "Worker needs docs write access.",
-                },
+                "record": {
+                    "record_id": "authority-request-1",
+                    "record_kind": "graph_record",
+                    "record_type": "authority_request_record",
+                    "producer_node_id": "authority-1",
+                    "port": "authority_request_record",
+                    "schema": "AuthorityRequest",
+                    "value": {
+                        "requested_authority": ["repo:docs/**:write"],
+                        "target_node_id": "worker-docs",
+                        "reason": "Worker needs docs write access.",
+                    },
+                }
             },
         ),
         _event(
@@ -408,8 +413,8 @@ async def test_fr08_authority_denial_and_rejection_readbacks(
     ]
     assert "node_deferred" in event_types
     decision_record = body["events"][1]["payload"]
-    assert decision_record["record_type"] == "authority_decision"
-    assert decision_record["value"]["decision"] == "denied"
+    assert decision_record["record"]["record_type"] == "authority_decision"
+    assert decision_record["record"]["value"]["decision"] == "denied"
     assert body["events"][4]["payload"]["lease_id"] == "lease-authority-1"
     assert any(
         event["event_type"] == "node_deferred"
@@ -487,6 +492,6 @@ async def test_fr08_authority_denial_and_rejection_readbacks(
     )
     assert not any(
         event["event_type"] == "output_record_accepted"
-        and event["payload"].get("producer_node_id") == "worker-docs"
+        and event["payload"]["record"].get("producer_node_id") == "worker-docs"
         for event in events
     )

@@ -486,7 +486,10 @@ def _event(run_id: str, event_type: str, payload: dict[str, object]) -> EventEnv
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FixedClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 

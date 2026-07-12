@@ -705,6 +705,8 @@ def test_candidate_record_round_trips() -> None:
             "candidate_id": "candidate-1",
             "task_region_id": "task-1",
             "attempt_number": 1,
+            "file_state_record_id": "file-state-1",
+            "file_state_record_ids": ["file-state-1"],
             "value": {
                 "summary": "implemented the feature",
                 "changed_paths": ["src/example.py"],

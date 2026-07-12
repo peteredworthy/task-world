@@ -11,9 +11,15 @@ import argparse
 import ast
 import json
 import sys
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable, Sequence
+from typing import Any, Iterable, Sequence, cast, get_args
+
+# Direct script execution places ``scripts/`` rather than the repository root
+# on sys.path, so make the sibling checker importable in both supported modes.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from scripts.check_graph_payload_architecture import (
     DOMAIN_COMMAND_NAMES as ARCHITECTURE_DOMAIN_COMMAND_NAMES,
@@ -614,6 +620,13 @@ def _event_argument(call: ast.Call, parsed: _ParsedFile) -> ast.expr | None:
     return None
 
 
+def _specification_name_argument(call: ast.Call) -> ast.expr | None:
+    keyword = next((item.value for item in call.keywords if item.arg == "name"), None)
+    if keyword is not None:
+        return keyword
+    return call.args[0] if call.args else None
+
+
 def _dynamic_classification(
     call: ast.Call,
     expression: ast.expr,
@@ -621,6 +634,35 @@ def _dynamic_classification(
 ) -> tuple[str, tuple[str, ...]]:
     owner = _owner_function(call, parsed)
     owner_name = owner.name if owner is not None else ""
+    if (
+        isinstance(expression, ast.Attribute)
+        and expression.attr == "name"
+        and isinstance(expression.value, ast.Name)
+        and expression.value.id == "specification"
+    ):
+        return "typed_specification_dispatch", ()
+    if (
+        isinstance(expression, ast.Attribute)
+        and expression.attr == "event_type"
+        and isinstance(expression.value, ast.Attribute)
+        and expression.value.attr == "metadata"
+        and isinstance(expression.value.value, ast.Name)
+        and expression.value.value.id == "event"
+        and owner_name != "_to_legacy_envelope"
+    ):
+        return "typed_specification_dispatch", ()
+    if (
+        isinstance(expression, ast.Attribute)
+        and expression.attr == "event_type"
+        and isinstance(expression.value, ast.Name)
+        and expression.value.id == "metadata"
+        and owner_name.startswith("reduce_typed_")
+    ):
+        return "typed_specification_dispatch", ()
+    if owner_name == "typed_topology_event":
+        return "typed_specification", _resolve_parameter(
+            expression, owner, parsed.calls, owner_name
+        )
     if owner_name == "_to_legacy_envelope":
         return "typed_event_serialization", ()
     if owner_name in {"make_event", "event_factory"}:
@@ -766,10 +808,7 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     for parsed in parsed_files:
         for node in ast.walk(parsed.tree):
             if isinstance(node, ast.Call):
-                specification_name = next(
-                    (keyword.value for keyword in node.keywords if keyword.arg == "name"),
-                    None,
-                )
+                specification_name = _specification_name_argument(node)
                 if _call_name(node.func) == "EventSpecification" and specification_name:
                     values = _literal_strings(specification_name)
                     if values:
@@ -939,6 +978,655 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     )
 
 
+# ---------------------------------------------------------------------------
+# Consumer-side scan (W5 Task 3.5 prep tooling)
+#
+# The producer scan above inventories event construction and reducer routing.
+# The consumer scan below finds code that *reads* converted strict payloads
+# with a stale shape: flat dict reads of nested record fields, test seeds that
+# no longer validate against the catalog specification, and attribute reads
+# that are not declared model fields.
+# ---------------------------------------------------------------------------
+
+CONSUMER_DOMAIN_EVENT_NAMES: dict[str, frozenset[str]] = {
+    "records": frozenset({"output_record_accepted"}),
+}
+
+CONSUMER_FAILING_CLASSIFICATIONS = frozenset(
+    {"flat_shape_read", "invalid_seed", "unknown_attribute_read"}
+)
+
+CONSUMER_REPORT_CLASSIFICATIONS = (
+    "flat_shape_read",
+    "invalid_seed",
+    "unverifiable_seed",
+    "unknown_attribute_read",
+)
+
+_SEED_FACTORY_NAMES = frozenset({"EventEnvelope", "make_event", "_event"})
+_MAX_SNIPPET_LENGTH = 110
+
+
+class UnknownConsumerDomainError(ValueError):
+    """Raised when a consumer scan names a domain with no event table."""
+
+
+@dataclass(frozen=True, order=True)
+class ConsumerSite(SourceSite):
+    event: str
+    classification: str
+    snippet: str
+
+
+@dataclass(frozen=True)
+class ConsumerSchema:
+    """Catalog-derived shape facts used to classify consumer-side payload use."""
+
+    event_names: frozenset[str]
+    declared_fields: dict[str, frozenset[str]]
+    nested_record_fields: dict[str, frozenset[str]]
+    payload_class_events: dict[str, str]
+    payload_classes: dict[str, Any]
+
+
+@lru_cache(maxsize=1)
+def _cached_catalog() -> Any:
+    from orchestrator.graph.catalog import build_graph_catalog
+
+    return build_graph_catalog()
+
+
+def _payload_model_variants(annotation: Any, base_model: type) -> tuple[type, ...]:
+    candidates = get_args(annotation) or (annotation,)
+    return tuple(
+        candidate
+        for candidate in candidates
+        if isinstance(candidate, type) and issubclass(candidate, base_model)
+    )
+
+
+@lru_cache(maxsize=1)
+def _consumer_schema() -> ConsumerSchema:
+    from pydantic import BaseModel
+
+    catalog = _cached_catalog()
+    declared: dict[str, frozenset[str]] = {}
+    nested: dict[str, frozenset[str]] = {}
+    class_events: dict[str, str] = {}
+    classes: dict[str, Any] = {}
+    for event_name, specification in catalog.event_specs.items():
+        payload_type = specification.payload_type
+        declared_fields: set[str] = set()
+        nested_fields: set[str] = set()
+        for field_name, model_field in payload_type.model_fields.items():
+            declared_fields.add(field_name)
+            if model_field.alias is not None:
+                declared_fields.add(model_field.alias)
+            for variant in _payload_model_variants(model_field.annotation, BaseModel):
+                for nested_name, nested_field in variant.model_fields.items():
+                    nested_fields.add(nested_name)
+                    if nested_field.alias is not None:
+                        nested_fields.add(nested_field.alias)
+        declared[event_name] = frozenset(declared_fields)
+        nested[event_name] = frozenset(nested_fields)
+        class_events.setdefault(payload_type.__name__, event_name)
+        classes.setdefault(payload_type.__name__, payload_type)
+    return ConsumerSchema(
+        event_names=frozenset(catalog.event_specs),
+        declared_fields=declared,
+        nested_record_fields=nested,
+        payload_class_events=class_events,
+        payload_classes=classes,
+    )
+
+
+def consumer_domain_event_names(domain: str | None) -> frozenset[str]:
+    """Resolve a consumer scan domain to the converted event names it covers."""
+
+    schema = _consumer_schema()
+    if domain is None:
+        return schema.event_names
+    needle = domain.casefold()
+    names = CONSUMER_DOMAIN_EVENT_NAMES.get(needle, DOMAIN_EVENT_NAMES.get(needle))
+    if names is None:
+        raise UnknownConsumerDomainError(domain)
+    return frozenset(names) & schema.event_names
+
+
+def _seed_validation_error(event_name: str, payload: dict[str, Any]) -> str | None:
+    """Validate one statically-known seed payload exactly as append would."""
+
+    from datetime import UTC, datetime
+
+    from orchestrator.graph import Actor, ActorKind, EventEnvelope
+    from orchestrator.graph_runtime import (
+        InvalidGraphEventPayloadError,
+        stored_graph_event,
+        validate_catalog_event_payload,
+    )
+
+    try:
+        envelope = EventEnvelope(
+            event_id="w5-consumer-scan",
+            run_id="w5-consumer-scan",
+            position=-1,
+            event_type=event_name,
+            schema_version=1,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+            payload=payload,
+        )
+        stored = stored_graph_event(envelope, run_id="w5-consumer-scan", position=1)
+        validate_catalog_event_payload(_cached_catalog(), stored)
+    except (InvalidGraphEventPayloadError, ValueError, TypeError) as error:
+        return str(error).splitlines()[0]
+    return None
+
+
+@dataclass
+class _ConsumerScope:
+    referenced_events: set[str] = field(default_factory=set)
+    payload_reads: list[ast.AST] = field(default_factory=list)
+    event_payload_names: set[str] = field(default_factory=set)
+    record_dict_names: set[str] = field(default_factory=set)
+    typed_variables: dict[str, str] = field(default_factory=dict)
+    typed_expressions: dict[str, str] = field(default_factory=dict)
+    attribute_reads: list[ast.Attribute] = field(default_factory=list)
+
+
+def _consumer_payload_base(node: ast.expr, scope: _ConsumerScope) -> bool:
+    if (
+        isinstance(node, ast.Attribute)
+        and node.attr == "payload"
+        and isinstance(node.value, ast.Name)
+        and node.value.id in {"event", "graph_event"}
+    ):
+        return True
+    if isinstance(node, ast.Name) and node.id in scope.event_payload_names:
+        return True
+    if isinstance(node, ast.Subscript):
+        return (
+            _literal_strings(node.slice) == ("payload",)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in {"event", "graph_event"}
+        )
+    return False
+
+
+def _consumer_payload_read(node: ast.AST, scope: _ConsumerScope) -> str | None:
+    if isinstance(node, ast.Subscript) and _consumer_payload_base(node.value, scope):
+        fields = _literal_strings(node.slice)
+        if fields:
+            return fields[0]
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "get"
+        and _consumer_payload_base(node.func.value, scope)
+        and node.args
+    ):
+        fields = _literal_strings(node.args[0])
+        if fields:
+            return fields[0]
+    return None
+
+
+def _read_base_expression(node: ast.AST) -> ast.expr | None:
+    if isinstance(node, ast.Subscript):
+        return node.value
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return node.func.value
+    return None
+
+
+def _is_bare_string_statement(node: ast.Constant, parsed: _ParsedFile) -> bool:
+    return isinstance(parsed.parents.get(node), ast.Expr)
+
+
+def _annotation_class_name(annotation: ast.expr | None) -> str | None:
+    if annotation is None:
+        return None
+    if isinstance(annotation, ast.Name):
+        return annotation.id
+    if isinstance(annotation, ast.Attribute):
+        return annotation.attr
+    return None
+
+
+def _track_isinstance_guard(
+    call: ast.Call,
+    scope: _ConsumerScope,
+    schema: ConsumerSchema,
+) -> None:
+    if not (isinstance(call.func, ast.Name) and call.func.id == "isinstance"):
+        return
+    if len(call.args) != 2:
+        return
+    guarded, class_expr = call.args
+    class_exprs = class_expr.elts if isinstance(class_expr, ast.Tuple) else [class_expr]
+    for candidate in class_exprs:
+        class_name = _annotation_class_name(candidate)
+        if class_name is not None and class_name in schema.payload_class_events:
+            scope.typed_expressions[ast.unparse(guarded)] = class_name
+            if isinstance(guarded, ast.Name):
+                scope.typed_variables.setdefault(guarded.id, class_name)
+
+
+def _model_validate_class_name(value: ast.expr) -> str | None:
+    if not (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Attribute)
+        and value.func.attr in {"model_validate", "model_validate_json"}
+    ):
+        return None
+    owner = value.func.value
+    if isinstance(owner, ast.Name):
+        return owner.id
+    if isinstance(owner, ast.Attribute):
+        return owner.attr
+    return None
+
+
+def _expression_extracts_record(value: ast.expr) -> bool:
+    for child in ast.walk(value):
+        if isinstance(child, ast.Attribute) and child.attr in {"record", "model_dump"}:
+            return True
+        if isinstance(child, ast.Subscript) and _literal_strings(child.slice) == ("record",):
+            return True
+    return False
+
+
+def _track_consumer_assignment(
+    node: ast.Assign | ast.AnnAssign,
+    scope: _ConsumerScope,
+    schema: ConsumerSchema,
+) -> None:
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    names = [target.id for target in targets if isinstance(target, ast.Name)]
+    if not names:
+        return
+    if isinstance(node, ast.AnnAssign):
+        class_name = _annotation_class_name(node.annotation)
+        if class_name is not None and class_name in schema.payload_class_events:
+            for name in names:
+                scope.typed_variables[name] = class_name
+    value = node.value
+    if value is None:
+        return
+    if _consumer_payload_base(value, scope):
+        scope.event_payload_names.update(names)
+        return
+    class_name = _model_validate_class_name(value)
+    if class_name is not None and class_name in schema.payload_class_events:
+        for name in names:
+            scope.typed_variables[name] = class_name
+            scope.record_dict_names.discard(name)
+        return
+    if _expression_extracts_record(value):
+        for name in names:
+            scope.record_dict_names.add(name)
+            scope.typed_variables.pop(name, None)
+
+
+def _consumer_snippet(node: ast.AST) -> str:
+    text = ast.unparse(node)
+    if len(text) > _MAX_SNIPPET_LENGTH:
+        return text[: _MAX_SNIPPET_LENGTH - 3] + "..."
+    return text
+
+
+def _consumer_site(
+    parsed: _ParsedFile,
+    node: ast.AST,
+    event_name: str,
+    classification: str,
+    detail: str | None = None,
+) -> ConsumerSite:
+    snippet = _consumer_snippet(node)
+    if detail:
+        snippet = f"{snippet} -- {detail}"
+    return ConsumerSite(
+        str(parsed.path),
+        node.lineno,
+        node.col_offset,
+        event_name,
+        classification,
+        snippet,
+    )
+
+
+def _record_wrapping_helper_names(parsed: _ParsedFile) -> frozenset[str]:
+    names: set[str] = set()
+    for name, function in parsed.functions.items():
+        if name not in _SEED_FACTORY_NAMES:
+            continue
+        for child in ast.walk(function):
+            if isinstance(child, ast.Dict) and any(
+                key is not None and _literal_strings(key) == ("record",) for key in child.keys
+            ):
+                names.add(name)
+                break
+    return frozenset(names)
+
+
+def _seed_call_parts(
+    call: ast.Call,
+    factory_name: str,
+    schema: ConsumerSchema,
+) -> tuple[str | None, ast.expr | None]:
+    payload_expr = next((kw.value for kw in call.keywords if kw.arg == "payload"), None)
+    if factory_name == "EventEnvelope":
+        event_expr = next((kw.value for kw in call.keywords if kw.arg == "event_type"), None)
+        if event_expr is None and len(call.args) > 3:
+            event_expr = call.args[3]
+        event_values = _literal_strings(event_expr) if event_expr is not None else ()
+        event_name = event_values[0] if len(event_values) == 1 else None
+        return event_name, payload_expr
+    event_name = None
+    event_index = -1
+    for index, argument in enumerate(call.args):
+        values = _literal_strings(argument)
+        if len(values) == 1 and values[0] in schema.event_names:
+            event_name = values[0]
+            event_index = index
+            break
+    if event_name is None:
+        return None, payload_expr
+    if payload_expr is None:
+        remaining = [
+            argument
+            for argument in call.args[event_index + 1 :]
+            if not isinstance(argument, ast.Starred)
+        ]
+        payload_expr = next(
+            (argument for argument in remaining if isinstance(argument, ast.Dict)),
+            remaining[0] if remaining else None,
+        )
+    return event_name, payload_expr
+
+
+def _uses_explicit_invalid_payload_escape(call: ast.Call, parsed: _ParsedFile) -> bool:
+    """Whether a seed is deliberately persisted through the corruption boundary."""
+
+    current: ast.AST = call
+    while current in parsed.parents:
+        current = parsed.parents[current]
+        if not isinstance(current, ast.Call) or _call_name(current.func) != "append_events":
+            continue
+        return any(
+            keyword.arg == "allow_invalid_payloads"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in current.keywords
+        )
+    return False
+
+
+def _consumer_seed_site(
+    call: ast.Call,
+    parsed: _ParsedFile,
+    schema: ConsumerSchema,
+    requested: frozenset[str],
+    wrapping_helpers: frozenset[str],
+) -> ConsumerSite | None:
+    factory_name = _call_name(call.func)
+    if factory_name not in _SEED_FACTORY_NAMES:
+        return None
+    event_name, payload_expr = _seed_call_parts(call, factory_name, schema)
+    if event_name is None or event_name not in requested or payload_expr is None:
+        return None
+    if _uses_explicit_invalid_payload_escape(call, parsed):
+        return None
+    try:
+        literal = ast.literal_eval(payload_expr)
+    except (ValueError, TypeError, SyntaxError):
+        return _consumer_site(parsed, call, event_name, "unverifiable_seed")
+    if not isinstance(literal, dict):
+        return _consumer_site(
+            parsed, call, event_name, "invalid_seed", "payload literal is not an object"
+        )
+    typed_literal = cast(dict[str, Any], literal)
+    error = _seed_validation_error(event_name, typed_literal)
+    if error is None:
+        return None
+    if factory_name in wrapping_helpers and "record" not in typed_literal:
+        wrapped_error = _seed_validation_error(event_name, {"record": typed_literal})
+        if wrapped_error is None:
+            return None
+    return _consumer_site(parsed, call, event_name, "invalid_seed", error)
+
+
+def _is_declared_payload_attribute(payload_type: Any, attribute: str) -> bool:
+    if attribute in payload_type.model_fields:
+        return True
+    if any(model_field.alias == attribute for model_field in payload_type.model_fields.values()):
+        return True
+    return hasattr(payload_type, attribute)
+
+
+def _event_type_condition(test: ast.expr) -> tuple[str, str] | None:
+    if not (
+        isinstance(test, ast.Compare)
+        and len(test.ops) == 1
+        and len(test.comparators) == 1
+        and isinstance(test.left, ast.Attribute)
+        and test.left.attr == "event_type"
+        and isinstance(test.left.value, ast.Name)
+        and test.left.value.id in {"event", "graph_event"}
+    ):
+        return None
+    values = _literal_strings(test.comparators[0])
+    if len(values) != 1:
+        return None
+    if isinstance(test.ops[0], ast.Eq):
+        return ("equals", values[0])
+    if isinstance(test.ops[0], ast.NotEq):
+        return ("not_equals", values[0])
+    return None
+
+
+def _event_type_conditions(test: ast.expr) -> tuple[tuple[str, str], ...]:
+    direct = _event_type_condition(test)
+    if direct is not None:
+        return (direct,)
+    if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+        return tuple(
+            condition for value in test.values for condition in _event_type_conditions(value)
+        )
+    return ()
+
+
+def _events_for_consumer_node(
+    parsed: _ParsedFile,
+    node: ast.AST,
+    events: set[str],
+) -> set[str]:
+    """Narrow a shared reducer scope to enclosing event-type branches."""
+
+    narrowed = set(events)
+    narrowed_by_event_type = False
+    child = node
+    while (parent := parsed.parents.get(child)) is not None:
+        if isinstance(parent, ast.If):
+            condition = _event_type_condition(parent.test)
+            if condition is not None:
+                relation, event_name = condition
+                in_body = child in parent.body
+                in_orelse = child in parent.orelse
+                if in_body:
+                    narrowed_by_event_type = True
+                    if relation == "equals":
+                        narrowed.intersection_update({event_name})
+                    else:
+                        narrowed.discard(event_name)
+                elif in_orelse:
+                    narrowed_by_event_type = True
+                    if relation == "equals":
+                        narrowed.discard(event_name)
+                    else:
+                        narrowed.intersection_update({event_name})
+        if isinstance(parent, ast.BoolOp) and isinstance(parent.op, ast.And):
+            for relation, event_name in _event_type_conditions(parent):
+                narrowed_by_event_type = True
+                if relation == "equals":
+                    narrowed.intersection_update({event_name})
+                else:
+                    narrowed.discard(event_name)
+        child = parent
+    return narrowed if narrowed_by_event_type else set()
+
+
+def _classify_consumer_scope(
+    parsed: _ParsedFile,
+    scope: _ConsumerScope,
+    schema: ConsumerSchema,
+    requested: frozenset[str],
+) -> list[ConsumerSite]:
+    sites: list[ConsumerSite] = []
+    events = scope.referenced_events & requested
+    for node in scope.payload_reads:
+        field_name = _consumer_payload_read(node, scope)
+        if field_name is None:
+            continue
+        base = _read_base_expression(node)
+        if isinstance(base, ast.Name) and base.id in scope.record_dict_names:
+            continue
+        for event_name in sorted(_events_for_consumer_node(parsed, node, events)):
+            if field_name in schema.declared_fields[event_name]:
+                continue
+            if field_name in schema.nested_record_fields[event_name]:
+                sites.append(_consumer_site(parsed, node, event_name, "flat_shape_read"))
+    for attribute in scope.attribute_reads:
+        class_name = None
+        if isinstance(attribute.value, ast.Name):
+            class_name = scope.typed_variables.get(attribute.value.id)
+        if class_name is None and scope.typed_expressions:
+            class_name = scope.typed_expressions.get(ast.unparse(attribute.value))
+        if class_name is None:
+            continue
+        event_name = schema.payload_class_events[class_name]
+        if event_name not in requested:
+            continue
+        payload_type = schema.payload_classes[class_name]
+        if _is_declared_payload_attribute(payload_type, attribute.attr):
+            continue
+        sites.append(_consumer_site(parsed, attribute, event_name, "unknown_attribute_read"))
+    return sites
+
+
+def _consumer_sites_for_file(
+    parsed: _ParsedFile,
+    schema: ConsumerSchema,
+    requested: frozenset[str],
+) -> list[ConsumerSite]:
+    scopes: dict[ast.AST | None, _ConsumerScope] = {}
+
+    def scope_for(node: ast.AST) -> _ConsumerScope:
+        return scopes.setdefault(_owner_function(node, parsed), _ConsumerScope())
+
+    wrapping_helpers = _record_wrapping_helper_names(parsed)
+    sites: list[ConsumerSite] = []
+    for node in ast.walk(parsed.tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if node.value in schema.event_names and not _is_bare_string_statement(node, parsed):
+                scope_for(node).referenced_events.add(node.value)
+        elif isinstance(node, ast.Call):
+            scope_for(node).payload_reads.append(node)
+            _track_isinstance_guard(node, scope_for(node), schema)
+            seed = _consumer_seed_site(node, parsed, schema, requested, wrapping_helpers)
+            if seed is not None:
+                sites.append(seed)
+        elif isinstance(node, ast.Subscript):
+            scope_for(node).payload_reads.append(node)
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            _track_consumer_assignment(node, scope_for(node), schema)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            scope = scopes.setdefault(node, _ConsumerScope())
+            arguments = (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+            for argument in arguments:
+                class_name = _annotation_class_name(argument.annotation)
+                if class_name is not None and class_name in schema.payload_class_events:
+                    scope.typed_variables[argument.arg] = class_name
+        elif isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            scope_for(node).attribute_reads.append(node)
+    for scope in scopes.values():
+        sites.extend(_classify_consumer_scope(parsed, scope, schema, requested))
+    return sites
+
+
+def scan_payload_consumers(
+    paths: Sequence[Path],
+    event_names: Iterable[str] | None = None,
+) -> tuple[ConsumerSite, ...]:
+    """Scan consumer-side payload usage for converted catalog-owned events."""
+
+    schema = _consumer_schema()
+    requested = (
+        schema.event_names if event_names is None else frozenset(event_names) & schema.event_names
+    )
+    expanded: list[Path] = []
+    for path in paths:
+        expanded.extend(path.rglob("*.py") if path.is_dir() else [path])
+    sites: list[ConsumerSite] = []
+    for path in sorted(set(expanded), key=str):
+        parsed = _parse(path)
+        sites.extend(_consumer_sites_for_file(parsed, schema, requested))
+    return tuple(sorted(set(sites)))
+
+
+def render_consumer_report(
+    sites: Sequence[ConsumerSite],
+    event_names: Iterable[str],
+) -> str:
+    counts: dict[str, int] = {name: 0 for name in CONSUMER_REPORT_CLASSIFICATIONS}
+    for site in sites:
+        counts[site.classification] = counts.get(site.classification, 0) + 1
+    lines = [
+        f"Consumer payload scan ({len(sites)} sites) for events: "
+        + (", ".join(sorted(event_names)) or "<none>"),
+        "Counts: "
+        + ", ".join(f"{name}={counts.get(name, 0)}" for name in CONSUMER_REPORT_CLASSIFICATIONS),
+    ]
+    lines.extend(
+        f"{site.path}:{site.line}:{site.column} {site.event} {site.classification} {site.snippet}"
+        for site in sites
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _default_consumer_paths() -> tuple[Path, ...]:
+    return (Path("src/orchestrator"), Path("tests"))
+
+
+def _run_consumer_scan(args: argparse.Namespace) -> int:
+    domain = args.check_consumers or args.domain
+    try:
+        event_names = consumer_domain_event_names(domain)
+    except UnknownConsumerDomainError as error:
+        print(f"unknown consumer domain: {error}", file=sys.stderr)
+        return 2
+    paths = tuple(args.paths) or _default_consumer_paths()
+    sites = scan_payload_consumers(paths, event_names)
+    if args.consumer_report:
+        rendered = render_consumer_report(sites, event_names)
+        if args.output is None:
+            sys.stdout.write(rendered)
+        else:
+            args.output.write_text(rendered)
+    if args.check_consumers:
+        failing = [
+            site for site in sites if site.classification in CONSUMER_FAILING_CLASSIFICATIONS
+        ]
+        for site in failing:
+            print(
+                f"{site.path}:{site.line}:{site.column} {site.event} "
+                f"{site.classification}: {site.snippet}",
+                file=sys.stderr,
+            )
+        return 1 if failing else 0
+    return 0
+
+
 def _default_paths() -> tuple[Path, ...]:
     return (Path("src/orchestrator/graph"), Path("src/orchestrator/graph_runtime"))
 
@@ -949,12 +1637,17 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--output", type=Path)
     parser.add_argument("--check-baseline", action="store_true")
     parser.add_argument("--check-domain")
+    parser.add_argument("--consumer-report", action="store_true")
+    parser.add_argument("--domain")
+    parser.add_argument("--check-consumers", metavar="NAME")
     parser.add_argument("paths", nargs="*", type=Path)
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = _parse_args(argv)
+    if args.consumer_report or args.check_consumers:
+        return _run_consumer_scan(args)
     report = scan_graph_payload_architecture(args.paths or _default_paths())
     rendered = report.to_json() if args.format == "json" else report.to_text()
     if args.output is None:

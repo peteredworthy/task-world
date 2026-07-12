@@ -39,10 +39,12 @@ async def seed_run(
     durable graph topology and static input facts, so they do not produce
     side-effect outbox rows.
     """
+    catalog = build_graph_catalog()
     planned_events = compile_routine(
         routine,
         clock,
         id_gen,
+        catalog=catalog,
         run_id=run_id,
         source_path=source_path,
         source_ref=source_ref,
@@ -53,13 +55,13 @@ async def seed_run(
         clock,
         id_gen,
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
+        catalog=catalog,
         future_effects=build_graph_command_dependencies().future_effects,
     ).handle_command(
         run_id,
         expected_position,
         "seed_compiled_events",
-        {"events": planned_events},
+        {"events": tuple(planned_events)},
     )
     return SeedRunResult(
         events=result.events,

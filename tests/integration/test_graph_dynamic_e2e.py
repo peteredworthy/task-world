@@ -859,8 +859,8 @@ async def test_dynamic_full_happy_path_completes(
         event.payload
         for event in events
         if event.event_type == "output_record_accepted"
-        and event.payload.get("record_type") == "verification_report"
-        and event.payload.get("value", {}).get("outcome") == "passed"
+        and event.payload["record"].get("record_type") == "verification_report"
+        and event.payload["record"].get("value", {}).get("outcome") == "passed"
     ]
     assert passed_reports, "expected explicit passed verification_report outcome"
     assert any(
@@ -871,8 +871,8 @@ async def test_dynamic_full_happy_path_completes(
     )
     assert any(
         event.event_type == "output_record_accepted"
-        and event.payload.get("record_type") == "check_result"
-        and event.payload.get("value", {}).get("status") == "passed"
+        and event.payload["record"].get("record_type") == "check_result"
+        and event.payload["record"].get("value", {}).get("status") == "passed"
         for event in events
     ), "expected final invariant check_result before completion"
 
@@ -978,8 +978,8 @@ async def test_passed_verifier_with_failure_only_gap_terminalizes_to_final_check
     }.issubset(retired_node_ids)
     assert any(
         event.event_type == "output_record_accepted"
-        and event.payload.get("record_type") == "check_result"
-        and event.payload.get("value", {}).get("status") == "passed"
+        and event.payload["record"].get("record_type") == "check_result"
+        and event.payload["record"].get("value", {}).get("status") == "passed"
         for event in events
     )
 
@@ -1139,8 +1139,8 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
         event.payload
         for event in events
         if event.event_type == "output_record_accepted"
-        and event.payload.get("record_type") == "check_result"
-        and event.payload.get("value", {}).get("status") == "failed"
+        and event.payload["record"].get("record_type") == "check_result"
+        and event.payload["record"].get("value", {}).get("status") == "failed"
     ]
     assert failed_check_results, "expected a failed deterministic check_result"
 

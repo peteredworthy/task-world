@@ -134,14 +134,26 @@ def test_planner_patch_binds_dynamic_feature_hidden_oracle_command() -> None:
     events = [
         *_planner_events(),
         _event(
-            "node_created",
+            "output_record_accepted",
             {
-                "node_id": "routine-snapshot",
-                "kind": "artifact",
-                "state": "completed",
-                "snapshot": {
-                    "dynamic_feature": {"hidden_oracle_command": "uv run pytest tests/oracle -q"}
-                },
+                "record": {
+                    "record_id": "routine-snapshot-record",
+                    "record_kind": "graph_record",
+                    "record_type": "routine_snapshot",
+                    "producer_node_id": "routine-snapshot",
+                    "port": "routine_snapshot",
+                    "schema": "RoutineSnapshot",
+                    "value": {
+                        "dynamic_feature": {
+                            "hidden_oracle_command": "uv run pytest tests/oracle -q"
+                        },
+                        "routine_id": "routine-1",
+                        "name": "Test Routine",
+                        "content_hash": "test-content-hash",
+                        "step_count": 1,
+                        "task_count": 1,
+                    },
+                }
             },
         ),
     ]

@@ -80,7 +80,8 @@ def _node_evidence_summary(node_id: str, events: list[EventEnvelope], state: str
         payload = event.payload
         if (
             event.event_type == "output_record_accepted"
-            and payload.get("producer_node_id") == node_id
+            and isinstance(payload.get("record"), dict)
+            and payload["record"].get("producer_node_id") == node_id
         ):
             output_records += 1
         elif (

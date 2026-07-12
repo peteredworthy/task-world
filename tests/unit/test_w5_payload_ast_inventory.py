@@ -1,13 +1,39 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from scripts.w5_payload_ast_inventory import (
     BASELINE_COMMAND_NAMES,
     BASELINE_EVENT_NAMES,
+    main as inventory_main,
+    render_consumer_report,
     scan_graph_payload_architecture,
+    scan_payload_consumers,
 )
+
+
+def test_inventory_cli_runs_when_invoked_as_a_script() -> None:
+    root = Path(__file__).parents[2]
+
+    result = subprocess.run(
+        (
+            sys.executable,
+            "scripts/w5_payload_ast_inventory.py",
+            "--format",
+            "json",
+            "src/orchestrator/graph/events",
+        ),
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "literal_event_names" in json.loads(result.stdout)
 
 
 SAMPLE_EVENT_AND_COMMAND_SOURCE = """\
@@ -107,6 +133,52 @@ emit("second", {})
 def test_repository_baseline_constants_have_expected_counts() -> None:
     assert len(BASELINE_EVENT_NAMES) == 44
     assert len(BASELINE_COMMAND_NAMES) == 23
+
+
+def test_inventory_recognizes_typed_lifecycle_specs_and_dispatch_sites() -> None:
+    """Typed declarations remain part of the authoritative 44/23 inventory."""
+    report = scan_graph_payload_architecture(
+        [Path("src/orchestrator/graph"), Path("src/orchestrator/graph_runtime")]
+    )
+
+    assert {
+        "agent_died",
+        "agent_dispatch_requested",
+        "callback_accepted",
+        "callback_duplicate_returned",
+        "callback_rejected_conflict",
+        "callback_rejected_stale",
+        "command_rejected",
+        "heartbeat_recorded",
+        "run_lifecycle_changed",
+        "runtime_retry_scheduled",
+    } <= report.produced_event_names
+    assert {
+        "accept_run",
+        "acknowledge_start",
+        "agent_died",
+        "cancel",
+        "complete",
+        "fail",
+        "pause",
+        "resume",
+        "seed_compiled_events",
+        "start",
+        "submit_callback",
+    } <= set(report.command_names)
+
+    classifications = {
+        (Path(site.path).as_posix(), site.expression): site.classification
+        for site in report.dynamic_event_sites
+    }
+    assert (
+        classifications[("src/orchestrator/graph/_commands.py", "specification.name")]
+        == "typed_specification_dispatch"
+    )
+    assert (
+        classifications[("src/orchestrator/graph/projections.py", "metadata.event_type")]
+        == "typed_specification_dispatch"
+    )
 
 
 def test_inventory_locates_allowlist_comprehension_consumers(tmp_path: Path) -> None:
@@ -645,3 +717,277 @@ def apply_temporary_unconverted_lease_renewal(command):
     assert {item.category for item in check_paths([source], domain="leases")} == {
         "temporary unconverted marker"
     }
+
+
+CONSUMER_READ_SOURCE = """\
+from typing import Any
+
+from orchestrator.graph.events.records import OutputRecordAcceptedPayload
+
+
+def read_flat_subscript(event: Any) -> Any:
+    if event.event_type == "output_record_accepted":
+        return event.payload["record_type"]
+    return None
+
+
+def read_flat_get(event: Any) -> Any:
+    if event.event_type == "output_record_accepted":
+        return event.payload.get("record_id")
+    return None
+
+
+def read_nested(event: Any) -> Any:
+    if event.event_type != "output_record_accepted":
+        return None
+    return event.payload["record"]["record_type"]
+
+
+def read_missing_attribute(event: Any) -> str:
+    payload = OutputRecordAcceptedPayload.model_validate(event.payload)
+    return payload.record_id
+
+
+def read_declared_attribute(event: Any) -> str:
+    payload = OutputRecordAcceptedPayload.model_validate(event.payload)
+    return payload.record.record_id
+
+
+def read_record_dump(event: Any) -> Any:
+    if event.event_type != "output_record_accepted":
+        return None
+    payload = OutputRecordAcceptedPayload.model_validate(event.payload).record.model_dump()
+    return payload.get("record_id")
+
+
+def read_isinstance_guarded(events: list) -> object:
+    return next(
+        event
+        for event in events
+        if event.metadata.event_type == "output_record_accepted"
+        and isinstance(event.payload, OutputRecordAcceptedPayload)
+        and event.payload.record_id == "routine-snapshot-record"
+    )
+"""
+
+
+CONSUMER_SEED_SOURCE = """\
+from typing import Any
+
+from orchestrator.graph import EventEnvelope
+
+
+def seed_valid() -> object:
+    return EventEnvelope(
+        event_id="evt-valid",
+        run_id="run-1",
+        position=-1,
+        event_type="output_record_accepted",
+        schema_version=1,
+        actor=None,
+        timestamp=None,
+        payload={
+            "record": {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "record_type": "candidate",
+                "candidate_id": "candidate-1",
+                "value": {"summary": "done"},
+            }
+        },
+    )
+
+
+def seed_flat_invalid() -> object:
+    return EventEnvelope(
+        event_type="output_record_accepted",
+        payload={
+            "record_type": "candidate",
+            "record_id": "candidate-2",
+            "value": {"summary": "done"},
+        },
+    )
+
+
+def seed_make_event_flat() -> object:
+    return make_event("output_record_accepted", {"record_type": "candidate"})
+
+
+def seed_dynamic(payload: dict[str, Any]) -> object:
+    return EventEnvelope(event_type="output_record_accepted", payload=payload)
+
+
+def _event(event_type: str, payload: dict[str, Any]) -> object:
+    body = {"record": payload} if "record" not in payload else payload
+    return EventEnvelope(event_type=event_type, payload=body)
+
+
+def seed_wrapped_valid() -> object:
+    return _event(
+        "output_record_accepted",
+        {
+            "record_id": "candidate-3",
+            "record_kind": "output",
+            "producer_node_id": "worker-1",
+            "port": "candidate",
+            "schema": "ImplementationCandidate",
+            "record_type": "candidate",
+            "candidate_id": "candidate-3",
+            "value": {"summary": "done"},
+        },
+    )
+"""
+
+
+def test_consumer_scan_flags_flat_reads_and_attribute_misses_only(tmp_path: Path) -> None:
+    source = tmp_path / "consumer_reads.py"
+    source.write_text(CONSUMER_READ_SOURCE)
+
+    sites = scan_payload_consumers([source], frozenset({"output_record_accepted"}))
+
+    flat = [site for site in sites if site.classification == "flat_shape_read"]
+    assert {site.snippet for site in flat} == {
+        "event.payload['record_type']",
+        "event.payload.get('record_id')",
+    }
+    attribute_misses = [site for site in sites if site.classification == "unknown_attribute_read"]
+    assert {site.snippet for site in attribute_misses} == {
+        "payload.record_id",
+        "event.payload.record_id",
+    }
+    assert all(site.event == "output_record_accepted" for site in sites)
+    # The correct nested form and declared attribute chains are not flagged.
+    assert len(sites) == 4
+    assert all("['record']['record_type']" not in site.snippet for site in sites)
+
+
+def test_consumer_scan_requires_event_payload_provenance_for_local_payload_names(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "payload_provenance.py"
+    source.write_text(
+        """\
+def command(payload: dict[str, object], event: object) -> object:
+    emitted = make_event("output_record_accepted", {"record": {}})
+    requested_id = payload.get("record_id")
+    event_payload = event.payload
+    if event.event_type == "output_record_accepted":
+        return emitted, requested_id, event_payload.get("record_id")
+    return emitted, requested_id, None
+"""
+    )
+
+    sites = scan_payload_consumers([source], frozenset({"output_record_accepted"}))
+
+    assert [site.snippet for site in sites if site.classification == "flat_shape_read"] == [
+        "event_payload.get('record_id')"
+    ]
+
+
+def test_consumer_scan_narrows_shared_event_payload_reads_to_the_matching_branch(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "event_branch.py"
+    source.write_text(
+        """\
+def reduce(event: object) -> object:
+    payload = event.payload
+    if event.event_type == "node_created":
+        return payload.get("task_region_id")
+    if event.event_type == "output_record_accepted":
+        return payload.get("record_id")
+    return None
+"""
+    )
+
+    sites = scan_payload_consumers([source], frozenset({"output_record_accepted"}))
+
+    assert [site.snippet for site in sites if site.classification == "flat_shape_read"] == [
+        "payload.get('record_id')"
+    ]
+
+
+def test_routine_compile_uses_nested_output_record_attributes() -> None:
+    source = Path("tests/integration/test_graph_routine_compile.py")
+
+    sites = scan_payload_consumers([source], frozenset({"output_record_accepted"}))
+
+    assert [site for site in sites if site.classification == "unknown_attribute_read"] == []
+
+
+def test_consumer_scan_validates_seed_literals_against_the_catalog(tmp_path: Path) -> None:
+    source = tmp_path / "consumer_seeds.py"
+    source.write_text(CONSUMER_SEED_SOURCE)
+
+    sites = scan_payload_consumers([source], frozenset({"output_record_accepted"}))
+
+    by_classification: dict[str, list[str]] = {}
+    for site in sites:
+        by_classification.setdefault(site.classification, []).append(site.snippet)
+    invalid = by_classification.pop("invalid_seed")
+    assert len(invalid) == 2
+    assert any("seed" not in snippet or "record_type" in snippet for snippet in invalid)
+    assert by_classification.pop("unverifiable_seed") == [
+        "EventEnvelope(event_type='output_record_accepted', payload=payload)"
+    ]
+    # Valid seeds (direct nested and helper-wrapped) produce no findings.
+    assert by_classification == {}
+
+
+def test_consumer_scan_excludes_explicit_intentional_corruption_boundary(tmp_path: Path) -> None:
+    source = tmp_path / "intentional_corruption.py"
+    source.write_text(
+        """\
+async def persist(store, run_id):
+    await store.append_events(
+        run_id,
+        0,
+        [
+            _event(
+                "output_record_accepted",
+                {"record": {"record_id": "intentionally-malformed"}},
+            )
+        ],
+        allow_invalid_payloads=True,
+    )
+"""
+    )
+
+    sites = scan_payload_consumers([source], frozenset({"output_record_accepted"}))
+
+    assert sites == ()
+
+
+def test_check_consumers_cli_fails_on_flat_read_and_passes_when_clean(tmp_path: Path) -> None:
+    dirty = tmp_path / "dirty.py"
+    dirty.write_text(CONSUMER_READ_SOURCE)
+    clean = tmp_path / "clean.py"
+    clean.write_text(
+        """\
+def read_nested(event):
+    if event.event_type != "output_record_accepted":
+        return None
+    return event.payload["record"]["record_type"]
+"""
+    )
+
+    assert inventory_main(["--check-consumers", "records", str(dirty)]) == 1
+    assert inventory_main(["--check-consumers", "records", str(clean)]) == 0
+    assert inventory_main(["--check-consumers", "no-such-domain", str(clean)]) == 2
+
+
+def test_consumer_report_lists_sites_deterministically(tmp_path: Path) -> None:
+    source = tmp_path / "consumer_reads.py"
+    source.write_text(CONSUMER_READ_SOURCE)
+
+    first = scan_payload_consumers([source], frozenset({"output_record_accepted"}))
+    second = scan_payload_consumers([source], frozenset({"output_record_accepted"}))
+    assert first == second
+
+    rendered = render_consumer_report(first, frozenset({"output_record_accepted"}))
+    assert rendered.splitlines()[0].startswith("Consumer payload scan (4 sites)")
+    assert "flat_shape_read=2" in rendered
+    assert "unknown_attribute_read=2" in rendered

@@ -72,7 +72,10 @@ def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -188,11 +191,9 @@ async def _seed_control_topology_graph_run(app: Any, run_id: str) -> None:
             "node_authority_changed",
             {
                 "node_id": "worker-control",
-                "authority": {
-                    "resource_claims": [{"mode": "write", "scope": "paths", "paths": ["src/"]}],
-                    "allowed_actions": ["submit", "record_heartbeat"],
-                    "preconditions": ["candidate_bound", "no_active_conflicts"],
-                },
+                "resource_claims": [{"mode": "write", "scope": "paths", "paths": ["src/"]}],
+                "allowed_actions": ["submit", "record_heartbeat"],
+                "preconditions": ["candidate_bound", "no_active_conflicts"],
             },
         ),
         _event(
@@ -224,12 +225,16 @@ async def _seed_control_topology_graph_run(app: Any, run_id: str) -> None:
         _event(
             "output_record_accepted",
             {
-                "record_id": "candidate-control",
-                "record_kind": "output",
-                "producer_node_id": "worker-control",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "value": {"summary": "control readback candidate"},
+                "record": {
+                    "record_id": "candidate-control",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-control",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "value": {"summary": "control readback candidate"},
+                    "candidate_id": "candidate-control",
+                }
             },
         ),
         _event(
@@ -274,34 +279,38 @@ async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
         _event(
             "output_record_accepted",
             {
-                "record_id": "artifact-callback",
-                "record_kind": "graph_record",
-                "record_type": "artifact_reference",
-                "producer_node_id": "worker-callback",
-                "port": "artifact",
-                "schema": "ContextArtifact",
-                "value": {
-                    "artifact_id": "stdout",
-                    "artifact_type": "agent_output",
-                    "uri": "artifacts/stdout.txt",
-                },
+                "record": {
+                    "record_id": "artifact-callback",
+                    "record_kind": "graph_record",
+                    "record_type": "artifact_reference",
+                    "producer_node_id": "worker-callback",
+                    "port": "artifact",
+                    "schema": "ContextArtifact",
+                    "value": {
+                        "artifact_id": "stdout",
+                        "artifact_type": "agent_output",
+                        "uri": "artifacts/stdout.txt",
+                    },
+                }
             },
         ),
         _event(
             "output_record_accepted",
             {
-                "record_id": "failure-callback",
-                "record_kind": "graph_record",
-                "record_type": "failure_record",
-                "producer_node_id": "worker-callback",
-                "port": "failure_record",
-                "schema": "FailureRecord",
-                "value": {
-                    "failed_node_id": "worker-callback",
-                    "phase": "runtime",
-                    "error_class": "agent_error",
-                    "retryable": True,
-                },
+                "record": {
+                    "record_id": "failure-callback",
+                    "record_kind": "graph_record",
+                    "record_type": "failure_record",
+                    "producer_node_id": "worker-callback",
+                    "port": "failure_record",
+                    "schema": "FailureRecord",
+                    "value": {
+                        "failed_node_id": "worker-callback",
+                        "phase": "runtime",
+                        "error_class": "agent_error",
+                        "retryable": True,
+                    },
+                }
             },
         ),
     ]
@@ -976,7 +985,7 @@ async def test_active_graph_execution_readback_uses_bounded_summary_paths(
     node = node_resp.json()
     assert node["node_id"] == active_node_id
     assert node["active_lease"]["state"] == "active"
-    assert "routine" not in str(node["events"])
+    assert all("routine" not in event["payload"] for event in node["events"])
 
 
 async def test_graph_projection_routes_recreate_deleted_read_models(
@@ -1122,12 +1131,14 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
         _event(
             "output_record_accepted",
             {
-                "record_id": "plan-1",
-                "record_kind": "output",
-                "producer_node_id": "planner-s-01",
-                "port": "plan",
-                "schema": "PlannerPacket",
-                "value": {"body": "target planner body"},
+                "record": {
+                    "record_id": "plan-1",
+                    "record_kind": "output",
+                    "producer_node_id": "planner-s-01",
+                    "port": "plan",
+                    "schema": "PlannerPacket",
+                    "value": {"body": "target planner body"},
+                }
             },
         ),
         _event(
@@ -1174,12 +1185,16 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
             _event(
                 "output_record_accepted",
                 {
-                    "record_id": f"noise-{index}",
-                    "record_kind": "output",
-                    "producer_node_id": "noise-worker",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"body": "x" * 4096, "index": index},
+                    "record": {
+                        "record_id": f"noise-{index}",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "noise-worker",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "x" * 4096},
+                        "candidate_id": f"noise-{index}",
+                    }
                 },
             )
             for index in range(40)
@@ -1221,10 +1236,15 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
     assert full["output_records"][0]["value"]["body"] == "target planner body"
     assert all(record["producer_node_id"] == "planner-s-01" for record in full["output_records"])
     assert all(
-        event["payload"].get("producer_node_id", "planner-s-01") == "planner-s-01"
+        event["payload"]["record"].get("producer_node_id", "planner-s-01") == "planner-s-01"
         for event in full["events"]
+        if event["event_type"] == "output_record_accepted"
     )
-    assert all("value" not in event["payload"] for event in full["events"])
+    assert [
+        event["payload"]["record"]["value"]["body"]
+        for event in full["events"]
+        if event["event_type"] == "output_record_accepted"
+    ] == ["target planner body"]
 
 
 async def test_fresh_control_and_topology_readbacks_preserve_runtime_controls(

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any, cast
 
-from orchestrator.graph.models import EventEnvelope
+from orchestrator.graph.events.records import OutputRecordAcceptedPayload
+from orchestrator.graph.models import EventEnvelope, RoutineSnapshotRecord
 
 KNOWN_CHECK_COMMAND_BINDINGS = frozenset({"dynamic_feature_hidden_oracle"})
 
@@ -96,12 +97,8 @@ def check_command_uses_acceptance_fallback(
     if node_payload.get("command_binding") != "dynamic_feature_hidden_oracle":
         return False
     for event in reversed(events):
-        snapshot = event.payload.get("snapshot")
-        if isinstance(snapshot, dict):
-            dynamic_feature = cast(dict[str, Any], snapshot).get("dynamic_feature")
-            if _dynamic_feature_uses_acceptance_fallback(dynamic_feature):
-                return True
-        if _dynamic_feature_uses_acceptance_fallback(event.payload.get("dynamic_feature")):
+        dynamic_feature = _dynamic_feature_from_routine_snapshot(event)
+        if _dynamic_feature_uses_acceptance_fallback(dynamic_feature):
             return True
     return False
 
@@ -122,16 +119,21 @@ def _shell_command_definition(
 
 def _dynamic_feature_hidden_oracle_command(events: list[EventEnvelope]) -> str | None:
     for event in reversed(events):
-        snapshot = event.payload.get("snapshot")
-        if isinstance(snapshot, dict):
-            typed_snapshot = cast(dict[str, Any], snapshot)
-            command = _hidden_oracle_from_dynamic_feature(typed_snapshot.get("dynamic_feature"))
-            if command is not None:
-                return command
-        command = _hidden_oracle_from_dynamic_feature(event.payload.get("dynamic_feature"))
+        command = _hidden_oracle_from_dynamic_feature(_dynamic_feature_from_routine_snapshot(event))
         if command is not None:
             return command
     return None
+
+
+def _dynamic_feature_from_routine_snapshot(event: EventEnvelope) -> dict[str, Any] | None:
+    if event.event_type != "output_record_accepted":
+        return None
+    accepted = OutputRecordAcceptedPayload.model_validate(event.payload)
+    record = accepted.record
+    if not isinstance(record, RoutineSnapshotRecord):
+        return None
+    dynamic_feature = record.value.dynamic_feature
+    return dynamic_feature if isinstance(dynamic_feature, dict) else None
 
 
 def _hidden_oracle_from_dynamic_feature(dynamic_feature: Any) -> str | None:

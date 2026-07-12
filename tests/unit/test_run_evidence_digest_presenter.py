@@ -52,7 +52,10 @@ def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnve
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -108,10 +111,15 @@ def _graph_events(step_id: str, task_id: str) -> list[EventEnvelope]:
         _event(
             "output_record_accepted",
             {
-                "record_id": "output-1",
-                "record_kind": "output",
-                "producer_node_id": "node-a",
-                "summary": "output summary",
+                "record": {
+                    "record_id": "output-1",
+                    "record_kind": "output",
+                    "record_type": "output_summary",
+                    "producer_node_id": "node-a",
+                    "port": "output",
+                    "schema": "OutputSummary",
+                    "value": {"summary": "output summary"},
+                }
             },
             2,
         ),

@@ -9,6 +9,10 @@ class StaleProjectionError(GraphRuntimeError):
     """Raised when a command appends against a stale run-local position."""
 
 
+class InvalidGraphEventPayloadError(GraphRuntimeError):
+    """Raised when a catalog-owned event payload fails strict validation at append."""
+
+
 class OutboxAppendError(GraphRuntimeError):
     """Raised when side-effect intent cannot be written atomically."""
 

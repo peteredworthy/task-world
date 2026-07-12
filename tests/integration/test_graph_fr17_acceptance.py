@@ -243,17 +243,19 @@ def _less_used_events(run_id: str) -> list[EventEnvelope]:
             run_id,
             "output_record_accepted",
             {
-                "record_id": "failure-record-1",
-                "record_kind": "output",
-                "record_type": "failure_record",
-                "producer_node_id": "worker-source",
-                "port": "failure_record",
-                "schema": "FailureRecord",
-                "value": {
-                    "failed_node_id": "worker-source",
-                    "phase": "runtime",
-                    "error_class": "agent_error",
-                    "retryable": True,
+                "record": {
+                    "record_id": "failure-record-1",
+                    "record_kind": "graph_record",
+                    "record_type": "failure_record",
+                    "producer_node_id": "worker-source",
+                    "port": "failure_record",
+                    "schema": "FailureRecord",
+                    "value": {
+                        "failed_node_id": "worker-source",
+                        "phase": "runtime",
+                        "error_class": "agent_error",
+                        "retryable": True,
+                    },
                 },
             },
         ),
@@ -284,13 +286,19 @@ def _less_used_events(run_id: str) -> list[EventEnvelope]:
             run_id,
             "output_record_accepted",
             {
-                "record_id": "recovery-plan-1",
-                "record_kind": "output",
-                "record_type": "recovery_plan",
-                "producer_node_id": "recovery-1",
-                "port": "recovery_plan",
-                "schema": "RecoveryPlan",
-                "value": {"action": "retry", "target_node_id": "worker-source"},
+                "record": {
+                    "record_id": "recovery-plan-1",
+                    "record_kind": "output",
+                    "record_type": "recovery_plan",
+                    "producer_node_id": "recovery-1",
+                    "port": "recovery_plan",
+                    "schema": "RecoveryPlan",
+                    "value": {
+                        "action": "retry",
+                        "responsible_actor": "recovery-1",
+                        "graph_changes": [{"target_node_id": "worker-source"}],
+                    },
+                },
             },
         ),
         _event(
@@ -412,7 +420,7 @@ def _less_used_events(run_id: str) -> list[EventEnvelope]:
 def _decision_request_record(record_id: str, node_id: str, prompt: str) -> dict[str, Any]:
     return {
         "record_id": record_id,
-        "record_kind": "output",
+        "record_kind": "graph_record",
         "record_type": "decision_request",
         "producer_node_id": node_id,
         "port": "decision_request",
@@ -573,7 +581,10 @@ def _event(run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelo
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 

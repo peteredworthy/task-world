@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 import posixpath
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, Sequence, cast
 
 from orchestrator.graph.callbacks import (
     CallbackRequest,
@@ -38,12 +38,10 @@ from orchestrator.graph.models import (
     CompletionDecisionRecord,
     DecisionRequestRecord,
     DecisionRecord,
-    DeadInputDetectedPayload,
     EventEnvelope,
     FailureRecord,
     FileStateRecord,
     GraphPatchAcceptedPayload,
-    GraphEventPayloadBase,
     JoinResultRecord,
     GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
@@ -54,18 +52,10 @@ from orchestrator.graph.models import (
     LeaseReleasedPayload,
     LeaseRenewedPayload,
     LeaseRevokedPayload,
-    NodeCreatedPayload,
-    NodeAuthorityChangedPayload,
-    NodeDeferredPayload,
-    NodeReadyPayload,
-    NodeRetiredPayload,
-    NodeStateChangedPayload,
-    NodeSuspectPayload,
     OutputRecord,
     OversightDecisionRecordedPayload,
     PatchEnvelope,
     PatchOp,
-    PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
     RequirementRevisionPayload,
     SupportEvidencePayload,
@@ -74,6 +64,22 @@ from orchestrator.graph.models import (
     normalize_record_selector,
     record_selector_matches,
 )
+from orchestrator.graph.events.topology import (
+    DEAD_INPUT_DETECTED,
+    EDGE_CREATED,
+    INPUT_BOUND,
+    NODE_AUTHORITY_CHANGED,
+    NODE_CREATED,
+    NODE_DEFERRED,
+    NODE_READY,
+    NODE_RETIRED,
+    NODE_STATE_CHANGED,
+    PLAN_REGION_MARKED_SUSPECT,
+    REVISION_CREATED,
+    SESSION_STATE_CHANGED,
+    PlannerSessionStateChangedPayload,
+)
+from orchestrator.graph.events.records import OUTPUT_RECORD_ACCEPTED
 from orchestrator.graph.file_state import GATEKEEPER_TAXONOMY
 from orchestrator.graph.patch_validator import validate_patch
 from orchestrator.graph.projections import (
@@ -93,7 +99,7 @@ from orchestrator.graph.events.lifecycle import (
     RUN_LIFECYCLE_CHANGED,
     COMMAND_REJECTED,
 )
-from orchestrator.graph.specifications import EventSpecification
+from orchestrator.graph.specifications import EventMetadata, EventSpecification, HydratedEvent
 
 
 class Clock(Protocol):
@@ -140,29 +146,40 @@ _UNCONVERTED_LEASE_EVENT_PAYLOAD_MODELS: dict[str, type[LeaseEventPayloadBase]] 
 }
 
 
-_LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[LegacyDeadInputPayloadBase]] = {
-    "dead_input_detected": DeadInputDetectedPayload,
+_LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[LegacyDeadInputPayloadBase]] = {}
+
+_TOPOLOGY_EVENT_SPECS: dict[str, EventSpecification[Any]] = {
+    specification.name: specification
+    for specification in (
+        NODE_CREATED,
+        NODE_STATE_CHANGED,
+        NODE_RETIRED,
+        NODE_READY,
+        NODE_DEFERRED,
+        NODE_AUTHORITY_CHANGED,
+        PLAN_REGION_MARKED_SUSPECT,
+        EDGE_CREATED,
+        INPUT_BOUND,
+        SESSION_STATE_CHANGED,
+        DEAD_INPUT_DETECTED,
+        REVISION_CREATED,
+    )
 }
 
-_NODE_LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[GraphEventPayloadBase]] = {
-    "node_state_changed": NodeStateChangedPayload,
-    "node_retired": NodeRetiredPayload,
-    "node_ready": NodeReadyPayload,
-    "node_deferred": NodeDeferredPayload,
-    "node_authority_changed": NodeAuthorityChangedPayload,
-    "plan_region_marked_suspect": NodeSuspectPayload,
-}
+
+def typed_topology_event(
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    event_type: str,
+    payload: dict[str, Any],
+) -> EventEnvelope:
+    """Validate a topology effect at its named specification boundary."""
+
+    specification = _TOPOLOGY_EVENT_SPECS[event_type]
+    return make_event(event_type, specification.validate_payload(payload).to_json())
 
 
 def _typed_lifecycle_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     model = _LIFECYCLE_EVENT_PAYLOAD_MODELS.get(event_type)
-    if model is None:
-        return payload
-    return model.model_validate(payload).model_dump(mode="json")
-
-
-def _typed_node_lifecycle_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    model = _NODE_LIFECYCLE_EVENT_PAYLOAD_MODELS.get(event_type)
     if model is None:
         return payload
     return model.model_validate(payload).model_dump(mode="json")
@@ -256,8 +273,9 @@ def _apply_evaluate_final_gate(
         }
     ).model_dump(mode="json")
     return [
-        make_event("output_record_accepted", output_record),
-        make_event(
+        make_event("output_record_accepted", {"record": output_record}),
+        typed_topology_event(
+            make_event,
             "node_state_changed",
             {
                 "node_id": node_id,
@@ -304,8 +322,9 @@ def _apply_evaluate_join(
         }
     ).model_dump(mode="json")
     return [
-        make_event("output_record_accepted", output_record),
-        make_event(
+        make_event("output_record_accepted", {"record": output_record}),
+        typed_topology_event(
+            make_event,
             "node_state_changed",
             {
                 "node_id": node_id,
@@ -382,88 +401,14 @@ def _apply_seed_compiled_events(
     payload: dict[str, Any],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    if projection["node_states"] or projection["edges"] or projection["input_bindings"]:
-        return [
-            _command_rejected(make_event, "seed_compiled_events", "run topology already seeded")
-        ]
-
-    raw_events = payload.get("events")
-    if not isinstance(raw_events, list) or not raw_events:
-        return [_command_rejected(make_event, "seed_compiled_events", "missing compiled events")]
-
-    run_id = str(payload.get("run_id", ""))
-    compiled_events: list[EventEnvelope] = []
-    try:
-        for raw_event in cast(list[Any], raw_events):
-            event = (
-                raw_event
-                if isinstance(raw_event, EventEnvelope)
-                else EventEnvelope.model_validate(raw_event)
-            )
-            if event.run_id != run_id:
-                return [
-                    _command_rejected(
-                        make_event,
-                        "seed_compiled_events",
-                        f"event run_id mismatch: {event.run_id}",
-                    )
-                ]
-            if event.event_type not in {
-                "node_created",
-                "edge_created",
-                "input_bound",
-                "output_record_accepted",
-            }:
-                return [
-                    _command_rejected(
-                        make_event,
-                        "seed_compiled_events",
-                        f"unsupported seed event: {event.event_type}",
-                    )
-                ]
-            if event.event_type == "node_created":
-                event = event.model_copy(
-                    update={
-                        "payload": NodeCreatedPayload.model_validate(event.payload).model_dump(
-                            mode="json"
-                        )
-                    }
-                )
-            if event.event_type == "edge_created":
-                event = event.model_copy(update={"payload": _validated_edge_payload(event.payload)})
-            if event.event_type == "output_record_accepted":
-                event = event.model_copy(
-                    update={"payload": _validated_seed_output_record_payload(event.payload)}
-                )
-            compiled_events.append(event)
-    except (TypeError, ValueError) as exc:
-        return [_command_rejected(make_event, "seed_compiled_events", f"malformed event: {exc}")]
-
-    return compiled_events
-
-
-def _validated_edge_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    edge_payload = dict(payload)
-    selector = edge_payload.get("accepted_record_selector")
-    if isinstance(selector, dict):
-        edge_payload["accepted_record_selector"] = normalize_record_selector(selector)
-    elif selector is not None:
-        msg = "accepted_record_selector must be an object"
-        raise ValueError(msg)
-    return edge_payload
-
-
-def _validated_seed_output_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    record_payload = dict(payload)
-    if not _is_verification_report_record_payload(record_payload):
-        return record_payload
-    record = VerificationReportRecord.model_validate(
-        _verification_report_record_payload_for_validation(
-            record_payload,
-            str(record_payload.get("producer_node_id", "")),
+    del projection, payload
+    return [
+        _command_rejected(
+            make_event,
+            "seed_compiled_events",
+            "seed_compiled_events requires the typed graph catalog",
         )
-    )
-    return record.model_dump(mode="json")
+    ]
 
 
 def _file_state_changed_paths(record_payload: dict[str, Any]) -> list[str]:
@@ -531,7 +476,7 @@ def _accepted_file_state_record_events(
         return []
     payload = record.model_dump(mode="json")
     output = [
-        make_event("output_record_accepted", payload),
+        make_event("output_record_accepted", {"record": payload}),
         make_event("file_state_accepted", payload),
     ]
     output.extend(
@@ -602,7 +547,7 @@ def _accepted_verification_record_events(
     if task_region_id is not None:
         event_payload["task_region_id"] = task_region_id
     output = [
-        make_event("output_record_accepted", payload),
+        make_event("output_record_accepted", {"record": payload}),
         make_event(event_type, event_payload),
     ]
     output.extend(
@@ -1090,7 +1035,8 @@ def _input_bound_events_for_record(
         if binding_payload is None:
             continue
         output.append(
-            make_event(
+            typed_topology_event(
+                make_event,
                 "input_bound",
                 binding_payload,
             )
@@ -1260,7 +1206,8 @@ def _apply_patch_command(
                         "count": budget_rejection["count"],
                     },
                 ),
-                make_event(
+                typed_topology_event(
+                    make_event,
                     "node_created",
                     {
                         "node_id": gate_node_id,
@@ -1272,7 +1219,8 @@ def _apply_patch_command(
                         "reason": "planner_generation_budget_exhausted",
                     },
                 ),
-                make_event(
+                typed_topology_event(
+                    make_event,
                     "node_state_changed",
                     {
                         "node_id": gate_node_id,
@@ -1327,7 +1275,8 @@ def _apply_patch_command(
         )
     if carryover_record_id is not None and successor_planner_node_ids:
         output.append(
-            make_event(
+            typed_topology_event(
+                make_event,
                 "input_bound",
                 {
                     "edge_id": f"edge-session-carryover-{successor_planner_node_ids[0]}",
@@ -1467,7 +1416,8 @@ def _apply_schedule_tick(
             if dead_input is not None:
                 if projection.get("last_deferred_reasons", {}).get(node_id) != reason:
                     output.append(
-                        make_event(
+                        typed_topology_event(
+                            make_event,
                             "dead_input_detected",
                             {
                                 "node_id": node_id,
@@ -1485,9 +1435,10 @@ def _apply_schedule_tick(
             )
             continue
         if node_state != "ready":
-            output.append(make_event("node_ready", {"node_id": node_id}))
+            output.append(typed_topology_event(make_event, "node_ready", {"node_id": node_id}))
             output.append(
-                make_event(
+                typed_topology_event(
+                    make_event,
                     "node_state_changed",
                     {
                         "node_id": node_id,
@@ -1524,7 +1475,7 @@ def _apply_schedule_tick(
             )
             continue
         if node_id not in readied_node_ids:
-            output.append(make_event("node_ready", {"node_id": node_id}))
+            output.append(typed_topology_event(make_event, "node_ready", {"node_id": node_id}))
         planner_session_id = _planner_session_id(projection, node_id, id_gen)
         lease_generation = _next_lease_generation(projection, node_id)
         lease_payload: dict[str, Any] = {
@@ -1555,13 +1506,15 @@ def _apply_schedule_tick(
                 }
             )
             output.append(
-                make_event(
+                typed_topology_event(
+                    make_event,
                     "session_state_changed",
                     session_payload.model_dump(mode="json", exclude_none=False),
                 )
             )
         output.append(
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_state_changed",
                 {"node_id": node_id, "new_state": "leased", "trigger": "scheduler_grants_lease"},
             )
@@ -1586,7 +1539,9 @@ def _append_node_deferred_if_changed(
 ) -> None:
     if projection.get("last_deferred_reasons", {}).get(node_id) == reason:
         return
-    output.append(make_event("node_deferred", {"node_id": node_id, "reason": reason}))
+    output.append(
+        typed_topology_event(make_event, "node_deferred", {"node_id": node_id, "reason": reason})
+    )
 
 
 def _dead_input_from_readiness(
@@ -1672,7 +1627,24 @@ def _project_with_events(
 ) -> GraphProjection:
     output = projection
     for event in source_events:
-        output = reduce_legacy_event(output, event)
+        if event.event_type == OUTPUT_RECORD_ACCEPTED.name:
+            payload = OUTPUT_RECORD_ACCEPTED.validate_payload(event.payload)
+            metadata = EventMetadata(
+                event_id=event.event_id,
+                run_id=event.run_id,
+                position=event.position,
+                event_type=event.event_type,
+                payload_schema_generation=event.schema_version,
+                actor=event.actor,
+                causation_id=event.causation_id,
+                correlation_id=event.correlation_id,
+                timestamp=event.timestamp,
+            )
+            output = OUTPUT_RECORD_ACCEPTED.reduce(
+                output, OUTPUT_RECORD_ACCEPTED.create(metadata, payload)
+            )
+        else:
+            output = reduce_legacy_event(output, event)
     return output
 
 
@@ -1733,7 +1705,8 @@ def _failed_check_recovery_events(
         if record_type == "check_result":
             selector["status"] = "failed"
         output.append(
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_created",
                 {
                     "node_id": recovery_node_id,
@@ -1782,7 +1755,7 @@ def _failed_check_recovery_events(
                 cast(str, edge["to_node_id"]),
             ):
                 continue
-            output.append(make_event("edge_created", edge))
+            output.append(typed_topology_event(make_event, "edge_created", edge))
             output.extend(_input_bound_events_for_edge(projection, edge, make_event))
     return output
 
@@ -1819,7 +1792,8 @@ def _failed_verification_recovery_events(
         task_region_id = verification.get("task_region_id", node_id)
         recovery_region_id = f"recovery-{_stable_graph_id_part(task_region_id)}"
         output.append(
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_created",
                 {
                     "node_id": recovery_node_id,
@@ -1872,7 +1846,7 @@ def _failed_verification_recovery_events(
                 cast(str, edge["to_node_id"]),
             ):
                 continue
-            output.append(make_event("edge_created", edge))
+            output.append(typed_topology_event(make_event, "edge_created", edge))
             output.extend(_input_bound_events_for_edge(projection, edge, make_event))
     return output
 
@@ -2237,7 +2211,8 @@ def _passed_verification_final_check_edges(
         if _would_create_directed_cycle(projection, verifier_node_id, check_node_id):
             return output
         output.append(
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_created",
                 {
                     "node_id": check_node_id,
@@ -2290,7 +2265,7 @@ def _passed_verification_final_check_edges(
         }
         if _would_create_directed_cycle(projection, verifier_node_id, check_node_id):
             continue
-        output.append(make_event("edge_created", edge))
+        output.append(typed_topology_event(make_event, "edge_created", edge))
         output.extend(_input_bound_events_for_edge(projection, edge, make_event))
     return output
 
@@ -2483,14 +2458,16 @@ def _retire_node_events(
     if projection["node_states"].get(node_id) in {"completed", "failed", "cancelled", "retired"}:
         return []
     return [
-        make_event(
+        typed_topology_event(
+            make_event,
             "node_retired",
             {
                 "node_id": node_id,
                 "reason": "unreachable_after_passed_terminal_evidence",
             },
         ),
-        make_event(
+        typed_topology_event(
+            make_event,
             "node_state_changed",
             {
                 "node_id": node_id,
@@ -2759,7 +2736,8 @@ def _apply_raise_appeal(
                 }
             ).model_dump(mode="json"),
         ),
-        make_event(
+        typed_topology_event(
+            make_event,
             "node_created",
             {
                 "node_id": oversight_node_id,
@@ -2840,7 +2818,7 @@ def _apply_record_decision(
         make_event(event_type, payload_model.model_validate(event_payload).model_dump(mode="json"))
     ]
     if decision_record is not None:
-        output.append(make_event("output_record_accepted", decision_record))
+        output.append(make_event("output_record_accepted", {"record": decision_record}))
         output.extend(
             _input_bound_events_for_record(
                 projection,
@@ -2853,7 +2831,8 @@ def _apply_record_decision(
             )
         )
     output.append(
-        make_event(
+        typed_topology_event(
+            make_event,
             "node_state_changed",
             {
                 "node_id": node_id,
@@ -3182,7 +3161,7 @@ def _apply_record_cleanup_applied(
     accepted_payload = record.model_dump(mode="json")
     return [
         make_event("cleanup_applied", applied_payload),
-        make_event("output_record_accepted", accepted_payload),
+        make_event("output_record_accepted", {"record": accepted_payload}),
         make_event("file_state_accepted", accepted_payload),
     ]
 
@@ -3398,11 +3377,12 @@ def _request_record_events_for_node(
 ) -> list[EventEnvelope]:
     output: list[EventEnvelope] = []
     for record_payload, to_port in _request_record_bindings_for_node(node_payload):
-        output.append(make_event("output_record_accepted", record_payload))
+        output.append(make_event("output_record_accepted", {"record": record_payload}))
         record_id = record_payload["record_id"]
         node_id = record_payload["producer_node_id"]
         output.append(
-            make_event(
+            typed_topology_event(
+                make_event,
                 "input_bound",
                 {
                     "edge_id": f"edge-{record_id}-to-{node_id}-{to_port}",
@@ -3542,7 +3522,7 @@ def _patch_op_events(
             _ensure_optional_session_carryover_input(node_payload)
             if carryover_record_id is not None:
                 node_payload["carryover_record_id"] = carryover_record_id
-        output = [make_event("node_created", node_payload)]
+        output = [typed_topology_event(make_event, "node_created", node_payload)]
         output.extend(_request_record_events_for_node(node_payload, make_event))
         return output
     if op.op == "create_edge":
@@ -3573,23 +3553,25 @@ def _patch_op_events(
         selector = op_payload.get("accepted_record_selector")
         if isinstance(selector, dict):
             edge_payload["accepted_record_selector"] = normalize_record_selector(selector)
-        output = [make_event("edge_created", edge_payload)]
+        output = [typed_topology_event(make_event, "edge_created", edge_payload)]
         output.extend(_input_bound_events_for_edge(projection, edge_payload, make_event))
         return output
     if op.op == "retire_node" and isinstance(op.node_id, str):
         return [
-            make_event("node_retired", {"node_id": op.node_id}),
-            make_event(
+            typed_topology_event(make_event, "node_retired", {"node_id": op.node_id}),
+            typed_topology_event(
+                make_event,
                 "node_state_changed",
                 {"node_id": op.node_id, "new_state": "retired", "trigger": "graph_patch_accepted"},
             ),
         ]
     if op.op == "create_gate":
         node_payload = _node_payload_for_op(op_payload, default_kind="gate")
-        return [make_event("node_created", node_payload)]
+        return [typed_topology_event(make_event, "node_created", node_payload)]
     if op.op == "create_revision_attempt":
         events = [
-            make_event(
+            typed_topology_event(
+                make_event,
                 "revision_created",
                 {
                     key: value
@@ -3602,7 +3584,8 @@ def _patch_op_events(
             raw_node = op_payload.get(node_key)
             if isinstance(raw_node, dict):
                 events.append(
-                    make_event(
+                    typed_topology_event(
+                        make_event,
                         "node_created",
                         _node_payload_for_op(
                             {"node": raw_node, **op_payload},
@@ -3612,7 +3595,11 @@ def _patch_op_events(
                 )
         if len(events) == 1:
             events.append(
-                make_event("node_created", _node_payload_for_op(op_payload, default_kind="worker"))
+                typed_topology_event(
+                    make_event,
+                    "node_created",
+                    _node_payload_for_op(op_payload, default_kind="worker"),
+                )
             )
         return events
     if op.op == "create_appeal":
@@ -3622,12 +3609,13 @@ def _patch_op_events(
         }
         appeal_payload.setdefault("node_id", node_payload["node_id"])
         return [
-            make_event("node_created", node_payload),
+            typed_topology_event(make_event, "node_created", node_payload),
             make_event("appeal_opened", appeal_payload),
         ]
     if op.op == "set_resource_claims" and isinstance(op.node_id, str):
         return [
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_authority_changed",
                 {
                     "node_id": op.node_id,
@@ -3637,7 +3625,8 @@ def _patch_op_events(
         ]
     if op.op == "set_allowed_actions" and isinstance(op.node_id, str):
         return [
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_authority_changed",
                 {
                     "node_id": op.node_id,
@@ -3647,7 +3636,8 @@ def _patch_op_events(
         ]
     if op.op == "mark_plan_region_suspect":
         return [
-            make_event(
+            typed_topology_event(
+                make_event,
                 "plan_region_marked_suspect",
                 {key: value for key, value in op_payload.items() if key != "op"},
             )
@@ -3666,7 +3656,10 @@ def _ensure_default_node_authority(node_payload: dict[str, Any]) -> None:
     )
     if "resource_claims" not in authority:
         authority["resource_claims"] = [{"mode": "write", "scope": "repo", "paths": ["."]}]
-    node_payload["authority"] = authority
+    for key in ("resource_claims", "allowed_actions", "preconditions"):
+        if key in authority:
+            node_payload.setdefault(key, authority[key])
+    node_payload.pop("authority", None)
 
 
 def _ensure_optional_session_carryover_input(node_payload: dict[str, Any]) -> None:
@@ -3719,21 +3712,24 @@ def _expired_lease_events(
             expired.append(
                 make_event(
                     "output_record_accepted",
-                    _failure_record_payload(
-                        node_id=node_id,
-                        phase="runtime",
-                        error_class="lease_expired_without_callback",
-                        retryable=False,
-                        lease_id=typed_lease_id,
-                        execution_id=lease.get("execution_id"),
-                        generation=lease.get("generation"),
-                        reason="lease_expired_without_callback",
-                        metadata={"expires_at": lease.get("expires_at")},
-                    ),
+                    {
+                        "record": _failure_record_payload(
+                            node_id=node_id,
+                            phase="runtime",
+                            error_class="lease_expired_without_callback",
+                            retryable=False,
+                            lease_id=typed_lease_id,
+                            execution_id=lease.get("execution_id"),
+                            generation=lease.get("generation"),
+                            reason="lease_expired_without_callback",
+                            metadata={"expires_at": lease.get("expires_at")},
+                        )
+                    },
                 )
             )
             expired.append(
-                make_event(
+                typed_topology_event(
+                    make_event,
                     "node_state_changed",
                     {
                         "node_id": node_id,
@@ -3913,6 +3909,9 @@ def _node_payload_for_op(op_payload: dict[str, Any], *, default_kind: str) -> di
         "task_region_id",
         "attempt_number",
         "candidate_id",
+        "generation_index",
+        "region_label",
+        "session_id",
         "predecessor_node_ids",
         "appealed_node_id",
         "failed_candidate_id",
@@ -3920,6 +3919,10 @@ def _node_payload_for_op(op_payload: dict[str, Any], *, default_kind: str) -> di
         if key in op_payload and key not in node_payload:
             node_payload[key] = op_payload[key]
     _ensure_default_node_authority(node_payload)
+    membership = node_payload.pop("membership", None)
+    if isinstance(membership, dict):
+        for key, value in cast(dict[str, Any], membership).items():
+            node_payload.setdefault(key, value)
     return node_payload
 
 
@@ -3977,7 +3980,7 @@ def _input_bound_events_for_edge(
             supersedes_record_id = record_payload.get("supersedes_record_id")
             if isinstance(supersedes_record_id, str):
                 binding_payload["supersedes_record_id"] = supersedes_record_id
-            output.append(make_event("input_bound", binding_payload))
+            output.append(typed_topology_event(make_event, "input_bound", binding_payload))
     return output
 
 
@@ -4036,12 +4039,11 @@ def _event_factory(
     id_gen: IdGenerator,
 ) -> Callable[[str, dict[str, Any]], EventEnvelope]:
     def make_event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+        topology_specification = _TOPOLOGY_EVENT_SPECS.get(event_type)
         typed_payload = (
-            NodeCreatedPayload.model_validate(payload).model_dump(mode="json")
-            if event_type == "node_created"
-            else _typed_node_lifecycle_event_payload(
-                event_type, _typed_lifecycle_event_payload(event_type, payload)
-            )
+            topology_specification.validate_payload(payload).to_json()
+            if topology_specification is not None
+            else _typed_lifecycle_event_payload(event_type, payload)
         )
         return EventEnvelope(
             event_id=id_gen.next_id("event"),
@@ -4058,17 +4060,18 @@ def _event_factory(
     return make_event
 
 
-def _run_id(events: list[EventEnvelope], payload: dict[str, Any]) -> str:
+def _run_id(events: Sequence[EventEnvelope | HydratedEvent], payload: dict[str, Any]) -> str:
     run_id = payload.get("run_id")
     if isinstance(run_id, str):
         return run_id
     if events:
-        return events[-1].run_id
+        event = events[-1]
+        return event.metadata.run_id if isinstance(event, HydratedEvent) else event.run_id
     return "run-1"
 
 
 def _current_position(
-    events: list[EventEnvelope],
+    events: Sequence[EventEnvelope | HydratedEvent],
     payload: dict[str, Any] | None = None,
 ) -> int:
     if not events:
@@ -4076,7 +4079,10 @@ def _current_position(
         if isinstance(current, int) and not isinstance(current, bool):
             return current
         return -1
-    return max(event.position for event in events)
+    return max(
+        event.metadata.position if isinstance(event, HydratedEvent) else event.position
+        for event in events
+    )
 
 
 def _claim_from_dict(claim: Any) -> ResourceClaim:
@@ -4220,7 +4226,7 @@ def _lifecycle_completion_decision_event(
     )
     return make_event(
         "output_record_accepted",
-        record.model_dump(mode="json"),
+        {"record": record.model_dump(mode="json")},
     )
 
 
@@ -4255,7 +4261,8 @@ def _cancel_active_lease_events(
         node_state = projection["node_states"].get(node_id)
         if node_state not in {"completed", "failed", "cancelled", "retired"}:
             output.append(
-                make_event(
+                typed_topology_event(
+                    make_event,
                     "node_state_changed",
                     {
                         "node_id": node_id,
@@ -4547,7 +4554,7 @@ def _accepted_output_record_events(
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
-            output.append(make_event("output_record_accepted", payload))
+            output.append(make_event("output_record_accepted", {"record": payload}))
             output.extend(
                 _input_bound_events_for_record(
                     projection,
@@ -4573,7 +4580,7 @@ def _accepted_output_record_events(
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
-            output.append(make_event("output_record_accepted", payload))
+            output.append(make_event("output_record_accepted", {"record": payload}))
             output.extend(
                 _input_bound_events_for_record(
                     projection,
@@ -4595,7 +4602,7 @@ def _accepted_output_record_events(
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
-            output.append(make_event("output_record_accepted", payload))
+            output.append(make_event("output_record_accepted", {"record": payload}))
             output.extend(
                 _input_bound_events_for_record(
                     projection,
@@ -4617,7 +4624,7 @@ def _accepted_output_record_events(
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
-            output.append(make_event("output_record_accepted", payload))
+            output.append(make_event("output_record_accepted", {"record": payload}))
             output.extend(
                 _input_bound_events_for_record(
                     projection,
@@ -4639,7 +4646,7 @@ def _accepted_output_record_events(
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
-            output.append(make_event("output_record_accepted", payload))
+            output.append(make_event("output_record_accepted", {"record": payload}))
             output.extend(
                 _input_bound_events_for_record(
                     projection,
@@ -4655,7 +4662,9 @@ def _accepted_output_record_events(
             record = OutputRecord.model_validate(record_payload)
         except ValueError:
             continue
-        output.append(make_event("output_record_accepted", record.model_dump(mode="json")))
+        output.append(
+            make_event("output_record_accepted", {"record": record.model_dump(mode="json")})
+        )
         output.extend(
             _input_bound_events_for_record(
                 projection,
@@ -4758,10 +4767,11 @@ def _source_repair_events(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     accepted_records = [
-        event.payload
+        cast(dict[str, Any], event.payload["record"])
         for event in source_events
         if event.event_type == "output_record_accepted"
-        and isinstance(event.payload.get("record_id"), str)
+        and isinstance(event.payload["record"], dict)
+        and isinstance(cast(dict[str, Any], event.payload["record"]).get("record_id"), str)
     ]
     repair_node_ids = {
         node_id
@@ -4868,7 +4878,8 @@ def _planner_session_state_event(
             "carryover_record_id": _session_carryover_record_id(projection, node_id),
         }
     )
-    return make_event(
+    return typed_topology_event(
+        make_event,
         "session_state_changed",
         payload.model_dump(mode="json", exclude_none=False),
     )

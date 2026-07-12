@@ -14,6 +14,8 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     GraphProjection,
+    HydratedEvent,
+    NodeCreatedPayload,
     SequentialIdGenerator,
     compile_routine,
     initial_projection,
@@ -27,6 +29,7 @@ from orchestrator.graph_runtime import (
 )
 from orchestrator.graph_runtime.controller import rebuild_projection
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph.events.records import OutputRecordAcceptedPayload
 
 ROUTINE_PATHS = [
     Path("routines/demo-task.yaml"),
@@ -42,7 +45,13 @@ def test_routine_corpus_loads_and_compiles_cleanly(routine_path: Path) -> None:
     """Corpus scope is active top-level routines plus examples, not archived fragments."""
     routine = load_routine_from_path(routine_path)
 
-    events = compile_routine(routine, FakeClock(), SequentialIdGenerator(), run_id="corpus-run")
+    events = compile_routine(
+        routine,
+        FakeClock(),
+        SequentialIdGenerator(),
+        catalog=build_graph_catalog(),
+        run_id="corpus-run",
+    )
     projection = _project(events)
 
     assert _count_nodes(projection, "worker") == _task_count(routine)
@@ -92,6 +101,7 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
         routine,
         clock,
         SequentialIdGenerator(),
+        catalog=build_graph_catalog(),
         run_id=run_id,
         source_path="routines/demo-task.yaml",
         source_ref="test-ref",
@@ -139,6 +149,7 @@ def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None
         routine,
         FakeClock(),
         SequentialIdGenerator(),
+        catalog=build_graph_catalog(),
         run_id="dynamic-feature",
         source_path=str(DYNAMIC_FEATURE_ROUTINE_PATH),
     )
@@ -155,21 +166,34 @@ def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None
     assert _count_nodes(projection, "verifier") == 0
 
     planner = _node_event(events, planner_ids[0])
-    assert planner.payload["generation_index"] == 0
-    authority = planner.payload["authority"]
-    assert authority["resource_claims"] == [{"mode": "graph_write", "scope": "graph"}]
-    output_ports = {output["port"] for output in planner.payload["outputs"]}
+    assert isinstance(planner, HydratedEvent)
+    assert isinstance(planner.payload, NodeCreatedPayload)
+    assert planner.payload.generation_index == 0
+    assert [claim.model_dump(mode="json") for claim in planner.payload.resource_claims] == [
+        {"mode": "graph_write", "scope": "graph"}
+    ]
+    output_ports = {output.port for output in planner.payload.outputs}
     assert output_ports == {"graph_patch", "completion"}
-    assert planner.payload["state"] == "planned"
+    assert planner.payload.state == "planned"
 
     planner_input_binding = projection["input_bindings"][planner_ids[0]]["routine_snapshot"]
     assert planner_input_binding["record_ids"] == ["routine-snapshot-record"]
-    snapshot_record = _accepted_record(events, "routine-snapshot-record")
-    assert snapshot_record.payload["record_type"] == "routine_snapshot"
-    assert snapshot_record.payload["producer_node_id"] == "routine-snapshot"
+    snapshot_record = next(
+        event
+        for event in events
+        if isinstance(event, HydratedEvent)
+        and event.metadata.event_type == "output_record_accepted"
+        and isinstance(event.payload, OutputRecordAcceptedPayload)
+        and event.payload.record.record_id == "routine-snapshot-record"
+    )
+    assert isinstance(snapshot_record.payload, OutputRecordAcceptedPayload)
+    assert snapshot_record.payload.record.record_type == "routine_snapshot"
+    assert snapshot_record.payload.record.producer_node_id == "routine-snapshot"
 
     root_node = _node_event(events, "root")
-    assert root_node.payload["planner_generation_budget"] == 10
+    assert isinstance(root_node, HydratedEvent)
+    assert isinstance(root_node.payload, NodeCreatedPayload)
+    assert root_node.payload.planner_generation_budget == 10
 
 
 @pytest.mark.asyncio
@@ -653,9 +677,14 @@ def _lease_kind(lease_granted: EventEnvelope) -> str:
     return "worker"
 
 
-def _node_event(events: list[EventEnvelope], node_id: str) -> EventEnvelope:
+def _node_event(
+    events: list[EventEnvelope | HydratedEvent], node_id: str
+) -> EventEnvelope | HydratedEvent:
     for event in events:
-        if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
+        if isinstance(event, HydratedEvent):
+            if event.metadata.event_type == "node_created" and event.payload.node_id == node_id:
+                return event
+        elif event.event_type == "node_created" and event.payload.get("node_id") == node_id:
             return event
     raise AssertionError(f"missing node_created event for {node_id}")
 
@@ -664,7 +693,7 @@ def _accepted_record(events: list[EventEnvelope], record_id: str) -> EventEnvelo
     for event in events:
         if (
             event.event_type == "output_record_accepted"
-            and event.payload.get("record_id") == record_id
+            and event.payload["record"]["record_id"] == record_id
         ):
             return event
     raise AssertionError(f"missing output_record_accepted event for {record_id}")

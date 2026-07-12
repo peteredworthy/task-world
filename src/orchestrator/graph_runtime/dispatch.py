@@ -25,6 +25,7 @@ from orchestrator.graph import (
     CheckResultRecord,
     EventEnvelope,
     GraphProjection,
+    OutputRecordAcceptedPayload,
     RequirementRecord,
     build_graph_catalog,
     check_command_uses_acceptance_fallback,
@@ -1275,7 +1276,10 @@ def _latest_passed_verification_citation(
     for event in events:
         if event.event_type != "output_record_accepted":
             continue
-        payload = event.payload
+        payload = OutputRecordAcceptedPayload.model_validate(event.payload).record.model_dump(
+            mode="json",
+            by_alias=True,
+        )
         if payload.get("record_id") not in wanted:
             continue
         if payload.get("record_type") != "verification_report":
@@ -1499,11 +1503,19 @@ def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str]
     for event in context.graph_events:
         if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
             continue
-        record_id = event.payload.get("record_id")
+        payload = (
+            event.payload.get("record", {})
+            if event.event_type == "output_record_accepted"
+            else event.payload
+        )
+        if not isinstance(payload, dict):
+            continue
+        record_payload = cast(dict[str, Any], payload)
+        record_id = record_payload.get("record_id")
         if not isinstance(record_id, str) or record_id not in wanted:
             continue
-        snapshot_id = event.payload.get("snapshot_id")
-        git = event.payload.get("git")
+        snapshot_id = record_payload.get("snapshot_id")
+        git = record_payload.get("git")
         snapshot_ref = cast(dict[str, Any], git).get("ref") if isinstance(git, dict) else None
         if isinstance(snapshot_id, str) and isinstance(snapshot_ref, str):
             return snapshot_id, snapshot_ref

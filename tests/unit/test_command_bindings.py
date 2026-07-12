@@ -17,7 +17,24 @@ def _dynamic_feature_event(dynamic_feature: dict[str, Any]) -> EventEnvelope:
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload={"dynamic_feature": dynamic_feature},
+        payload={
+            "record": {
+                "record_id": "routine-snapshot",
+                "record_kind": "graph_record",
+                "record_type": "routine_snapshot",
+                "producer_node_id": "root",
+                "port": "routine_snapshot",
+                "schema": "RoutineSnapshot",
+                "value": {
+                    "routine_id": "routine-1",
+                    "name": "Routine",
+                    "content_hash": "sha256:test",
+                    "step_count": 1,
+                    "task_count": 1,
+                    "dynamic_feature": dynamic_feature,
+                },
+            }
+        },
     )
 
 

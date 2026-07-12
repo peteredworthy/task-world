@@ -49,6 +49,7 @@ from orchestrator.graph.specifications import (
     HydratedEvent,
     FutureCommandEffects,
 )
+from orchestrator.graph._commands import typed_topology_event
 
 
 def _command_rejected(creator: TypedEventCreator, command_type: str, reason: str) -> HydratedEvent:
@@ -429,7 +430,8 @@ def apply_callback_effects(
     )
     if command.complete_node:
         output.append(
-            make_event(
+            typed_topology_event(
+                make_event,
                 "node_state_changed",
                 {
                     "node_id": request.node_id,
@@ -499,4 +501,4 @@ def apply_acknowledge_start_effects(
     if command.prompt_summary is not None:
         event_payload["prompt_summary"] = dict(command.prompt_summary)
 
-    return [make_event("node_state_changed", event_payload)]
+    return [typed_topology_event(make_event, "node_state_changed", event_payload)]

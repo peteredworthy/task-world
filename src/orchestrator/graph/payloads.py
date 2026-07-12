@@ -22,7 +22,9 @@ class StrictPayload(BaseModel):
     def to_json(self) -> dict[str, JsonValue]:
         """Return the canonical JSON-compatible representation."""
 
-        return cast(dict[str, JsonValue], self.model_dump(mode="json", by_alias=True))
+        return cast(
+            dict[str, JsonValue], self.model_dump(mode="json", by_alias=True, exclude_none=True)
+        )
 
 
 __all__ = ["JsonValue", "StrictPayload"]

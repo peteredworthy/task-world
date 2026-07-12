@@ -11,25 +11,8 @@ from orchestrator.graph._commands import (
     IdGenerator,
     EventEnvelope,
     apply_reconcile,
-    apply_seed_compiled_events,
     apply_schedule_tick,
 )
-
-
-def handle_seed_compiled_events(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    del events
-    del command_type
-    del clock
-    del id_gen
-    return apply_seed_compiled_events(projection, payload, make_event)
 
 
 def handle_schedule_tick(
@@ -63,6 +46,5 @@ def handle_reconcile(
 
 __all__ = [
     "handle_reconcile",
-    "handle_seed_compiled_events",
     "handle_schedule_tick",
 ]

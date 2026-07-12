@@ -5,7 +5,12 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, cast
 
-from orchestrator.graph import DEFAULT_NODE_CONTRACTS, EventEnvelope, GraphProjection
+from orchestrator.graph import (
+    DEFAULT_NODE_CONTRACTS,
+    EventEnvelope,
+    GraphProjection,
+    OutputRecordAcceptedPayload,
+)
 from orchestrator.graph.command_bindings import resolve_check_command_definition
 from orchestrator.graph.models import FileStateRecord, GapClassificationRecord
 from orchestrator.graph.patch_validator import PLANNER_OPS
@@ -395,17 +400,19 @@ def _dynamic_feature_from_context(context: GraphDispatchContext) -> dict[str, An
         return cast(dict[str, Any], node_feature)
 
     for event in reversed(context.graph_events):
-        if event.event_type != "node_created":
+        if event.event_type != "output_record_accepted":
             continue
-        snapshot = event.payload.get("snapshot")
-        if isinstance(snapshot, dict):
-            typed_snapshot = cast(dict[str, Any], snapshot)
-            snapshot_feature = typed_snapshot.get("dynamic_feature")
-            if isinstance(snapshot_feature, dict):
-                return cast(dict[str, Any], snapshot_feature)
-        payload_feature = event.payload.get("dynamic_feature")
-        if isinstance(payload_feature, dict):
-            return cast(dict[str, Any], payload_feature)
+        record = OutputRecordAcceptedPayload.model_validate(event.payload).record
+        if record.record_type != "routine_snapshot":
+            continue
+        record_payload = record.model_dump(mode="json", by_alias=True)
+        value = record_payload.get("value")
+        if not isinstance(value, dict):
+            continue
+        typed_value = cast(dict[str, Any], value)
+        dynamic_feature = typed_value.get("dynamic_feature")
+        if isinstance(dynamic_feature, dict):
+            return cast(dict[str, Any], dynamic_feature)
     return None
 
 
@@ -651,7 +658,9 @@ def _planner_evidence(
     for event in events:
         if event.event_type != "output_record_accepted":
             continue
-        payload = event.payload
+        payload = OutputRecordAcceptedPayload.model_validate(event.payload).record.model_dump(
+            mode="json", by_alias=True, exclude_none=True
+        )
         record_id = payload.get("record_id")
         if not isinstance(record_id, str):
             continue
@@ -1275,9 +1284,17 @@ def _record_payloads_for_ids(
     for event in events:
         if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
             continue
-        record_id = event.payload.get("record_id")
+        payload = (
+            OutputRecordAcceptedPayload.model_validate(event.payload).record.model_dump(
+                mode="json",
+                by_alias=True,
+            )
+            if event.event_type == "output_record_accepted"
+            else event.payload
+        )
+        record_id = payload.get("record_id")
         if isinstance(record_id, str) and record_id in wanted:
-            records.append(dict(event.payload))
+            records.append(dict(payload))
     return records
 
 
@@ -1432,13 +1449,16 @@ def _output_records_for_submit(
                 {
                     "record_id": candidate_id,
                     "record_kind": "output",
+                    "record_type": "fan_out_inputs",
                     "producer_node_id": context.node_id,
                     "port": "reader_output",
                     "schema": "FanOutInputs",
-                    "candidate_id": candidate_id,
-                    "task_region_id": task_region_id,
-                    "attempt_number": attempt_number,
-                    "value": {"summary": "fan-out inputs submitted by graph runner"},
+                    "value": {
+                        "summary": "fan-out inputs submitted by graph runner",
+                        "candidate_id": candidate_id,
+                        "task_region_id": task_region_id,
+                        "attempt_number": attempt_number,
+                    },
                 }
             ]
         if role == "fan_out_join":
@@ -1446,13 +1466,16 @@ def _output_records_for_submit(
                 {
                     "record_id": candidate_id,
                     "record_kind": "output",
+                    "record_type": "fan_out_inputs",
                     "producer_node_id": context.node_id,
                     "port": "fan_out_inputs",
                     "schema": "FanOutJoinedInputs",
-                    "candidate_id": candidate_id,
-                    "task_region_id": task_region_id,
-                    "attempt_number": attempt_number,
-                    "value": {"summary": "fan-out join submitted by graph runner"},
+                    "value": {
+                        "summary": "fan-out join submitted by graph runner",
+                        "candidate_id": candidate_id,
+                        "task_region_id": task_region_id,
+                        "attempt_number": attempt_number,
+                    },
                 }
             ]
         return []

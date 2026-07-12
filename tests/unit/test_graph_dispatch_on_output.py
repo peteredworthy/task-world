@@ -17,6 +17,7 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     GraphProjection,
+    OutputRecordAcceptedPayload,
     initial_projection,
     reduce_event,
 )
@@ -91,7 +92,10 @@ def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> Even
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -155,57 +159,68 @@ def test_bound_record_hydration_policy_shapes_prompt_records() -> None:
         _event(
             "output_record_accepted",
             {
-                "record_id": "candidate-structured",
-                "record_kind": "output",
-                "record_type": "candidate",
-                "producer_node_id": "worker-1",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "value": {"summary": "full candidate"},
+                "record": {
+                    "record_id": "candidate-structured",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-structured",
+                    "value": {"summary": "full candidate"},
+                }
             },
             5,
         ),
         _event(
             "output_record_accepted",
             {
-                "record_id": "candidate-inline",
-                "record_kind": "output",
-                "record_type": "candidate",
-                "producer_node_id": "worker-2",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "value": {"summary": "short candidate"},
+                "record": {
+                    "record_id": "candidate-inline",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-2",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-inline",
+                    "value": {"summary": "short candidate"},
+                }
             },
             6,
         ),
         _event(
             "output_record_accepted",
             {
-                "record_id": "artifact-1",
-                "record_kind": "graph_record",
-                "record_type": "artifact_reference",
-                "producer_node_id": "context-1",
-                "port": "artifact",
-                "schema": "ContextArtifact",
-                "value": {
-                    "artifact_id": "spec",
-                    "artifact_type": "context_source",
-                    "uri": "docs/spec.md",
-                    "summary": "Feature spec",
-                },
+                "record": {
+                    "record_id": "artifact-1",
+                    "record_kind": "graph_record",
+                    "record_type": "artifact_reference",
+                    "producer_node_id": "context-1",
+                    "port": "artifact",
+                    "schema": "ContextArtifact",
+                    "value": {
+                        "artifact_id": "spec",
+                        "artifact_type": "context_source",
+                        "uri": "docs/spec.md",
+                        "summary": "Feature spec",
+                    },
+                }
             },
             7,
         ),
         _event(
             "output_record_accepted",
             {
-                "record_id": "candidate-tool",
-                "record_kind": "output",
-                "record_type": "candidate",
-                "producer_node_id": "worker-3",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "value": {"summary": "tool only candidate"},
+                "record": {
+                    "record_id": "candidate-tool",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-3",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-tool",
+                    "value": {"summary": "tool only candidate"},
+                }
             },
             8,
         ),
@@ -216,6 +231,7 @@ def test_bound_record_hydration_policy_shapes_prompt_records() -> None:
                 "to_node_id": "planner-1",
                 "to_port": "structured",
                 "record_ids": ["candidate-structured"],
+                "bound_at_position": 9,
             },
             9,
         ),
@@ -226,6 +242,7 @@ def test_bound_record_hydration_policy_shapes_prompt_records() -> None:
                 "to_node_id": "planner-1",
                 "to_port": "inline",
                 "record_ids": ["candidate-inline"],
+                "bound_at_position": 10,
             },
             10,
         ),
@@ -236,6 +253,7 @@ def test_bound_record_hydration_policy_shapes_prompt_records() -> None:
                 "to_node_id": "planner-1",
                 "to_port": "artifact",
                 "record_ids": ["artifact-1"],
+                "bound_at_position": 11,
             },
             11,
         ),
@@ -246,6 +264,7 @@ def test_bound_record_hydration_policy_shapes_prompt_records() -> None:
                 "to_node_id": "planner-1",
                 "to_port": "tool",
                 "record_ids": ["candidate-tool"],
+                "bound_at_position": 12,
             },
             12,
         ),
@@ -272,6 +291,7 @@ def test_bound_record_hydration_policy_shapes_prompt_records() -> None:
     assert inline["record_summary"] == {
         "record_id": "candidate-inline",
         "record_type": "candidate",
+        "candidate_id": "candidate-inline",
         "schema": "ImplementationCandidate",
         "summary": "short candidate",
     }
@@ -1040,18 +1060,22 @@ def test_verifier_submit_cites_bound_candidate_and_file_state_records() -> None:
         _event(
             "input_bound",
             {
+                "edge_id": "edge-candidate-under-test",
                 "to_node_id": "verifier-1",
                 "to_port": "candidate_under_test",
                 "record_ids": ["candidate-1"],
+                "bound_at_position": 1,
             },
             1,
         ),
         _event(
             "input_bound",
             {
+                "edge_id": "edge-file-state",
                 "to_node_id": "verifier-1",
                 "to_port": "file_state",
                 "record_ids": ["file-state-1"],
+                "bound_at_position": 2,
             },
             2,
         ),
@@ -1082,9 +1106,11 @@ def test_verifier_submit_uses_bound_candidate_over_node_metadata() -> None:
         _event(
             "input_bound",
             {
+                "edge_id": "edge-candidate-under-test",
                 "to_node_id": "verifier-1",
                 "to_port": "candidate_under_test",
                 "record_ids": ["candidate-bound"],
+                "bound_at_position": 1,
             },
             1,
         ),
@@ -1110,25 +1136,32 @@ def test_verifier_submit_inherits_file_state_citations_from_candidate_record() -
         _event(
             "output_record_accepted",
             {
-                "record_id": "candidate-1",
-                "record_kind": "output",
-                "record_type": "candidate",
-                "producer_node_id": "worker-1",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "candidate_id": "candidate-1",
-                "task_region_id": "task-1",
-                "file_state_record_ids": ["file-state-1"],
-                "value": {"file_state_record_ids": ["file-state-1"]},
+                "record": {
+                    "record_id": "candidate-1",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-1",
+                    "task_region_id": "task-1",
+                    "file_state_record_ids": ["file-state-1"],
+                    "value": {
+                        "summary": "test candidate",
+                        "file_state_record_ids": ["file-state-1"],
+                    },
+                }
             },
             1,
         ),
         _event(
             "input_bound",
             {
+                "edge_id": "edge-candidate-under-test",
                 "to_node_id": "verifier-1",
                 "to_port": "candidate_under_test",
                 "record_ids": ["candidate-1"],
+                "bound_at_position": 2,
             },
             2,
         ),
@@ -1155,18 +1188,22 @@ async def test_execute_check_command_records_real_process_success(tmp_path: Path
         _event(
             "input_bound",
             {
+                "edge_id": "edge-candidate-under-test",
                 "to_node_id": "check-1",
                 "to_port": "candidate_under_test",
                 "record_ids": ["candidate-1"],
+                "bound_at_position": 1,
             },
             1,
         ),
         _event(
             "input_bound",
             {
+                "edge_id": "edge-file-state",
                 "to_node_id": "check-1",
                 "to_port": "file_state",
                 "record_ids": ["file-state-1"],
+                "bound_at_position": 2,
             },
             2,
         ),
@@ -1190,7 +1227,10 @@ async def test_execute_check_command_records_real_process_success(tmp_path: Path
 
     record = await _execute_check_command(context)
 
+    strict_payload = OutputRecordAcceptedPayload.model_validate({"record": record})
+
     assert record["record_type"] == "check_result"
+    assert strict_payload.record.candidate_record_id == "candidate-1"
     assert record["record_kind"] == "output"
     assert record["producer_node_id"] == "check-1"
     assert record["port"] == "check_result"
@@ -1246,9 +1286,11 @@ async def test_execute_check_command_runs_against_bound_file_state_snapshot(
         _event(
             "input_bound",
             {
+                "edge_id": "edge-file-state",
                 "to_node_id": "check-1",
                 "to_port": "file_state",
                 "record_ids": ["file-state-1"],
+                "bound_at_position": 2,
             },
             2,
         ),
@@ -1333,9 +1375,11 @@ async def test_execute_check_command_provisions_node_dependencies_for_snapshot(
         _event(
             "input_bound",
             {
+                "edge_id": "edge-file-state",
                 "to_node_id": "check-1",
                 "to_port": "file_state",
                 "record_ids": ["file-state-1"],
+                "bound_at_position": 2,
             },
             2,
         ),
@@ -1432,16 +1476,26 @@ async def test_execute_check_command_resolves_bound_dynamic_feature_oracle(tmp_p
         },
         graph_events=[
             _event(
-                "node_created",
+                "output_record_accepted",
                 {
-                    "node_id": "routine-snapshot",
-                    "kind": "routine_snapshot",
-                    "state": "completed",
-                    "snapshot": {
-                        "dynamic_feature": {
-                            "hidden_oracle_command": "printf bound-oracle",
-                        }
-                    },
+                    "record": {
+                        "record_id": "routine-snapshot",
+                        "record_kind": "graph_record",
+                        "record_type": "routine_snapshot",
+                        "producer_node_id": "root",
+                        "port": "routine_snapshot",
+                        "schema": "RoutineSnapshot",
+                        "value": {
+                            "routine_id": "routine-1",
+                            "name": "Routine",
+                            "content_hash": "sha256:test",
+                            "step_count": 1,
+                            "task_count": 1,
+                            "dynamic_feature": {
+                                "hidden_oracle_command": "printf bound-oracle",
+                            },
+                        },
+                    }
                 },
                 1,
             )
@@ -1464,34 +1518,46 @@ async def test_execute_check_command_cites_verification_when_oracle_falls_back_t
 ) -> None:
     graph_events = [
         _event(
-            "node_created",
+            "output_record_accepted",
             {
-                "node_id": "routine-snapshot",
-                "kind": "routine_snapshot",
-                "state": "completed",
-                "snapshot": {
-                    "dynamic_feature": {
-                        "acceptance_command": "definitely_missing_duplicate_acceptance_tool",
-                        "hidden_oracle_command": "",
-                    }
-                },
+                "record": {
+                    "record_id": "routine-snapshot",
+                    "record_kind": "graph_record",
+                    "record_type": "routine_snapshot",
+                    "producer_node_id": "root",
+                    "port": "routine_snapshot",
+                    "schema": "RoutineSnapshot",
+                    "value": {
+                        "routine_id": "routine-1",
+                        "name": "Routine",
+                        "content_hash": "sha256:test",
+                        "step_count": 1,
+                        "task_count": 1,
+                        "dynamic_feature": {
+                            "acceptance_command": "definitely_missing_duplicate_acceptance_tool",
+                            "hidden_oracle_command": "",
+                        },
+                    },
+                }
             },
             1,
         ),
         _event(
             "output_record_accepted",
             {
-                "record_id": "verification-1",
-                "record_kind": "verification",
-                "record_type": "verification_report",
-                "producer_node_id": "verifier-1",
-                "port": "verification_report",
-                "schema": "VerificationReport",
-                "candidate_id": "candidate-1",
-                "candidate_record_ids": ["candidate-1"],
-                "task_region_id": "task-1",
-                "outcome": "passed",
-                "value": {"outcome": "passed"},
+                "record": {
+                    "record_id": "verification-1",
+                    "record_kind": "verification",
+                    "record_type": "verification_report",
+                    "producer_node_id": "verifier-1",
+                    "port": "verification_report",
+                    "schema": "VerificationReport",
+                    "candidate_id": "candidate-1",
+                    "candidate_record_ids": ["candidate-1"],
+                    "task_region_id": "task-1",
+                    "outcome": "passed",
+                    "value": {"outcome": "passed"},
+                }
             },
             2,
         ),
@@ -1502,6 +1568,7 @@ async def test_execute_check_command_cites_verification_when_oracle_falls_back_t
                 "to_node_id": "check-1",
                 "to_port": "verification_evidence",
                 "record_ids": ["verification-1"],
+                "bound_at_position": 3,
             },
             3,
         ),
@@ -1554,17 +1621,22 @@ async def test_execute_check_command_cites_bound_verification_and_region_file_st
         _event(
             "output_record_accepted",
             {
-                "record_id": "verification-1",
-                "record_kind": "verification",
-                "record_type": "verification_report",
-                "producer_node_id": "verifier-1",
-                "port": "verification_report",
-                "schema": "VerificationReport",
-                "candidate_id": "candidate-1",
-                "candidate_record_ids": ["candidate-1"],
-                "evaluated_record_ids": ["candidate-1"],
-                "task_region_id": "task-1",
-                "value": {"grades": [{"requirement_id": "R1", "grade": "A"}]},
+                "record": {
+                    "record_id": "verification-1",
+                    "record_kind": "verification",
+                    "record_type": "verification_report",
+                    "producer_node_id": "verifier-1",
+                    "port": "verification_report",
+                    "schema": "VerificationReport",
+                    "candidate_id": "candidate-1",
+                    "candidate_record_ids": ["candidate-1"],
+                    "evaluated_record_ids": ["candidate-1"],
+                    "task_region_id": "task-1",
+                    "value": {
+                        "outcome": "passed",
+                        "grades": [{"requirement_id": "R1", "grade": "A"}],
+                    },
+                }
             },
             3,
         ),
@@ -1591,6 +1663,7 @@ async def test_execute_check_command_cites_bound_verification_and_region_file_st
                 "to_node_id": "check-1",
                 "to_port": "verification_evidence",
                 "record_ids": ["verification-1"],
+                "bound_at_position": 5,
             },
             5,
         ),
@@ -1767,6 +1840,27 @@ async def test_special_planner_roles_can_submit_without_graph_patch() -> None:
         assert executor.submitted == [context]
         assert executor.graph_patches == []
         assert executor.failures == []
+
+
+@pytest.mark.parametrize(
+    ("role", "expected_record_type", "expected_port"),
+    [
+        ("fan_out_reader", "fan_out_inputs", "reader_output"),
+        ("fan_out_join", "fan_out_inputs", "fan_out_inputs"),
+    ],
+)
+def test_special_planner_submit_records_satisfy_strict_record_envelope(
+    role: str,
+    expected_record_type: str,
+    expected_port: str,
+) -> None:
+    context = _context(node_id=f"{role}-1", node_kind="planner", node_role=role)
+
+    record = _output_records_for_submit(context, [])[0]
+
+    payload = OutputRecordAcceptedPayload.model_validate({"record": record})
+    assert payload.record.record_type == expected_record_type
+    assert payload.record.port == expected_port
 
 
 class _FakeCommandResult:

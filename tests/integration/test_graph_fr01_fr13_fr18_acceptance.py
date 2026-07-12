@@ -536,11 +536,13 @@ async def test_fr01_fr18_two_task_bootstrap_completes(
     assert event_types.count("file_state_accepted") >= 2, (
         "expected file_state_accepted for both task workers"
     )
+    # Strict output_record_accepted payloads keep the durable record nested
+    # under "record"; full-mode reads no longer lift its fields to the top.
     verification_reports = [
         e
         for e in events
         if e["event_type"] == "output_record_accepted"
-        and e["payload"].get("record_type") == "verification_report"
+        and e["payload"].get("record", {}).get("record_type") == "verification_report"
     ]
     assert len(verification_reports) >= 2, "expected verification_report for both tasks"
 
@@ -548,8 +550,8 @@ async def test_fr01_fr18_two_task_bootstrap_completes(
         e
         for e in events
         if e["event_type"] == "output_record_accepted"
-        and e["payload"].get("record_type") == "check_result"
-        and e["payload"].get("value", {}).get("status") == "passed"
+        and e["payload"].get("record", {}).get("record_type") == "check_result"
+        and e["payload"].get("record", {}).get("value", {}).get("status") == "passed"
     ]
     assert len(check_results) >= 2, "expected passed check_result for both tasks"
 
@@ -558,16 +560,17 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
     fr_e2e_app: tuple[AsyncClient, Any],
     tmp_path: Path,
 ) -> None:
-    """FR-13: blocked-progress scenarios and invalid-patch probe in blocked state.
+    """FR-13: terminal blocked-progress scenario and invalid-patch probe.
 
     FR-13 coverage (criterion b/c):
-    (b) while T-01 is accepted and T-02 is blocked by a failing check, the
+    (b) while T-01 is accepted and T-02 reaches terminal failure after its
+        failing check has no recovery successor, the
         final-blockers readback and /graph/regions correctly identify the
         incomplete T-02 region, proving graph cannot silently complete while
         work is possible.
-    (c) an invalid patch submitted while the run is in a blocked/quiescent
+    (c) an invalid patch submitted while the run is terminally failed/quiescent
         state is rejected with diagnostics, leaves the blockers unchanged, and
-        does not corrupt graph state — the run remains paused after the
+        does not corrupt graph state — the run remains failed after the
         rejection.
 
     Also proves FR-01/FR-13: the planner invalid-patch probe (hidden_oracle_command)
@@ -578,7 +581,8 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
     repo = tmp_path / "fr-e2e-blocked"
     _init_repo(repo)
     run_id = _run_id()
-    # T-02's check command always fails, so T-02 region will be blocked.
+    # T-02's check command always fails; its completed no-successor recovery
+    # planner transitions the graph from active to terminal failed.
     routine = _two_task_routine(t02_check_cmd="false")
     await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
 
@@ -587,7 +591,7 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
         run_id
     )
 
-    # Run must be blocked (T-02 check fails, region stays pending)
+    # Run must stop without completion (T-02 check fails, region stays pending).
     assert outcome.completed is False, "expected blocked outcome"
     assert outcome.blocked_reason is not None
 
@@ -595,16 +599,16 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
     assert "rejected" in planner_agent.invalid_feedback
     assert "hidden_oracle_command" in planner_agent.invalid_feedback
 
-    # --- public readbacks while blocked (FR-13 criterion b) ------------------
+    # --- public readbacks while terminally failed (FR-13 criterion b) --------
     run = await _get_json(client, f"/api/runs/{run_id}")
     graph = await _get_json(client, f"/api/runs/{run_id}/graph")
     regions = await _get_json(client, f"/api/runs/{run_id}/graph/regions")
     blockers_before = await _get_json(client, f"/api/runs/{run_id}/graph/final-blockers")
     scheduler = await _get_json(client, f"/api/runs/{run_id}/graph/scheduler")
 
-    assert run["status"] == RunStatus.PAUSED.value
+    assert run["status"] == RunStatus.FAILED.value
     assert run["is_graph_backed"] is True
-    assert graph["run_state"] == "paused"
+    assert graph["run_state"] == "failed"
 
     # FR-13 criterion b: T-01 is accepted, T-02 is pending
     region_states = {r["task_region_id"]: r["state"] for r in regions["regions"]}
@@ -622,7 +626,7 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
         f"expected T-02-related blocker, got {blocker_node_ids}"
     )
 
-    # No active leases (quiescent blocked state)
+    # No active leases (quiescent terminal state)
     assert scheduler["leases"]["active"] == []
 
     # --- invalid patch submitted while quiescent (FR-13 criterion c) ---------
@@ -687,9 +691,9 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
         f"expected T-02 blockers to persist, got {blocker_ids_after}"
     )
 
-    # Run must remain paused (invalid patch did not unblock anything)
+    # Run must remain failed (invalid patch did not alter terminal graph state)
     run_after = await _get_json(client, f"/api/runs/{run_id}")
-    assert run_after["status"] == RunStatus.PAUSED.value
+    assert run_after["status"] == RunStatus.FAILED.value
 
     # /graph/patches shows any durable rejected attempt
     patches = await _get_json(client, f"/api/runs/{run_id}/graph/patches")

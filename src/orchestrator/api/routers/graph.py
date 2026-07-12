@@ -19,6 +19,7 @@ from orchestrator.db import GraphOutboxModel
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    CompactEventEnvelope,
     EventEnvelope,
     RecordSelector,
     build_projection,
@@ -47,6 +48,7 @@ from orchestrator.graph_runtime.store import (
 )
 from orchestrator.state import RunNotFoundError
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph.events.records import OutputRecordAcceptedPayload
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
 
@@ -875,9 +877,13 @@ def _pick_output_records(events: list[EventEnvelope], node_id: str) -> list[dict
     for event in events:
         if event.event_type != "output_record_accepted":
             continue
-        payload = event.payload
-        if not isinstance(payload.get("record_kind"), str):
-            continue
+        payload = (
+            dict(event.payload["record"])
+            if isinstance(event, CompactEventEnvelope)
+            else OutputRecordAcceptedPayload.model_validate(event.payload).record.model_dump(
+                mode="json", by_alias=True, exclude_none=True
+            )
+        )
         if payload.get("record_kind") == "file_state":
             continue
         if payload.get("producer_node_id") != node_id:
@@ -1199,6 +1205,11 @@ def build_node_detail_response(
     metadata = node_metadata.get(node_id, {})
     output_records = _pick_output_records(events, node_id)
     file_state_records = _pick_file_state_records(events, node_id)
+    if payload_mode == "summary":
+        output_records = [_compact_node_detail_output_record(record) for record in output_records]
+        file_state_records = [
+            _compact_node_detail_file_state_record(record) for record in file_state_records
+        ]
     active_lease = _active_lease_for_node(leases, node_id)
     callback_history = [event for event in node_events if _is_callback_history_event(event)]
 
@@ -1219,9 +1230,13 @@ def build_node_detail_response(
         file_state_records=file_state_records,
         active_lease=active_lease,
         callback_history=[
-            _event_to_response(event, payload_mode=payload_mode) for event in callback_history
+            _node_detail_event_to_response(event, payload_mode=payload_mode)
+            for event in callback_history
         ],
-        events=[_event_to_response(event, payload_mode=payload_mode) for event in node_events],
+        events=[
+            _node_detail_event_to_response(event, payload_mode=payload_mode)
+            for event in node_events
+        ],
         prompt_summary=_latest_prompt_summary(node_events),
     )
 
@@ -1232,6 +1247,29 @@ def _latest_prompt_summary(events: list[EventEnvelope]) -> dict[str, Any] | None
         if isinstance(prompt_summary, dict):
             return dict(cast(dict[str, Any], prompt_summary))
     return None
+
+
+def _node_detail_event_to_response(
+    event: EventEnvelope,
+    *,
+    payload_mode: Literal["full", "summary"],
+) -> GraphEventResponse:
+    if payload_mode != "summary":
+        return _event_to_response(event, payload_mode=payload_mode)
+    if event.event_type == "output_record_accepted":
+        payload = _compact_node_detail_output_record(event.payload)
+    elif event.event_type == "file_state_accepted":
+        payload = _compact_node_detail_file_state_record(event.payload)
+    else:
+        payload = _event_payload(event, payload_mode=payload_mode)
+    return GraphEventResponse(
+        event_id=event.event_id,
+        event_type=event.event_type,
+        run_id=event.run_id,
+        position=event.position,
+        timestamp=event.timestamp.isoformat(),
+        payload=payload,
+    )
 
 
 def build_node_detail_response_from_summary(
@@ -1306,7 +1344,6 @@ def _node_detail_full_event_payload(event: EventEnvelope) -> dict[str, Any]:
     payload = dict(event.payload)
     if event.event_type in {
         "callback_accepted",
-        "output_record_accepted",
         "file_state_accepted",
     }:
         return _compact_node_detail_record_payload(payload)
@@ -1413,6 +1450,43 @@ def _compact_node_detail_record_payload(payload: dict[str, Any]) -> dict[str, An
         )
     if "value" in payload and _node_detail_record_value_should_be_included(payload):
         compact["value"] = _bounded_node_detail_value(payload["value"])
+    return compact
+
+
+def _compact_node_detail_output_record(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        key: value
+        for key in (
+            "attempt_number",
+            "candidate_id",
+            "created_at",
+            "graph_position",
+            "port",
+            "producer_node_id",
+            "record_id",
+            "record_kind",
+            "record_type",
+            "schema",
+            "task_region_id",
+        )
+        if (value := payload.get(key)) is not None
+    }
+
+
+def _compact_node_detail_file_state_record(payload: dict[str, Any]) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key in ("record_id", "record_kind", "port", "producer_node_id"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            compact[key] = value
+    compact["classification_summary"] = _classification_summary({"verdict": payload.get("verdict")})
+    for key in ("snapshot_id", "verdict", "patch_bundle_id"):
+        value = payload.get(key)
+        if isinstance(value, str):
+            compact[key] = value
+    diff_summary = payload.get("diff_summary")
+    if isinstance(diff_summary, dict):
+        compact["diff_summary"] = dict(cast(dict[str, Any], diff_summary))
     return compact
 
 

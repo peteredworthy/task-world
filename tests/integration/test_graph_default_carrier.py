@@ -449,7 +449,7 @@ async def test_common_routine_shapes_seed_and_complete_as_graph(
         if routine.id == "auto-verify":
             assert any(
                 event.event_type == "output_record_accepted"
-                and event.payload.get("record_type") == "check_result"
+                and event.payload["record"].get("record_type") == "check_result"
                 for event in events
             )
         assert "verifier" in dispatch_order

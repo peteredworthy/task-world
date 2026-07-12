@@ -19,13 +19,20 @@ from orchestrator.graph import (
 
 
 def dispatch_graph_command(
-    events: list[EventEnvelope],
+    events: list[EventEnvelope | HydratedEvent],
     command_type: str,
     payload: dict[str, Any] | None = None,
 ) -> list[EventEnvelope]:
     """Dispatch through the real catalog and return store-compatible envelopes."""
     raw_payload = dict(payload or {})
-    run_id = str(raw_payload.pop("run_id", events[0].run_id if events else "run-1"))
+    first_run_id = (
+        events[0].metadata.run_id
+        if events and isinstance(events[0], HydratedEvent)
+        else events[0].run_id
+        if events
+        else "run-1"
+    )
+    run_id = str(raw_payload.pop("run_id", first_run_id))
     actor_role = raw_payload.pop("actor_role", None)
     clock = FakeClock()
     id_generator = SequentialIdGenerator()
@@ -34,7 +41,13 @@ def dispatch_graph_command(
         projection = reduce_event(build_graph_catalog(), projection, event)
     context = CommandExecutionContext(
         run_id=run_id,
-        current_position=max((event.position for event in events), default=-1),
+        current_position=max(
+            (
+                event.metadata.position if isinstance(event, HydratedEvent) else event.position
+                for event in events
+            ),
+            default=-1,
+        ),
         clock=clock,
         id_generator=id_generator,
         actor=Actor(

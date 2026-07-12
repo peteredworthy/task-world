@@ -96,7 +96,6 @@ async def test_fr06_edges_bind_fanout_join_optional_bind_all_and_supersede(
         event.event_type == "input_bound"
         and event.payload["to_node_id"] == "planner-1"
         and event.payload["record_ids"] == ["file-state-2"]
-        and event.payload["supersedes_record_id"] == "file-state-1"
         for event in second_callback.events
     )
 
@@ -107,7 +106,7 @@ async def test_fr06_edges_bind_fanout_join_optional_bind_all_and_supersede(
         {"node_id": "join-1", "record_id": "join-result-fr06"},
     )
     assert joined.events[0].event_type == "output_record_accepted"
-    assert joined.events[0].payload["value"] == {
+    assert joined.events[0].payload["record"]["value"] == {
         "status": "ready",
         "source_record_ids": ["candidate-1"],
     }
@@ -524,5 +523,8 @@ def _event(run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelo
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )

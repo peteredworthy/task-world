@@ -30,11 +30,15 @@ def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnve
 
 def test_scheduler_view_buckets_deferral_reasons() -> None:
     events = [
-        _event("node_created", {"node_id": "ready-node", "state": "planned"}, 1),
-        _event("node_created", {"node_id": "input-node", "state": "planned"}, 2),
-        _event("node_created", {"node_id": "resource-node", "state": "planned"}, 3),
-        _event("node_created", {"node_id": "gate-node", "state": "planned"}, 4),
-        _event("node_created", {"node_id": "authority-node", "state": "planned"}, 5),
+        _event("node_created", {"node_id": "ready-node", "kind": "worker", "state": "planned"}, 1),
+        _event("node_created", {"node_id": "input-node", "kind": "worker", "state": "planned"}, 2),
+        _event(
+            "node_created", {"node_id": "resource-node", "kind": "worker", "state": "planned"}, 3
+        ),
+        _event("node_created", {"node_id": "gate-node", "kind": "worker", "state": "planned"}, 4),
+        _event(
+            "node_created", {"node_id": "authority-node", "kind": "worker", "state": "planned"}, 5
+        ),
         _event(
             "node_deferred",
             {"node_id": "input-node", "reason": "missing_required_input:candidate"},
@@ -71,8 +75,8 @@ def test_scheduler_view_buckets_deferral_reasons() -> None:
 
 def test_scheduler_view_buckets_ready_resource_deferral() -> None:
     events = [
-        _event("node_created", {"node_id": "writer-a", "state": "leased"}, 1),
-        _event("node_created", {"node_id": "writer-b", "state": "planned"}, 2),
+        _event("node_created", {"node_id": "writer-a", "kind": "worker", "state": "leased"}, 1),
+        _event("node_created", {"node_id": "writer-b", "kind": "worker", "state": "planned"}, 2),
         _event("node_state_changed", {"node_id": "writer-b", "new_state": "ready"}, 3),
         _event(
             "node_deferred",

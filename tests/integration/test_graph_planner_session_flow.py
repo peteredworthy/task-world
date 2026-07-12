@@ -222,12 +222,14 @@ async def _seed_planner_run(controller: GraphController, run_id: str) -> None:
         planner_generation_budget=8,
         steps=[StepConfig(id="Plan", kind="planner", title="Plan")],
     )
-    compiled = compile_routine(routine, FixedClock(), SequentialIds(), run_id=run_id)
+    compiled = compile_routine(
+        routine, FixedClock(), SequentialIds(), catalog=build_graph_catalog(), run_id=run_id
+    )
     await controller.handle_command(
         run_id,
         0,
         "seed_compiled_events",
-        {"events": [event.model_dump(mode="json") for event in compiled]},
+        {"events": tuple(compiled)},
     )
     position = await controller.current_position(run_id)
     result = await controller.handle_command(run_id, position, "accept_run", {})

@@ -255,7 +255,7 @@ async def test_fr12_recovery_reentry_skips_stale_report_and_rebuilds_readbacks(
     assert event_types.count("runtime_retry_scheduled") == 1
     assert any(
         event.event_type == "output_record_accepted"
-        and event.payload.get("record_type") == "recovery_plan"
+        and event.payload["record"].get("record_type") == "recovery_plan"
         for event in events
     )
     assert not any(event.event_type == "command_rejected" for event in events)

@@ -130,6 +130,852 @@ def test_remaining_domain_migrations_cover_authoritative_routing_surface() -> No
         assert migration.target_module == target_module
 
 
+def test_complete_reads_migration_removes_partial_read_helpers() -> None:
+    migration = DOMAIN_MIGRATIONS["complete_reads"]
+    assert set(migration.allowlist_names) == {
+        "GRAPH_PROJECTION_PAYLOAD_FIELDS",
+        "LIGHT_GRAPH_PAYLOAD_FIELDS",
+        "SUMMARY_REBUILD_PAYLOAD_FIELDS",
+        "NODE_DETAIL_PAYLOAD_FIELDS",
+    }
+    source = """\
+LIGHT_GRAPH_PAYLOAD_FIELDS = (\"node_id\",)\n\nasync def read_run_light(self, run_id, from_position=0):\n    return await self._read_run_extracting_fields(run_id, from_position, LIGHT_GRAPH_PAYLOAD_FIELDS)\n\nasync def _read_run_extracting_fields(self, run_id, from_position, fields):\n    return []\n"""
+    result = StrictPayloadCutoverCodemod(migration).transform_source(source, "store.py")
+    assert "LIGHT_GRAPH_PAYLOAD_FIELDS" not in result.source
+    assert "_read_run_extracting_fields" not in result.source
+    assert "return await self.read_run(run_id, from_position)" in result.source
+
+
+def test_records_migration_nests_output_record_payload_once() -> None:
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    source = """\
+def emit(make_event, payload):
+    first = make_event("output_record_accepted", payload)
+    second = make_event("output_record_accepted", {"record": payload})
+    return first, second
+"""
+    result = StrictPayloadCutoverCodemod(migration).transform_source(source, "commands.py")
+    assert 'make_event("output_record_accepted", {"record": payload})' in result.source
+    assert result.source.count('"record": payload') == 2
+    second = StrictPayloadCutoverCodemod(migration).transform_source(result.source, "commands.py")
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_completes_planner_session_generation_once() -> None:
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    source = """\
+event = _event(
+    "session_state_changed",
+    {
+        "session_id": "session-1",
+        "state": "attached",
+        "node_id": "planner-1",
+        "carryover_record_id": "carryover-1",
+    },
+    4,
+)
+"""
+
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_planner_packet.py"
+    )
+
+    assert '"lease_generation": 3' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_planner_packet.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_nests_strict_record_reads_once() -> None:
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    source = """\
+passed = any(
+    event.event_type == "output_record_accepted"
+    and event.payload.get("record_type") == "check_result"
+    and event.payload.get("value", {}).get("status") == "passed"
+    for event in events
+)
+"""
+
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/integration/test_graph_dynamic_e2e.py"
+    )
+
+    assert 'event.payload["record"].get("record_type")' in result.source
+    assert 'event.payload["record"].get("value", {})' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/integration/test_graph_dynamic_e2e.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_records_migration_preserves_unconverted_evaluate_command_routing() -> None:
+    source = """\
+from orchestrator.graph.commands.records import handle_evaluate_final_gate, handle_evaluate_join
+
+_UNCONVERTED_W5_BRIDGE = {
+    "evaluate_join": handle_evaluate_join,
+    "evaluate_final_gate": handle_evaluate_final_gate,
+}
+COMMAND_SPECIFICATIONS = (RECORD_HEARTBEAT,)
+"""
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["records"]).transform_source(
+        source, "src/orchestrator/graph/commands/__init__.py"
+    )
+
+    assert result.source == source
+    assert result.changes == 0
+    assert not result.diagnostics
+
+
+def test_records_nesting_does_not_change_topology_codemod_output() -> None:
+    source = 'make_event("node_created", payload)\n'
+    topology = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["topology"]).transform_source(
+        source, "src/orchestrator/graph/_commands.py"
+    )
+    records = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["records"]).transform_source(
+        source, "src/orchestrator/graph/_commands.py"
+    )
+    assert records.source == source
+    assert topology.source == source
+
+
+def test_records_migration_nests_event_envelope_keyword_payload_once() -> None:
+    source = (
+        'EventEnvelope(event_type="output_record_accepted", payload=payload, '
+        'event_id="e", run_id="r")\n'
+    )
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["records"]).transform_source(
+        source, "tests/unit/test_fixture.py"
+    )
+    assert 'payload={"record": payload}' in result.source
+    second = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["records"]).transform_source(
+        result.source, "tests/unit/test_fixture.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_records_migration_rewrites_output_record_assertions_once() -> None:
+    source = """\
+assert output[1].payload["record_type"] == "failure_record"
+assert output[1].payload["value"]["retryable"] is False
+assert output[1].payload["provenance"] == {"source": "test"}
+assert decision_events[0].payload["value"]["status"] == "passed"
+accepted_record = output[1].payload
+assert accepted_record["record_id"] == "record-1"
+assert output[2].payload["candidate_id"] == "candidate-1"
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_commands.py"
+    )
+
+    assert 'output[1].payload["record"]["record_type"]' in result.source
+    assert 'output[1].payload["record"]["value"]["retryable"]' in result.source
+    assert 'output[1].payload["record"]["provenance"]' in result.source
+    assert 'decision_events[0].payload["record"]["value"]["status"]' in result.source
+    assert 'accepted_record = output[1].payload["record"]' in result.source
+    assert 'output[2].payload["candidate_id"]' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_commands.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_rewrites_selected_output_record_once() -> None:
+    source = """\
+accepted_record = next(
+    event.payload for event in output if event.event_type == "output_record_accepted"
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_commands.py"
+    )
+
+    assert 'event.payload["record"] for event in output' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_commands.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_completes_input_bound_once() -> None:
+    source = """\
+event = _event(
+    "input_bound",
+    {
+        "to_node_id": "join-1",
+        "to_port": "source_record_1",
+    },
+    4,
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_commands.py"
+    )
+
+    assert '"edge_id": "edge-join-1-source_record_1"' in result.source
+    assert '"bound_at_position": 0' in result.source
+    assert '"record_ids": []' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_commands.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_completes_planner_packet_input_bound_once() -> None:
+    source = """\
+event = _event(
+    "input_bound",
+    {
+        "to_node_id": "verifier-1",
+        "to_port": "candidate_under_test",
+        "record_ids": ["candidate-1"],
+    },
+    4,
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_planner_packet.py"
+    )
+
+    assert '"edge_id": "edge-verifier-1-candidate_under_test"' in result.source
+    assert '"bound_at_position": 0' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_planner_packet.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_completes_strict_record_variants_once() -> None:
+    source = """\
+snapshot = _event(
+    "output_record_accepted",
+    {"record": {
+        "record_id": "routine-snapshot-record",
+        "record_kind": "routine_snapshot",
+        "record_type": "routine_snapshot",
+        "producer_node_id": "routine-snapshot",
+        "port": "snapshot",
+        "schema": "RoutineSnapshot",
+        "value": {"routine_id": "routine-1"},
+    }},
+)
+verification = _event(
+    "output_record_accepted",
+    {"record": {
+        "record_id": "verification-1",
+        "record_kind": "verification",
+        "producer_node_id": "verifier-1",
+        "port": "verification_report",
+        "candidate_id": "candidate-1",
+        "verdict": "passed",
+    }},
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_commands.py"
+    )
+
+    assert '"record_kind": "graph_record"' in result.source
+    assert '"name": "Test Routine"' in result.source
+    assert '"content_hash": "test-content-hash"' in result.source
+    assert '"step_count": 1' in result.source
+    assert '"task_count": 1' in result.source
+    assert '"record_type": "verification_report"' in result.source
+    assert '"schema": "VerificationReport"' in result.source
+    assert '"value": {"outcome": "passed", "grades": []}' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_commands.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_rewrites_routine_snapshot_node_once() -> None:
+    source = """\
+event = _event(
+    "node_created",
+    {
+        "node_id": "routine-snapshot",
+        "kind": "artifact",
+        "state": "completed",
+        "snapshot": {
+            "dynamic_feature": {"hidden_oracle_command": "uv run pytest tests/oracle -q"}
+        },
+    },
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_planner.py"
+    )
+
+    assert '"output_record_accepted"' in result.source
+    assert '"record_type": "routine_snapshot"' in result.source
+    assert '"producer_node_id": "routine-snapshot"' in result.source
+    assert '"dynamic_feature": {"hidden_oracle_command"' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_planner.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_rewrites_planner_packet_routine_snapshot_once() -> None:
+    source = """\
+event = _event(
+    "node_created",
+    {
+        "node_id": "routine-snapshot",
+        "kind": "artifact",
+        "state": "completed",
+        "snapshot": {"dynamic_feature": {"feature_spec_path": "docs/spec.md"}},
+    },
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_planner_packet.py"
+    )
+
+    assert '"output_record_accepted"' in result.source
+    assert '"record_type": "routine_snapshot"' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_planner_packet.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_completes_typed_candidate_identity_once() -> None:
+    source = """\
+event = _event(
+    "output_record_accepted",
+    {"record": {
+        "record_id": "candidate-1",
+        "record_kind": "output",
+        "record_type": "candidate",
+        "producer_node_id": "worker-1",
+        "port": "candidate",
+        "value": {"summary": "done"},
+    }},
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/integration/test_graph_event_store.py"
+    )
+
+    assert '"candidate_id": "candidate-1"' in result.source
+    assert '"schema": "ImplementationCandidate"' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/integration/test_graph_event_store.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_completes_four_argument_candidate_once() -> None:
+    source = """\
+event = _event(
+    "evt-candidate",
+    run_id,
+    "output_record_accepted",
+    {
+        "record_id": "candidate-1",
+        "record_kind": "output",
+        "producer_node_id": "worker-1",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "value": {"summary": "done"},
+    },
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/integration/test_graph_event_store.py"
+    )
+
+    assert '"record": {' in result.source
+    assert '"record_type": "candidate"' in result.source
+    assert '"candidate_id": "candidate-1"' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/integration/test_graph_event_store.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_completes_read_model_output_records_once() -> None:
+    source = """\
+plain_output = _event(
+    "evt-output",
+    run_id,
+    "output_record_accepted",
+    {
+        "record_id": "record-1",
+        "record_kind": "output",
+        "producer_node_id": "worker-1",
+        "port": "result",
+        "value": {"large": "x"},
+    },
+)
+candidate = _event(
+    "evt-candidate",
+    run_id,
+    "output_record_accepted",
+    {
+        "record_id": "candidate-1",
+        "record_kind": "output",
+        "producer_node_id": "worker-1",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "value": {"body": "x", "grades": {"req-1": "pass"}},
+    },
+)
+sparse_candidate = _event(
+    "evt-sparse",
+    run_id,
+    "output_record_accepted",
+    {
+        "task_region_id": "task-1",
+        "candidate_id": "candidate-2",
+        "attempt_number": 1,
+        "record_id": "candidate-2",
+        "record_kind": "output",
+        "record_type": "candidate",
+        "producer_node_id": "worker-2",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "supersedes_task_region_id": "task-0",
+        "value": {"summary": "existing candidate"},
+    },
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/integration/test_graph_read_models.py"
+    )
+
+    assert '"schema": "OutputRecord"' in result.source
+    assert result.source.count('"record_type": "candidate"') == 2
+    assert result.source.count('"candidate_id": "candidate-1"') == 1
+    assert result.source.count('"summary": "test candidate"') == 1
+    assert '"summary": "existing candidate"' in result.source
+    assert '"supersedes_task_region_ids": ["task-0"]' in result.source
+    assert '"supersedes_task_region_id":' not in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/integration/test_graph_read_models.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_completes_four_argument_check_result_once() -> None:
+    source = """\
+event = _event(
+    "evt-check",
+    run_id,
+    "output_record_accepted",
+    {
+        "record_id": "check-1",
+        "record_kind": "output",
+        "producer_node_id": "check-1",
+        "port": "check_result",
+        "schema": "CheckResult",
+        "value": {"status": "passed", "classification": "passed"},
+    },
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/integration/test_graph_event_store.py"
+    )
+
+    assert '"record": {' in result.source
+    assert '"task_region_id": "task-test"' in result.source
+    assert '"command_text": "test"' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/integration/test_graph_event_store.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_repairs_authority_request_record_type_once() -> None:
+    source = """\
+event = _event(
+    "evt-authority",
+    run_id,
+    "output_record_accepted",
+    {"record": {
+        "record_id": "authority-1",
+        "record_kind": "graph_record",
+        "record_type": "authority_request",
+        "producer_node_id": "authority-1",
+        "port": "authority_request_record",
+        "schema": "AuthorityRequest",
+        "value": {"requested_authority": ["repo:write"], "reason": "needed"},
+    }},
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/integration/test_graph_event_store.py"
+    )
+
+    assert '"record_type": "authority_request_record"' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/integration/test_graph_event_store.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_repairs_recovery_plan_record_kind_once() -> None:
+    source = """\
+event = _event(
+    "evt-recovery",
+    run_id,
+    "output_record_accepted",
+    {"record": {
+        "record_id": "recovery-1",
+        "record_kind": "graph_record",
+        "record_type": "recovery_plan",
+        "producer_node_id": "recovery-1",
+        "port": "recovery_plan",
+        "schema": "RecoveryPlan",
+        "value": {"action": "retry", "responsible_actor": "controller", "graph_changes": []},
+    }},
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/integration/test_graph_event_store.py"
+    )
+
+    assert '"record_kind": "output"' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/integration/test_graph_event_store.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_rewrites_event_store_record_reads_once() -> None:
+    source = """\
+candidate = stored[0].payload
+file_state = stored[1].payload
+verification = stored[2].payload
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/integration/test_graph_event_store.py"
+    )
+
+    assert 'candidate = stored[0].payload["record"]' in result.source
+    assert "file_state = stored[1].payload" in result.source
+    assert 'verification = stored[2].payload["record"]' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/integration/test_graph_event_store.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_completes_event_store_check_result_expectation_once() -> None:
+    source = """\
+assert check_result["payload"] == {
+    "status": "passed",
+    "classification": "passed",
+    "command_id": "unit-check",
+}
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/integration/test_graph_event_store.py"
+    )
+
+    assert '"command_text": "test"' in result.source
+    assert '"timeout_seconds": 60' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/integration/test_graph_event_store.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_rewrites_output_record_get_once() -> None:
+    source = """\
+assert any(
+    event.event_type == "output_record_accepted"
+    and event.payload.get("record_type") == "check_result"
+    for event in events
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/integration/test_graph_default_carrier.py"
+    )
+
+    assert 'event.payload["record"].get("record_type")' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/integration/test_graph_default_carrier.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_records_migration_rewrites_whole_output_record_comparison_once() -> None:
+    source = """\
+assert output[1].payload == {
+    "record_id": "record-1",
+    "record_kind": "output",
+    "record_type": "decision_record",
+    "producer_node_id": "gate-1",
+    "port": "decision_record",
+    "schema": "DecisionRecord",
+    "value": {"decision": "approved"},
+}
+assert output[2].payload == {"edge_id": "edge-1", "record_ids": ["record-1"]}
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_commands.py"
+    )
+
+    assert 'assert output[1].payload["record"] == {' in result.source
+    assert 'assert output[2].payload == {"edge_id"' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_commands.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_records_migration_completes_sparse_candidate_fixture_once() -> None:
+    source = """\
+event = _event(
+    "output_record_accepted",
+    {"record": {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1}},
+)
+"""
+    migration = DOMAIN_MIGRATIONS["records"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_projections.py"
+    )
+
+    assert '"record_id": "cand-1"' in result.source
+    assert '"record_kind": "output"' in result.source
+    assert '"record_type": "candidate"' in result.source
+    assert '"producer_node_id": "worker-test"' in result.source
+    assert '"port": "candidate"' in result.source
+    assert '"schema": "ImplementationCandidate"' in result.source
+    assert '"value": {"summary": "test candidate"}' in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_projections.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_records_migration_does_not_reclassify_verification_fixture() -> None:
+    source = """\
+event = _event(
+    "output_record_accepted",
+    {"record": {
+        "record_id": "verification-1",
+        "record_kind": "verification",
+        "producer_node_id": "verifier-1",
+        "port": "verification_report",
+        "candidate_id": "cand-1",
+        "verdict": "passed",
+    }},
+)
+"""
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["records"]).transform_source(
+        source, "tests/unit/test_graph_commands.py"
+    )
+
+    assert result.source == source
+    assert result.changes == 0
+
+
+def test_records_migration_completes_candidate_value_summary_once() -> None:
+    source = """\
+event = _event(
+    "output_record_accepted",
+    {"record": {
+        "record_type": "candidate",
+        "candidate_id": "cand-1",
+        "value": {"file_state_record_ids": ["file-1"]},
+    }},
+)
+"""
+    migration = DOMAIN_MIGRATIONS["records"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_projections.py"
+    )
+
+    assert (
+        '"value": {"summary": "test candidate", "file_state_record_ids": ["file-1"]}'
+        in result.source
+    )
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_projections.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_records_migration_completes_sparse_check_result_fixture_once() -> None:
+    source = """\
+event = _event(
+    "output_record_accepted",
+    {"record": {
+        "record_id": "check-1",
+        "record_kind": "output",
+        "record_type": "check_result",
+        "producer_node_id": "check-1",
+        "port": "check_result",
+        "task_region_id": "task-1",
+        "value": {"status": "failed", "stderr": "boom"},
+    }},
+)
+"""
+    migration = DOMAIN_MIGRATIONS["records"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_projections.py"
+    )
+
+    assert '"schema": "CheckResult"' in result.source
+    assert '"candidate_id": "candidate-test"' not in result.source
+    assert '"attempt_number": 1' in result.source
+    assert '"classification": "failed"' in result.source
+    assert '"stderr": "boom"' in result.source
+    assert '"timeout_seconds": 60' in result.source
+    assert result.source.count('"status": "failed"') == 1
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_projections.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_task3_fixture_migration_completes_candidate_and_failure_records_once() -> None:
+    source = """\
+candidate = _event(
+    "output_record_accepted",
+    {"record": {
+        "record_id": "cand-1",
+        "record_kind": "output",
+        "record_type": "candidate",
+        "producer_node_id": "worker-1",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "candidate_id": "cand-1",
+    }},
+)
+failure = _event(
+    "output_record_accepted",
+    {"record": {
+        "record_id": "failure-1",
+        "record_kind": "failure_record",
+        "record_type": "failure_record",
+        "producer_node_id": "check-1",
+        "port": "failure_record",
+        "schema": "FailureRecord",
+        "task_region_id": "region-1",
+        "value": {
+            "failed_node_id": "check-1",
+            "phase": "runtime",
+            "error_class": "runtime_error",
+            "retryable": False,
+        },
+    }},
+)
+"""
+    migration = DOMAIN_MIGRATIONS["task3_fixtures"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        source, "tests/unit/test_graph_commands.py"
+    )
+
+    assert '"value": {"summary": "test candidate"}' in result.source
+    assert '"record_kind": "graph_record"' in result.source
+    assert '"task_region_id"' not in result.source
+    second = StrictPayloadCutoverCodemod(migration).transform_source(
+        result.source, "tests/unit/test_graph_commands.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_complete_reads_assert_clean_rejects_leftover_partial_consumer() -> None:
+    migration = DOMAIN_MIGRATIONS["complete_reads"]
+    result = StrictPayloadCutoverCodemod(migration).transform_source(
+        'async def unrelated(event):\n    return event.payload["node_id"]\n',
+        "src/orchestrator/graph_runtime/store.py",
+    )
+    assert any(item.code == "W5ALLOWLIST_REFERENCE" for item in result.diagnostics) is False
+    leftover = StrictPayloadCutoverCodemod(migration).transform_source(
+        'LIGHT_GRAPH_PAYLOAD_FIELDS = ("node_id",)\n\n'
+        'def unrelated(event):\n    return event.payload if "node_id" in LIGHT_GRAPH_PAYLOAD_FIELDS else {}\n',
+        "src/orchestrator/graph_runtime/store.py",
+    )
+    assert any(item.code == "W5ALLOWLIST_REFERENCE" for item in leftover.diagnostics)
+
+
+def test_other_domain_does_not_rewrite_node_detail_helper_call() -> None:
+    source = "def use(event):\n    return _node_detail_light_event(event)\n"
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["topology"]).transform_source(
+        source,
+        "src/orchestrator/graph/projections.py",
+    )
+    assert result.source == source
+
+
+def test_topology_codemod_creates_target_and_repairs_generated_references() -> None:
+    migration = DOMAIN_MIGRATIONS["topology"]
+    sources = {
+        "src/orchestrator/graph/models.py": "class NodeReadyPayload(GraphEventPayloadBase):\n    node_id: str\n",
+        "src/orchestrator/graph/commands/__init__.py": (
+            '_UNCONVERTED_W5_BRIDGE = {"seed_compiled_events": handle_seed_compiled_events}\n'
+            "COMMAND_SPECIFICATIONS = (RECORD_HEARTBEAT,)\n"
+        ),
+        "src/orchestrator/graph/commands/schedule.py": (
+            "def handle_seed_compiled_events(payload: dict[str, object]):\n    return payload\n"
+        ),
+    }
+
+    result = StrictPayloadCutoverCodemod(migration).transform_files(sources)
+
+    assert "class NodeReadyPayload" in result.sources["src/orchestrator/graph/events/topology.py"]
+    assert (
+        "from orchestrator.graph.events.topology import SEED_COMPILED_EVENTS"
+        in result.sources["src/orchestrator/graph/commands/__init__.py"]
+    )
+    assert (
+        "SeedCompiledEventsCommand" in result.sources["src/orchestrator/graph/commands/schedule.py"]
+    )
+    second = StrictPayloadCutoverCodemod(migration).transform_files(result.sources)
+    assert second.sources == result.sources
+    assert second.changes == 0
+
+
 def test_lifecycle_bridge_entries_become_composed_specifications() -> None:
     migration = DomainMigration(
         domain="lifecycle",

@@ -1,7 +1,7 @@
 - name: planner_planned_to_ready
   given_events:
     - node_created: {node_id: planner-1, kind: planner, state: planned}
-    - input_bound: {to_node_id: planner-1, input: planning_context}
+    - input_bound: {edge_id: edge-planner-1-context, to_node_id: planner-1, to_port: planning_context, record_ids: [], bound_at_position: 1}
     - node_state_changed: {node_id: planner-1, new_state: ready, trigger: planning_inputs_available}
   when_command: null
   then_events: []

@@ -392,26 +392,32 @@ async def _seed_fr09_base_events(
                     run_id,
                     "output_record_accepted",
                     {
-                        "record_id": "candidate-source",
-                        "record_kind": "output",
-                        "record_type": "candidate",
-                        "producer_node_id": "worker-source",
-                        "port": "candidate",
-                        "schema": "ImplementationCandidate",
-                        "value": {"summary": "candidate for summarizer"},
+                        "record": {
+                            "record_id": "candidate-source",
+                            "record_kind": "output",
+                            "record_type": "candidate",
+                            "producer_node_id": "worker-source",
+                            "port": "candidate",
+                            "schema": "ImplementationCandidate",
+                            "candidate_id": "candidate-source",
+                            "value": {"summary": "candidate for summarizer"},
+                        },
                     },
                 ),
                 _event(
                     run_id,
                     "output_record_accepted",
                     {
-                        "record_id": "verification-source",
-                        "record_kind": "verification",
-                        "record_type": "verification_report",
-                        "producer_node_id": "verifier-source",
-                        "port": "verification_report",
-                        "schema": "VerificationReport",
-                        "value": {"verdict": "failed"},
+                        "record": {
+                            "record_id": "verification-source",
+                            "record_kind": "verification",
+                            "record_type": "verification_report",
+                            "producer_node_id": "verifier-source",
+                            "port": "verification_report",
+                            "schema": "VerificationReport",
+                            "candidate_id": "candidate-source",
+                            "value": {"outcome": "failed"},
+                        },
                     },
                 ),
             ],
@@ -484,5 +490,8 @@ def _event(run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelo
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )

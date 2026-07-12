@@ -46,7 +46,10 @@ def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> Even
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -94,19 +97,21 @@ async def _seed_decision_graph_run(app: Any, run_id: str) -> None:
         _event(
             "output_record_accepted",
             {
-                "record_id": "authority-request-1",
-                "record_kind": "graph_record",
-                "record_type": "authority_request_record",
-                "producer_node_id": "authority-1",
-                "port": "authority_request_record",
-                "schema": "AuthorityRequest",
-                "value": {
-                    "requested_authority": ["repo:docs/**:write"],
-                    "target_node_id": "worker-docs",
-                    "target_region_id": "task-1",
-                    "reason": "Worker needs docs write access.",
-                    "expires_at": "2026-06-13T12:05:00+00:00",
-                },
+                "record": {
+                    "record_id": "authority-request-1",
+                    "record_kind": "graph_record",
+                    "record_type": "authority_request_record",
+                    "producer_node_id": "authority-1",
+                    "port": "authority_request_record",
+                    "schema": "AuthorityRequest",
+                    "value": {
+                        "requested_authority": ["repo:docs/**:write"],
+                        "target_node_id": "worker-docs",
+                        "target_region_id": "task-1",
+                        "reason": "Worker needs docs write access.",
+                        "expires_at": "2026-06-13T12:05:00+00:00",
+                    },
+                }
             },
         ),
         _event(
@@ -151,17 +156,19 @@ async def _seed_active_authority_graph_run(app: Any, run_id: str) -> None:
         _event(
             "output_record_accepted",
             {
-                "record_id": "authority-request-1",
-                "record_kind": "graph_record",
-                "record_type": "authority_request_record",
-                "producer_node_id": "authority-1",
-                "port": "authority_request_record",
-                "schema": "AuthorityRequest",
-                "value": {
-                    "requested_authority": ["repo:docs/**:write"],
-                    "target_node_id": "worker-docs",
-                    "reason": "Worker needs docs write access.",
-                },
+                "record": {
+                    "record_id": "authority-request-1",
+                    "record_kind": "graph_record",
+                    "record_type": "authority_request_record",
+                    "producer_node_id": "authority-1",
+                    "port": "authority_request_record",
+                    "schema": "AuthorityRequest",
+                    "value": {
+                        "requested_authority": ["repo:docs/**:write"],
+                        "target_node_id": "worker-docs",
+                        "reason": "Worker needs docs write access.",
+                    },
+                }
             },
         ),
         _event(
@@ -272,7 +279,9 @@ async def test_record_authority_decision_updates_decision_readback(
         "output_record_accepted",
         "node_state_changed",
     ]
-    decision_record = body["events"][1]["payload"]
+    decision_payload = body["events"][1]["payload"]
+    assert set(decision_payload) == {"record"}
+    decision_record = decision_payload["record"]
     assert decision_record["record_id"] == "authority_decision-authority-1"
     assert decision_record["record_kind"] == "output"
     assert decision_record["record_type"] == "authority_decision"

@@ -53,7 +53,10 @@ def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnve
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -118,10 +121,14 @@ async def _seed_graph_run(app: Any, run_id: str) -> tuple[str, str]:
         _event(
             "output_record_accepted",
             {
-                "record_id": "output-1",
-                "record_kind": "output",
-                "port": "output",
-                "producer_node_id": "node-a",
+                "record": {
+                    "record_id": "output-1",
+                    "record_kind": "output",
+                    "port": "output",
+                    "producer_node_id": "node-a",
+                    "schema": "TestOutput",
+                    "value": {},
+                }
             },
             2,
         ),

@@ -50,12 +50,19 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
 def _representative_events(run_id: str) -> list[EventEnvelope]:
-    heavy_body = {"body": "x" * 4096, "grades": {"req-1": "pass"}}
+    heavy_body = {
+        "summary": "candidate output",
+        "body": "x" * 4096,
+        "grades": {"req-1": "pass"},
+    }
     return [
         _event("evt-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
         _event(
@@ -81,11 +88,9 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
             "node_authority_changed",
             {
                 "node_id": "worker-1",
-                "authority": {
-                    "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
-                    "allowed_actions": ["submit"],
-                    "preconditions": ["candidate_bound"],
-                },
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+                "allowed_actions": ["submit"],
+                "preconditions": ["candidate_bound"],
             },
         ),
         _event(
@@ -141,12 +146,16 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
             run_id,
             "output_record_accepted",
             {
-                "record_id": "candidate-1",
-                "record_kind": "output",
-                "producer_node_id": "worker-1",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "value": heavy_body,
+                "record": {
+                    "record_id": "candidate-1",
+                    "record_kind": "output",
+                    "producer_node_id": "worker-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "value": heavy_body,
+                    "record_type": "candidate",
+                    "candidate_id": "candidate-1",
+                }
             },
         ),
         _event(
@@ -196,6 +205,7 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
             {
                 "edge_id": "edge-1",
                 "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
                 "record_ids": ["candidate-1"],
             },
         ),
@@ -322,10 +332,8 @@ async def test_check_node_detail_summary_derives_command_precondition(
                     "cmd": "uv run python -c 'print(42)'",
                     "must": True,
                 },
-                "authority": {
-                    "allowed_actions": ["submit_records"],
-                    "resource_claims": [{"mode": "read", "scope": "repo", "paths": ["."]}],
-                },
+                "allowed_actions": ["submit_records"],
+                "resource_claims": [{"mode": "read", "scope": "repo", "paths": ["."]}],
             },
         )
     ]
@@ -590,7 +598,34 @@ async def test_node_detail_summary_matches_existing_light_builder(
         new_response = await _materialized_response(session, run_id, "worker-1")
 
     assert old_response is not None
-    assert new_response == old_response.model_dump(mode="json")
+    old_dump = old_response.model_dump(mode="json")
+    semantic_fields = set(new_response).difference({"events", "callback_history"})
+    assert len(semantic_fields) == 16
+    assert semantic_fields == set(old_dump).difference({"events", "callback_history"})
+    assert {key: new_response[key] for key in semantic_fields} == {
+        key: old_dump[key] for key in semantic_fields
+    }
+    assert [
+        (event["event_id"], event["event_type"], event["position"])
+        for event in new_response["events"]
+    ] == [
+        (event["event_id"], event["event_type"], event["position"]) for event in old_dump["events"]
+    ]
+    # The Task 11 complete-read cutover deliberately makes the materialized
+    # event payload the full source while the former light reader remains a
+    # compact projection.  Verify the compact payload is a faithful subset;
+    # classification_summary is a derived presentation field, not source data.
+    for compact, full in zip(old_dump["events"], new_response["events"], strict=True):
+        compact_payload = dict(compact["payload"])
+        compact_payload.pop("classification_summary", None)
+        assert all(full["payload"].get(key) == value for key, value in compact_payload.items())
+    assert [event["event_id"] for event in new_response["callback_history"]] == [
+        event["event_id"] for event in old_dump["callback_history"]
+    ]
+    for compact, full in zip(
+        old_dump["callback_history"], new_response["callback_history"], strict=True
+    ):
+        assert all(full["payload"].get(key) == value for key, value in compact["payload"].items())
 
 
 @pytest.mark.asyncio

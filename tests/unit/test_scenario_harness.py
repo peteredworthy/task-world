@@ -66,7 +66,7 @@ def test_scenario_detects_missing_then_event() -> None:
     result = run_scenario(
         {
             "name": "missing_event",
-            "given_events": [{"node_created": {"node_id": "build-A-1"}}],
+            "given_events": [{"node_created": {"node_id": "build-A-1", "kind": "worker"}}],
             "then_events": ["appeal_opened"],
         },
         InMemoryEventStore(),
@@ -84,8 +84,8 @@ def test_scenario_detects_wrong_payload_in_then_event() -> None:
     result = run_scenario(
         {
             "name": "payload_mismatch",
-            "given_events": [{"node_created": {"node_id": "build-A-1"}}],
-            "then_events": [{"node_created": {"node_id": "build-A-2"}}],
+            "given_events": [{"node_created": {"node_id": "build-A-1", "kind": "worker"}}],
+            "then_events": [{"node_created": {"node_id": "build-A-2", "kind": "worker"}}],
         },
         InMemoryEventStore(),
         FakeClock(),
@@ -96,7 +96,8 @@ def test_scenario_detects_wrong_payload_in_then_event() -> None:
 
     assert result.passed is False
     assert result.failures == [
-        "Payload mismatch for event node_created: expected fields {'node_id': 'build-A-2'}"
+        "Payload mismatch for event node_created: expected fields "
+        "{'node_id': 'build-A-2', 'kind': 'worker'}"
     ]
 
 

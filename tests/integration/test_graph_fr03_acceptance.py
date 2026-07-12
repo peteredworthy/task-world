@@ -107,8 +107,8 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert joined.events[0].payload["record_type"] == "join_result"
-    assert joined.events[0].payload["value"] == {
+    assert joined.events[0].payload["record"]["record_type"] == "join_result"
+    assert joined.events[0].payload["record"]["value"] == {
         "status": "ready",
         "source_record_ids": ["candidate-1"],
     }
@@ -306,6 +306,7 @@ async def _seed_fr03_base_events(
                         "record_id": "candidate-1",
                         "record_kind": "output",
                         "record_type": "candidate",
+                        "candidate_id": "candidate-1",
                         "producer_node_id": "worker-source",
                         "port": "candidate",
                         "schema": "ImplementationCandidate",
@@ -317,8 +318,9 @@ async def _seed_fr03_base_events(
                     "output_record_accepted",
                     {
                         "record_id": "candidate-2",
-                        "record_kind": "verification",
+                        "record_kind": "output",
                         "record_type": "candidate",
+                        "candidate_id": "candidate-2",
                         "producer_node_id": "worker-source",
                         "port": "candidate",
                         "schema": "ImplementationCandidate",
@@ -330,8 +332,9 @@ async def _seed_fr03_base_events(
                     "output_record_accepted",
                     {
                         "record_id": "verification-1",
-                        "record_kind": "output",
+                        "record_kind": "verification",
                         "record_type": "verification_report",
+                        "candidate_id": "candidate-1",
                         "producer_node_id": "verifier-source",
                         "port": "verification_report",
                         "schema": "VerificationReport",
@@ -468,5 +471,8 @@ def _event(run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelo
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )

@@ -343,7 +343,10 @@ def _graph_event(
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -486,7 +489,10 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
                 "port": "verification_report",
                 "schema": "VerificationReport",
                 "task_region_id": "region-implementation",
-                "value": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
+                "value": {
+                    "outcome": "passed",
+                    "grades": [{"requirement_id": "req-1", "grade": "A"}],
+                },
             },
         ),
         _graph_event(
@@ -574,8 +580,8 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
     assert "callback_accepted" in final_check_event_types
     assert any(
         event.event_type == "output_record_accepted"
-        and event.payload.get("producer_node_id") == "check-final"
-        and event.payload.get("port") == "check_result"
+        and event.payload["record"].get("producer_node_id") == "check-final"
+        and event.payload["record"].get("port") == "check_result"
         for event in final_events
     )
     assert (

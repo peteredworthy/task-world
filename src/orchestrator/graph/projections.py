@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Iterable, Literal, TypedDict, cast
+from copy import deepcopy
+from typing import Any, Iterable, Literal, Sequence, TypedDict, cast
 
 from pydantic import ConfigDict, field_validator
 
@@ -36,6 +37,7 @@ from orchestrator.graph.models import (
     CleanupAppliedPayload,
     CleanupRequestedPayload,
     CleanupRequestedProjection,
+    CompactEventEnvelope,
     CommandDefinitionProjection,
     CompletionDecisionRecord,
     DecisionRecord,
@@ -66,13 +68,6 @@ from orchestrator.graph.models import (
     LeaseSuspendedPayload,
     JoinResultRecord,
     NodeCreationProjection,
-    NodeAuthorityChangedPayload,
-    NodeCreatedPayload,
-    NodeDeferredPayload,
-    NodeReadyPayload,
-    NodeRetiredPayload,
-    NodeStateChangedPayload,
-    NodeSuspectPayload,
     NodeKind,
     NodeState,
     OversightDecisionProjection,
@@ -80,13 +75,13 @@ from orchestrator.graph.models import (
     OutputRecord,
     OutputRecordPayload,
     PendingGateDecisionProjection,
-    PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
     RequirementRecord,
     RequirementAuthorityResolutionPayload,
     RequirementRevisionPayload,
     RequirementRevisionProjection,
     ResourceClaimProjection,
+    RunContextRecord,
     RoutineSnapshotRecord,
     SupportEvidenceProjection,
     SupportEvidencePayload,
@@ -94,7 +89,23 @@ from orchestrator.graph.models import (
     VerificationResultProjection,
     VerifierVerdictProjection,
 )
+from orchestrator.graph.events.records import OutputRecordAcceptedPayload
+from orchestrator.graph.events.topology import (
+    EdgeCreatedPayload,
+    InputBoundPayload,
+    NodeAuthorityChangedPayload,
+    NodeCreatedPayload,
+    NodeDeferredPayload,
+    NodeReadyPayload,
+    NodeRetiredPayload,
+    NodeStateChangedPayload,
+    PlanRegionMarkedSuspectPayload,
+    PlannerSessionStateChangedPayload,
+)
 from orchestrator.graph.models import normalize_record_selector
+from orchestrator.graph.specifications import HydratedEvent
+
+GraphHistoryEvent = EventEnvelope | HydratedEvent
 
 
 _EDGE_METADATA_KEYS = (
@@ -117,9 +128,6 @@ _TASK_STATE_VALUES = {
 }
 _NODE_STATE_VALUES = {state.value for state in NodeState}
 _NODE_KIND_VALUES = {kind.value for kind in NodeKind}
-
-# Bump this whenever reduce_event semantics or GraphProjection shape changes.
-PROJECTION_SCHEMA_VERSION = 10
 
 GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "allowed_actions",
@@ -209,6 +217,15 @@ GRAPH_PROJECTION_PAYLOAD_FIELDS = (
     "requirement_id",
     "resource_claims",
 )
+
+
+def copy_projection(state: GraphProjection) -> GraphProjection:
+    """Return a fully isolated projection for catalog-owned reducers."""
+    return deepcopy(state)
+
+
+# Bump this whenever reduce_event semantics or GraphProjection shape changes.
+PROJECTION_SCHEMA_VERSION = 10
 
 
 class GraphRecordSummary(TypedDict, total=False):
@@ -1504,15 +1521,6 @@ def _cleanup_applied_payload_from_event(event: EventEnvelope) -> CleanupAppliedP
         return None
 
 
-def _planner_session_state_changed_payload_from_event(
-    event: EventEnvelope,
-) -> PlannerSessionStateChangedPayload | None:
-    try:
-        return PlannerSessionStateChangedPayload.model_validate(event.payload)
-    except ValueError:
-        return None
-
-
 def _graph_patch_accepted_payload_from_event(
     event: EventEnvelope,
 ) -> GraphPatchAcceptedPayload | None:
@@ -1573,7 +1581,7 @@ def _cleanup_requested_from_event(event: EventEnvelope) -> CleanupRequestedProje
     )
 
 
-def _node_creation_from_event(event: EventEnvelope) -> NodeCreationProjection | None:
+def _node_creation_from_event(event: GraphHistoryEvent) -> NodeCreationProjection | None:
     event_payload = _node_created_payload_from_event(event)
     if event_payload is None:
         return None
@@ -1585,12 +1593,14 @@ def _node_creation_from_event(event: EventEnvelope) -> NodeCreationProjection | 
     return _node_creation_from_payload(
         {
             **projection_payload,
-            "position": event.position,
+            "position": _history_event_position(event),
         }
     )
 
 
-def _node_created_payload_from_event(event: EventEnvelope) -> NodeCreatedPayload | None:
+def _node_created_payload_from_event(event: GraphHistoryEvent) -> NodeCreatedPayload | None:
+    if isinstance(event, HydratedEvent):
+        return event.payload if isinstance(event.payload, NodeCreatedPayload) else None
     try:
         return NodeCreatedPayload.model_validate(event.payload)
     except ValueError:
@@ -1815,11 +1825,80 @@ def _pending_gate_decision_payload(
     return cast(PendingGateDecision, details.model_dump(mode="json"))
 
 
+def reduce_typed_output_record_accepted(
+    state: GraphProjection,
+    payload: Any,
+    metadata: Any,
+) -> GraphProjection:
+    """Apply a catalog-hydrated accepted record without legacy payload parsing."""
+    next_state = copy_projection(state)
+    record = payload.record
+    record_payload = record.model_dump(mode="json")
+    event = EventEnvelope(
+        event_id=metadata.event_id,
+        run_id=metadata.run_id,
+        position=metadata.position,
+        event_type=metadata.event_type,
+        schema_version=metadata.payload_schema_generation,
+        actor=metadata.actor,
+        causation_id=metadata.causation_id,
+        correlation_id=metadata.correlation_id,
+        timestamp=metadata.timestamp,
+        payload=record_payload,
+    )
+    typed_record = cast(OutputRecordPayload, record)
+    _record_output_record(next_state, typed_record)
+    _record_node_output_port(next_state, event)
+    _record_accepted_output_record(next_state, typed_record)
+    _record_accepted_record_summary(next_state, event)
+    _record_output_payload(next_state, typed_record)
+    _record_latest_routine_snapshot(next_state, event)
+    _record_completion_decision(next_state, event)
+    _record_decision_request_details(next_state, event)
+    _record_candidate(next_state, event)
+    _record_check_result(next_state, event)
+    _record_environment_failure(next_state, event)
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_compact_output_record_accepted(
+    state: GraphProjection,
+    event: CompactEventEnvelope,
+) -> GraphProjection:
+    """Apply the projection fields selected by the transitional compact reader."""
+    record = event.payload.get("record")
+    if not isinstance(record, dict):
+        msg = "compact output_record_accepted requires a record object"
+        raise ValueError(msg)
+    flat_event = event.model_copy(update={"payload": record})
+    next_state = reduce_legacy_event(state, flat_event)
+    output_record_payload = _parse_output_record_payload(flat_event.payload)
+    _record_output_record(next_state, output_record_payload)
+    _record_node_output_port(next_state, flat_event)
+    _record_accepted_output_record(next_state, output_record_payload)
+    _record_accepted_record_summary(next_state, flat_event)
+    _record_output_payload(next_state, output_record_payload)
+    _record_latest_routine_snapshot(next_state, flat_event)
+    _record_completion_decision(next_state, flat_event)
+    _record_decision_request_details(next_state, flat_event)
+    _record_candidate(next_state, flat_event)
+    _record_check_result(next_state, flat_event)
+    _record_environment_failure(next_state, flat_event)
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
 def reduce_event(
     catalog: GraphCatalog,
     state: GraphProjection,
-    event: EventEnvelope,
+    event: EventEnvelope | HydratedEvent,
 ) -> GraphProjection:
+    if isinstance(event, HydratedEvent):
+        specification = catalog.resolve_event(event.metadata.event_type)
+        return specification.reduce(state, event)
+    if isinstance(event, CompactEventEnvelope):
+        return reduce_compact_output_record_accepted(state, event)
     # Mixed persistence boundary: catalog-owned events hydrate exactly once;
     # future-domain events continue through the legacy raw reducer below.
     handled, reduced = catalog.reduce_stored_event(state, event)
@@ -2039,85 +2118,7 @@ def reduce_legacy_event(
         "cleanup_applied_ids": dict(state.get("cleanup_applied_ids", {})),
     }
 
-    if event.event_type == "node_created":
-        typed_node_payload = _node_created_payload_from_event(event)
-        node_payload = _node_creation_from_event(event)
-        if node_payload is not None and typed_node_payload is not None:
-            node_id = node_payload.node_id
-            kind = node_payload.kind
-            role = node_payload.role
-            node_state = node_payload.state
-            task_region_id = node_payload.task_region_id
-            attempt_number = node_payload.attempt_number
-            candidate_id = node_payload.candidate_id
-            if node_state is not None:
-                next_state["node_states"][node_id] = node_state
-            next_state["node_creation_positions"].setdefault(node_id, event.position)
-            next_state["node_creation_payloads"][node_id] = node_payload
-            _record_recovery_node(next_state, typed_node_payload)
-            if kind == "root":
-                budget = node_payload.planner_generation_budget
-                if isinstance(budget, int) and not isinstance(budget, bool) and budget >= 0:
-                    next_state["planner_generation_budget"] = budget
-            if kind is not None:
-                next_state["node_kinds"][node_id] = kind
-            if role is not None:
-                next_state["node_roles"][node_id] = role
-            if kind == "planner" and role == "planner":
-                generation_index = node_payload.generation_index
-                if isinstance(generation_index, int) and not isinstance(generation_index, bool):
-                    next_state["planner_generations"][node_id] = generation_index
-                region_label = node_payload.region_label
-                if region_label is not None:
-                    next_state["planner_region_labels"][node_id] = region_label
-                session_id = node_payload.session_id
-                if session_id is not None:
-                    next_state["planner_sessions"][node_id] = session_id
-                    next_state["planner_session_states"].setdefault(session_id, "detached")
-                    next_state["planner_session_carryovers"].setdefault(session_id, None)
-            if task_region_id is not None:
-                next_state["node_task_regions"][node_id] = task_region_id
-            if attempt_number is not None:
-                next_state["node_attempts"][node_id] = attempt_number
-            if candidate_id is not None:
-                next_state["node_candidates"][node_id] = candidate_id
-            failed_candidate_id = node_payload.failed_candidate_id
-            if failed_candidate_id is not None:
-                next_state["node_failed_candidates"][node_id] = failed_candidate_id
-            resource_claims = node_payload.resource_claims
-            if resource_claims:
-                next_state["node_resource_claims"][node_id] = resource_claims
-            allowed_actions = node_payload.allowed_actions
-            if allowed_actions:
-                next_state["node_allowed_actions"][node_id] = allowed_actions
-            preconditions = list(node_payload.preconditions)
-            if kind == "check" and "has_command_definition" not in preconditions:
-                preconditions.append("has_command_definition")
-            if preconditions:
-                next_state["node_preconditions"][node_id] = preconditions
-            command_definition = _command_definition_for_node_creation(node_payload)
-            if command_definition is not None:
-                next_state["node_command_definitions"][node_id] = command_definition
-            if kind == "gate" and task_region_id is not None:
-                next_state["configured_gates"].setdefault(task_region_id, {})[node_id] = True
-    elif event.event_type == "node_state_changed":
-        payload = NodeStateChangedPayload.model_validate(event.payload)
-        node_id = payload.node_id
-        new_state = payload.new_state
-        if isinstance(node_id, str) and isinstance(new_state, str):
-            next_state["node_states"][node_id] = new_state
-            attempt_number = payload.attempt_number
-            if attempt_number is not None:
-                next_state["node_attempts"][node_id] = attempt_number
-    elif event.event_type == "node_retired":
-        node_id = NodeRetiredPayload.model_validate(event.payload).node_id
-        if isinstance(node_id, str):
-            next_state["node_states"][node_id] = "retired"
-    elif event.event_type == "edge_created":
-        _record_edge(next_state, event)
-    elif event.event_type == "input_bound":
-        _record_input_binding(next_state, event)
-    elif event.event_type == "lease_granted":
+    if event.event_type == "lease_granted":
         granted_payload = _lease_granted_from_payload(event.payload)
         if granted_payload is not None:
             lease_id = granted_payload.lease_id
@@ -2153,23 +2154,6 @@ def reduce_legacy_event(
             lease = _lease_from_payload(lease_payload)
             if lease is not None:
                 next_state["leases"][lease_id] = lease
-    elif event.event_type == "session_state_changed":
-        payload = _planner_session_state_changed_payload_from_event(event)
-        if payload is not None and payload.session_id is not None and payload.state is not None:
-            session_id = payload.session_id
-            session_state = payload.state
-            next_state["planner_session_states"][session_id] = session_state
-            if session_state == "attached" and payload.node_id is not None:
-                next_state["planner_session_current_nodes"][session_id] = payload.node_id
-            elif session_state in {"suspended", "detached", "dead"}:
-                next_state["planner_session_current_nodes"].pop(session_id, None)
-            if payload.carryover_record_id is not None:
-                next_state["planner_session_carryovers"][session_id] = payload.carryover_record_id
-            elif (
-                "carryover_record_id" in event.payload
-                and "carryover_record_id" not in payload.extra
-            ):
-                next_state["planner_session_carryovers"][session_id] = None
     elif event.event_type in {
         "lease_suspended",
         "lease_revoked",
@@ -2199,19 +2183,6 @@ def reduce_legacy_event(
             lease = _lease_from_payload(lease_payload)
             if lease is not None:
                 next_state["leases"][lease_id] = lease
-    elif event.event_type == "output_record_accepted":
-        output_record_payload = _parse_output_record_payload(event.payload)
-        _record_output_record(next_state, output_record_payload)
-        _record_node_output_port(next_state, event)
-        _record_accepted_output_record(next_state, output_record_payload)
-        _record_accepted_record_summary(next_state, event)
-        _record_output_payload(next_state, output_record_payload)
-        _record_latest_routine_snapshot(next_state, event)
-        _record_completion_decision(next_state, event)
-        _record_decision_request_details(next_state, event)
-        _record_candidate(next_state, event)
-        _record_check_result(next_state, event)
-        _record_environment_failure(next_state, event)
     elif event.event_type in {"verification_passed", "verification_failed"}:
         _record_verdict(next_state, event)
         _record_verification_result(next_state, event)
@@ -2235,10 +2206,6 @@ def reduce_legacy_event(
         authority_payload = AuthorityDecisionRecordedPayload.model_validate(event.payload)
         _record_latest_authority_decision(next_state["authority_decisions"], authority_payload)
         _record_authority_decision(next_state, authority_payload)
-    elif event.event_type == "node_authority_changed":
-        _record_authority_change(
-            next_state, NodeAuthorityChangedPayload.model_validate(event.payload)
-        )
     elif event.event_type in {"environment_failure_accepted", "check_result_classified"}:
         _record_environment_failure(next_state, event)
     elif event.event_type == "file_state_accepted":
@@ -2301,32 +2268,11 @@ def reduce_legacy_event(
     }:
         _record_open_proposal_blocker(next_state, event)
     elif event.event_type in {
-        "plan_region_marked_suspect",
-        "node_marked_suspect",
-        "plan_region_suspect_resolved",
-        "node_suspect_resolved",
-        "plan_region_suspect_cleared",
-        "node_suspect_cleared",
-    }:
-        _record_suspect_node_reason(
-            next_state, event.event_type, NodeSuspectPayload.model_validate(event.payload)
-        )
-    elif event.event_type in {
         "authority_resolution_recorded",
         "authority_resolved",
         "requirement_revision_authorized",
     }:
         _record_authority_revision_blocker(next_state, event)
-    elif event.event_type == "node_deferred":
-        payload = NodeDeferredPayload.model_validate(event.payload)
-        node_id = payload.node_id
-        reason = payload.reason
-        if isinstance(node_id, str) and isinstance(reason, str):
-            next_state["last_deferred_reasons"][node_id] = reason
-    elif event.event_type == "node_ready":
-        node_id = NodeReadyPayload.model_validate(event.payload).node_id
-        if isinstance(node_id, str):
-            next_state["last_deferred_reasons"].pop(node_id, None)
     # node_ready/node_deferred and agent_died/runtime_retry_scheduled are
     # audit/policy facts. Projection facts are updated only by lease_* and
     # node_state_changed events so replay has a single state authority.
@@ -2585,22 +2531,26 @@ def _failed_check_result_blockers(
     for event in events:
         if event.event_type != "output_record_accepted":
             continue
-        if not _is_check_result_record(event.payload):
+        payload = event.payload.get("record")
+        if not isinstance(payload, dict):
             continue
-        status = _check_result_status(event.payload)
+        typed_payload = cast(dict[str, Any], payload)
+        if not _is_check_result_record(typed_payload):
+            continue
+        status = _check_result_status(typed_payload)
         if status is None:
             continue
         if status in {"passed", "pass", "ok"}:
             continue
-        if _check_result_recovery_superseded(projection, event.payload):
+        if _check_result_recovery_superseded(projection, typed_payload):
             continue
-        record_id = event.payload.get("record_id")
+        record_id = typed_payload.get("record_id")
         key = record_id if isinstance(record_id, str) else f"position-{event.position}"
         blocker: FinalInvariantBlocker = {
             "kind": "failed_check_result",
             "reason": "check result did not pass",
         }
-        value = event.payload.get("value")
+        value = typed_payload.get("value")
         if isinstance(value, dict):
             typed_value = cast(dict[str, Any], value)
             classification = typed_value.get("classification")
@@ -2621,10 +2571,10 @@ def _failed_check_result_blockers(
                 blocker["exit_code"] = exit_code
             if classification in {"environment_error", "tool_error", "tool_unavailable"}:
                 blocker["reason"] = _environment_failure_reason_from_check_value(typed_value)
-        node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
+        node_id = typed_payload.get("producer_node_id") or typed_payload.get("node_id")
         if isinstance(node_id, str):
             blocker["node_id"] = node_id
-        task_region_id = event.payload.get("task_region_id")
+        task_region_id = typed_payload.get("task_region_id")
         if isinstance(task_region_id, str):
             blocker["task_region_id"] = task_region_id
         blocker["state"] = status
@@ -2705,7 +2655,10 @@ def _completion_decision_blockers(
     payloads: Iterable[dict[str, Any]]
     if _has_full_event_history(events):
         payloads = [
-            event.payload for event in events if event.event_type == "output_record_accepted"
+            cast(dict[str, Any], event.payload["record"])
+            for event in events
+            if event.event_type == "output_record_accepted"
+            and isinstance(event.payload.get("record"), dict)
         ]
     else:
         payloads = [
@@ -2833,25 +2786,8 @@ def _suspect_node_blockers(
     events: list[EventEnvelope],
     projection: GraphProjection,
 ) -> list[FinalInvariantBlocker]:
-    if _has_full_event_history(events):
-        suspect_nodes: dict[str, str] = {}
-        for event in events:
-            if event.event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
-                payload = NodeSuspectPayload.model_validate(event.payload)
-                reason = payload.reason or "suspect graph fact remains unresolved"
-                for node_id in _node_ids_from_suspect_payload(payload):
-                    suspect_nodes[node_id] = reason
-            elif event.event_type in {
-                "plan_region_suspect_resolved",
-                "node_suspect_resolved",
-                "plan_region_suspect_cleared",
-                "node_suspect_cleared",
-            }:
-                payload = NodeSuspectPayload.model_validate(event.payload)
-                for node_id in _node_ids_from_suspect_payload(payload):
-                    suspect_nodes.pop(node_id, None)
-    else:
-        suspect_nodes = projection.get("suspect_node_reasons", {})
+    del events
+    suspect_nodes = projection.get("suspect_node_reasons", {})
 
     blockers: list[FinalInvariantBlocker] = []
     inactive_states = {"completed", "failed", "cancelled", "retired"}
@@ -3055,29 +2991,6 @@ def _record_open_proposal_blocker(state: GraphProjection, event: EventEnvelope) 
         state["open_proposal_blockers"].pop(proposal_id, None)
 
 
-def _record_suspect_node_reason(
-    state: GraphProjection, event_type: str, payload: NodeSuspectPayload
-) -> None:
-    node_ids = _node_ids_from_suspect_payload(payload)
-    if event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
-        reason = payload.reason or "suspect graph fact remains unresolved"
-        for node_id in node_ids:
-            state["suspect_node_reasons"][node_id] = reason
-        return
-    for node_id in node_ids:
-        state["suspect_node_reasons"].pop(node_id, None)
-
-
-def _node_ids_from_suspect_payload(payload: NodeSuspectPayload) -> list[str]:
-    return sorted(
-        set(
-            [node_id for node_id in [payload.node_id, payload.region_id] if node_id is not None]
-            + payload.node_ids
-            + payload.region_node_ids
-        )
-    )
-
-
 def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvelope) -> None:
     payload = _authority_revision_payload_for_event(event)
     if payload is None:
@@ -3204,7 +3117,7 @@ def _requirement_priority(payload: dict[str, Any]) -> str | None:
 
 
 def project_planner_chain(
-    catalog: GraphCatalog, events: list[EventEnvelope]
+    catalog: GraphCatalog, events: Sequence[GraphHistoryEvent]
 ) -> list[dict[str, Any]]:
     projection = _project(catalog, events)
     planner_ids = [
@@ -3964,7 +3877,14 @@ def _add_record_summary_positions(
     for event in events:
         if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
             continue
-        record_id = event.payload.get("record_id")
+        if event.event_type == "output_record_accepted":
+            record_id = (
+                cast(str, event.payload["record"]["record_id"])
+                if isinstance(event, CompactEventEnvelope)
+                else OutputRecordAcceptedPayload.model_validate(event.payload).record.record_id
+            )
+        else:
+            record_id = event.payload.get("record_id")
         if not isinstance(record_id, str):
             continue
         summary = summaries.get(record_id)
@@ -4128,14 +4048,14 @@ def project_gatekeeper_report(events: list[EventEnvelope]) -> dict[str, dict[str
     return reports
 
 
-def _project(catalog: GraphCatalog, events: list[EventEnvelope]) -> GraphProjection:
+def _project(catalog: GraphCatalog, events: Sequence[GraphHistoryEvent]) -> GraphProjection:
     projection = initial_projection()
     for event in events:
         projection = reduce_event(catalog, projection, event)
     return projection
 
 
-def build_projection(catalog: GraphCatalog, events: list[EventEnvelope]) -> GraphProjection:
+def build_projection(catalog: GraphCatalog, events: Sequence[GraphHistoryEvent]) -> GraphProjection:
     """Fold *events* into a full :class:`GraphProjection`.
 
     Public entry point for callers (e.g. read-model presenters) that need to
@@ -4147,18 +4067,25 @@ def build_projection(catalog: GraphCatalog, events: list[EventEnvelope]) -> Grap
 
 
 def _has_full_event_history(events: list[EventEnvelope]) -> bool:
-    return bool(events) and events[0].position <= 1
+    # Compact envelopes carry transitional flat output-record payloads, not the
+    # durable nested shape the event-introspection helpers read; treat those
+    # histories as partial so callers use the projection-based fallbacks.
+    return (
+        bool(events)
+        and events[0].position <= 1
+        and not any(isinstance(event, CompactEventEnvelope) for event in events)
+    )
 
 
 _PENDING_DECISION_STATES = {"planned", "blocked", "ready", "leased", "running", "suspended"}
 
 
 def _latest_node_creation_payloads(
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
 ) -> dict[str, NodeCreationProjection]:
     payloads: dict[str, NodeCreationProjection] = {}
     for event in events:
-        if event.event_type != "node_created":
+        if _history_event_type(event) != "node_created":
             continue
         payload = _node_creation_from_event(event)
         if payload is not None:
@@ -4214,6 +4141,165 @@ def _approval_decision_from_payload(
         return ApprovalDecisionProjection.model_validate(payload)
     except ValueError:
         return None
+
+
+def reduce_node_created(
+    state: GraphProjection, payload: NodeCreatedPayload, metadata: Any
+) -> GraphProjection:
+    """Apply a hydrated node creation payload without revisiting storage JSON."""
+    next_state = copy_projection(state)
+    node_id = payload.node_id
+    kind = payload.kind
+    role = payload.role
+    if payload.state is not None:
+        next_state["node_states"][node_id] = payload.state
+    next_state["node_creation_positions"].setdefault(node_id, metadata.position)
+    node_creation = NodeCreationProjection.model_validate(
+        {**payload.model_dump(mode="json"), "position": metadata.position}
+    )
+    next_state["node_creation_payloads"][node_id] = node_creation
+    _record_recovery_node(next_state, payload)
+    if kind == "root" and payload.planner_generation_budget is not None:
+        next_state["planner_generation_budget"] = payload.planner_generation_budget
+    next_state["node_kinds"][node_id] = kind
+    if role is not None:
+        next_state["node_roles"][node_id] = role
+    if kind == "planner" and role == "planner":
+        if payload.generation_index is not None:
+            next_state["planner_generations"][node_id] = payload.generation_index
+        if payload.region_label is not None:
+            next_state["planner_region_labels"][node_id] = payload.region_label
+        if payload.session_id is not None:
+            next_state["planner_sessions"][node_id] = payload.session_id
+            next_state["planner_session_states"].setdefault(payload.session_id, "detached")
+            next_state["planner_session_carryovers"].setdefault(payload.session_id, None)
+    if payload.task_region_id is not None:
+        next_state["node_task_regions"][node_id] = payload.task_region_id
+    if payload.attempt_number is not None:
+        next_state["node_attempts"][node_id] = payload.attempt_number
+    if payload.candidate_id is not None:
+        next_state["node_candidates"][node_id] = payload.candidate_id
+    if payload.failed_candidate_id is not None:
+        next_state["node_failed_candidates"][node_id] = payload.failed_candidate_id
+    if payload.resource_claims:
+        next_state["node_resource_claims"][node_id] = payload.resource_claims
+    if payload.allowed_actions:
+        next_state["node_allowed_actions"][node_id] = payload.allowed_actions
+    preconditions = list(payload.preconditions)
+    if kind == "check" and "has_command_definition" not in preconditions:
+        preconditions.append("has_command_definition")
+    if preconditions:
+        next_state["node_preconditions"][node_id] = preconditions
+    command_definition = _command_definition_for_node_creation(payload)
+    if command_definition is not None:
+        next_state["node_command_definitions"][node_id] = command_definition
+    if kind == "gate" and payload.task_region_id is not None:
+        next_state["configured_gates"].setdefault(payload.task_region_id, {})[node_id] = True
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_node_state_changed(
+    state: GraphProjection, payload: NodeStateChangedPayload, metadata: Any
+) -> GraphProjection:
+    del metadata
+    next_state = copy_projection(state)
+    next_state["node_states"][payload.node_id] = payload.new_state
+    if payload.attempt_number is not None:
+        next_state["node_attempts"][payload.node_id] = payload.attempt_number
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_node_retired(
+    state: GraphProjection, payload: NodeRetiredPayload, metadata: Any
+) -> GraphProjection:
+    del metadata
+    next_state = copy_projection(state)
+    next_state["node_states"][payload.node_id] = "retired"
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_node_ready(
+    state: GraphProjection, payload: NodeReadyPayload, metadata: Any
+) -> GraphProjection:
+    del metadata
+    next_state = copy_projection(state)
+    next_state["last_deferred_reasons"].pop(payload.node_id, None)
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_node_deferred(
+    state: GraphProjection, payload: NodeDeferredPayload, metadata: Any
+) -> GraphProjection:
+    del metadata
+    next_state = copy_projection(state)
+    next_state["last_deferred_reasons"][payload.node_id] = payload.reason
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_node_authority_changed(
+    state: GraphProjection, payload: NodeAuthorityChangedPayload, metadata: Any
+) -> GraphProjection:
+    del metadata
+    next_state = copy_projection(state)
+    _record_authority_change(next_state, payload)
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_plan_region_marked_suspect(
+    state: GraphProjection, payload: PlanRegionMarkedSuspectPayload, metadata: Any
+) -> GraphProjection:
+    del metadata
+    next_state = copy_projection(state)
+    for node_id in payload.region_node_ids:
+        next_state["suspect_node_reasons"][node_id] = payload.reason
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_edge_created(
+    state: GraphProjection, payload: EdgeCreatedPayload, metadata: Any
+) -> GraphProjection:
+    del metadata
+    next_state = copy_projection(state)
+    _record_edge(next_state, payload)
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_input_bound(
+    state: GraphProjection, payload: InputBoundPayload, metadata: Any
+) -> GraphProjection:
+    del metadata
+    next_state = copy_projection(state)
+    _record_input_binding(next_state, payload)
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_session_state_changed(
+    state: GraphProjection, payload: PlannerSessionStateChangedPayload, metadata: Any
+) -> GraphProjection:
+    del metadata
+    next_state = copy_projection(state)
+    next_state["planner_session_states"][payload.session_id] = payload.state
+    if payload.state == "attached":
+        next_state["planner_session_current_nodes"][payload.session_id] = payload.node_id
+    elif payload.state in {"suspended", "detached", "dead"}:
+        next_state["planner_session_current_nodes"].pop(payload.session_id, None)
+    next_state["planner_session_carryovers"][payload.session_id] = payload.carryover_record_id
+    _refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def _refresh_derived_topology_state(state: GraphProjection) -> None:
+    state["ready_nodes"] = _ready_nodes(state["node_states"])
+    state["task_states"] = _derive_task_states(state)
 
 
 def _authority_decision_from_payload(
@@ -4373,8 +4459,7 @@ def _latest_node_deferrals(events: list[EventEnvelope]) -> dict[str, str]:
         payload = NodeDeferredPayload.model_validate(event.payload)
         node_id = payload.node_id
         reason = payload.reason
-        if isinstance(node_id, str) and isinstance(reason, str):
-            reasons[node_id] = reason
+        reasons[node_id] = reason
     return reasons
 
 
@@ -4400,29 +4485,37 @@ def _optional_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def _node_creation_position(events: list[EventEnvelope], node_id: str) -> int:
+def _node_creation_position(events: Sequence[GraphHistoryEvent], node_id: str) -> int:
     for event in events:
-        if event.event_type != "node_created":
+        if _history_event_type(event) != "node_created":
             continue
         payload = _node_created_payload_from_event(event)
         if payload is not None and payload.node_id == node_id:
-            return event.position
+            return _history_event_position(event)
     return 0
 
 
-def _latest_lease_generation(events: list[EventEnvelope], node_id: str) -> int | None:
+def _latest_lease_generation(events: Sequence[GraphHistoryEvent], node_id: str) -> int | None:
     generation: int | None = None
     for event in events:
-        if event.event_type != "lease_granted" or event.payload.get("node_id") != node_id:
+        if _history_event_type(event) != "lease_granted":
             continue
-        value = event.payload.get("generation")
+        if isinstance(event, HydratedEvent):
+            payload = event.payload
+            event_node_id = getattr(payload, "node_id", None)
+            value = getattr(payload, "generation", None)
+        else:
+            event_node_id = event.payload.get("node_id")
+            value = event.payload.get("generation")
+        if event_node_id != node_id:
+            continue
         if isinstance(value, int) and not isinstance(value, bool):
             generation = value
     return generation
 
 
 def _planner_region_label(
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     projection: GraphProjection,
     node_id: str,
 ) -> str | None:
@@ -4436,10 +4529,10 @@ def _planner_region_label(
     return labels.get(generation_index)
 
 
-def _seeded_planner_chain_labels(events: list[EventEnvelope]) -> dict[int, str]:
+def _seeded_planner_chain_labels(events: Sequence[GraphHistoryEvent]) -> dict[int, str]:
     labels: dict[int, str] = {}
     for event in events:
-        if event.event_type != "node_created":
+        if _history_event_type(event) != "node_created":
             continue
         payload = _node_created_payload_from_event(event)
         if payload is None or payload.planner_chain is None:
@@ -4454,6 +4547,18 @@ def _seeded_planner_chain_labels(events: list[EventEnvelope]) -> dict[int, str]:
             ):
                 labels.setdefault(generation_index, region_label)
     return labels
+
+
+def _history_event_type(event: GraphHistoryEvent) -> str:
+    if isinstance(event, HydratedEvent):
+        return event.metadata.event_type
+    return event.event_type
+
+
+def _history_event_position(event: GraphHistoryEvent) -> int:
+    if isinstance(event, HydratedEvent):
+        return event.metadata.position
+    return event.position
 
 
 def _planner_generation_state(events: list[EventEnvelope], lease_id: str) -> str:
@@ -4564,7 +4669,7 @@ def _record_recovery_node(state: GraphProjection, payload: NodeCreatedPayload) -
     node_id = payload.node_id
     recovery_reason = payload.recovery_reason
     record_id = payload.recovery_of_record_id
-    if not isinstance(node_id, str) or not node_id:
+    if not node_id:
         return
     if not isinstance(recovery_reason, str) or not recovery_reason:
         return
@@ -4701,6 +4806,10 @@ def _output_record_model_for_payload(payload: dict[str, Any]) -> type[GraphBaseM
     schema = payload.get("schema")
     port = payload.get("port")
 
+    if record_kind == "file_state":
+        return FileStateRecord
+    if record_type == "run_context" or schema == "RunContext":
+        return RunContextRecord
     if record_kind == "verification" or record_type in {"verification", "verification_report"}:
         return VerificationReportRecord
     if schema == "VerificationReport" or port in {"verification_report", "verification_result"}:
@@ -5009,41 +5118,29 @@ def _record_authority_decision(
         state["node_gate_decisions"][node_id] = passed
 
 
-def _record_edge(state: GraphProjection, event: EventEnvelope) -> None:
-    from_node_id = event.payload.get("from_node_id")
-    from_port = event.payload.get("from_port")
-    to_node_id = event.payload.get("to_node_id")
-    to_port = event.payload.get("to_port")
-    if not all(isinstance(value, str) for value in (from_node_id, from_port, to_node_id, to_port)):
-        return
-
-    edge_id = event.payload.get("edge_id")
-    if not isinstance(edge_id, str):
-        edge_id = f"{from_node_id}:{from_port}->{to_node_id}:{to_port}"
-    required = event.payload.get("required")
-    dependency_type = event.payload.get("dependency_type", "input_binding")
-    if not isinstance(dependency_type, str):
-        dependency_type = "input_binding"
+def _record_edge(state: GraphProjection, payload: EdgeCreatedPayload) -> None:
+    edge_id = payload.edge_id
     edge_payload: dict[str, Any] = {
         "edge_id": edge_id,
-        "from_node_id": from_node_id,
-        "from_port": from_port,
-        "to_node_id": to_node_id,
-        "to_port": to_port,
-        "required": _edge_required(required),
-        "dependency_type": dependency_type,
+        "from_node_id": payload.from_node_id,
+        "from_port": payload.from_port,
+        "to_node_id": payload.to_node_id,
+        "to_port": payload.to_port,
+        "required": payload.required,
+        "dependency_type": payload.dependency_type or "input_binding",
     }
     for key in ("from_node_kind", "from_node_role"):
-        value = event.payload.get(key)
+        value = getattr(payload, key, None)
         if isinstance(value, str) and value:
             edge_payload[key] = value
-    selector = event.payload.get("accepted_record_selector")
-    if isinstance(selector, dict):
-        edge_payload["accepted_record_selector"] = normalize_record_selector(selector)
+    if payload.accepted_record_selector is not None:
+        edge_payload["accepted_record_selector"] = normalize_record_selector(
+            payload.accepted_record_selector
+        )
     for key in _EDGE_METADATA_KEYS:
-        if key not in event.payload:
+        value = getattr(payload, key, None)
+        if value is None:
             continue
-        value = event.payload[key]
         if isinstance(value, dict):
             edge_payload[key] = dict(cast(dict[str, Any], value))
         elif isinstance(value, list):
@@ -5257,63 +5354,26 @@ def _authority_required_reason(payload: dict[str, Any], classification: str) -> 
     return classification
 
 
-def _record_input_binding(state: GraphProjection, event: EventEnvelope) -> None:
-    to_node_id = event.payload.get("to_node_id")
-    if not isinstance(to_node_id, str):
-        return
-
-    to_port = event.payload.get("to_port")
-    edge_id = event.payload.get("edge_id")
-    if not isinstance(to_port, str) and isinstance(edge_id, str):
-        edge = state["edges"].get(edge_id)
-        if edge is not None:
-            edge_to_port = edge.get("to_port")
-            if isinstance(edge_to_port, str):
-                to_port = edge_to_port
-    if not isinstance(to_port, str):
-        legacy_input = event.payload.get("input")
-        if isinstance(legacy_input, str):
-            to_port = legacy_input
-    if not isinstance(to_port, str):
-        return
-
+def _record_input_binding(state: GraphProjection, payload: InputBoundPayload) -> None:
+    to_node_id = payload.to_node_id
+    to_port = payload.to_port
+    edge_id = payload.edge_id
     binding: dict[str, Any] = {
         "to_node_id": to_node_id,
         "to_port": to_port,
+        "edge_id": edge_id,
+        "record_ids": list(payload.record_ids),
+        "bound_at_position": payload.bound_at_position,
     }
-    if isinstance(edge_id, str):
-        binding["edge_id"] = edge_id
-    record_ids = event.payload.get("record_ids")
-    if isinstance(record_ids, list):
-        binding["record_ids"] = [
-            record_id for record_id in cast(list[Any], record_ids) if isinstance(record_id, str)
-        ]
-    bound_at_position = event.payload.get("bound_at_position")
-    if isinstance(bound_at_position, int) and not isinstance(bound_at_position, bool):
-        binding["bound_at_position"] = bound_at_position
-    else:
-        binding["bound_at_position"] = event.position
-    for key in ("trigger", "supersedes_record_id"):
-        value = event.payload.get(key)
-        if isinstance(value, str):
-            binding[key] = value
-    incoming_positions = event.payload.get("record_bound_positions")
-    if isinstance(incoming_positions, dict):
-        binding["record_bound_positions"] = {
-            record_id: position
-            for record_id, position in cast(dict[Any, Any], incoming_positions).items()
-            if isinstance(record_id, str)
-            and isinstance(position, int)
-            and not isinstance(position, bool)
-        }
+    if payload.supersedes_record_id is not None:
+        binding["supersedes_record_id"] = payload.supersedes_record_id
+    if payload.record_bound_positions is not None:
+        binding["record_bound_positions"] = dict(payload.record_bound_positions)
+    if payload.trigger is not None:
+        binding["trigger"] = payload.trigger
     existing_binding = state["input_bindings"].get(to_node_id, {}).get(to_port)
     policy = _binding_policy_for_input_event(state, binding, to_node_id, to_port)
     binding["binding_policy"] = policy
-    if "edge_id" not in binding:
-        edge = _edge_for_input_binding(state, binding, to_node_id, to_port)
-        edge_id_from_projection = edge.get("edge_id") if edge is not None else None
-        if isinstance(edge_id_from_projection, str):
-            binding["edge_id"] = edge_id_from_projection
     merged_ids = merge_bound_record_ids(
         policy,
         _bound_record_ids(existing_binding or {}),
@@ -5409,20 +5469,14 @@ def _merged_record_bound_positions(
 
 def _record_authority_change(state: GraphProjection, payload: NodeAuthorityChangedPayload) -> None:
     node_id = payload.node_id
-    if not isinstance(node_id, str):
-        return
+    if "resource_claims" in payload.model_fields_set:
+        state["node_resource_claims"][node_id] = payload.resource_claims
 
-    resource_claims = payload.resource_claims
-    if resource_claims:
-        state["node_resource_claims"][node_id] = resource_claims
+    if "allowed_actions" in payload.model_fields_set:
+        state["node_allowed_actions"][node_id] = payload.allowed_actions
 
-    allowed_actions = payload.allowed_actions
-    if allowed_actions:
-        state["node_allowed_actions"][node_id] = allowed_actions
-
-    preconditions = payload.preconditions
-    if preconditions:
-        state["node_preconditions"][node_id] = preconditions
+    if "preconditions" in payload.model_fields_set:
+        state["node_preconditions"][node_id] = payload.preconditions
 
 
 def _record_environment_failure(state: GraphProjection, event: EventEnvelope) -> None:
@@ -6272,6 +6326,6 @@ def _task_region_ids_from_payload(
 
 
 def _command_definition_for_node_creation(
-    payload: NodeCreationProjection,
+    payload: NodeCreationProjection | NodeCreatedPayload,
 ) -> CommandDefinitionProjection | None:
     return check_command_reference(payload.model_dump(mode="json"))

@@ -344,19 +344,19 @@ async def test_final_gate_completion_decision_and_region_readbacks(
         event
         for event in events
         if event["event_type"] == "output_record_accepted"
-        and event["payload"].get("record_type") == "completion_decision"
+        and event["payload"]["record"].get("record_type") == "completion_decision"
     ]
     assert len(completion_decisions) == 1
     decision_event = completion_decisions[0]
     decision = decision_event["payload"]
-    assert decision["record_id"]
-    assert decision["record_kind"] == "output"
-    assert decision["record_type"] == "completion_decision"
-    assert decision["producer_node_id"] == "final-gate-s-01-t-01"
-    assert decision["port"] == "completion_decision"
-    assert decision["schema"] == "CompletionDecision"
-    assert decision["value"] == {"status": "passed", "blockers": []}
-    assert decision["provenance"] == {"source": "final_gate_evaluated"}
+    assert decision["record"]["record_id"]
+    assert decision["record"]["record_kind"] == "output"
+    assert decision["record"]["record_type"] == "completion_decision"
+    assert decision["record"]["producer_node_id"] == "final-gate-s-01-t-01"
+    assert decision["record"]["port"] == "completion_decision"
+    assert decision["record"]["schema"] == "CompletionDecision"
+    assert decision["record"]["value"] == {"status": "passed", "blockers": []}
+    assert decision["record"]["provenance"] == {"source": "final_gate_evaluated"}
     assert decision_event["run_id"] == run_id
     assert decision_event["position"] > 0
     assert decision_event["timestamp"]
@@ -383,7 +383,7 @@ async def test_final_gate_completion_decision_and_region_readbacks(
     assert gate["input_ports"] == {"check_result": final_edge["binding"]["record_ids"]}
     assert len(gate["output_records"]) == 1
     gate_record = gate["output_records"][0]
-    assert gate_record["record_id"] == decision["record_id"]
+    assert gate_record["record_id"] == decision["record"]["record_id"]
     assert gate_record["record_kind"] == "output"
     assert gate_record["record_type"] == "completion_decision"
     assert gate_record["schema"] == "CompletionDecision"
@@ -406,7 +406,7 @@ async def test_final_gate_completion_decision_and_region_readbacks(
     assert len(completion_events) == 1
     completed_event = completion_events[0]["payload"]
     assert completed_event["completion_status"] == "passed"
-    assert completed_event["completion_decision_record_id"] == decision["record_id"]
+    assert completed_event["completion_decision_record_id"] == decision["record"]["record_id"]
 
     assert final_edge["binding"]["binding_policy"] == "bind_first"
     assert final_edge["binding"]["to_node_id"] == "final-gate-s-01-t-01"
@@ -419,7 +419,7 @@ async def test_final_gate_completion_decision_and_region_readbacks(
         event["position"]
         for event in events
         if event["event_type"] == "output_record_accepted"
-        and event["payload"].get("record_type") == "candidate"
+        and event["payload"]["record"].get("record_type") == "candidate"
     )
     file_state_position = next(
         event["position"] for event in events if event["event_type"] == "file_state_accepted"
@@ -428,13 +428,13 @@ async def test_final_gate_completion_decision_and_region_readbacks(
         event["position"]
         for event in events
         if event["event_type"] == "output_record_accepted"
-        and event["payload"].get("record_type") == "verification_report"
+        and event["payload"]["record"].get("record_type") == "verification_report"
     )
     check_position = next(
         event["position"]
         for event in events
         if event["event_type"] == "output_record_accepted"
-        and event["payload"].get("record_type") == "check_result"
+        and event["payload"]["record"].get("record_type") == "check_result"
     )
     assert (
         max(

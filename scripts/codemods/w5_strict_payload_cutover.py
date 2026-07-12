@@ -11,6 +11,7 @@ import argparse
 import ast
 import builtins
 import difflib
+import re
 import sys
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -91,6 +92,9 @@ class DomainMigration:
     allowlist_consumers: tuple[AllowlistConsumer, ...] = ()
     report_dynamic_emissions: bool = False
     allowlist_names: tuple[str, ...] = ()
+    remove_functions: tuple[str, ...] = ()
+    allowed_allowlist_owners: tuple[str, ...] = ()
+    transform_commands: bool = True
 
 
 @dataclass(frozen=True, order=True)
@@ -140,6 +144,485 @@ def _assigned_name(node: cst.Assign | cst.AnnAssign) -> str | None:
     return node.targets[0].target.value
 
 
+def _is_nested_record_payload(node: cst.BaseExpression) -> bool:
+    if not isinstance(node, cst.Dict):
+        return False
+    for element in node.elements:
+        if isinstance(element, cst.DictElement) and _simple_string(element.key) == "record":
+            return True
+    return False
+
+
+def _dict_elements_by_key(node: cst.Dict) -> dict[str, cst.DictElement]:
+    elements: dict[str, cst.DictElement] = {}
+    for element in node.elements:
+        if isinstance(element, cst.DictElement):
+            key = _simple_string(element.key)
+            if key is not None:
+                elements[key] = element
+    return elements
+
+
+def _append_missing_dict_fields(
+    node: cst.Dict, additions: tuple[tuple[str, cst.BaseExpression], ...]
+) -> cst.Dict:
+    existing = _dict_elements_by_key(node)
+    return node.with_changes(
+        elements=(
+            *node.elements,
+            *(
+                cst.DictElement(cst.SimpleString(f'"{key}"'), value)
+                for key, value in additions
+                if key not in existing
+            ),
+        )
+    )
+
+
+def _complete_sparse_check_result_record_payload(
+    node: cst.BaseExpression,
+) -> cst.BaseExpression | None:
+    if not isinstance(node, cst.Dict):
+        return None
+    outer = _dict_elements_by_key(node)
+    record_element = outer.get("record")
+    if record_element is None or not isinstance(record_element.value, cst.Dict):
+        return None
+    record = record_element.value
+    fields = _dict_elements_by_key(record)
+    record_type = fields.get("record_type")
+    value_field = fields.get("value")
+    if (
+        record_type is None
+        or _simple_string(record_type.value) != "check_result"
+        or (value_field is not None and not isinstance(value_field.value, cst.Dict))
+    ):
+        return None
+    value = value_field.value if value_field is not None else cst.Dict(elements=())
+    value_fields = _dict_elements_by_key(value)
+    status_field = value_fields.get("status") or fields.get("status")
+    status = (
+        status_field.value
+        if status_field is not None
+        and _simple_string(status_field.value) in {"passed", "failed", "timeout"}
+        else cst.SimpleString('"passed"')
+    )
+    completed_value = _append_missing_dict_fields(
+        _append_missing_dict_fields(value, (("status", status),)),
+        (
+            ("classification", status),
+            ("command_id", cst.SimpleString('"check-test"')),
+            ("command_text", cst.SimpleString('"test"')),
+            ("command", cst.Dict(elements=())),
+            ("worktree_path", cst.SimpleString('"/repo"')),
+            ("base_snapshot_id", cst.SimpleString('"S0"')),
+            ("execution_id", cst.SimpleString('"exec-test"')),
+            ("duration_ms", cst.Integer("0")),
+            ("stdout", cst.SimpleString('""')),
+            ("stderr", cst.SimpleString('""')),
+            ("stdout_truncated", cst.Name("False")),
+            ("stderr_truncated", cst.Name("False")),
+            ("timeout_seconds", cst.Integer("60")),
+            ("environment_policy", cst.Dict(elements=())),
+        ),
+    )
+    completed_record = _append_missing_dict_fields(
+        record,
+        (
+            ("schema", cst.SimpleString('"CheckResult"')),
+            ("attempt_number", cst.Integer("1")),
+        ),
+    )
+    completed_record = completed_record.with_changes(
+        elements=tuple(
+            element
+            for element in completed_record.elements
+            if not (
+                isinstance(element, cst.DictElement)
+                and (
+                    (
+                        _simple_string(element.key) == "candidate_id"
+                        and _simple_string(element.value) == "candidate-test"
+                    )
+                    or _simple_string(element.key) == "status"
+                )
+            )
+        )
+    )
+    completed_record_fields = _dict_elements_by_key(completed_record)
+    completed_value_field = completed_record_fields.get("value")
+    if completed_value_field is None:
+        completed_record = _append_missing_dict_fields(
+            completed_record, (("value", completed_value),)
+        )
+    else:
+        completed_record = completed_record.with_changes(
+            elements=tuple(
+                element.with_changes(value=completed_value)
+                if element is completed_value_field
+                else element
+                for element in completed_record.elements
+            )
+        )
+    if completed_record.deep_equals(record):
+        return None
+    return node.with_changes(
+        elements=tuple(
+            element.with_changes(value=completed_record) if element is record_element else element
+            for element in node.elements
+        )
+    )
+
+
+def _complete_sparse_candidate_record_payload(
+    node: cst.BaseExpression,
+) -> cst.BaseExpression | None:
+    if not isinstance(node, cst.Dict):
+        return None
+    outer = _dict_elements_by_key(node)
+    record_element = outer.get("record")
+    if record_element is None or not isinstance(record_element.value, cst.Dict):
+        return None
+    record = record_element.value
+    fields = _dict_elements_by_key(record)
+    record_type_field = fields.get("record_type")
+    value_field = fields.get("value")
+    if record_type_field is not None and _simple_string(record_type_field.value) == "candidate":
+        completed_record = record
+        record_id_field = fields.get("record_id")
+        if "candidate_id" not in fields and record_id_field is not None:
+            completed_record = _append_missing_dict_fields(
+                completed_record, (("candidate_id", record_id_field.value),)
+            )
+        if value_field is None:
+            completed_record = _append_missing_dict_fields(
+                completed_record,
+                (
+                    (
+                        "value",
+                        cst.Dict(
+                            elements=(
+                                cst.DictElement(
+                                    cst.SimpleString('"summary"'),
+                                    cst.SimpleString('"test candidate"'),
+                                ),
+                            )
+                        ),
+                    ),
+                ),
+            )
+        elif isinstance(value_field.value, cst.Dict) and "summary" not in _dict_elements_by_key(
+            value_field.value
+        ):
+            completed_value = value_field.value.with_changes(
+                elements=(
+                    cst.DictElement(
+                        cst.SimpleString('"summary"'), cst.SimpleString('"test candidate"')
+                    ),
+                    *value_field.value.elements,
+                )
+            )
+            completed_record = completed_record.with_changes(
+                elements=tuple(
+                    element.with_changes(value=completed_value)
+                    if element is value_field
+                    else element
+                    for element in record.elements
+                )
+            )
+        completed_fields = _dict_elements_by_key(completed_record)
+        singular_supersedes = completed_fields.get("supersedes_task_region_id")
+        if singular_supersedes is not None:
+            completed_record = completed_record.with_changes(
+                elements=tuple(
+                    element.with_changes(
+                        key=cst.SimpleString('"supersedes_task_region_ids"'),
+                        value=cst.List(elements=(cst.Element(singular_supersedes.value),)),
+                    )
+                    if element is singular_supersedes
+                    else element
+                    for element in completed_record.elements
+                )
+            )
+        if completed_record.deep_equals(record):
+            return None
+        return node.with_changes(
+            elements=tuple(
+                element.with_changes(value=completed_record)
+                if element is record_element
+                else element
+                for element in node.elements
+            )
+        )
+    candidate_id = fields.get("candidate_id")
+    record_kind = fields.get("record_kind")
+    port = fields.get("port")
+    if (
+        candidate_id is None
+        or "record_type" in fields
+        or (record_kind is not None and _simple_string(record_kind.value) not in {None, "output"})
+        or (port is not None and _simple_string(port.value) not in {None, "candidate"})
+        or any(key in fields for key in ("verdict", "outcome", "grades"))
+    ):
+        return None
+    value = fields.get("value")
+    if value is None:
+        value_elements: list[cst.DictElement] = [
+            cst.DictElement(cst.SimpleString('"summary"'), cst.SimpleString('"test candidate"'))
+        ]
+        file_state_ids = fields.get("file_state_record_ids")
+        if file_state_ids is not None:
+            value_elements.append(
+                cst.DictElement(cst.SimpleString('"file_state_record_ids"'), file_state_ids.value)
+            )
+        value_expression: cst.BaseExpression = cst.Dict(elements=tuple(value_elements))
+    elif isinstance(value.value, cst.Dict) and "summary" not in _dict_elements_by_key(value.value):
+        value_expression = value.value.with_changes(
+            elements=(
+                cst.DictElement(
+                    cst.SimpleString('"summary"'), cst.SimpleString('"test candidate"')
+                ),
+                *value.value.elements,
+            )
+        )
+    else:
+        value_expression = value.value
+    prefix = (
+        cst.DictElement(cst.SimpleString('"record_id"'), candidate_id.value),
+        cst.DictElement(cst.SimpleString('"record_kind"'), cst.SimpleString('"output"')),
+        cst.DictElement(cst.SimpleString('"record_type"'), cst.SimpleString('"candidate"')),
+        cst.DictElement(
+            cst.SimpleString('"producer_node_id"'),
+            fields.get(
+                "producer_node_id",
+                cst.DictElement(
+                    cst.SimpleString('"producer_node_id"'), cst.SimpleString('"worker-test"')
+                ),
+            ).value,
+        ),
+        cst.DictElement(cst.SimpleString('"port"'), cst.SimpleString('"candidate"')),
+        cst.DictElement(
+            cst.SimpleString('"schema"'), cst.SimpleString('"ImplementationCandidate"')
+        ),
+        cst.DictElement(cst.SimpleString('"value"'), value_expression),
+    )
+    replaced_keys = {
+        "record_id",
+        "record_kind",
+        "record_type",
+        "producer_node_id",
+        "port",
+        "schema",
+        "value",
+    }
+    remaining = tuple(
+        element
+        for element in record.elements
+        if not isinstance(element, cst.DictElement)
+        or _simple_string(element.key) not in replaced_keys
+    )
+    replaced_record = record.with_changes(elements=(*prefix, *remaining))
+    return node.with_changes(
+        elements=tuple(
+            element.with_changes(value=replaced_record) if element is record_element else element
+            for element in node.elements
+        )
+    )
+
+
+def _complete_task3_strict_record_payload(
+    node: cst.BaseExpression,
+) -> cst.BaseExpression | None:
+    if not isinstance(node, cst.Dict):
+        return None
+    outer = _dict_elements_by_key(node)
+    record_element = outer.get("record")
+    if record_element is None or not isinstance(record_element.value, cst.Dict):
+        return None
+    record = record_element.value
+    fields = _dict_elements_by_key(record)
+    record_type = _simple_string(fields["record_type"].value) if "record_type" in fields else None
+    record_kind = _simple_string(fields["record_kind"].value) if "record_kind" in fields else None
+
+    if (
+        _simple_string(fields["port"].value) if "port" in fields else None
+    ) == "authority_request_record" and record_type != "authority_request_record":
+        completed_record = record.with_changes(
+            elements=tuple(
+                element.with_changes(value=cst.SimpleString('"authority_request_record"'))
+                if isinstance(element, cst.DictElement)
+                and _simple_string(element.key) == "record_type"
+                else element
+                for element in record.elements
+            )
+        )
+    elif record_type == "routine_snapshot":
+        value_field = fields.get("value")
+        value = value_field.value if value_field is not None else cst.Dict(elements=())
+        if not isinstance(value, cst.Dict):
+            return None
+        completed_value = _append_missing_dict_fields(
+            value,
+            (
+                ("routine_id", cst.SimpleString('"routine-1"')),
+                ("name", cst.SimpleString('"Test Routine"')),
+                ("content_hash", cst.SimpleString('"test-content-hash"')),
+                ("step_count", cst.Integer("1")),
+                ("task_count", cst.Integer("1")),
+            ),
+        )
+        completed_record = _append_missing_dict_fields(record, (("value", completed_value),))
+        completed_fields = _dict_elements_by_key(completed_record)
+        if value_field is not None:
+            current_value = completed_fields["value"]
+            completed_record = completed_record.with_changes(
+                elements=tuple(
+                    element.with_changes(value=completed_value)
+                    if element is current_value
+                    else element
+                    for element in completed_record.elements
+                )
+            )
+        kind_field = _dict_elements_by_key(completed_record).get("record_kind")
+        if kind_field is not None and _simple_string(kind_field.value) != "graph_record":
+            completed_record = completed_record.with_changes(
+                elements=tuple(
+                    element.with_changes(value=cst.SimpleString('"graph_record"'))
+                    if element is kind_field
+                    else element
+                    for element in completed_record.elements
+                )
+            )
+    elif record_kind == "verification" and record_type is None:
+        verdict_field = fields.get("verdict")
+        verdict = (
+            verdict_field.value
+            if verdict_field is not None
+            and _simple_string(verdict_field.value) in {"passed", "failed"}
+            else cst.SimpleString('"passed"')
+        )
+        completed_record = _append_missing_dict_fields(
+            record,
+            (
+                ("record_type", cst.SimpleString('"verification_report"')),
+                ("schema", cst.SimpleString('"VerificationReport"')),
+                (
+                    "value",
+                    cst.Dict(
+                        elements=(
+                            cst.DictElement(cst.SimpleString('"outcome"'), verdict),
+                            cst.DictElement(cst.SimpleString('"grades"'), cst.List(elements=())),
+                        )
+                    ),
+                ),
+            ),
+        )
+    elif record_type == "candidate" and "schema" not in fields:
+        record_id_field = fields.get("record_id")
+        additions: list[tuple[str, cst.BaseExpression]] = [
+            ("schema", cst.SimpleString('"ImplementationCandidate"'))
+        ]
+        if "candidate_id" not in fields and record_id_field is not None:
+            additions.append(("candidate_id", record_id_field.value))
+        completed_record = _append_missing_dict_fields(record, tuple(additions))
+    elif record_type == "recovery_plan" and record_kind != "output":
+        completed_record = record.with_changes(
+            elements=tuple(
+                element.with_changes(value=cst.SimpleString('"output"'))
+                if isinstance(element, cst.DictElement)
+                and _simple_string(element.key) == "record_kind"
+                else element
+                for element in record.elements
+            )
+        )
+    elif record_type == "failure_record":
+        completed_record = record.with_changes(
+            elements=tuple(
+                element.with_changes(value=cst.SimpleString('"graph_record"'))
+                if isinstance(element, cst.DictElement)
+                and _simple_string(element.key) == "record_kind"
+                else element
+                for element in record.elements
+                if not (
+                    isinstance(element, cst.DictElement)
+                    and _simple_string(element.key) == "task_region_id"
+                )
+            )
+        )
+    else:
+        return None
+
+    if completed_record.deep_equals(record):
+        return None
+    return node.with_changes(
+        elements=tuple(
+            element.with_changes(value=completed_record) if element is record_element else element
+            for element in node.elements
+        )
+    )
+
+
+def _task3_routine_snapshot_record(node: cst.BaseExpression) -> cst.Dict | None:
+    if not isinstance(node, cst.Dict):
+        return None
+    fields = _dict_elements_by_key(node)
+    node_id = fields.get("node_id")
+    snapshot = fields.get("snapshot")
+    if (
+        node_id is None
+        or _simple_string(node_id.value) != "routine-snapshot"
+        or snapshot is None
+        or not isinstance(snapshot.value, cst.Dict)
+    ):
+        return None
+    value = _append_missing_dict_fields(
+        snapshot.value,
+        (
+            ("routine_id", cst.SimpleString('"routine-1"')),
+            ("name", cst.SimpleString('"Test Routine"')),
+            ("content_hash", cst.SimpleString('"test-content-hash"')),
+            ("step_count", cst.Integer("1")),
+            ("task_count", cst.Integer("1")),
+        ),
+    )
+    record = cst.Dict(
+        elements=(
+            cst.DictElement(
+                cst.SimpleString('"record_id"'), cst.SimpleString('"routine-snapshot-record"')
+            ),
+            cst.DictElement(cst.SimpleString('"record_kind"'), cst.SimpleString('"graph_record"')),
+            cst.DictElement(
+                cst.SimpleString('"record_type"'), cst.SimpleString('"routine_snapshot"')
+            ),
+            cst.DictElement(cst.SimpleString('"producer_node_id"'), node_id.value),
+            cst.DictElement(cst.SimpleString('"port"'), cst.SimpleString('"routine_snapshot"')),
+            cst.DictElement(cst.SimpleString('"schema"'), cst.SimpleString('"RoutineSnapshot"')),
+            cst.DictElement(cst.SimpleString('"value"'), value),
+        )
+    )
+    return cst.Dict(elements=(cst.DictElement(cst.SimpleString('"record"'), record),))
+
+
+class _EventPayloadToRecord(cst.CSTTransformer):
+    def leave_Attribute(
+        self, original_node: cst.Attribute, updated_node: cst.Attribute
+    ) -> cst.BaseExpression:
+        if (
+            isinstance(original_node.value, cst.Name)
+            and original_node.value.value == "event"
+            and original_node.attr.value == "payload"
+        ):
+            return cst.Subscript(
+                value=updated_node,
+                slice=(
+                    cst.SubscriptElement(
+                        slice=cst.Index(value=cst.SimpleString('"record"')),
+                    ),
+                ),
+            )
+        return updated_node
+
+
 class _MechanicalTransformer(cst.CSTTransformer):
     METADATA_DEPENDENCIES = (
         metadata.PositionProvider,
@@ -166,8 +649,9 @@ class _MechanicalTransformer(cst.CSTTransformer):
         self._blocked_command_specs = blocked_command_specs
         self._composed_command_specs = False
         self._events = {route.event_name: route for route in migration.event_routes}
-        self._commands = {route.command_name: route for route in migration.command_routes}
-        self._handlers = {route.handler: route for route in migration.command_routes}
+        command_routes = migration.command_routes if migration.transform_commands else ()
+        self._commands = {route.command_name: route for route in command_routes}
+        self._handlers = {route.handler: route for route in command_routes}
         self._imports = {route.old_module: route for route in migration.import_routes}
         self._catalog_injections = migration.catalog_injections
         self._allowlist_consumers = {
@@ -187,6 +671,169 @@ class _MechanicalTransformer(cst.CSTTransformer):
         self.get_metadata(metadata.ScopeProvider, node)
         return position
 
+    @staticmethod
+    def _is_indexed_output_payload(node: cst.BaseExpression) -> bool:
+        return (
+            isinstance(node, cst.Attribute)
+            and node.attr.value == "payload"
+            and isinstance(node.value, cst.Subscript)
+            and isinstance(node.value.value, cst.Name)
+            and node.value.value.value in {"output", "decision_events"}
+        )
+
+    @staticmethod
+    def _record_payload(node: cst.BaseExpression) -> cst.Subscript:
+        return cst.Subscript(
+            value=node,
+            slice=(
+                cst.SubscriptElement(
+                    slice=cst.Index(value=cst.SimpleString('"record"')),
+                ),
+            ),
+        )
+
+    def leave_Assign(
+        self, original_node: cst.Assign, updated_node: cst.Assign
+    ) -> cst.BaseSmallStatement:
+        record_fixture_names = {
+            "accepted_record",
+            "candidate_record",
+            "decision",
+            "join_result",
+            "request_record",
+        }
+        if (
+            self.migration.domain in {"records", "task3_fixtures"}
+            and self.path.endswith("tests/unit/test_graph_commands.py")
+            and len(original_node.targets) == 1
+            and isinstance(original_node.targets[0].target, cst.Name)
+            and original_node.targets[0].target.value in record_fixture_names
+            and self._is_indexed_output_payload(original_node.value)
+        ):
+            self.changes += 1
+            return updated_node.with_changes(value=self._record_payload(updated_node.value))
+        if (
+            self.migration.domain == "task3_fixtures"
+            and self.path.endswith("tests/unit/test_graph_commands.py")
+            and len(original_node.targets) == 1
+            and isinstance(original_node.targets[0].target, cst.Name)
+            and original_node.targets[0].target.value == "accepted_record"
+            and isinstance(original_node.value, cst.Call)
+            and isinstance(original_node.value.func, cst.Name)
+            and original_node.value.func.value == "next"
+            and 'event.payload["record"]' not in cst.Module([]).code_for_node(original_node.value)
+        ):
+            transformed = updated_node.value.visit(_EventPayloadToRecord())
+            if not transformed.deep_equals(updated_node.value):
+                self.changes += 1
+                return updated_node.with_changes(value=transformed)
+        if (
+            self.migration.domain == "task3_fixtures"
+            and self.path.endswith("tests/integration/test_graph_event_store.py")
+            and len(original_node.targets) == 1
+            and isinstance(original_node.targets[0].target, cst.Name)
+            and original_node.targets[0].target.value
+            in {
+                "candidate",
+                "verification",
+                "check_result",
+                "decision_request",
+                "authority_request",
+                "failure",
+                "recovery_plan",
+                "run_context",
+                "routine_snapshot",
+                "artifact_reference",
+            }
+            and isinstance(original_node.value, cst.Attribute)
+            and original_node.value.attr.value == "payload"
+            and isinstance(original_node.value.value, cst.Subscript)
+            and isinstance(original_node.value.value.value, cst.Name)
+            and original_node.value.value.value.value == "stored"
+        ):
+            self.changes += 1
+            return updated_node.with_changes(value=self._record_payload(updated_node.value))
+        return updated_node
+
+    def leave_Comparison(
+        self, original_node: cst.Comparison, updated_node: cst.Comparison
+    ) -> cst.BaseExpression:
+        if (
+            self.migration.domain == "task3_fixtures"
+            and self.path.endswith("tests/integration/test_graph_event_store.py")
+            and isinstance(original_node.left, cst.Subscript)
+            and isinstance(original_node.left.value, cst.Name)
+            and original_node.left.value.value == "check_result"
+            and len(original_node.left.slice) == 1
+            and isinstance(original_node.left.slice[0].slice, cst.Index)
+            and _simple_string(original_node.left.slice[0].slice.value) == "payload"
+            and len(updated_node.comparisons) == 1
+            and isinstance(updated_node.comparisons[0].operator, cst.Equal)
+            and isinstance(updated_node.comparisons[0].comparator, cst.Dict)
+        ):
+            expected = _append_missing_dict_fields(
+                updated_node.comparisons[0].comparator,
+                (
+                    ("command_text", cst.SimpleString('"test"')),
+                    ("command", cst.Dict(elements=())),
+                    ("worktree_path", cst.SimpleString('"/repo"')),
+                    ("base_snapshot_id", cst.SimpleString('"S0"')),
+                    ("execution_id", cst.SimpleString('"exec-test"')),
+                    ("duration_ms", cst.Integer("0")),
+                    ("stdout", cst.SimpleString('""')),
+                    ("stderr", cst.SimpleString('""')),
+                    ("stdout_truncated", cst.Name("False")),
+                    ("stderr_truncated", cst.Name("False")),
+                    ("timeout_seconds", cst.Integer("60")),
+                    ("environment_policy", cst.Dict(elements=())),
+                ),
+            )
+            if not expected.deep_equals(updated_node.comparisons[0].comparator):
+                self.changes += 1
+                return updated_node.with_changes(
+                    comparisons=(updated_node.comparisons[0].with_changes(comparator=expected),)
+                )
+        if (
+            self.migration.domain in {"records", "task3_fixtures"}
+            and self.path.endswith("tests/unit/test_graph_commands.py")
+            and self._is_indexed_output_payload(original_node.left)
+            and len(original_node.comparisons) == 1
+            and isinstance(original_node.comparisons[0].operator, cst.Equal)
+            and isinstance(original_node.comparisons[0].comparator, cst.Dict)
+        ):
+            keys = {
+                _simple_string(element.key)
+                for element in original_node.comparisons[0].comparator.elements
+                if isinstance(element, cst.DictElement)
+            }
+            if {"record_id", "record_kind", "record_type"}.issubset(keys):
+                self.changes += 1
+                return updated_node.with_changes(left=self._record_payload(updated_node.left))
+        return updated_node
+
+    def leave_Subscript(
+        self, original_node: cst.Subscript, updated_node: cst.Subscript
+    ) -> cst.BaseExpression:
+        record_only_fields = {
+            "record_type",
+            "producer_node_id",
+            "port",
+            "schema",
+            "value",
+            "provenance",
+        }
+        if (
+            self.migration.domain in {"records", "task3_fixtures"}
+            and self.path.endswith("tests/unit/test_graph_commands.py")
+            and self._is_indexed_output_payload(original_node.value)
+            and len(original_node.slice) == 1
+            and isinstance(original_node.slice[0].slice, cst.Index)
+            and _simple_string(original_node.slice[0].slice.value) in record_only_fields
+        ):
+            self.changes += 1
+            return updated_node.with_changes(value=self._record_payload(updated_node.value))
+        return updated_node
+
     def leave_ImportFrom(
         self, original_node: cst.ImportFrom, updated_node: cst.ImportFrom
     ) -> cst.BaseSmallStatement:
@@ -199,6 +846,16 @@ class _MechanicalTransformer(cst.CSTTransformer):
         }
         if not imported.intersection(route.symbols):
             return updated_node
+        if route.old_module == route.new_module:
+            remaining = tuple(
+                alias
+                for alias in original_node.names
+                if not (isinstance(alias.name, cst.Name) and alias.name.value in route.symbols)
+            )
+            self.changes += 1
+            if not remaining:
+                return cst.RemoveFromParent()
+            return updated_node.with_changes(names=remaining)
         if not imported.issubset(route.symbols):
             # The containing statement splits mixed imports after child visits.
             return updated_node
@@ -208,13 +865,17 @@ class _MechanicalTransformer(cst.CSTTransformer):
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.BaseStatement:
+        if original_node.name.value in self.migration.remove_functions:
+            self.changes += 1
+            return cst.RemoveFromParent()
         consumer = self._allowlist_consumers.get(original_node.name.value)
         if consumer is not None:
             resolved_names = self._resolved_names(original_node.name)
             scope = self.get_metadata(metadata.ScopeProvider, original_node.name)
             expected_names = consumer.qualified_names or (consumer.function_name,)
-            if not resolved_names.intersection(expected_names) or not isinstance(
-                scope, GlobalScope
+            if self.migration.domain != "complete_reads" and (
+                not resolved_names.intersection(expected_names)
+                or not isinstance(scope, GlobalScope)
             ):
                 consumer = None
         if consumer is not None:
@@ -342,6 +1003,15 @@ class _MechanicalTransformer(cst.CSTTransformer):
         ):
             payload = payload.func.value
         self.changes += 1
+        if self.migration.domain == "topology":
+            return updated_node.with_changes(
+                func=cst.Name("typed_topology_event"),
+                args=(
+                    cst.Arg(updated_node.func),
+                    updated_node.args[0],
+                    updated_node.args[1].with_changes(value=payload),
+                ),
+            )
         replacement_arg = updated_node.args[1].with_changes(value=payload)
         return updated_node.with_changes(
             func=cst.Attribute(cst.Name(route.specification), cst.Name("create")),
@@ -396,6 +1066,377 @@ class _MechanicalTransformer(cst.CSTTransformer):
         )
 
     def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.BaseExpression:
+        if (
+            self.migration.domain == "task3_fixtures"
+            and self.path.endswith(
+                (
+                    "tests/integration/test_graph_event_store.py",
+                    "tests/integration/test_graph_read_models.py",
+                    "tests/integration/test_graph_node_detail_read_models.py",
+                )
+            )
+            and isinstance(original_node.func, cst.Name)
+            and original_node.func.value == "_event"
+            and len(updated_node.args) >= 4
+            and _simple_string(updated_node.args[2].value) == "output_record_accepted"
+            and isinstance(updated_node.args[3].value, cst.Dict)
+        ):
+            record = updated_node.args[3].value
+            if _is_nested_record_payload(record):
+                completed_record = record
+                changed = False
+                for complete in (
+                    _complete_task3_strict_record_payload,
+                    _complete_sparse_check_result_record_payload,
+                    _complete_sparse_candidate_record_payload,
+                ):
+                    completed = complete(completed_record)
+                    if completed is not None:
+                        completed_record = completed
+                        changed = True
+                if not changed:
+                    return updated_node
+                self.changes += 1
+                return updated_node.with_changes(
+                    args=(
+                        *updated_node.args[:3],
+                        updated_node.args[3].with_changes(value=completed_record),
+                        *updated_node.args[4:],
+                    )
+                )
+            fields = _dict_elements_by_key(record)
+            schema = (
+                _simple_string(fields.get("schema").value)
+                if fields.get("schema") is not None
+                else None
+            )
+            port = (
+                _simple_string(fields.get("port").value) if fields.get("port") is not None else None
+            )
+            record_types = {
+                "candidate": "candidate",
+                "verification_report": "verification_report",
+                "check_result": "check_result",
+                "decision_request": "decision_request",
+                "authority_request_record": "authority_request_record",
+                "failure_record": "failure_record",
+                "recovery_plan": "recovery_plan",
+                "run_context": "run_context",
+                "snapshot": "routine_snapshot",
+                "artifact": "artifact_reference",
+            }
+            additions: list[tuple[str, cst.BaseExpression]] = []
+            record_type = record_types.get(port or "")
+            if record_type is not None:
+                additions.append(("record_type", cst.SimpleString(f'"{record_type}"')))
+            record_id = fields.get("record_id")
+            if schema == "ImplementationCandidate" and record_id is not None:
+                if record_type is None:
+                    additions.append(("record_type", cst.SimpleString('"candidate"')))
+                additions.append(("candidate_id", record_id.value))
+            if schema is None and port == "result":
+                additions.append(("schema", cst.SimpleString('"OutputRecord"')))
+            if schema == "CheckResult":
+                additions.append(("task_region_id", cst.SimpleString('"task-test"')))
+            completed_record = _append_missing_dict_fields(record, tuple(additions))
+            nested: cst.BaseExpression = cst.Dict(
+                elements=(cst.DictElement(cst.SimpleString('"record"'), completed_record),)
+            )
+            for complete in (
+                _complete_task3_strict_record_payload,
+                _complete_sparse_check_result_record_payload,
+                _complete_sparse_candidate_record_payload,
+            ):
+                completed = complete(nested)
+                if completed is not None:
+                    nested = completed
+            self.changes += 1
+            return updated_node.with_changes(
+                args=(
+                    *updated_node.args[:3],
+                    updated_node.args[3].with_changes(value=nested),
+                    *updated_node.args[4:],
+                )
+            )
+        if (
+            self.migration.domain == "task3_fixtures"
+            and self.path.endswith("tests/unit/test_graph_planner_packet.py")
+            and isinstance(original_node.func, cst.Name)
+            and original_node.func.value == "_event"
+            and len(updated_node.args) >= 2
+            and _simple_string(updated_node.args[0].value) == "session_state_changed"
+            and isinstance(updated_node.args[1].value, cst.Dict)
+            and not any(
+                isinstance(element, cst.DictElement)
+                and _simple_string(element.key) == "lease_generation"
+                for element in updated_node.args[1].value.elements
+            )
+        ):
+            payload = updated_node.args[1].value
+            self.changes += 1
+            completed = payload.with_changes(
+                elements=(
+                    cst.DictElement(
+                        cst.SimpleString('"lease_generation"'),
+                        cst.Integer("3"),
+                    ),
+                    *payload.elements,
+                )
+            )
+            return updated_node.with_changes(
+                args=(
+                    updated_node.args[0],
+                    updated_node.args[1].with_changes(value=completed),
+                    *updated_node.args[2:],
+                )
+            )
+        if (
+            self.migration.domain == "task3_fixtures"
+            and self.path.endswith(
+                (
+                    "tests/integration/test_graph_default_carrier.py",
+                    "tests/integration/test_graph_dynamic_e2e.py",
+                )
+            )
+            and isinstance(original_node.func, cst.Attribute)
+            and original_node.func.attr.value == "get"
+            and isinstance(original_node.func.value, cst.Attribute)
+            and isinstance(original_node.func.value.value, cst.Name)
+            and original_node.func.value.value.value == "event"
+            and original_node.func.value.attr.value == "payload"
+            and updated_node.args
+            and _simple_string(updated_node.args[0].value) in {"record_type", "value"}
+        ):
+            self.changes += 1
+            return updated_node.with_changes(
+                func=updated_node.func.with_changes(
+                    value=cst.Subscript(
+                        value=updated_node.func.value,
+                        slice=(
+                            cst.SubscriptElement(
+                                slice=cst.Index(value=cst.SimpleString('"record"')),
+                            ),
+                        ),
+                    )
+                )
+            )
+        if (
+            self.migration.domain == "task3_fixtures"
+            and self.path.endswith(
+                (
+                    "tests/unit/test_graph_planner.py",
+                    "tests/unit/test_graph_planner_packet.py",
+                )
+            )
+            and isinstance(original_node.func, cst.Name)
+            and original_node.func.value == "_event"
+            and len(updated_node.args) >= 2
+            and _simple_string(updated_node.args[0].value) == "node_created"
+        ):
+            payload = _task3_routine_snapshot_record(updated_node.args[1].value)
+            if payload is not None:
+                self.changes += 1
+                return updated_node.with_changes(
+                    args=(
+                        updated_node.args[0].with_changes(
+                            value=cst.SimpleString('"output_record_accepted"')
+                        ),
+                        updated_node.args[1].with_changes(value=payload),
+                        *updated_node.args[2:],
+                    )
+                )
+        if (
+            self.migration.domain == "task3_fixtures"
+            and self.path.endswith(
+                (
+                    "tests/unit/test_graph_commands.py",
+                    "tests/unit/test_graph_planner_packet.py",
+                )
+            )
+            and isinstance(original_node.func, cst.Name)
+            and original_node.func.value == "_event"
+            and len(updated_node.args) >= 2
+            and _simple_string(updated_node.args[0].value) == "input_bound"
+            and isinstance(updated_node.args[1].value, cst.Dict)
+        ):
+            payload = updated_node.args[1].value
+            keyed = {
+                _simple_string(element.key): element
+                for element in payload.elements
+                if isinstance(element, cst.DictElement)
+            }
+            additions: list[cst.DictElement] = []
+            if "edge_id" not in keyed:
+                to_node = keyed.get("to_node_id")
+                to_port = keyed.get("to_port")
+                node_value = _simple_string(to_node.value) if to_node is not None else None
+                port_value = _simple_string(to_port.value) if to_port is not None else None
+                if node_value is not None and port_value is not None:
+                    additions.append(
+                        cst.DictElement(
+                            cst.SimpleString('"edge_id"'),
+                            cst.SimpleString(f'"edge-{node_value}-{port_value}"'),
+                        )
+                    )
+            if "bound_at_position" not in keyed:
+                additions.append(
+                    cst.DictElement(cst.SimpleString('"bound_at_position"'), cst.Integer("0"))
+                )
+            if "record_ids" not in keyed:
+                additions.append(
+                    cst.DictElement(cst.SimpleString('"record_ids"'), cst.List(elements=()))
+                )
+            if additions:
+                self.changes += len(additions)
+                completed = payload.with_changes(elements=(*additions, *payload.elements))
+                return updated_node.with_changes(
+                    args=(
+                        updated_node.args[0],
+                        updated_node.args[1].with_changes(value=completed),
+                        *updated_node.args[2:],
+                    )
+                )
+        if (
+            self.migration.domain in {"records", "task3_fixtures"}
+            and (
+                (
+                    isinstance(original_node.func, cst.Name)
+                    and original_node.func.value in {"make_event", "_event"}
+                )
+                or (
+                    isinstance(original_node.func, cst.Attribute)
+                    and original_node.func.attr.value == "_event"
+                )
+            )
+            and len(updated_node.args) >= 2
+            and _simple_string(updated_node.args[0].value) == "output_record_accepted"
+        ):
+            payload = updated_node.args[1].value
+            if self.migration.domain == "task3_fixtures":
+                completed_task3_record = _complete_task3_strict_record_payload(payload)
+                if completed_task3_record is not None:
+                    self.changes += 1
+                    return updated_node.with_changes(
+                        args=(
+                            updated_node.args[0],
+                            updated_node.args[1].with_changes(value=completed_task3_record),
+                            *updated_node.args[2:],
+                        )
+                    )
+            completed_check_result = _complete_sparse_check_result_record_payload(payload)
+            if completed_check_result is not None:
+                self.changes += 1
+                return updated_node.with_changes(
+                    args=(
+                        updated_node.args[0],
+                        updated_node.args[1].with_changes(value=completed_check_result),
+                        *updated_node.args[2:],
+                    )
+                )
+            completed_candidate = _complete_sparse_candidate_record_payload(payload)
+            if completed_candidate is not None:
+                self.changes += 1
+                return updated_node.with_changes(
+                    args=(
+                        updated_node.args[0],
+                        updated_node.args[1].with_changes(value=completed_candidate),
+                        *updated_node.args[2:],
+                    )
+                )
+            if not _is_nested_record_payload(payload):
+                self.changes += 1
+                nested = cst.Dict(
+                    elements=(
+                        cst.DictElement(
+                            key=cst.SimpleString('"record"'),
+                            value=payload,
+                        ),
+                    )
+                )
+                return updated_node.with_changes(
+                    args=(
+                        updated_node.args[0],
+                        updated_node.args[1].with_changes(value=nested),
+                        *updated_node.args[2:],
+                    )
+                )
+        if self.migration.domain == "records" and isinstance(original_node.func, cst.Name):
+            if original_node.func.value == "EventEnvelope":
+                keywords = {
+                    arg.keyword.value: arg for arg in updated_node.args if arg.keyword is not None
+                }
+                event_type = keywords.get("event_type")
+                payload = keywords.get("payload")
+                if (
+                    event_type is not None
+                    and _simple_string(event_type.value) == "output_record_accepted"
+                    and payload is not None
+                ):
+                    if _is_nested_record_payload(payload.value):
+                        return updated_node
+                    self.changes += 1
+                    nested = cst.Dict(
+                        elements=(
+                            cst.DictElement(
+                                key=cst.SimpleString('"record"'),
+                                value=payload.value,
+                            ),
+                        )
+                    )
+                    return updated_node.with_changes(
+                        args=tuple(
+                            arg.with_changes(value=nested)
+                            if arg.keyword is not None and arg.keyword.value == "payload"
+                            else arg
+                            for arg in updated_node.args
+                        )
+                    )
+                if (
+                    event_type is not None
+                    and payload is not None
+                    and isinstance(event_type.value, cst.Name)
+                    and isinstance(payload.value, cst.Name)
+                    and payload.value.value == "payload"
+                ):
+                    self.changes += 1
+                    nested = cst.parse_expression(
+                        '{"record": payload} if event_type == "output_record_accepted" and not (isinstance(payload, dict) and "record" in payload) else payload'
+                    )
+                    return updated_node.with_changes(
+                        args=tuple(
+                            arg.with_changes(value=nested)
+                            if arg.keyword is not None and arg.keyword.value == "payload"
+                            else arg
+                            for arg in updated_node.args
+                        )
+                    )
+                if (
+                    event_type is not None
+                    and payload is not None
+                    and isinstance(event_type.value, cst.Name)
+                    and isinstance(payload.value, cst.IfExp)
+                    and isinstance(payload.value.test, cst.Comparison)
+                ):
+                    self.changes += 1
+                    nested = cst.parse_expression(
+                        '{"record": payload} if event_type == "output_record_accepted" and not (isinstance(payload, dict) and "record" in payload) else payload'
+                    )
+                    return updated_node.with_changes(
+                        args=tuple(
+                            arg.with_changes(value=nested)
+                            if arg.keyword is not None and arg.keyword.value == "payload"
+                            else arg
+                            for arg in updated_node.args
+                        )
+                    )
+        if (
+            self.migration.domain == "complete_reads"
+            and isinstance(original_node.func, cst.Name)
+            and original_node.func.value == "_node_detail_light_event"
+            and len(updated_node.args) == 1
+        ):
+            self.changes += 1
+            return updated_node.args[0].value
         event = self._event_replacement(original_node, updated_node)
         if event is not None:
             return event
@@ -419,6 +1460,11 @@ class _MechanicalTransformer(cst.CSTTransformer):
                 ]
                 remaining = [alias for alias in original_import.names if alias not in selected]
                 if selected and remaining:
+                    if route.old_module == route.new_module:
+                        self.changes += 1
+                        return updated_node.with_changes(
+                            body=(original_import.with_changes(names=tuple(remaining)),)
+                        )
 
                     def aliases(
                         values: list[cst.ImportAlias],
@@ -695,6 +1741,10 @@ class StrictPayloadCutoverCodemod:
                     if isinstance(current, ast.ClassDef):
                         classes.append(current.name)
                 owner = ".".join((*reversed(classes), owner_node.name))
+            if owner in self.migration.allowed_allowlist_owners or (
+                owner is None and path.endswith("graph_runtime/store.py")
+            ):
+                continue
             if owner in configured_consumers:
                 continue
             blocked_allowlists.add(node.id)
@@ -719,7 +1769,11 @@ class StrictPayloadCutoverCodemod:
                 for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
             )
         ]
-        command_route_names = {route.command_name for route in self.migration.command_routes}
+        command_route_names = {
+            route.command_name
+            for route in self.migration.command_routes
+            if self.migration.transform_commands
+        }
         will_compose_command_specs = False
         for statement in module.body:
             if not isinstance(statement, cst.SimpleStatementLine):
@@ -1004,7 +2058,7 @@ class StrictPayloadCutoverCodemod:
                 by_target.setdefault(relocation.target_path, []).append(relocation)
         for target_path, relocations in by_target.items():
             if target_path not in working:
-                continue
+                working[target_path] = ""
             module = cst.parse_module(working[target_path])
             existing_import_code = {
                 module.code_for_node(statement)
@@ -1076,6 +2130,16 @@ class StrictPayloadCutoverCodemod:
 
         changes = relocation_changes
         for path in sorted(working):
+            if self.migration.domain == "records" and path.endswith((".yaml", ".yml")):
+                transformed_yaml = re.sub(
+                    r"(output_record_accepted:\s*)\{(?!\s*record\s*:)([^{}]*)\}",
+                    r"\1{record: {\2}}",
+                    working[path],
+                )
+                if transformed_yaml != working[path]:
+                    changes += 1
+                    working[path] = transformed_yaml
+                continue
             result = self.transform_source(working[path], path)
             dynamic_imports = (
                 (
@@ -1421,6 +2485,76 @@ DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
 
 DOMAIN_MIGRATIONS.update(
     {
+        "complete_reads": DomainMigration(
+            domain="complete_reads",
+            paths=(
+                "src/orchestrator/graph/projections.py",
+                "src/orchestrator/graph/__init__.py",
+                "src/orchestrator/graph_runtime/store.py",
+            ),
+            import_routes=(
+                ImportRoute(
+                    "orchestrator.graph.projections",
+                    "orchestrator.graph.projections",
+                    ("GRAPH_PROJECTION_PAYLOAD_FIELDS",),
+                ),
+                ImportRoute("datetime", "datetime", ("datetime",)),
+                ImportRoute("orchestrator.graph", "orchestrator.graph", ("Actor", "ActorKind")),
+            ),
+            allowlist_names=(
+                "GRAPH_PROJECTION_PAYLOAD_FIELDS",
+                "LIGHT_GRAPH_PAYLOAD_FIELDS",
+                "SUMMARY_REBUILD_PAYLOAD_FIELDS",
+                "NODE_DETAIL_PAYLOAD_FIELDS",
+            ),
+            allowlist_consumers=(
+                AllowlistConsumer(
+                    "read_run_light",
+                    "await self.read_run(run_id, from_position)",
+                ),
+                AllowlistConsumer(
+                    "read_run_summary_rebuild",
+                    "await self.read_run(run_id, from_position)",
+                ),
+                AllowlistConsumer(
+                    "read_run_projection",
+                    "await self.read_run(run_id, from_position)",
+                ),
+                AllowlistConsumer(
+                    "read_run_node_detail",
+                    "await self.read_run(run_id, from_position)",
+                ),
+            ),
+            remove_functions=(
+                "_read_run_extracting_fields",
+                "_node_detail_light_event",
+                "_json_extract_payload_value",
+                "_json_extract_value",
+            ),
+            allowed_allowlist_owners=(
+                "GraphEventStore.read_run_light",
+                "GraphEventStore.read_run_summary_rebuild",
+                "GraphEventStore.read_run_projection",
+                "GraphEventStore.read_run_node_detail",
+                "_node_detail_rows_for_events",
+                "_apply_node_detail_events",
+                "_has_missing_preexisting_node_reference",
+            ),
+        ),
+        "task3_fixtures": DomainMigration(
+            domain="task3_fixtures",
+            paths=(
+                "tests/unit/test_graph_commands.py",
+                "tests/unit/test_graph_planner.py",
+                "tests/unit/test_graph_planner_packet.py",
+                "tests/integration/test_graph_event_store.py",
+                "tests/integration/test_graph_read_models.py",
+                "tests/integration/test_graph_node_detail_read_models.py",
+                "tests/integration/test_graph_default_carrier.py",
+                "tests/integration/test_graph_dynamic_e2e.py",
+            ),
+            transform_commands=False,
+        ),
         "topology": DomainMigration(
             domain="topology",
             target_module="src/orchestrator/graph/events/topology.py",
@@ -1428,9 +2562,49 @@ DOMAIN_MIGRATIONS.update(
                 "src/orchestrator/graph/_commands.py",
                 "src/orchestrator/graph/commands/__init__.py",
                 "src/orchestrator/graph/commands/schedule.py",
+                "src/orchestrator/graph/commands/callbacks.py",
+                "src/orchestrator/graph/commands/lifecycle.py",
                 "src/orchestrator/graph/compiler.py",
                 "src/orchestrator/graph/models.py",
                 "src/orchestrator/graph/projections.py",
+                "src/orchestrator/graph/events/topology.py",
+                "src/orchestrator/graph/__init__.py",
+            ),
+            relocations=tuple(
+                SymbolRelocation(
+                    symbol,
+                    "src/orchestrator/graph/models.py",
+                    "src/orchestrator/graph/events/topology.py",
+                    "orchestrator.graph.models",
+                )
+                for symbol in (
+                    "NodeCreatedPayload",
+                    "NodeStateChangedPayload",
+                    "NodeRetiredPayload",
+                    "NodeReadyPayload",
+                    "NodeDeferredPayload",
+                    "NodeAuthorityChangedPayload",
+                    "NodeSuspectPayload",
+                    "PlannerSessionStateChangedPayload",
+                    "DeadInputDetectedPayload",
+                )
+            ),
+            import_routes=(
+                ImportRoute(
+                    "orchestrator.graph.models",
+                    "orchestrator.graph.events.topology",
+                    (
+                        "NodeCreatedPayload",
+                        "NodeStateChangedPayload",
+                        "NodeRetiredPayload",
+                        "NodeReadyPayload",
+                        "NodeDeferredPayload",
+                        "NodeAuthorityChangedPayload",
+                        "NodeSuspectPayload",
+                        "PlannerSessionStateChangedPayload",
+                        "DeadInputDetectedPayload",
+                    ),
+                ),
             ),
             event_routes=(
                 EventRoute("node_created", "NodeCreatedPayload", "NODE_CREATED"),
@@ -1466,7 +2640,43 @@ DOMAIN_MIGRATIONS.update(
                     "SeedCompiledEventsCommand",
                 ),
             ),
-            report_dynamic_emissions=True,
+            required_imports=(
+                RequiredImport(
+                    "src/orchestrator/graph/commands/__init__.py",
+                    "orchestrator.graph.events.topology",
+                    ("SEED_COMPILED_EVENTS",),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/schedule.py",
+                    "orchestrator.graph.events.topology",
+                    ("SeedCompiledEventsCommand",),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/callbacks.py",
+                    "orchestrator.graph._commands",
+                    ("typed_topology_event",),
+                ),
+                RequiredImport(
+                    "src/orchestrator/graph/commands/lifecycle.py",
+                    "orchestrator.graph._commands",
+                    ("typed_topology_event",),
+                ),
+            ),
+            event_factory_qualified_names=tuple(
+                f"{owner}.<locals>.make_event"
+                for owner in (
+                    "_event_factory",
+                    "apply_command",
+                    "_apply_lifecycle_command",
+                    "_apply_callback_command",
+                    "_apply_patch_command",
+                    "_patch_op_events",
+                    "handle_submit_callback",
+                    "handle_acknowledge_start",
+                    "handle_agent_died",
+                )
+            ),
+            report_dynamic_emissions=False,
         ),
         "leases": DomainMigration(
             domain="leases",
@@ -1496,13 +2706,50 @@ DOMAIN_MIGRATIONS.update(
         ),
         "records": DomainMigration(
             domain="records",
+            transform_commands=False,
             target_module="src/orchestrator/graph/events/records.py",
             paths=(
                 "src/orchestrator/graph/_commands.py",
+                "src/orchestrator/graph/compiler.py",
                 "src/orchestrator/graph/commands/__init__.py",
                 "src/orchestrator/graph/commands/records.py",
+                "src/orchestrator/graph/commands/lifecycle.py",
                 "src/orchestrator/graph/models.py",
                 "src/orchestrator/graph/projections.py",
+                "tests/integration/test_graph_api.py",
+                "tests/integration/test_graph_decisions_api.py",
+                "tests/integration/test_graph_default_carrier.py",
+                "tests/integration/test_graph_dynamic_e2e.py",
+                "tests/integration/test_graph_event_store.py",
+                "tests/integration/test_graph_fr01_fr13_fr18_acceptance.py",
+                "tests/integration/test_graph_fr03_acceptance.py",
+                "tests/integration/test_graph_fr06_acceptance.py",
+                "tests/integration/test_graph_fr07_acceptance.py",
+                "tests/integration/test_graph_fr08_acceptance.py",
+                "tests/integration/test_graph_fr09_acceptance.py",
+                "tests/integration/test_graph_fr12_acceptance.py",
+                "tests/integration/test_graph_fr14_final_gate_acceptance.py",
+                "tests/integration/test_graph_fr15_acceptance.py",
+                "tests/integration/test_graph_fr17_acceptance.py",
+                "tests/integration/test_graph_node_detail_read_models.py",
+                "tests/integration/test_graph_outbox_crash_points.py",
+                "tests/integration/test_graph_read_models.py",
+                "tests/integration/test_graph_routine_compile.py",
+                "tests/integration/test_graph_run_driver.py",
+                "tests/integration/test_run_evidence_digest_api.py",
+                "tests/unit/test_command_bindings.py",
+                "tests/unit/test_graph_api_projection.py",
+                "tests/unit/test_graph_commands.py",
+                "tests/unit/test_graph_compiler.py",
+                "tests/unit/test_graph_decision_view.py",
+                "tests/unit/test_graph_dispatch_on_output.py",
+                "tests/unit/test_graph_planner_packet.py",
+                "tests/unit/test_graph_projections.py",
+                "tests/unit/test_run_evidence_digest_presenter.py",
+                "tests/fixtures/graph/invariants.yaml",
+                "tests/fixtures/graph/node_lifecycle_appeal.yaml",
+                "tests/fixtures/graph/node_lifecycle_worker.yaml",
+                "tests/fixtures/graph/task_projection.yaml",
             ),
             event_routes=(
                 EventRoute(

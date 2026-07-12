@@ -8,6 +8,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, cast
 
+from pydantic import ValidationError
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,11 +23,13 @@ from orchestrator.db import (
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    CompactEventEnvelope,
     EventEnvelope,
     GraphCatalog,
     GraphProjection,
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
     PROJECTION_SCHEMA_VERSION,
+    OutputRecordAcceptedPayload,
     initial_projection,
     merge_bound_record_ids,
     project_decision_view,
@@ -38,7 +41,10 @@ from orchestrator.graph import (
     project_scheduler_view,
     reduce_event,
 )
-from orchestrator.graph_runtime.errors import StaleProjectionError
+from orchestrator.graph_runtime.errors import (
+    InvalidGraphEventPayloadError,
+    StaleProjectionError,
+)
 
 GRAPH_AGGREGATE_PREFIX = "graph:"
 _CHECKPOINT_PROJECTION_KEY = "_projection_checkpoint"
@@ -406,8 +412,16 @@ def _payload_with_durable_graph_position(
 ) -> dict[str, Any]:
     payload = dict(event.payload)
     if event.event_type in {"output_record_accepted", "file_state_accepted"}:
-        _add_durable_record_base_fields(event, payload, position, run_id)
-        _validate_durable_record_base_fields(event.event_type, payload)
+        durable_record = payload
+        if event.event_type == "output_record_accepted":
+            nested_record = payload.get("record")
+            if not isinstance(nested_record, dict):
+                msg = "output_record_accepted requires a record object"
+                raise ValueError(msg)
+            durable_record = dict(cast(dict[str, Any], nested_record))
+            payload["record"] = durable_record
+        _add_durable_record_base_fields(event, durable_record, position, run_id)
+        _validate_durable_record_base_fields(event.event_type, durable_record)
     if event.event_type != "input_bound":
         return payload
     bound_at_position = payload.get("bound_at_position")
@@ -419,6 +433,38 @@ def _payload_with_durable_graph_position(
         return payload
     payload["bound_at_position"] = position
     return payload
+
+
+def stored_graph_event(event: EventEnvelope, *, run_id: str, position: int) -> EventEnvelope:
+    """Return the durable stored form of one graph event at its final position."""
+    return event.model_copy(
+        update={
+            "run_id": run_id,
+            "position": position,
+            "payload": _payload_with_durable_graph_position(event, position, run_id),
+        }
+    )
+
+
+def validate_catalog_event_payload(catalog: GraphCatalog, event: EventEnvelope) -> None:
+    """Validate a stored catalog-owned event payload with hydration parity.
+
+    Events not owned by the catalog pass through untouched. Validation uses the
+    same JSON-mode strict path as ``EventSpecification.hydrate`` so an event
+    that appends cleanly is guaranteed to hydrate cleanly later.
+    """
+    specification = catalog.event_specs.get(event.event_type)
+    if specification is None:
+        return
+    payload_json = event.model_dump(mode="json")["payload"]
+    try:
+        specification.payload_type.model_validate_json(json.dumps(payload_json))
+    except ValidationError as error:
+        msg = (
+            f"invalid graph event payload for event_type={event.event_type!r} "
+            f"at position {event.position}: {error}"
+        )
+        raise InvalidGraphEventPayloadError(msg) from error
 
 
 _RECORD_PAYLOAD_BASE_FIELDS = {
@@ -587,8 +633,16 @@ class GraphEventStore:
         run_id: str,
         expected_position: int,
         events: list[EventEnvelope],
+        *,
+        allow_invalid_payloads: bool = False,
     ) -> list[EventEnvelope]:
-        """Append events if the run stream is still at ``expected_position``."""
+        """Append events if the run stream is still at ``expected_position``.
+
+        Catalog-owned event payloads are validated eagerly against their strict
+        specification before any row is staged. ``allow_invalid_payloads`` is a
+        narrow escape for intentional-corruption tests only; production callers
+        must never set it.
+        """
         if not events:
             return []
 
@@ -604,13 +658,9 @@ class GraphEventStore:
         rows: list[EventV2Model] = []
         for offset, event in enumerate(events, start=1):
             position = expected_position + offset
-            stored = event.model_copy(
-                update={
-                    "run_id": run_id,
-                    "position": position,
-                    "payload": _payload_with_durable_graph_position(event, position, run_id),
-                }
-            )
+            stored = stored_graph_event(event, run_id=run_id, position=position)
+            if not allow_invalid_payloads:
+                validate_catalog_event_payload(self._catalog, stored)
             stored_events.append(stored)
             rows.append(
                 EventV2Model(
@@ -740,6 +790,12 @@ class GraphEventStore:
             func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(field)
             for field in fields
         ]
+        record_payload_selects = [
+            func.json_extract(EventV2Model.payload, f"$.payload.record.{field}").label(
+                f"__record_{field}"
+            )
+            for field in fields
+        ]
         nested_payload_selects = [
             func.json_extract(EventV2Model.payload, "$.payload.value.status").label(
                 "__value_status"
@@ -753,9 +809,27 @@ class GraphEventStore:
             func.json_extract(EventV2Model.payload, "$.payload.value.grades").label(
                 "__value_grades"
             ),
+            func.json_extract(EventV2Model.payload, "$.payload.record.value.status").label(
+                "__record_value_status"
+            ),
+            func.json_extract(EventV2Model.payload, "$.payload.record.value.classification").label(
+                "__record_value_classification"
+            ),
+            func.json_extract(EventV2Model.payload, "$.payload.record.value.outcome").label(
+                "__record_value_outcome"
+            ),
+            func.json_extract(EventV2Model.payload, "$.payload.record.value.grades").label(
+                "__record_value_grades"
+            ),
             *[
                 func.json_extract(EventV2Model.payload, f"$.payload.value.{field}").label(
                     f"__decision_value_{field}"
+                )
+                for field in DECISION_RECORD_VALUE_FIELDS
+            ],
+            *[
+                func.json_extract(EventV2Model.payload, f"$.payload.record.value.{field}").label(
+                    f"__record_decision_value_{field}"
                 )
                 for field in DECISION_RECORD_VALUE_FIELDS
             ],
@@ -765,10 +839,12 @@ class GraphEventStore:
                 EventV2Model.event_type,
                 EventV2Model.version,
                 EventV2Model.timestamp,
+                EventV2Model.payload.label("__full_event"),
                 func.json_extract(EventV2Model.payload, "$.event_id").label("event_id"),
                 func.json_extract(EventV2Model.payload, "$.causation_id").label("causation_id"),
                 func.json_extract(EventV2Model.payload, "$.correlation_id").label("correlation_id"),
                 *payload_selects,
+                *record_payload_selects,
                 *nested_payload_selects,
             )
             .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
@@ -777,54 +853,130 @@ class GraphEventStore:
         )
 
         events: list[EventEnvelope] = []
+        omitted_output_record_fields = (
+            {"payload", "attempt_number"} if fields == LIGHT_GRAPH_PAYLOAD_FIELDS else {"payload"}
+        )
+        extract_compact_output_record = fields in {
+            LIGHT_GRAPH_PAYLOAD_FIELDS,
+            NODE_DETAIL_PAYLOAD_FIELDS,
+        }
         for row in result.mappings():
-            payload = {
-                field: _json_extract_payload_value(field, row[field])
-                for field in fields
-                if row.get(field) is not None
-                and (field != "payload" or str(row["event_type"]).startswith("callback_"))
-            }
-            if str(row["event_type"]).startswith("callback_") and "payload" in fields:
+            event_type = str(row["event_type"])
+            # Full stored payloads for catalog-owned events must stay exactly as
+            # persisted: strict hydration forbids fields the legacy partial-read
+            # fallbacks would lift in below.
+            payload_is_full_stored = False
+            if event_type in self._catalog.event_specs and (
+                event_type != "output_record_accepted" or not extract_compact_output_record
+            ):
+                full_event = json.loads(str(row["__full_event"]))
+                payload = dict(cast(dict[str, Any], full_event).get("payload", {}))
+                payload_is_full_stored = True
+            elif event_type == "output_record_accepted" and extract_compact_output_record:
+                payload = {
+                    field: _json_extract_payload_value(field, row[f"__record_{field}"])
+                    for field in fields
+                    if row.get(f"__record_{field}") is not None
+                    and field not in omitted_output_record_fields
+                }
+            else:
+                payload = {
+                    field: _json_extract_payload_value(field, row[field])
+                    for field in fields
+                    if row.get(field) is not None
+                    and (field != "payload" or event_type.startswith("callback_"))
+                }
+            if event_type.startswith("callback_") and "payload" in fields:
                 payload.setdefault("payload", None)
             if (
-                include_nested_value_fallbacks
+                not payload_is_full_stored
+                and include_nested_value_fallbacks
                 and "status" in fields
                 and "status" not in payload
-                and row.get("__value_status")
+                and (
+                    row.get("__record_value_status")
+                    if event_type == "output_record_accepted"
+                    else row.get("__value_status")
+                )
             ):
-                payload["status"] = _json_extract_value(row["__value_status"])
+                value_status = (
+                    row["__record_value_status"]
+                    if event_type == "output_record_accepted"
+                    else row["__value_status"]
+                )
+                payload["status"] = _json_extract_value(value_status)
             if (
-                include_nested_value_fallbacks
+                not payload_is_full_stored
+                and include_nested_value_fallbacks
                 and "classification" in fields
                 and "classification" not in payload
-                and row.get("__value_classification")
+                and (
+                    row.get("__record_value_classification")
+                    if event_type == "output_record_accepted"
+                    else row.get("__value_classification")
+                )
             ):
-                payload["classification"] = _json_extract_value(row["__value_classification"])
-            if _is_verification_report_payload(payload):
+                value_classification = (
+                    row["__record_value_classification"]
+                    if event_type == "output_record_accepted"
+                    else row["__value_classification"]
+                )
+                payload["classification"] = _json_extract_value(value_classification)
+            if not payload_is_full_stored and _is_verification_report_payload(payload):
                 value_payload: dict[str, Any] = {}
-                value_outcome = row.get("__value_outcome")
+                value_outcome = row.get(
+                    "__record_value_outcome"
+                    if event_type == "output_record_accepted"
+                    else "__value_outcome"
+                )
                 if value_outcome is not None:
                     value_payload["outcome"] = _json_extract_value(value_outcome)
-                value_grades = row.get("__value_grades")
+                value_grades = row.get(
+                    "__record_value_grades"
+                    if event_type == "output_record_accepted"
+                    else "__value_grades"
+                )
                 if value_grades is not None:
                     value_payload["grades"] = _json_extract_value(value_grades)
                 if value_payload:
                     payload["value"] = value_payload
             record_type = payload.get("record_type")
             port = payload.get("port")
-            if record_type in {"decision_request", "authority_request_record"} or port in {
-                "decision_request",
-                "authority_request_record",
-            }:
+            if not payload_is_full_stored and (
+                record_type in {"decision_request", "authority_request_record"}
+                or port
+                in {
+                    "decision_request",
+                    "authority_request_record",
+                }
+            ):
                 value_payload = {
-                    field: _json_extract_value(row[f"__decision_value_{field}"])
+                    field: _json_extract_value(
+                        row[
+                            f"__record_decision_value_{field}"
+                            if event_type == "output_record_accepted"
+                            else f"__decision_value_{field}"
+                        ]
+                    )
                     for field in DECISION_RECORD_VALUE_FIELDS
-                    if row.get(f"__decision_value_{field}") is not None
+                    if row.get(
+                        f"__record_decision_value_{field}"
+                        if event_type == "output_record_accepted"
+                        else f"__decision_value_{field}"
+                    )
+                    is not None
                 }
                 if value_payload:
                     payload["value"] = value_payload
+            if event_type == "output_record_accepted" and extract_compact_output_record:
+                payload = {"record": payload}
+            envelope_type = (
+                CompactEventEnvelope
+                if event_type == "output_record_accepted" and extract_compact_output_record
+                else EventEnvelope
+            )
             events.append(
-                EventEnvelope(
+                envelope_type(
                     event_id=str(row.get("event_id") or f"graph-event-{row['version']}"),
                     run_id=run_id,
                     position=int(row["version"]),
@@ -1206,7 +1358,12 @@ class GraphEventStore:
         position = max(event.position for event in events)
         _add_node_detail_summaries(
             self._session,
-            _node_detail_summaries_from_events(run_id, events, position=position),
+            _node_detail_summaries_from_events(
+                run_id,
+                events,
+                position=position,
+                events_are_light=True,
+            ),
         )
         self._session.add(GraphNodeDetailSummaryCheckpointModel(run_id=run_id, position=position))
         await self._session.flush()
@@ -1352,9 +1509,14 @@ class GraphEventStore:
 
 
 def summarize_graph_event(event: EventEnvelope) -> GraphEventSummary:
+    source_payload = event.payload
+    if event.event_type == "output_record_accepted":
+        source_payload = OutputRecordAcceptedPayload.model_validate(
+            event.payload
+        ).record.model_dump(mode="json", by_alias=True, exclude_none=True)
     payload = {
         key: value
-        for key, value in event.payload.items()
+        for key, value in source_payload.items()
         if key in SUMMARY_PAYLOAD_FIELDS
         or key
         in {
@@ -1366,10 +1528,10 @@ def summarize_graph_event(event: EventEnvelope) -> GraphEventSummary:
             "tokens_by_node_kind",
         }
     }
-    ops = event.payload.get("ops") or event.payload.get("operations")
+    ops = source_payload.get("ops") or source_payload.get("operations")
     if isinstance(ops, list):
         payload["patch_ops"] = len(cast(list[Any], ops))
-    value = event.payload.get("value")
+    value = source_payload.get("value")
     if isinstance(value, dict):
         typed_value = cast(dict[str, Any], value)
         grades = typed_value.get("grades")
@@ -1379,7 +1541,7 @@ def summarize_graph_event(event: EventEnvelope) -> GraphEventSummary:
             if isinstance(outcome, str):
                 value_summary["outcome"] = outcome
             payload["value"] = value_summary
-    grades = event.payload.get("grades")
+    grades = source_payload.get("grades")
     if grades is not None:
         payload["grades"] = grades
     return GraphEventSummary(
@@ -1555,6 +1717,7 @@ def _node_detail_summaries_from_events(
     events: list[EventEnvelope],
     *,
     position: int,
+    events_are_light: bool = False,
 ) -> dict[str, GraphNodeDetailSummary]:
     return _apply_node_detail_events(
         run_id,
@@ -1563,6 +1726,7 @@ def _node_detail_summaries_from_events(
         existing_node_ids=set(),
         summaries={},
         edge_ports={},
+        events_are_light=events_are_light,
     )
 
 
@@ -1574,13 +1738,14 @@ def _apply_node_detail_events(
     existing_node_ids: set[str],
     summaries: dict[str, GraphNodeDetailSummary],
     edge_ports: dict[str, str],
+    events_are_light: bool = False,
 ) -> dict[str, GraphNodeDetailSummary]:
     updated: dict[str, GraphNodeDetailSummary] = {}
     known_node_ids = set(existing_node_ids)
     edge_ports = dict(edge_ports)
 
     for event in events:
-        light_event = _node_detail_light_event(event)
+        light_event = event if events_are_light else _node_detail_light_event(event)
         payload = light_event.payload
         if light_event.event_type == "edge_created":
             edge_id = payload.get("edge_id")
@@ -1767,8 +1932,12 @@ def _node_detail_field_updates(
                 active_lease=_selected_lease(leases),
             )
     elif event.event_type == "output_record_accepted":
-        node_id = payload.get("producer_node_id")
-        record_kind = payload.get("record_kind")
+        record_payload = payload.get("record")
+        if not isinstance(record_payload, dict):
+            return updates
+        typed_record_payload = cast(dict[str, Any], record_payload)
+        node_id = typed_record_payload.get("producer_node_id")
+        record_kind = typed_record_payload.get("record_kind")
         if (
             isinstance(node_id, str)
             and isinstance(record_kind, str)
@@ -1780,7 +1949,7 @@ def _node_detail_field_updates(
                 position,
             )
             records = [dict(record) for record in summary.output_records]
-            records.append(dict(payload))
+            records.append(dict(typed_record_payload))
             updates[node_id] = _replace_summary(
                 summary,
                 position=position,
@@ -1871,16 +2040,21 @@ def _is_callback_history_event(event: EventEnvelope) -> bool:
 
 
 def _node_detail_light_event(event: EventEnvelope) -> EventEnvelope:
+    source_payload = event.payload
+    if event.event_type == "output_record_accepted":
+        source_payload = OutputRecordAcceptedPayload.model_validate(
+            event.payload
+        ).record.model_dump(mode="json", by_alias=True, exclude_none=True)
     payload = {
         key: value
-        for key, value in event.payload.items()
+        for key, value in source_payload.items()
         if key in NODE_DETAIL_PAYLOAD_FIELDS
         and (key != "payload" or event.event_type.startswith("callback_"))
     }
     if event.event_type.startswith("callback_"):
         payload.setdefault("payload", None)
-    value = event.payload.get("value")
-    if _is_verification_report_payload(event.payload) and isinstance(value, dict):
+    value = source_payload.get("value")
+    if _is_verification_report_payload(source_payload) and isinstance(value, dict):
         typed_value = cast(dict[str, Any], value)
         compact_value: dict[str, Any] = {}
         outcome = typed_value.get("outcome")
@@ -1891,18 +2065,19 @@ def _node_detail_light_event(event: EventEnvelope) -> EventEnvelope:
             compact_value["grades"] = grades
         if compact_value:
             payload["value"] = compact_value
+    if event.event_type == "output_record_accepted":
+        payload = {"record": payload}
     return event.model_copy(update={"payload": payload})
 
 
 def _node_event_response(event: EventEnvelope) -> dict[str, Any]:
-    summary = summarize_graph_event(event)
     return {
-        "event_id": summary.event_id,
-        "event_type": summary.event_type,
-        "run_id": summary.run_id,
-        "position": summary.position,
-        "timestamp": summary.timestamp,
-        "payload": summary.payload,
+        "event_id": event.event_id,
+        "event_type": event.event_type,
+        "run_id": event.run_id,
+        "position": event.position,
+        "timestamp": event.timestamp.isoformat(),
+        "payload": dict(event.payload),
     }
 
 

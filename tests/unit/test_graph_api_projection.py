@@ -15,7 +15,7 @@ from orchestrator.api import (
     build_node_detail_response,
     build_node_detail_response_from_summary,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, CompactEventEnvelope, EventEnvelope, FakeClock
 from orchestrator.graph_runtime.store import GraphEventStore, GraphNodeDetailSummary
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import build_graph_catalog
@@ -36,7 +36,10 @@ def _event(
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -86,7 +89,6 @@ def test_build_node_detail_filters_by_node_id() -> None:
             {
                 "node_id": "node-a",
                 "new_state": "ready",
-                "old_state": "planned",
             },
         ),
         _event(
@@ -94,25 +96,34 @@ def test_build_node_detail_filters_by_node_id() -> None:
             {
                 "node_id": "node-b",
                 "new_state": "running",
-                "old_state": "planned",
             },
         ),
         _event(
             "output_record_accepted",
             {
-                "record_id": "out-a",
-                "record_kind": "output",
-                "producer_node_id": "node-a",
-                "task_region_id": "task-a",
+                "record": {
+                    "record_id": "out-a",
+                    "record_kind": "output",
+                    "record_type": "output_summary",
+                    "producer_node_id": "node-a",
+                    "port": "output",
+                    "schema": "OutputSummary",
+                    "value": {"task_region_id": "task-a"},
+                }
             },
         ),
         _event(
             "output_record_accepted",
             {
-                "record_id": "out-b",
-                "record_kind": "graph_record",
-                "producer_node_id": "node-b",
-                "task_region_id": "task-b",
+                "record": {
+                    "record_id": "out-b",
+                    "record_kind": "output",
+                    "record_type": "output_summary",
+                    "producer_node_id": "node-b",
+                    "port": "output",
+                    "schema": "OutputSummary",
+                    "value": {"task_region_id": "task-b"},
+                }
             },
         ),
         _event(
@@ -152,6 +163,46 @@ def test_build_node_detail_filters_by_node_id() -> None:
         "file_state_accepted-event",
         "node_state_changed-event",
     ]
+
+
+def test_build_node_detail_accepts_compact_output_record_envelope() -> None:
+    created = _event(
+        "node_created",
+        {"node_id": "node-a", "kind": "worker", "state": "completed"},
+    )
+    compact = CompactEventEnvelope.model_validate(
+        _event(
+            "output_record_accepted",
+            {
+                "record": {
+                    "record_id": "out-a",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "node-a",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "out-a",
+                    "value": {"summary": "compact"},
+                }
+            },
+        ).model_dump()
+        | {
+            "payload": {
+                "record": {
+                    "record_id": "out-a",
+                    "record_kind": "output",
+                    "producer_node_id": "node-a",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                }
+            }
+        }
+    )
+
+    detail = build_node_detail_response("run-node", "node-a", [created, compact])
+
+    assert detail is not None
+    assert detail.output_records == [compact.payload["record"]]
 
 
 def test_build_node_detail_exposes_contract_and_runtime_controls_separately() -> None:
@@ -231,11 +282,18 @@ def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None
         _event(
             "output_record_accepted",
             {
-                "record_id": "out-a",
-                "record_kind": "output",
-                "producer_node_id": "node-a",
-                "port": "candidate",
-                "value": {"body": long_body, "paths": [f"file-{index}" for index in range(201)]},
+                "record": {
+                    "record_id": "out-a",
+                    "record_kind": "output",
+                    "record_type": "output",
+                    "producer_node_id": "node-a",
+                    "port": "candidate",
+                    "schema": "GenericOutput",
+                    "value": {
+                        "body": long_body,
+                        "paths": [f"file-{index}" for index in range(201)],
+                    },
+                }
             },
             run_id="run-node",
             position=2,
@@ -243,11 +301,15 @@ def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None
         _event(
             "output_record_accepted",
             {
-                "record_id": "out-b",
-                "record_kind": "output",
-                "producer_node_id": "node-b",
-                "port": "candidate",
-                "value": {"body": "unrelated"},
+                "record": {
+                    "record_id": "out-b",
+                    "record_kind": "output",
+                    "record_type": "output",
+                    "producer_node_id": "node-b",
+                    "port": "candidate",
+                    "schema": "GenericOutput",
+                    "value": {"body": "unrelated"},
+                }
             },
             run_id="run-node",
             position=3,
@@ -257,7 +319,7 @@ def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None
     detail = build_node_detail_response_from_summary(summary, full_events=full_events)
 
     assert [event.position for event in detail.events] == [2]
-    assert detail.events[0].payload["record_id"] == "out-a"
+    assert detail.events[0].payload["record"]["record_id"] == "out-a"
     assert "value" not in detail.events[0].payload
     assert detail.output_records[0]["record_id"] == "out-a"
     assert detail.output_records[0]["producer_node_id"] == "node-a"
@@ -317,12 +379,16 @@ def test_build_graph_topology_response_exposes_edge_contracts_and_bindings() -> 
         _event(
             "output_record_accepted",
             {
-                "record_id": "candidate-1",
-                "record_kind": "output",
-                "record_type": "candidate",
-                "producer_node_id": "worker-1",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
+                "record": {
+                    "record_id": "candidate-1",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-1",
+                    "value": {"summary": "candidate one"},
+                }
             },
             position=4,
         ),
@@ -402,12 +468,16 @@ def test_build_graph_topology_response_exposes_accumulated_many_bindings() -> No
         _event(
             "output_record_accepted",
             {
-                "record_id": "candidate-1",
-                "record_kind": "output",
-                "record_type": "candidate",
-                "producer_node_id": "worker-1",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
+                "record": {
+                    "record_id": "candidate-1",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-1",
+                    "value": {"summary": "candidate one"},
+                }
             },
             position=4,
         ),
@@ -425,12 +495,16 @@ def test_build_graph_topology_response_exposes_accumulated_many_bindings() -> No
         _event(
             "output_record_accepted",
             {
-                "record_id": "candidate-2",
-                "record_kind": "output",
-                "record_type": "candidate",
-                "producer_node_id": "worker-1",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
+                "record": {
+                    "record_id": "candidate-2",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-2",
+                    "value": {"summary": "candidate two"},
+                }
             },
             position=6,
         ),
@@ -475,22 +549,24 @@ def test_build_final_invariant_blockers_response_returns_typed_blockers() -> Non
         _event(
             "output_record_accepted",
             {
-                "record_id": "decision-1",
-                "record_kind": "output",
-                "record_type": "completion_decision",
-                "producer_node_id": "gate-final",
-                "port": "completion_decision",
-                "schema": "CompletionDecision",
-                "value": {
-                    "status": "blocked",
-                    "blockers": [
-                        {
-                            "kind": "open_planner_proposal",
-                            "reason": "planner proposal has not been accepted or rejected",
-                            "proposal_id": "proposal-1",
-                        }
-                    ],
-                },
+                "record": {
+                    "record_id": "decision-1",
+                    "record_kind": "output",
+                    "record_type": "completion_decision",
+                    "producer_node_id": "gate-final",
+                    "port": "completion_decision",
+                    "schema": "CompletionDecision",
+                    "value": {
+                        "status": "blocked",
+                        "blockers": [
+                            {
+                                "kind": "open_planner_proposal",
+                                "reason": "planner proposal has not been accepted or rejected",
+                                "proposal_id": "proposal-1",
+                            }
+                        ],
+                    },
+                }
             },
             position=3,
         ),

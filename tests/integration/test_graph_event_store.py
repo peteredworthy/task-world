@@ -21,6 +21,7 @@ from orchestrator.graph import (
     PROJECTION_SCHEMA_VERSION,
     Actor,
     ActorKind,
+    CompactEventEnvelope,
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
@@ -60,7 +61,10 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -223,7 +227,6 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
             "node_state_changed",
             {
                 "node_id": "worker-stale",
-                "old_state": "planned",
                 "new_state": "cancelled",
                 "trigger": "test_conflict",
             },
@@ -564,12 +567,16 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             run_id,
             "output_record_accepted",
             {
-                "record_id": "candidate-1",
-                "record_kind": "output",
-                "producer_node_id": "worker-1",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "value": {"summary": "done"},
+                "record": {
+                    "record_id": "candidate-1",
+                    "record_kind": "output",
+                    "producer_node_id": "worker-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "value": {"summary": "done"},
+                    "record_type": "candidate",
+                    "candidate_id": "candidate-1",
+                }
             },
         ),
         _event(
@@ -592,23 +599,26 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             run_id,
             "output_record_accepted",
             {
-                "record_id": "verification-1",
-                "record_kind": "verification",
-                "producer_node_id": "verifier-1",
-                "port": "verification_report",
-                "schema": "VerificationReport",
-                "candidate_id": "candidate-1",
-                "outcome": "passed",
-                "verdict": "passed",
-                "value": {
-                    "grades": [
-                        {
-                            "requirement_id": "R-1",
-                            "grade": "A",
-                            "reason": "satisfied",
-                        }
-                    ]
-                },
+                "record": {
+                    "record_id": "verification-1",
+                    "record_kind": "verification",
+                    "producer_node_id": "verifier-1",
+                    "port": "verification_report",
+                    "schema": "VerificationReport",
+                    "candidate_id": "candidate-1",
+                    "outcome": "passed",
+                    "verdict": "passed",
+                    "value": {
+                        "grades": [
+                            {
+                                "requirement_id": "R-1",
+                                "grade": "A",
+                                "reason": "satisfied",
+                            }
+                        ]
+                    },
+                    "record_type": "verification_report",
+                }
             },
         ),
         _event(
@@ -616,16 +626,33 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             run_id,
             "output_record_accepted",
             {
-                "record_id": "check-1",
-                "record_kind": "output",
-                "producer_node_id": "check-1",
-                "port": "check_result",
-                "schema": "CheckResult",
-                "value": {
-                    "status": "passed",
-                    "classification": "passed",
-                    "command_id": "unit-check",
-                },
+                "record": {
+                    "record_id": "check-1",
+                    "record_kind": "output",
+                    "producer_node_id": "check-1",
+                    "port": "check_result",
+                    "schema": "CheckResult",
+                    "value": {
+                        "status": "passed",
+                        "classification": "passed",
+                        "command_id": "unit-check",
+                        "command_text": "test",
+                        "command": {},
+                        "worktree_path": "/repo",
+                        "base_snapshot_id": "S0",
+                        "execution_id": "exec-test",
+                        "duration_ms": 0,
+                        "stdout": "",
+                        "stderr": "",
+                        "stdout_truncated": False,
+                        "stderr_truncated": False,
+                        "timeout_seconds": 60,
+                        "environment_policy": {},
+                    },
+                    "record_type": "check_result",
+                    "task_region_id": "task-test",
+                    "attempt_number": 1,
+                }
             },
         ),
         _event(
@@ -633,17 +660,20 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             run_id,
             "output_record_accepted",
             {
-                "record_id": "decision-request-1",
-                "record_kind": "graph_record",
-                "producer_node_id": "gate-1",
-                "port": "decision_request",
-                "schema": "DecisionRequest",
-                "value": {
-                    "decision_type": "approval",
-                    "options": ["approve", "reject"],
-                    "default_option": "reject",
-                    "consequence_summary": "Approve planner expansion.",
-                },
+                "record": {
+                    "record_id": "decision-request-1",
+                    "record_kind": "graph_record",
+                    "producer_node_id": "gate-1",
+                    "port": "decision_request",
+                    "schema": "DecisionRequest",
+                    "value": {
+                        "decision_type": "approval",
+                        "options": ["approve", "reject"],
+                        "default_option": "reject",
+                        "consequence_summary": "Approve planner expansion.",
+                    },
+                    "record_type": "decision_request",
+                }
             },
         ),
         _event(
@@ -651,16 +681,19 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             run_id,
             "output_record_accepted",
             {
-                "record_id": "authority-request-1",
-                "record_kind": "graph_record",
-                "producer_node_id": "authority-1",
-                "port": "authority_request_record",
-                "schema": "AuthorityRequest",
-                "value": {
-                    "requested_authority": ["repo:docs/**:write"],
-                    "target_node_id": "worker-docs",
-                    "reason": "Worker needs docs write access.",
-                },
+                "record": {
+                    "record_id": "authority-request-1",
+                    "record_kind": "graph_record",
+                    "producer_node_id": "authority-1",
+                    "port": "authority_request_record",
+                    "schema": "AuthorityRequest",
+                    "value": {
+                        "requested_authority": ["repo:docs/**:write"],
+                        "target_node_id": "worker-docs",
+                        "reason": "Worker needs docs write access.",
+                    },
+                    "record_type": "authority_request_record",
+                }
             },
         ),
         _event(
@@ -668,17 +701,20 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             run_id,
             "output_record_accepted",
             {
-                "record_id": "failure-1",
-                "record_kind": "graph_record",
-                "producer_node_id": "worker-1",
-                "port": "failure_record",
-                "schema": "FailureRecord",
-                "value": {
-                    "failed_node_id": "worker-1",
-                    "phase": "runtime",
-                    "error_class": "max_attempts_exhausted",
-                    "retryable": False,
-                },
+                "record": {
+                    "record_id": "failure-1",
+                    "record_kind": "graph_record",
+                    "producer_node_id": "worker-1",
+                    "port": "failure_record",
+                    "schema": "FailureRecord",
+                    "value": {
+                        "failed_node_id": "worker-1",
+                        "phase": "runtime",
+                        "error_class": "max_attempts_exhausted",
+                        "retryable": False,
+                    },
+                    "record_type": "failure_record",
+                }
             },
         ),
         _event(
@@ -686,17 +722,20 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             run_id,
             "output_record_accepted",
             {
-                "record_id": "recovery-plan-1",
-                "record_kind": "graph_record",
-                "producer_node_id": "recovery-1",
-                "port": "recovery_plan",
-                "schema": "RecoveryPlan",
-                "value": {
-                    "action": "retry",
-                    "responsible_actor": "controller",
-                    "graph_changes": [],
-                    "reason": "retry after transient worker failure",
-                },
+                "record": {
+                    "record_id": "recovery-plan-1",
+                    "record_kind": "output",
+                    "producer_node_id": "recovery-1",
+                    "port": "recovery_plan",
+                    "schema": "RecoveryPlan",
+                    "value": {
+                        "action": "retry",
+                        "responsible_actor": "controller",
+                        "graph_changes": [],
+                        "reason": "retry after transient worker failure",
+                    },
+                    "record_type": "recovery_plan",
+                }
             },
         ),
         _event(
@@ -704,16 +743,18 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             run_id,
             "output_record_accepted",
             {
-                "record_id": "run-context",
-                "record_kind": "graph_record",
-                "record_type": "run_context",
-                "producer_node_id": "root",
-                "port": "run_context",
-                "schema": "RunContext",
-                "value": {
-                    "routine_id": "routine-1",
-                    "routine_name": "Routine",
-                },
+                "record": {
+                    "record_id": "run-context",
+                    "record_kind": "graph_record",
+                    "record_type": "run_context",
+                    "producer_node_id": "root",
+                    "port": "run_context",
+                    "schema": "RunContext",
+                    "value": {
+                        "routine_id": "routine-1",
+                        "routine_name": "Routine",
+                    },
+                }
             },
         ),
         _event(
@@ -721,19 +762,21 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             run_id,
             "output_record_accepted",
             {
-                "record_id": "routine-snapshot-record",
-                "record_kind": "graph_record",
-                "record_type": "routine_snapshot",
-                "producer_node_id": "routine-snapshot",
-                "port": "snapshot",
-                "schema": "RoutineSnapshot",
-                "value": {
-                    "routine_id": "routine-1",
-                    "name": "Routine",
-                    "content_hash": "abc123",
-                    "step_count": 1,
-                    "task_count": 1,
-                },
+                "record": {
+                    "record_id": "routine-snapshot-record",
+                    "record_kind": "graph_record",
+                    "record_type": "routine_snapshot",
+                    "producer_node_id": "routine-snapshot",
+                    "port": "snapshot",
+                    "schema": "RoutineSnapshot",
+                    "value": {
+                        "routine_id": "routine-1",
+                        "name": "Routine",
+                        "content_hash": "abc123",
+                        "step_count": 1,
+                        "task_count": 1,
+                    },
+                }
             },
         ),
         _event(
@@ -741,17 +784,19 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             run_id,
             "output_record_accepted",
             {
-                "record_id": "artifact-reference-1",
-                "record_kind": "graph_record",
-                "record_type": "artifact_reference",
-                "producer_node_id": "context-1",
-                "port": "artifact",
-                "schema": "ContextArtifact",
-                "value": {
-                    "artifact_id": "spec",
-                    "artifact_type": "context_source",
-                    "uri": "docs/spec.md",
-                },
+                "record": {
+                    "record_id": "artifact-reference-1",
+                    "record_kind": "graph_record",
+                    "record_type": "artifact_reference",
+                    "producer_node_id": "context-1",
+                    "port": "artifact",
+                    "schema": "ContextArtifact",
+                    "value": {
+                        "artifact_id": "spec",
+                        "artifact_type": "context_source",
+                        "uri": "docs/spec.md",
+                    },
+                }
             },
         ),
     ]
@@ -769,7 +814,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             build_graph_catalog(),
         ).read_run(run_id)
 
-    candidate = stored[0].payload
+    candidate = stored[0].payload["record"]
     assert candidate["record_type"] == "candidate"
     assert candidate["schema_version"] == 1
     assert candidate["producer_port"] == "candidate"
@@ -791,7 +836,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "verdict": "captured",
     }
 
-    verification = stored[2].payload
+    verification = stored[2].payload["record"]
     assert verification["record_type"] == "verification_report"
     assert verification["schema_version"] == 1
     assert verification["producer_port"] == "verification_report"
@@ -803,7 +848,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "grades": [{"requirement_id": "R-1", "grade": "A", "reason": "satisfied"}],
     }
 
-    check_result = stored[3].payload
+    check_result = stored[3].payload["record"]
     assert check_result["record_type"] == "check_result"
     assert check_result["schema_version"] == 1
     assert check_result["producer_port"] == "check_result"
@@ -814,9 +859,21 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "status": "passed",
         "classification": "passed",
         "command_id": "unit-check",
+        "command_text": "test",
+        "command": {},
+        "worktree_path": "/repo",
+        "base_snapshot_id": "S0",
+        "execution_id": "exec-test",
+        "duration_ms": 0,
+        "stdout": "",
+        "stderr": "",
+        "stdout_truncated": False,
+        "stderr_truncated": False,
+        "timeout_seconds": 60,
+        "environment_policy": {},
     }
 
-    decision_request = stored[4].payload
+    decision_request = stored[4].payload["record"]
     assert decision_request["record_type"] == "decision_request"
     assert decision_request["schema_version"] == 1
     assert decision_request["producer_port"] == "decision_request"
@@ -829,7 +886,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "consequence_summary": "Approve planner expansion.",
     }
 
-    authority_request = stored[5].payload
+    authority_request = stored[5].payload["record"]
     assert authority_request["record_type"] == "authority_request_record"
     assert authority_request["schema_version"] == 1
     assert authority_request["producer_port"] == "authority_request_record"
@@ -841,7 +898,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "reason": "Worker needs docs write access.",
     }
 
-    failure = stored[6].payload
+    failure = stored[6].payload["record"]
     assert failure["record_type"] == "failure_record"
     assert failure["schema_version"] == 1
     assert failure["producer_port"] == "failure_record"
@@ -854,7 +911,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "retryable": False,
     }
 
-    recovery_plan = stored[7].payload
+    recovery_plan = stored[7].payload["record"]
     assert recovery_plan["record_type"] == "recovery_plan"
     assert recovery_plan["schema_version"] == 1
     assert recovery_plan["producer_port"] == "recovery_plan"
@@ -867,7 +924,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "reason": "retry after transient worker failure",
     }
 
-    run_context = stored[8].payload
+    run_context = stored[8].payload["record"]
     assert run_context["record_type"] == "run_context"
     assert run_context["schema_version"] == 1
     assert run_context["producer_port"] == "run_context"
@@ -875,7 +932,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert run_context["graph_position"] == 9
     assert run_context["payload"] == {"routine_id": "routine-1", "routine_name": "Routine"}
 
-    routine_snapshot = stored[9].payload
+    routine_snapshot = stored[9].payload["record"]
     assert routine_snapshot["record_type"] == "routine_snapshot"
     assert routine_snapshot["schema_version"] == 1
     assert routine_snapshot["producer_port"] == "snapshot"
@@ -889,7 +946,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "task_count": 1,
     }
 
-    artifact_reference = stored[10].payload
+    artifact_reference = stored[10].payload["record"]
     assert artifact_reference["record_type"] == "artifact_reference"
     assert artifact_reference["schema_version"] == 1
     assert artifact_reference["producer_port"] == "artifact"
@@ -908,19 +965,22 @@ async def test_append_events_rejects_malformed_accepted_record_atomically(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "store-record-base-rejection"
+    malformed_record = {
+        "record_id": "candidate-1",
+        "record_kind": "output",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "value": {"summary": "done"},
+        "record_type": "candidate",
+        "candidate_id": "candidate-1",
+    }
     events = [
         _event("evt-node", run_id, "node_created", {"node_id": "worker-1", "kind": "worker"}),
         _event(
             "evt-bad-record",
             run_id,
             "output_record_accepted",
-            {
-                "record_id": "candidate-1",
-                "record_kind": "output",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "value": {"summary": "done"},
-            },
+            {"record": malformed_record},
         ),
     ]
 
@@ -946,6 +1006,28 @@ async def test_append_events_rejects_invalid_supplied_durable_base_fields(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "store-record-base-invalid"
+    invalid_schema_record = {
+        "record_id": "candidate-1",
+        "record_kind": "output",
+        "producer_node_id": "worker-1",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "schema_version": 0,
+        "value": {"summary": "done"},
+        "record_type": "candidate",
+        "candidate_id": "candidate-1",
+    }
+    invalid_port_record = {
+        "record_id": "candidate-1",
+        "record_kind": "output",
+        "producer_node_id": "worker-1",
+        "producer_port": "check_result",
+        "port": "candidate",
+        "schema": "ImplementationCandidate",
+        "value": {"summary": "done"},
+        "record_type": "candidate",
+        "candidate_id": "candidate-1",
+    }
 
     with pytest.raises(ValueError, match="invalid durable record schema_version"):
         async with session_factory() as session:
@@ -961,15 +1043,7 @@ async def test_append_events_rejects_invalid_supplied_durable_base_fields(
                             "evt-bad-schema",
                             run_id,
                             "output_record_accepted",
-                            {
-                                "record_id": "candidate-1",
-                                "record_kind": "output",
-                                "producer_node_id": "worker-1",
-                                "port": "candidate",
-                                "schema": "ImplementationCandidate",
-                                "schema_version": 0,
-                                "value": {"summary": "done"},
-                            },
+                            {"record": invalid_schema_record},
                         )
                     ],
                 )
@@ -988,15 +1062,7 @@ async def test_append_events_rejects_invalid_supplied_durable_base_fields(
                             "evt-bad-port",
                             run_id,
                             "output_record_accepted",
-                            {
-                                "record_id": "candidate-1",
-                                "record_kind": "output",
-                                "producer_node_id": "worker-1",
-                                "producer_port": "check_result",
-                                "port": "candidate",
-                                "schema": "ImplementationCandidate",
-                                "value": {"summary": "done"},
-                            },
+                            {"record": invalid_port_record},
                         )
                     ],
                 )
@@ -1021,12 +1087,20 @@ async def test_per_run_isolation(session_factory: async_sessionmaker[AsyncSessio
             await store.append_events(
                 "store-run-a",
                 0,
-                [_event("evt-a", "store-run-a", "node_created", {"node_id": "a"})],
+                [
+                    _event(
+                        "evt-a", "store-run-a", "node_created", {"node_id": "a", "kind": "worker"}
+                    )
+                ],
             )
             await store.append_events(
                 "store-run-b",
                 0,
-                [_event("evt-b", "store-run-b", "node_created", {"node_id": "b"})],
+                [
+                    _event(
+                        "evt-b", "store-run-b", "node_created", {"node_id": "b", "kind": "worker"}
+                    )
+                ],
             )
 
     async with session_factory() as session:
@@ -1054,7 +1128,14 @@ async def test_unique_version_conflict(
             ).append_events(
                 run_id,
                 0,
-                [_event("evt-conflict-1", run_id, "node_created", {"node_id": "n1"})],
+                [
+                    _event(
+                        "evt-conflict-1",
+                        run_id,
+                        "node_created",
+                        {"node_id": "n1", "kind": "worker"},
+                    )
+                ],
             )
 
     with pytest.raises(StaleProjectionError):
@@ -1066,7 +1147,14 @@ async def test_unique_version_conflict(
                 ).append_events(
                     run_id,
                     0,
-                    [_event("evt-conflict-2", run_id, "node_created", {"node_id": "n2"})],
+                    [
+                        _event(
+                            "evt-conflict-2",
+                            run_id,
+                            "node_created",
+                            {"node_id": "n2", "kind": "worker"},
+                        )
+                    ],
                 )
 
 
@@ -1101,7 +1189,14 @@ async def test_unique_constraint_race_surfaces_stale_projection_error(
                 ).append_events(
                     run_id,
                     position_one,
-                    [_event("evt-race-1", run_id, "node_created", {"node_id": "n1"})],
+                    [
+                        _event(
+                            "evt-race-1",
+                            run_id,
+                            "node_created",
+                            {"node_id": "n1", "kind": "worker"},
+                        )
+                    ],
                 )
 
         with pytest.raises(StaleProjectionError):
@@ -1113,7 +1208,14 @@ async def test_unique_constraint_race_surfaces_stale_projection_error(
                     ).append_events(
                         run_id,
                         position_two,
-                        [_event("evt-race-2", run_id, "node_created", {"node_id": "n2"})],
+                        [
+                            _event(
+                                "evt-race-2",
+                                run_id,
+                                "node_created",
+                                {"node_id": "n2", "kind": "worker"},
+                            )
+                        ],
                     )
 
         async with session_factory() as session:
@@ -1166,7 +1268,11 @@ async def test_graph_stream_coexists_with_legacy_workflow_events(
             await store.append_events(
                 run_id,
                 0,
-                [_event("evt-coexist-1", run_id, "node_created", {"node_id": "n1"})],
+                [
+                    _event(
+                        "evt-coexist-1", run_id, "node_created", {"node_id": "n1", "kind": "worker"}
+                    )
+                ],
             )
 
     async with session_factory() as session:
@@ -1191,9 +1297,15 @@ async def test_read_from_offset(session_factory: async_sessionmaker[AsyncSession
                 run_id,
                 0,
                 [
-                    _event("evt-offset-1", run_id, "node_created", {"node_id": "n1"}),
-                    _event("evt-offset-2", run_id, "node_created", {"node_id": "n2"}),
-                    _event("evt-offset-3", run_id, "node_created", {"node_id": "n3"}),
+                    _event(
+                        "evt-offset-1", run_id, "node_created", {"node_id": "n1", "kind": "worker"}
+                    ),
+                    _event(
+                        "evt-offset-2", run_id, "node_created", {"node_id": "n2", "kind": "worker"}
+                    ),
+                    _event(
+                        "evt-offset-3", run_id, "node_created", {"node_id": "n3", "kind": "worker"}
+                    ),
                 ],
             )
 
@@ -1237,7 +1349,8 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
                                         "record_kind": "file_state",
                                         "ignored": large_payload,
                                     }
-                                ]
+                                ],
+                                "large_irrelevant_field": large_payload,
                             },
                         },
                     ),
@@ -1249,7 +1362,6 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
                             "node_id": "worker-1",
                             "kind": "worker",
                             "state": "planned",
-                            "large_irrelevant_field": large_payload,
                         },
                     ),
                     _event(
@@ -1257,19 +1369,21 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
                         run_id,
                         "output_record_accepted",
                         {
-                            "record_id": "verification-1",
-                            "record_kind": "verification",
-                            "record_type": "verification_report",
-                            "producer_node_id": "verifier-1",
-                            "port": "verification_report",
-                            "schema": "VerificationReport",
-                            "candidate_id": "candidate-1",
-                            "outcome": "passed",
-                            "verdict": "passed",
-                            "value": {
+                            "record": {
+                                "record_id": "verification-1",
+                                "record_kind": "verification",
+                                "record_type": "verification_report",
+                                "producer_node_id": "verifier-1",
+                                "port": "verification_report",
+                                "schema": "VerificationReport",
+                                "candidate_id": "candidate-1",
                                 "outcome": "passed",
-                                "grades": [{"requirement_id": "R-1", "grade": "A"}],
-                            },
+                                "verdict": "passed",
+                                "value": {
+                                    "outcome": "passed",
+                                    "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                                },
+                            }
                         },
                     ),
                 ],
@@ -1359,7 +1473,6 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                             "state": "planned",
                             "task_region_id": "step/task",
                             "resource_claims": [{"mode": "write", "scope": "repo"}],
-                            "value": {"body": large_payload},
                         },
                     ),
                     _event(
@@ -1367,13 +1480,21 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                         run_id,
                         "output_record_accepted",
                         {
-                            "record_id": "candidate-1",
-                            "record_kind": "output",
-                            "producer_node_id": "worker-1",
-                            "port": "candidate",
-                            "candidate_id": "candidate-1",
-                            "task_region_id": "step/task",
-                            "value": {"body": large_payload},
+                            "record": {
+                                "record_id": "candidate-1",
+                                "record_kind": "output",
+                                "producer_node_id": "worker-1",
+                                "port": "candidate",
+                                "candidate_id": "candidate-1",
+                                "task_region_id": "step/task",
+                                "value": {
+                                    "summary": "test candidate",
+                                    "body": large_payload,
+                                    "node_creation_context": {"body": large_payload},
+                                },
+                                "record_type": "candidate",
+                                "schema": "ImplementationCandidate",
+                            }
                         },
                     ),
                     _event(
@@ -1414,7 +1535,6 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                             "freshness_policy": "latest_only",
                             "prompt_hydration_policy": "artifact_reference",
                             "metadata": {"purpose": "verify candidate"},
-                            "value": {"body": large_payload},
                         },
                     ),
                     _event(
@@ -1422,18 +1542,36 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
                         run_id,
                         "output_record_accepted",
                         {
-                            "record_id": "check-result-1",
-                            "record_kind": "output",
-                            "record_type": "check_result",
-                            "producer_node_id": "check-1",
-                            "port": "check_result",
-                            "candidate_id": "candidate-check-1",
-                            "task_region_id": "step/task",
-                            "value": {
-                                "status": "passed",
-                                "classification": "passed",
-                                "body": large_payload,
-                            },
+                            "record": {
+                                "record_id": "check-result-1",
+                                "record_kind": "output",
+                                "record_type": "check_result",
+                                "producer_node_id": "check-1",
+                                "port": "check_result",
+                                "candidate_id": "candidate-check-1",
+                                "task_region_id": "step/task",
+                                "value": {
+                                    "status": "passed",
+                                    "classification": "passed",
+                                    "body": large_payload,
+                                    "edge_context": {"body": large_payload},
+                                    "command_id": "check-test",
+                                    "command_text": "test",
+                                    "command": {},
+                                    "worktree_path": "/repo",
+                                    "base_snapshot_id": "S0",
+                                    "execution_id": "exec-test",
+                                    "duration_ms": 0,
+                                    "stdout": "",
+                                    "stderr": "",
+                                    "stdout_truncated": False,
+                                    "stderr_truncated": False,
+                                    "timeout_seconds": 60,
+                                    "environment_policy": {},
+                                },
+                                "schema": "CheckResult",
+                                "attempt_number": 1,
+                            }
                         },
                     ),
                 ],
@@ -1461,13 +1599,16 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "task_region_id": "step/task",
     }
     assert events[1].payload == {
-        "candidate_id": "candidate-1",
-        "port": "candidate",
-        "producer_node_id": "worker-1",
-        "record_id": "candidate-1",
-        "record_kind": "output",
-        "record_type": "candidate",
-        "task_region_id": "step/task",
+        "record": {
+            "candidate_id": "candidate-1",
+            "port": "candidate",
+            "producer_node_id": "worker-1",
+            "record_id": "candidate-1",
+            "record_kind": "output",
+            "record_type": "candidate",
+            "schema": "ImplementationCandidate",
+            "task_region_id": "step/task",
+        }
     }
     assert events[2].payload == {
         "idempotency_key": "light-callback-1",
@@ -1495,18 +1636,40 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "to_port": "candidate_under_test",
     }
     assert events[5].payload == {
-        "candidate_id": "candidate-check-1",
-        "classification": "passed",
-        "port": "check_result",
-        "producer_node_id": "check-1",
-        "record_id": "check-result-1",
-        "record_kind": "output",
-        "record_type": "check_result",
-        "status": "passed",
-        "task_region_id": "step/task",
+        "record": {
+            "candidate_id": "candidate-check-1",
+            "classification": "passed",
+            "port": "check_result",
+            "producer_node_id": "check-1",
+            "record_id": "check-result-1",
+            "record_kind": "output",
+            "record_type": "check_result",
+            "schema": "CheckResult",
+            "status": "passed",
+            "task_region_id": "step/task",
+        }
     }
-    assert all("value" not in event.payload for event in events)
+    assert all(
+        "value"
+        not in (
+            event.payload["record"]
+            if event.event_type == "output_record_accepted"
+            else event.payload
+        )
+        for event in events
+    )
     assert all(
         "payload" not in event.payload or event.event_type == "callback_accepted"
         for event in events
     )
+    assert isinstance(events[1], CompactEventEnvelope)
+    assert isinstance(events[5], CompactEventEnvelope)
+    projection = initial_projection()
+    for event in events:
+        projection = reduce_event(build_graph_catalog(), projection, event)
+    assert projection["accepted_record_summaries_by_id"]["candidate-1"]["record_id"] == (
+        "candidate-1"
+    )
+    flattened_full_event = EventEnvelope.model_validate(events[1].model_dump())
+    with pytest.raises(ValueError, match="record"):
+        reduce_event(build_graph_catalog(), initial_projection(), flattened_full_event)

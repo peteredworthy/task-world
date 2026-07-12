@@ -178,7 +178,10 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -752,8 +755,8 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert died.events[3].payload["record_type"] == "recovery_plan"
-    assert died.events[3].payload["value"]["action"] == "retry"
+    assert died.events[3].payload["record"]["record_type"] == "recovery_plan"
+    assert died.events[3].payload["record"]["value"]["action"] == "retry"
     assert projection_after_death["leases"][lease_id]["state"] == "revoked"
     assert projection_after_death["node_states"]["worker-1"] == "ready"
     assert any(event.event_type == "runtime_retry_scheduled" for event in died.events)
@@ -1096,6 +1099,8 @@ async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
         run_id="cleanup-before-side-effect",
     )
     await restarted_dispatcher.dispatch_pending()
+    rows_after_recovery = await _outbox_rows(session_factory)
+    assert rows_after_recovery[0].last_error is None
 
     events = await _read_events(session_factory, "cleanup-before-side-effect")
     projection = rebuild_projection(build_graph_catalog(), events)

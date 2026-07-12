@@ -45,7 +45,10 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -71,6 +74,14 @@ def _sample_events(run_id: str) -> list[EventEnvelope]:
             {
                 "node_id": "worker-1",
                 "new_state": "ready",
+            },
+        ),
+        _event(
+            "evt-patch-summary",
+            run_id,
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-summary",
                 "blockers": ["waiting-for-input"],
                 "graph_verifier_grades": {"req-1": "pass"},
                 "tokens_by_node": {"worker-1": 30},
@@ -83,11 +94,14 @@ def _sample_events(run_id: str) -> list[EventEnvelope]:
             run_id,
             "output_record_accepted",
             {
-                "record_id": "record-1",
-                "record_kind": "output",
-                "producer_node_id": "worker-1",
-                "port": "result",
-                "value": {"large": "x" * 1024},
+                "record": {
+                    "record_id": "record-1",
+                    "record_kind": "output",
+                    "producer_node_id": "worker-1",
+                    "port": "result",
+                    "value": {"large": "x" * 1024},
+                    "schema": "OutputRecord",
+                }
             },
         ),
     ]
@@ -101,15 +115,18 @@ def _corrective_supersession_events(run_id: str) -> list[EventEnvelope]:
             run_id,
             "output_record_accepted",
             {
-                "task_region_id": "origin",
-                "candidate_id": "cand-origin",
-                "attempt_number": 1,
-                "producer_node_id": "worker-origin",
-                "record_id": "cand-origin",
-                "record_kind": "output",
-                "record_type": "candidate",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
+                "record": {
+                    "task_region_id": "origin",
+                    "candidate_id": "cand-origin",
+                    "attempt_number": 1,
+                    "producer_node_id": "worker-origin",
+                    "record_id": "cand-origin",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "value": {"summary": "test candidate"},
+                }
             },
         ),
         _event(
@@ -123,16 +140,19 @@ def _corrective_supersession_events(run_id: str) -> list[EventEnvelope]:
             run_id,
             "output_record_accepted",
             {
-                "task_region_id": "corrective",
-                "candidate_id": "cand-fix",
-                "attempt_number": 1,
-                "producer_node_id": "worker-fix",
-                "record_id": "cand-fix",
-                "record_kind": "output",
-                "record_type": "candidate",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "supersedes_task_region_id": "origin",
+                "record": {
+                    "task_region_id": "corrective",
+                    "candidate_id": "cand-fix",
+                    "attempt_number": 1,
+                    "producer_node_id": "worker-fix",
+                    "record_id": "cand-fix",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "supersedes_task_region_ids": ["origin"],
+                    "value": {"summary": "test candidate"},
+                }
             },
         ),
         _event(
@@ -199,15 +219,18 @@ def _candidate_event(
         run_id,
         "output_record_accepted",
         {
-            "task_region_id": task_region_id,
-            "candidate_id": candidate_id,
-            "attempt_number": attempt_number,
-            "record_id": candidate_id,
-            "record_kind": "output",
-            "record_type": "candidate",
-            "producer_node_id": f"worker-{candidate_id}",
-            "port": "candidate",
-            "schema": "ImplementationCandidate",
+            "record": {
+                "task_region_id": task_region_id,
+                "candidate_id": candidate_id,
+                "attempt_number": attempt_number,
+                "record_id": candidate_id,
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": f"worker-{candidate_id}",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "value": {"summary": "test candidate"},
+            }
         },
     )
 
@@ -376,24 +399,27 @@ async def test_append_keeps_graph_read_models_synchronized(
         summaries = await store.read_run_summaries(run_id)
         snapshot = await store.read_projection_snapshot(run_id)
 
-    assert [summary.position for summary in summaries] == [1, 2, 3, 4]
+    assert [summary.position for summary in summaries] == [1, 2, 3, 4, 5]
     assert summaries[2].payload == {
         "node_id": "worker-1",
         "new_state": "ready",
+    }
+    assert summaries[3].payload == {
+        "patch_id": "patch-summary",
         "blockers": ["waiting-for-input"],
         "graph_verifier_grades": {"req-1": "pass"},
         "tokens_by_node": {"worker-1": 30},
         "tokens_by_node_kind": {"worker": 30},
         "patch_ops": 2,
     }
-    assert summaries[-1].payload == {
+    assert summaries[4].payload == {
         "producer_node_id": "worker-1",
         "record_id": "record-1",
         "record_kind": "output",
         "port": "result",
     }
     assert snapshot is not None
-    assert snapshot.position == 4
+    assert snapshot.position == 5
     assert snapshot.run_state == "active"
     assert snapshot.node_states == {"worker-1": "ready"}
     assert snapshot.ready_nodes == ["worker-1"]
@@ -454,7 +480,7 @@ async def test_graph_read_models_are_rebuildable_and_idempotent(
             .select_from(EventV2Model)
             .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
         )
-        assert event_count == 4
+        assert event_count == 5
         assert await _count_model(session, GraphEventSummaryModel, run_id) == 0
         assert await _count_model(session, GraphProjectionSnapshotModel, run_id) == 0
 

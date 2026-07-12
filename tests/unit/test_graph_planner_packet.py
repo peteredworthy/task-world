@@ -37,7 +37,10 @@ def _event(
         causation_id="test",
         correlation_id=None,
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload={"record": payload}
+        if event_type == "output_record_accepted"
+        and not (isinstance(payload, dict) and "record" in payload)
+        else payload,
     )
 
 
@@ -142,6 +145,7 @@ def _graph_events() -> list[EventEnvelope]:
                 "state": "attached",
                 "node_id": "planner-1",
                 "carryover_record_id": "carryover-1",
+                "lease_generation": 3,
             },
             4,
         ),
@@ -261,12 +265,16 @@ def _graph_events() -> list[EventEnvelope]:
         _event(
             "output_record_accepted",
             {
-                "record_id": "summary-1",
-                "record_kind": "output",
-                "producer_node_id": "worker-1",
-                "port": "region_summary",
-                "schema": "RegionSummary",
-                "value": {"text": "region-1 summary"},
+                "record": {
+                    "record_id": "summary-1",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "summary-1",
+                    "value": {"summary": "region-1 summary"},
+                }
             },
             13,
         ),
@@ -648,29 +656,39 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
         dispatch_event_id="dispatch-fallback-worker",
         graph_events=[
             _event(
-                "node_created",
+                "output_record_accepted",
                 {
-                    "node_id": "routine-snapshot",
-                    "kind": "artifact",
-                    "state": "completed",
-                    "snapshot": {
-                        "dynamic_feature": {
-                            "feature_spec_path": (
-                                "docs/graph-approach/dynamic-smoke-feature-spec.md"
-                            ),
-                            "feature_spec_content": (
-                                "Create docs/graph-approach/dynamic-smoke-output.txt "
-                                "for dynamic-smoke."
-                            ),
-                            "acceptance_command": (
-                                'rg -q "dynamic-smoke" docs/graph-approach/dynamic-smoke-output.txt'
-                            ),
-                            "hidden_oracle_command": (
-                                'rg -q "validation-strengthened: true" '
-                                "docs/graph-approach/dynamic-smoke-output.txt"
-                            ),
-                        }
-                    },
+                    "record": {
+                        "record_id": "routine-snapshot-record",
+                        "record_kind": "graph_record",
+                        "record_type": "routine_snapshot",
+                        "producer_node_id": "routine-snapshot",
+                        "port": "routine_snapshot",
+                        "schema": "RoutineSnapshot",
+                        "value": {
+                            "dynamic_feature": {
+                                "feature_spec_path": (
+                                    "docs/graph-approach/dynamic-smoke-feature-spec.md"
+                                ),
+                                "feature_spec_content": (
+                                    "Create docs/graph-approach/dynamic-smoke-output.txt "
+                                    "for dynamic-smoke."
+                                ),
+                                "acceptance_command": (
+                                    'rg -q "dynamic-smoke" docs/graph-approach/dynamic-smoke-output.txt'
+                                ),
+                                "hidden_oracle_command": (
+                                    'rg -q "validation-strengthened: true" '
+                                    "docs/graph-approach/dynamic-smoke-output.txt"
+                                ),
+                            },
+                            "routine_id": "routine-1",
+                            "name": "Test Routine",
+                            "content_hash": "test-content-hash",
+                            "step_count": 1,
+                            "task_count": 1,
+                        },
+                    }
                 },
                 1,
             )
@@ -690,14 +708,17 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
         _event(
             "output_record_accepted",
             {
-                "record_id": "candidate-1",
-                "record_kind": "output",
-                "producer_node_id": "worker-1",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "candidate_id": "candidate-1",
-                "task_region_id": "region-1",
-                "value": {"summary": "candidate payload"},
+                "record": {
+                    "record_id": "candidate-1",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "value": {"summary": "candidate payload"},
+                    "candidate_id": "candidate-1",
+                    "task_region_id": "region-1",
+                }
             },
             100,
         ),
@@ -720,6 +741,8 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
         _event(
             "input_bound",
             {
+                "edge_id": "edge-verifier-1-candidate_under_test",
+                "bound_at_position": 0,
                 "to_node_id": "verifier-1",
                 "to_port": "candidate_under_test",
                 "record_ids": ["candidate-1"],
@@ -729,6 +752,8 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
         _event(
             "input_bound",
             {
+                "edge_id": "edge-verifier-1-file_state",
+                "bound_at_position": 0,
                 "to_node_id": "verifier-1",
                 "to_port": "file_state",
                 "record_ids": ["file-state-1"],
@@ -776,18 +801,24 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
         _event(
             "output_record_accepted",
             {
-                "record_id": "candidate-summary-source",
-                "record_kind": "output",
-                "producer_node_id": "worker-1",
-                "port": "candidate",
-                "schema": "ImplementationCandidate",
-                "value": {"summary": "candidate details"},
+                "record": {
+                    "record_id": "candidate-summary-source",
+                    "record_kind": "output",
+                    "record_type": "candidate",
+                    "producer_node_id": "worker-1",
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-summary-source",
+                    "value": {"summary": "candidate details"},
+                }
             },
             110,
         ),
         _event(
             "input_bound",
             {
+                "edge_id": "edge-summarizer-1-source_records",
+                "bound_at_position": 0,
                 "to_node_id": "summarizer-1",
                 "to_port": "source_records",
                 "record_ids": ["candidate-summary-source"],

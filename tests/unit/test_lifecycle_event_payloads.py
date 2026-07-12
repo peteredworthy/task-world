@@ -322,7 +322,7 @@ def test_runtime_retry_payload_preserves_retry_backoff_projection() -> None:
     assert projection["retry_not_before_by_node"] == {"worker-1": "2026-07-09T12:01:00+00:00"}
 
 
-def test_unconverted_dead_input_audit_remains_projection_neutral() -> None:
+def test_dead_input_audit_remains_projection_neutral() -> None:
     audit_payloads = [
         (
             "dead_input_detected",
@@ -332,7 +332,6 @@ def test_unconverted_dead_input_audit_remains_projection_neutral() -> None:
                     "from_node_id": "upstream-1",
                     "to_port": "candidate",
                     "reason": "upstream_failed:upstream-1",
-                    "legacy": 1,
                 }
             ),
         ),
@@ -340,13 +339,25 @@ def test_unconverted_dead_input_audit_remains_projection_neutral() -> None:
     baseline = projection_to_checkpoint(initial_projection())
 
     for position, (event_type, payload) in enumerate(audit_payloads, start=1):
-        assert payload.extra == {"legacy": 1}
         projected = reduce_event(
             build_graph_catalog(),
             initial_projection(),
             _event(event_type, payload.model_dump(mode="json"), position=position),
         )
         assert projection_to_checkpoint(projected) == baseline
+
+
+def test_dead_input_audit_rejects_unknown_fields() -> None:
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        DeadInputDetectedPayload.model_validate(
+            {
+                "node_id": "worker-1",
+                "from_node_id": "upstream-1",
+                "to_port": "candidate",
+                "reason": "upstream_failed:upstream-1",
+                "legacy": 1,
+            }
+        )
 
 
 def test_lifecycle_callback_and_runtime_producers_emit_typed_payloads() -> None:

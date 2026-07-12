@@ -330,6 +330,19 @@ GREEN (independently rerun by a fresh final verifier):
   - Result: passed, 0 errors.
 - `git diff --check`
   - Result: passed.
+
+## Strict-cutover Task 3: topology, nodes, sessions, inputs, revisions
+
+Status: implementation and gates ready for semantics review; not committed or final-reviewed. The twelve topology specifications are strict and catalog-owned;
+compiler output and `seed_compiled_events` carry `HydratedEvent` values. The
+minimal strict `output_record_accepted` specification is registered early in
+`events/records.py` solely to hydrate compiler output; its full records-domain
+projection semantics remain deferred. The strict suite rejects historical aliases,
+unknown fields, and malformed nested values rather than salvaging them. Final
+evidence: topology assert-clean, second apply with zero changes, inventory domain
+check, architecture check, 250 focused tests, compiler 23 tests, Ruff, Pyright,
+and `git diff --check` all passed; the current verification is 886 broad graph,
+187 focused, inventory 28, and baseline 44/23.
 - Commit hooks:
   - Result: 4,508 backend tests passed, 4 skipped; Ruff, formatting, secret
     detection, Pyright, module-import, signal-routing, UI lint, and UI

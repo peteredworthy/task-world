@@ -28,17 +28,17 @@ from orchestrator.config.models import (
     TaskConfig,
 )
 from orchestrator.config.template_vars import resolve_plain_variables
+from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
     ArtifactReferenceRecord,
-    EventEnvelope,
-    NodeCreatedPayload,
     RequirementRecord,
     RoutineSnapshotRecord,
     RunContextRecord,
 )
+from orchestrator.graph.specifications import EventMetadata, HydratedEvent
 
 
 def compile_routine(
@@ -46,18 +46,21 @@ def compile_routine(
     clock: Clock,
     id_gen: IdGenerator,
     *,
+    catalog: GraphCatalog,
     run_id: str,
     source_path: str | None = None,
     source_ref: str | None = None,
     run_config: dict[str, Any] | None = None,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     """Compile a validated routine config into ordered initial graph events.
 
     The returned events are append-ready graph facts with placeholder
     positions. The effectful store assigns durable run-local positions when the
     events are seeded.
     """
-    builder = _Compiler(routine, clock, id_gen, run_id, source_path, source_ref, run_config)
+    builder = _Compiler(
+        routine, clock, id_gen, catalog, run_id, source_path, source_ref, run_config
+    )
     return builder.compile()
 
 
@@ -67,6 +70,7 @@ class _Compiler:
         routine: RoutineConfig,
         clock: Clock,
         id_gen: IdGenerator,
+        catalog: GraphCatalog,
         run_id: str,
         source_path: str | None,
         source_ref: str | None,
@@ -75,16 +79,17 @@ class _Compiler:
         self._routine = routine
         self._clock = clock
         self._id_gen = id_gen
+        self._catalog = catalog
         self._run_id = run_id
         self._source_path = source_path
         self._source_ref = source_ref
         self._run_config = dict(run_config or {})
-        self._events: list[EventEnvelope] = []
+        self._events: list[HydratedEvent] = []
         self._stem_counts = _task_stem_counts(routine)
         self._has_planner_step = any(step.kind == "planner" for step in routine.steps)
         self._dynamic_feature_inputs = _dynamic_feature_inputs(routine, self._run_config)
 
-    def compile(self) -> list[EventEnvelope]:
+    def compile(self) -> list[HydratedEvent]:
         self._create_root()
         self._create_routine_snapshot()
 
@@ -889,10 +894,13 @@ class _Compiler:
 
     def _node(self, payload: dict[str, Any]) -> None:
         payload.setdefault("run_id", self._run_id)
-        self._event(
-            "node_created",
-            NodeCreatedPayload.model_validate(payload).model_dump(mode="json"),
-        )
+        authority = payload.pop("authority", None)
+        if authority is not None:
+            payload.update(authority)
+        membership = payload.pop("membership", None)
+        if membership is not None:
+            payload.update(membership)
+        self._event("node_created", payload)
 
     def _edge(
         self,
@@ -943,21 +951,24 @@ class _Compiler:
         )
 
     def _accept_record(self, payload: dict[str, Any]) -> None:
-        self._event("output_record_accepted", payload)
+        self._event("output_record_accepted", {"record": payload})
 
     def _event(self, event_type: str, payload: dict[str, Any]) -> None:
+        specification = self._catalog.resolve_event(event_type)
         self._events.append(
-            EventEnvelope(
-                event_id=self._id_gen.next_id("event"),
-                run_id=self._run_id,
-                position=-1,
-                event_type=event_type,
-                schema_version=1,
-                actor=Actor(kind=ActorKind.CONTROLLER),
-                causation_id="compile_routine",
-                correlation_id=_correlation_id(payload),
-                timestamp=self._clock.now(),
-                payload=payload,
+            specification.create(
+                EventMetadata(
+                    event_id=self._id_gen.next_id("event"),
+                    run_id=self._run_id,
+                    position=-1,
+                    event_type=event_type,
+                    payload_schema_generation=2,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    causation_id="compile_routine",
+                    correlation_id=_correlation_id(payload),
+                    timestamp=self._clock.now(),
+                ),
+                specification.validate_payload(payload),
             )
         )
 

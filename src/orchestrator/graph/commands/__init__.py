@@ -37,7 +37,6 @@ from orchestrator.graph.commands.records import (
 from orchestrator.graph.commands.schedule import (
     handle_reconcile,
     handle_schedule_tick,
-    handle_seed_compiled_events,
 )
 from orchestrator.graph.specifications import (
     CommandExecutionContext,
@@ -57,6 +56,7 @@ from orchestrator.graph.commands.lifecycle import (
     AGENT_DIED_COMMAND,
 )
 from orchestrator.graph.commands.callbacks import SUBMIT_CALLBACK, ACKNOWLEDGE_START
+from orchestrator.graph.events.topology import SEED_COMPILED_EVENTS, SeedCompiledEventsCommand
 
 ApplyCommandHandler = Callable[
     [
@@ -73,7 +73,6 @@ ApplyCommandHandler = Callable[
 
 
 _UNCONVERTED_W5_BRIDGE: dict[str, ApplyCommandHandler] = {
-    "seed_compiled_events": handle_seed_compiled_events,
     "submit_patch": handle_submit_patch,
     "schedule_tick": handle_schedule_tick,
     "reconcile": handle_reconcile,
@@ -100,6 +99,7 @@ COMMAND_SPECIFICATIONS = (
     SUBMIT_CALLBACK,
     ACKNOWLEDGE_START,
     AGENT_DIED_COMMAND,
+    SEED_COMPILED_EVENTS,
 )
 _CATALOG_COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECIFICATIONS)
 
@@ -151,10 +151,15 @@ def apply_command(
     if catalog is None and command_type in _CATALOG_COMMAND_NAMES:
         raise ValueError(f"typed graph command {command_type!r} requires a catalog and context")
     if specification is not None:
+        assert catalog is not None
         if context is None:
             msg = f"typed graph command {command_type!r} requires an execution context"
             raise ValueError(msg)
         command = specification.validate(payload)
+        if command_type == SEED_COMPILED_EVENTS.name:
+            typed_command = cast(SeedCompiledEventsCommand, command)
+            for event in typed_command.events:
+                catalog.resolve_event(event.metadata.event_type).serialize(event)
         if command_type == RECORD_HEARTBEAT.name:
             typed_command = cast(RecordHeartbeatCommand, command)
             renewal = apply_temporary_unconverted_lease_renewal(

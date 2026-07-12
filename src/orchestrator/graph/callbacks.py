@@ -1,10 +1,13 @@
 """Pure callback validation for execution graph leases."""
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Sequence, cast
 
 from orchestrator.graph.models import EventEnvelope
 from orchestrator.graph.projections import GraphProjection
+from orchestrator.graph.specifications import HydratedEvent
+
+GraphHistoryEvent = EventEnvelope | HydratedEvent
 
 
 @dataclass(frozen=True)
@@ -58,7 +61,7 @@ _TERMINAL_RUN_STATES = {"cancelled", "failed"}
 def validate_callback(
     request: CallbackRequest,
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
 ) -> CallbackValidationResult:
     """Validate a callback against prior idempotency events and graph projection."""
 
@@ -131,7 +134,7 @@ def validate_callback(
 def _validate_expired_lease_callback(
     request: CallbackRequest,
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     request_lease: dict[str, Any],
 ) -> CallbackValidationResult:
     if _has_replacement_active_lease(projection, request.lease_id, request.node_id):
@@ -163,29 +166,29 @@ def _has_replacement_active_lease(
 
 
 def _lease_expiry_recorded(
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     lease_id: str,
     node_id: str,
 ) -> bool:
     return any(
-        event.event_type == "lease_expired"
-        and event.payload.get("lease_id") == lease_id
-        and event.payload.get("node_id") == node_id
+        _history_event_type(event) == "lease_expired"
+        and _history_payload_value(event, "lease_id") == lease_id
+        and _history_payload_value(event, "node_id") == node_id
         for event in events
     )
 
 
-def _latest_node_failure_is_lease_expiry(events: list[EventEnvelope], node_id: str) -> bool:
+def _latest_node_failure_is_lease_expiry(events: Sequence[GraphHistoryEvent], node_id: str) -> bool:
     for event in reversed(events):
-        if event.event_type != "node_state_changed":
+        if _history_event_type(event) != "node_state_changed":
             continue
-        if event.payload.get("node_id") != node_id:
+        if _history_payload_value(event, "node_id") != node_id:
             continue
-        if event.payload.get("new_state") != "failed":
+        if _history_payload_value(event, "new_state") != "failed":
             return False
         return (
-            event.payload.get("trigger") == "lease_expired_without_callback"
-            or event.payload.get("reason") == "lease_expired_without_callback"
+            _history_payload_value(event, "trigger") == "lease_expired_without_callback"
+            or _history_payload_value(event, "reason") == "lease_expired_without_callback"
         )
     return False
 
@@ -193,7 +196,7 @@ def _latest_node_failure_is_lease_expiry(events: list[EventEnvelope], node_id: s
 def _validate_idempotency(
     request: CallbackRequest,
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
 ) -> CallbackValidationResult | None:
     if not _has_full_event_history(events):
         projected = projection.get("callback_idempotency_events", {}).get(
@@ -217,18 +220,21 @@ def _validate_idempotency(
                 reason="idempotency payload conflict",
             )
     for event in events:
-        if event.event_type not in _IDEMPOTENCY_EVENT_TYPES:
+        if _history_event_type(event) not in _IDEMPOTENCY_EVENT_TYPES:
             continue
-        if event.payload.get("idempotency_key") != request.idempotency_key:
+        if _history_payload_value(event, "idempotency_key") != request.idempotency_key:
             continue
-        if event.payload.get("node_id") != request.node_id:
+        if _history_payload_value(event, "node_id") != request.node_id:
             continue
 
-        if _stored_callback_payload(event.payload) == request.payload:
+        if _stored_callback_payload(_history_payload(event)) == request.payload:
             return CallbackValidationResult(
                 outcome=CallbackOutcome.DUPLICATE_IDEMPOTENT,
                 reason="duplicate idempotency key",
-                prior_result={"outcome": event.event_type, "payload": event.payload},
+                prior_result={
+                    "outcome": _history_event_type(event),
+                    "payload": _history_payload(event),
+                },
             )
         return CallbackValidationResult(
             outcome=CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT,
@@ -237,8 +243,32 @@ def _validate_idempotency(
     return None
 
 
-def _has_full_event_history(events: list[EventEnvelope]) -> bool:
-    return bool(events) and events[0].position == 1
+def _has_full_event_history(events: Sequence[GraphHistoryEvent]) -> bool:
+    return bool(events) and _history_event_position(events[0]) == 1
+
+
+def _history_event_type(event: GraphHistoryEvent) -> str:
+    if isinstance(event, HydratedEvent):
+        return event.metadata.event_type
+    return event.event_type
+
+
+def _history_event_position(event: GraphHistoryEvent) -> int:
+    if isinstance(event, HydratedEvent):
+        return event.metadata.position
+    return event.position
+
+
+def _history_payload_value(event: GraphHistoryEvent, field: str) -> Any:
+    if isinstance(event, HydratedEvent):
+        return getattr(event.payload, field, None)
+    return event.payload.get(field)
+
+
+def _history_payload(event: GraphHistoryEvent) -> dict[str, Any]:
+    if isinstance(event, HydratedEvent):
+        return event.payload.model_dump(mode="json", exclude_none=True)
+    return event.payload
 
 
 def _callback_idempotency_projection_key(node_id: str, idempotency_key: str) -> str:

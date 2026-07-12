@@ -1,7 +1,7 @@
 - name: verifier_planned_to_ready
   given_events:
     - node_created: {node_id: verify-1, kind: verifier, state: planned}
-    - input_bound: {to_node_id: verify-1, candidate_id: candidate-1}
+    - input_bound: {edge_id: edge-verify-1-candidate, to_node_id: verify-1, to_port: candidate, record_ids: [candidate-1], bound_at_position: 1}
     - node_state_changed: {node_id: verify-1, new_state: ready, trigger: candidate_file_state_bound}
   when_command: null
   then_events: []
