@@ -60,23 +60,23 @@
 
 ## Deferred Compatibility Cleanup Register (added 2026-07-12)
 
-Domain tasks (1–8) delete an alias's **catalog specification and strict-path support** but deliberately retain its branches inside `reduce_legacy_event`, the full-history scan helpers, and related enum members. Durable `events_v2` history must keep replaying until the Task 13 database cutover, and the legacy reducer conditional is only deleted wholesale in Task 9. Deleting an alias's reducer branch inside a domain task would break replay of the existing database before the cutover.
+Domain tasks (1–8) delete an alias's **catalog specification and strict-path support** but deliberately retain registered compatibility branches needed by durable replay. All D1–D6 cleanup is deferred to Task 13, after `orchestrator.db` is backed up and reset; Task 9 must not run the former zero-match deletion gate.
 
 Rules:
 - A domain task marks its aliases "strict-path deleted, legacy-replay deferred" and adds a row here. It does NOT delete legacy reducer branches.
-- Task 9 Step 4 sweeps this register: every row must be deleted, and the grep gate below must come back empty.
-- A row may only be closed by Task 9 (or later); closing it earlier requires an explicit design amendment.
+- Task 13 sweeps this register after database backup/reset.
+- A row may only be closed by Task 13; closing it earlier requires an explicit design amendment.
 
 | # | Deferred item (code sites) | Deferred by | Deleted in |
 |---|---|---|---|
-| D1 | `lease_suspended`: branch in `reduce_legacy_event` (projections.py ~2160), `_planner_generation_state` suspended branch (~4582), `GraphRecordKind.LEASE_SUSPENDED` enum member (models.py) | Task 4 (done) | Task 9 Step 4 |
-| D2 | `graph_patch_proposed` / proposal-status alias bookkeeping: `_graph_patch_payload_for_event`, `_open_proposal_blockers`, `_record_open_proposal_blocker`, proposal branch in patch-attempt `ensure_attempt`, `graph_patch_proposal` record/port check (~4852) | Task 6 (done) | Task 9 Step 4 |
-| D3 | Legacy output-record parsing, sparse verification fallbacks, and raw `value.get(...)` logic reachable only via `reduce_legacy_event` / full-history scans: `reduce_legacy_event` (`projections.py`), `reduce_compact_output_record_accepted` / `_checkpoint_output_record_payload` / `_parse_output_record_payload` (`projections.py`), `_record_verification_result` (`projections.py`), and model selector compatibility helpers `_verification_payload_outcome`, `_check_result_payload_status`, and `_gap_classification_payload_classification` (`models.py`). Strict-path deleted, legacy-replay deferred. | Task 5 | Task 9 Step 4 |
-| D4 | `requirement_revision_proposed` and `authority_resolution_recorded` alias branches + `_requires_authority_resolution(dict)` raw helper, in `reduce_legacy_event` and the authority blocker scans | Task 7 | Task 9 Step 4 |
-| D5 | `environment_failure_accepted` / `check_result_classified` branches (projections.py ~2213, ~5508) | Task 8 | Task 9 Step 4 |
-| D6 | `reduce_legacy_event` itself, its callers in `_commands.py`, and typed-spec reducers that delegate into it (e.g. `events/patches.py`) | Tasks 1–8 (structural) | Task 9 Steps 3–4 |
+| D1 | `lease_suspended`: branch in `reduce_legacy_event` (projections.py ~2160), `_planner_generation_state` suspended branch (~4582), `GraphRecordKind.LEASE_SUSPENDED` enum member (models.py) | Task 4 (done) | Task 13 after backup/reset |
+| D2 | `graph_patch_proposed` / proposal-status alias bookkeeping: `_graph_patch_payload_for_event`, `_open_proposal_blockers`, `_record_open_proposal_blocker`, proposal branch in patch-attempt `ensure_attempt`, `graph_patch_proposal` record/port check (~4852) | Task 6 (done) | Task 13 after backup/reset |
+| D3 | Legacy output-record parsing, sparse verification fallbacks, and raw `value.get(...)` logic reachable only via `reduce_legacy_event` / full-history scans: `reduce_legacy_event` (`projections.py`), `reduce_compact_output_record_accepted` / `_checkpoint_output_record_payload` / `_parse_output_record_payload` (`projections.py`), `_record_verification_result` (`projections.py`), and model selector compatibility helpers `_verification_payload_outcome`, `_check_result_payload_status`, and `_gap_classification_payload_classification` (`models.py`). Strict-path deleted, legacy-replay deferred. | Task 5 | Task 13 after backup/reset |
+| D4 | Strict-path deleted; legacy replay retained for `requirement_revision_proposed` and `authority_resolution_recorded` alias branches plus `_requires_authority_resolution(dict)` in `reduce_legacy_event` and full-history authority-blocker scans | Task 7 | Task 13 after `orchestrator.db` backup/reset |
+| D5 | `environment_failure_accepted` / `check_result_classified` branches (projections.py ~2213, ~5508) | Task 8 | Task 13 after backup/reset |
+| D6 | `reduce_legacy_event` itself, its callers in `_commands.py`, and typed-spec reducers that delegate into it (e.g. `events/patches.py`) | Tasks 1–8 (structural) | Task 13 after backup/reset |
 
-Task 9 grep gate (run after Step 4; docs and Alembic migrations exempt):
+Task 13 grep gate (run after database backup/reset; docs and Alembic migrations exempt):
 
 ```bash
 grep -rn "lease_suspended\|graph_patch_proposed\|requirement_revision_proposed\|authority_resolution_recorded\|environment_failure_accepted\|check_result_classified\|reduce_legacy_event" \
@@ -936,7 +936,7 @@ Expected: all four checks exit 0; no shared wrapper was hand-rewritten around th
 
 - [ ] **Step 2: Implement decision and requirement event modules**
 
-Define separate payload models when semantics differ; do not use one permissive decision base with many optional aliases. Move latest-decision, appeal resolution, authority requirement, revision, and evidence reducers into their owning modules. (Amended 2026-07-12: the `requirement_revision_proposed` and `authority_resolution_recorded` alias branches and `_requires_authority_resolution(dict)` inside `reduce_legacy_event` and the authority blocker scans are deliberately retained until Task 9 — register entry D4. Do not delete them here; only the catalog and strict path must be alias-free.)
+Define separate payload models when semantics differ; do not use one permissive decision base with many optional aliases. Move latest-decision, appeal resolution, authority requirement, revision, and evidence reducers into their owning modules. (Amended 2026-07-12: only the `requirement_revision_proposed` and `authority_resolution_recorded` branches and `_requires_authority_resolution(dict)` inside `reduce_legacy_event` and the authority blocker/full-history scans are retained as D4. Their deletion is deferred to Task 13 after `orchestrator.db` backup/reset.)
 
 - [ ] **Step 3: Implement four strict command specifications**
 
@@ -1106,7 +1106,7 @@ Delete `COMMAND_HANDLERS`, the event-type conditional in `reduce_event`, **`redu
 
 Remove all W5 payload classes from `models.py`, their exports, `extra` helpers, and legacy before validators. Keep unrelated Pydantic normalizers only when they apply to non-W5 business records; the architecture guard in Task 12 will distinguish them by boundary/type ownership.
 
-**Sweep the Deferred Compatibility Cleanup Register (D1–D6).** Delete every registered site: `lease_suspended` branches and `GraphRecordKind.LEASE_SUSPENDED`; `graph_patch_proposed`/proposal bookkeeping helpers; deferred legacy record/verification parsing; `requirement_revision_proposed`/`authority_resolution_recorded` alias branches and `_requires_authority_resolution`; `environment_failure_accepted`/`check_result_classified` branches. Then run the register's grep gate and require zero matches in `src/orchestrator/graph` and `src/orchestrator/graph_runtime`. A register row left standing is a Task 9 verification FAILURE, not a note.
+**Do not sweep the Deferred Compatibility Cleanup Register in Task 9.** D1–D6 remain until Task 13 performs the explicit database backup/reset cutover.
 
 - [ ] **Step 5: Run catalog and full unit graph tests**
 

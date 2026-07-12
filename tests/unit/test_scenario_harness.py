@@ -35,7 +35,9 @@ def test_scenario_with_all_expected_events_passes() -> None:
                     }
                 },
             ],
-            "when_command": {"raise_appeal": {"node_id": "build-A-1"}},
+            "when_command": {
+                "raise_appeal": {"node_id": "build-A-1", "appeal_type": "invalid_test"}
+            },
             "then_events": [
                 {"node_created": {"kind": "worker"}},
                 {

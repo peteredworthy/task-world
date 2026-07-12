@@ -211,8 +211,8 @@ class RecordGraphDecisionRequest(ApiModel):
     @model_validator(mode="after")
     def validate_decision_request(self) -> "RecordGraphDecisionRequest":
         valid_by_type = {
-            "approval": {"approved", "rejected", "deferred", "defer"},
-            "authority": {"granted", "denied", "deferred", "grant", "deny", "defer"},
+            "approval": {"approved", "rejected", "deferred"},
+            "authority": {"granted", "denied", "deferred"},
             "oversight": {"accepted", "rejected", "invalid_test_accepted"},
         }
         valid = valid_by_type[self.decision_type]

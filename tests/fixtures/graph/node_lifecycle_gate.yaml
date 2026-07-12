@@ -21,7 +21,7 @@
   when_command:
     record_decision: {run_id: run-1, decision_type: approval, node_id: gate-3, decision: approved, decider: {kind: human, id: reviewer-1}}
   then_events:
-    - approval_decision_recorded: {node_id: gate-3, decision: approved}
+    - approval_decision_recorded: {node_id: gate-3, decision: approved, decider: {kind: human, id: reviewer-1}}
     - node_state_changed: {node_id: gate-3, new_state: completed}
   then_projection: {gate-3: completed}
 
@@ -31,6 +31,6 @@
   when_command:
     record_decision: {run_id: run-1, decision_type: approval, node_id: gate-4, decision: rejected, decider: {kind: human, id: reviewer-1}}
   then_events:
-    - approval_decision_recorded: {node_id: gate-4, decision: rejected}
+    - approval_decision_recorded: {node_id: gate-4, decision: rejected, decider: {kind: human, id: reviewer-1}}
     - node_state_changed: {node_id: gate-4, new_state: completed}
   then_projection: {gate-4: completed}

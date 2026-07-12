@@ -1,355 +1,177 @@
 from __future__ import annotations
 
-from typing import Any
+import pytest
+from pydantic import ValidationError
 
-from orchestrator.graph import (
-    Actor,
-    ActorKind,
-    EventEnvelope,
-    FakeClock,
-    RequirementRevisionPayload,
-    RequirementAuthorityResolutionPayload,
-    SequentialIdGenerator,
-    SupportEvidencePayload,
-    apply_command,
-    build_projection,
-    initial_projection,
-    project_final_invariant_blockers,
-    projection_from_checkpoint,
-    projection_to_checkpoint,
-    reduce_event,
+from orchestrator.graph import RequirementRevisionPayload, SupportEvidencePayload
+from orchestrator.graph.commands.callbacks import (
+    RecordRequirementRevisionCommand,
+    RecordSupportEvidenceCommand,
 )
-from orchestrator.graph_runtime.store import (
-    LIGHT_GRAPH_PAYLOAD_FIELDS,
-    _json_extract_payload_value,
-)
-from orchestrator.graph import build_graph_catalog
 
 
-def test_requirement_revision_payload_preserves_all_authority_classification_inputs() -> None:
-    payload = RequirementRevisionPayload.model_validate(
-        {
-            "requirement_id": "R-1",
-            "id": "legacy-R-1",
-            "node_id": "requirement-node",
-            "revision_id": "revision-1",
-            "version_id": "R-1.v2",
-            "requirement_version_id": "legacy-version",
-            "proposal_id": "proposal-1",
-            "patch_id": "patch-1",
-            "change_classification": "semantic_change",
-            "classification": "semantic",
-            "revision_type": "scope_expansion",
-            "requires_authority": True,
-            "explicit_authority_required": False,
-            "new_behavior": True,
-            "behavior_change": False,
-            "semantic_change": True,
-            "validation_strengthening": False,
-            "active": True,
-            "previous_version_id": "R-1.v1",
-            "revision_index": 2,
-            "authority_required_reason": "operator approval required",
-            "requirement": {"id": "nested-R-1", "priority": "must"},
-        }
-    )
-
-    assert payload.model_dump(mode="json") == {
-        "requirement_id": "R-1",
-        "id": "legacy-R-1",
-        "node_id": "requirement-node",
-        "revision_id": "revision-1",
-        "version_id": "R-1.v2",
-        "requirement_version_id": "legacy-version",
-        "proposal_id": "proposal-1",
-        "patch_id": "patch-1",
-        "change_classification": "semantic_change",
-        "classification": "semantic",
-        "revision_type": "scope_expansion",
-        "requires_authority": True,
-        "explicit_authority_required": False,
-        "new_behavior": True,
-        "behavior_change": False,
-        "semantic_change": True,
-        "validation_strengthening": False,
-        "active": True,
-        "previous_version_id": "R-1.v1",
-        "revision_index": 2,
-        "authority_required_reason": "operator approval required",
-        "requirement": {"id": "nested-R-1", "priority": "must"},
-    }
-
-
-def test_requirement_revision_payload_normalizes_invalid_scalars_and_unknown_keys_to_extra() -> (
-    None
-):
-    payload = RequirementRevisionPayload.model_validate(
-        {
-            "requirement_id": 7,
-            "classification": ["semantic"],
-            "requires_authority": "yes",
-            "revision_index": True,
-            "requirement": "R-1",
-            "legacy_note": {"kept": True},
-        }
-    )
-
-    assert payload.requirement_id is None
-    assert payload.classification is None
-    assert payload.requires_authority is None
-    assert payload.revision_index is None
-    assert payload.requirement is None
-    assert payload.extra == {
-        "requirement_id": 7,
-        "classification": ["semantic"],
-        "requires_authority": "yes",
-        "revision_index": True,
-        "requirement": "R-1",
-        "legacy_note": {"kept": True},
-    }
-
-
-def test_support_evidence_payload_supports_edge_and_version_aliases() -> None:
-    payload = SupportEvidencePayload.model_validate(
-        {
-            "edge_id": "support-edge-1",
-            "evidence_id": "evidence-1",
-            "requirement_id": "R-1",
-            "version_id": "R-1.v1",
-            "status": "stale",
-            "stale_reason": "superseded",
-            "confidence": "high",
-            "legacy_note": 1,
-        }
-    )
-
-    assert payload.edge_id == "support-edge-1"
-    assert payload.version_id == "R-1.v1"
-    assert payload.extra == {"legacy_note": 1}
-
-
-def test_requirement_reducers_tolerate_recorded_and_replay_only_aliases() -> None:
-    events = [
-        _event(
-            "requirement_revision_recorded",
-            {"requirement_id": "R-1", "version_id": "R-1.v1", "classification": "initial"},
-            position=1,
-        ),
-        _event(
-            "requirement_amended",
+@pytest.mark.parametrize(
+    ("model", "valid"),
+    [
+        (
+            RequirementRevisionPayload,
             {
                 "requirement_id": "R-1",
-                "requirement_version_id": "R-1.v2",
-                "classification": "semantic",
+                "version_id": "R-1.v1",
+                "classification": "initial",
+                "active": True,
             },
-            position=2,
         ),
-        _event(
-            "support_edge_recorded",
-            {
-                "edge_id": "S-1",
-                "evidence_id": "E-1",
-                "requirement_id": "R-1",
-                "version_id": "R-1.v2",
-            },
-            position=3,
-        ),
-        _event(
-            "requirement_revision_proposed",
-            {
-                "proposal_id": "proposal-2",
-                "requirement": {"id": "R-2"},
-                "semantic_change": True,
-            },
-            position=4,
-        ),
-    ]
-
-    projection = build_projection(build_graph_catalog(), events)
-
-    assert projection["active_requirement_versions"] == {"R-1": "R-1.v2"}
-    assert projection["support_evidence"]["S-1"].requirement_version_id == "R-1.v2"
-    assert set(projection["authority_revision_blockers"]) == {"R-1.v2", "proposal-2"}
-
-
-def test_authority_resolution_aliases_clear_full_history_and_checkpoint_blockers() -> None:
-    revision = _event(
-        "requirement_revision_proposed",
-        {
-            "proposal_id": "proposal-1",
-            "requirement": {"id": "R-1"},
-            "semantic_change": True,
-        },
-        position=1,
-    )
-    checkpoint = projection_to_checkpoint(build_projection(build_graph_catalog(), [revision]))
-
-    for event_type, identifier in (
-        ("authority_resolution_recorded", {"proposal_id": "proposal-1"}),
-        ("authority_resolved", {"revision_id": "proposal-1"}),
-        ("requirement_revision_authorized", {"patch_id": "proposal-1"}),
-    ):
-        resolution = _event(event_type, identifier, position=2)
-        parsed = RequirementAuthorityResolutionPayload.model_validate(resolution.payload)
-        assert parsed.model_dump(mode="json") == identifier
-        full_events = [revision, resolution]
-        tail_events = [resolution]
-
-        assert project_final_invariants(full_events) == project_final_invariants_from_checkpoint(
-            checkpoint, tail_events
-        )
-        assert project_final_invariants(full_events) == []
-
-
-def test_requirement_and_support_producers_emit_typed_payloads() -> None:
-    revision_events = apply_command(
-        initial_projection(),
-        [],
-        "record_requirement_revision",
-        {
-            "run_id": "run-1",
-            "requirement_id": "R-1",
-            "version_id": "R-1.v1",
-            "classification": "initial",
-        },
-        FakeClock(),
-        SequentialIdGenerator(),
-    )
-    revision = RequirementRevisionPayload.model_validate(revision_events[0].payload)
-    assert revision.requirement_id == "R-1"
-    assert revision.extra == {}
-
-    projection = build_projection(build_graph_catalog(), revision_events)
-    support_events = apply_command(
-        projection,
-        revision_events,
-        "record_support_evidence",
-        {
-            "run_id": "run-1",
-            "support_id": "S-1",
-            "evidence_id": "E-1",
-            "requirement_id": "R-1",
-        },
-        FakeClock(),
-        SequentialIdGenerator(),
-    )
-    support = SupportEvidencePayload.model_validate(support_events[0].payload)
-    assert support.requirement_version_id == "R-1.v1"
-    assert support.extra == {}
-
-
-def test_validation_strengthening_still_stales_prior_support() -> None:
-    events = [
-        _event(
-            "requirement_revision_recorded",
-            {"requirement_id": "R-1", "version_id": "R-1.v1"},
-            position=1,
-        ),
-        _event(
-            "support_evidence_recorded",
+        (
+            SupportEvidencePayload,
             {
                 "support_id": "S-1",
                 "evidence_id": "E-1",
                 "requirement_id": "R-1",
                 "requirement_version_id": "R-1.v1",
+                "status": "active",
             },
-            position=2,
         ),
-        _event(
-            "requirement_revision_recorded",
+    ],
+)
+def test_requirement_event_payloads_are_exact_strict_models(
+    model: type, valid: dict[str, object]
+) -> None:
+    assert model.model_validate(valid).model_dump(mode="json", exclude_none=True) == valid
+    with pytest.raises(ValidationError):
+        model.model_validate({**valid, "unknown": 1})
+    with pytest.raises(ValidationError):
+        model.model_validate(
+            {key: value for index, (key, value) in enumerate(valid.items()) if index}
+        )
+    first = next(iter(valid))
+    with pytest.raises(ValidationError):
+        model.model_validate({**valid, first: 7})
+
+
+@pytest.mark.parametrize(
+    ("model", "legacy"),
+    [
+        (RequirementRevisionPayload, {"id": "R-1", "requirement_version_id": "v1"}),
+        (SupportEvidencePayload, {"edge_id": "S-1", "evidence_id": "E-1", "version_id": "v1"}),
+    ],
+)
+def test_requirement_event_payloads_reject_legacy_aliases(
+    model: type, legacy: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(legacy)
+
+
+@pytest.mark.parametrize(
+    ("model", "valid", "required"),
+    [
+        (
+            RecordRequirementRevisionCommand,
+            {"requirement_id": "R-1", "version_id": "R-1.v1"},
+            "requirement_id",
+        ),
+        (
+            RecordSupportEvidenceCommand,
             {
+                "support_id": "S-1",
+                "evidence_id": "E-1",
                 "requirement_id": "R-1",
-                "version_id": "R-1.v2",
-                "validation_strengthening": True,
-                "previous_version_id": "R-1.v1",
+                "status": "active",
             },
-            position=3,
+            "support_id",
         ),
-    ]
+    ],
+)
+def test_requirement_command_models_reject_missing_extra_and_mistyped_fields(
+    model: type, valid: dict[str, object], required: str
+) -> None:
+    model.model_validate(valid)
+    for invalid in (
+        {key: value for key, value in valid.items() if key != required},
+        {**valid, "unknown": 1},
+        {**valid, required: 7},
+    ):
+        with pytest.raises(ValidationError):
+            model.model_validate(invalid)
 
-    support = build_projection(build_graph_catalog(), events)["support_evidence"]["S-1"]
-    assert support.status == "stale"
-    assert support.stale_reason is not None
+
+def test_record_support_evidence_command_rejects_unknown_status() -> None:
+    with pytest.raises(ValidationError):
+        RecordSupportEvidenceCommand.model_validate(
+            {
+                "support_id": "S-1",
+                "evidence_id": "E-1",
+                "requirement_id": "R-1",
+                "status": "unknown",
+            }
+        )
 
 
-def test_light_graph_payload_retains_change_classification_for_requirement_replay() -> None:
-    compact_payload = _compact_light_payload(
-        {
-            "requirement_id": "R-1",
-            "version_id": "R-1.v2",
-            "change_classification": "semantic_change",
-        }
+def test_task7_requirement_commands_exhaustively_validate_declared_fields() -> None:
+    cases = (
+        (
+            RecordRequirementRevisionCommand,
+            {
+                "requirement_id": "R",
+                "version_id": "v1",
+                "record_id": "RR",
+                "classification": "semantic",
+                "change_classification": "semantic",
+                "requires_authority": True,
+                "new_behavior": False,
+                "behavior_change": True,
+                "semantic_change": True,
+                "validation_strengthening": False,
+                "active": True,
+                "previous_version_id": "v0",
+            },
+            ("requirement_id", "version_id"),
+            {
+                "requirement_id": 1,
+                "version_id": 1,
+                "record_id": 1,
+                "classification": 1,
+                "change_classification": 1,
+                "requires_authority": "yes",
+                "new_behavior": 1,
+                "behavior_change": 1,
+                "semantic_change": 1,
+                "validation_strengthening": 1,
+                "active": 1,
+                "previous_version_id": 1,
+            },
+        ),
+        (
+            RecordSupportEvidenceCommand,
+            {
+                "support_id": "S",
+                "evidence_id": "E",
+                "requirement_id": "R",
+                "requirement_version_id": "v1",
+                "status": "active",
+                "stale_reason": "old",
+                "confidence": "high",
+            },
+            ("support_id", "evidence_id", "requirement_id"),
+            {
+                "support_id": 1,
+                "evidence_id": 1,
+                "requirement_id": 1,
+                "requirement_version_id": 1,
+                "status": "unknown",
+                "stale_reason": 1,
+                "confidence": 1,
+            },
+        ),
     )
-
-    projection = build_projection(
-        build_graph_catalog(),
-        [_event("requirement_revision_recorded", compact_payload, position=1)],
-    )
-    revision = projection["requirement_revisions"]["R-1.v2"]
-
-    assert revision.change_classification == "semantic_change"
-    assert revision.requires_authority is True
-
-
-def test_light_graph_payload_normalizes_sqlite_new_behavior_boolean_for_requirement_replay() -> (
-    None
-):
-    compact_payload = _compact_light_payload(
-        {
-            "requirement_id": "R-1",
-            "version_id": "R-1.v2",
-            "new_behavior": 1,
-        }
-    )
-
-    assert compact_payload["new_behavior"] is True
-    projection = build_projection(
-        build_graph_catalog(),
-        [_event("requirement_revision_recorded", compact_payload, position=1)],
-    )
-    revision = projection["requirement_revisions"]["R-1.v2"]
-
-    assert revision.change_classification == "new_behavior"
-    assert revision.requires_authority is True
-
-
-def project_final_invariants(events: list[EventEnvelope]) -> list[dict[str, Any]]:
-    return [
-        blocker
-        for blocker in project_final_invariant_blockers(build_graph_catalog(), events)
-        if blocker.get("kind") == "unresolved_authority_required_revision"
-    ]
-
-
-def _compact_light_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        field: _json_extract_payload_value(field, payload[field])
-        for field in LIGHT_GRAPH_PAYLOAD_FIELDS
-        if field in payload
-    }
-
-
-def project_final_invariants_from_checkpoint(
-    checkpoint: dict[str, Any],
-    tail_events: list[EventEnvelope],
-) -> list[dict[str, Any]]:
-    projection = projection_from_checkpoint(checkpoint)
-    for event in tail_events:
-        projection = reduce_event(build_graph_catalog(), projection, event)
-    return [
-        projection["authority_revision_blockers"][key]
-        for key in sorted(projection["authority_revision_blockers"])
-    ]
-
-
-def _event(event_type: str, payload: dict[str, Any], *, position: int) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
-    )
+    for model, valid, required, mistyped in cases:
+        model.model_validate(valid)
+        invalids = [
+            {key: value for key, value in valid.items() if key != field} for field in required
+        ]
+        invalids.append({**valid, "unknown": 1})
+        invalids.extend({**valid, field: value} for field, value in mistyped.items())
+        for invalid in invalids:
+            with pytest.raises(ValidationError):
+                model.model_validate(invalid)

@@ -1,7 +1,7 @@
 """Callback and output/evidence command handlers."""
 
 from __future__ import annotations
-from typing import Any
+from typing import Annotated, Any, Literal
 
 from orchestrator.graph.callbacks import (
     CallbackOutcome,
@@ -29,17 +29,17 @@ from orchestrator.graph.commands.future_effects import require_future_effect
 from orchestrator.graph.commands.event_creator import TypedEventCreator
 from collections.abc import Callable
 
-from pydantic import Field
+from pydantic import ConfigDict, Field, RootModel
 
 from orchestrator.graph._commands import (
     Clock,
     IdGenerator,
-    apply_raise_appeal,
     apply_record_cleanup_applied,
-    apply_record_decision,
     apply_record_gatekeeper_verdicts,
-    apply_record_requirement_revision,
-    apply_record_support_evidence,
+    decision_output_record,
+    input_bound_events_for_record,
+    record_selector_aliases,
+    release_active_node_leases,
     event_factory,
 )
 from orchestrator.graph.payloads import JsonValue, StrictPayload
@@ -52,6 +52,100 @@ from orchestrator.graph.specifications import (
 from orchestrator.graph._commands import typed_topology_event
 from orchestrator.graph.events.leases import LEASE_RELEASED
 from orchestrator.graph._commands import make_strict_event
+from orchestrator.graph.events.decisions import (
+    APPEAL_OPENED,
+    APPROVAL_DECISION_RECORDED,
+    AUTHORITY_DECISION_RECORDED,
+    OVERSIGHT_DECISION_RECORDED,
+    AppealOpenedPayload,
+)
+from orchestrator.graph.events.requirements import (
+    REQUIREMENT_REVISION_RECORDED,
+    SUPPORT_EVIDENCE_RECORDED,
+)
+from orchestrator.graph.events.records import OUTPUT_RECORD_ACCEPTED
+from orchestrator.graph.events.topology import INPUT_BOUND, NODE_CREATED, NODE_STATE_CHANGED
+
+
+class RaiseAppealCommand(StrictPayload):
+    node_id: str
+    appeal_type: Literal["invalid_test"]
+    appeal_node_id: str | None = None
+    oversight_node_id: str | None = None
+    candidate_id: str | None = None
+    task_region_id: str | None = None
+    lease_id: str | None = None
+
+
+class ApprovalDecisionCommand(StrictPayload):
+    decision_type: Literal["approval"]
+    node_id: str
+    decision: Literal["approved", "rejected", "deferred"]
+    decider: JsonValue
+    scope: dict[str, JsonValue] | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+    record_id: str | None = None
+
+
+class AuthorityDecisionCommand(StrictPayload):
+    decision_type: Literal["authority"]
+    node_id: str
+    decision: Literal["granted", "denied", "deferred"]
+    decider: JsonValue
+    scope: dict[str, JsonValue] | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+    record_id: str | None = None
+
+
+class OversightDecisionCommand(StrictPayload):
+    decision_type: Literal["oversight"]
+    node_id: str
+    decision: Literal["accepted", "rejected", "invalid_test_accepted"]
+    decider: JsonValue
+    scope: dict[str, JsonValue] | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+    record_id: str | None = None
+
+
+DecisionCommand = Annotated[
+    ApprovalDecisionCommand | AuthorityDecisionCommand | OversightDecisionCommand,
+    Field(discriminator="decision_type"),
+]
+
+
+class RecordDecisionCommand(RootModel[DecisionCommand]):
+    model_config = ConfigDict(strict=True, frozen=True)
+
+    def to_json(self) -> dict[str, JsonValue]:
+        return self.root.to_json()
+
+
+class RecordRequirementRevisionCommand(StrictPayload):
+    requirement_id: str
+    version_id: str
+    record_id: str | None = None
+    classification: str | None = None
+    change_classification: str | None = None
+    requires_authority: bool | None = None
+    new_behavior: bool | None = None
+    behavior_change: bool | None = None
+    semantic_change: bool | None = None
+    validation_strengthening: bool | None = None
+    active: bool | None = None
+    previous_version_id: str | None = None
+
+
+class RecordSupportEvidenceCommand(StrictPayload):
+    support_id: str
+    evidence_id: str
+    requirement_id: str
+    requirement_version_id: str | None = None
+    status: Literal["active", "stale"] | None = None
+    stale_reason: str | None = None
+    confidence: str | None = None
 
 
 def _command_rejected(creator: TypedEventCreator, command_type: str, reason: str) -> HydratedEvent:
@@ -145,35 +239,144 @@ CALLBACK_COMMAND_SPECIFICATIONS = (ACKNOWLEDGE_START, SUBMIT_CALLBACK)
 
 
 def handle_raise_appeal(
+    command: RaiseAppealCommand,
     projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    del projection
+    events: tuple[EventEnvelope, ...],
+    context: CommandExecutionContext,
+) -> list[HydratedEvent]:
     del events
-    del command_type
-    del clock
-    return apply_raise_appeal(payload, make_event, id_gen)
+    creator = TypedEventCreator(context, assign_position=False)
+    node_state = projection["node_states"].get(command.node_id)
+    if (
+        node_state in {"completed", "failed", "cancelled", "retired"}
+        and projection["node_kinds"].get(command.node_id) != "verifier"
+    ):
+        return [_command_rejected(creator, "raise_appeal", f"terminal target node: {node_state}")]
+    appeal_id = command.appeal_node_id or context.id_generator.next_id("appeal")
+    oversight_id = command.oversight_node_id or context.id_generator.next_id("oversight")
+    from orchestrator.graph.events.topology import NodeCreatedPayload
+
+    return [
+        creator.create(
+            APPEAL_OPENED,
+            AppealOpenedPayload(
+                node_id=appeal_id,
+                appealed_node_id=command.node_id,
+                appeal_type=command.appeal_type,
+                candidate_id=command.candidate_id,
+                task_region_id=command.task_region_id,
+                lease_id=command.lease_id,
+            ),
+        ),
+        creator.create(
+            NODE_CREATED,
+            NodeCreatedPayload(
+                node_id=oversight_id,
+                kind="oversight",
+                state="planned",
+                task_region_id=command.task_region_id,
+            ),
+        ),
+    ]
 
 
 def handle_record_decision(
+    command: RecordDecisionCommand,
     projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
+    events: tuple[EventEnvelope, ...],
+    context: CommandExecutionContext,
+) -> list[HydratedEvent]:
     del events
-    del command_type
-    del clock
-    del id_gen
-    return apply_record_decision(projection, payload, make_event)
+    decision_command = command.root
+    creator = TypedEventCreator(context, assign_position=False)
+    if (
+        decision_command.node_id not in projection["node_states"]
+        and decision_command.node_id not in projection["node_kinds"]
+    ):
+        return [
+            _command_rejected(
+                creator, "record_decision", f"unknown target node: {decision_command.node_id}"
+            )
+        ]
+    if (
+        decision_command.decision_type == "authority"
+        and projection["node_kinds"].get(decision_command.node_id) != "authority_request"
+    ):
+        return [
+            _command_rejected(
+                creator, "record_decision", "authority decisions require authority_request target"
+            )
+        ]
+    node_state = projection["node_states"].get(decision_command.node_id)
+    if node_state in {"completed", "failed", "cancelled", "retired"}:
+        return [
+            _command_rejected(creator, "record_decision", f"terminal target node: {node_state}")
+        ]
+    if projection["run_state"] in {"cancelled", "failed"}:
+        return [
+            _command_rejected(
+                creator, "record_decision", f"terminal run: {projection['run_state']}"
+            )
+        ]
+    values = command.to_json()
+    values.pop("decision_type")
+    task_region_id = projection["node_task_regions"].get(decision_command.node_id)
+    if task_region_id is not None:
+        values["task_region_id"] = task_region_id
+    if decision_command.decision_type == "approval":
+        event_spec = APPROVAL_DECISION_RECORDED
+        first = creator.create(event_spec, event_spec.validate_payload(values))
+    elif decision_command.decision_type == "authority":
+        event_spec = AUTHORITY_DECISION_RECORDED
+        first = creator.create(event_spec, event_spec.validate_payload(values))
+    else:
+        event_spec = OVERSIGHT_DECISION_RECORDED
+        first = creator.create(event_spec, event_spec.validate_payload(values))
+    output: list[HydratedEvent] = [first]
+    record = decision_output_record(
+        projection,
+        decision_command.node_id,
+        {**values, "decision_type": decision_command.decision_type},
+        decision_command.decision_type,
+    )
+    if record is not None:
+        output.append(
+            creator.create(
+                OUTPUT_RECORD_ACCEPTED,
+                OUTPUT_RECORD_ACCEPTED.validate_payload({"record": record}),
+            )
+        )
+        make_event = event_factory(
+            context.run_id, "record_decision", context.clock, context.id_generator
+        )
+        for event in input_bound_events_for_record(
+            projection,
+            decision_command.node_id,
+            str(record["port"]),
+            str(record["record_id"]),
+            record,
+            make_event,
+            record_selector_aliases(record),
+        ):
+            output.append(creator.create(INPUT_BOUND, INPUT_BOUND.validate_payload(event.payload)))
+    output.append(
+        creator.create(
+            NODE_STATE_CHANGED,
+            NODE_STATE_CHANGED.payload_type(
+                node_id=decision_command.node_id,
+                new_state="completed",
+                trigger=f"{event_spec.name}_accepted",
+            ),
+        )
+    )
+    make_event = event_factory(
+        context.run_id, "record_decision", context.clock, context.id_generator
+    )
+    for event in release_active_node_leases(projection, decision_command.node_id, make_event):
+        output.append(
+            creator.create(LEASE_RELEASED, LEASE_RELEASED.validate_payload(event.payload))
+        )
+    return output
 
 
 def handle_record_gatekeeper_verdicts(
@@ -193,36 +396,69 @@ def handle_record_gatekeeper_verdicts(
 
 
 def handle_record_requirement_revision(
+    command: RecordRequirementRevisionCommand,
     projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
+    events: tuple[EventEnvelope, ...],
+    context: CommandExecutionContext,
+) -> list[HydratedEvent]:
     del projection
     del events
-    del command_type
-    del clock
-    del id_gen
-    return apply_record_requirement_revision(payload, make_event)
+    creator = TypedEventCreator(context, assign_position=False)
+    return [
+        creator.create(
+            REQUIREMENT_REVISION_RECORDED,
+            REQUIREMENT_REVISION_RECORDED.validate_payload(command.to_json()),
+        )
+    ]
 
 
 def handle_record_support_evidence(
+    command: RecordSupportEvidenceCommand,
     projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
+    events: tuple[EventEnvelope, ...],
+    context: CommandExecutionContext,
+) -> list[HydratedEvent]:
     del events
-    del command_type
-    del clock
-    del id_gen
-    return apply_record_support_evidence(projection, payload, make_event)
+    creator = TypedEventCreator(context, assign_position=False)
+    version_id = command.requirement_version_id or projection["active_requirement_versions"].get(
+        command.requirement_id
+    )
+    if version_id is None:
+        return [
+            _command_rejected(
+                creator,
+                "record_support_evidence",
+                f"unknown active requirement version: {command.requirement_id}",
+            )
+        ]
+    return [
+        creator.create(
+            SUPPORT_EVIDENCE_RECORDED,
+            SUPPORT_EVIDENCE_RECORDED.validate_payload(
+                {**command.to_json(), "requirement_version_id": version_id}
+            ),
+        )
+    ]
+
+
+RAISE_APPEAL = CommandSpecification("raise_appeal", RaiseAppealCommand, handle_raise_appeal)
+RECORD_DECISION = CommandSpecification(
+    "record_decision", RecordDecisionCommand, handle_record_decision
+)
+RECORD_REQUIREMENT_REVISION = CommandSpecification(
+    "record_requirement_revision",
+    RecordRequirementRevisionCommand,
+    handle_record_requirement_revision,
+)
+RECORD_SUPPORT_EVIDENCE = CommandSpecification(
+    "record_support_evidence", RecordSupportEvidenceCommand, handle_record_support_evidence
+)
+POLICY_COMMAND_SPECIFICATIONS = (
+    RAISE_APPEAL,
+    RECORD_DECISION,
+    RECORD_REQUIREMENT_REVISION,
+    RECORD_SUPPORT_EVIDENCE,
+)
 
 
 def handle_record_cleanup_applied(

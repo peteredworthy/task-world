@@ -1,192 +1,237 @@
 from __future__ import annotations
 
-from typing import Any
+import pytest
+from pydantic import ValidationError
 
 from orchestrator.graph import (
-    Actor,
-    ActorKind,
     AppealOpenedPayload,
     ApprovalDecisionRecordedPayload,
     AuthorityDecisionRecordedPayload,
-    EventEnvelope,
-    FakeClock,
     OversightDecisionRecordedPayload,
-    SequentialIdGenerator,
-    apply_command,
-    initial_projection,
-    reduce_event,
 )
-from orchestrator.graph import build_graph_catalog
+from orchestrator.graph.commands.callbacks import RaiseAppealCommand, RecordDecisionCommand
 
 
-def test_appeal_opened_payload_normalizes_membership_and_patch_extras() -> None:
-    payload = AppealOpenedPayload.model_validate(
-        {
-            "node_id": "appeal-1",
-            "membership": {"task_region_id": "task-1", "candidate_id": "candidate-1"},
-            "legacy": 1,
-        }
-    )
-
-    assert payload.task_region_id == "task-1"
-    assert payload.candidate_id == "candidate-1"
-    assert payload.extra == {"legacy": 1}
-
-
-def test_decision_payloads_normalize_legacy_outcome_verdict_and_approved() -> None:
-    approval = ApprovalDecisionRecordedPayload.model_validate(
-        {"node_id": "gate-1", "outcome": "accept"}
-    )
-    authority = AuthorityDecisionRecordedPayload.model_validate(
-        {"node_id": "authority-1", "approved": True}
-    )
-    oversight = OversightDecisionRecordedPayload.model_validate(
-        {"node_id": "appeal-1", "verdict": "failed"}
-    )
-
-    assert approval.decision == "approved"
-    assert authority.decision == "granted"
-    assert oversight.verdict == "failed"
-    assert oversight.decision is None
-
-
-def test_decision_payloads_preserve_opaque_decider_scope_and_unknown_extra() -> None:
-    decider = ["human", {"id": "operator-1"}]
-    scope = {"regions": ["task-1"], "policy": {"name": "review"}}
-
-    payload = OversightDecisionRecordedPayload.model_validate(
-        {
-            "task_region_id": "task-1",
-            "verdict": "failed",
-            "decider": decider,
-            "scope": scope,
-            "legacy": 1,
-        }
-    )
-
-    assert payload.node_id is None
-    assert payload.verdict == "failed"
-    assert payload.decider == decider
-    assert payload.scope == scope
-    assert payload.extra == {"legacy": 1}
-
-
-def test_decision_reducers_preserve_legacy_appeal_and_invalid_test_behavior() -> None:
-    projection = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
-        _event(
-            "appeal_opened",
-            {
-                "node_id": "appealed-node",
-                "membership": {"task_region_id": "task-1", "candidate_id": "candidate-1"},
-                "appeal_type": "invalid_test",
-            },
-            position=1,
+@pytest.mark.parametrize(
+    ("model", "valid"),
+    [
+        (
+            AppealOpenedPayload,
+            {"node_id": "a-1", "appealed_node_id": "n-1", "appeal_type": "invalid_test"},
         ),
-    )
-    projection = reduce_event(
-        build_graph_catalog(),
-        projection,
-        _event(
-            "oversight_decision_recorded",
-            {
-                "node_id": "oversight-1",
-                "appealed_node_id": "appealed-node",
-                "membership": {"task_region_id": "task-1", "candidate_id": "candidate-1"},
-                "appeal_type": "invalid_test",
-                "approved": True,
-            },
-            position=2,
+        (
+            ApprovalDecisionRecordedPayload,
+            {"node_id": "g-1", "decision": "approved", "decider": "operator-1"},
         ),
-    )
-
-    assert projection["node_pending_appeals"] == {"appealed-node": False}
-    assert projection["invalid_test_blocks"]["task-1"].accepted is True
-
-
-def test_oversight_reducer_uses_recognized_legacy_alias_after_obsolete_decision() -> None:
-    projection = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
-        _event(
-            "oversight_decision_recorded",
+        (
+            AuthorityDecisionRecordedPayload,
+            {"node_id": "r-1", "decision": "granted", "decider": "operator-1"},
+        ),
+        (
+            OversightDecisionRecordedPayload,
             {
-                "decision": "obsolete",
-                "outcome": "approved",
+                "node_id": "a-1",
+                "appealed_node_id": "n-1",
+                "decision": "accepted",
+                "decider": "operator-1",
+            },
+        ),
+    ],
+)
+def test_decision_event_payloads_are_exact_strict_models(
+    model: type, valid: dict[str, object]
+) -> None:
+    assert model.model_validate(valid).model_dump(mode="json", exclude_none=True) == valid
+    for invalid in (
+        {**valid, "unknown": 1},
+        {key: value for key, value in valid.items() if key != next(iter(valid))},
+    ):
+        with pytest.raises(ValidationError):
+            model.model_validate(invalid)
+    first = next(iter(valid))
+    with pytest.raises(ValidationError):
+        model.model_validate({**valid, first: 7})
+
+
+@pytest.mark.parametrize(
+    ("model", "legacy"),
+    [
+        (AppealOpenedPayload, {"node_id": "a", "membership": {"task_region_id": "t"}}),
+        (ApprovalDecisionRecordedPayload, {"node_id": "g", "outcome": "accept"}),
+        (AuthorityDecisionRecordedPayload, {"node_id": "r", "approved": True}),
+        (OversightDecisionRecordedPayload, {"task_region_id": "t", "verdict": "failed"}),
+    ],
+)
+def test_decision_event_payloads_reject_legacy_aliases(
+    model: type, legacy: dict[str, object]
+) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(legacy)
+
+
+@pytest.mark.parametrize(
+    ("model", "valid", "required"),
+    [
+        (RaiseAppealCommand, {"node_id": "n-1", "appeal_type": "invalid_test"}, "node_id"),
+        (
+            RecordDecisionCommand,
+            {
+                "decision_type": "approval",
+                "node_id": "g-1",
+                "decision": "approved",
+                "decider": "operator-1",
+            },
+            "node_id",
+        ),
+    ],
+)
+def test_decision_command_models_reject_missing_extra_and_mistyped_fields(
+    model: type, valid: dict[str, object], required: str
+) -> None:
+    model.model_validate(valid)
+    for invalid in (
+        {key: value for key, value in valid.items() if key != required},
+        {**valid, "unknown": 1},
+        {**valid, required: 7},
+    ):
+        with pytest.raises(ValidationError):
+            model.model_validate(invalid)
+
+
+@pytest.mark.parametrize("decision", ["grant", "deny", "defer"])
+def test_record_decision_command_rejects_decision_aliases(decision: str) -> None:
+    with pytest.raises(ValidationError):
+        RecordDecisionCommand.model_validate(
+            {
+                "decision_type": "authority",
+                "node_id": "a-1",
+                "decision": decision,
+                "decider": "operator-1",
+            }
+        )
+
+
+def test_task7_decision_commands_exhaustively_validate_declared_fields() -> None:
+    cases = (
+        (
+            RaiseAppealCommand,
+            {
+                "node_id": "n",
+                "appeal_type": "invalid_test",
+                "appeal_node_id": "a",
+                "oversight_node_id": "o",
+                "candidate_id": "c",
                 "task_region_id": "t",
-                "appeal_type": "invalid_test",
+                "lease_id": "l",
             },
-            position=1,
+            ("node_id", "appeal_type"),
+            {
+                "node_id": 1,
+                "appeal_type": "other",
+                "appeal_node_id": 1,
+                "oversight_node_id": 1,
+                "candidate_id": 1,
+                "task_region_id": 1,
+                "lease_id": 1,
+            },
+        ),
+        (
+            RecordDecisionCommand,
+            {
+                "decision_type": "approval",
+                "node_id": "g",
+                "decision": "approved",
+                "decider": "human",
+                "scope": {"region": "t"},
+                "expires_at": "later",
+                "reason": "safe",
+                "record_id": "d",
+            },
+            ("decision_type", "node_id", "decision", "decider"),
+            {
+                "decision_type": "unknown",
+                "node_id": 1,
+                "decision": 1,
+                "decider": object(),
+                "scope": [],
+                "expires_at": 1,
+                "reason": 1,
+                "record_id": 1,
+            },
         ),
     )
-
-    assert projection["invalid_test_blocks"]["t"].accepted is True
-
-
-def test_decision_producers_emit_typed_payloads() -> None:
-    appeal_events = apply_command(
-        initial_projection(),
-        [],
-        "raise_appeal",
-        {"run_id": "run-1", "node_id": "failed-1", "appeal_type": "invalid_test"},
-        FakeClock(),
-        SequentialIdGenerator(),
-    )
-    appeal = AppealOpenedPayload.model_validate(appeal_events[0].payload)
-    assert appeal.appealed_node_id == "failed-1"
-
-    events = [
-        _event("node_created", {"node_id": "gate-1", "kind": "gate", "state": "ready"}, position=1)
-    ]
-    output = apply_command(
-        _project(events),
-        events,
-        "record_decision",
-        {
-            "run_id": "run-1",
-            "decision_type": "approval",
-            "node_id": "gate-1",
-            "decision": "approved",
-            "decider": "operator-1",
-        },
-        FakeClock(),
-        SequentialIdGenerator(),
-    )
-    payload = ApprovalDecisionRecordedPayload.model_validate(output[0].payload)
-    assert payload.decision == "approved"
-    assert payload.extra == {}
+    for model, valid, required, mistyped in cases:
+        model.model_validate(valid)
+        invalids = [
+            {key: value for key, value in valid.items() if key != field} for field in required
+        ]
+        invalids.append({**valid, "unknown": 1})
+        invalids.extend({**valid, field: value} for field, value in mistyped.items())
+        for invalid in invalids:
+            with pytest.raises(ValidationError):
+                model.model_validate(invalid)
 
 
-def test_sparse_oversight_decision_without_node_id_remains_replayable() -> None:
-    projection = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
-        _event(
-            "oversight_decision_recorded",
-            {"task_region_id": "task-1", "verdict": "failed", "legacy": 1},
-            position=1,
+@pytest.mark.parametrize(
+    ("valid", "mistyped"),
+    [
+        (
+            {
+                "decision_type": "authority",
+                "node_id": "a",
+                "decision": "granted",
+                "decider": "human",
+                "scope": {"region": "t"},
+                "expires_at": "later",
+                "reason": "safe",
+                "record_id": "d",
+            },
+            {
+                "decision_type": "approval",
+                "node_id": 1,
+                "decision": "grant",
+                "decider": object(),
+                "scope": [],
+                "expires_at": 1,
+                "reason": 1,
+                "record_id": 1,
+            },
         ),
-    )
-
-    assert projection["oversight_decisions"] == {}
-
-
-def _project(events: list[EventEnvelope]) -> Any:
-    projection = initial_projection()
-    for event in events:
-        projection = reduce_event(build_graph_catalog(), projection, event)
-    return projection
-
-
-def _event(event_type: str, payload: dict[str, Any], *, position: int) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
-    )
+        (
+            {
+                "decision_type": "oversight",
+                "node_id": "o",
+                "decision": "accepted",
+                "decider": "human",
+                "scope": {"region": "t"},
+                "expires_at": "later",
+                "reason": "safe",
+                "record_id": "d",
+            },
+            {
+                "decision_type": "authority",
+                "node_id": 1,
+                "decision": "approved",
+                "decider": object(),
+                "scope": [],
+                "expires_at": 1,
+                "reason": 1,
+                "record_id": 1,
+            },
+        ),
+    ],
+)
+def test_record_decision_authority_and_oversight_variants_are_exact_strict_contracts(
+    valid: dict[str, object], mistyped: dict[str, object]
+) -> None:
+    RecordDecisionCommand.model_validate(valid)
+    for required in ("decision_type", "node_id", "decision", "decider"):
+        with pytest.raises(ValidationError):
+            RecordDecisionCommand.model_validate(
+                {key: value for key, value in valid.items() if key != required}
+            )
+    with pytest.raises(ValidationError):
+        RecordDecisionCommand.model_validate({**valid, "unknown": 1})
+    for field, value in mistyped.items():
+        with pytest.raises(ValidationError):
+            RecordDecisionCommand.model_validate({**valid, field: value})

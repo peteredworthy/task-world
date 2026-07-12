@@ -13,10 +13,8 @@ from orchestrator.graph import (
     FakeClock,
     NodeCreatedPayload,
     SequentialIdGenerator,
-    apply_command,
     build_projection,
     compile_routine,
-    initial_projection,
     project_planner_chain,
     projection_to_checkpoint,
 )
@@ -369,13 +367,10 @@ def test_node_created_producers_emit_payloads_validated_by_typed_model() -> None
             ],
         },
     )
-    appeal_events = apply_command(
-        initial_projection(),
+    appeal_events = dispatch_graph_command(
         [],
         "raise_appeal",
         {"run_id": "run-1", "node_id": "verifier-1", "appeal_type": "invalid_test"},
-        FakeClock(),
-        SequentialIdGenerator(),
     )
     compiler_nodes = [
         event for event in compiler_events if event.metadata.event_type == "node_created"

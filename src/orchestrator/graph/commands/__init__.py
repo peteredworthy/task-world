@@ -17,12 +17,12 @@ from orchestrator.graph._commands import (
 )
 from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.commands.callbacks import (
-    handle_raise_appeal,
+    RAISE_APPEAL,
+    RECORD_DECISION,
+    RECORD_REQUIREMENT_REVISION,
+    RECORD_SUPPORT_EVIDENCE,
     handle_record_cleanup_applied,
-    handle_record_decision,
     handle_record_gatekeeper_verdicts,
-    handle_record_requirement_revision,
-    handle_record_support_evidence,
 )
 from orchestrator.graph.commands.lifecycle import (
     RECORD_HEARTBEAT,
@@ -68,11 +68,7 @@ ApplyCommandHandler = Callable[
 
 
 _UNCONVERTED_W5_BRIDGE: dict[str, ApplyCommandHandler] = {
-    "raise_appeal": handle_raise_appeal,
-    "record_decision": handle_record_decision,
     "record_gatekeeper_verdicts": handle_record_gatekeeper_verdicts,
-    "record_requirement_revision": handle_record_requirement_revision,
-    "record_support_evidence": handle_record_support_evidence,
     "record_cleanup_applied": handle_record_cleanup_applied,
 }
 
@@ -95,6 +91,10 @@ COMMAND_SPECIFICATIONS = (
     SUBMIT_PATCH,
     EVALUATE_JOIN,
     EVALUATE_FINAL_GATE,
+    RAISE_APPEAL,
+    RECORD_DECISION,
+    RECORD_REQUIREMENT_REVISION,
+    RECORD_SUPPORT_EVIDENCE,
 )
 _CATALOG_COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECIFICATIONS)
 

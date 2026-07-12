@@ -109,7 +109,10 @@ class GraphCatalog:
 def build_graph_catalog() -> GraphCatalog:
     """Compose a fresh catalog from immutable domain declarations."""
 
-    from orchestrator.graph.commands.callbacks import CALLBACK_COMMAND_SPECIFICATIONS
+    from orchestrator.graph.commands.callbacks import (
+        CALLBACK_COMMAND_SPECIFICATIONS,
+        POLICY_COMMAND_SPECIFICATIONS,
+    )
     from orchestrator.graph.commands.lifecycle import COMMAND_SPECIFICATIONS
     from orchestrator.graph.commands.schedule import SCHEDULE_TICK, RECONCILE
     from orchestrator.graph.commands.records import EVALUATE_FINAL_GATE, EVALUATE_JOIN
@@ -122,6 +125,7 @@ def build_graph_catalog() -> GraphCatalog:
         (
             *COMMAND_SPECIFICATIONS,
             *CALLBACK_COMMAND_SPECIFICATIONS,
+            *POLICY_COMMAND_SPECIFICATIONS,
             SEED_COMPILED_EVENTS,
             SCHEDULE_TICK,
             RECONCILE,

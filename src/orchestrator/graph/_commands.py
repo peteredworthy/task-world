@@ -24,10 +24,7 @@ from orchestrator.graph.models import (
     Actor,
     ActorKind,
     AnalysisSummaryRecord,
-    AppealOpenedPayload,
-    ApprovalDecisionRecordedPayload,
     ArtifactReferenceRecord,
-    AuthorityDecisionRecordedPayload,
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
     CandidateRecord,
@@ -46,12 +43,9 @@ from orchestrator.graph.models import (
     GraphPatchRejectedPayload,
     LegacyDeadInputPayloadBase,
     OutputRecord,
-    OversightDecisionRecordedPayload,
     PatchEnvelope,
     PatchOp,
     RecoveryPlanRecord,
-    RequirementRevisionPayload,
-    SupportEvidencePayload,
     VerificationResultProjection,
     VerificationReportRecord,
     normalize_record_selector,
@@ -76,6 +70,9 @@ from orchestrator.graph.events.records import (
     OUTPUT_RECORD_ACCEPTED,
     VERIFICATION_FAILED,
     VERIFICATION_PASSED,
+)
+from orchestrator.graph.events.decisions import (
+    APPEAL_OPENED,
 )
 from orchestrator.graph.file_state import GATEKEEPER_TAXONOMY
 from orchestrator.graph.patch_validator import validate_patch
@@ -213,15 +210,15 @@ def apply_command(
     if command_type == "reconcile":
         return _apply_reconcile(projection, events, make_event)
     if command_type == "raise_appeal":
-        return _apply_raise_appeal(payload, make_event, id_gen)
+        raise ValueError("raise_appeal requires typed command dispatch")
     if command_type == "record_decision":
-        return _apply_record_decision(projection, payload, make_event)
+        raise ValueError("record_decision requires typed command dispatch")
     if command_type == "record_gatekeeper_verdicts":
         return _apply_record_gatekeeper_verdicts(projection, payload, make_event)
     if command_type == "record_requirement_revision":
-        return _apply_record_requirement_revision(payload, make_event)
+        raise ValueError("record_requirement_revision requires typed command dispatch")
     if command_type == "record_support_evidence":
-        return _apply_record_support_evidence(projection, payload, make_event)
+        raise ValueError("record_support_evidence requires typed command dispatch")
     if command_type == "record_cleanup_applied":
         return _apply_record_cleanup_applied(projection, payload, make_event)
     return [
@@ -2581,142 +2578,6 @@ def _is_chain_planner(projection: GraphProjection, node_id: str) -> bool:
     )
 
 
-def _apply_raise_appeal(
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    node_id = payload.get("node_id")
-    appeal_type = payload.get("appeal_type")
-    if not isinstance(node_id, str) or appeal_type != "invalid_test":
-        return [_command_rejected(make_event, "raise_appeal", "malformed appeal")]
-
-    oversight_node_id = str(payload.get("oversight_node_id", id_gen.next_id("oversight")))
-    return [
-        make_event(
-            "appeal_opened",
-            AppealOpenedPayload.model_validate(
-                {
-                    "node_id": str(payload.get("appeal_node_id", id_gen.next_id("appeal"))),
-                    "appealed_node_id": node_id,
-                    "candidate_id": payload.get("candidate_id"),
-                    "task_region_id": payload.get("task_region_id"),
-                    "appeal_type": appeal_type,
-                    "lease_id": payload.get("lease_id"),
-                }
-            ).model_dump(mode="json"),
-        ),
-        typed_topology_event(
-            make_event,
-            "node_created",
-            {
-                "node_id": oversight_node_id,
-                "kind": "oversight",
-                "state": "planned",
-                "task_region_id": payload.get("task_region_id"),
-            },
-        ),
-    ]
-
-
-def _apply_record_decision(
-    projection: GraphProjection,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
-    decision_type = payload.get("decision_type")
-    if decision_type not in {"approval", "oversight", "authority"}:
-        return [_command_rejected(make_event, "record_decision", "unknown decision_type")]
-
-    node_id = payload.get("node_id")
-    if not isinstance(node_id, str):
-        return [_command_rejected(make_event, "record_decision", "missing target node_id")]
-    if not _node_exists(projection, node_id):
-        return [_command_rejected(make_event, "record_decision", f"unknown target node: {node_id}")]
-
-    node_kind = projection["node_kinds"].get(node_id)
-    if decision_type == "authority" and node_kind != "authority_request":
-        return [
-            _command_rejected(
-                make_event,
-                "record_decision",
-                "authority decisions require authority_request target",
-            )
-        ]
-
-    node_state = projection["node_states"].get(node_id)
-    if node_state in {"completed", "failed", "cancelled", "retired"}:
-        return [
-            _command_rejected(make_event, "record_decision", f"terminal target node: {node_state}")
-        ]
-
-    run_state = projection["run_state"]
-    if run_state in {"cancelled", "failed"}:
-        return [_command_rejected(make_event, "record_decision", f"terminal run: {run_state}")]
-
-    decider = payload.get("decider") or payload.get("decider_actor")
-    if not _valid_decider(decider):
-        return [_command_rejected(make_event, "record_decision", "missing decider actor")]
-
-    decision = _decision_value(decision_type, payload)
-    if decision is None:
-        return [_command_rejected(make_event, "record_decision", "invalid decision value")]
-
-    event_payload = dict(payload)
-    event_payload["decision"] = decision
-    event_payload.setdefault("decider", decider)
-    task_region_id = projection["node_task_regions"].get(node_id)
-    if task_region_id is not None:
-        event_payload.setdefault("task_region_id", task_region_id)
-
-    if decision_type == "approval":
-        event_type = "approval_decision_recorded"
-    elif decision_type == "authority":
-        event_type = "authority_decision_recorded"
-    else:
-        event_type = "oversight_decision_recorded"
-    try:
-        decision_record = _decision_output_record(projection, node_id, event_payload, decision_type)
-    except ValueError as exc:
-        return [_command_rejected(make_event, "record_decision", f"invalid decision record: {exc}")]
-    payload_model = {
-        "approval_decision_recorded": ApprovalDecisionRecordedPayload,
-        "authority_decision_recorded": AuthorityDecisionRecordedPayload,
-        "oversight_decision_recorded": OversightDecisionRecordedPayload,
-    }[event_type]
-    output = [
-        make_event(event_type, payload_model.model_validate(event_payload).model_dump(mode="json"))
-    ]
-    if decision_record is not None:
-        output.append(
-            make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": decision_record})
-        )
-        output.extend(
-            _input_bound_events_for_record(
-                projection,
-                node_id,
-                str(decision_record["port"]),
-                str(decision_record["record_id"]),
-                decision_record,
-                make_event,
-                _record_selector_aliases(decision_record),
-            )
-        )
-    output.append(
-        typed_topology_event(
-            make_event,
-            "node_state_changed",
-            {
-                "node_id": node_id,
-                "new_state": "completed",
-                "trigger": f"{event_type}_accepted",
-            },
-        )
-    )
-    output.extend(_release_active_node_leases(projection, node_id, make_event))
-    return output
-
-
 def _decision_output_record(
     projection: GraphProjection,
     node_id: str,
@@ -3039,91 +2900,6 @@ def _apply_record_cleanup_applied(
         make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": accepted_payload}),
         make_event("file_state_accepted", accepted_payload),
     ]
-
-
-def _apply_record_requirement_revision(
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
-    requirement_id = payload.get("requirement_id")
-    if not isinstance(requirement_id, str) or not requirement_id:
-        return [
-            _command_rejected(
-                make_event,
-                "record_requirement_revision",
-                "missing requirement_id",
-            )
-        ]
-
-    version_id = payload.get("version_id")
-    if not isinstance(version_id, str) or not version_id:
-        version_id = payload.get("requirement_version_id")
-    if not isinstance(version_id, str) or not version_id:
-        return [
-            _command_rejected(
-                make_event,
-                "record_requirement_revision",
-                "missing version_id",
-            )
-        ]
-
-    event_payload = RequirementRevisionPayload.model_validate(
-        {
-            **payload,
-            "requirement_id": requirement_id,
-            "version_id": version_id,
-        }
-    ).model_dump(mode="json")
-    return [make_event("requirement_revision_recorded", event_payload)]
-
-
-def _apply_record_support_evidence(
-    projection: GraphProjection,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
-    support_id = payload.get("support_id")
-    if not isinstance(support_id, str) or not support_id:
-        return [_command_rejected(make_event, "record_support_evidence", "missing support_id")]
-
-    evidence_id = payload.get("evidence_id")
-    if not isinstance(evidence_id, str) or not evidence_id:
-        return [_command_rejected(make_event, "record_support_evidence", "missing evidence_id")]
-
-    requirement_id = payload.get("requirement_id")
-    if not isinstance(requirement_id, str) or not requirement_id:
-        return [
-            _command_rejected(
-                make_event,
-                "record_support_evidence",
-                "missing requirement_id",
-            )
-        ]
-
-    requirement_version_id = payload.get("requirement_version_id")
-    if not isinstance(requirement_version_id, str) or not requirement_version_id:
-        requirement_version_id = payload.get("version_id")
-    if not isinstance(requirement_version_id, str) or not requirement_version_id:
-        requirement_version_id = projection["active_requirement_versions"].get(requirement_id)
-    if not isinstance(requirement_version_id, str) or not requirement_version_id:
-        return [
-            _command_rejected(
-                make_event,
-                "record_support_evidence",
-                f"unknown active requirement version: {requirement_id}",
-            )
-        ]
-
-    event_payload = SupportEvidencePayload.model_validate(
-        {
-            **payload,
-            "support_id": support_id,
-            "evidence_id": evidence_id,
-            "requirement_id": requirement_id,
-            "requirement_version_id": requirement_version_id,
-        }
-    ).model_dump(mode="json")
-    return [make_event("support_evidence_recorded", event_payload)]
 
 
 def _cleanup_requested_event(
@@ -3482,12 +3258,14 @@ def _patch_op_events(
     if op.op == "create_appeal":
         node_payload = _node_payload_for_op(op_payload, default_kind="appeal")
         appeal_payload = {
-            key: value for key, value in op_payload.items() if key not in {"op", "node"}
+            key: value
+            for key, value in op_payload.items()
+            if key not in {"op", "node", "kind", "state"}
         }
         appeal_payload.setdefault("node_id", node_payload["node_id"])
         return [
             typed_topology_event(make_event, "node_created", node_payload),
-            make_event("appeal_opened", appeal_payload),
+            _make_strict_event(make_event, APPEAL_OPENED, appeal_payload),
         ]
     if op.op == "set_resource_claims" and isinstance(op.node_id, str):
         return [
@@ -3636,49 +3414,6 @@ def _lease_is_expired(lease: dict[str, Any], now: datetime) -> bool:
     if not isinstance(expires_at, str):
         return False
     return datetime.fromisoformat(expires_at) <= now
-
-
-def _node_exists(projection: GraphProjection, node_id: str) -> bool:
-    return node_id in projection["node_states"] or node_id in projection["node_kinds"]
-
-
-def _decision_value(decision_type: Any, payload: dict[str, Any]) -> str | None:
-    decision = payload.get("decision")
-    if decision_type == "approval":
-        if decision in {"approved", "rejected", "deferred"}:
-            return cast(str, decision)
-        if decision == "defer":
-            return "deferred"
-        approved = payload.get("approved")
-        if approved is True:
-            return "approved"
-        if approved is False:
-            return "rejected"
-        return None
-
-    if decision_type == "authority":
-        if decision in {"granted", "denied", "deferred"}:
-            return cast(str, decision)
-        if decision == "grant":
-            return "granted"
-        if decision == "deny":
-            return "denied"
-        if decision == "defer":
-            return "deferred"
-        return None
-
-    if decision in {"accepted", "rejected", "invalid_test_accepted"}:
-        return cast(str, decision)
-    return None
-
-
-def _valid_decider(decider: Any) -> bool:
-    if isinstance(decider, str):
-        return bool(decider)
-    if isinstance(decider, dict):
-        typed_decider = cast(dict[str, Any], decider)
-        return isinstance(typed_decider.get("kind"), str)
-    return False
 
 
 def _op_payload(op: PatchOp) -> dict[str, Any]:
@@ -3929,11 +3664,11 @@ apply_seed_compiled_events = _apply_seed_compiled_events
 apply_patch_command = _apply_patch_command
 apply_schedule_tick = schedule_tick_effects
 apply_reconcile = _apply_reconcile
-apply_raise_appeal = _apply_raise_appeal
-apply_record_decision = _apply_record_decision
 apply_record_gatekeeper_verdicts = _apply_record_gatekeeper_verdicts
-apply_record_requirement_revision = _apply_record_requirement_revision
-apply_record_support_evidence = _apply_record_support_evidence
+decision_output_record = _decision_output_record
+input_bound_events_for_record = _input_bound_events_for_record
+record_selector_aliases = _record_selector_aliases
+release_active_node_leases = _release_active_node_leases
 
 
 def apply_record_cleanup_applied(

@@ -123,7 +123,7 @@
   given_events:
     - run_lifecycle_changed: {to_state: active}
     - node_created: {node_id: gate-invariant-9b, kind: gate, state: completed}
-    - approval_decision_recorded: {node_id: gate-invariant-9b, decision: approved}
+    - approval_decision_recorded: {node_id: gate-invariant-9b, decision: approved, decider: system}
     - node_created: {node_id: successor-invariant-9b, kind: worker, state: blocked}
     - edge_created: {edge_id: edge-invariant-9b, from_node_id: gate-invariant-9b, from_port: decision, to_node_id: successor-invariant-9b, to_port: approval, required: true}
     - input_bound: {edge_id: edge-invariant-9b, to_node_id: successor-invariant-9b, to_port: approval, record_ids: [], bound_at_position: 5}

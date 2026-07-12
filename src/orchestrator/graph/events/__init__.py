@@ -13,6 +13,12 @@ from orchestrator.graph.events.topology import (
 )
 from orchestrator.graph.events.leases import EVENT_SPECIFICATIONS as LEASE_EVENT_SPECIFICATIONS
 from orchestrator.graph.events.patches import EVENT_SPECIFICATIONS as PATCH_EVENT_SPECIFICATIONS
+from orchestrator.graph.events.decisions import (
+    EVENT_SPECIFICATIONS as DECISION_EVENT_SPECIFICATIONS,
+)
+from orchestrator.graph.events.requirements import (
+    EVENT_SPECIFICATIONS as REQUIREMENT_EVENT_SPECIFICATIONS,
+)
 from orchestrator.graph.specifications import EventSpecification
 
 
@@ -22,6 +28,8 @@ EVENT_SPECIFICATIONS: tuple[EventSpecification[Any], ...] = (
     *TOPOLOGY_EVENT_SPECIFICATIONS,
     *LEASE_EVENT_SPECIFICATIONS,
     *PATCH_EVENT_SPECIFICATIONS,
+    *DECISION_EVENT_SPECIFICATIONS,
+    *REQUIREMENT_EVENT_SPECIFICATIONS,
 )
 
 

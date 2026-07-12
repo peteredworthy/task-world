@@ -40,15 +40,22 @@ from orchestrator.graph.events.leases import (
     LeaseRevokedPayload,
 )
 from orchestrator.graph.events.patches import GraphPatchAcceptedPayload, GraphPatchRejectedPayload
+from orchestrator.graph.events.decisions import (
+    AppealOpenedPayload,
+    ApprovalDecisionRecordedPayload,
+    AuthorityDecisionRecordedPayload,
+    OversightDecisionRecordedPayload,
+)
+from orchestrator.graph.events.requirements import (
+    RequirementRevisionPayload,
+    SupportEvidencePayload,
+)
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
     AnalysisSummaryRecord,
-    AppealOpenedPayload,
     ApprovalDecisionProjection,
-    ApprovalDecisionRecordedPayload,
     AuthorityDecisionProjection,
-    AuthorityDecisionRecordedPayload,
     CallbackIdempotencyEvent,
     CandidateProjection,
     CheckResultProjection,
@@ -69,17 +76,13 @@ from orchestrator.graph.models import (
     NodeCreationProjection,
     OutputRecord,
     OutputRecordPayload,
-    OversightDecisionRecordedPayload,
     OversightDecisionProjection,
     PatchEnvelope,
     PatchOp,
     PendingGateDecisionProjection,
     RecordSelector,
     RequirementRecord,
-    RequirementAuthorityResolutionPayload,
-    RequirementRevisionPayload,
     RequirementRevisionProjection,
-    SupportEvidencePayload,
     SupportEvidenceProjection,
     VerificationResultProjection,
     VerifierVerdictProjection,
@@ -269,7 +272,6 @@ __all__ = [
     "RECORD_HEARTBEAT",
     "RecordHeartbeatCommand",
     "RequirementRecord",
-    "RequirementAuthorityResolutionPayload",
     "RequirementRevisionPayload",
     "RequirementRevisionProjection",
     "RunLifecycleChangedPayload",

@@ -8191,7 +8191,11 @@ def test_schedule_tick_allows_approved_gate_input() -> None:
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event("node_created", {"node_id": "gate-1", "kind": "gate", "state": "completed"}, 1),
-        _event("approval_decision_recorded", {"node_id": "gate-1", "decision": "approved"}, 2),
+        _event(
+            "approval_decision_recorded",
+            {"node_id": "gate-1", "decision": "approved", "decider": "system"},
+            2,
+        ),
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "blocked"}, 3),
         _event(
             "edge_created",
@@ -8288,7 +8292,11 @@ def test_schedule_tick_allows_granted_authority_request_input() -> None:
             {"node_id": "authority-1", "kind": "authority_request", "state": "completed"},
             1,
         ),
-        _event("authority_decision_recorded", {"node_id": "authority-1", "decision": "granted"}, 2),
+        _event(
+            "authority_decision_recorded",
+            {"node_id": "authority-1", "decision": "granted", "decider": "system"},
+            2,
+        ),
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "blocked"}, 3),
         _event(
             "edge_created",
@@ -9216,9 +9224,8 @@ def test_raise_appeal_accepts_well_formed() -> None:
 
 
 def test_raise_appeal_rejects_malformed() -> None:
-    output = _apply([], "raise_appeal", {"run_id": "run-1", "node_id": "verify-1"})
-
-    assert output[0].event_type == "command_rejected"
+    with pytest.raises(ValidationError):
+        _apply([], "raise_appeal", {"run_id": "run-1", "node_id": "verify-1"})
 
 
 def test_record_decision_accepts_approval() -> None:
@@ -9291,7 +9298,7 @@ def test_record_decision_accepts_authority_request_with_typed_record() -> None:
             "run_id": "run-1",
             "decision_type": "authority",
             "node_id": "authority-1",
-            "decision": "grant",
+            "decision": "granted",
             "scope": {"tools": ["graph_write"]},
             "expires_at": "2026-01-02T00:00:00+00:00",
             "decider": {"kind": "human", "id": "alice"},
@@ -9420,7 +9427,7 @@ def test_record_decision_rejects_authority_for_non_authority_target() -> None:
             "run_id": "run-1",
             "decision_type": "authority",
             "node_id": "gate-1",
-            "decision": "grant",
+            "decision": "granted",
             "decider": {"kind": "human", "id": "alice"},
         },
     )
@@ -9433,72 +9440,64 @@ def test_record_decision_rejects_authority_for_non_authority_target() -> None:
 
 
 def test_record_decision_rejects_missing_target() -> None:
-    output = _apply([], "record_decision", {"run_id": "run-1", "decision_type": "approval"})
-
-    assert output[0].event_type == "command_rejected"
-    assert "missing target node_id" in output[0].payload["reason"]
+    with pytest.raises(ValidationError):
+        _apply([], "record_decision", {"run_id": "run-1", "decision_type": "approval"})
 
 
 def test_record_decision_rejects_invalid_decision() -> None:
-    output = _apply(
-        [_event("node_created", {"node_id": "gate-1", "kind": "gate", "state": "blocked"}, 0)],
-        "record_decision",
-        {
-            "run_id": "run-1",
-            "decision_type": "approval",
-            "node_id": "gate-1",
-            "decision": "maybe",
-            "decider": {"kind": "human", "id": "alice"},
-        },
-    )
-
-    assert output[0].event_type == "command_rejected"
-    assert "invalid decision value" in output[0].payload["reason"]
+    with pytest.raises(ValidationError):
+        _apply(
+            [_event("node_created", {"node_id": "gate-1", "kind": "gate", "state": "blocked"}, 0)],
+            "record_decision",
+            {
+                "run_id": "run-1",
+                "decision_type": "approval",
+                "node_id": "gate-1",
+                "decision": "maybe",
+                "decider": {"kind": "human", "id": "alice"},
+            },
+        )
 
 
 def test_record_decision_rejects_malformed_typed_authority_record_atomically() -> None:
-    output = _apply(
-        [
-            _event(
-                "run_lifecycle_changed",
-                {"to_state": "active"},
-                0,
-            ),
-            _event(
-                "node_created",
-                {"node_id": "authority-1", "kind": "authority_request", "state": "blocked"},
-                1,
-            ),
-        ],
-        "record_decision",
-        {
-            "run_id": "run-1",
-            "decision_type": "authority",
-            "node_id": "authority-1",
-            "decision": "grant",
-            "scope": "graph_write",
-            "decider": {"kind": "human", "id": "alice"},
-        },
-    )
-
-    assert [event.event_type for event in output] == ["command_rejected"]
-    assert "invalid decision record" in output[0].payload["reason"]
+    with pytest.raises(ValidationError):
+        _apply(
+            [
+                _event(
+                    "run_lifecycle_changed",
+                    {"to_state": "active"},
+                    0,
+                ),
+                _event(
+                    "node_created",
+                    {"node_id": "authority-1", "kind": "authority_request", "state": "blocked"},
+                    1,
+                ),
+            ],
+            "record_decision",
+            {
+                "run_id": "run-1",
+                "decision_type": "authority",
+                "node_id": "authority-1",
+                "decision": "granted",
+                "scope": "graph_write",
+                "decider": {"kind": "human", "id": "alice"},
+            },
+        )
 
 
 def test_record_decision_rejects_missing_decider() -> None:
-    output = _apply(
-        [_event("node_created", {"node_id": "gate-1", "kind": "gate", "state": "blocked"}, 0)],
-        "record_decision",
-        {
-            "run_id": "run-1",
-            "decision_type": "approval",
-            "node_id": "gate-1",
-            "decision": "approved",
-        },
-    )
-
-    assert output[0].event_type == "command_rejected"
-    assert "missing decider actor" in output[0].payload["reason"]
+    with pytest.raises(ValidationError):
+        _apply(
+            [_event("node_created", {"node_id": "gate-1", "kind": "gate", "state": "blocked"}, 0)],
+            "record_decision",
+            {
+                "run_id": "run-1",
+                "decision_type": "approval",
+                "node_id": "gate-1",
+                "decision": "approved",
+            },
+        )
 
 
 def test_record_decision_rejects_unknown_target() -> None:

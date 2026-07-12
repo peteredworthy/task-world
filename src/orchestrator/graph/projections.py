@@ -21,12 +21,9 @@ from orchestrator.graph.contracts import (
 )
 from orchestrator.graph.models import (
     AnalysisSummaryRecord,
-    AppealOpenedPayload,
-    ApprovalDecisionRecordedPayload,
     ApprovalDecisionProjection,
     ArtifactReferenceRecord,
     AuthorityDecisionProjection,
-    AuthorityDecisionRecordedPayload,
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
     CallbackIdempotencyEvent,
@@ -66,23 +63,26 @@ from orchestrator.graph.models import (
     NodeKind,
     NodeState,
     OversightDecisionProjection,
-    OversightDecisionRecordedPayload,
     OutputRecord,
     PendingGateDecisionProjection,
     RecoveryPlanRecord,
     RequirementRecord,
-    RequirementAuthorityResolutionPayload,
-    RequirementRevisionPayload,
     RequirementRevisionProjection,
     ResourceClaimProjection,
     RunContextRecord,
     RoutineSnapshotRecord,
     SupportEvidenceProjection,
-    SupportEvidencePayload,
     VerificationReportRecord,
     VerificationResultProjection,
     VerifierVerdictProjection,
 )
+from orchestrator.graph.events.decisions import (
+    AppealOpenedPayload,
+    ApprovalDecisionRecordedPayload,
+    AuthorityDecisionRecordedPayload,
+    OversightDecisionRecordedPayload,
+)
+from orchestrator.graph.events.requirements import RequirementRevisionPayload
 from orchestrator.graph.events.leases import (
     LeaseExpiredPayload,
     LeaseGrantedPayload,
@@ -2297,26 +2297,6 @@ def reduce_legacy_event(
     elif event.event_type in {"verification_passed", "verification_failed"}:
         _record_verdict(next_state, event)
         _record_verification_result(next_state, event)
-    elif event.event_type == "appeal_opened":
-        _record_open_appeal(
-            next_state,
-            AppealOpenedPayload.model_validate(event.payload),
-            event.position,
-        )
-    elif event.event_type == "oversight_decision_recorded":
-        oversight_payload = OversightDecisionRecordedPayload.model_validate(event.payload)
-        _record_latest_decision(
-            next_state["oversight_decisions"], oversight_payload, event.position
-        )
-        _record_oversight_decision(next_state, oversight_payload, event.position)
-    elif event.event_type == "approval_decision_recorded":
-        approval_payload = ApprovalDecisionRecordedPayload.model_validate(event.payload)
-        _record_latest_approval_decision(next_state["approval_decisions"], approval_payload)
-        _record_gate_decision(next_state, approval_payload)
-    elif event.event_type == "authority_decision_recorded":
-        authority_payload = AuthorityDecisionRecordedPayload.model_validate(event.payload)
-        _record_latest_authority_decision(next_state["authority_decisions"], authority_payload)
-        _record_authority_decision(next_state, authority_payload)
     elif event.event_type in {"environment_failure_accepted", "check_result_classified"}:
         _record_environment_failure(next_state, event)
     elif event.event_type == "file_state_accepted":
@@ -2359,13 +2339,8 @@ def reduce_legacy_event(
         _record_cleanup_requested(next_state, event)
     elif event.event_type == "cleanup_applied":
         _record_cleanup_applied(next_state, event)
-    elif event.event_type in {"requirement_revision_recorded", "requirement_amended"}:
-        _record_requirement_revision(next_state, event)
-        _record_authority_revision_blocker(next_state, event)
     elif event.event_type == "requirement_revision_proposed":
         _record_authority_revision_blocker(next_state, event)
-    elif event.event_type in {"support_evidence_recorded", "support_edge_recorded"}:
-        _record_support_evidence(next_state, event)
     elif event.event_type in {
         "graph_patch_proposed",
         "planner_proposal_opened",
@@ -2378,11 +2353,7 @@ def reduce_legacy_event(
         "proposal_closed",
     }:
         _record_open_proposal_blocker(next_state, event)
-    elif event.event_type in {
-        "authority_resolution_recorded",
-        "authority_resolved",
-        "requirement_revision_authorized",
-    }:
+    elif event.event_type == "authority_resolution_recorded":
         _record_authority_revision_blocker(next_state, event)
     # node_ready/node_deferred and agent_died/runtime_retry_scheduled are
     # audit/policy facts. Projection facts are updated only by lease_* and
@@ -3007,7 +2978,6 @@ def _authority_revision_blockers(
             continue
         if event.event_type in {
             "requirement_revision_recorded",
-            "requirement_amended",
             "requirement_revision_proposed",
         }:
             if not _requires_authority_resolution(payload):
@@ -3021,11 +2991,7 @@ def _authority_revision_blockers(
             if requirement_id is not None:
                 blocker["requirement_id"] = requirement_id
             unresolved[revision_id] = blocker
-        elif event.event_type in {
-            "authority_resolution_recorded",
-            "authority_resolved",
-            "requirement_revision_authorized",
-        }:
+        elif event.event_type == "authority_resolution_recorded":
             unresolved.pop(revision_id, None)
     return [unresolved[key] for key in sorted(unresolved)]
 
@@ -3111,7 +3077,6 @@ def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvel
         return
     if event.event_type in {
         "requirement_revision_recorded",
-        "requirement_amended",
         "requirement_revision_proposed",
     }:
         if not _requires_authority_resolution(payload):
@@ -3126,29 +3091,15 @@ def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvel
         if requirement_id is not None:
             blocker["requirement_id"] = requirement_id
         state["authority_revision_blockers"][revision_id] = blocker
-    elif event.event_type in {
-        "authority_resolution_recorded",
-        "authority_resolved",
-        "requirement_revision_authorized",
-    }:
+    elif event.event_type == "authority_resolution_recorded":
         state["authority_revision_blockers"].pop(revision_id, None)
 
 
 def _authority_revision_payload_for_event(event: EventEnvelope) -> dict[str, Any] | None:
-    if event.event_type in {
-        "requirement_revision_recorded",
-        "requirement_amended",
-        "requirement_revision_proposed",
-    }:
+    if event.event_type == "requirement_revision_recorded":
         return RequirementRevisionPayload.model_validate(event.payload).model_dump(mode="json")
-    if event.event_type in {
-        "authority_resolution_recorded",
-        "authority_resolved",
-        "requirement_revision_authorized",
-    }:
-        return RequirementAuthorityResolutionPayload.model_validate(event.payload).model_dump(
-            mode="json"
-        )
+    if event.event_type in {"requirement_revision_proposed", "authority_resolution_recorded"}:
+        return dict(event.payload)
     return None
 
 
@@ -5158,10 +5109,7 @@ def _record_open_appeal(
     state: GraphProjection, payload: AppealOpenedPayload, position: int
 ) -> None:
     appealed_node_id = payload.appealed_node_id
-    if appealed_node_id is None and payload.node_id in state["node_states"]:
-        appealed_node_id = payload.node_id
-    if isinstance(appealed_node_id, str):
-        state["node_pending_appeals"][appealed_node_id] = True
+    state["node_pending_appeals"][appealed_node_id] = True
 
     task_region_id = payload.task_region_id
     candidate_id = payload.candidate_id
@@ -5222,19 +5170,15 @@ def _record_gate_decision(state: GraphProjection, payload: ApprovalDecisionRecor
     task_region_id = payload.task_region_id
     node_id = payload.node_id
     decision = payload.decision
-    approved = payload.approved
-    passed = approved is True or decision in {"approved", "passed", "accepted"}
-    if isinstance(node_id, str):
-        state["node_gate_decisions"][node_id] = passed
-    if task_region_id is None and isinstance(node_id, str):
+    passed = decision == "approved"
+    state["node_gate_decisions"][node_id] = passed
+    if task_region_id is None:
         task_region_id = state["node_task_regions"].get(node_id)
     if task_region_id is None:
         return
     gate_id = payload.gate_id
-    if not isinstance(gate_id, str):
+    if gate_id is None:
         gate_id = node_id
-    if not isinstance(gate_id, str):
-        gate_id = "default"
     state["gate_decisions"].setdefault(task_region_id, {})[gate_id] = passed
 
 
@@ -5244,8 +5188,7 @@ def _record_authority_decision(
     node_id = payload.node_id
     decision = payload.decision
     passed = decision in {"granted", "approved", "passed", "accepted"}
-    if isinstance(node_id, str):
-        state["node_gate_decisions"][node_id] = passed
+    state["node_gate_decisions"][node_id] = passed
 
 
 def _record_edge(state: GraphProjection, payload: EdgeCreatedPayload) -> None:
@@ -5288,96 +5231,6 @@ def _edge_required(value: Any) -> bool:
     if isinstance(value, int) and not isinstance(value, bool) and value == 0:
         return False
     return True
-
-
-def _record_requirement_revision(state: GraphProjection, event: EventEnvelope) -> None:
-    payload = RequirementRevisionPayload.model_validate(event.payload).model_dump(mode="json")
-    requirement_id = payload.get("requirement_id")
-    if not isinstance(requirement_id, str):
-        return
-
-    version_id = payload.get("version_id")
-    if not isinstance(version_id, str):
-        version_id = payload.get("requirement_version_id")
-    if not isinstance(version_id, str):
-        version_id = f"{requirement_id}.v{event.position}"
-
-    classification = _requirement_revision_classification(payload)
-    requires_authority = _requires_explicit_requirement_authority(payload, classification)
-    revision_payload: dict[str, Any] = {
-        "requirement_id": requirement_id,
-        "version_id": version_id,
-        "change_classification": classification,
-        "requires_authority": requires_authority,
-        "position": event.position,
-    }
-    previous_version_id = payload.get("previous_version_id")
-    if isinstance(previous_version_id, str):
-        revision_payload["previous_version_id"] = previous_version_id
-    revision_index = payload.get("revision_index")
-    if isinstance(revision_index, int) and not isinstance(revision_index, bool):
-        revision_payload["revision_index"] = revision_index
-    authority_reason = _authority_required_reason(payload, classification)
-    if authority_reason is not None:
-        revision_payload["authority_required_reason"] = authority_reason
-    validation_strengthening = (
-        payload.get("validation_strengthening") is True
-        or classification == "validation_strengthening"
-    )
-    revision_payload["validation_strengthening"] = validation_strengthening
-
-    revision = _requirement_revision_from_payload(revision_payload)
-    if revision is None:
-        return
-    state["requirement_revisions"][version_id] = revision
-    if payload.get("active") is not False:
-        state["active_requirement_versions"][requirement_id] = version_id
-    if validation_strengthening:
-        _mark_superseded_support_stale(state, requirement_id, version_id)
-
-
-def _record_support_evidence(state: GraphProjection, event: EventEnvelope) -> None:
-    payload = SupportEvidencePayload.model_validate(event.payload).model_dump(mode="json")
-    support_id = payload.get("support_id")
-    if not isinstance(support_id, str):
-        support_id = payload.get("edge_id")
-    if not isinstance(support_id, str):
-        return
-
-    evidence_id = payload.get("evidence_id")
-    requirement_id = payload.get("requirement_id")
-    if not isinstance(evidence_id, str) or not isinstance(requirement_id, str):
-        return
-
-    requirement_version_id = payload.get("requirement_version_id")
-    if not isinstance(requirement_version_id, str):
-        requirement_version_id = payload.get("version_id")
-    if not isinstance(requirement_version_id, str):
-        requirement_version_id = state["active_requirement_versions"].get(requirement_id)
-    if not isinstance(requirement_version_id, str):
-        return
-
-    status = payload.get("status", "active")
-    if not isinstance(status, str):
-        status = "active"
-    support_payload: dict[str, Any] = {
-        "support_id": support_id,
-        "evidence_id": evidence_id,
-        "requirement_id": requirement_id,
-        "requirement_version_id": requirement_version_id,
-        "status": status,
-        "position": event.position,
-    }
-    stale_reason = payload.get("stale_reason")
-    if isinstance(stale_reason, str):
-        support_payload["stale_reason"] = stale_reason
-    confidence = payload.get("confidence")
-    if isinstance(confidence, str):
-        support_payload["confidence"] = confidence
-    support = _support_evidence_from_payload(support_payload)
-    if support is None:
-        return
-    state["support_evidence"][support_id] = support
 
 
 def _mark_superseded_support_stale(
@@ -6459,3 +6312,19 @@ def _command_definition_for_node_creation(
     payload: NodeCreationProjection | NodeCreatedPayload,
 ) -> CommandDefinitionProjection | None:
     return check_command_reference(payload.model_dump(mode="json"))
+
+
+derive_task_states = _derive_task_states
+record_open_appeal = _record_open_appeal
+record_latest_decision = _record_latest_decision
+record_latest_approval_decision = _record_latest_approval_decision
+record_latest_authority_decision = _record_latest_authority_decision
+record_oversight_decision = _record_oversight_decision
+record_gate_decision = _record_gate_decision
+record_authority_decision = _record_authority_decision
+authority_required_reason = _authority_required_reason
+mark_superseded_support_stale = _mark_superseded_support_stale
+requirement_revision_classification = _requirement_revision_classification
+requirement_revision_from_payload = _requirement_revision_from_payload
+requires_explicit_requirement_authority = _requires_explicit_requirement_authority
+support_evidence_from_payload = _support_evidence_from_payload

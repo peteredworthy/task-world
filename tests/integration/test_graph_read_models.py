@@ -296,6 +296,7 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                 {
                     "node_id": "gate-accepted",
                     "decision": "approved",
+                    "decider": "system",
                 },
             ),
         ],
@@ -326,10 +327,12 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                 run_id,
                 "oversight_decision_recorded",
                 {
+                    "node_id": "oversight-invalid-test",
                     "task_region_id": "blocked_invalid_test",
                     "candidate_id": "cand-invalid-test",
                     "appeal_type": "invalid_test",
                     "decision": "accepted",
+                    "decider": "system",
                 },
             ),
         ],

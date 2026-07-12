@@ -78,26 +78,16 @@ _ROOT_FUNCTION = "reduce_event"
 # transitive callees in projections.py; see the module docstring above for
 # why this is a manually-verified list rather than a second static slice.
 _EXCLUDED_KEYS: dict[str, str] = {
-    "active": "requirement_revisions/active_requirement_versions bookkeeping",
     "record": "strict output_record_accepted envelope; compact readers extract its typed contents",
-    "authority_required_reason": "requirement_revisions / decision_request_details bookkeeping",
-    "behavior_change": "requirement revision classification helper, not task_states",
-    "change_classification": "requirement_revisions bookkeeping",
     "command_text": "environment_failures/check_results informational field; only "
     "classification/status/key-existence matter to task_states",
-    "confidence": "support_evidence bookkeeping",
-    "edge_id": "edges dict key/metadata; not read by the recovery-lineage traversal helper",
     "evidence": "record-id fallback container in _record_ids_from_payload; only reachable for "
     "output_record_accepted, which is catalog-owned and never enters the legacy fold (Task 5)",
-    "evidence_id": "support_evidence bookkeeping",
     "exit_code": "environment_failures/check_results informational field (see command_text)",
-    "explicit_authority_required": "requirement revision authority-resolution bookkeeping",
     "file_state_record_id": "gatekeeper-verdict/cleanup lookups mutate file_state_records fields "
     "_task_file_state_accepted never reads (classifications/residue/compromised/cleanup_*)",
     "id": "requirement id fallback helper, used only for authority_revision_blockers/support views",
-    "new_behavior": "requirement revision classification helper",
     "patch_id": "accepted_no_successor_patches_by_node / graph-patch-attempt bookkeeping",
-    "previous_version_id": "requirement_revisions bookkeeping",
     "proposal_id": "open_proposal_blockers bookkeeping",
     "provenance": "record-id fallback container in _record_ids_from_payload (see evidence)",
     "reason": "informational annotation (environment_failures/cleanup/suspect-node); never "
@@ -107,14 +97,10 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "requirement_version_id": "requirement_revisions bookkeeping",
     "requires_authority": "requirement_revisions authority-resolution bookkeeping",
     "revision_id": "authority_revision_blockers bookkeeping",
-    "revision_index": "requirement_revisions bookkeeping",
     "revision_type": "requirement revision classification helper",
     "schema": "node_command_definitions/record-type classification (topology/summary views)",
     "semantic_change": "requirement revision authority-resolution bookkeeping",
-    "stale_reason": "support_evidence bookkeeping",
     "stderr": "environment_failures/check_results informational field (see command_text)",
-    "support_id": "support_evidence bookkeeping",
-    "validation_strengthening": "requirement_revisions bookkeeping",
     "value": "nested payload.value.* reads; status/classification fallbacks are already handled "
     "by the dedicated __value_status/__value_classification json_extract columns in "
     "_read_run_extracting_fields regardless of whether 'value' itself is listed",
@@ -159,33 +145,23 @@ _TYPED_TOPOLOGY_RAW_FIELDS: dict[str, frozenset[str]] = {
 # floor: any added or lost raw field requires an explicit ownership decision.
 _EXPECTED_LEGACY_RAW_REDUCER_KEYS = frozenset(
     {
-        "active",
         "record",
         # attempt_number/evidence/provenance/supersedes_task_region_id are
         # records-domain fields read by candidate/check-result helpers that are
         # shared with the compact output-record path; they leave this inventory
         # when Task 5 converts the records domain.
         "attempt_number",
-        "authority_required_reason",
-        "behavior_change",
         "candidate_id",
-        "change_classification",
         "classification",
         "command_text",
-        "confidence",
-        "edge_id",
         "evidence",
-        "evidence_id",
         "exit_code",
-        "explicit_authority_required",
         "file_state_record_id",
         "id",
         "membership",
-        "new_behavior",
         "node_id",
         "patch_id",
         "port",
-        "previous_version_id",
         "producer_node_id",
         "proposal_id",
         "provenance",
@@ -198,17 +174,13 @@ _EXPECTED_LEGACY_RAW_REDUCER_KEYS = frozenset(
         "requirement_version_id",
         "requires_authority",
         "revision_id",
-        "revision_index",
         "revision_type",
         "schema",
         "semantic_change",
-        "stale_reason",
         "status",
         "stderr",
         "supersedes_task_region_id",
-        "support_id",
         "task_region_id",
-        "validation_strengthening",
         "value",
         "verdicts",
         "verifier_node_id",

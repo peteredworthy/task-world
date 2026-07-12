@@ -47,7 +47,7 @@ def test_decision_view_lists_pending_gates_and_appeals() -> None:
         ),
         _event(
             "approval_decision_recorded",
-            {"node_id": "gate-approved-1", "decision": "approved"},
+            {"node_id": "gate-approved-1", "decision": "approved", "decider": "system"},
             3,
         ),
         _event(
@@ -61,6 +61,7 @@ def test_decision_view_lists_pending_gates_and_appeals() -> None:
                 "appeal_node_id": "appeal-1",
                 "node_id": "oversight-1",
                 "decision": "invalid_test_accepted",
+                "decider": "system",
             },
             5,
         ),

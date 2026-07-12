@@ -17,7 +17,7 @@ from orchestrator.graph.payloads import JsonValue, StrictPayload
 
 
 PayloadT = TypeVar("PayloadT", bound=StrictPayload)
-CommandT = TypeVar("CommandT", bound=StrictPayload)
+CommandT = TypeVar("CommandT", bound=BaseModel)
 ProjectionT = TypeVar("ProjectionT")
 
 
@@ -191,7 +191,7 @@ class CommandSpecification(Generic[CommandT]):
 
     def handle(
         self,
-        command: StrictPayload,
+        command: BaseModel,
         projection: Any,
         events: tuple[EventEnvelope, ...],
         context: CommandExecutionContext,

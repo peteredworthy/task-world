@@ -322,31 +322,13 @@ def test_authority_decision_projection_uses_typed_payload() -> None:
     assert projected.scope == {"tools": ["graph_write"]}
 
 
-def test_decision_projection_accepts_legacy_outcome_and_boolean_payloads() -> None:
-    projection = reduce_event(
-        build_graph_catalog(),
-        reduce_event(
-            build_graph_catalog(),
-            initial_projection(),
-            _event(
-                "approval_decision_recorded",
-                {
-                    "node_id": "gate-1",
-                    "outcome": "approved",
-                },
-            ),
-        ),
-        _event(
-            "authority_decision_recorded",
-            {
-                "node_id": "authority-1",
-                "approved": False,
-            },
-        ),
-    )
-
-    assert projection["approval_decisions"]["gate-1"].decision == "approved"
-    assert projection["authority_decisions"]["authority-1"].decision == "denied"
+def test_decision_projection_rejects_legacy_outcome_and_boolean_payloads() -> None:
+    for event in (
+        _event("approval_decision_recorded", {"node_id": "gate-1", "outcome": "approved"}),
+        _event("authority_decision_recorded", {"node_id": "authority-1", "approved": False}),
+    ):
+        with pytest.raises(ValidationError):
+            reduce_event(build_graph_catalog(), initial_projection(), event)
 
 
 def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
@@ -360,6 +342,7 @@ def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
                 {
                     "node_id": "gate-1",
                     "decision": "approved",
+                    "decider": "system",
                     "reason": "looks safe",
                 },
             ),
@@ -369,6 +352,7 @@ def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
             {
                 "node_id": "authority-1",
                 "decision": "granted",
+                "decider": "system",
                 "scope": {"tools": ["graph_write"]},
             },
         ),
@@ -386,29 +370,18 @@ def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
     assert authority.scope == {"tools": ["graph_write"]}
 
 
-def test_malformed_decision_payloads_are_tolerated_without_raw_projection_entries() -> None:
-    folded = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
+def test_malformed_decision_payloads_are_rejected() -> None:
+    for event in (
         _event(
-            "approval_decision_recorded",
-            {
-                "node_id": "gate-1",
-                "decision": "not-a-real-decision",
-            },
+            "approval_decision_recorded", {"node_id": "gate-1", "decision": "not-a-real-decision"}
         ),
-    )
-    folded_oversight = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
         _event(
             "oversight_decision_recorded",
-            {
-                "node_id": "oversight-1",
-                "decision": "not-a-real-oversight-decision",
-            },
+            {"node_id": "oversight-1", "decision": "not-a-real-oversight-decision"},
         ),
-    )
+    ):
+        with pytest.raises(ValidationError):
+            reduce_event(build_graph_catalog(), initial_projection(), event)
 
     restored = projection_from_checkpoint(
         {
@@ -434,8 +407,6 @@ def test_malformed_decision_payloads_are_tolerated_without_raw_projection_entrie
         }
     )
 
-    assert folded["approval_decisions"] == {}
-    assert folded_oversight["oversight_decisions"] == {}
     assert restored["approval_decisions"] == {}
     assert restored["authority_decisions"] == {}
     assert restored["oversight_decisions"] == {}
@@ -466,6 +437,7 @@ def test_decision_view_behavior_is_preserved_with_typed_decision_projection() ->
             {
                 "node_id": "authority-1",
                 "decision": "granted",
+                "decider": "system",
             },
         ),
     ]
@@ -1026,6 +998,7 @@ def test_oversight_decision_projection_checkpoint_round_trips_typed_payload() ->
                 "decision": "invalid_test_accepted",
                 "appeal_type": "invalid_test",
                 "reason": "test assertion was wrong",
+                "decider": "system",
             },
         ).model_copy(update={"position": 40}),
     )
@@ -1044,6 +1017,9 @@ def test_oversight_decision_projection_checkpoint_round_trips_typed_payload() ->
         "appealed_node_id": "verifier-1",
         "appeal_type": "invalid_test",
         "reason": "test assertion was wrong",
+        "decider": "system",
+        "scope": None,
+        "record_id": None,
     }
     assert restored["oversight_decisions"]["appeal-1"] is projected
 
@@ -1067,7 +1043,7 @@ def test_oversight_decision_checkpoint_restore_rebuilds_appeal_alias() -> None:
     assert restored["oversight_decisions"]["appeal-1"] is projected
 
 
-def test_oversight_decision_approved_boolean_blocks_invalid_test() -> None:
+def test_oversight_decision_blocks_invalid_test() -> None:
     events = [
         _event(
             "output_record_accepted",
@@ -1092,10 +1068,13 @@ def test_oversight_decision_approved_boolean_blocks_invalid_test() -> None:
         _event(
             "oversight_decision_recorded",
             {
+                "appealed_node_id": "verifier-1",
                 "task_region_id": "task-1",
                 "candidate_id": "cand-1",
                 "appeal_type": "invalid_test",
-                "approved": True,
+                "node_id": "oversight-1",
+                "decision": "accepted",
+                "decider": "system",
             },
         ).model_copy(update={"position": 2}),
     ]
@@ -4985,7 +4964,13 @@ def test_task_projection_accepted() -> None:
         _file_state_event("task-1", "cand-1", 2),
         _event(
             "approval_decision_recorded",
-            {"task_region_id": "task-1", "gate_id": "gate-1", "approved": True},
+            {
+                "node_id": "gate-1",
+                "task_region_id": "task-1",
+                "gate_id": "gate-1",
+                "decision": "approved",
+                "decider": "system",
+            },
         ).model_copy(update={"position": 3}),
     ]
 
@@ -5059,7 +5044,7 @@ def test_task_projection_configured_gate_requires_decision() -> None:
         *events,
         _event(
             "approval_decision_recorded",
-            {"node_id": "gate-1", "decision": "approved"},
+            {"node_id": "gate-1", "decision": "approved", "decider": "system"},
         ).model_copy(update={"position": 3}),
     ]
     assert project_task_states(build_graph_catalog(), approved_events) == {"task-1": "accepted"}
@@ -5068,7 +5053,7 @@ def test_task_projection_configured_gate_requires_decision() -> None:
         *events,
         _event(
             "approval_decision_recorded",
-            {"node_id": "gate-1", "decision": "rejected"},
+            {"node_id": "gate-1", "decision": "rejected", "decider": "system"},
         ).model_copy(update={"position": 3}),
     ]
     assert project_task_states(build_graph_catalog(), rejected_events) == {"task-1": "pending"}
@@ -5222,10 +5207,12 @@ def test_task_projection_blocked_invalid_test() -> None:
         _event(
             "oversight_decision_recorded",
             {
+                "node_id": "oversight-1",
                 "task_region_id": "task-1",
                 "candidate_id": "cand-1",
                 "appeal_type": "invalid_test",
                 "decision": "accepted",
+                "decider": "system",
             },
         ).model_copy(update={"position": 2}),
     ]
@@ -5260,10 +5247,12 @@ def test_invalid_test_block_projection_uses_typed_payload_and_preserves_task_sta
         _event(
             "oversight_decision_recorded",
             {
+                "node_id": "oversight-1",
                 "task_region_id": "task-1",
                 "candidate_id": "cand-1",
                 "appeal_type": "invalid_test",
                 "decision": "accepted",
+                "decider": "system",
             },
         ).model_copy(update={"position": 2}),
     ]
@@ -5288,10 +5277,12 @@ def test_invalid_test_block_checkpoint_round_trips_typed_payload_and_drops_malfo
         _event(
             "oversight_decision_recorded",
             {
+                "node_id": "oversight-1",
                 "task_region_id": "task-1",
                 "candidate_id": "cand-1",
                 "appeal_type": "invalid_test",
                 "decision": "accepted",
+                "decider": "system",
             },
         ).model_copy(update={"position": 2}),
     )
@@ -5545,6 +5536,8 @@ def test_task_projection_active_appeal_overrides_latest_failure() -> None:
         _event(
             "appeal_opened",
             {
+                "node_id": "appeal-1",
+                "appealed_node_id": "verifier-1",
                 "task_region_id": "task-1",
                 "candidate_id": "cand-1",
                 "appeal_type": "invalid_test",
@@ -5580,10 +5573,12 @@ def test_task_projection_invalid_test_block_exits_after_replacement_pass() -> No
         _event(
             "oversight_decision_recorded",
             {
+                "node_id": "oversight-1",
                 "task_region_id": "task-1",
                 "candidate_id": "cand-1",
                 "appeal_type": "invalid_test",
                 "decision": "accepted",
+                "decider": "system",
             },
         ).model_copy(update={"position": 2}),
         _event(

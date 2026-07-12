@@ -11,7 +11,7 @@
   given_events:
     - run_lifecycle_changed: {from_state: queued, to_state: active}
     - node_created: {node_id: gate-successor, kind: worker, state: blocked}
-    - approval_decision_recorded: {node_id: gate-1, decision: approved}
+    - approval_decision_recorded: {node_id: gate-1, decision: approved, decider: system}
     - node_state_changed: {node_id: gate-successor, new_state: ready, trigger: gate_approved}
   when_command: null
   then_events: []
