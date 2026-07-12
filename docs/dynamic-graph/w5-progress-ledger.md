@@ -343,7 +343,21 @@ GREEN:
 
 ## Decision Event Payload Slice
 
-Status: complete.
+### Task 7 strict cutover
+
+Status: complete. Committed as `1bd87831b` after independent PASS.
+
+- Replaced decision, appeal, requirement-revision, and support-evidence strict paths with frozen, strict, extra-forbid event/command payloads and catalog-owned reducers/handlers.
+- Independent evidence: 339 focused, 7 fixture corpus, 897 broad graph,
+  and full suite 4,768 passed / 5 skipped / 3 warnings. Catalog baseline
+  remained 44 events / 23 commands; decisions and requirements were both
+  assert-clean and inventory-clean; architecture, Ruff, format, Pyright,
+  `git diff --check`, and commit hooks were green.
+- D4 retained sites/categories: `reduce_legacy_event`, authority-blocker scans,
+  and `_requires_authority_resolution(dict)` compatibility handling. Per the
+  user's decision, deletion is Task 13 after database backup/reset.
+
+Legacy decision payload slice status: complete.
 
 Implementation commits:
 - `6a6686ab8c18e15c472b27f6c0e88e3c457936f8` — typed decision event payloads.
