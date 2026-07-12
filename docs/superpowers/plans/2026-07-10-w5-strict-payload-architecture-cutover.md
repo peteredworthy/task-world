@@ -58,6 +58,33 @@
 | Old `GradeRow` proposal with `extra="allow"` | Strict `GradeRow` with explicit fields and `extra="forbid"`. |
 | Compatibility-first completion queue order | The dependency-ordered slices below: framework, domain specifications, full cutover, persistence/read paths, enforcement, operational reset, closeout. |
 
+## Deferred Compatibility Cleanup Register (added 2026-07-12)
+
+Domain tasks (1–8) delete an alias's **catalog specification and strict-path support** but deliberately retain its branches inside `reduce_legacy_event`, the full-history scan helpers, and related enum members. Durable `events_v2` history must keep replaying until the Task 13 database cutover, and the legacy reducer conditional is only deleted wholesale in Task 9. Deleting an alias's reducer branch inside a domain task would break replay of the existing database before the cutover.
+
+Rules:
+- A domain task marks its aliases "strict-path deleted, legacy-replay deferred" and adds a row here. It does NOT delete legacy reducer branches.
+- Task 9 Step 4 sweeps this register: every row must be deleted, and the grep gate below must come back empty.
+- A row may only be closed by Task 9 (or later); closing it earlier requires an explicit design amendment.
+
+| # | Deferred item (code sites) | Deferred by | Deleted in |
+|---|---|---|---|
+| D1 | `lease_suspended`: branch in `reduce_legacy_event` (projections.py ~2160), `_planner_generation_state` suspended branch (~4582), `GraphRecordKind.LEASE_SUSPENDED` enum member (models.py) | Task 4 (done) | Task 9 Step 4 |
+| D2 | `graph_patch_proposed` / proposal-status alias bookkeeping: `_graph_patch_payload_for_event`, `_open_proposal_blockers`, `_record_open_proposal_blocker`, proposal branch in patch-attempt `ensure_attempt`, `graph_patch_proposal` record/port check (~4852) | Task 6 (done) | Task 9 Step 4 |
+| D3 | Legacy output-record parsing, sparse verification fallbacks, and raw `value.get(...)` logic reachable only via `reduce_legacy_event` / full-history scans | Task 5 | Task 9 Step 4 |
+| D4 | `requirement_revision_proposed` and `authority_resolution_recorded` alias branches + `_requires_authority_resolution(dict)` raw helper, in `reduce_legacy_event` and the authority blocker scans | Task 7 | Task 9 Step 4 |
+| D5 | `environment_failure_accepted` / `check_result_classified` branches (projections.py ~2213, ~5508) | Task 8 | Task 9 Step 4 |
+| D6 | `reduce_legacy_event` itself, its callers in `_commands.py`, and typed-spec reducers that delegate into it (e.g. `events/patches.py`) | Tasks 1–8 (structural) | Task 9 Steps 3–4 |
+
+Task 9 grep gate (run after Step 4; docs and Alembic migrations exempt):
+
+```bash
+grep -rn "lease_suspended\|graph_patch_proposed\|requirement_revision_proposed\|authority_resolution_recorded\|environment_failure_accepted\|check_result_classified\|reduce_legacy_event" \
+  src/orchestrator/graph src/orchestrator/graph_runtime
+```
+
+Expected: no matches.
+
 ## Live Catalog Baseline
 
 The completion gate starts from 44 currently produced event names:
@@ -697,7 +724,7 @@ Use `tuple[ResourceClaimProjection, ...]` for resource claims and exact nullable
 
 Run: `uv run pytest tests/unit/test_lease_event_payloads.py tests/unit/test_scheduler.py tests/unit/test_graph_commands.py tests/unit/test_callbacks.py tests/unit/test_fixture_corpus.py -q`
 
-Expected: pass; there is no `lease_suspended` specification or reducer branch.
+Expected: pass; there is no `lease_suspended` event specification in the catalog and no strict-path support for it. (Amended 2026-07-12: the `lease_suspended` branches inside `reduce_legacy_event` and `_planner_generation_state`, and the `GraphRecordKind.LEASE_SUSPENDED` enum member, are deliberately retained until Task 9 — durable history must replay until the Task 13 database cutover. Register entry D1.)
 
 - [ ] **Step 5: Commit the domain slice**
 
@@ -766,7 +793,7 @@ Expected: exit 0; record union/grade semantics are the only manual portion.
 
 - [ ] **Step 3: Implement strict record/verification event specifications**
 
-Use a discriminated `OutputRecordPayload` union and explicit verification fields. Move record acceptance and verification reducers into `events/records.py`; delete legacy output-record parsing, sparse verification fallbacks, and repeated `value.get(...)` logic.
+Use a discriminated `OutputRecordPayload` union and explicit verification fields. Move record acceptance and verification reducers into `events/records.py`; delete legacy output-record parsing, sparse verification fallbacks, and repeated `value.get(...)` logic **from the strict specification path only**. (Amended 2026-07-12: legacy parsing that is reachable only through `reduce_legacy_event` or full-history scans is NOT deleted here — it stays until Task 9 so existing durable history keeps replaying. List the exact retained sites under register entry D3 when you finish this task.)
 
 - [ ] **Step 4: Implement join/final-gate command specifications**
 
@@ -833,7 +860,7 @@ Expected: exit 0; opaque named patch values remain manual semantic choices, not 
 
 - [ ] **Step 2: Implement patch models/specifications and typed reducers**
 
-Move accepted/rejected attempt updates into `events/patches.py`. Keep `PatchEnvelope`/`PatchOp` as the typed business value for operations. Remove open-proposal replay bookkeeping that is reachable only from unproduced alias events.
+Move accepted/rejected attempt updates into `events/patches.py`. Keep `PatchEnvelope`/`PatchOp` as the typed business value for operations. Remove open-proposal replay bookkeeping from the strict specification path. (Amended 2026-07-12: the `graph_patch_proposed`/proposal-status bookkeeping inside `reduce_legacy_event` and the blocker/attempt scan helpers is deliberately retained until Task 9 — see register entry D2. Only the catalog and strict dispatch must be alias-free after this task.)
 
 - [ ] **Step 3: Implement the strict submit command and move its handler**
 
@@ -909,7 +936,7 @@ Expected: all four checks exit 0; no shared wrapper was hand-rewritten around th
 
 - [ ] **Step 2: Implement decision and requirement event modules**
 
-Define separate payload models when semantics differ; do not use one permissive decision base with many optional aliases. Move latest-decision, appeal resolution, authority requirement, revision, and evidence reducers into their owning modules.
+Define separate payload models when semantics differ; do not use one permissive decision base with many optional aliases. Move latest-decision, appeal resolution, authority requirement, revision, and evidence reducers into their owning modules. (Amended 2026-07-12: the `requirement_revision_proposed` and `authority_resolution_recorded` alias branches and `_requires_authority_resolution(dict)` inside `reduce_legacy_event` and the authority blocker scans are deliberately retained until Task 9 — register entry D4. Do not delete them here; only the catalog and strict path must be alias-free.)
 
 - [ ] **Step 3: Implement four strict command specifications**
 
@@ -960,7 +987,7 @@ Expected: all six event producers, two command entries, runtime consumers, paylo
 
 - [ ] **Step 1: Write strict file-state/gatekeeper/cleanup RED tests**
 
-Assert complete current producer shapes round-trip, malformed nested verdict/file entries fail, `resolved_count` and cost fields remain explicit, and audit `file_state_rejected` is registered as projection-neutral. Remove legacy environment/check-result alias tests because neither event is produced.
+Assert complete current producer shapes round-trip, malformed nested verdict/file entries fail, `resolved_count` and cost fields remain explicit, and audit `file_state_rejected` is registered as projection-neutral. Remove legacy environment/check-result alias tests because neither event is produced. (Amended 2026-07-12: removing the alias TESTS and catalog support is this task's scope; the `environment_failure_accepted`/`check_result_classified` reducer branches in `reduce_legacy_event` and the classification scan are deliberately retained until Task 9 — register entry D5.)
 
 Run: `uv run pytest tests/unit/test_cleanup_event_payloads.py tests/unit/test_graph_gatekeeper.py -q`
 
@@ -1073,11 +1100,13 @@ The tuple names are public domain APIs; adding a normal event/command to an exis
 
 - [ ] **Step 3: Cut command and reducer dispatch to catalog-only paths**
 
-Delete `COMMAND_HANDLERS`, the event-type conditional in `reduce_event`, per-event parse wrappers, `_typed_*` helpers, and `_UNCONVERTED_W5_BRIDGE`. Unknown names now raise typed catalog errors rather than producing a permissive fallback event; a deliberately invalid command may still produce `command_rejected` only after a known command's typed handler evaluates domain rules.
+Delete `COMMAND_HANDLERS`, the event-type conditional in `reduce_event`, **`reduce_legacy_event` and every typed-spec reducer that delegates into it (register entry D6)**, per-event parse wrappers, `_typed_*` helpers, and `_UNCONVERTED_W5_BRIDGE`. Unknown names now raise typed catalog errors rather than producing a permissive fallback event; a deliberately invalid command may still produce `command_rejected` only after a known command's typed handler evaluates domain rules.
 
 - [ ] **Step 4: Delete compatibility models, validators, aliases, and `_commands.py`**
 
 Remove all W5 payload classes from `models.py`, their exports, `extra` helpers, and legacy before validators. Keep unrelated Pydantic normalizers only when they apply to non-W5 business records; the architecture guard in Task 12 will distinguish them by boundary/type ownership.
+
+**Sweep the Deferred Compatibility Cleanup Register (D1–D6).** Delete every registered site: `lease_suspended` branches and `GraphRecordKind.LEASE_SUSPENDED`; `graph_patch_proposed`/proposal bookkeeping helpers; deferred legacy record/verification parsing; `requirement_revision_proposed`/`authority_resolution_recorded` alias branches and `_requires_authority_resolution`; `environment_failure_accepted`/`check_result_classified` branches. Then run the register's grep gate and require zero matches in `src/orchestrator/graph` and `src/orchestrator/graph_runtime`. A register row left standing is a Task 9 verification FAILURE, not a note.
 
 - [ ] **Step 5: Run catalog and full unit graph tests**
 
@@ -1458,6 +1487,7 @@ git commit -m "docs: close W5 strict payload architecture"
 - [ ] Static architecture targets are all zero and pre-commit enforces them.
 - [ ] AST inventory classifies the entire migration surface; every mechanically eligible edit was performed by the LibCST codemod, every domain reports zero eligible sites remaining, and every second codemod run is empty.
 - [ ] The model-field, new-event, and new-command maintenance exercises demonstrate no storage or central-dispatch changes.
+- [ ] Every Deferred Compatibility Cleanup Register row (D1–D6) is deleted and the register grep gate returns no matches.
 - [ ] Corpus replay, graph-focused tests, full backend tests, Ruff, formatting, Pyright, and diff checks pass.
 - [ ] The database was backed up before reset, a fresh schema was initialized, and a representative typed graph completed.
 - [ ] Documentation records before/after metrics, retained/replaced work, complete-read measurements, and W5 closure.

@@ -330,19 +330,6 @@ GREEN (independently rerun by a fresh final verifier):
   - Result: passed, 0 errors.
 - `git diff --check`
   - Result: passed.
-
-## Strict-cutover Task 3: topology, nodes, sessions, inputs, revisions
-
-Status: implementation and gates ready for semantics review; not committed or final-reviewed. The twelve topology specifications are strict and catalog-owned;
-compiler output and `seed_compiled_events` carry `HydratedEvent` values. The
-minimal strict `output_record_accepted` specification is registered early in
-`events/records.py` solely to hydrate compiler output; its full records-domain
-projection semantics remain deferred. The strict suite rejects historical aliases,
-unknown fields, and malformed nested values rather than salvaging them. Final
-evidence: topology assert-clean, second apply with zero changes, inventory domain
-check, architecture check, 250 focused tests, compiler 23 tests, Ruff, Pyright,
-and `git diff --check` all passed; the current verification is 886 broad graph,
-187 focused, inventory 28, and baseline 44/23.
 - Commit hooks:
   - Result: 4,508 backend tests passed, 4 skipped; Ruff, formatting, secret
     detection, Pyright, module-import, signal-routing, UI lint, and UI
@@ -481,3 +468,65 @@ GREEN (independently rerun by a fresh final verifier):
   - Result: passed, 0 errors.
 - `git diff --check`
   - Result: passed.
+
+# Strict Payload Architecture Cutover (plan: docs/superpowers/plans/2026-07-10-w5-strict-payload-architecture-cutover.md)
+
+The entries below supersede the compatibility-first slices above where they
+overlap. Task 0–2 evidence lives in `.superpowers/sdd/progress.md`; slice
+reports live in `.superpowers/sdd/`.
+
+## Strict-cutover Task 3: topology, nodes, sessions, inputs, revisions
+
+Status: complete. Committed as `a2885ae1c` (corrected 2026-07-12; an earlier
+version of this entry said "not committed or final-reviewed" and was stale).
+
+The twelve topology specifications are strict and catalog-owned; compiler
+output and `seed_compiled_events` carry `HydratedEvent` values. The minimal
+strict `output_record_accepted` specification is registered early in
+`events/records.py` solely to hydrate compiler output; its full records-domain
+projection semantics remain deferred to Task 5. The strict suite rejects
+historical aliases, unknown fields, and malformed nested values rather than
+salvaging them.
+
+Evidence: topology assert-clean, second apply with zero changes, inventory
+domain check, architecture check, 250 focused tests, compiler 23 tests, Ruff,
+Pyright, and `git diff --check` all passed; verification at completion was 886
+broad graph, 187 focused, inventory 28, and baseline 44/23. Task 3.5 consumer
+readback follow-up: full suite 4,732 passed, 5 skipped.
+
+## Strict-cutover Tasks 4 and 6: lease/scheduling and patch domains
+
+Status: complete. Committed as `14c32a73c` (single combined commit; the plan
+prescribed one commit per domain — deviation accepted, recorded here).
+
+Scope:
+- `events/leases.py` with five strict lease specs; `events/patches.py` with
+  two strict patch specs.
+- `ScheduleTickCommand`, empty `ReconcileCommand`, and `SubmitPatchCommand`
+  own their domains; scheduling logic moved out of `_commands.py` into
+  `commands/schedule.py`; `commands/lease_bridge.py` deleted.
+- No `lease_suspended` or proposal-alias specification exists in the catalog.
+
+Deferred (NOT deleted here — see the plan's Deferred Compatibility Cleanup
+Register, entries D1 and D2, swept in Task 9):
+- `lease_suspended` branches in `reduce_legacy_event` and
+  `_planner_generation_state`, and `GraphRecordKind.LEASE_SUSPENDED`.
+- `graph_patch_proposed`/proposal-status bookkeeping helpers
+  (`_graph_patch_payload_for_event`, `_open_proposal_blockers`,
+  `_record_open_proposal_blocker`, attempt/record-port branches).
+These are retained deliberately: durable history must replay until the Task 13
+database cutover. The builder report's claim that "`lease_suspended` remains
+absent" is true of the catalog only.
+
+GREEN (independently rerun by a fresh verifier, 2026-07-12, at `14c32a73c`):
+- Lease and patch codemod `--assert-clean`: pass, both domains.
+- `uv run python scripts/w5_payload_ast_inventory.py --check-domain leases` /
+  `--check-domain patches`: pass; baseline 44 events / 23 commands.
+- `uv run python scripts/check_graph_payload_architecture.py`: exit 0.
+- Targeted suites (lease/patch payloads, scheduler, graph commands, callbacks,
+  fixture corpus, patch validator, prompt generation, graph planner):
+  passed, 416 tests.
+- `uv run ruff check .`: passed.
+- `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime`:
+  passed, 0 errors.
+- `uv run pytest tests/ -q`: 4,733 passed, 5 skipped (67s).
