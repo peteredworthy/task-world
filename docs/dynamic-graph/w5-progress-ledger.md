@@ -1,8 +1,118 @@
 # W5 Typed Payloads Progress Ledger
 
+## Strict Cutover Task 5 — Records, Verification, Join, Final Gate
+
+Status: complete. Committed as `d12908002` after independent verification.
+
+Changes: completed the existing `output_record_accepted` strict specification
+in place, added strict verification outcomes and grade rows, moved typed join
+and final-gate commands into the records domain, and migrated eligible raw
+record-acceptance producers through the records codemod.
+
+Prior verification evidence is superseded by the follow-up entry below. Fresh
+focused, corpus, broad graph, architecture, codemod, lint, and type evidence
+is required before this slice can be marked complete.
+
+D3: strict-path parsing was deleted while legacy-only replay remains deferred.
+The retained sites are `reduce_legacy_event`,
+`reduce_compact_output_record_accepted`, `_checkpoint_output_record_payload`,
+`_parse_output_record_payload`, `_record_verification_result`,
+`_verification_payload_outcome`, `_check_result_payload_status`, and
+`_gap_classification_payload_classification`. Per the user's governing
+decision, deletion occurs in Task 13 after database backup/reset, not Task 9.
+Commit SHA: `d12908002`.
+
 Seed branch: `main`
 Seed SHA: `bd41b5b24756fec7441cbfd0ee150739b9afede7`
 Work branch: `codex/w5-typed-payloads`
+
+### Follow-up replay/producer verification (2026-07-12; incomplete)
+
+The prior green claim above is stale after the requested fresh broad replay.
+Investigation reproduced 17 original graph failures (`879 passed, 17 failed`) and
+classified them as active producer/fixture incompatibilities, not a reason to
+weaken strict payloads. A narrower replay boundary test was added and observed
+RED: a schema-generation-2 malformed `output_record_accepted` event was
+incorrectly replayed through the legacy reducer. The named
+`reduce_d3_legacy_record_replay` boundary now accepts only schema generation 1
+record events; its focused regression set passed (`4 passed`).
+
+The records LibCST codemod was extended with a RED→GREEN fixture conversion
+test for explicit verification outcomes, but its candidate fixture
+idempotency test remains failing. The current broad graph command is
+`uv run pytest tests/ -k graph -q --tb=short --log-level=CRITICAL` and reports
+`879 passed, 18 failed`; the added failure is the codemod-test regression.
+Remaining failures are: one active file-state cleanup producer with no strict
+`record_type`; eight node-detail fixture replays with undeclared candidate
+`value.body`/`grades`; one light-read fixture with undeclared candidate
+`body`/`node_creation_context`; four fixtures missing strict verification
+outcomes; and two callback producers with undeclared candidate `value.node_id`.
+The focused suite currently reports `479 passed, 2 failed`, both in
+`test_w5_strict_payload_codemod.py` (raw output-record nesting and candidate
+idempotency). `records --assert-clean`, records inventory (44 events / 23
+commands), architecture guard, and `git diff --check` exited zero. No commit
+was made, and the user-modified continuation prompt remains untouched.
+
+### Bounded producer/replay completion evidence (2026-07-12)
+
+Resolved the follow-up list without relaxing strict validation: the cleanup
+producer now provides the file-state discriminator; strict candidates use
+closed optional detail fields for `body`, `grades`, `node_creation_context`,
+and `node_id`; callback candidates and read-model fixtures use only those
+declared fields; and verification fixtures now state both record and nested
+outcomes. The records codemod's nested-record and idempotency regressions are
+covered and fixed. Current-schema records remain strict and do not use D3.
+
+Fresh evidence (all exit 0):
+- `uv run pytest tests/unit/test_w5_strict_payload_codemod.py ... -q` —
+  `482 passed` (records codemod plus focused Task 5 suites).
+- `uv run pytest tests/unit/test_fixture_corpus.py -q` — `7 passed`.
+- `uv run pytest tests/ -k graph -q --tb=short --log-level=CRITICAL` —
+  `897 passed`.
+- Architecture guard; records `--assert-clean`; records inventory check —
+  passed, catalog baseline `44 events / 23 commands`.
+- `uv run ruff check .`,
+  `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime`, and
+  `git diff --check` — passed (Pyright: `0 errors`).
+
+The slice remains intentionally uncommitted and is not marked complete here:
+there is no independent fresh verifier report.
+
+### Final model-hardening follow-up (2026-07-12; complete)
+
+The strict union now uses independent frozen, `extra="forbid"` models rather
+than narrowing mutable permissive record subclasses. The final producer
+alignment declares the exact active artifact-reference, decision-request,
+verification-report, and file-state fields. File-state bridge serialization
+also preserves its concrete entry fields and fixed discriminator fields.
+Checkpoint hydration retains strict records, and dynamic check binding accepts
+the strict routine-snapshot variant.
+
+Fresh final evidence (all exit 0):
+- Task 5 focused contracts: `413 passed`.
+- Direct producer/checkpoint consequences: `245 passed`.
+- Fixture corpus: `7 passed`.
+- Broad graph matrix: `897 passed`.
+- Architecture guard, records `--assert-clean`, and records inventory: passed,
+  baseline `44 events / 23 commands`.
+- Ruff, graph/runtime Pyright (`0 errors`), and `git diff --check`: passed.
+
+Independent final verification at commit `d12908002` (all exit 0):
+- Targeted post-format suite: `569 passed`.
+- Strict/D3 probes: `6 passed`.
+- Fixture corpus: `7 passed`.
+- Broad graph matrix: `899 passed`.
+- Catalog baseline: `44 events / 23 commands`.
+- Architecture guard, records `--assert-clean`, inventory, Ruff format,
+  Pyright, and `git diff --check`: passed.
+- Commit hooks: passed.
+
+D3 retains `reduce_legacy_event`, `reduce_compact_output_record_accepted`,
+`_checkpoint_output_record_payload`, `_parse_output_record_payload`,
+`_record_verification_result`, `_verification_payload_outcome`,
+`_check_result_payload_status`, and
+`_gap_classification_payload_classification`. Their deletion is governed by
+Task 13 after database backup/reset, not Task 9.
 
 ## Phase 0 - Corpus Replay Parity Safety Net
 
