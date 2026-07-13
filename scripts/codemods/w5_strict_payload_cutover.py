@@ -128,6 +128,8 @@ class FileTransformResult:
 class MigrationRunResult:
     exit_code: int
     output: str
+    eligible_sites: int = 0
+    second_run_changes: int = 0
 
 
 def _simple_string(value: cst.BaseExpression) -> str | None:
@@ -2376,6 +2378,7 @@ class StrictPayloadCutoverCodemod:
             noncanonical_specifications
             and self.migration.domain != "catalog_cutover"
             and self.migration.command_routes
+            and will_compose_command_specs
         ):
             initial_diagnostics.extend(
                 CodemodDiagnostic(
@@ -3939,7 +3942,12 @@ def run_migration(migration: DomainMigration, root: Path, mode: str) -> Migratio
     if migration.domain == "catalog_injection":
         target_names = tuple(route.callable_name for route in migration.catalog_injections)
         production_paths = tuple(
-            str(path.relative_to(root)) for path in (root / "src" / "orchestrator").rglob("*.py")
+            str(path.relative_to(root))
+            for path in (root / "src" / "orchestrator").rglob("*.py")
+            if (
+                "build_graph_catalog(" in (source := path.read_text())
+                or any(name in source for name in target_names)
+            )
         )
         discovered = tuple(
             str(path.relative_to(root))
@@ -4037,6 +4045,34 @@ def run_migration(migration: DomainMigration, root: Path, mode: str) -> Migratio
     diagnostics = "\n".join(item.render() for item in result.diagnostics)
     if diagnostics:
         diagnostics += "\n"
+    if mode == "measure":
+        second_input = (
+            {path: source for path, source in transformed_sources.items() if path.endswith(".py")}
+            if migration.domain == "leases"
+            else transformed_sources
+        )
+        second = StrictPayloadCutoverCodemod(python_migration).transform_files(second_input)
+        second_sources = dict(second.sources)
+        if migration.domain == "leases":
+            second_sources.update(
+                {
+                    path: _complete_lease_yaml_fixtures(source)
+                    for path, source in transformed_sources.items()
+                    if path.endswith(".yaml")
+                }
+            )
+        second_diffs = "".join(
+            _diff(path, transformed_sources[path], second_sources[path])
+            for path in sorted(transformed_sources)
+            if transformed_sources[path] != second_sources[path]
+        )
+        return MigrationRunResult(
+            1 if result.diagnostics else 0,
+            diffs + diagnostics,
+            sum(line.startswith("@@") for line in diffs.splitlines()) + len(result.diagnostics),
+            sum(line.startswith("@@") for line in second_diffs.splitlines())
+            + len(second.diagnostics),
+        )
     if mode == "dry-run":
         return MigrationRunResult(1 if diagnostics else 0, diffs + diagnostics)
     if mode == "assert-clean":

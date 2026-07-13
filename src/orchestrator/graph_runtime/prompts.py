@@ -10,6 +10,7 @@ from orchestrator.graph import (
     EventEnvelope,
     GraphProjection,
     OutputRecordAcceptedPayload,
+    event_payload_json,
 )
 from orchestrator.graph.command_bindings import resolve_check_command_definition
 from orchestrator.graph.models import FileStateRecord, GapClassificationRecord
@@ -586,8 +587,8 @@ def _planner_deferred_reasons(events: list[EventEnvelope]) -> dict[str, str]:
     for event in events:
         if event.event_type != "node_deferred":
             continue
-        node_id = event.payload.get("node_id")
-        reason = event.payload.get("reason")
+        node_id = event_payload_json(event).get("node_id")
+        reason = event_payload_json(event).get("reason")
         if isinstance(node_id, str) and isinstance(reason, str):
             reasons[node_id] = reason
     return reasons

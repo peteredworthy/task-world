@@ -210,6 +210,12 @@ class CatalogCutoverSite(SourceSite):
     expression: str
 
 
+@dataclass(frozen=True, order=True)
+class ArchitectureFact(SourceSite):
+    rule: str
+    expression: str
+
+
 @dataclass(frozen=True)
 class DomainInventory:
     """A deterministic domain-filtered view of an inventory report."""
@@ -267,7 +273,10 @@ class DomainInventory:
             f"{site.classification} ({site.expression})"
             for site in self.catalog_cutover_sites
         )
-        diagnostics.extend(site.render() for site in self.architecture_diagnostics)
+        diagnostics.extend(
+            f"{site.category}: {site.path}:{site.line}:{site.column}: {site.expression}"
+            for site in self.architecture_diagnostics
+        )
         return tuple(diagnostics)
 
 
@@ -286,6 +295,8 @@ class InventoryReport:
     partial_payload_consumers: tuple[SourceSite, ...]
     catalog_cutover_sites: tuple[CatalogCutoverSite, ...] = ()
     catalog_injection_sites: tuple[CatalogCutoverSite, ...] = ()
+    architecture_facts: tuple[ArchitectureFact, ...] = ()
+    deferred_architecture_facts: tuple[ArchitectureFact, ...] = ()
     scanned_paths: tuple[Path, ...] = ()
 
     @property
@@ -450,6 +461,8 @@ class InventoryReport:
             "allowlists": _records(self.allowlists),
             "partial_payload_consumers": _records(self.partial_payload_consumers),
             "catalog_cutover_sites": _records(self.catalog_cutover_sites),
+            "architecture_facts": _records(self.architecture_facts),
+            "deferred_architecture_facts": _records(self.deferred_architecture_facts),
         }
 
     def to_json(self) -> str:
@@ -709,6 +722,14 @@ def _dynamic_classification(
         "reduce_event",
         "stored_graph_event",
     }:
+        return "typed_event_serialization", ()
+    if (
+        _call_name(call.func) == "EventEnvelope"
+        and isinstance(expression, ast.Attribute)
+        and expression.attr == "event_type"
+        and isinstance(expression.value, ast.Name)
+        and expression.value.id == "event"
+    ):
         return "typed_event_serialization", ()
     if owner_name in {"make_event", "event_factory"}:
         return "generic_factory_definition", ()
@@ -978,6 +999,559 @@ def _inside_reduce_legacy_event(node: ast.AST, parsed: _ParsedFile) -> bool:
     return False
 
 
+@dataclass(frozen=True)
+class LegacyArchitectureSite:
+    path_suffix: str
+    function: str
+    rule: str
+    raw_expressions: frozenset[str]
+    event_names: frozenset[str]
+    generation_attribute: str
+
+
+LEGACY_ARCHITECTURE_SITES = (
+    LegacyArchitectureSite(
+        "src/orchestrator/graph/projections.py",
+        "reduce_d3_legacy_record_replay",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload.get('record')"}),
+        frozenset({"output_record_accepted", "verification_passed", "verification_failed"}),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph/projections.py",
+        "reduce_legacy_event",
+        "W5RAW_PAYLOAD_READ",
+        frozenset(),
+        frozenset(
+            {
+                "lease_suspended",
+                "graph_patch_proposed",
+                "requirement_revision_proposed",
+                "authority_resolution_recorded",
+                "environment_failure_accepted",
+                "check_result_classified",
+            }
+        ),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph/_commands.py",
+        "apply_command",
+        "W5RAW_BOUNDARY_DICT",
+        frozenset({"<boundary>"}),
+        frozenset({"seed_compiled_events", "submit_patch", "schedule_tick", "reconcile"}),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph/callbacks.py",
+        "_history_payload_value",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload.get(field)"}),
+        frozenset(
+            {
+                "callback_accepted",
+                "callback_rejected_stale",
+                "callback_rejected_conflict",
+                "callback_duplicate_returned",
+                "lease_expired",
+                "agent_died",
+                "node_state_changed",
+            }
+        ),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph/projections.py",
+        "reduce_compact_output_record_accepted",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload.get('record')"}),
+        frozenset({"output_record_accepted"}),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph/projections.py",
+        "_add_record_summary_positions",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload['record']", "event.payload.get('record_id')"}),
+        frozenset({"output_record_accepted"}),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph/projections.py",
+        "project_gatekeeper_report",
+        "W5RAW_PAYLOAD_READ",
+        frozenset(
+            {
+                "event.payload.get('record_id')",
+                "event.payload.get('verdicts')",
+                "event.payload.get('file_state_record_id')",
+            }
+        ),
+        frozenset(
+            {
+                "file_state_accepted",
+                "gatekeeper_verdict_recorded",
+                "gatekeeper_cost_recorded",
+            }
+        ),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph/projections.py",
+        "_latest_lease_generation",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload.get('node_id')", "event.payload.get('generation')"}),
+        frozenset({"lease_granted", "lease_renewed", "lease_suspended"}),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph_runtime/dispatch.py",
+        "_record_start_heartbeat",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload.get('command_type')"}),
+        frozenset({"heartbeat_recorded", "command_rejected"}),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph_runtime/dispatch.py",
+        "_dispatch_snapshot_cleanup",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload.get('command_type')"}),
+        frozenset({"output_record_accepted", "command_rejected"}),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph_runtime/dispatch.py",
+        "_bound_file_state_snapshot",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload.get('record', {})"}),
+        frozenset({"output_record_accepted", "input_bound"}),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph_runtime/store.py",
+        "_is_callback_history_event",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload.get('trigger')"}),
+        frozenset(
+            {
+                "callback_accepted",
+                "callback_rejected_stale",
+                "callback_rejected_conflict",
+                "callback_duplicate_returned",
+            }
+        ),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph_runtime/store.py",
+        "_lease_update_ids",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload.get('lease_id')"}),
+        frozenset({"lease_granted", "lease_renewed", "lease_suspended"}),
+        "schema_version",
+    ),
+    LegacyArchitectureSite(
+        "src/orchestrator/graph_runtime/store.py",
+        "_input_bound_edge_ids_needing_ports",
+        "W5RAW_PAYLOAD_READ",
+        frozenset({"event.payload.get('to_port')", "event.payload.get('edge_id')"}),
+        frozenset({"input_bound"}),
+        "schema_version",
+    ),
+)
+
+
+def _containing_function(node: ast.AST, parsed: _ParsedFile) -> str | None:
+    current = node
+    while current in parsed.parents:
+        current = parsed.parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current.name
+    return None
+
+
+def _containing_function_node(
+    node: ast.AST, parsed: _ParsedFile
+) -> ast.FunctionDef | ast.AsyncFunctionDef | None:
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        return node
+    current = node
+    while current in parsed.parents:
+        current = parsed.parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current
+    return None
+
+
+def _dict_any_annotation(annotation: ast.expr | None) -> bool:
+    if annotation is None:
+        return False
+    rendered = ast.unparse(annotation).replace(" ", "")
+    return rendered in {"dict[str,Any]", "dict[str,object]"}
+
+
+def _keyword(call: ast.Call, name: str) -> ast.expr | None:
+    return next((item.value for item in call.keywords if item.arg == name), None)
+
+
+def _has_schema_generation_one_boundary(node: ast.AST, operator: type[ast.cmpop]) -> bool:
+    return any(
+        isinstance(child, ast.Compare)
+        and isinstance(child.left, ast.Attribute)
+        and child.left.attr == "schema_version"
+        and len(child.ops) == 1
+        and isinstance(child.ops[0], operator)
+        and len(child.comparators) == 1
+        and isinstance(child.comparators[0], ast.Constant)
+        and child.comparators[0].value == 1
+        for child in ast.walk(node)
+    )
+
+
+def _is_d3_replay_branch(branch: ast.If, parsed: _ParsedFile) -> bool:
+    predicate = parsed.functions.get("_is_d3_legacy_record_replay_event")
+    adapter = parsed.functions.get("reduce_d3_legacy_record_replay")
+    if predicate is None or adapter is None:
+        return False
+    return (
+        any(
+            isinstance(call, ast.Call)
+            and _call_name(call.func) == "_is_d3_legacy_record_replay_event"
+            for call in ast.walk(branch.test)
+        )
+        and any(
+            isinstance(call, ast.Call) and _call_name(call.func) == "reduce_d3_legacy_record_replay"
+            for statement in branch.body
+            for call in ast.walk(statement)
+        )
+        and _has_schema_generation_one_boundary(predicate, ast.Eq)
+        and _has_schema_generation_one_boundary(adapter, ast.NotEq)
+    )
+
+
+def _has_generation_one_guard(function: ast.AST, attribute: str) -> bool:
+    return any(
+        isinstance(child, ast.Compare)
+        and isinstance(child.left, ast.Attribute)
+        and child.left.attr == attribute
+        and len(child.ops) == 1
+        and isinstance(child.ops[0], (ast.Eq, ast.NotEq))
+        and len(child.comparators) == 1
+        and isinstance(child.comparators[0], ast.Constant)
+        and child.comparators[0].value == 1
+        for child in ast.walk(function)
+    )
+
+
+def _event_literal_guard(node: ast.AST, event_names: frozenset[str]) -> bool:
+    return any(
+        isinstance(child, ast.Compare)
+        and isinstance(child.left, ast.Attribute)
+        and child.left.attr == "event_type"
+        and bool(
+            {
+                value.value
+                for comparator in child.comparators
+                for value in ast.walk(comparator)
+                if isinstance(value, ast.Constant) and isinstance(value.value, str)
+            }.intersection(event_names)
+        )
+        for child in ast.walk(node)
+    )
+
+
+def _terminates_control_flow(branch: Sequence[ast.stmt]) -> bool:
+    return any(
+        isinstance(statement, (ast.Return, ast.Raise, ast.Continue, ast.Break))
+        for statement in branch
+    )
+
+
+def _control_predicates(
+    node: ast.AST,
+    function: ast.FunctionDef | ast.AsyncFunctionDef,
+    parsed: _ParsedFile,
+) -> tuple[ast.AST, ...]:
+    predicates: list[ast.AST] = []
+    current = node
+    while current in parsed.parents and current is not function:
+        parent = parsed.parents[current]
+        if isinstance(parent, ast.If) and any(current is statement for statement in parent.body):
+            predicates.append(parent.test)
+        elif isinstance(parent, ast.comprehension):
+            predicates.extend(parent.ifs)
+        elif isinstance(parent, (ast.BoolOp, ast.IfExp)):
+            predicates.append(parent)
+        for field_name in ("body", "orelse"):
+            statements = getattr(parent, field_name, None)
+            if not isinstance(statements, list) or current not in statements:
+                continue
+            position = statements.index(current)
+            predicates.extend(
+                statement.test
+                for statement in statements[:position]
+                if isinstance(statement, ast.If) and _terminates_control_flow(statement.body)
+            )
+        current = parent
+    return tuple(predicates)
+
+
+def _matches_legacy_site(
+    parsed: _ParsedFile,
+    function: ast.FunctionDef | ast.AsyncFunctionDef | None,
+    node: ast.AST,
+    rule: str,
+) -> bool:
+    if function is None:
+        return False
+    for site in LEGACY_ARCHITECTURE_SITES:
+        if (
+            not parsed.path.as_posix().endswith(site.path_suffix)
+            or function.name != site.function
+            or rule != site.rule
+        ):
+            continue
+        expression = "<boundary>" if node is function else ast.unparse(node)
+        if expression not in site.raw_expressions:
+            continue
+        if node is function:
+            if _has_generation_one_guard(function, site.generation_attribute) and set(
+                _literal_strings_from_tree(function)
+            ).intersection(site.event_names):
+                return True
+            continue
+        predicates = _control_predicates(node, function, parsed)
+        if any(
+            _has_generation_one_guard(predicate, site.generation_attribute)
+            for predicate in predicates
+        ) and any(_event_literal_guard(predicate, site.event_names) for predicate in predicates):
+            return True
+    return False
+
+
+def _literal_strings_from_tree(node: ast.AST) -> tuple[str, ...]:
+    return tuple(
+        child.value
+        for child in ast.walk(node)
+        if isinstance(child, ast.Constant) and isinstance(child.value, str)
+    )
+
+
+def _has_current_boundary_role(function: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    arguments = {
+        argument.arg
+        for argument in (*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs)
+    }
+    calls = [child for child in ast.walk(function) if isinstance(child, ast.Call)]
+    command_resolution = any(
+        isinstance(call.func, ast.Attribute) and call.func.attr == "resolve_command"
+        for call in calls
+    )
+    execution_signature = (
+        {"command_type", "payload"}.issubset(arguments)
+        and bool(arguments.intersection({"catalog", "context"}))
+    ) or (
+        {"event_type", "payload"}.issubset(arguments)
+        and bool(arguments.intersection({"catalog", "context"}))
+    )
+    normalized = function.name.lstrip("_")
+    conventional_role = not function.name.startswith("_") and (
+        normalized.startswith(("handle_", "apply_", "reduce_", "dispatch_"))
+        or normalized in {"handle", "apply", "reduce", "dispatch"}
+    )
+    return command_resolution or execution_signature or conventional_role
+
+
+def _inherits_strict_payload(node: ast.ClassDef, parsed: _ParsedFile) -> bool:
+    classes = {
+        child.name: child for child in ast.walk(parsed.tree) if isinstance(child, ast.ClassDef)
+    }
+
+    def inherits(candidate: ast.ClassDef, seen: frozenset[str]) -> bool:
+        for base in candidate.bases:
+            name = _call_name(base)
+            if name == "StrictPayload":
+                return True
+            if name is not None and name not in seen and name in classes:
+                if inherits(classes[name], seen | {name}):
+                    return True
+        return False
+
+    return inherits(node, frozenset({node.name}))
+
+
+def _is_command_dispatch_dict(value: ast.expr | None, parsed: _ParsedFile) -> bool:
+    if not isinstance(value, ast.Dict) or len(value.keys) < 2:
+        return False
+    keys = [
+        key.value
+        for key in value.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    ]
+    if len(keys) != len(value.keys):
+        return False
+
+    def handler_like(handler: ast.expr) -> bool:
+        if isinstance(handler, ast.Lambda):
+            return True
+        if isinstance(handler, ast.Name):
+            return handler.id in parsed.functions or any(
+                token in handler.id
+                for token in ("handle", "handler", "apply", "dispatch", "callback")
+            )
+        if isinstance(handler, ast.Attribute):
+            return any(
+                token in handler.attr
+                for token in ("handle", "handler", "apply", "dispatch", "callback")
+            )
+        return False
+
+    return all(handler_like(handler) for handler in value.values)
+
+
+def _architecture_facts(
+    parsed: _ParsedFile,
+) -> tuple[tuple[ArchitectureFact, ...], tuple[ArchitectureFact, ...]]:
+    """Return shared catalog-wide enforcement facts from one parsed file."""
+
+    facts: list[ArchitectureFact] = []
+    deferred: list[ArchitectureFact] = []
+
+    def add(node: ast.AST, rule: str) -> None:
+        facts.append(
+            ArchitectureFact(
+                str(parsed.path), node.lineno, node.col_offset, rule, ast.unparse(node)
+            )
+        )
+
+    def add_payload_read(node: ast.AST) -> None:
+        path = parsed.path.as_posix()
+        if "/graph/" not in f"/{path}" and "/graph_runtime/" not in f"/{path}":
+            return
+        function = _containing_function_node(node, parsed)
+        target = (
+            deferred
+            if _matches_legacy_site(parsed, function, node, "W5RAW_PAYLOAD_READ")
+            else facts
+        )
+        target.append(
+            ArchitectureFact(
+                str(parsed.path),
+                node.lineno,
+                node.col_offset,
+                "W5DEFERRED_LEGACY_PAYLOAD_READ" if target is deferred else "W5RAW_PAYLOAD_READ",
+                f"{function_name or '<module>'}: {ast.unparse(node)}",
+            )
+        )
+
+    for node in ast.walk(parsed.tree):
+        function_name = _containing_function(node, parsed)
+        if isinstance(node, ast.Call):
+            if (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == "get"
+                and isinstance(node.func.value, ast.Attribute)
+                and isinstance(node.func.value.value, ast.Name)
+                and node.func.value.value.id == "event"
+                and node.func.value.attr == "payload"
+            ):
+                add_payload_read(node)
+            if _call_name(node.func) in {"EventEnvelope", "StoredEventEnvelope"}:
+                payload = _keyword(node, "payload")
+                if payload is None and len(node.args) >= 10:
+                    payload = node.args[9]
+                if isinstance(payload, ast.Dict) and not parsed.path.as_posix().endswith(
+                    ("graph_runtime/store.py", "db/orm/models.py")
+                ):
+                    add(node, "W5DIRECT_DICTIONARY_EVENT")
+        elif (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.value, ast.Attribute)
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id == "event"
+            and node.value.attr == "payload"
+        ):
+            add_payload_read(node)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name == "reduce_event":
+                for branch in (child for child in ast.walk(node) if isinstance(child, ast.If)):
+                    if any(
+                        isinstance(child, ast.Attribute) and child.attr in {"event_type", "name"}
+                        for child in ast.walk(branch.test)
+                    ) and not _is_d3_replay_branch(branch, parsed):
+                        add(branch, "W5CENTRAL_REDUCE_EVENT_BRANCH")
+            approved_adapter = parsed.path.as_posix().endswith(
+                ("api/routers/graph.py", "graph_runtime/store.py", "db/orm/models.py")
+            ) and node.name in {
+                "parse_graph_command_payload",
+                "_stored_event_from_row",
+                "_stored_event_to_row",
+            }
+            raw_boundary = _has_current_boundary_role(node) and any(
+                argument.arg in {"payload", "command"} and _dict_any_annotation(argument.annotation)
+                for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+            )
+            if raw_boundary and not approved_adapter and node.name != "_handle_command_retry_stale":
+                if _matches_legacy_site(parsed, node, node, "W5RAW_BOUNDARY_DICT"):
+                    deferred.append(
+                        ArchitectureFact(
+                            str(parsed.path),
+                            node.lineno,
+                            node.col_offset,
+                            "W5DEFERRED_LEGACY_BOUNDARY_DICT",
+                            ast.unparse(node),
+                        )
+                    )
+                else:
+                    add(node, "W5RAW_BOUNDARY_DICT")
+        elif isinstance(node, ast.ClassDef) and _inherits_strict_payload(node, parsed):
+            for statement in node.body:
+                if isinstance(statement, (ast.AnnAssign, ast.Assign)):
+                    targets = (
+                        [statement.target]
+                        if isinstance(statement, ast.AnnAssign)
+                        else statement.targets
+                    )
+                    if any(
+                        isinstance(target, ast.Name) and target.id == "extra" for target in targets
+                    ):
+                        add(statement, "W5TOP_LEVEL_PAYLOAD_EXTRA")
+                if isinstance(statement, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    for decorator in statement.decorator_list:
+                        if (
+                            isinstance(decorator, ast.Call)
+                            and _call_name(decorator.func) == "model_validator"
+                            and any(
+                                keyword.arg == "mode"
+                                and isinstance(keyword.value, ast.Constant)
+                                and keyword.value.value == "before"
+                                for keyword in decorator.keywords
+                            )
+                        ):
+                            add(decorator, "W5BEFORE_PAYLOAD_NORMALIZER")
+        elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            names = {target.id for target in targets if isinstance(target, ast.Name)}
+            if names.intersection(ALLOWLIST_NAMES):
+                add(node, "W5PAYLOAD_ALLOWLIST")
+            if "COMMAND_HANDLERS" in names or _is_command_dispatch_dict(node.value, parsed):
+                add(node, "W5CENTRAL_COMMAND_HANDLERS")
+
+    facts.extend(
+        ArchitectureFact(site.path, site.line, site.column, "W5IMPLICIT_CATALOG", site.expression)
+        for site in (*_catalog_cutover_sites(parsed), *_catalog_injection_sites(parsed))
+        if site.classification
+        in {
+            "catalog_default_escape",
+            "catalog_global_escape",
+            "catalog_membership_fallback_dispatch",
+        }
+    )
+    return tuple(sorted(set(facts))), tuple(sorted(set(deferred)))
+
+
 def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     """Scan Python files and return a stable structural payload inventory."""
 
@@ -996,11 +1570,16 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     partial_consumers: list[SourceSite] = []
     catalog_cutover_sites: list[CatalogCutoverSite] = []
     catalog_injection_sites: list[CatalogCutoverSite] = []
+    architecture_facts: list[ArchitectureFact] = []
+    deferred_architecture_facts: list[ArchitectureFact] = []
     command_names: set[str] = set()
     typed_command_names: set[str] = set()
     bridge_handlers: list[CommandHandler] = []
 
     for parsed in parsed_files:
+        current_facts, deferred_facts = _architecture_facts(parsed)
+        architecture_facts.extend(current_facts)
+        deferred_architecture_facts.extend(deferred_facts)
         catalog_cutover_sites.extend(_catalog_cutover_sites(parsed))
         catalog_injection_sites.extend(_catalog_injection_sites(parsed))
         for node in ast.walk(parsed.tree):
@@ -1189,6 +1768,8 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
         partial_payload_consumers=tuple(sorted(set(partial_consumers))),
         catalog_cutover_sites=tuple(sorted(catalog_cutover_sites)),
         catalog_injection_sites=tuple(sorted(catalog_injection_sites)),
+        architecture_facts=tuple(sorted(set(architecture_facts))),
+        deferred_architecture_facts=tuple(sorted(set(deferred_architecture_facts))),
         scanned_paths=tuple(parsed.path for parsed in parsed_files),
     )
 

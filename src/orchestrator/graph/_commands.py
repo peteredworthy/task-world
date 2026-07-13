@@ -91,7 +91,12 @@ from orchestrator.graph.events.lifecycle import (
     RUN_LIFECYCLE_CHANGED,
     COMMAND_REJECTED,
 )
-from orchestrator.graph.specifications import EventMetadata, EventSpecification, HydratedEvent
+from orchestrator.graph.specifications import (
+    EventMetadata,
+    EventSpecification,
+    HydratedEvent,
+    event_payload_json,
+)
 from orchestrator.graph.events.leases import (
     LEASE_EXPIRED,
     LEASE_GRANTED,
@@ -198,6 +203,8 @@ def apply_command(
 ) -> list[EventEnvelope]:
     """Apply a pure graph command and return events a controller would append."""
 
+    if any(item.schema_version != 1 for item in events):
+        raise ValueError("legacy command replay accepts only schema generation 1 events")
     run_id = _run_id(events, payload)
     make_event = _event_factory(run_id, command_type, clock, id_gen)
 
@@ -1255,9 +1262,10 @@ def schedule_tick_effects(
         and isinstance(lease.get("node_id"), str)
     ]
     retiring_node_ids = {
-        event.payload["node_id"]
+        str(event_payload_json(event)["node_id"])
         for event in output
-        if event.event_type == "node_retired" and isinstance(event.payload.get("node_id"), str)
+        if event.event_type == "node_retired"
+        and isinstance(event_payload_json(event).get("node_id"), str)
     }
     nodes: list[NodeScheduleInfo] = []
     readied_node_ids: set[str] = set()
@@ -3914,24 +3922,26 @@ def _source_repair_events(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     accepted_records = [
-        cast(dict[str, Any], event.payload["record"])
+        cast(dict[str, Any], event_payload_json(event)["record"])
         for event in source_events
         if event.event_type == "output_record_accepted"
-        and isinstance(event.payload["record"], dict)
-        and isinstance(cast(dict[str, Any], event.payload["record"]).get("record_id"), str)
+        and isinstance(event_payload_json(event)["record"], dict)
+        and isinstance(
+            cast(dict[str, Any], event_payload_json(event)["record"]).get("record_id"), str
+        )
     ]
     repair_node_ids = {
         node_id
         for event in source_events
         for node_id in (
-            event.payload.get("proposed_by_node_id"),
-            event.payload.get("node_id"),
+            event_payload_json(event).get("proposed_by_node_id"),
+            event_payload_json(event).get("node_id"),
         )
         if (
             event.event_type == "graph_patch_accepted"
             or (
                 event.event_type == "node_state_changed"
-                and event.payload.get("new_state") == "completed"
+                and event_payload_json(event).get("new_state") == "completed"
             )
         )
         and isinstance(node_id, str)

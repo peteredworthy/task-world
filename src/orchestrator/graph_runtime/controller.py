@@ -17,6 +17,7 @@ from orchestrator.graph import (
     GraphCatalog,
     GraphProjection,
     HydratedEvent,
+    event_payload_json,
     apply_command,
     initial_projection,
     reduce_event,
@@ -215,7 +216,7 @@ class GraphController:
                 continue
             if event.event_type != "lease_granted":
                 continue
-            node_id = event.payload.get("node_id")
+            node_id = event_payload_json(event).get("node_id")
             expanded.append(
                 AGENT_DISPATCH_REQUESTED.create(
                     EventMetadata(
@@ -232,12 +233,12 @@ class GraphController:
                     AgentDispatchRequestedPayload.model_validate(
                         {
                             "lease_granted_event_id": event.event_id,
-                            "lease_id": event.payload.get("lease_id"),
+                            "lease_id": event_payload_json(event).get("lease_id"),
                             "node_id": node_id,
-                            "generation": event.payload.get("generation"),
-                            "execution_id": event.payload.get("execution_id"),
-                            "base_snapshot_id": event.payload.get("base_snapshot_id"),
-                            "resource_claims": event.payload.get("resource_claims", []),
+                            "generation": event_payload_json(event).get("generation"),
+                            "execution_id": event_payload_json(event).get("execution_id"),
+                            "base_snapshot_id": event_payload_json(event).get("base_snapshot_id"),
+                            "resource_claims": event_payload_json(event).get("resource_claims", []),
                         }
                     ),
                 )

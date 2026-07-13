@@ -108,6 +108,14 @@ class HydratedEvent(BaseModel):
         return self.metadata.timestamp
 
 
+def event_payload_json(event: EventEnvelope | HydratedEvent) -> dict[str, JsonValue]:
+    """Serialize a typed current event or expose a stored legacy payload once."""
+
+    if isinstance(event, HydratedEvent):
+        return event.payload.to_json()
+    return cast(dict[str, JsonValue], event.payload)
+
+
 class ProjectionParticipation(str, Enum):
     MUTATES = "mutates"
     NEUTRAL = "neutral"
@@ -257,6 +265,7 @@ __all__ = [
     "CommandSpecification",
     "EventMetadata",
     "EventSpecification",
+    "event_payload_json",
     "FutureCommandEffects",
     "HydratedEvent",
     "ProjectionParticipation",

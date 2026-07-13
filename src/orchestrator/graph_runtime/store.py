@@ -28,6 +28,7 @@ from orchestrator.graph import (
     PROJECTION_SCHEMA_VERSION,
     StoredEventEnvelope,
     StrictPayload,
+    event_payload_json,
     initial_projection,
     merge_bound_record_ids,
     project_decision_view,
@@ -1476,10 +1477,11 @@ def _is_callback_history_event(event: GraphHistoryEvent) -> bool:
         "agent_died",
     }:
         return True
-    return (
-        event.event_type == "node_state_changed"
-        and event.payload.get("trigger") == "runtime_start_acknowledged"
-    )
+    if event.event_type != "node_state_changed":
+        return False
+    if event.schema_version == 1:
+        return event.payload.get("trigger") == "runtime_start_acknowledged"
+    return event_payload_json(event).get("trigger") == "runtime_start_acknowledged"
 
 
 def _node_event_response(event: GraphHistoryEvent) -> dict[str, Any]:
@@ -1583,7 +1585,7 @@ def _selected_lease(leases: list[dict[str, Any]]) -> dict[str, Any] | None:
 def _lease_update_ids(events: Sequence[GraphHistoryEvent]) -> set[str]:
     ids: set[str] = set()
     for event in events:
-        if event.event_type not in {
+        if event.schema_version != 1 or event.event_type not in {
             "lease_suspended",
             "lease_revoked",
             "lease_expired",
@@ -1621,7 +1623,7 @@ def _has_missing_preexisting_node_reference(
 def _input_bound_edge_ids_needing_ports(events: Sequence[GraphHistoryEvent]) -> set[str]:
     edge_ids: set[str] = set()
     for event in events:
-        if event.event_type != "input_bound":
+        if event.schema_version != 1 or event.event_type != "input_bound":
             continue
         if isinstance(event.payload.get("to_port"), str):
             continue

@@ -262,7 +262,17 @@ def _history_event_position(event: GraphHistoryEvent) -> int:
 def _history_payload_value(event: GraphHistoryEvent, field: str) -> Any:
     if isinstance(event, HydratedEvent):
         return getattr(event.payload, field, None)
-    return event.payload.get(field)
+    if event.schema_version == 1 and event.event_type in {
+        "callback_accepted",
+        "callback_rejected_stale",
+        "callback_rejected_conflict",
+        "callback_duplicate_returned",
+        "lease_expired",
+        "agent_died",
+        "node_state_changed",
+    }:
+        return event.payload.get(field)
+    return None
 
 
 def _history_payload(event: GraphHistoryEvent) -> dict[str, Any]:

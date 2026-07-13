@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import ast
 import json
 import subprocess
 import sys
 from pathlib import Path
+
+import pytest
 
 from scripts.w5_payload_ast_inventory import (
     BASELINE_COMMAND_NAMES,
@@ -35,6 +38,63 @@ def test_inventory_cli_runs_when_invoked_as_a_script() -> None:
 
     assert result.returncode == 0, result.stderr
     assert "literal_event_names" in json.loads(result.stdout)
+
+
+def test_architecture_checker_cli_runs_when_invoked_as_a_script() -> None:
+    root = Path(__file__).parents[2]
+
+    result = subprocess.run(
+        (sys.executable, "scripts/check_graph_payload_architecture.py"),
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+
+
+EXPECTED_ARCHITECTURE_METRICS = {
+    "registered_event_specs": 44,
+    "registered_command_specs": 23,
+    "event_payload_raw_reads_in_kernel": 0,
+    "raw_event_or_command_boundary_dict_annotations": 0,
+    "direct_dictionary_event_construction_sites": 0,
+    "hand_maintained_payload_field_allowlists": 0,
+    "w5_legacy_payload_before_validators": 0,
+    "w5_top_level_payload_extra_fields": 0,
+    "central_command_handler_tables": 0,
+    "central_reduce_event_name_branches": 0,
+    "eligible_ast_cst_migration_sites_remaining": 0,
+    "codemod_second_run_changes": 0,
+    "unclassified_dynamic_event_or_command_sites": 0,
+}
+
+
+def test_architecture_metrics_emit_stable_json_and_separate_deferred_sites() -> None:
+    from scripts.measure_graph_payload_architecture import measure
+
+    root = Path(__file__).parents[2]
+
+    first = measure(root, migrations={})
+    second = measure(root, migrations={})
+
+    assert json.dumps(first, sort_keys=True) == json.dumps(second, sort_keys=True)
+    assert first["metrics"] == EXPECTED_ARCHITECTURE_METRICS
+    assert first["deferred_compatibility"]["site_count"] > 0
+
+
+def test_architecture_metrics_emit_stable_markdown() -> None:
+    from scripts.measure_graph_payload_architecture import _markdown, measure
+
+    root = Path(__file__).parents[2]
+
+    rendered = _markdown(measure(root, migrations={}))
+
+    assert rendered.startswith("# Graph Payload Architecture Metrics\n\n")
+    for name, value in EXPECTED_ARCHITECTURE_METRICS.items():
+        assert f"| `{name}` | {value} |" in rendered
+    assert "## Deferred D1-D6 Compatibility" in rendered
 
 
 SAMPLE_EVENT_AND_COMMAND_SOURCE = """\
@@ -641,6 +701,459 @@ def reduce_event(projection, event):
         "converted reducer branch",
     }
     assert {item.path for item in diagnostics} == {str(source)}
+
+
+@pytest.mark.parametrize(
+    ("source_text", "rule", "line"),
+    [
+        ("def reduce(event):\n    return event.payload.get('node_id')\n", "W5RAW_PAYLOAD_READ", 2),
+        ("def reduce(event):\n    return event.payload['node_id']\n", "W5RAW_PAYLOAD_READ", 2),
+        (
+            "from typing import Any\ndef handle(payload: dict[str, Any]):\n    return payload\n",
+            "W5RAW_BOUNDARY_DICT",
+            2,
+        ),
+        (
+            "event = EventEnvelope(event_type='node_created', payload={'node_id': 'n-1'})\n",
+            "W5DIRECT_DICTIONARY_EVENT",
+            1,
+        ),
+        *[
+            (f"{name} = ('node_id',)\n", "W5PAYLOAD_ALLOWLIST", 1)
+            for name in (
+                "GRAPH_PROJECTION_PAYLOAD_FIELDS",
+                "LIGHT_GRAPH_PAYLOAD_FIELDS",
+                "SUMMARY_REBUILD_PAYLOAD_FIELDS",
+                "NODE_DETAIL_PAYLOAD_FIELDS",
+            )
+        ],
+        (
+            "from pydantic import model_validator\n"
+            "class NodeCreatedPayload(StrictPayload):\n"
+            "    @model_validator(mode='before')\n"
+            "    @classmethod\n"
+            "    def normalize(cls, value):\n"
+            "        return value\n",
+            "W5BEFORE_PAYLOAD_NORMALIZER",
+            3,
+        ),
+        (
+            "class NodeCreatedPayload(StrictPayload):\n    extra: dict[str, object]\n",
+            "W5TOP_LEVEL_PAYLOAD_EXTRA",
+            2,
+        ),
+        ("COMMAND_HANDLERS = {'start': handle_start}\n", "W5CENTRAL_COMMAND_HANDLERS", 1),
+        (
+            "def reduce_event(event):\n"
+            "    if event.metadata.event_type == 'node_created':\n"
+            "        return event.payload\n",
+            "W5CENTRAL_REDUCE_EVENT_BRANCH",
+            2,
+        ),
+        ("DEFAULT_CATALOG = build_graph_catalog()\n", "W5IMPLICIT_CATALOG", 1),
+        (
+            "def emit(event_name, payload):\n    return make_event(event_name, payload)\n",
+            "W5UNCLASSIFIED_DYNAMIC_SITE",
+            2,
+        ),
+    ],
+)
+def test_architecture_checker_reports_each_catalog_wide_rule_from_valid_source(
+    tmp_path: Path, source_text: str, rule: str, line: int
+) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    ast.parse(source_text)
+    source = tmp_path / "src/orchestrator/graph/fixture.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(source_text)
+
+    diagnostics = check_paths([source])
+
+    assert [(item.rule, item.line) for item in diagnostics] == [(rule, line)]
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "source_text"),
+    [
+        (
+            "src/orchestrator/graph/events/example.py",
+            "def reduce(payload):\n    return payload.node_id\n",
+        ),
+        (
+            "src/orchestrator/api/routers/graph.py",
+            "from typing import Any\n"
+            "def parse_graph_command_payload(payload: dict[str, Any]):\n"
+            "    return payload\n",
+        ),
+        (
+            "src/orchestrator/graph/events/example.py",
+            "def serialize(payload):\n    return payload.model_dump(mode='json')\n",
+        ),
+        (
+            "src/orchestrator/graph/projections.py",
+            "def reduce_d3_legacy_record_replay(event):\n"
+            "    if event.schema_version != 1:\n"
+            "        raise ValueError\n"
+            "    if event.event_type != 'verification_passed':\n"
+            "        raise ValueError\n"
+            "    return event.payload.get('record')\n",
+        ),
+    ],
+)
+def test_architecture_checker_keeps_typed_boundaries_and_narrow_legacy_sites_clean(
+    tmp_path: Path, relative_path: str, source_text: str
+) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    ast.parse(source_text)
+    source = tmp_path / relative_path
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_text(source_text)
+
+    assert check_paths([source]) == ()
+
+
+@pytest.mark.parametrize(
+    ("case", "relative_path", "dirty_source", "expected_rules", "allowed_source"),
+    [
+        (
+            "fake registered function name",
+            "src/orchestrator/graph/callbacks.py",
+            "def _history_payload_value(event):\n    return event.payload.get('node_id')\n",
+            ("W5RAW_PAYLOAD_READ",),
+            "def helper(value):\n    return value.get('node_id')\n",
+        ),
+        (
+            "unrelated EventEnvelope handler",
+            "src/orchestrator/graph/events/example.py",
+            "def handle_current(event: EventEnvelope):\n    return event.payload.get('node_id')\n",
+            ("W5RAW_PAYLOAD_READ",),
+            "def handle_current(event: HydratedEvent):\n    return event.payload.node_id\n",
+        ),
+        (
+            "nonstandard command boundary name",
+            "src/orchestrator/graph/commands/example.py",
+            "from typing import Any\n"
+            "def route(command_type: str, payload: dict[str, Any], catalog: GraphCatalog):\n"
+            "    return catalog.resolve_command(command_type).validate(payload)\n",
+            ("W5RAW_BOUNDARY_DICT",),
+            "from typing import Any\n"
+            "def format_for_log(payload: dict[str, Any]):\n"
+            "    return sorted(payload)\n",
+        ),
+        (
+            "positional envelope dictionary",
+            "src/orchestrator/graph/events/example.py",
+            "event = EventEnvelope('event-1', 'run-1', 0, 'node_created', 2, actor, "
+            "None, None, now, {'node_id': 'n-1'})\n",
+            ("W5DIRECT_DICTIONARY_EVENT",),
+            "event = NODE_CREATED.create(metadata, NodeCreatedPayload(node_id='n-1'))\n",
+        ),
+        (
+            "inherited strict payload violations",
+            "src/orchestrator/graph/events/example.py",
+            "from pydantic import model_validator\n"
+            "class DomainPayload(StrictPayload):\n"
+            "    value: str\n"
+            "class ChildPayload(DomainPayload):\n"
+            "    extra: dict[str, object]\n"
+            "    @model_validator(mode='before')\n"
+            "    @classmethod\n"
+            "    def normalize(cls, value):\n"
+            "        return value\n",
+            ("W5TOP_LEVEL_PAYLOAD_EXTRA", "W5BEFORE_PAYLOAD_NORMALIZER"),
+            "class NestedRecord(BaseModel):\n    extra: dict[str, object]\n",
+        ),
+        (
+            "equivalent command dispatch table",
+            "src/orchestrator/graph/commands/example.py",
+            "ROUTES = {'start': handle_start, 'pause': handle_pause}\n",
+            ("W5CENTRAL_COMMAND_HANDLERS",),
+            "LABELS = {'start': 'Start', 'pause': 'Pause'}\n",
+        ),
+    ],
+)
+def test_architecture_checker_adversarial_cases_fail_closed_with_clean_neighbors(
+    tmp_path: Path,
+    case: str,
+    relative_path: str,
+    dirty_source: str,
+    expected_rules: tuple[str, ...],
+    allowed_source: str,
+) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    ast.parse(dirty_source)
+    ast.parse(allowed_source)
+    dirty = tmp_path / "dirty" / relative_path
+    dirty.parent.mkdir(parents=True)
+    dirty.write_text(dirty_source)
+    allowed = tmp_path / "allowed" / relative_path
+    allowed.parent.mkdir(parents=True)
+    allowed.write_text(allowed_source)
+
+    assert tuple(item.rule for item in check_paths([dirty])) == expected_rules, case
+    assert check_paths([allowed]) == (), case
+
+
+def test_architecture_metrics_measure_codemod_passes_independently(tmp_path: Path) -> None:
+    from scripts.codemods.w5_strict_payload_cutover import DomainMigration, EventRoute
+    from scripts.measure_graph_payload_architecture import measure
+
+    source = tmp_path / "graph.py"
+    source.write_text("from package import make_event\nevent = make_event('started', payload)\n")
+    migration = DomainMigration(
+        domain="fixture",
+        paths=("graph.py",),
+        event_routes=(EventRoute("started", "StartedPayload", "STARTED"),),
+        event_factory_qualified_names=("package.make_event",),
+    )
+
+    report = measure(tmp_path, migrations={"fixture": migration})
+    metrics = report["metrics"]
+
+    assert isinstance(metrics, dict)
+    assert metrics["eligible_ast_cst_migration_sites_remaining"] == 1
+    assert metrics["codemod_second_run_changes"] == 0
+
+
+def test_legacy_exemption_requires_guard_event_and_read_in_same_branch(tmp_path: Path) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    source = tmp_path / "src/orchestrator/graph/projections.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+def unrelated_guard(event):
+    return event.schema_version == 1 and event.event_type == "output_record_accepted"
+
+def reduce_d3_legacy_record_replay(event):
+    return event.payload.get("record")
+"""
+    )
+
+    assert [item.rule for item in check_paths([source])] == ["W5RAW_PAYLOAD_READ"]
+
+
+def test_legacy_exemption_rejects_read_outside_matching_guard_branch(tmp_path: Path) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    source = tmp_path / "src/orchestrator/graph/projections.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+def reduce_d3_legacy_record_replay(event):
+    if event.schema_version == 1 and event.event_type == "output_record_accepted":
+        marker = True
+    return event.payload.get("record")
+"""
+    )
+
+    assert [item.rule for item in check_paths([source])] == ["W5RAW_PAYLOAD_READ"]
+
+
+def test_legacy_exemption_allows_only_registered_read_inside_matching_branch(
+    tmp_path: Path,
+) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    source = tmp_path / "src/orchestrator/graph/projections.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+def reduce_d3_legacy_record_replay(event):
+    if event.schema_version == 1 and event.event_type == "output_record_accepted":
+        registered = event.payload.get("record")
+        added = event.payload.get("unregistered")
+        return registered, added
+    return None
+"""
+    )
+
+    diagnostics = check_paths([source])
+
+    assert [(item.rule, item.line) for item in diagnostics] == [("W5RAW_PAYLOAD_READ", 4)]
+
+
+def test_event_envelope_annotation_never_bypasses_raw_read_rule(tmp_path: Path) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    source = tmp_path / "src/orchestrator/graph/events/example.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "def helper(event: EventEnvelope):\n    return event.payload.get('node_id')\n"
+    )
+
+    assert [item.rule for item in check_paths([source])] == ["W5RAW_PAYLOAD_READ"]
+
+
+def test_command_dispatch_dictionary_uses_callable_structure_not_known_keys(
+    tmp_path: Path,
+) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    dirty = tmp_path / "dirty/src/orchestrator/graph/commands/example.py"
+    dirty.parent.mkdir(parents=True)
+    dirty.write_text(
+        "def launch_handler(): pass\n"
+        "def halt_handler(): pass\n"
+        "ROUTES = {'launch-custom': launch_handler, 'halt-custom': halt_handler}\n"
+    )
+    allowed = tmp_path / "allowed/src/orchestrator/graph/commands/example.py"
+    allowed.parent.mkdir(parents=True)
+    allowed.write_text("LABELS = {'launch-custom': 'Launch', 'halt-custom': {'label': 'Halt'}}\n")
+
+    assert [item.rule for item in check_paths([dirty])] == ["W5CENTRAL_COMMAND_HANDLERS"]
+    assert check_paths([allowed]) == ()
+
+
+def test_deferred_legacy_sites_are_pinned_to_exact_current_identities() -> None:
+    report = scan_graph_payload_architecture(
+        [Path("src/orchestrator/graph"), Path("src/orchestrator/graph_runtime")]
+    )
+    identities = {
+        (
+            fact.path,
+            fact.line,
+            fact.column,
+            fact.rule,
+            "apply_command"
+            if fact.expression.startswith("def apply_command")
+            else fact.expression.split(": ", 1)[0],
+        )
+        for fact in report.deferred_architecture_facts
+    }
+
+    assert identities == {
+        (
+            "src/orchestrator/graph/_commands.py",
+            196,
+            0,
+            "W5DEFERRED_LEGACY_BOUNDARY_DICT",
+            "apply_command",
+        ),
+        (
+            "src/orchestrator/graph/callbacks.py",
+            274,
+            15,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_history_payload_value",
+        ),
+        (
+            "src/orchestrator/graph/projections.py",
+            1927,
+            13,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "reduce_compact_output_record_accepted",
+        ),
+        (
+            "src/orchestrator/graph/projections.py",
+            1986,
+            21,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "reduce_d3_legacy_record_replay",
+        ),
+        (
+            "src/orchestrator/graph/projections.py",
+            3982,
+            38,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_add_record_summary_positions",
+        ),
+        (
+            "src/orchestrator/graph/projections.py",
+            3990,
+            24,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_add_record_summary_positions",
+        ),
+        (
+            "src/orchestrator/graph/projections.py",
+            4107,
+            16,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "project_gatekeeper_report",
+        ),
+        (
+            "src/orchestrator/graph/projections.py",
+            4129,
+            16,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "project_gatekeeper_report",
+        ),
+        (
+            "src/orchestrator/graph/projections.py",
+            4136,
+            16,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "project_gatekeeper_report",
+        ),
+        (
+            "src/orchestrator/graph/projections.py",
+            4685,
+            28,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_latest_lease_generation",
+        ),
+        (
+            "src/orchestrator/graph/projections.py",
+            4686,
+            20,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_latest_lease_generation",
+        ),
+        (
+            "src/orchestrator/graph_runtime/dispatch.py",
+            471,
+            28,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_record_start_heartbeat",
+        ),
+        (
+            "src/orchestrator/graph_runtime/dispatch.py",
+            808,
+            28,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_dispatch_snapshot_cleanup",
+        ),
+        (
+            "src/orchestrator/graph_runtime/dispatch.py",
+            1566,
+            12,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_bound_file_state_snapshot",
+        ),
+        (
+            "src/orchestrator/graph_runtime/store.py",
+            1483,
+            15,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_is_callback_history_event",
+        ),
+        (
+            "src/orchestrator/graph_runtime/store.py",
+            1595,
+            19,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_lease_update_ids",
+        ),
+        (
+            "src/orchestrator/graph_runtime/store.py",
+            1628,
+            22,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_input_bound_edge_ids_needing_ports",
+        ),
+        (
+            "src/orchestrator/graph_runtime/store.py",
+            1630,
+            18,
+            "W5DEFERRED_LEGACY_PAYLOAD_READ",
+            "_input_bound_edge_ids_needing_ports",
+        ),
+    }
+    assert len(identities) == 18
 
 
 def test_records_legacy_replay_requires_a_recognized_d3_branch(tmp_path: Path) -> None:

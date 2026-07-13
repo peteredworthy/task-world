@@ -17,6 +17,55 @@ from scripts.codemods.w5_strict_payload_cutover import (
     DOMAIN_MIGRATIONS,
     run_migration,
 )
+from scripts.codemods.w5_task12_event_payload_reads import (
+    transform_source as transform_task12_reads,
+)
+
+
+@pytest.mark.timeout(120)
+@pytest.mark.parametrize(
+    ("domain", "migration"),
+    tuple(sorted(DOMAIN_MIGRATIONS.items())),
+    ids=tuple(sorted(DOMAIN_MIGRATIONS)),
+)
+def test_every_registered_domain_is_catalog_wide_clean_and_idempotent(
+    domain: str, migration: DomainMigration
+) -> None:
+    root = Path(__file__).parents[2]
+
+    second_run = run_migration(migration, root, "assert-clean")
+    assert second_run.exit_code == 0, f"{domain}:\n{second_run.output}"
+    assert second_run.output == "", domain
+
+
+@pytest.mark.timeout(120)
+def test_measurement_counts_actual_first_and_second_diffs_not_noop_visits() -> None:
+    root = Path(__file__).parents[2]
+
+    result = run_migration(DOMAIN_MIGRATIONS["complete_reads"], root, "measure")
+
+    assert result.eligible_sites == 0, result.output
+    assert result.second_run_changes == 0, result.output
+
+
+def test_task12_payload_read_codemod_preserves_exact_legacy_sites_and_is_idempotent() -> None:
+    source = """\
+def current(event: EventEnvelope):
+    return event.payload.get("node_id"), event.payload["generation"]
+
+def _history_payload_value(event: EventEnvelope):
+    return event.payload.get("node_id")
+"""
+
+    first, changes = transform_task12_reads(source, "src/orchestrator/graph/callbacks.py")
+    second, second_changes = transform_task12_reads(first, "src/orchestrator/graph/callbacks.py")
+
+    assert changes == 2
+    assert 'event_payload_json(event).get("node_id")' in first
+    assert 'event_payload_json(event)["generation"]' in first
+    assert 'event.payload.get("node_id")' in first
+    assert second == first
+    assert second_changes == 0
 
 
 def test_lifecycle_domain_routes_cover_complete_slice() -> None:

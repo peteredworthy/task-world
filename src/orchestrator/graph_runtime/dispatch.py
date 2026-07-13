@@ -33,6 +33,7 @@ from orchestrator.graph import (
     check_command_uses_acceptance_fallback,
     initial_projection,
     resolve_check_command_definition,
+    event_payload_json,
 )
 from orchestrator.graph_runtime import prompts as _prompts
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
@@ -464,7 +465,16 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 event
                 for event in result.events
                 if event.event_type == "command_rejected"
-                and event.payload.get("command_type") == "record_heartbeat"
+                and (
+                    (
+                        event.schema_version == 1
+                        and event.payload.get("command_type") == "record_heartbeat"
+                    )
+                    or (
+                        event.schema_version != 1
+                        and event_payload_json(event).get("command_type") == "record_heartbeat"
+                    )
+                )
             ),
             None,
         )
@@ -734,9 +744,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 current_position,
                 "record_gatekeeper_verdicts",
                 {
-                    "file_state_record_id": event.payload.get("record_id"),
+                    "file_state_record_id": event_payload_json(event).get("record_id"),
                     "execution_id": context.execution_id,
-                    "consult_id": f"{context.execution_id}:{event.payload.get('record_id')}",
+                    "consult_id": f"{context.execution_id}:{event_payload_json(event).get('record_id')}",
                     "model_id": model_ids[0] if len(model_ids) == 1 else "mixed",
                     "verdicts": verdicts,
                 },
@@ -792,7 +802,17 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 event
                 for event in result.events
                 if event.event_type == "command_rejected"
-                and event.payload.get("command_type") == "record_cleanup_applied"
+                and (
+                    (
+                        event.schema_version == 1
+                        and event.payload.get("command_type") == "record_cleanup_applied"
+                    )
+                    or (
+                        event.schema_version != 1
+                        and event_payload_json(event).get("command_type")
+                        == "record_cleanup_applied"
+                    )
+                )
             ),
             None,
         )
@@ -904,7 +924,7 @@ def _node_payload(events: Sequence[EventEnvelope | HydratedEvent], node_id: str)
     for event in events:
         if event.event_type != "node_created":
             continue
-        if event.payload.get("node_id") == node_id:
+        if event_payload_json(event).get("node_id") == node_id:
             return (
                 event.payload.to_json()
                 if isinstance(event.payload, StrictPayload)
@@ -945,10 +965,10 @@ def _requirements_for_node(
     for event in events:
         if event.event_type != "node_created":
             continue
-        requirement_node_id = event.payload.get("node_id")
+        requirement_node_id = event_payload_json(event).get("node_id")
         if not isinstance(requirement_node_id, str) or requirement_node_id not in bound_record_ids:
             continue
-        requirement_record = event.payload.get("requirement_record")
+        requirement_record = event_payload_json(event).get("requirement_record")
         if isinstance(requirement_record, dict):
             try:
                 record = RequirementRecord.model_validate(requirement_record)
@@ -956,7 +976,7 @@ def _requirements_for_node(
                 continue
             requirements.append(f"{record.value.id}: {record.value.text}")
             continue
-        requirement = event.payload.get("requirement")
+        requirement = event_payload_json(event).get("requirement")
         if isinstance(requirement, dict):
             req = cast(dict[str, Any], requirement)
             requirements.append(f"{req.get('id', requirement_node_id)}: {req.get('desc', '')}")
@@ -977,13 +997,13 @@ def _dynamic_feature_from_events(events: list[EventEnvelope]) -> dict[str, Any] 
     for event in reversed(events):
         if event.event_type != "node_created":
             continue
-        snapshot = event.payload.get("snapshot")
+        snapshot = event_payload_json(event).get("snapshot")
         if isinstance(snapshot, dict):
             typed_snapshot = cast(dict[str, Any], snapshot)
             snapshot_feature = typed_snapshot.get("dynamic_feature")
             if isinstance(snapshot_feature, dict):
                 return cast(dict[str, Any], snapshot_feature)
-        payload_feature = event.payload.get("dynamic_feature")
+        payload_feature = event_payload_json(event).get("dynamic_feature")
         if isinstance(payload_feature, dict):
             return cast(dict[str, Any], payload_feature)
     return None
@@ -1020,7 +1040,7 @@ def _callback_conflict_reason(events: list[EventEnvelope]) -> str | None:
             event.event_type in _CALLBACK_REJECTION_EVENT_TYPES
             or event.event_type == "command_rejected"
         ):
-            reason = event.payload.get("reason")
+            reason = event_payload_json(event).get("reason")
             return (
                 str(reason) if isinstance(reason, str) and reason else "unknown callback conflict"
             )
@@ -1088,14 +1108,15 @@ def _cleanup_requested_event(
     for event in events:
         if event.event_type != "cleanup_requested":
             continue
-        if event.payload.get("cleanup_id") == cleanup_id:
+        if event_payload_json(event).get("cleanup_id") == cleanup_id:
             return event
     return None
 
 
 def _cleanup_applied_exists(events: list[EventEnvelope], cleanup_id: str) -> bool:
     return any(
-        event.event_type == "cleanup_applied" and event.payload.get("cleanup_id") == cleanup_id
+        event.event_type == "cleanup_applied"
+        and event_payload_json(event).get("cleanup_id") == cleanup_id
         for event in events
     )
 
@@ -1106,8 +1127,8 @@ def _rejected_cleanup_already_applied(
 ) -> bool:
     return any(
         event.event_type == "command_rejected"
-        and event.payload.get("command_type") == "record_cleanup_applied"
-        and event.payload.get("reason") == f"cleanup already applied: {cleanup_id}"
+        and event_payload_json(event).get("command_type") == "record_cleanup_applied"
+        and event_payload_json(event).get("reason") == f"cleanup already applied: {cleanup_id}"
         for event in events
     )
 
@@ -1536,12 +1557,17 @@ def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str]
         return None
     wanted = set(file_state_record_ids)
     for event in context.graph_events:
-        if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
+        if event.event_type not in {
+            "output_record_accepted",
+            "file_state_accepted",
+        }:
             continue
         payload = (
             event.payload.get("record", {})
+            if event.schema_version == 1 and event.event_type == "output_record_accepted"
+            else event_payload_json(event).get("record", {})
             if event.event_type == "output_record_accepted"
-            else event.payload
+            else event_payload_json(event)
         )
         if not isinstance(payload, dict):
             continue

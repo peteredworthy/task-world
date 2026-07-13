@@ -10,6 +10,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Sequence
 
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 
 DOMAIN_COMMAND_NAMES: dict[str, frozenset[str]] = {
     "vertical_slice": frozenset({"record_heartbeat"}),
@@ -103,8 +106,12 @@ class ArchitectureDiagnostic:
     category: str
     expression: str
 
+    @property
+    def rule(self) -> str:
+        return self.category
+
     def render(self) -> str:
-        return f"{self.category}: {self.path}:{self.line}:{self.column}: {self.expression}"
+        return f"{self.path}:{self.line}:{self.column}: {self.category}: {self.expression}"
 
 
 def _call_name(node: ast.expr) -> str | None:
@@ -315,8 +322,28 @@ def _scan_file(path: Path, domain: str) -> list[ArchitectureDiagnostic]:
 
 
 def check_paths(
-    paths: Sequence[Path], *, domain: str = "lifecycle"
+    paths: Sequence[Path], *, domain: str | None = None
 ) -> tuple[ArchitectureDiagnostic, ...]:
+    if domain is None:
+        from scripts.w5_payload_ast_inventory import scan_graph_payload_architecture
+
+        report = scan_graph_payload_architecture(paths)
+        diagnostics = [
+            ArchitectureDiagnostic(fact.path, fact.line, fact.column, fact.rule, fact.expression)
+            for fact in report.architecture_facts
+        ]
+        diagnostics.extend(
+            ArchitectureDiagnostic(
+                site.path,
+                site.line,
+                site.column,
+                "W5UNCLASSIFIED_DYNAMIC_SITE",
+                site.expression,
+            )
+            for site in (*report.dynamic_event_sites, *report.dynamic_command_sites)
+            if site.classification == "unresolved"
+        )
+        return tuple(sorted(set(diagnostics)))
     expanded: list[Path] = []
     for path in paths:
         expanded.extend(path.rglob("*.py") if path.is_dir() else [path])
@@ -330,10 +357,16 @@ def check_paths(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--domain", default="lifecycle")
+    parser.add_argument("--domain")
     parser.add_argument("paths", nargs="*", type=Path)
     args = parser.parse_args(argv)
-    paths = args.paths or [Path("src/orchestrator/graph"), Path("src/orchestrator/graph_runtime")]
+    paths = args.paths or [
+        Path("src/orchestrator/graph"),
+        Path("src/orchestrator/graph_runtime"),
+        Path("src/orchestrator/api"),
+        Path("src/orchestrator/db"),
+        Path("src/orchestrator/workflow"),
+    ]
     diagnostics = check_paths(paths, domain=args.domain)
     for diagnostic in diagnostics:
         print(diagnostic.render(), file=sys.stderr)

@@ -39,6 +39,12 @@ repos:
         language: system
         types: [python]
         pass_filenames: true
+      - id: check-graph-payload-architecture
+        name: check graph payload architecture
+        entry: uv run python scripts/check_graph_payload_architecture.py
+        language: system
+        pass_filenames: false
+        files: ^(src/orchestrator/(graph|graph_runtime|api|db|workflow)/|scripts/(check_graph_payload_architecture|measure_graph_payload_architecture|w5_payload_ast_inventory)\.py|scripts/codemods/w5_task12_event_payload_reads\.py|tests/unit/(test_w5_payload_ast_inventory|test_w5_strict_payload_codemod|test_graph_change_spread|test_graph_catalog_contracts)\.py)
       - id: enum-drift
         name: enum-drift
         entry: uv run python scripts/export_enums.py --check

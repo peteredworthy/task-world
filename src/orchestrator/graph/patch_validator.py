@@ -8,7 +8,7 @@ from orchestrator.graph.command_bindings import is_known_check_command_binding
 from orchestrator.graph.contracts import validate_edge_payload, validate_node_payload
 from orchestrator.graph.models import EventEnvelope, PatchEnvelope, normalize_record_selector
 from orchestrator.graph.projections import GraphProjection
-from orchestrator.graph.specifications import HydratedEvent
+from orchestrator.graph.specifications import HydratedEvent, event_payload_json
 
 
 @dataclass(frozen=True)
@@ -66,7 +66,7 @@ def classify_event(event: EventEnvelope | HydratedEvent) -> str:
     """Classify whether an event can invalidate a stale patch read-set."""
     if event.event_type == "node_state_changed":
         new_state = (
-            event.payload.get("new_state")
+            event_payload_json(event).get("new_state")
             if isinstance(event.payload, dict)
             else getattr(event.payload, "new_state", None)
         )
@@ -74,7 +74,7 @@ def classify_event(event: EventEnvelope | HydratedEvent) -> str:
             return "invalidating"
     if event.event_type == "run_lifecycle_changed":
         to_state = (
-            event.payload.get("to_state")
+            event_payload_json(event).get("to_state")
             if isinstance(event.payload, dict)
             else getattr(event.payload, "to_state", None)
         )
