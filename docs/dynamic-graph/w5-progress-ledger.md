@@ -707,3 +707,28 @@ This entry makes no claim that D1-D6 or aliases were deleted in Task 9.
 
 The source, governing plan, and continuation prompt are preserved; this
 bookkeeping update changes only the progress file and this ledger.
+
+## Strict-cutover Task 10: catalog injection and persistence
+
+Status: complete. Committed as `87ecaefad` after independent PASS.
+
+The catalog is now a mandatory injected dependency through composition roots
+and persistence. Both event-store read paths validate `StoredEventEnvelope`
+and hydrate each event exactly once. API routes reuse strict command models
+rather than rebuilding raw command payloads. Migration head `zg1h2i3j4k5l`
+adds the nullable payload schema-generation column; the database was not
+touched.
+
+Independent evidence:
+- Focused suites: 66 passed.
+- Automation-repair suites: 181 passed.
+- Fixture corpus: 7 passed.
+- Broad graph matrix: 1,018 passed.
+- Full suite: 4,959 passed / 5 skipped / 3 warnings.
+- All-source injection `--assert-clean` and inventory, architecture, Ruff and
+  format, full Pyright, `git diff --check`, Alembic head `zg1h2i3j4k5l`, and
+  commit hooks: green.
+
+Deferred Compatibility Cleanup Register entries D1-D6 remain retained. No
+source or continuation artifact was edited for this bookkeeping update, the
+database remains untouched, and no bookkeeping commit was requested.
