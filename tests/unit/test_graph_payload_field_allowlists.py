@@ -84,8 +84,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "evidence": "record-id fallback container in _record_ids_from_payload; only reachable for "
     "output_record_accepted, which is catalog-owned and never enters the legacy fold (Task 5)",
     "exit_code": "environment_failures/check_results informational field (see command_text)",
-    "file_state_record_id": "gatekeeper-verdict/cleanup lookups mutate file_state_records fields "
-    "_task_file_state_accepted never reads (classifications/residue/compromised/cleanup_*)",
     "id": "requirement id fallback helper, used only for authority_revision_blockers/support views",
     "patch_id": "accepted_no_successor_patches_by_node / graph-patch-attempt bookkeeping",
     "proposal_id": "open_proposal_blockers bookkeeping",
@@ -104,8 +102,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "value": "nested payload.value.* reads; status/classification fallbacks are already handled "
     "by the dedicated __value_status/__value_classification json_extract columns in "
     "_read_run_extracting_fields regardless of whether 'value' itself is listed",
-    "verdicts": "gatekeeper per-path file verdicts (_record_gatekeeper_verdicts); mutates "
-    "file_state_records fields _task_file_state_accepted never reads",
     "version_id": "requirement_revisions bookkeeping",
 }
 
@@ -156,7 +152,6 @@ _EXPECTED_LEGACY_RAW_REDUCER_KEYS = frozenset(
         "command_text",
         "evidence",
         "exit_code",
-        "file_state_record_id",
         "id",
         "membership",
         "node_id",
@@ -182,7 +177,6 @@ _EXPECTED_LEGACY_RAW_REDUCER_KEYS = frozenset(
         "supersedes_task_region_id",
         "task_region_id",
         "value",
-        "verdicts",
         "verifier_node_id",
         "version_id",
     }

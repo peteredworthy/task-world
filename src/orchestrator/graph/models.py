@@ -6,6 +6,8 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field, RootModel, Tag, model_validator
 
+from orchestrator.graph.payloads import StrictPayload
+
 
 class GraphBaseModel(BaseModel):
     """Base model that preserves forward-compatible PRD fields."""
@@ -19,7 +21,7 @@ class GraphBaseModel(BaseModel):
         return super().model_dump(*args, **kwargs)
 
 
-class StrictOutputRecordValue(BaseModel):
+class StrictOutputRecordValue(StrictPayload):
     """Closed immutable value object used by strict output-record variants."""
 
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
@@ -1053,10 +1055,6 @@ class PendingGateDecisionProjection(GraphBaseModel):
         return self
 
 
-def _empty_cleanup_extra() -> dict[str, Any]:
-    return {}
-
-
 def _empty_cleanup_paths() -> list[str]:
     return []
 
@@ -1076,37 +1074,6 @@ class GraphEventPayloadBase(BaseModel):
         if not data.get("extra"):
             data.pop("extra", None)
         return data
-
-
-class CleanupEventPayloadBase(GraphEventPayloadBase):
-    pass
-
-
-def _normalize_cleanup_event_payload(value: Any, known_keys: set[str]) -> Any:
-    if not isinstance(value, dict):
-        return value
-
-    payload = dict(cast(dict[str, Any], value))
-    normalized_extra = payload.get("extra")
-    extra = (
-        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
-    )
-
-    authority = payload.get("authority")
-    if authority is not None and not isinstance(authority, str):
-        extra["authority"] = authority
-        payload.pop("authority", None)
-
-    paths = payload.get("paths")
-    if isinstance(paths, list):
-        payload["paths"] = [path for path in cast(list[Any], paths) if isinstance(path, str)]
-
-    for key in list(payload):
-        if key not in known_keys:
-            extra.setdefault(key, payload.pop(key))
-
-    payload["extra"] = extra
-    return payload
 
 
 def _normalize_string_list(value: Any) -> list[str]:
@@ -1245,68 +1212,6 @@ class GraphPatchStatusPayload(GraphEventPayloadBase):
         )
 
 
-class CleanupRequestedPayload(CleanupEventPayloadBase):
-    cleanup_id: str
-    file_state_record_id: str | None = None
-    snapshot_id: str | None = None
-    paths: list[str] = Field(default_factory=_empty_cleanup_paths)
-    authority: str | None = None
-    reason: str | None = None
-    execution_id: str | None = None
-    producer_node_id: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_cleanup_event_payload(
-            value,
-            {
-                "cleanup_id",
-                "file_state_record_id",
-                "snapshot_id",
-                "paths",
-                "authority",
-                "reason",
-                "execution_id",
-                "producer_node_id",
-                "extra",
-            },
-        )
-
-
-class CleanupAppliedPayload(CleanupEventPayloadBase):
-    cleanup_id: str
-    file_state_record_id: str | None = None
-    superseding_record_id: str | None = None
-    old_snapshot_id: str | None = None
-    new_snapshot_id: str | None = None
-    paths: list[str] = Field(default_factory=_empty_cleanup_paths)
-    authority: str | None = None
-    reason: str | None = None
-    execution_id: str | None = None
-    deleted_snapshot_ref: bool | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_cleanup_event_payload(
-            value,
-            {
-                "cleanup_id",
-                "file_state_record_id",
-                "superseding_record_id",
-                "old_snapshot_id",
-                "new_snapshot_id",
-                "paths",
-                "authority",
-                "reason",
-                "execution_id",
-                "deleted_snapshot_ref",
-                "extra",
-            },
-        )
-
-
 class PlannerChainRegionPayload(GraphBaseModel):
     generation_index: int | None = None
     region_label: str | None = None
@@ -1323,7 +1228,7 @@ class PlannerChainPayload(GraphBaseModel):
 
 
 class CleanupRequestedProjection(GraphBaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
     cleanup_id: str
     position: int
@@ -1334,26 +1239,6 @@ class CleanupRequestedProjection(GraphBaseModel):
     reason: str | None = None
     execution_id: str | None = None
     producer_node_id: str | None = None
-    extra: dict[str, Any] = Field(default_factory=_empty_cleanup_extra)
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_cleanup_event_payload(
-            value,
-            {
-                "cleanup_id",
-                "position",
-                "file_state_record_id",
-                "snapshot_id",
-                "paths",
-                "authority",
-                "reason",
-                "execution_id",
-                "producer_node_id",
-                "extra",
-            },
-        )
 
 
 class RequirementRevisionProjection(GraphBaseModel):
@@ -2539,11 +2424,18 @@ class StrictRecoveryPlanValue(StrictOutputRecordValue):
     retry_not_before: str | None = None
 
 
+class StrictGitDiffSummary(StrictOutputRecordValue):
+    files_changed: int = Field(ge=0)
+    additions: int = Field(ge=0)
+    deletions: int = Field(ge=0)
+
+
 class StrictGitRef(StrictOutputRecordValue):
     commit_sha: str | None = None
     tree_sha: str | None = None
     no_commit_reason: str | None = None
     ref: str | None = None
+    diff_summary: StrictGitDiffSummary | None = None
 
 
 class StrictFileEntry(StrictOutputRecordValue):
@@ -2556,8 +2448,8 @@ class StrictFileEntry(StrictOutputRecordValue):
     needs_gatekeeper: bool | None = None
     rejected: bool | None = None
     reason: str | None = None
-    size_bytes: int | None = None
-    entropy: float | None = None
+    size_bytes: int | None = Field(default=None, ge=0)
+    entropy: float | None = Field(default=None, ge=0, le=8)
     hash: str | None = None
 
 
@@ -2675,6 +2567,17 @@ class StrictFanOutInputsRecord(StrictOutputRecordBase):
 
 class StrictFileStateRecord(StrictOutputRecordBase):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
+    record_id: str
+    record_kind: str = "file_state"
+    record_type: str = "file_state"
+    producer_node_id: str = Field(min_length=1)
+    port: str = "file_state"
+    schema_: str = Field(default="FileStateRecord", alias="schema")
+    schema_version: int | None = Field(default=None, ge=1)
+    producer_port: str | None = None
+    created_at: str | None = None
+    graph_position: int | None = None
+    run_id: str | None = None
     snapshot_id: str | None = None
     base_snapshot_id: str | None = None
     verdict: Literal["captured", "rejected"] = "captured"

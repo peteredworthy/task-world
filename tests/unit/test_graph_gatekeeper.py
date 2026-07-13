@@ -2,13 +2,17 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+from pydantic import ValidationError
+
 from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    apply_command,
+    apply_command as apply_typed_command,
+    build_graph_command_dependencies,
     initial_projection,
     project_gatekeeper_report,
     project_pattern_library,
@@ -16,6 +20,46 @@ from orchestrator.graph import (
     reduce_event,
 )
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph.specifications import CommandExecutionContext, HydratedEvent
+
+
+def apply_command(projection, events, command_type, payload, clock, id_gen):
+    payload = dict(payload)
+    run_id = payload.pop("run_id", "run-1")
+    catalog = build_graph_catalog()
+    output = apply_typed_command(
+        projection,
+        events,
+        command_type,
+        payload,
+        clock,
+        id_gen,
+        catalog=catalog,
+        context=CommandExecutionContext(
+            run_id=run_id,
+            current_position=len(events),
+            clock=clock,
+            id_generator=id_gen,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            events=(),
+            future_effects=build_graph_command_dependencies().future_effects,
+        ),
+    )
+    return [_stored_event(event) if isinstance(event, HydratedEvent) else event for event in output]
+
+
+def _stored_event(event: HydratedEvent) -> EventEnvelope:
+    metadata = event.metadata
+    return EventEnvelope(
+        event_id=metadata.event_id,
+        run_id=metadata.run_id,
+        position=metadata.position,
+        event_type=metadata.event_type,
+        schema_version=metadata.payload_schema_generation,
+        actor=metadata.actor,
+        timestamp=metadata.timestamp,
+        payload=event.payload.to_json(),
+    )
 
 
 def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
@@ -30,6 +74,8 @@ def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
             "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
+            "consult_id": "consult-1",
+            "model_id": "model-1",
             "verdicts": [_verdict("reports/result.xml", "test_artifact")],
         },
         FakeClock(),
@@ -55,6 +101,8 @@ def test_record_gatekeeper_verdicts_rejects_unknown_record_id() -> None:
             "run_id": "run-1",
             "file_state_record_id": "missing",
             "execution_id": "exec-1",
+            "consult_id": "consult-1",
+            "model_id": "model-1",
             "verdicts": [_verdict("tmp.out", "build_output")],
         },
         FakeClock(),
@@ -76,6 +124,8 @@ def test_record_gatekeeper_verdicts_rejects_path_not_in_residue() -> None:
             "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
+            "consult_id": "consult-1",
+            "model_id": "model-1",
             "verdicts": [_verdict("other.out", "build_output")],
         },
         FakeClock(),
@@ -89,22 +139,44 @@ def test_record_gatekeeper_verdicts_rejects_path_not_in_residue() -> None:
 def test_record_gatekeeper_verdicts_rejects_invalid_taxonomy_value() -> None:
     events = [_file_state_event("file-state-1", "tmp.out")]
 
-    emitted = apply_command(
-        _project(events),
-        events,
-        "record_gatekeeper_verdicts",
-        {
-            "run_id": "run-1",
-            "file_state_record_id": "file-state-1",
-            "execution_id": "exec-1",
-            "verdicts": [_verdict("tmp.out", "unknown_untracked")],
-        },
-        FakeClock(),
-        SequentialIdGenerator(),
-    )
+    with pytest.raises(ValidationError):
+        apply_command(
+            _project(events),
+            events,
+            "record_gatekeeper_verdicts",
+            {
+                "run_id": "run-1",
+                "file_state_record_id": "file-state-1",
+                "execution_id": "exec-1",
+                "verdicts": [_verdict("tmp.out", "unknown_untracked")],
+            },
+            FakeClock(),
+            SequentialIdGenerator(),
+        )
 
-    assert emitted[0].event_type == "command_rejected"
-    assert "invalid classification for tmp.out" in str(emitted[0].payload["reason"])
+
+@pytest.mark.parametrize("confidence", [-0.01, 1.01])
+def test_record_gatekeeper_verdicts_rejects_invalid_confidence_at_command_boundary(
+    confidence: float,
+) -> None:
+    events = [_file_state_event("file-state-1", "tmp.out")]
+    verdict = _verdict("tmp.out", "build_output")
+    verdict["confidence"] = confidence
+
+    with pytest.raises(ValidationError):
+        apply_command(
+            _project(events),
+            events,
+            "record_gatekeeper_verdicts",
+            {
+                "run_id": "run-1",
+                "file_state_record_id": "file-state-1",
+                "execution_id": "exec-1",
+                "verdicts": [verdict],
+            },
+            FakeClock(),
+            SequentialIdGenerator(),
+        )
 
 
 def test_record_gatekeeper_verdicts_rejects_duplicate_already_resolved_path() -> None:
@@ -117,6 +189,8 @@ def test_record_gatekeeper_verdicts_rejects_duplicate_already_resolved_path() ->
             "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
+            "consult_id": "consult-1",
+            "model_id": "model-1",
             "verdicts": [_verdict("tmp.out", "build_output")],
         },
         FakeClock(),
@@ -131,6 +205,8 @@ def test_record_gatekeeper_verdicts_rejects_duplicate_already_resolved_path() ->
             "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
+            "consult_id": "consult-2",
+            "model_id": "model-1",
             "verdicts": [_verdict("tmp.out", "build_output")],
         },
         FakeClock(),
@@ -167,21 +243,19 @@ def test_project_pattern_library_derives_and_merges_globs() -> None:
 def test_record_gatekeeper_verdicts_requires_execution_id() -> None:
     events = [_file_state_event("file-state-1", "tmp.out")]
 
-    emitted = apply_command(
-        _project(events),
-        events,
-        "record_gatekeeper_verdicts",
-        {
-            "run_id": "run-1",
-            "file_state_record_id": "file-state-1",
-            "verdicts": [_verdict("tmp.out", "build_output")],
-        },
-        FakeClock(),
-        SequentialIdGenerator(),
-    )
-
-    assert emitted[0].event_type == "command_rejected"
-    assert emitted[0].payload["reason"] == "missing execution_id"
+    with pytest.raises(ValidationError):
+        apply_command(
+            _project(events),
+            events,
+            "record_gatekeeper_verdicts",
+            {
+                "run_id": "run-1",
+                "file_state_record_id": "file-state-1",
+                "verdicts": [_verdict("tmp.out", "build_output")],
+            },
+            FakeClock(),
+            SequentialIdGenerator(),
+        )
 
 
 def test_record_gatekeeper_verdicts_rejects_duplicate_path_in_same_payload() -> None:
@@ -195,6 +269,8 @@ def test_record_gatekeeper_verdicts_rejects_duplicate_path_in_same_payload() -> 
             "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
+            "consult_id": "consult-1",
+            "model_id": "model-1",
             "verdicts": [
                 _verdict("tmp.out", "build_output"),
                 _verdict("tmp.out", "build_output"),
@@ -219,6 +295,8 @@ def test_record_gatekeeper_verdicts_secret_requests_cleanup_and_marks_projection
             "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
+            "consult_id": "consult-1",
+            "model_id": "model-1",
             "verdicts": [_verdict("residue.txt", "secret")],
         },
         FakeClock(),
@@ -474,6 +552,8 @@ def _verdict(path: str, classification: str) -> dict[str, Any]:
         "model_id": "claude-test",
         "input_tokens": 11,
         "output_tokens": 3,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
         "cost_usd": 0.001,
         "wall_time_ms": 12,
     }
@@ -490,6 +570,7 @@ def _cleanup_requested_events() -> list[EventEnvelope]:
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "consult_id": "consult-1",
+            "model_id": "model-1",
             "verdicts": [_verdict("residue.txt", "secret")],
         },
         FakeClock(),

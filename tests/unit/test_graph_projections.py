@@ -674,8 +674,12 @@ def test_file_state_projection_checkpoint_round_trips_typed_payload() -> None:
             {
                 "cleanup_id": "cleanup-1",
                 "file_state_record_id": "file-state-cand-1",
+                "snapshot_id": "snapshot-cand-1",
                 "reason": "secret found",
                 "paths": ["secrets.env"],
+                "authority": "gatekeeper",
+                "execution_id": "exec-1",
+                "producer_node_id": "worker-1",
             },
         ).model_copy(update={"position": 22}),
     )
@@ -2687,13 +2691,46 @@ def test_residual_command_projection_fields_fold_incrementally() -> None:
         ).model_copy(update={"position": 7}),
         _event(
             "cleanup_requested",
-            {"cleanup_id": "cleanup-1", "file_state_record_id": "file-state-1"},
+            {
+                "cleanup_id": "cleanup-1",
+                "file_state_record_id": "file-state-1",
+                "snapshot_id": None,
+                "paths": [],
+                "authority": "gatekeeper",
+                "reason": None,
+                "execution_id": "exec-1",
+                "producer_node_id": None,
+            },
         ).model_copy(update={"position": 8}),
         _event(
             "cleanup_requested",
-            {"cleanup_id": "cleanup-1", "file_state_record_id": "file-state-2"},
+            {
+                "cleanup_id": "cleanup-1",
+                "file_state_record_id": "file-state-2",
+                "snapshot_id": None,
+                "paths": [],
+                "authority": "gatekeeper",
+                "reason": None,
+                "execution_id": "exec-1",
+                "producer_node_id": None,
+            },
         ).model_copy(update={"position": 9}),
-        _event("cleanup_applied", {"cleanup_id": "cleanup-1"}).model_copy(update={"position": 10}),
+        _event(
+            "cleanup_applied",
+            {
+                "cleanup_id": "cleanup-1",
+                "file_state_record_id": "file-state-1",
+                "superseding_record_id": "file-state-2",
+                "old_snapshot_id": None,
+                "new_snapshot_id": None,
+                "paths": [],
+                "authority": "gatekeeper",
+                "reason": None,
+                "execution_id": "exec-1",
+                "deleted_snapshot_ref": False,
+                "resolved_count": 0,
+            },
+        ).model_copy(update={"position": 10}),
     ]
 
     projection = initial_projection()
@@ -2731,6 +2768,11 @@ def test_cleanup_requested_events_checkpoint_round_trips_typed_envelopes() -> No
                 "cleanup_id": "cleanup-1",
                 "file_state_record_id": "file-state-1",
                 "paths": ["secrets.env"],
+                "snapshot_id": None,
+                "authority": "gatekeeper",
+                "reason": None,
+                "execution_id": "exec-1",
+                "producer_node_id": None,
             },
         ).model_copy(update={"position": 8}),
         _event(
@@ -2739,6 +2781,11 @@ def test_cleanup_requested_events_checkpoint_round_trips_typed_envelopes() -> No
                 "cleanup_id": "cleanup-1",
                 "file_state_record_id": "file-state-2",
                 "paths": ["ignored.env"],
+                "snapshot_id": None,
+                "authority": "gatekeeper",
+                "reason": None,
+                "execution_id": "exec-1",
+                "producer_node_id": None,
             },
         ).model_copy(update={"position": 9}),
     ]:

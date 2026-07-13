@@ -8,6 +8,10 @@ from orchestrator.graph.command_bindings import (
     resolve_check_command_definition,
 )
 from orchestrator.graph.commands import apply_command
+from orchestrator.graph.commands.file_state import (
+    RecordCleanupAppliedCommand,
+    RecordGatekeeperVerdictsCommand,
+)
 from orchestrator.graph.composition import (
     GraphCommandDependencies,
     build_graph_command_dependencies,
@@ -50,6 +54,11 @@ from orchestrator.graph.events.requirements import (
     RequirementRevisionPayload,
     SupportEvidencePayload,
 )
+from orchestrator.graph.events.file_state import (
+    CleanupAppliedPayload,
+    CleanupRequestedPayload,
+    GatekeeperVerdict,
+)
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -60,14 +69,13 @@ from orchestrator.graph.models import (
     CandidateProjection,
     CheckResultProjection,
     CheckResultRecord,
-    CleanupAppliedPayload,
-    CleanupRequestedPayload,
     CleanupRequestedProjection,
     CompactEventEnvelope,
     EdgeProjection,
     EnvironmentFailureProjection,
     EventEnvelope,
     FileStateRecord,
+    StrictFileStateRecord,
     GraphPatchStatusPayload,
     InputBindingProjection,
     InvalidTestBlockProjection,
@@ -201,6 +209,9 @@ __all__ = [
     "DEFAULT_NODE_CONTRACTS",
     "CleanupAppliedPayload",
     "CleanupRequestedPayload",
+    "GatekeeperVerdict",
+    "RecordCleanupAppliedCommand",
+    "RecordGatekeeperVerdictsCommand",
     "CleanupRequestedProjection",
     "CompactEventEnvelope",
     "CommandRejectedPayload",
@@ -215,6 +226,7 @@ __all__ = [
     "FutureCommandEffects",
     "FakeClock",
     "FileStateRecord",
+    "StrictFileStateRecord",
     "FileStateClassification",
     "FileStateDeclaration",
     "FileStatePath",

@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from typing import Any
+import json
+import inspect
+from pathlib import Path
+
+import pytest
+from pydantic import ValidationError
 
 from orchestrator.graph import (
     Actor,
@@ -10,117 +16,394 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    apply_command,
+    apply_command as apply_typed_command,
+    build_graph_command_dependencies,
     initial_projection,
     reduce_event,
 )
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph.specifications import CommandExecutionContext, HydratedEvent
+from orchestrator.graph.commands import callbacks
+from orchestrator.graph import _commands
+from orchestrator.graph.events import file_state as file_state_events
+from orchestrator.graph.commands.file_state import RecordGatekeeperVerdictsCommand
+from orchestrator.graph.events.file_state import (
+    FileStateRejectedPayload,
+    GatekeeperCostRecordedPayload,
+    GatekeeperVerdict,
+    GatekeeperVerdictRecordedPayload,
+)
+from orchestrator.graph.models import StrictFileEntry, StrictFileStateRecord, StrictGitDiffSummary
 
 
-def test_cleanup_requested_payload_normalizes_legacy_free_form_keys_to_extra() -> None:
-    payload = CleanupRequestedPayload.model_validate(
-        {
-            "cleanup_id": "cleanup-1",
-            "file_state_record_id": "file-state-1",
-            "snapshot_id": "snapshot-1",
-            "paths": ["secrets.env", 7],
-            "authority": {"kind": "gatekeeper", "policy": "delete-secret"},
-            "reason": "secret found",
-            "execution_id": "exec-1",
-            "producer_node_id": "gatekeeper-1",
-            "policy": "legacy-top-level",
-        }
-    )
-
-    assert payload.cleanup_id == "cleanup-1"
-    assert payload.paths == ["secrets.env"]
-    assert payload.authority is None
-    assert payload.extra == {
-        "authority": {"kind": "gatekeeper", "policy": "delete-secret"},
-        "policy": "legacy-top-level",
-    }
-
-
-def test_cleanup_applied_payload_normalizes_legacy_free_form_keys_to_extra() -> None:
-    payload = CleanupAppliedPayload.model_validate(
-        {
-            "cleanup_id": "cleanup-1",
-            "file_state_record_id": "file-state-1",
-            "superseding_record_id": "file-state-2",
-            "old_snapshot_id": "snapshot-old",
-            "new_snapshot_id": "snapshot-new",
-            "paths": ["secrets.env", None],
-            "authority": {"kind": "gatekeeper"},
-            "reason": "cleanup applied",
-            "execution_id": "exec-1",
-            "deleted_snapshot_ref": True,
-            "operator_note": "legacy note",
-        }
-    )
-
-    assert payload.paths == ["secrets.env"]
-    assert payload.authority is None
-    assert payload.deleted_snapshot_ref is True
-    assert payload.extra == {
-        "authority": {"kind": "gatekeeper"},
-        "operator_note": "legacy note",
-    }
-
-
-def test_cleanup_reducers_tolerate_legacy_payloads_through_typed_models() -> None:
-    projection = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
-        _file_state_event("file-state-1", "snapshot-1", ["secrets.env"]),
-    )
-
-    projection = reduce_event(
-        build_graph_catalog(),
+def apply_command(projection, events, command_type, payload, clock, id_gen):
+    payload = dict(payload)
+    run_id = payload.pop("run_id")
+    output = apply_typed_command(
         projection,
-        _event(
-            "cleanup_requested",
-            {
-                "cleanup_id": "cleanup-1",
-                "file_state_record_id": "file-state-1",
-                "snapshot_id": "snapshot-1",
-                "paths": ["secrets.env", 123],
-                "authority": {"kind": "gatekeeper"},
-                "reason": "secret found",
-                "legacy_note": "kept under extra",
-            },
-            position=2,
+        events,
+        command_type,
+        payload,
+        clock,
+        id_gen,
+        catalog=build_graph_catalog(),
+        context=CommandExecutionContext(
+            run_id=run_id,
+            current_position=len(events),
+            clock=clock,
+            id_generator=id_gen,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            events=(),
+            future_effects=build_graph_command_dependencies().future_effects,
         ),
     )
+    return [_stored_event(event) if isinstance(event, HydratedEvent) else event for event in output]
 
-    requested = projection["cleanup_requested_events"]["cleanup-1"]
-    assert requested.paths == ["secrets.env"]
-    assert requested.authority is None
-    assert requested.extra == {
-        "authority": {"kind": "gatekeeper"},
-        "legacy_note": "kept under extra",
+
+def _stored_event(event: HydratedEvent) -> EventEnvelope:
+    metadata = event.metadata
+    return EventEnvelope(
+        event_id=metadata.event_id,
+        run_id=metadata.run_id,
+        position=metadata.position,
+        event_type=metadata.event_type,
+        schema_version=metadata.payload_schema_generation,
+        actor=metadata.actor,
+        timestamp=metadata.timestamp,
+        payload=event.payload.to_json(),
+    )
+
+
+def test_cleanup_requested_payload_rejects_unknown_and_malformed_fields() -> None:
+    valid = {
+        "cleanup_id": "cleanup-1",
+        "file_state_record_id": "file-state-1",
+        "snapshot_id": "snapshot-1",
+        "paths": ("secrets.env",),
+        "authority": "gatekeeper",
+        "reason": "secret found",
+        "execution_id": "exec-1",
+        "producer_node_id": "gatekeeper-1",
     }
 
-    projection = reduce_event(
-        build_graph_catalog(),
-        projection,
-        _event(
-            "cleanup_applied",
+    with pytest.raises(ValidationError):
+        CleanupRequestedPayload.model_validate({**valid, "policy": "legacy-top-level"})
+    with pytest.raises(ValidationError):
+        CleanupRequestedPayload.model_validate({**valid, "paths": ["secrets.env", 7]})
+
+
+def test_file_state_strict_domain_does_not_delegate_or_dehydrate() -> None:
+    event_source = inspect.getsource(file_state_events)
+    handler_source = inspect.getsource(
+        callbacks.handle_record_gatekeeper_verdicts
+    ) + inspect.getsource(callbacks.handle_record_cleanup_applied)
+
+    assert "reduce_legacy_event" not in event_source
+    assert "_legacy_reduce" not in event_source
+    assert "command.to_json" not in handler_source
+    assert "apply_typed_record_" not in handler_source
+    command_source = inspect.getsource(_commands)
+    assert "apply_typed_record_gatekeeper_verdicts" not in command_source
+    assert "apply_typed_record_cleanup_applied" not in command_source
+    dispatch_source = Path("src/orchestrator/graph_runtime/dispatch.py").read_text()
+    assert "GatekeeperVerdict.model_validate(verdict.to_payload())" not in dispatch_source
+
+
+def test_file_state_accepted_reuses_strict_file_state_record_contract() -> None:
+    assert file_state_events.FileStateAcceptedPayload is StrictFileStateRecord
+
+
+@pytest.mark.parametrize("confidence", [0.0, 1.0])
+def test_gatekeeper_verdict_accepts_confidence_boundaries(confidence: float) -> None:
+    verdict = GatekeeperVerdict(
+        path="artifact.txt",
+        classification="test_artifact",
+        confidence=confidence,
+        rationale="boundary",
+        model_id="model-1",
+        input_tokens=0,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        cost_usd=0.0,
+        wall_time_ms=0,
+    )
+    assert verdict.confidence == confidence
+
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "cost_usd",
+        "wall_time_ms",
+    ],
+)
+def test_gatekeeper_verdict_requires_every_metric(field: str) -> None:
+    values = _verdict("artifact.txt", "test_artifact")
+    values.update(cache_read_tokens=0, cache_write_tokens=0)
+    values.pop(field)
+    with pytest.raises(ValidationError):
+        GatekeeperVerdict.model_validate(values)
+
+
+@pytest.mark.parametrize("producer_node_id", [None, ""])
+def test_file_state_record_requires_nonempty_producer_node_id(
+    producer_node_id: str | None,
+) -> None:
+    values = _file_state_event("file-state-1", "snapshot-1", []).payload.copy()
+    if producer_node_id is None:
+        values.pop("producer_node_id")
+    else:
+        values["producer_node_id"] = producer_node_id
+    with pytest.raises(ValidationError):
+        StrictFileStateRecord.model_validate(values)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("confidence", -0.01),
+        ("confidence", 1.01),
+        ("input_tokens", -1),
+        ("output_tokens", -1),
+        ("cache_read_tokens", -1),
+        ("cache_write_tokens", -1),
+        ("cost_usd", -0.01),
+        ("wall_time_ms", -1),
+        ("confidence", "0.5"),
+        ("input_tokens", 1.5),
+        ("cost_usd", "0.01"),
+        ("wall_time_ms", 1.5),
+    ],
+)
+def test_gatekeeper_verdict_rejects_invalid_numeric_boundaries(field: str, value: object) -> None:
+    valid = _verdict("artifact.txt", "test_artifact")
+    valid.update(cache_read_tokens=0, cache_write_tokens=0)
+    valid[field] = value
+    with pytest.raises(ValidationError):
+        GatekeeperVerdict.model_validate(valid)
+    with pytest.raises(ValidationError):
+        RecordGatekeeperVerdictsCommand.model_validate(
+            {
+                "file_state_record_id": "file-state-1",
+                "execution_id": "exec-1",
+                "verdicts": [valid],
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    ("model", "payload", "field", "value"),
+    [
+        (
+            GatekeeperVerdictRecordedPayload,
+            {
+                "file_state_record_id": "file-state-1",
+                "execution_id": "exec-1",
+                "verdicts": (),
+                "resolved_count": 0,
+            },
+            "resolved_count",
+            -1,
+        ),
+        (
+            GatekeeperCostRecordedPayload,
+            {
+                "file_state_record_id": "file-state-1",
+                "execution_id": "exec-1",
+                "consult_id": "consult-1",
+                "model_id": "model-1",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.0,
+                "wall_time_ms": 0,
+                "item_count": 0,
+            },
+            "item_count",
+            -1,
+        ),
+        (
+            CleanupAppliedPayload,
             {
                 "cleanup_id": "cleanup-1",
                 "file_state_record_id": "file-state-1",
                 "superseding_record_id": "file-state-2",
+                "old_snapshot_id": "old",
+                "new_snapshot_id": "new",
+                "paths": (),
+                "authority": "gatekeeper",
+                "reason": None,
+                "execution_id": "exec-1",
                 "deleted_snapshot_ref": True,
-                "authority": {"kind": "gatekeeper"},
-                "legacy_note": "kept under extra",
+                "resolved_count": 0,
             },
-            position=3,
+            "resolved_count",
+            -1,
         ),
-    )
+    ],
+)
+def test_event_payloads_reject_negative_aggregate_counts(model, payload, field, value) -> None:
+    assert model.model_validate(payload)
+    with pytest.raises(ValidationError):
+        model.model_validate({**payload, field: value})
 
-    record = projection["file_state_records"]["file-state-1"]
-    assert projection["cleanup_applied_ids"] == {"cleanup-1": True}
-    assert record.superseded_by_record_id == "file-state-2"
-    assert record.compromised_snapshot_deleted is True
+
+@pytest.mark.parametrize(
+    "field",
+    [
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "cost_usd",
+        "wall_time_ms",
+        "item_count",
+    ],
+)
+def test_gatekeeper_cost_rejects_each_negative_numeric_field(field: str) -> None:
+    payload = {
+        "file_state_record_id": "file-state-1",
+        "execution_id": "exec-1",
+        "consult_id": "consult-1",
+        "model_id": "model-1",
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
+        "cost_usd": 0.0,
+        "wall_time_ms": 0,
+        "item_count": 0,
+    }
+    payload[field] = -0.01 if field == "cost_usd" else -1
+    with pytest.raises(ValidationError):
+        GatekeeperCostRecordedPayload.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (StrictGitDiffSummary, {"files_changed": -1, "additions": 0, "deletions": 0}),
+        (StrictGitDiffSummary, {"files_changed": 0, "additions": -1, "deletions": 0}),
+        (StrictGitDiffSummary, {"files_changed": 0, "additions": 0, "deletions": -1}),
+        (StrictFileEntry, {"path": "artifact", "size_bytes": -1}),
+        (StrictFileEntry, {"path": "artifact", "entropy": -0.01}),
+        (StrictFileEntry, {"path": "artifact", "entropy": 8.01}),
+        (
+            FileStateRejectedPayload,
+            {
+                "node_id": "node-1",
+                "run_id": "run-1",
+                "execution_id": "exec-1",
+                "lease_id": "lease-1",
+                "lease_generation": -1,
+                "classifications": [],
+                "rejected_paths": [],
+            },
+        ),
+    ],
+)
+def test_task8_similar_numeric_fields_reject_out_of_domain_values(model, payload) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (
+            GatekeeperCostRecordedPayload,
+            {
+                "file_state_record_id": "file-state-1",
+                "execution_id": "exec-1",
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.0,
+                "wall_time_ms": 0,
+                "item_count": 0,
+            },
+        ),
+        (
+            CleanupRequestedPayload,
+            {
+                "cleanup_id": "cleanup-1",
+                "file_state_record_id": "file-state-1",
+                "paths": (),
+            },
+        ),
+        (
+            RecordGatekeeperVerdictsCommand,
+            {
+                "file_state_record_id": "file-state-1",
+                "execution_id": "exec-1",
+                "verdicts": [],
+            },
+        ),
+    ],
+)
+def test_strict_task8_payloads_require_explicit_identity_fields(model, payload) -> None:
+    with pytest.raises(ValidationError):
+        model.model_validate(payload)
+
+
+@pytest.mark.parametrize("field", ["execution_id", "consult_id", "model_id"])
+def test_gatekeeper_command_rejects_empty_identity_fields(field: str) -> None:
+    payload = {
+        "file_state_record_id": "file-state-1",
+        "execution_id": "exec-1",
+        "consult_id": "consult-1",
+        "model_id": "model-1",
+        "verdicts": [],
+    }
+    payload[field] = ""
+    with pytest.raises(ValidationError):
+        RecordGatekeeperVerdictsCommand.model_validate(payload)
+
+
+@pytest.mark.parametrize("field", ["authority", "execution_id"])
+def test_cleanup_requested_rejects_empty_identity_fields(field: str) -> None:
+    payload = {
+        "cleanup_id": "cleanup-1",
+        "file_state_record_id": "file-state-1",
+        "paths": (),
+        "authority": "gatekeeper",
+        "execution_id": "exec-1",
+    }
+    payload[field] = ""
+    with pytest.raises(ValidationError):
+        CleanupRequestedPayload.model_validate(payload)
+
+
+def test_cleanup_applied_payload_requires_resolved_count_and_rejects_unknown_fields() -> None:
+    valid = {
+        "cleanup_id": "cleanup-1",
+        "file_state_record_id": "file-state-1",
+        "superseding_record_id": "file-state-2",
+        "old_snapshot_id": "snapshot-old",
+        "new_snapshot_id": "snapshot-new",
+        "paths": ("secrets.env",),
+        "authority": "gatekeeper",
+        "reason": "cleanup applied",
+        "execution_id": "exec-1",
+        "deleted_snapshot_ref": True,
+        "resolved_count": 1,
+    }
+
+    payload = CleanupAppliedPayload.model_validate(valid)
+    assert payload.resolved_count == 1
+    with pytest.raises(ValidationError):
+        CleanupAppliedPayload.model_validate(
+            {key: value for key, value in valid.items() if key != "resolved_count"}
+        )
+    with pytest.raises(ValidationError):
+        CleanupAppliedPayload.model_validate({**valid, "operator_note": "legacy note"})
 
 
 def test_cleanup_producers_emit_payloads_validated_by_typed_models() -> None:
@@ -134,15 +417,16 @@ def test_cleanup_producers_emit_payloads_validated_by_typed_models() -> None:
             "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
+            "consult_id": "consult-1",
+            "model_id": "model-1",
             "verdicts": [_verdict("residue.txt", "secret")],
         },
         FakeClock(),
         SequentialIdGenerator(),
     )
     requested_event = next(event for event in emitted if event.event_type == "cleanup_requested")
-    requested = CleanupRequestedPayload.model_validate(requested_event.payload)
+    requested = CleanupRequestedPayload.model_validate_json(json.dumps(requested_event.payload))
     assert requested.cleanup_id == "file-state-1:gatekeeper-secret"
-    assert requested.extra == {}
 
     requested_event.payload["cleanup_id"] = "cleanup-1"
     events = [*events, requested_event]
@@ -160,12 +444,12 @@ def test_cleanup_producers_emit_payloads_validated_by_typed_models() -> None:
         SequentialIdGenerator(),
     )
 
-    applied_payload = CleanupAppliedPayload.model_validate(applied[0].payload)
+    applied_payload = CleanupAppliedPayload.model_validate_json(json.dumps(applied[0].payload))
     assert applied[0].event_type == "cleanup_applied"
     assert applied_payload.cleanup_id == "cleanup-1"
     assert applied_payload.superseding_record_id == "file-state-1-cleanup"
     assert applied_payload.deleted_snapshot_ref is True
-    assert applied_payload.extra == {}
+    assert applied_payload.resolved_count == 1
 
 
 def _project(events: list[EventEnvelope]) -> Any:
@@ -231,6 +515,8 @@ def _verdict(path: str, classification: str) -> dict[str, Any]:
         "model_id": "claude-test",
         "input_tokens": 11,
         "output_tokens": 3,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
         "cost_usd": 0.001,
         "wall_time_ms": 12,
     }

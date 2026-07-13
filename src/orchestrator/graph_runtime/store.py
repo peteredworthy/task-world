@@ -331,6 +331,7 @@ NODE_DETAIL_PAYLOAD_FIELDS = (
     "retry_not_before",
     "schema",
     "session_id",
+    "snapshot_id",
     "state",
     "supersedes_record_id",
     "task_region_id",

@@ -1,13 +1,13 @@
 """Pure graph projections for scenario fixtures."""
 
 from __future__ import annotations
-
 from datetime import datetime
 from typing import Any, Iterable, Literal, Sequence, TypedDict, cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
 from orchestrator.graph.catalog import GraphCatalog
+from orchestrator.graph.events.file_state import file_entry_values
 from orchestrator.graph.command_bindings import check_command_reference
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
@@ -31,8 +31,6 @@ from orchestrator.graph.models import (
     CandidateRecord,
     CheckResultProjection,
     CheckResultRecord,
-    CleanupAppliedPayload,
-    CleanupRequestedPayload,
     CleanupRequestedProjection,
     CompactEventEnvelope,
     CommandDefinitionProjection,
@@ -42,7 +40,6 @@ from orchestrator.graph.models import (
     EdgeProjection,
     EnvironmentFailureProjection,
     EventEnvelope,
-    ExternalFileEntry,
     FileEntry,
     FileStateRecord,
     FailureRecord,
@@ -1512,20 +1509,6 @@ def _cleanup_requested_from_payload(payload: dict[str, Any]) -> CleanupRequested
         return None
 
 
-def _cleanup_requested_payload_from_event(event: EventEnvelope) -> CleanupRequestedPayload | None:
-    try:
-        return CleanupRequestedPayload.model_validate(event.payload)
-    except ValueError:
-        return None
-
-
-def _cleanup_applied_payload_from_event(event: EventEnvelope) -> CleanupAppliedPayload | None:
-    try:
-        return CleanupAppliedPayload.model_validate(event.payload)
-    except ValueError:
-        return None
-
-
 def _graph_patch_accepted_payload_from_event(
     event: EventEnvelope,
 ) -> GraphPatchAcceptedPayload | None:
@@ -1572,18 +1555,6 @@ def _graph_patch_payload_for_event(event: EventEnvelope) -> dict[str, Any] | Non
     if payload is None:
         return None
     return payload.model_dump(mode="json")
-
-
-def _cleanup_requested_from_event(event: EventEnvelope) -> CleanupRequestedProjection | None:
-    payload = _cleanup_requested_payload_from_event(event)
-    if payload is None:
-        return None
-    return _cleanup_requested_from_payload(
-        {
-            **payload.model_dump(mode="json"),
-            "position": event.position,
-        }
-    )
 
 
 def _node_creation_from_event(event: GraphHistoryEvent) -> NodeCreationProjection | None:
@@ -1982,6 +1953,16 @@ def reduce_d3_legacy_record_replay(
                     }
                 ),
             )
+    if event.event_type == "file_state_accepted":
+        next_state = copy_projection(state)
+        normalized = event.model_copy(
+            update={"payload": _normalize_d3_file_state_membership(event.payload)}
+        )
+        _record_node_output_port(next_state, normalized)
+        _record_accepted_record_summary(next_state, normalized)
+        _record_file_state(next_state, normalized)
+        _refresh_derived_topology_state(next_state)
+        return next_state
     return reduce_legacy_event(
         state,
         event.model_copy(update={"payload": _normalize_d3_file_state_membership(event.payload)}),
@@ -2299,10 +2280,6 @@ def reduce_legacy_event(
         _record_verification_result(next_state, event)
     elif event.event_type in {"environment_failure_accepted", "check_result_classified"}:
         _record_environment_failure(next_state, event)
-    elif event.event_type == "file_state_accepted":
-        _record_node_output_port(next_state, event)
-        _record_accepted_record_summary(next_state, event)
-        _record_file_state(next_state, event)
     elif event.event_type == "graph_patch_accepted":
         _record_open_proposal_blocker(next_state, event)
         accepted_payload = _graph_patch_accepted_payload_from_event(event)
@@ -2333,12 +2310,6 @@ def reduce_legacy_event(
                 next_state["accepted_no_successor_patch_ids_by_node"][planner_node_id] = patch_id
             if successor_node_ids:
                 next_state["planner_successors"][planner_node_id] = successor_node_ids[0]
-    elif event.event_type == "gatekeeper_verdict_recorded":
-        _record_gatekeeper_verdicts(next_state, event)
-    elif event.event_type == "cleanup_requested":
-        _record_cleanup_requested(next_state, event)
-    elif event.event_type == "cleanup_applied":
-        _record_cleanup_applied(next_state, event)
     elif event.event_type == "requirement_revision_proposed":
         _record_authority_revision_blocker(next_state, event)
     elif event.event_type in {
@@ -3757,7 +3728,7 @@ def project_residue_report(
     for record in _project(catalog, events)["file_state_records"].values():
         entries = record.residue or record.classifications
         for raw_entry in entries:
-            entry = _file_entry_dict(raw_entry)
+            entry = file_entry_values(raw_entry)
             path = entry.get("path")
             if not isinstance(path, str):
                 continue
@@ -5556,98 +5527,6 @@ def _record_file_state(state: GraphProjection, event: EventEnvelope) -> None:
     state["file_state_records"][record_id] = record
 
 
-def _record_gatekeeper_verdicts(state: GraphProjection, event: EventEnvelope) -> None:
-    record_id = event.payload.get("file_state_record_id")
-    if not isinstance(record_id, str):
-        return
-    record = state["file_state_records"].get(record_id)
-    if record is None:
-        return
-    verdicts = event.payload.get("verdicts")
-    if not isinstance(verdicts, list):
-        return
-    by_path: dict[str, dict[str, Any]] = {}
-    for raw_verdict in cast(list[Any], verdicts):
-        if not isinstance(raw_verdict, dict):
-            continue
-        verdict = cast(dict[str, Any], raw_verdict)
-        path = verdict.get("path")
-        if isinstance(path, str):
-            by_path[path] = verdict
-    for key in ("classifications", "residue", "untracked", "ignored", "external"):
-        entries = getattr(record, key)
-        if not entries:
-            continue
-        setattr(record, key, [_resolved_file_entry(entry, by_path) for entry in entries])
-
-
-def _record_cleanup_requested(state: GraphProjection, event: EventEnvelope) -> None:
-    payload = _cleanup_requested_payload_from_event(event)
-    if payload is None:
-        return
-
-    cleanup_id = payload.cleanup_id
-    cleanup = _cleanup_requested_from_event(event)
-    if cleanup is not None:
-        state["cleanup_requested_events"].setdefault(cleanup_id, cleanup)
-
-    record_id = payload.file_state_record_id
-    if record_id is None:
-        return
-    record = state["file_state_records"].get(record_id)
-    if record is None:
-        return
-    record.compromised = True
-    record.superseded_pending = True
-    record.cleanup_id = cleanup_id
-    record.cleanup_reason = payload.reason
-    record.compromised_paths = list(payload.paths)
-
-
-def _record_cleanup_applied(state: GraphProjection, event: EventEnvelope) -> None:
-    payload = _cleanup_applied_payload_from_event(event)
-    if payload is None:
-        return
-
-    cleanup_id = payload.cleanup_id
-    state["cleanup_applied_ids"][cleanup_id] = True
-
-    record_id = payload.file_state_record_id
-    if record_id is None:
-        return
-    record = state["file_state_records"].get(record_id)
-    if record is None:
-        return
-    record.compromised = True
-    record.superseded_pending = False
-    record.superseded_by_record_id = payload.superseding_record_id
-    record.cleanup_applied_event_id = event.event_id
-    record.compromised_snapshot_deleted = payload.deleted_snapshot_ref is True
-
-
-def _resolved_file_entry(
-    raw_entry: FileEntry | ExternalFileEntry,
-    verdicts_by_path: dict[str, dict[str, Any]],
-) -> FileEntry | ExternalFileEntry:
-    entry = _file_entry_dict(raw_entry)
-    path = entry.get("path")
-    if not isinstance(path, str) or path not in verdicts_by_path:
-        return raw_entry
-    verdict = verdicts_by_path[path]
-    entry["classification"] = verdict.get("classification")
-    entry["matched_rule"] = f"gatekeeper:{verdict.get('model_id', 'unknown')}"
-    entry["needs_gatekeeper"] = False
-    entry["gatekeeper_confidence"] = verdict.get("confidence")
-    entry["gatekeeper_rationale"] = verdict.get("rationale")
-    if isinstance(raw_entry, ExternalFileEntry):
-        return ExternalFileEntry.model_validate(entry)
-    return FileEntry.model_validate(entry)
-
-
-def _file_entry_dict(entry: FileEntry | ExternalFileEntry) -> dict[str, Any]:
-    return entry.model_dump(mode="json")
-
-
 def _file_state_record_from_payload(payload: dict[str, Any]) -> FileStateRecord | None:
     try:
         return FileStateRecord.model_validate(payload)
@@ -5709,7 +5588,7 @@ def _file_state_source_by_path(record: dict[str, Any] | FileStateRecord | None) 
         )
         for entries in entry_groups:
             for raw_entry in entries:
-                entry = _file_entry_dict(raw_entry)
+                entry = file_entry_values(raw_entry)
                 path = entry.get("path")
                 source = entry.get("source")
                 if isinstance(path, str) and isinstance(source, str):

@@ -21,8 +21,8 @@ from orchestrator.graph.commands.callbacks import (
     RECORD_DECISION,
     RECORD_REQUIREMENT_REVISION,
     RECORD_SUPPORT_EVIDENCE,
-    handle_record_cleanup_applied,
-    handle_record_gatekeeper_verdicts,
+    RECORD_CLEANUP_APPLIED,
+    RECORD_GATEKEEPER_VERDICTS,
 )
 from orchestrator.graph.commands.lifecycle import (
     RECORD_HEARTBEAT,
@@ -67,12 +67,6 @@ ApplyCommandHandler = Callable[
 ]
 
 
-_UNCONVERTED_W5_BRIDGE: dict[str, ApplyCommandHandler] = {
-    "record_gatekeeper_verdicts": handle_record_gatekeeper_verdicts,
-    "record_cleanup_applied": handle_record_cleanup_applied,
-}
-
-
 COMMAND_SPECIFICATIONS = (
     RECORD_HEARTBEAT,
     ACCEPT_RUN,
@@ -95,6 +89,8 @@ COMMAND_SPECIFICATIONS = (
     RECORD_DECISION,
     RECORD_REQUIREMENT_REVISION,
     RECORD_SUPPORT_EVIDENCE,
+    RECORD_GATEKEEPER_VERDICTS,
+    RECORD_CLEANUP_APPLIED,
 )
 _CATALOG_COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECIFICATIONS)
 
@@ -156,16 +152,7 @@ def apply_command(
             for event in typed_command.events:
                 catalog.resolve_event(event.metadata.event_type).serialize(event)
         return specification.handle(command, projection, tuple(events), context)
-    handler = _UNCONVERTED_W5_BRIDGE.get(command_type)
-    if handler is None:
-        return [
-            command_rejected(
-                make_event,
-                command_type,
-                f"unknown command: {command_type}",
-            )
-        ]
-    return handler(projection, events, command_type, payload, make_event, clock, id_gen)
+    return [command_rejected(make_event, command_type, f"unknown command: {command_type}")]
 
 
 __all__ = [

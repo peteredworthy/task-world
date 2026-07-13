@@ -9,58 +9,30 @@ return token/cost facts for the graph event stream.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Protocol, cast
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.graph import (
     EventEnvelope,
     FileStateDeclaration,
     FileStatePolicy,
     FileStateTaxonomy,
-    GatekeeperTaxonomy,
+    GatekeeperVerdict,
     project_pattern_library,
 )
 
 
-@dataclass(frozen=True)
-class ResidueMetadata:
-    path: str
-    size_bytes: int | None
-    entropy: float | None
-    source: str
-    prior_classification: str
-    matched_rule: str
-    record_id: str
+class ResidueMetadata(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
 
-
-@dataclass(frozen=True)
-class GatekeeperVerdict:
-    path: str
-    classification: GatekeeperTaxonomy
-    confidence: float
-    rationale: str
-    model_id: str
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_write_tokens: int = 0
-    cost_usd: float = 0.0
-    wall_time_ms: int = 0
-
-    def to_payload(self) -> dict[str, object]:
-        return {
-            "path": self.path,
-            "classification": self.classification,
-            "confidence": self.confidence,
-            "rationale": self.rationale,
-            "model_id": self.model_id,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "cache_read_tokens": self.cache_read_tokens,
-            "cache_write_tokens": self.cache_write_tokens,
-            "cost_usd": self.cost_usd,
-            "wall_time_ms": self.wall_time_ms,
-        }
+    path: str = Field(min_length=1)
+    size_bytes: int | None = Field(ge=0)
+    entropy: float | None = Field(ge=0, le=8)
+    source: str = Field(min_length=1)
+    prior_classification: str = Field(min_length=1)
+    matched_rule: str = Field(min_length=1)
+    record_id: str = Field(min_length=1)
 
 
 class ResidueClassifier(Protocol):
@@ -124,7 +96,7 @@ def metadata_from_file_state_record(
     max_items: int,
 ) -> list[ResidueMetadata]:
     """Extract capped metadata-only residue items from a file-state record."""
-    record_id = str(record.get("record_id", ""))
+    record_id = record.get("record_id")
     residue = record.get("residue")
     if not isinstance(residue, list):
         return []
@@ -135,38 +107,21 @@ def metadata_from_file_state_record(
         if not isinstance(raw_entry, dict):
             continue
         entry = cast(dict[str, object], raw_entry)
-        path = entry.get("path")
-        if not isinstance(path, str):
-            continue
         if entry.get("needs_gatekeeper") is not True:
             continue
         if entry.get("classification") == "secret":
             continue
         items.append(
-            ResidueMetadata(
-                path=path,
-                size_bytes=_optional_int(entry.get("size_bytes")),
-                entropy=_optional_float(entry.get("entropy")),
-                source=str(entry.get("source", "")),
-                prior_classification=str(entry.get("classification", "")),
-                matched_rule=str(entry.get("matched_rule", "")),
-                record_id=record_id,
+            ResidueMetadata.model_validate(
+                {
+                    "path": entry.get("path"),
+                    "size_bytes": entry.get("size_bytes"),
+                    "entropy": entry.get("entropy"),
+                    "source": entry.get("source"),
+                    "prior_classification": entry.get("classification"),
+                    "matched_rule": entry.get("matched_rule"),
+                    "record_id": record_id,
+                }
             )
         )
     return items
-
-
-def _optional_int(value: object) -> int | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int | float):
-        return int(value)
-    return None
-
-
-def _optional_float(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int | float):
-        return float(value)
-    return None

@@ -140,6 +140,8 @@ async def _seed_file_state_report_run(app: Any, run_id: str) -> None:
                         "model_id": "fake-small-model",
                         "input_tokens": 7,
                         "output_tokens": 2,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 0,
                         "cost_usd": 0.0001,
                         "wall_time_ms": 5,
                     }

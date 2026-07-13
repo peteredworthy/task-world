@@ -32,10 +32,6 @@ from collections.abc import Callable
 from pydantic import ConfigDict, Field, RootModel
 
 from orchestrator.graph._commands import (
-    Clock,
-    IdGenerator,
-    apply_record_cleanup_applied,
-    apply_record_gatekeeper_verdicts,
     decision_output_record,
     input_bound_events_for_record,
     record_selector_aliases,
@@ -64,6 +60,12 @@ from orchestrator.graph.events.requirements import (
     SUPPORT_EVIDENCE_RECORDED,
 )
 from orchestrator.graph.events.records import OUTPUT_RECORD_ACCEPTED
+from orchestrator.graph.commands.file_state import (
+    RECORD_CLEANUP_APPLIED,
+    RECORD_GATEKEEPER_VERDICTS,
+    handle_record_cleanup_applied,
+    handle_record_gatekeeper_verdicts,
+)
 from orchestrator.graph.events.topology import INPUT_BOUND, NODE_CREATED, NODE_STATE_CHANGED
 
 
@@ -379,22 +381,6 @@ def handle_record_decision(
     return output
 
 
-def handle_record_gatekeeper_verdicts(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    del events
-    del command_type
-    del clock
-    del id_gen
-    return apply_record_gatekeeper_verdicts(projection, payload, make_event)
-
-
 def handle_record_requirement_revision(
     command: RecordRequirementRevisionCommand,
     projection: GraphProjection,
@@ -453,27 +439,16 @@ RECORD_REQUIREMENT_REVISION = CommandSpecification(
 RECORD_SUPPORT_EVIDENCE = CommandSpecification(
     "record_support_evidence", RecordSupportEvidenceCommand, handle_record_support_evidence
 )
+
+
 POLICY_COMMAND_SPECIFICATIONS = (
     RAISE_APPEAL,
     RECORD_DECISION,
     RECORD_REQUIREMENT_REVISION,
     RECORD_SUPPORT_EVIDENCE,
+    RECORD_GATEKEEPER_VERDICTS,
+    RECORD_CLEANUP_APPLIED,
 )
-
-
-def handle_record_cleanup_applied(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    del command_type
-    del clock
-    del id_gen
-    return apply_record_cleanup_applied(projection, events, payload, make_event)
 
 
 __all__ = [

@@ -19,6 +19,9 @@ from orchestrator.graph.events.decisions import (
 from orchestrator.graph.events.requirements import (
     EVENT_SPECIFICATIONS as REQUIREMENT_EVENT_SPECIFICATIONS,
 )
+from orchestrator.graph.events.file_state import (
+    EVENT_SPECIFICATIONS as FILE_STATE_EVENT_SPECIFICATIONS,
+)
 from orchestrator.graph.specifications import EventSpecification
 
 
@@ -30,6 +33,7 @@ EVENT_SPECIFICATIONS: tuple[EventSpecification[Any], ...] = (
     *PATCH_EVENT_SPECIFICATIONS,
     *DECISION_EVENT_SPECIFICATIONS,
     *REQUIREMENT_EVENT_SPECIFICATIONS,
+    *FILE_STATE_EVENT_SPECIFICATIONS,
 )
 
 

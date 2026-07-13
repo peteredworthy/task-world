@@ -27,6 +27,7 @@ from orchestrator.graph import (
     GraphProjection,
     OutputRecordAcceptedPayload,
     RequirementRecord,
+    StrictFileStateRecord,
     build_graph_catalog,
     check_command_uses_acceptance_fallback,
     initial_projection,
@@ -722,6 +723,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             verdicts = self._residue_classifier.classify(metadata)
             if not verdicts:
                 continue
+            model_ids = sorted({verdict.model_id for verdict in verdicts})
             result = await self._handle_command_retry_stale(
                 context.run_id,
                 current_position,
@@ -730,7 +732,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     "file_state_record_id": event.payload.get("record_id"),
                     "execution_id": context.execution_id,
                     "consult_id": f"{context.execution_id}:{event.payload.get('record_id')}",
-                    "verdicts": [verdict.to_payload() for verdict in verdicts],
+                    "model_id": model_ids[0] if len(model_ids) == 1 else "mixed",
+                    "verdicts": verdicts,
                 },
             )
             current_position = result.projection_position
@@ -771,7 +774,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "record_cleanup_applied",
             {
                 "cleanup_id": cleanup.cleanup_id,
-                "superseding_file_state_record": cleanup.superseding_file_state_record,
+                "superseding_file_state_record": StrictFileStateRecord.model_validate(
+                    cleanup.superseding_file_state_record
+                ),
                 "deleted_snapshot_ref": cleanup.deleted_snapshot_ref,
             },
         )

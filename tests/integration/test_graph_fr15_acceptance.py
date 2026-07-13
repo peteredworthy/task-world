@@ -190,6 +190,7 @@ async def test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable(
             "file_state_record_id": record_id,
             "execution_id": "exec-cleanup",
             "consult_id": "consult-cleanup",
+            "model_id": "model-cleanup",
             "verdicts": [_secret_verdict("residue.txt")],
         },
     )
@@ -502,6 +503,8 @@ def _secret_verdict(path: str) -> dict[str, object]:
         "model_id": "test-gatekeeper",
         "input_tokens": 1,
         "output_tokens": 1,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
         "cost_usd": 0.001,
         "wall_time_ms": 1,
     }

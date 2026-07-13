@@ -300,6 +300,8 @@ def _secret_verdict(path: str) -> dict[str, object]:
         "model_id": "test-gatekeeper",
         "input_tokens": 1,
         "output_tokens": 1,
+        "cache_read_tokens": 0,
+        "cache_write_tokens": 0,
         "cost_usd": 0.001,
         "wall_time_ms": 1,
     }
@@ -386,6 +388,7 @@ async def _seed_cleanup_request(
             "file_state_record_id": record_id,
             "execution_id": "exec-1",
             "consult_id": "consult-1",
+            "model_id": "model-1",
             "verdicts": [_secret_verdict("residue.txt")],
         },
     )
@@ -1256,6 +1259,8 @@ async def test_compromised_file_state_binding_is_refused_before_cleanup_complete
                 "file_state_record_id": "file-state-1",
                 "snapshot_id": "snapshot-1",
                 "paths": ["residue.txt"],
+                "authority": "gatekeeper",
+                "execution_id": "exec-1",
             },
         ),
         _event(
