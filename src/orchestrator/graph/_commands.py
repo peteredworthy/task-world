@@ -1114,7 +1114,7 @@ def _apply_patch_command(
             )
         ]
 
-    parent_session_id = projection["planner_sessions"].get(patch.proposed_by_node_id)
+    parent_session_id = projection["planner_sessions"].values.get(patch.proposed_by_node_id)
     carryover_record_id = _carryover_record_id(payload)
     output = [
         _make_strict_event(
@@ -1218,7 +1218,7 @@ def _planner_budget_rejection(
     projection: GraphProjection,
     patch: PatchEnvelope,
 ) -> dict[str, int] | None:
-    parent_generation = projection["planner_generations"].get(patch.proposed_by_node_id, 0)
+    parent_generation = projection["planner_generations"].values.get(patch.proposed_by_node_id, 0)
     attempted_generation = parent_generation + 1
     budget = projection["planner_generation_budget"]
     if attempted_generation <= budget:
@@ -2453,25 +2453,29 @@ def _latest_routine_snapshot_record(projection: GraphProjection) -> dict[str, st
         }
     latest: dict[str, str] | None = None
     for summary in projection["accepted_record_summaries_by_id"].values():
-        record_id = summary.get("record_id")
-        producer_node_id = summary.get("producer_node_id")
-        port = summary.get("producer_port")
-        if not all(
-            isinstance(value, str) and value for value in (record_id, producer_node_id, port)
+        record_id = summary.record_id
+        producer_node_id = summary.producer_node_id
+        port = summary.producer_port
+        if (
+            not record_id
+            or not isinstance(producer_node_id, str)
+            or not producer_node_id
+            or not isinstance(port, str)
+            or not port
         ):
             continue
         is_routine_snapshot = (
-            summary.get("record_type") == "routine_snapshot"
-            or summary.get("record_kind") == "routine_snapshot"
-            or summary.get("schema") == "RoutineSnapshot"
+            summary.record_type == "routine_snapshot"
+            or summary.record_kind == "routine_snapshot"
+            or summary.schema_ == "RoutineSnapshot"
             or (producer_node_id == "routine-snapshot" and port in {"snapshot", "routine_snapshot"})
         )
         if not is_routine_snapshot:
             continue
         latest = {
-            "record_id": cast(str, record_id),
-            "producer_node_id": cast(str, producer_node_id),
-            "port": cast(str, port),
+            "record_id": record_id,
+            "producer_node_id": producer_node_id,
+            "port": port,
         }
     return latest
 
@@ -2541,7 +2545,7 @@ def _planner_session_id(
 ) -> str | None:
     if not _is_chain_planner(projection, node_id):
         return None
-    session_id = projection["planner_sessions"].get(node_id)
+    session_id = projection["planner_sessions"].values.get(node_id)
     if isinstance(session_id, str):
         return session_id
     return id_gen.next_id("session")
@@ -2550,7 +2554,7 @@ def _planner_session_id(
 def _next_lease_generation(projection: GraphProjection, node_id: str) -> int:
     if not _is_chain_planner(projection, node_id):
         return 1
-    session_id = projection["planner_sessions"].get(node_id)
+    session_id = projection["planner_sessions"].values.get(node_id)
     generations = [
         lease.get("generation")
         for lease in projection["leases"].values()
@@ -4009,7 +4013,7 @@ def _planner_session_state_event(
 ) -> EventEnvelope | None:
     if not _is_chain_planner(projection, node_id):
         return None
-    session_id = projection["planner_sessions"].get(node_id)
+    session_id = projection["planner_sessions"].values.get(node_id)
     if not isinstance(session_id, str):
         return None
     payload = PlannerSessionStateChangedPayload.model_validate(

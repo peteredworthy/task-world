@@ -84,6 +84,8 @@ __all__ = [
     "build_final_invariant_blockers_response",
     "build_graph_regions_response",
     "build_graph_topology_response",
+    "build_scheduler_view_response",
+    "build_decision_view_response",
     "get_codex_models_fn",
     "get_agent_runner_display_name",
     "get_agent_runner_icon",
@@ -116,6 +118,8 @@ _GRAPH_ROUTER_SYMBOLS = {
     "build_graph_projection_response",
     "build_graph_regions_response",
     "build_graph_topology_response",
+    "build_scheduler_view_response",
+    "build_decision_view_response",
     "build_scheduler_view_response_from_snapshot",
     "build_node_detail_response",
     "build_node_detail_response_from_summary",
@@ -148,6 +152,18 @@ def build_graph_regions_response(*args: Any, catalog: GraphCatalog, **kwargs: An
     import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
 
     return _graph_router.build_graph_regions_response(*args, **kwargs, catalog=catalog)
+
+
+def build_scheduler_view_response(*args: Any, catalog: GraphCatalog, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
+
+    return _graph_router.build_scheduler_view_response(*args, **kwargs, catalog=catalog)
+
+
+def build_decision_view_response(*args: Any, catalog: GraphCatalog, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
+
+    return _graph_router.build_decision_view_response(*args, **kwargs, catalog=catalog)
 
 
 def build_graph_topology_response(*args: Any, catalog: GraphCatalog, **kwargs: Any) -> Any:

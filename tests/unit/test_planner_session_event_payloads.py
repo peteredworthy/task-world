@@ -61,9 +61,9 @@ def test_session_state_changed_reducer_uses_strict_payload() -> None:
             },
         ),
     )
-    assert projection["planner_session_states"] == {"session-1": "attached"}
-    assert projection["planner_session_current_nodes"] == {"session-1": "planner-1"}
-    assert projection["planner_session_carryovers"] == {"session-1": "summary-1"}
+    assert projection["planner_session_states"].values == {"session-1": "attached"}
+    assert projection["planner_session_current_nodes"].values == {"session-1": "planner-1"}
+    assert projection["planner_session_carryovers"].values == {"session-1": "summary-1"}
 
 
 def test_session_state_changed_producers_emit_strict_payloads() -> None:
@@ -117,7 +117,7 @@ def test_session_state_changed_producer_emits_explicit_null_to_clear_stale_carry
     assert suspended_event.payload["carryover_record_id"] is None
     assert reduce_event(build_graph_catalog(), projection, suspended_event)[
         "planner_session_carryovers"
-    ] == {"session-1": None}
+    ].values == {"session-1": None}
 
 
 def _project(events: list[EventEnvelope]) -> Any:

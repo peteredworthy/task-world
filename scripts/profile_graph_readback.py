@@ -1,64 +1,74 @@
-"""Profile graph readback hot paths with one synthetic local run.
-
-This script is intentionally deterministic and LLM-free. It writes a single
-graph event stream to SQLite, then times the same read/projection/serialization
-steps used by graph API endpoints.
-"""
+"""Profile catalog-hydrated graph readback paths with strict sample payloads."""
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import importlib.util
 import json
+import resource
+import sys
+import tracemalloc
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from statistics import median
 from time import perf_counter
+from types import ModuleType
 from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-import orchestrator.api as api
 from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    GraphCatalog,
+    HydratedEvent,
+    build_graph_catalog,
+)
 from orchestrator.graph_runtime import GraphEventStore
 
 
 RUN_ID = "profile-graph-readback"
-PROFILE_NODE_ID = "worker-profile-0"
-build_graph_projection_response = cast(
-    Callable[[str, list[EventEnvelope]], Any],
-    getattr(api, "build_graph_projection_response"),
-)
-build_graph_projection_response_from_snapshot = cast(
-    Callable[[str, Any], Any],
-    getattr(api, "build_graph_projection_response_from_snapshot"),
-)
-build_scheduler_view_response_from_snapshot = cast(
-    Callable[[str, Any], Any],
-    getattr(api, "build_scheduler_view_response_from_snapshot"),
-)
-build_node_detail_response = cast(
-    Callable[[str, str, list[EventEnvelope]], Any],
-    getattr(api, "build_node_detail_response"),
-)
+SAMPLE_SOURCE = "tests/unit/graph_catalog_samples.py"
+
+
+def _load_event_samples() -> dict[str, dict[str, object]]:
+    source_path = Path(__file__).resolve().parents[1] / SAMPLE_SOURCE
+    specification = importlib.util.spec_from_file_location("graph_catalog_samples", source_path)
+    if specification is None or specification.loader is None:
+        raise RuntimeError(f"unable to load profiler sample source: {source_path}")
+    module = importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(module)
+    samples = cast(ModuleType, module).EVENT_SAMPLES
+    if not isinstance(samples, dict):
+        raise RuntimeError(f"invalid profiler sample source: {source_path}")
+    return cast(dict[str, dict[str, object]], samples)
+
+
+EVENT_SAMPLES = _load_event_samples()
 
 
 @dataclass(frozen=True)
-class Measurement:
+class ReaderMeasurement:
     name: str
     samples: int
-    median_ms: float
-    min_ms: float
-    max_ms: float
-    output_bytes: int | None = None
+    median_wall_ms: float
+    min_wall_ms: float
+    max_wall_ms: float
+    rows: int
+    payload_bytes: int
+    tracemalloc_peak_bytes: int
+    payload_parity: bool
 
 
-def _event(event_id: str, event_type: str, payload: dict[str, Any], index: int) -> EventEnvelope:
+def _event(event_type: str, payload: dict[str, Any], index: int) -> EventEnvelope:
     return EventEnvelope(
-        event_id=event_id,
+        event_id=f"profile-{event_type}-{index}",
         run_id=RUN_ID,
         position=-1,
         event_type=event_type,
@@ -71,97 +81,47 @@ def _event(event_id: str, event_type: str, payload: dict[str, Any], index: int) 
     )
 
 
-def _synthetic_events(event_count: int, heavy_every: int, payload_kb: int) -> list[EventEnvelope]:
-    events = [
-        _event("profile-run-active", "run_lifecycle_changed", {"to_state": "active"}, 0),
-        _event(
-            "profile-root",
-            "node_created",
-            {"node_id": "root", "kind": "root", "state": "completed"},
-            1,
-        ),
-        _event(
-            "profile-worker-node",
-            "node_created",
-            {
-                "node_id": PROFILE_NODE_ID,
-                "kind": "worker",
-                "role": "builder",
-                "state": "running",
-                "task_region_id": "profile-task",
-                "candidate_id": "candidate-profile-0",
-            },
-            2,
-        ),
-        _event(
-            "profile-lease",
-            "lease_granted",
-            {
-                "node_id": PROFILE_NODE_ID,
-                "lease_id": "lease-profile-0",
-                "generation": 1,
-                "execution_id": "exec-profile-0",
-                "expires_at": "2026-01-01T00:10:00+00:00",
-            },
-            3,
-        ),
-    ]
-    heavy_text = "x" * (payload_kb * 1024)
-    for index in range(4, event_count + 1):
-        node_id = f"worker-profile-{index % 20}"
-        if index % heavy_every == 0:
-            producer_node_id = PROFILE_NODE_ID if index % (heavy_every * 5) == 0 else node_id
-            events.append(
-                _event(
-                    f"profile-output-{index}",
-                    "output_record_accepted",
-                    {
-                        "record_id": f"record-{index}",
-                        "record_kind": "output",
-                        "producer_node_id": producer_node_id,
-                        "port": "profile_payload",
-                        "schema": "ProfilePayload",
-                        "value": {
-                            "index": index,
-                            "body": heavy_text,
-                            "grades": [{"id": "req-1", "grade": "A"}],
-                        },
-                    },
-                    index,
-                )
-            )
-        elif index % 7 == 0:
-            events.append(
-                _event(
-                    f"profile-callback-{index}",
-                    "callback_accepted",
-                    {
-                        "node_id": node_id,
-                        "lease_id": f"lease-{index}",
-                        "lease_generation": 1,
-                        "payload": {"body": heavy_text},
-                    },
-                    index,
-                )
-            )
+def _sample_payload(
+    catalog: GraphCatalog,
+    event_type: str,
+    payload: dict[str, object],
+) -> dict[str, Any]:
+    return catalog.resolve_event(event_type).validate_payload(payload).to_json()
+
+
+def _heavy_payload(catalog: GraphCatalog, index: int, payload_kb: int) -> dict[str, Any]:
+    payload = deepcopy(EVENT_SAMPLES["output_record_accepted"])
+    record = payload["record"]
+    assert isinstance(record, dict)
+    record["record_id"] = f"profile-record-{index}"
+    record["candidate_id"] = f"profile-candidate-{index}"
+    value = record["value"]
+    assert isinstance(value, dict)
+    value["body"] = "x" * (payload_kb * 1024)
+    return _sample_payload(catalog, "output_record_accepted", payload)
+
+
+def _synthetic_events(
+    event_count: int,
+    heavy_every: int,
+    payload_kb: int,
+) -> list[EventEnvelope]:
+    catalog = build_graph_catalog()
+    events: list[EventEnvelope] = []
+    for index in range(event_count):
+        if (index + 1) % heavy_every == 0:
+            event_type = "output_record_accepted"
+            payload = _heavy_payload(catalog, index, payload_kb)
         else:
-            events.append(
-                _event(
-                    f"profile-node-{index}",
-                    "node_state_changed",
-                    {
-                        "node_id": node_id,
-                        "new_state": "ready" if index % 3 == 0 else "blocked",
-                        "reason": "profile_synthetic_state",
-                    },
-                    index,
-                )
-            )
-    return events[:event_count]
+            event_type = "run_lifecycle_changed"
+            payload = _sample_payload(catalog, event_type, EVENT_SAMPLES[event_type])
+        events.append(_event(event_type, payload, index))
+    return events
 
 
 async def _seed(
     session_factory: async_sessionmaker[AsyncSession],
+    catalog: GraphCatalog,
     *,
     event_count: int,
     heavy_every: int,
@@ -170,337 +130,119 @@ async def _seed(
     events = _synthetic_events(event_count, heavy_every, payload_kb)
     async with session_factory() as session:
         async with session.begin():
-            stored = await GraphEventStore(session).append_events(RUN_ID, 0, events)
+            stored = await GraphEventStore(session, catalog).append_events(RUN_ID, 0, events)
     return len(stored)
 
 
-async def _read_full(session_factory: async_sessionmaker[AsyncSession]) -> list[EventEnvelope]:
+async def _read(
+    session_factory: async_sessionmaker[AsyncSession],
+    catalog: GraphCatalog,
+    reader_name: str,
+) -> list[HydratedEvent]:
     async with session_factory() as session:
-        return await GraphEventStore(session).read_run(RUN_ID)
+        store = GraphEventStore(session, catalog)
+        reader = getattr(store, reader_name)
+        return await reader(RUN_ID)
 
 
-async def _read_light(session_factory: async_sessionmaker[AsyncSession]) -> list[EventEnvelope]:
-    async with session_factory() as session:
-        return await GraphEventStore(session).read_run_light(RUN_ID)
+def _serialized_payloads(events: list[HydratedEvent]) -> bytes:
+    return json.dumps(
+        [event.payload.to_json() for event in events],
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
 
 
-async def _read_projection(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> list[EventEnvelope]:
-    async with session_factory() as session:
-        return await GraphEventStore(session).read_run_projection(RUN_ID)
-
-
-async def _read_node_detail(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> list[EventEnvelope]:
-    async with session_factory() as session:
-        return await GraphEventStore(session).read_run_node_detail(RUN_ID)
-
-
-async def _read_summary(session_factory: async_sessionmaker[AsyncSession]) -> str:
-    async with session_factory() as session:
-        summaries = await GraphEventStore(session).read_run_summaries(RUN_ID)
-    return json.dumps([asdict(summary) for summary in summaries], sort_keys=True)
-
-
-async def _append_readback_tick(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    index: int,
-) -> None:
-    async with session_factory() as session:
-        async with session.begin():
-            store = GraphEventStore(session)
-            position = await store.current_position(RUN_ID)
-            await store.append_events(
-                RUN_ID,
-                position,
-                [
-                    _event(
-                        f"profile-readback-tick-{index}-{position + 1}",
-                        "node_state_changed",
-                        {
-                            "node_id": PROFILE_NODE_ID,
-                            "new_state": "running",
-                            "reason": "profile_readback_tick",
-                        },
-                        position + 1,
-                    )
-                ],
-            )
-
-
-async def _events_full_json(session_factory: async_sessionmaker[AsyncSession]) -> str:
-    events = await _read_full(session_factory)
-    return json.dumps([event.model_dump(mode="json") for event in events], sort_keys=True)
-
-
-async def _projection_endpoint_like(session_factory: async_sessionmaker[AsyncSession]) -> str:
-    events = await _read_projection(session_factory)
-    return build_graph_projection_response(RUN_ID, events).model_dump_json()
-
-
-async def _projection_snapshot_endpoint_like(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> str:
-    async with session_factory() as session:
-        store = GraphEventStore(session)
-        snapshot = await store.read_projection_snapshot(RUN_ID)
-        await store.commit_read_model_changes()
-    return build_graph_projection_response_from_snapshot(RUN_ID, snapshot).model_dump_json()
-
-
-async def _scheduler_snapshot_endpoint_like(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> str:
-    async with session_factory() as session:
-        store = GraphEventStore(session)
-        snapshot = await store.read_projection_snapshot(RUN_ID)
-        await store.commit_read_model_changes()
-    return build_scheduler_view_response_from_snapshot(RUN_ID, snapshot).model_dump_json()
-
-
-async def _projection_snapshot_after_append_like(
-    session_factory: async_sessionmaker[AsyncSession],
-    index: int,
-) -> str:
-    await _append_readback_tick(session_factory, index=index)
-    return await _projection_snapshot_endpoint_like(session_factory)
-
-
-async def _projection_after_append_like(
-    session_factory: async_sessionmaker[AsyncSession],
-    index: int,
-) -> str:
-    await _append_readback_tick(session_factory, index=index)
-    return await _projection_endpoint_like(session_factory)
-
-
-async def _projection_endpoint_full_payload_like(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> str:
-    events = await _read_full(session_factory)
-    return build_graph_projection_response(RUN_ID, events).model_dump_json()
-
-
-async def _node_detail_endpoint_like(session_factory: async_sessionmaker[AsyncSession]) -> str:
-    events = await _read_node_detail(session_factory)
-    detail = build_node_detail_response(RUN_ID, PROFILE_NODE_ID, events, payload_mode="summary")
-    if detail is None:
-        msg = f"profile node not found: {PROFILE_NODE_ID}"
-        raise RuntimeError(msg)
-    return detail.model_dump_json()
-
-
-async def _node_detail_endpoint_full_payload_like(
-    session_factory: async_sessionmaker[AsyncSession],
-) -> str:
-    events = await _read_full(session_factory)
-    detail = build_node_detail_response(RUN_ID, PROFILE_NODE_ID, events, payload_mode="full")
-    if detail is None:
-        msg = f"profile node not found: {PROFILE_NODE_ID}"
-        raise RuntimeError(msg)
-    return detail.model_dump_json()
-
-
-async def _measure_async(
+async def _measure_reader(
     name: str,
     iterations: int,
-    fn: Callable[[], Awaitable[object]],
-) -> Measurement:
-    samples: list[float] = []
-    output_bytes: int | None = None
+    fn: Callable[[], Awaitable[list[HydratedEvent]]],
+    baseline_payloads: bytes | None,
+) -> tuple[ReaderMeasurement, bytes]:
+    wall_samples: list[float] = []
+    peak_samples: list[int] = []
+    serialized = b""
+    rows = 0
+    parity = True
     for _ in range(iterations):
+        tracemalloc.start()
         start = perf_counter()
-        output = await fn()
-        elapsed_ms = (perf_counter() - start) * 1000
-        samples.append(elapsed_ms)
-        output_bytes = _output_size(output)
-    return Measurement(
+        events = await fn()
+        serialized = _serialized_payloads(events)
+        wall_samples.append((perf_counter() - start) * 1000)
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+        peak_samples.append(peak)
+        rows = len(events)
+        if baseline_payloads is not None:
+            parity = parity and serialized == baseline_payloads
+    measurement = ReaderMeasurement(
         name=name,
         samples=iterations,
-        median_ms=round(median(samples), 3),
-        min_ms=round(min(samples), 3),
-        max_ms=round(max(samples), 3),
-        output_bytes=output_bytes,
+        median_wall_ms=round(median(wall_samples), 3),
+        min_wall_ms=round(min(wall_samples), 3),
+        max_wall_ms=round(max(wall_samples), 3),
+        rows=rows,
+        payload_bytes=len(serialized),
+        tracemalloc_peak_bytes=int(median(peak_samples)),
+        payload_parity=parity,
     )
+    return measurement, serialized
 
 
-async def _measure_async_indexed(
-    name: str,
-    iterations: int,
-    fn: Callable[[int], Awaitable[object]],
-) -> Measurement:
-    samples: list[float] = []
-    output_bytes: int | None = None
-    for index in range(iterations):
-        start = perf_counter()
-        output = await fn(index)
-        elapsed_ms = (perf_counter() - start) * 1000
-        samples.append(elapsed_ms)
-        output_bytes = _output_size(output)
-    return Measurement(
-        name=name,
-        samples=iterations,
-        median_ms=round(median(samples), 3),
-        min_ms=round(min(samples), 3),
-        max_ms=round(max(samples), 3),
-        output_bytes=output_bytes,
-    )
-
-
-async def _measure_sync(
-    name: str,
-    iterations: int,
-    fn: Callable[[], object],
-) -> Measurement:
-    samples: list[float] = []
-    output_bytes: int | None = None
-    for _ in range(iterations):
-        start = perf_counter()
-        output = fn()
-        elapsed_ms = (perf_counter() - start) * 1000
-        samples.append(elapsed_ms)
-        output_bytes = _output_size(output)
-    return Measurement(
-        name=name,
-        samples=iterations,
-        median_ms=round(median(samples), 3),
-        min_ms=round(min(samples), 3),
-        max_ms=round(max(samples), 3),
-        output_bytes=output_bytes,
-    )
-
-
-def _output_size(output: object) -> int | None:
-    if isinstance(output, str):
-        return len(output.encode("utf-8"))
-    if isinstance(output, list):
-        return len(json.dumps([_jsonable(item) for item in output], sort_keys=True).encode("utf-8"))
-    return None
-
-
-def _jsonable(value: object) -> object:
-    if isinstance(value, EventEnvelope):
-        return value.model_dump(mode="json")
-    return value
+def _process_max_rss_bytes() -> int:
+    maximum = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    return int(maximum if sys.platform == "darwin" else maximum * 1024)
 
 
 async def profile(args: argparse.Namespace) -> dict[str, Any]:
+    profile_start = perf_counter()
+    catalog = build_graph_catalog()
     engine: AsyncEngine = create_engine(Path(args.db_path) if args.db_path else ":memory:")
     await init_db(engine)
     session_factory = create_session_factory(engine)
     try:
-        seed_start = perf_counter()
-        stored_events = await _seed(
+        stored_rows = await _seed(
             session_factory,
+            catalog,
             event_count=args.events,
             heavy_every=args.heavy_every,
             payload_kb=args.payload_kb,
         )
-        seed_ms = round((perf_counter() - seed_start) * 1000, 3)
-
-        cached_events = await _read_full(session_factory)
-        measurements = [
-            Measurement(
-                name="seed_append",
-                samples=1,
-                median_ms=seed_ms,
-                min_ms=seed_ms,
-                max_ms=seed_ms,
-                output_bytes=None,
-            ),
-            await _measure_async(
-                "store.read_run.full_materialize",
+        readers = (
+            "read_run",
+            "read_run_light",
+            "read_run_summary_rebuild",
+            "read_run_projection",
+            "read_run_node_detail",
+        )
+        measurements: list[ReaderMeasurement] = []
+        baseline_payloads: bytes | None = None
+        for reader_name in readers:
+            measurement, serialized = await _measure_reader(
+                reader_name,
                 args.iterations,
-                lambda: _read_full(session_factory),
-            ),
-            await _measure_async(
-                "store.read_run_light.projection_fields",
-                args.iterations,
-                lambda: _read_light(session_factory),
-            ),
-            await _measure_async(
-                "store.read_run_projection.minimal_fields",
-                args.iterations,
-                lambda: _read_projection(session_factory),
-            ),
-            await _measure_async(
-                "store.read_run_node_detail.node_fields",
-                args.iterations,
-                lambda: _read_node_detail(session_factory),
-            ),
-            await _measure_async(
-                "store.read_run_summaries.compact",
-                args.iterations,
-                lambda: _read_summary(session_factory),
-            ),
-            await _measure_sync(
-                "projection.build_from_cached_events",
-                args.iterations,
-                lambda: build_graph_projection_response(RUN_ID, cached_events).model_dump_json(),
-            ),
-            await _measure_async(
-                "endpoint_like.graph_projection",
-                args.iterations,
-                lambda: _projection_endpoint_like(session_factory),
-            ),
-            await _measure_async(
-                "read_model.graph_projection_snapshot",
-                args.iterations,
-                lambda: _projection_snapshot_endpoint_like(session_factory),
-            ),
-            await _measure_async(
-                "read_model.scheduler_snapshot",
-                args.iterations,
-                lambda: _scheduler_snapshot_endpoint_like(session_factory),
-            ),
-            await _measure_async_indexed(
-                "read_model.graph_projection_snapshot_after_append",
-                args.iterations,
-                lambda index: _projection_snapshot_after_append_like(session_factory, index),
-            ),
-            await _measure_async_indexed(
-                "endpoint_like.graph_projection_after_append",
-                args.iterations,
-                lambda index: _projection_after_append_like(session_factory, index),
-            ),
-            await _measure_async(
-                "endpoint_like.graph_projection_full_payload_baseline",
-                args.iterations,
-                lambda: _projection_endpoint_full_payload_like(session_factory),
-            ),
-            await _measure_async(
-                "endpoint_like.graph_events_full",
-                args.iterations,
-                lambda: _events_full_json(session_factory),
-            ),
-            await _measure_async(
-                "endpoint_like.graph_events_summary",
-                args.iterations,
-                lambda: _read_summary(session_factory),
-            ),
-            await _measure_async(
-                "endpoint_like.node_detail",
-                args.iterations,
-                lambda: _node_detail_endpoint_like(session_factory),
-            ),
-            await _measure_async(
-                "endpoint_like.node_detail_full_payload",
-                args.iterations,
-                lambda: _node_detail_endpoint_full_payload_like(session_factory),
-            ),
-        ]
+                lambda reader_name=reader_name: _read(session_factory, catalog, reader_name),
+                baseline_payloads,
+            )
+            measurements.append(measurement)
+            if baseline_payloads is None:
+                baseline_payloads = serialized
+        wall_ms = round((perf_counter() - profile_start) * 1000, 3)
         return {
             "config": {
                 "events": args.events,
                 "heavy_every": args.heavy_every,
                 "payload_kb": args.payload_kb,
                 "iterations": args.iterations,
-                "stored_events": stored_events,
+                "sample_source": SAMPLE_SOURCE,
             },
-            "measurements": [asdict(measurement) for measurement in measurements],
+            "profile": {
+                "stored_rows": stored_rows,
+                "wall_ms": wall_ms,
+                "process_max_rss_bytes": _process_max_rss_bytes(),
+            },
+            "readers": [asdict(measurement) for measurement in measurements],
         }
     finally:
         await engine.dispose()
@@ -514,8 +256,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--iterations", type=int, default=5)
     parser.add_argument("--db-path", default="")
     args = parser.parse_args()
-    if args.events < 4:
-        parser.error("--events must be at least 4")
+    if args.events < 1:
+        parser.error("--events must be at least 1")
     if args.heavy_every < 1:
         parser.error("--heavy-every must be at least 1")
     if args.payload_kb < 1:

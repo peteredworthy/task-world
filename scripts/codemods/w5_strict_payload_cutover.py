@@ -3334,8 +3334,11 @@ DOMAIN_MIGRATIONS.update(
                     "orchestrator.graph.projections",
                     ("GRAPH_PROJECTION_PAYLOAD_FIELDS",),
                 ),
-                ImportRoute("datetime", "datetime", ("datetime",)),
-                ImportRoute("orchestrator.graph", "orchestrator.graph", ("Actor", "ActorKind")),
+                ImportRoute(
+                    "orchestrator.graph",
+                    "orchestrator.graph",
+                    ("Actor", "ActorKind", "GRAPH_PROJECTION_PAYLOAD_FIELDS"),
+                ),
             ),
             allowlist_names=(
                 "GRAPH_PROJECTION_PAYLOAD_FIELDS",
@@ -3372,9 +3375,11 @@ DOMAIN_MIGRATIONS.update(
                 "GraphEventStore.read_run_summary_rebuild",
                 "GraphEventStore.read_run_projection",
                 "GraphEventStore.read_run_node_detail",
+                "GraphEventStore._read_run_extracting_fields",
                 "_node_detail_rows_for_events",
                 "_apply_node_detail_events",
                 "_has_missing_preexisting_node_reference",
+                "_node_detail_light_event",
             ),
         ),
         "task3_fixtures": DomainMigration(

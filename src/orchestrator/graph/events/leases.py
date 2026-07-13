@@ -72,7 +72,7 @@ LeasePayload = (
 def _reduce_lease(state: Any, payload: LeasePayload, metadata: EventMetadata) -> Any:
     next_state = dict(state)
     next_state["leases"] = dict(state.get("leases", {}))
-    next_state["planner_sessions"] = dict(state.get("planner_sessions", {}))
+    planner_sessions = state["planner_sessions"]
     existing = next_state["leases"].get(payload.lease_id)
     lease: dict[str, Any] = (
         existing.model_dump(mode="python") if isinstance(existing, LeaseProjection) else {}
@@ -102,7 +102,9 @@ def _reduce_lease(state: Any, payload: LeasePayload, metadata: EventMetadata) ->
         if payload.session_id is not None:
             lease["session_id"] = payload.session_id
         if payload.session_id is not None:
-            next_state["planner_sessions"][payload.node_id] = payload.session_id
+            next_state["planner_sessions"] = planner_sessions.model_copy(
+                update={"values": {**planner_sessions.values, payload.node_id: payload.session_id}}
+            )
     elif isinstance(payload, LeaseRenewedPayload):
         lease.update(
             node_id=payload.node_id,

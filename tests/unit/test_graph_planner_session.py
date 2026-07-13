@@ -40,7 +40,7 @@ def test_successor_inherits_session_id() -> None:
     )
 
     projection = _project(events)
-    assert projection["planner_sessions"]["planner-1"] == "session-1"
+    assert projection["planner_sessions"].values["planner-1"] == "session-1"
     assert lease.payload["session_id"] == "session-1"
     assert lease.payload["generation"] == 2
 

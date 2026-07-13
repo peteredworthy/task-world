@@ -44,6 +44,8 @@ from orchestrator.graph_runtime.seeding import SeedRunResult, seed_run
 from orchestrator.graph_runtime.store import (
     GRAPH_PAYLOAD_SCHEMA_GENERATION,
     GraphEventStore,
+    GraphEventSummary,
+    GraphNodeDetailSummary,
     stored_graph_event,
     validate_catalog_event_payload,
 )
@@ -55,6 +57,8 @@ __all__ = [
     "GraphDispatchContext",
     "GraphDispatchExecutor",
     "GraphEventStore",
+    "GraphEventSummary",
+    "GraphNodeDetailSummary",
     "GRAPH_PAYLOAD_SCHEMA_GENERATION",
     "GraphRuntimeError",
     "HORIZON_REGION_PURPOSES",

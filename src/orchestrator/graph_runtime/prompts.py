@@ -460,7 +460,7 @@ def _planner_packet(context: GraphDispatchContext, *, catalog: GraphCatalog) -> 
     events = sorted(context.graph_events, key=lambda event: event.position)
     node = context.node_payload
     current_position = max((event.position for event in events), default=0)
-    generation_index = projection["planner_generations"].get(context.node_id)
+    generation_index = projection["planner_generations"].values.get(context.node_id)
 
     frontier = _planner_frontier(projection, events, context)
     evidence = _planner_evidence(context, projection, events)
@@ -892,10 +892,10 @@ def _planner_session_carryover_record(
     context: GraphDispatchContext,
     projection: GraphProjection,
 ) -> str | None:
-    session_id = projection["planner_sessions"].get(context.node_id)
+    session_id = projection["planner_sessions"].values.get(context.node_id)
     if not isinstance(session_id, str):
         return None
-    carryover = projection["planner_session_carryovers"].get(session_id)
+    carryover = projection["planner_session_carryovers"].values.get(session_id)
     if carryover is None:
         return None
     return str(carryover)

@@ -204,10 +204,15 @@ def test_complete_reads_migration_removes_partial_read_helpers() -> None:
         "SUMMARY_REBUILD_PAYLOAD_FIELDS",
         "NODE_DETAIL_PAYLOAD_FIELDS",
     }
+    assert {
+        "GraphEventStore._read_run_extracting_fields",
+        "_node_detail_light_event",
+    }.issubset(migration.allowed_allowlist_owners)
     source = """\
-LIGHT_GRAPH_PAYLOAD_FIELDS = (\"node_id\",)\n\nasync def read_run_light(self, run_id, from_position=0):\n    return await self._read_run_extracting_fields(run_id, from_position, LIGHT_GRAPH_PAYLOAD_FIELDS)\n\nasync def _read_run_extracting_fields(self, run_id, from_position, fields):\n    return []\n"""
+from orchestrator.graph import GRAPH_PROJECTION_PAYLOAD_FIELDS\n\nLIGHT_GRAPH_PAYLOAD_FIELDS = (\"node_id\",)\n\nasync def read_run_light(self, run_id, from_position=0):\n    return await self._read_run_extracting_fields(run_id, from_position, LIGHT_GRAPH_PAYLOAD_FIELDS)\n\nasync def _read_run_extracting_fields(self, run_id, from_position, fields):\n    return []\n"""
     result = StrictPayloadCutoverCodemod(migration).transform_source(source, "store.py")
     assert "LIGHT_GRAPH_PAYLOAD_FIELDS" not in result.source
+    assert "GRAPH_PROJECTION_PAYLOAD_FIELDS" not in result.source
     assert "_read_run_extracting_fields" not in result.source
     assert "return await self.read_run(run_id, from_position)" in result.source
 

@@ -154,6 +154,18 @@ async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
         )
 
         compact_events = await store.read_run_summary_rebuild(run_id)
+        full_events = await store.read_run(run_id)
+        named_readers = (
+            store.read_run_light,
+            store.read_run_summary_rebuild,
+            store.read_run_projection,
+            store.read_run_node_detail,
+        )
+        for reader in named_readers:
+            reader_events = await reader(run_id)
+            assert [event.payload.to_json() for event in reader_events] == [
+                event.payload.to_json() for event in full_events
+            ], f"{path.name}::{scenario['name']} {reader.__name__} payload parity diverged"
         compact_projection_checkpoint = projection_to_checkpoint(
             build_projection(build_graph_catalog(), compact_events)
         )

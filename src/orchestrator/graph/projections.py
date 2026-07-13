@@ -1,10 +1,12 @@
 """Pure graph projections for scenario fixtures."""
 
 from __future__ import annotations
+
 from datetime import datetime
+
 from typing import Any, Iterable, Literal, Sequence, TypedDict, cast
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.events.file_state import file_entry_values
@@ -48,7 +50,6 @@ from orchestrator.graph.models import (
     GraphPatchAcceptedPayload,
     GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
-    GraphPatchResultRecord,
     GraphPatchStatusPayload,
     InvalidTestBlockProjection,
     InputBindingProjection,
@@ -101,7 +102,7 @@ from orchestrator.graph.events.topology import (
     PlannerSessionStateChangedPayload,
 )
 from orchestrator.graph.models import normalize_record_selector
-from orchestrator.graph.payloads import LegacyEventPayload
+from orchestrator.graph.payloads import JsonValue, LegacyEventPayload
 from orchestrator.graph.specifications import HydratedEvent
 
 GraphHistoryEvent = EventEnvelope | HydratedEvent
@@ -128,95 +129,6 @@ _TASK_STATE_VALUES = {
 _NODE_STATE_VALUES = {state.value for state in NodeState}
 _NODE_KIND_VALUES = {kind.value for kind in NodeKind}
 
-GRAPH_PROJECTION_PAYLOAD_FIELDS = (
-    "allowed_actions",
-    "approval_prompt",
-    "approval_type",
-    "appeal_type",
-    "attempt_number",
-    "approved",
-    "base_snapshot_id",
-    "candidate_id",
-    "carryover_record_id",
-    "classification",
-    "command_binding",
-    "command_definition",
-    "command_definition_id",
-    "command_type",
-    "decision",
-    "execution_id",
-    "expires_at",
-    "failed_candidate_id",
-    "from_node_id",
-    "from_port",
-    "from_state",
-    "gate_id",
-    "generation",
-    "idempotency_key",
-    "kind",
-    "lease_id",
-    "lease_granted_event_id",
-    "lease_generation",
-    "membership",
-    "new_state",
-    "node_id",
-    "outcome",
-    "observed_at",
-    "port",
-    "producer_node_id",
-    "prior_result",
-    "payload",
-    "policy",
-    "record_id",
-    "record_kind",
-    "record_type",
-    "recovery_of_record_id",
-    "recovery_reason",
-    "reason",
-    "retry_not_before",
-    "role",
-    "session_id",
-    "state",
-    "status",
-    "supersedes_task_region_id",
-    "supersedes_task_region_ids",
-    "task_region_id",
-    "to_node_id",
-    "to_port",
-    "to_state",
-    "verdict",
-    "verifier_node_id",
-    "authority",
-    "authority_request",
-    "authority_request_record",
-    "authority_request_record_id",
-    "blocker",
-    "blocker_reason",
-    "decision_request",
-    "decision_request_record_id",
-    "generation_index",
-    "gate_type",
-    "guarded_planner_node_id",
-    "human_prompt",
-    "hidden_oracle_command",
-    "inputs",
-    "id",
-    "message",
-    "outputs",
-    "planner_chain",
-    "planner_generation_budget",
-    "preconditions",
-    "priority",
-    "prompt",
-    "recovery_of_node_id",
-    "reason",
-    "region_label",
-    "rejected_patch_id",
-    "requirement",
-    "requirement_id",
-    "resource_claims",
-)
-
 
 def copy_projection(state: GraphProjection) -> GraphProjection:
     """Return a fully isolated projection for catalog-owned reducers."""
@@ -241,14 +153,98 @@ def copy_projection(state: GraphProjection) -> GraphProjection:
 PROJECTION_SCHEMA_VERSION = 10
 
 
-class GraphRecordSummary(TypedDict, total=False):
+class GraphRecordSummary(BaseModel):
+    """Closed projection of the stable identity fields of an accepted record."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
     record_id: str
-    record_type: str
-    record_kind: str
-    schema: str
-    producer_node_id: str
-    producer_port: str
+    record_type: str | None = None
+    record_kind: str | None = None
+    schema_: str | None = Field(default=None, alias="schema")
+    producer_node_id: str | None = None
+    producer_port: str | None = None
+    position: int | None = None
+
+
+class PlannerGenerations(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    values: dict[str, int]
+
+
+class PlannerSessions(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    values: dict[str, str]
+
+
+class PlannerSessionStates(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    values: dict[str, str]
+
+
+class PlannerSessionCurrentNodes(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    values: dict[str, str]
+
+
+class PlannerSessionCarryovers(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    values: dict[str, str | None]
+
+
+class PlannerRegionLabels(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    values: dict[str, str]
+
+
+class GatekeeperPatternLibrarySizeRow(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
     position: int
+    file_state_record_id: str | None
+    size: int
+
+
+class GatekeeperCostRow(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    model_id: str
+    consults: int
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float
+    wall_time_ms: int
+    executions: list[str]
+
+
+class GatekeeperReport(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    run_id: str
+    boundary_count: int
+    deterministic_classifications: int
+    gatekeeper_consults: int
+    gatekeeper_resolved: int
+    unresolved_residue: int
+    total_classified: int
+    hit_rate: float
+    pattern_library_size: int
+    pattern_library_size_over_time: list[GatekeeperPatternLibrarySizeRow]
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_write_tokens: int
+    cost_usd: float
+    wall_time_ms: int
+    models: dict[str, GatekeeperCostRow]
 
 
 class AcceptedOutputRecord(TypedDict):
@@ -332,12 +328,12 @@ class GraphProjection(TypedDict):
     accepted_no_successor_patches_by_node: dict[str, list[str]]
     accepted_no_successor_patch_ids_by_node: dict[str, str]
     latest_routine_snapshot_record: LatestRoutineSnapshotRecord | None
-    planner_generations: dict[str, int]
-    planner_sessions: dict[str, str]
-    planner_session_states: dict[str, str]
-    planner_session_current_nodes: dict[str, str]
-    planner_session_carryovers: dict[str, str | None]
-    planner_region_labels: dict[str, str]
+    planner_generations: PlannerGenerations
+    planner_sessions: PlannerSessions
+    planner_session_states: PlannerSessionStates
+    planner_session_current_nodes: PlannerSessionCurrentNodes
+    planner_session_carryovers: PlannerSessionCarryovers
+    planner_region_labels: PlannerRegionLabels
     requirement_revisions: dict[str, RequirementRevisionProjection]
     active_requirement_versions: dict[str, str]
     support_evidence: dict[str, SupportEvidenceProjection]
@@ -357,15 +353,19 @@ class GraphProjection(TypedDict):
     cleanup_applied_ids: dict[str, bool]
 
 
-class GraphTopologyBinding(TypedDict, total=False):
-    edge_id: str
-    to_node_id: str
-    to_port: str
+class GraphTopologyBinding(BaseModel):
+    """Closed, serializable input-binding view for a topology edge."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
     record_ids: list[str]
-    bound_at_position: int
-    record_bound_positions: dict[str, int]
-    binding_policy: str
-    trigger: str
+    edge_id: str | None = None
+    to_node_id: str | None = None
+    to_port: str | None = None
+    bound_at_position: int | None = None
+    record_bound_positions: dict[str, int] | None = None
+    binding_policy: str | None = None
+    trigger: str | None = None
 
 
 class GraphTopologyNode(TypedDict, total=False):
@@ -376,23 +376,27 @@ class GraphTopologyNode(TypedDict, total=False):
     contract: dict[str, Any]
 
 
-class GraphTopologyEdge(TypedDict, total=False):
+class GraphTopologyEdge(BaseModel):
+    """Closed topology response record; opaque contract values stay JSON values."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
     edge_id: str
     from_node_id: str
-    from_node_kind: str
-    from_node_role: str
     from_port: str
     to_node_id: str
     to_port: str
     required: bool
     dependency_type: str
-    accepted_record_selector: dict[str, Any]
-    metadata: dict[str, Any]
-    source_port_contract: dict[str, Any]
-    target_port_contract: dict[str, Any]
+    metadata: dict[str, JsonValue]
     record_types: list[str]
-    binding: GraphTopologyBinding | None
     bound_records: list[GraphRecordSummary]
+    from_node_kind: str | None = None
+    from_node_role: str | None = None
+    accepted_record_selector: dict[str, JsonValue] | None = None
+    source_port_contract: dict[str, JsonValue] | None = None
+    target_port_contract: dict[str, JsonValue] | None = None
+    binding: GraphTopologyBinding | None = None
 
 
 class GraphTopologyView(TypedDict):
@@ -496,21 +500,25 @@ class FinalInvariantBlocker(TypedDict, total=False):
     support_ids: list[str]
 
 
-class GraphPatchAttempt(TypedDict, total=False):
+class GraphPatchAttempt(BaseModel):
+    """Closed result projection for a proposed graph patch."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
     patch_id: str
-    proposed_by_node_id: str
-    base_graph_position: int
     current_graph_position: int
     status: Literal["accepted", "rejected"]
-    rejection_reason: str
-    diagnostics: dict[str, Any]
-    read_set_diff: dict[str, Any]
-    accepted_event_id: str
-    accepted_position: int
-    rejected_event_id: str
-    rejected_position: int
-    created_node_ids: list[str]
-    created_edge_ids: list[str]
+    proposed_by_node_id: str | None = None
+    base_graph_position: int | None = None
+    rejection_reason: str | None = None
+    diagnostics: dict[str, JsonValue] | None = None
+    read_set_diff: dict[str, JsonValue] | None = None
+    accepted_event_id: str | None = None
+    accepted_position: int | None = None
+    rejected_event_id: str | None = None
+    rejected_position: int | None = None
+    created_node_ids: list[str] = Field(default_factory=list)
+    created_edge_ids: list[str] = Field(default_factory=list)
 
 
 class GraphPatchAttemptView(TypedDict):
@@ -565,12 +573,12 @@ def initial_projection() -> GraphProjection:
         "accepted_no_successor_patches_by_node": {},
         "accepted_no_successor_patch_ids_by_node": {},
         "latest_routine_snapshot_record": None,
-        "planner_generations": {},
-        "planner_sessions": {},
-        "planner_session_states": {},
-        "planner_session_current_nodes": {},
-        "planner_session_carryovers": {},
-        "planner_region_labels": {},
+        "planner_generations": PlannerGenerations(values={}),
+        "planner_sessions": PlannerSessions(values={}),
+        "planner_session_states": PlannerSessionStates(values={}),
+        "planner_session_current_nodes": PlannerSessionCurrentNodes(values={}),
+        "planner_session_carryovers": PlannerSessionCarryovers(values={}),
+        "planner_region_labels": PlannerRegionLabels(values={}),
         "requirement_revisions": {},
         "active_requirement_versions": {},
         "support_evidence": {},
@@ -678,6 +686,10 @@ def projection_to_checkpoint(projection: GraphProjection) -> dict[str, Any]:
         }
         for node_id, ports in projection.get("accepted_output_records_by_node_port", {}).items()
     }
+    checkpoint["accepted_record_summaries_by_id"] = {
+        record_id: summary.model_dump(mode="json", by_alias=True, exclude_none=True)
+        for record_id, summary in projection.get("accepted_record_summaries_by_id", {}).items()
+    }
     checkpoint["output_records_by_node_port"] = {
         node_id: {
             port: [_output_record_payload_dict(record) for record in records]
@@ -715,6 +727,24 @@ def projection_to_checkpoint(projection: GraphProjection) -> dict[str, Any]:
         checkpoint["latest_routine_snapshot_record"] = checkpoint[
             "latest_routine_snapshot_record"
         ].model_dump(mode="json")
+    checkpoint["planner_generations"] = projection["planner_generations"].model_dump(mode="json")[
+        "values"
+    ]
+    checkpoint["planner_sessions"] = projection["planner_sessions"].model_dump(mode="json")[
+        "values"
+    ]
+    checkpoint["planner_session_states"] = projection["planner_session_states"].model_dump(
+        mode="json"
+    )["values"]
+    checkpoint["planner_session_current_nodes"] = projection[
+        "planner_session_current_nodes"
+    ].model_dump(mode="json")["values"]
+    checkpoint["planner_session_carryovers"] = projection["planner_session_carryovers"].model_dump(
+        mode="json"
+    )["values"]
+    checkpoint["planner_region_labels"] = projection["planner_region_labels"].model_dump(
+        mode="json"
+    )["values"]
     checkpoint["node_creation_payloads"] = {
         node_id: payload.model_dump(mode="json")
         for node_id, payload in projection.get("node_creation_payloads", {}).items()
@@ -884,23 +914,25 @@ def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjectio
     projection["accepted_no_successor_patch_ids_by_node"] = _string_map_from_checkpoint(
         raw_projection.get("accepted_no_successor_patch_ids_by_node"),
     )
-    projection["planner_generations"] = _int_map_from_checkpoint(
-        raw_projection.get("planner_generations"),
+    projection["planner_generations"] = PlannerGenerations(
+        values=_int_map_from_checkpoint(raw_projection.get("planner_generations"))
     )
-    projection["planner_sessions"] = _string_map_from_checkpoint(
-        raw_projection.get("planner_sessions"),
+    projection["planner_sessions"] = PlannerSessions(
+        values=_string_map_from_checkpoint(raw_projection.get("planner_sessions"))
     )
-    projection["planner_session_states"] = _string_map_from_checkpoint(
-        raw_projection.get("planner_session_states"),
+    projection["planner_session_states"] = PlannerSessionStates(
+        values=_string_map_from_checkpoint(raw_projection.get("planner_session_states"))
     )
-    projection["planner_session_current_nodes"] = _string_map_from_checkpoint(
-        raw_projection.get("planner_session_current_nodes"),
+    projection["planner_session_current_nodes"] = PlannerSessionCurrentNodes(
+        values=_string_map_from_checkpoint(raw_projection.get("planner_session_current_nodes"))
     )
-    projection["planner_session_carryovers"] = _nullable_string_map_from_checkpoint(
-        raw_projection.get("planner_session_carryovers"),
+    projection["planner_session_carryovers"] = PlannerSessionCarryovers(
+        values=_nullable_string_map_from_checkpoint(
+            raw_projection.get("planner_session_carryovers")
+        )
     )
-    projection["planner_region_labels"] = _string_map_from_checkpoint(
-        raw_projection.get("planner_region_labels"),
+    projection["planner_region_labels"] = PlannerRegionLabels(
+        values=_string_map_from_checkpoint(raw_projection.get("planner_region_labels"))
     )
     projection["node_creation_payloads"] = _node_creation_payloads_from_checkpoint(
         raw_projection.get("node_creation_payloads"),
@@ -1073,17 +1105,24 @@ def _record_summaries_from_checkpoint(raw_map: Any) -> dict[str, GraphRecordSumm
     for record_id, raw_summary in cast(dict[Any, Any], raw_map).items():
         if not isinstance(record_id, str) or not isinstance(raw_summary, dict):
             continue
-        summary: GraphRecordSummary = {}
-        for field in _GRAPH_RECORD_SUMMARY_STRING_FIELDS:
-            value = cast(dict[str, Any], raw_summary).get(field)
-            if isinstance(value, str):
-                summary[field] = value
-        position = cast(dict[str, Any], raw_summary).get("position")
-        if isinstance(position, int) and not isinstance(position, bool):
-            summary["position"] = position
-        if summary:
+        try:
+            summary = GraphRecordSummary.model_validate(raw_summary)
+        except ValueError:
+            continue
+        if summary.record_id == record_id:
             typed[record_id] = summary
     return typed
+
+
+def _copy_record_summary(value: Any) -> GraphRecordSummary | None:
+    if isinstance(value, GraphRecordSummary):
+        return value.model_copy(deep=True)
+    if not isinstance(value, dict):
+        return None
+    try:
+        return GraphRecordSummary.model_validate(value)
+    except ValueError:
+        return None
 
 
 _FINAL_INVARIANT_BLOCKER_STRING_FIELDS = {
@@ -2067,8 +2106,9 @@ def reduce_legacy_event(
             for node_id, ports in state.get("accepted_output_records_by_node_port", {}).items()
         },
         "accepted_record_summaries_by_id": {
-            record_id: cast(GraphRecordSummary, dict(summary))
+            record_id: summary_copy
             for record_id, summary in state.get("accepted_record_summaries_by_id", {}).items()
+            if (summary_copy := _copy_record_summary(summary)) is not None
         },
         "output_records_by_node_port": {
             node_id: {
@@ -2163,12 +2203,14 @@ def reduce_legacy_event(
             state.get("accepted_no_successor_patch_ids_by_node", {})
         ),
         "latest_routine_snapshot_record": _copy_latest_routine_snapshot_record(state),
-        "planner_generations": dict(state.get("planner_generations", {})),
-        "planner_sessions": dict(state.get("planner_sessions", {})),
-        "planner_session_states": dict(state.get("planner_session_states", {})),
-        "planner_session_current_nodes": dict(state.get("planner_session_current_nodes", {})),
-        "planner_session_carryovers": dict(state.get("planner_session_carryovers", {})),
-        "planner_region_labels": dict(state.get("planner_region_labels", {})),
+        "planner_generations": state["planner_generations"].model_copy(deep=True),
+        "planner_sessions": state["planner_sessions"].model_copy(deep=True),
+        "planner_session_states": state["planner_session_states"].model_copy(deep=True),
+        "planner_session_current_nodes": state["planner_session_current_nodes"].model_copy(
+            deep=True
+        ),
+        "planner_session_carryovers": state["planner_session_carryovers"].model_copy(deep=True),
+        "planner_region_labels": state["planner_region_labels"].model_copy(deep=True),
         "requirement_revisions": {
             version_id: revision.model_copy(deep=True)
             for version_id, revision in state.get("requirement_revisions", {}).items()
@@ -2245,7 +2287,9 @@ def reduce_legacy_event(
             session_id = granted_payload.session_id
             if session_id is not None:
                 lease_payload["session_id"] = session_id
-                next_state["planner_sessions"][node_id] = session_id
+                next_state["planner_sessions"] = PlannerSessions(
+                    values={**next_state["planner_sessions"].values, node_id: session_id}
+                )
             task_region_id = next_state["node_task_regions"].get(node_id)
             if task_region_id is not None:
                 lease_payload["task_region_id"] = task_region_id
@@ -3177,7 +3221,7 @@ def project_planner_chain(
     ordered = sorted(
         planner_ids,
         key=lambda node_id: (
-            projection["planner_generations"].get(node_id, 0),
+            projection["planner_generations"].values.get(node_id, 0),
             _node_creation_position(events, node_id),
             node_id,
         ),
@@ -3185,8 +3229,8 @@ def project_planner_chain(
     return [
         {
             "node_id": node_id,
-            "generation_index": projection["planner_generations"].get(node_id, 0),
-            "session_id": projection["planner_sessions"].get(node_id),
+            "generation_index": projection["planner_generations"].values.get(node_id, 0),
+            "session_id": projection["planner_sessions"].values.get(node_id),
             "lease_generation": _latest_lease_generation(events, node_id),
             "region_label": _planner_region_label(events, projection, node_id),
             "state": projection["node_states"].get(node_id),
@@ -3198,9 +3242,9 @@ def project_planner_chain(
 
 def project_planner_session(catalog: GraphCatalog, events: list[EventEnvelope]) -> dict[str, Any]:
     projection = _project(catalog, events)
-    session_ids = list(projection["planner_session_states"])
+    session_ids = list(projection["planner_session_states"].values)
     if not session_ids:
-        session_ids = list(projection["planner_sessions"].values())
+        session_ids = list(projection["planner_sessions"].values.values())
     session_id = sorted(set(session_ids))[0] if session_ids else None
     if session_id is None:
         return {
@@ -3232,10 +3276,10 @@ def project_planner_session(catalog: GraphCatalog, events: list[EventEnvelope]) 
     generations.sort(key=lambda generation: int(generation["lease_generation"]))
     return {
         "session_id": session_id,
-        "state": projection["planner_session_states"].get(session_id),
+        "state": projection["planner_session_states"].values.get(session_id),
         "generations": generations,
-        "current_node_id": projection["planner_session_current_nodes"].get(session_id),
-        "carryover_record_id": projection["planner_session_carryovers"].get(session_id),
+        "current_node_id": projection["planner_session_current_nodes"].values.get(session_id),
+        "carryover_record_id": projection["planner_session_carryovers"].values.get(session_id),
     }
 
 
@@ -3251,7 +3295,7 @@ def project_node_states(
 
 def project_node_metadata(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     projection: GraphProjection | None = None,
 ) -> dict[str, dict[str, Any]]:
@@ -3285,7 +3329,9 @@ def project_node_metadata(
     return metadata
 
 
-def project_graph_topology(catalog: GraphCatalog, events: list[EventEnvelope]) -> GraphTopologyView:
+def project_graph_topology(
+    catalog: GraphCatalog, events: Sequence[GraphHistoryEvent]
+) -> GraphTopologyView:
     projection = _project(catalog, events)
     record_summaries = _record_summaries_by_id(projection)
     _add_record_summary_positions(record_summaries, events)
@@ -3317,21 +3363,19 @@ def project_graph_patch_attempts(
     run_id: str = "",
     current_graph_position: int | None = None,
 ) -> GraphPatchAttemptView:
-    attempts: dict[str, GraphPatchAttempt] = {}
+    attempts: dict[str, dict[str, Any]] = {}
     order: list[str] = []
     active_patch_id: str | None = None
 
-    def ensure_attempt(patch_id: str) -> GraphPatchAttempt:
-        attempt = attempts.get(patch_id)
-        if attempt is None:
-            attempt = GraphPatchAttempt(
-                patch_id=patch_id,
-                created_node_ids=[],
-                created_edge_ids=[],
-            )
-            attempts[patch_id] = attempt
+    def ensure_attempt(patch_id: str) -> dict[str, Any]:
+        if patch_id not in attempts:
+            attempts[patch_id] = {
+                "patch_id": patch_id,
+                "created_node_ids": [],
+                "created_edge_ids": [],
+            }
             order.append(patch_id)
-        return attempt
+        return attempts[patch_id]
 
     for history_event in events:
         event = _history_event_envelope(history_event)
@@ -3371,13 +3415,11 @@ def project_graph_patch_attempts(
             node_payload = _node_created_payload_from_event(event)
             node_id = node_payload.node_id if node_payload is not None else None
             if node_id is not None:
-                created = attempt.setdefault("created_node_ids", [])
-                created.append(node_id)
+                cast(list[str], attempt["created_node_ids"]).append(node_id)
         elif event.event_type == "edge_created":
             edge_id = payload.get("edge_id")
             if isinstance(edge_id, str):
-                created = attempt.setdefault("created_edge_ids", [])
-                created.append(edge_id)
+                cast(list[str], attempt["created_edge_ids"]).append(edge_id)
         else:
             active_patch_id = None
 
@@ -3389,12 +3431,7 @@ def project_graph_patch_attempts(
         if "status" not in attempt:
             continue
         attempt.setdefault("current_graph_position", current_graph_position)
-        ordered_attempts.append(
-            cast(
-                GraphPatchAttempt,
-                GraphPatchResultRecord.model_validate(attempt).model_dump(mode="json"),
-            )
-        )
+        ordered_attempts.append(GraphPatchAttempt.model_validate(attempt))
     return {
         "run_id": run_id,
         "current_graph_position": current_graph_position,
@@ -3402,7 +3439,7 @@ def project_graph_patch_attempts(
     }
 
 
-def _apply_patch_payload(attempt: GraphPatchAttempt, payload: dict[str, Any]) -> None:
+def _apply_patch_payload(attempt: dict[str, Any], payload: dict[str, Any]) -> None:
     proposed_by_node_id = payload.get("proposed_by_node_id")
     if isinstance(proposed_by_node_id, str):
         attempt["proposed_by_node_id"] = proposed_by_node_id
@@ -3448,7 +3485,7 @@ def _patch_id(payload: dict[str, Any]) -> str | None:
 
 def project_task_states(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     projection: GraphProjection | None = None,
 ) -> dict[str, str]:
@@ -3780,7 +3817,7 @@ def _topology_edge(
     metadata = {
         key: edge[key] for key in _EDGE_METADATA_KEYS if key in edge and edge[key] is not None
     }
-    topology_edge: GraphTopologyEdge = {
+    topology_edge: dict[str, Any] = {
         "edge_id": str(edge["edge_id"]),
         "from_node_id": str(edge["from_node_id"]),
         "from_port": str(edge["from_port"]),
@@ -3811,12 +3848,12 @@ def _topology_edge(
     if binding is not None:
         binding_summary = _topology_binding(binding)
         topology_edge["binding"] = binding_summary
-        record_ids = binding_summary.get("record_ids", [])
+        record_ids = binding_summary.record_ids
         bound_records: list[GraphRecordSummary] = [
             record_summaries[record_id] for record_id in record_ids if record_id in record_summaries
         ]
         topology_edge["bound_records"] = bound_records
-    return topology_edge
+    return GraphTopologyEdge.model_validate(topology_edge)
 
 
 def _edge_port_contracts(
@@ -3895,7 +3932,7 @@ def _binding_for_edge(
 
 
 def _topology_binding(binding: dict[str, Any]) -> GraphTopologyBinding:
-    summary: GraphTopologyBinding = {
+    summary: dict[str, Any] = {
         "record_ids": _bound_record_ids(binding),
     }
     for key in ("edge_id", "to_node_id", "to_port", "binding_policy", "trigger"):
@@ -3914,19 +3951,20 @@ def _topology_binding(binding: dict[str, Any]) -> GraphTopologyBinding:
             and isinstance(position, int)
             and not isinstance(position, bool)
         }
-    return summary
+    return GraphTopologyBinding.model_validate(summary)
 
 
 def _record_summaries_by_id(projection: GraphProjection) -> dict[str, GraphRecordSummary]:
     return {
-        record_id: cast(GraphRecordSummary, dict(summary))
+        record_id: summary_copy
         for record_id, summary in projection["accepted_record_summaries_by_id"].items()
+        if (summary_copy := _copy_record_summary(summary)) is not None
     }
 
 
 def _add_record_summary_positions(
     summaries: dict[str, GraphRecordSummary],
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
 ) -> None:
     for event in events:
         if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
@@ -3943,7 +3981,7 @@ def _add_record_summary_positions(
             continue
         summary = summaries.get(record_id)
         if summary is not None:
-            summary["position"] = event.position
+            summaries[record_id] = summary.model_copy(update={"position": event.position})
 
 
 def _record_type_for_summary(
@@ -4037,7 +4075,7 @@ def project_pattern_library(events: list[EventEnvelope]) -> dict[str, Any]:
 
 def project_gatekeeper_report(events: Sequence[GraphHistoryEvent]) -> dict[str, dict[str, Any]]:
     """Project gatekeeper cost, hit-rate, and pattern-library growth per run."""
-    reports: dict[str, dict[str, Any]] = {}
+    reports: dict[str, GatekeeperReport] = {}
     prefixes: dict[str, list[EventEnvelope]] = {}
     for history_event in events:
         event = _history_event_envelope(history_event)
@@ -4051,56 +4089,64 @@ def project_gatekeeper_report(events: Sequence[GraphHistoryEvent]) -> dict[str, 
             unresolved = sum(
                 1 for entry in classifications if entry.get("needs_gatekeeper") is True
             )
-            run["deterministic_classifications"] += deterministic
-            run["unresolved_residue"] += unresolved
-            run["boundary_count"] += 1
             library = project_pattern_library(prefixes[event.run_id])
-            run["pattern_library_size_over_time"].append(
-                {
-                    "position": event.position,
-                    "file_state_record_id": event.payload.get("record_id"),
-                    "size": len(library["patterns"]),
+            record_id = event.payload.get("record_id")
+            reports[event.run_id] = run.model_copy(
+                update={
+                    "deterministic_classifications": run.deterministic_classifications
+                    + deterministic,
+                    "unresolved_residue": run.unresolved_residue + unresolved,
+                    "boundary_count": run.boundary_count + 1,
+                    "pattern_library_size_over_time": [
+                        *run.pattern_library_size_over_time,
+                        GatekeeperPatternLibrarySizeRow(
+                            position=event.position,
+                            file_state_record_id=record_id if isinstance(record_id, str) else None,
+                            size=len(library["patterns"]),
+                        ),
+                    ],
                 }
             )
         elif event.event_type == "gatekeeper_verdict_recorded":
             verdicts = event.payload.get("verdicts")
             resolved = len(cast(list[Any], verdicts)) if isinstance(verdicts, list) else 0
-            run["gatekeeper_resolved"] += resolved
-            run["unresolved_residue"] = max(0, int(run["unresolved_residue"]) - resolved)
             library = project_pattern_library(prefixes[event.run_id])
-            run["pattern_library_size_over_time"].append(
-                {
-                    "position": event.position,
-                    "file_state_record_id": event.payload.get("file_state_record_id"),
-                    "size": len(library["patterns"]),
+            record_id = event.payload.get("file_state_record_id")
+            reports[event.run_id] = run.model_copy(
+                update={
+                    "gatekeeper_resolved": run.gatekeeper_resolved + resolved,
+                    "unresolved_residue": max(0, run.unresolved_residue - resolved),
+                    "pattern_library_size_over_time": [
+                        *run.pattern_library_size_over_time,
+                        GatekeeperPatternLibrarySizeRow(
+                            position=event.position,
+                            file_state_record_id=record_id if isinstance(record_id, str) else None,
+                            size=len(library["patterns"]),
+                        ),
+                    ],
                 }
             )
         elif event.event_type == "gatekeeper_cost_recorded":
-            run["gatekeeper_consults"] += 1
-            run["input_tokens"] += _payload_number(event.payload, "input_tokens")
-            run["output_tokens"] += _payload_number(event.payload, "output_tokens")
-            run["cache_read_tokens"] += _payload_number(event.payload, "cache_read_tokens")
-            run["cache_write_tokens"] += _payload_number(event.payload, "cache_write_tokens")
-            run["cost_usd"] += _payload_float(event.payload, "cost_usd")
-            run["wall_time_ms"] += _payload_number(event.payload, "wall_time_ms")
-            _record_model_cost(run, event.payload)
+            reports[event.run_id] = _record_model_cost(run, event.payload)
 
-    for run in reports.values():
-        total_classified = int(run["deterministic_classifications"]) + int(
-            run["gatekeeper_resolved"]
+    for run_id, run in reports.items():
+        total_classified = run.deterministic_classifications + run.gatekeeper_resolved
+        reports[run_id] = run.model_copy(
+            update={
+                "total_classified": total_classified,
+                "hit_rate": (
+                    run.deterministic_classifications / total_classified
+                    if total_classified
+                    else 0.0
+                ),
+                "pattern_library_size": (
+                    run.pattern_library_size_over_time[-1].size
+                    if run.pattern_library_size_over_time
+                    else 0
+                ),
+            }
         )
-        run["total_classified"] = total_classified
-        run["hit_rate"] = (
-            float(run["deterministic_classifications"]) / total_classified
-            if total_classified
-            else 0.0
-        )
-        run["pattern_library_size"] = (
-            int(run["pattern_library_size_over_time"][-1]["size"])
-            if run["pattern_library_size_over_time"]
-            else 0
-        )
-    return reports
+    return {run_id: report.model_dump(mode="json") for run_id, report in reports.items()}
 
 
 def _project(catalog: GraphCatalog, events: Sequence[GraphHistoryEvent]) -> GraphProjection:
@@ -4221,13 +4267,39 @@ def reduce_node_created(
         next_state["node_roles"][node_id] = role
     if kind == "planner" and role == "planner":
         if payload.generation_index is not None:
-            next_state["planner_generations"][node_id] = payload.generation_index
+            next_state["planner_generations"] = PlannerGenerations(
+                values={
+                    **next_state["planner_generations"].values,
+                    node_id: payload.generation_index,
+                }
+            )
         if payload.region_label is not None:
-            next_state["planner_region_labels"][node_id] = payload.region_label
+            next_state["planner_region_labels"] = PlannerRegionLabels(
+                values={
+                    **next_state["planner_region_labels"].values,
+                    node_id: payload.region_label,
+                }
+            )
         if payload.session_id is not None:
-            next_state["planner_sessions"][node_id] = payload.session_id
-            next_state["planner_session_states"].setdefault(payload.session_id, "detached")
-            next_state["planner_session_carryovers"].setdefault(payload.session_id, None)
+            next_state["planner_sessions"] = PlannerSessions(
+                values={**next_state["planner_sessions"].values, node_id: payload.session_id}
+            )
+            next_state["planner_session_states"] = PlannerSessionStates(
+                values={
+                    **next_state["planner_session_states"].values,
+                    payload.session_id: next_state["planner_session_states"].values.get(
+                        payload.session_id, "detached"
+                    ),
+                }
+            )
+            next_state["planner_session_carryovers"] = PlannerSessionCarryovers(
+                values={
+                    **next_state["planner_session_carryovers"].values,
+                    payload.session_id: next_state["planner_session_carryovers"].values.get(
+                        payload.session_id
+                    ),
+                }
+            )
     if payload.task_region_id is not None:
         next_state["node_task_regions"][node_id] = payload.task_region_id
     if payload.attempt_number is not None:
@@ -4342,12 +4414,32 @@ def reduce_session_state_changed(
 ) -> GraphProjection:
     del metadata
     next_state = copy_projection(state)
-    next_state["planner_session_states"][payload.session_id] = payload.state
+    next_state["planner_session_states"] = PlannerSessionStates(
+        values={**next_state["planner_session_states"].values, payload.session_id: payload.state}
+    )
     if payload.state == "attached":
-        next_state["planner_session_current_nodes"][payload.session_id] = payload.node_id
+        next_state["planner_session_current_nodes"] = PlannerSessionCurrentNodes(
+            values={
+                **next_state["planner_session_current_nodes"].values,
+                payload.session_id: payload.node_id,
+            }
+        )
     elif payload.state in {"suspended", "detached", "dead"}:
-        next_state["planner_session_current_nodes"].pop(payload.session_id, None)
-    next_state["planner_session_carryovers"][payload.session_id] = payload.carryover_record_id
+        next_state["planner_session_current_nodes"] = PlannerSessionCurrentNodes(
+            values={
+                session_id: node_id
+                for session_id, node_id in next_state[
+                    "planner_session_current_nodes"
+                ].values.items()
+                if session_id != payload.session_id
+            }
+        )
+    next_state["planner_session_carryovers"] = PlannerSessionCarryovers(
+        values={
+            **next_state["planner_session_carryovers"].values,
+            payload.session_id: payload.carryover_record_id,
+        }
+    )
     _refresh_derived_topology_state(next_state)
     return next_state
 
@@ -4579,10 +4671,10 @@ def _planner_region_label(
     projection: GraphProjection,
     node_id: str,
 ) -> str | None:
-    label = projection["planner_region_labels"].get(node_id)
+    label = projection["planner_region_labels"].values.get(node_id)
     if label is not None:
         return label
-    generation_index = projection["planner_generations"].get(node_id)
+    generation_index = projection["planner_generations"].values.get(node_id)
     if generation_index is None:
         return None
     labels = _seeded_planner_chain_labels(events)
@@ -5029,23 +5121,25 @@ def _record_accepted_record_summary(state: GraphProjection, event: EventEnvelope
     if not isinstance(record_id, str):
         return
     payload = _stable_accepted_record_payload(event.payload)
-    summary: GraphRecordSummary = {"record_id": record_id}
+    summary_values: dict[str, Any] = {"record_id": record_id}
     record_kind = payload.get("record_kind")
     if isinstance(record_kind, str):
-        summary["record_kind"] = record_kind
+        summary_values["record_kind"] = record_kind
     schema = payload.get("schema")
     if isinstance(schema, str):
-        summary["schema"] = schema
+        summary_values["schema"] = schema
     producer_node_id = payload.get("producer_node_id")
     if isinstance(producer_node_id, str):
-        summary["producer_node_id"] = producer_node_id
+        summary_values["producer_node_id"] = producer_node_id
     producer_port = payload.get("port")
     if isinstance(producer_port, str):
-        summary["producer_port"] = producer_port
+        summary_values["producer_port"] = producer_port
     record_type = _record_type_for_summary(payload, state)
     if record_type is not None:
-        summary["record_type"] = record_type
-    state["accepted_record_summaries_by_id"][record_id] = summary
+        summary_values["record_type"] = record_type
+    state["accepted_record_summaries_by_id"][record_id] = GraphRecordSummary.model_validate(
+        summary_values
+    )
 
 
 _DURABLE_RECORD_DECORATION_FIELDS = frozenset(
@@ -5674,57 +5768,76 @@ def _payload_float(payload: dict[str, Any], key: str) -> float:
     return 0.0
 
 
-def _empty_gatekeeper_report(run_id: str) -> dict[str, Any]:
-    return {
-        "run_id": run_id,
-        "boundary_count": 0,
-        "deterministic_classifications": 0,
-        "gatekeeper_consults": 0,
-        "gatekeeper_resolved": 0,
-        "unresolved_residue": 0,
-        "total_classified": 0,
-        "hit_rate": 0.0,
-        "pattern_library_size": 0,
-        "pattern_library_size_over_time": [],
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "cost_usd": 0.0,
-        "wall_time_ms": 0,
-        "models": {},
-    }
+def _empty_gatekeeper_report(run_id: str) -> GatekeeperReport:
+    return GatekeeperReport(
+        run_id=run_id,
+        boundary_count=0,
+        deterministic_classifications=0,
+        gatekeeper_consults=0,
+        gatekeeper_resolved=0,
+        unresolved_residue=0,
+        total_classified=0,
+        hit_rate=0.0,
+        pattern_library_size=0,
+        pattern_library_size_over_time=[],
+        input_tokens=0,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        cost_usd=0.0,
+        wall_time_ms=0,
+        models={},
+    )
 
 
-def _record_model_cost(run: dict[str, Any], payload: dict[str, Any]) -> None:
+def _record_model_cost(run: GatekeeperReport, payload: dict[str, Any]) -> GatekeeperReport:
     model_id = payload.get("model_id")
     if not isinstance(model_id, str) or not model_id:
         model_id = "unknown"
-    models = cast(dict[str, dict[str, Any]], run["models"])
-    model = models.setdefault(
-        model_id,
-        {
-            "model_id": model_id,
-            "consults": 0,
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "cache_read_tokens": 0,
-            "cache_write_tokens": 0,
-            "cost_usd": 0.0,
-            "wall_time_ms": 0,
-            "executions": [],
-        },
+    model = run.models.get(model_id) or GatekeeperCostRow(
+        model_id=model_id,
+        consults=0,
+        input_tokens=0,
+        output_tokens=0,
+        cache_read_tokens=0,
+        cache_write_tokens=0,
+        cost_usd=0.0,
+        wall_time_ms=0,
+        executions=[],
     )
-    model["consults"] += 1
-    model["input_tokens"] += _payload_number(payload, "input_tokens")
-    model["output_tokens"] += _payload_number(payload, "output_tokens")
-    model["cache_read_tokens"] += _payload_number(payload, "cache_read_tokens")
-    model["cache_write_tokens"] += _payload_number(payload, "cache_write_tokens")
-    model["cost_usd"] += _payload_float(payload, "cost_usd")
-    model["wall_time_ms"] += _payload_number(payload, "wall_time_ms")
     execution_id = payload.get("execution_id")
-    if isinstance(execution_id, str) and execution_id not in model["executions"]:
-        model["executions"].append(execution_id)
+    executions = model.executions
+    if isinstance(execution_id, str) and execution_id not in executions:
+        executions = [*executions, execution_id]
+    return run.model_copy(
+        update={
+            "gatekeeper_consults": run.gatekeeper_consults + 1,
+            "input_tokens": run.input_tokens + _payload_number(payload, "input_tokens"),
+            "output_tokens": run.output_tokens + _payload_number(payload, "output_tokens"),
+            "cache_read_tokens": run.cache_read_tokens
+            + _payload_number(payload, "cache_read_tokens"),
+            "cache_write_tokens": run.cache_write_tokens
+            + _payload_number(payload, "cache_write_tokens"),
+            "cost_usd": run.cost_usd + _payload_float(payload, "cost_usd"),
+            "wall_time_ms": run.wall_time_ms + _payload_number(payload, "wall_time_ms"),
+            "models": {
+                **run.models,
+                model_id: GatekeeperCostRow(
+                    model_id=model_id,
+                    consults=model.consults + 1,
+                    input_tokens=model.input_tokens + _payload_number(payload, "input_tokens"),
+                    output_tokens=model.output_tokens + _payload_number(payload, "output_tokens"),
+                    cache_read_tokens=model.cache_read_tokens
+                    + _payload_number(payload, "cache_read_tokens"),
+                    cache_write_tokens=model.cache_write_tokens
+                    + _payload_number(payload, "cache_write_tokens"),
+                    cost_usd=model.cost_usd + _payload_float(payload, "cost_usd"),
+                    wall_time_ms=model.wall_time_ms + _payload_number(payload, "wall_time_ms"),
+                    executions=executions,
+                ),
+            },
+        }
+    )
 
 
 def _derive_task_states(state: GraphProjection) -> dict[str, str]:

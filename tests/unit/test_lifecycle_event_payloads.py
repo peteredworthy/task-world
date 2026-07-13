@@ -34,12 +34,8 @@ from orchestrator.graph import (
     EventMetadata,
 )
 from orchestrator.graph_runtime.store import (
-    GRAPH_PROJECTION_PAYLOAD_FIELDS,
-    LIGHT_GRAPH_PAYLOAD_FIELDS,
-    NODE_DETAIL_PAYLOAD_FIELDS,
-    SUMMARY_REBUILD_PAYLOAD_FIELDS,
+    GRAPH_PAYLOAD_SCHEMA_GENERATION,
     GraphEventStore,
-    _json_extract_payload_value,
     graph_aggregate_id,
 )
 
@@ -431,41 +427,6 @@ def test_declared_lifecycle_and_callback_events_remain_replayable() -> None:
     assert set(projection["callback_idempotency_events"]) == {"worker-1\0key-1"}
 
 
-def test_retry_not_before_is_retained_by_every_compact_payload_allowlist() -> None:
-    retry_not_before = "2026-07-09T12:01:00+00:00"
-    for fields in (
-        GRAPH_PROJECTION_PAYLOAD_FIELDS,
-        LIGHT_GRAPH_PAYLOAD_FIELDS,
-        SUMMARY_REBUILD_PAYLOAD_FIELDS,
-        NODE_DETAIL_PAYLOAD_FIELDS,
-    ):
-        compact = _compact_payload(
-            {"node_id": "worker-1", "retry_not_before": retry_not_before}, fields
-        )
-        assert compact["retry_not_before"] == retry_not_before
-
-
-def test_compact_runtime_retry_reconstructs_scheduler_backoff() -> None:
-    retry_not_before = "2026-07-09T12:01:00+00:00"
-    payload = _compact_payload(
-        {
-            "node_id": "worker-1",
-            "lease_id": "lease-1",
-            "generation": 1,
-            "policy": "retry",
-            "reason": "agent_died",
-            "retry_not_before": retry_not_before,
-        },
-        SUMMARY_REBUILD_PAYLOAD_FIELDS,
-    )
-
-    projection = build_projection(
-        build_graph_catalog(), [_event("runtime_retry_scheduled", payload, position=1)]
-    )
-
-    assert projection["retry_not_before_by_node"] == {"worker-1": retry_not_before}
-
-
 @pytest.mark.asyncio
 async def test_sqlite_compact_readers_retain_runtime_retry_not_before() -> None:
     retry_not_before = "2026-07-09T12:01:00+00:00"
@@ -492,6 +453,7 @@ async def test_sqlite_compact_readers_retain_runtime_retry_not_before() -> None:
                     version=1,
                     event_type=event.event_type,
                     payload=event.model_dump_json(),
+                    payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
                     timestamp=event.timestamp.isoformat(),
                 )
             )
@@ -538,14 +500,6 @@ def _active_lease_events() -> list[EventEnvelope]:
             position=3,
         ),
     ]
-
-
-def _compact_payload(payload: dict[str, Any], fields: tuple[str, ...]) -> dict[str, Any]:
-    return {
-        field: _json_extract_payload_value(field, payload[field])
-        for field in fields
-        if field in payload
-    }
 
 
 def _event(event_type: str, payload: dict[str, Any], *, position: int) -> EventEnvelope:

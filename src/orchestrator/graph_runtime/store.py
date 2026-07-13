@@ -6,7 +6,6 @@ import json
 
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
-from datetime import datetime
 from typing import Any, cast
 
 from pydantic import ValidationError
@@ -22,16 +21,11 @@ from orchestrator.db import (
     GraphProjectionSnapshotModel,
 )
 from orchestrator.graph import (
-    Actor,
-    ActorKind,
-    CompactEventEnvelope,
     EventEnvelope,
     GraphCatalog,
     GraphProjection,
     HydratedEvent,
-    GRAPH_PROJECTION_PAYLOAD_FIELDS,
     PROJECTION_SCHEMA_VERSION,
-    OutputRecordAcceptedPayload,
     StoredEventEnvelope,
     StrictPayload,
     initial_projection,
@@ -59,350 +53,6 @@ GRAPH_AGGREGATE_PREFIX = "graph:"
 _CHECKPOINT_PROJECTION_KEY = "_projection_checkpoint"
 _CHECKPOINT_SCHEMA_VERSION_KEY = "_projection_schema_version"
 _CHECKPOINT_TERMINAL_KEY = "_projection_terminal"
-HEAVY_GRAPH_EVENT_TYPES = frozenset(
-    {
-        "callback_accepted",
-        "callback_rejected_conflict",
-        "callback_rejected_stale",
-        "file_state_accepted",
-        "file_state_rejected",
-        "output_record_accepted",
-    }
-)
-SUMMARY_PAYLOAD_FIELDS = (
-    "accepted_patches",
-    "actor_role",
-    "allowed_actions",
-    "authority",
-    "blocker",
-    "command_binding",
-    "command_definition",
-    "command_type",
-    "execution_id",
-    "generation",
-    "grade",
-    "kind",
-    "lease_generation",
-    "lease_id",
-    "lease_granted_event_id",
-    "new_state",
-    "node_id",
-    "node_kind",
-    "outcome",
-    "observed_at",
-    "patch_id",
-    "port",
-    "producer_node_id",
-    "prior_result",
-    "proposed_by_node_id",
-    "reason",
-    "record_id",
-    "record_kind",
-    "resource_claims",
-    "preconditions",
-    "rejected_patches",
-    "rejection_reason",
-    "role",
-    "state",
-    "task_region_id",
-    "to_state",
-    "tokens",
-)
-LIGHT_GRAPH_PAYLOAD_FIELDS = (
-    "accepted_record_selector",
-    "active",
-    "allowed_actions",
-    "appeal_node_id",
-    "appeal_type",
-    "appealed_node_id",
-    "approved",
-    "authority",
-    "authority_required_reason",
-    "base_snapshot_id",
-    "binding_policy",
-    "behavior_change",
-    "blocker",
-    "bound_at_position",
-    "cache_read_tokens",
-    "cache_write_tokens",
-    "candidate_record_id",
-    "candidate_record_ids",
-    "candidate_id",
-    "change_classification",
-    "classification",
-    "cleanup_id",
-    "command_binding",
-    "command_definition",
-    "command_definition_id",
-    "command_type",
-    "confidence",
-    "decision",
-    "deleted_snapshot_ref",
-    "dependency_type",
-    "edge_id",
-    "evidence_id",
-    "execution_id",
-    "evaluated_record_ids",
-    "expires_at",
-    "explicit_authority_required",
-    "failed_candidate_id",
-    "file_state_record_ids",
-    "file_state_record_id",
-    "from_node_kind",
-    "from_node_id",
-    "from_port",
-    "from_node_role",
-    "from_state",
-    "gate_id",
-    "gate_type",
-    "generation",
-    "generation_index",
-    "freshness_policy",
-    "input",
-    "input_tokens",
-    "id",
-    "idempotency_key",
-    "kind",
-    "lease_generation",
-    "lease_id",
-    "lease_granted_event_id",
-    "membership",
-    "metadata",
-    "model_id",
-    "new_behavior",
-    "new_state",
-    "node_id",
-    "operation",
-    "outcome",
-    "observed_at",
-    "output_tokens",
-    "path",
-    "port",
-    "payload",
-    "patch_id",
-    "planner_chain",
-    "planner_generation_budget",
-    "policy",
-    "proposal_id",
-    "previous_version_id",
-    "priority",
-    "prompt",
-    "prompt_hydration_policy",
-    "producer_node_id",
-    "prior_result",
-    "proposed_by_node_id",
-    "reason",
-    "record_id",
-    "record_ids",
-    "record_kind",
-    "record_type",
-    "region_id",
-    "region_label",
-    "rejected_patches",
-    "required",
-    "requirement",
-    "requirement_id",
-    "requirement_version_id",
-    "requires_authority",
-    "resource_claims",
-    "revision_index",
-    "revision_id",
-    "revision_type",
-    "retry_not_before",
-    "role",
-    "schema",
-    "semantic_change",
-    "session_id",
-    "stale_only",
-    "stale_reason",
-    "state",
-    "status",
-    "supersedes_record_id",
-    "supersedes_task_region_id",
-    "supersedes_task_region_ids",
-    "successor_planner_node_ids",
-    "superseding_record_id",
-    "support_id",
-    "supported",
-    "task_region_id",
-    "to_node_id",
-    "to_port",
-    "to_state",
-    "trigger",
-    "unsupported",
-    "validation_strengthening",
-    "verdict",
-    "verdicts",
-    "version_id",
-    "approval_prompt",
-    "approval_type",
-    "attempt_number",
-    "authority_request",
-    "authority_request_record",
-    "authority_request_record_id",
-    "blocker_reason",
-    "decision_request",
-    "decision_request_record_id",
-    "guarded_planner_node_id",
-    "human_prompt",
-    "hidden_oracle_command",
-    "inputs",
-    "message",
-    "outputs",
-    "preconditions",
-    "recovery_of_node_id",
-    "recovery_of_record_id",
-    "recovery_reason",
-    "rejected_patch_id",
-)
-DECISION_RECORD_VALUE_FIELDS = (
-    "consequence_summary",
-    "default_option",
-    "expires_at",
-    "options",
-    "requested_authority",
-    "target_node_id",
-    "target_region_id",
-)
-SUMMARY_REBUILD_PAYLOAD_FIELDS = tuple(
-    dict.fromkeys(
-        [
-            *LIGHT_GRAPH_PAYLOAD_FIELDS,
-            *SUMMARY_PAYLOAD_FIELDS,
-            "attempt_number",
-            "blockers",
-            "decider",
-            "decision_type",
-            "graph_verifier_grades",
-            "grades",
-            "idempotency_key",
-            "operations",
-            "ops",
-            "payload",
-            "patch_ops",
-            "patch_rejection_reasons",
-            "policy",
-            "provenance",
-            "record_ids",
-            "run_id",
-            "schema",
-            "snapshot_id",
-            "tokens_by_node",
-            "tokens_by_node_kind",
-            "value",
-        ]
-    )
-)
-NODE_DETAIL_PAYLOAD_FIELDS = (
-    "accepted_record_selector",
-    "allowed_actions",
-    "authority",
-    "base_snapshot_id",
-    "binding_policy",
-    "candidate_record_id",
-    "candidate_record_ids",
-    "candidate_id",
-    "command_binding",
-    "command_definition",
-    "edge_id",
-    "evaluated_record_ids",
-    "execution_id",
-    "expires_at",
-    "from_node_kind",
-    "from_node_id",
-    "from_port",
-    "from_node_role",
-    "file_state_record_ids",
-    "generation",
-    "idempotency_key",
-    "input",
-    "kind",
-    "lease_generation",
-    "lease_id",
-    "lease_granted_event_id",
-    "new_state",
-    "node_id",
-    "outcome",
-    "observed_at",
-    "port",
-    "payload",
-    "policy",
-    "producer_node_id",
-    "prior_result",
-    "prompt_summary",
-    "record_id",
-    "record_ids",
-    "record_kind",
-    "reason",
-    "resource_claims",
-    "preconditions",
-    "role",
-    "retry_not_before",
-    "schema",
-    "session_id",
-    "snapshot_id",
-    "state",
-    "supersedes_record_id",
-    "task_region_id",
-    "to_node_id",
-    "to_port",
-    "to_state",
-    "trigger",
-    "verdict",
-    "classifications",
-    "diff_summary",
-    "patch_bundle_id",
-    "approval_prompt",
-    "approval_type",
-    "attempt_number",
-    "authority_request",
-    "authority_request_record",
-    "authority_request_record_id",
-    "blocker",
-    "blocker_reason",
-    "command_definition_id",
-    "decision_request",
-    "decision_request_record_id",
-    "failed_candidate_id",
-    "gate_type",
-    "generation_index",
-    "guarded_planner_node_id",
-    "human_prompt",
-    "hidden_oracle_command",
-    "id",
-    "inputs",
-    "membership",
-    "message",
-    "outputs",
-    "planner_chain",
-    "planner_generation_budget",
-    "priority",
-    "prompt",
-    "reason",
-    "recovery_of_node_id",
-    "recovery_of_record_id",
-    "recovery_reason",
-    "region_label",
-    "rejected_patch_id",
-    "requirement",
-    "requirement_id",
-)
-BOOLEAN_PAYLOAD_FIELDS = frozenset(
-    {
-        "active",
-        "approved",
-        "behavior_change",
-        "explicit_authority_required",
-        "new_behavior",
-        "required",
-        "requires_authority",
-        "semantic_change",
-        "stale_only",
-        "supported",
-        "unsupported",
-        "validation_strengthening",
-    }
-)
 
 
 def graph_aggregate_id(run_id: str) -> str:
@@ -848,274 +498,29 @@ class GraphEventStore:
                 ) from exc
         return events
 
-    async def read_run_light(self, run_id: str, from_position: int = 0) -> list[EventEnvelope]:
-        """Read graph events with only projection/search payload fields.
-
-        This avoids selecting and validating the full JSON payload column for
-        callback/output/file-state bodies. Use ``read_run`` only when an API or
-        runtime path explicitly needs complete payloads.
-        """
-        return await self._read_run_extracting_fields(
-            run_id,
-            from_position,
-            LIGHT_GRAPH_PAYLOAD_FIELDS,
-        )
+    async def read_run_light(self, run_id: str, from_position: int = 0) -> list[HydratedEvent]:
+        return await self.read_run(run_id, from_position)
 
     async def read_run_summary_rebuild(
         self,
         run_id: str,
         from_position: int = 0,
-    ) -> list[EventEnvelope]:
-        """Read only fields needed to rebuild compact graph summaries and snapshots."""
-        return await self._read_run_extracting_fields(
-            run_id,
-            from_position,
-            SUMMARY_REBUILD_PAYLOAD_FIELDS,
-            include_nested_value_fallbacks=False,
-        )
+    ) -> list[HydratedEvent]:
+        return await self.read_run(run_id, from_position)
 
     async def read_run_projection(
         self,
         run_id: str,
         from_position: int = 0,
-    ) -> list[EventEnvelope]:
-        """Read only fields needed for the compact ``/graph`` projection."""
-        return await self._read_run_extracting_fields(
-            run_id,
-            from_position,
-            GRAPH_PROJECTION_PAYLOAD_FIELDS,
-        )
+    ) -> list[HydratedEvent]:
+        return await self.read_run(run_id, from_position)
 
     async def read_run_node_detail(
         self,
         run_id: str,
         from_position: int = 0,
-    ) -> list[EventEnvelope]:
-        """Read fields needed for summary node detail without large payload bodies."""
-        return await self._read_run_extracting_fields(
-            run_id,
-            from_position,
-            NODE_DETAIL_PAYLOAD_FIELDS,
-        )
-
-    async def _read_run_extracting_fields(
-        self,
-        run_id: str,
-        from_position: int,
-        fields: tuple[str, ...],
-        *,
-        include_nested_value_fallbacks: bool = True,
-    ) -> list[EventEnvelope]:
-        payload_selects = [
-            func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(field)
-            for field in fields
-        ]
-        record_payload_selects = [
-            func.json_extract(EventV2Model.payload, f"$.payload.record.{field}").label(
-                f"__record_{field}"
-            )
-            for field in fields
-        ]
-        nested_payload_selects = [
-            func.json_extract(EventV2Model.payload, "$.payload.value.status").label(
-                "__value_status"
-            ),
-            func.json_extract(EventV2Model.payload, "$.payload.value.classification").label(
-                "__value_classification"
-            ),
-            func.json_extract(EventV2Model.payload, "$.payload.value.outcome").label(
-                "__value_outcome"
-            ),
-            func.json_extract(EventV2Model.payload, "$.payload.value.grades").label(
-                "__value_grades"
-            ),
-            func.json_extract(EventV2Model.payload, "$.payload.record.value.status").label(
-                "__record_value_status"
-            ),
-            func.json_extract(EventV2Model.payload, "$.payload.record.value.classification").label(
-                "__record_value_classification"
-            ),
-            func.json_extract(EventV2Model.payload, "$.payload.record.value.outcome").label(
-                "__record_value_outcome"
-            ),
-            func.json_extract(EventV2Model.payload, "$.payload.record.value.grades").label(
-                "__record_value_grades"
-            ),
-            *[
-                func.json_extract(EventV2Model.payload, f"$.payload.value.{field}").label(
-                    f"__decision_value_{field}"
-                )
-                for field in DECISION_RECORD_VALUE_FIELDS
-            ],
-            *[
-                func.json_extract(EventV2Model.payload, f"$.payload.record.value.{field}").label(
-                    f"__record_decision_value_{field}"
-                )
-                for field in DECISION_RECORD_VALUE_FIELDS
-            ],
-        ]
-        result = await self._session.execute(
-            select(
-                EventV2Model.event_type,
-                EventV2Model.version,
-                EventV2Model.timestamp,
-                EventV2Model.payload.label("__full_event"),
-                func.json_extract(EventV2Model.payload, "$.event_id").label("event_id"),
-                func.json_extract(EventV2Model.payload, "$.causation_id").label("causation_id"),
-                func.json_extract(EventV2Model.payload, "$.correlation_id").label("correlation_id"),
-                *payload_selects,
-                *record_payload_selects,
-                *nested_payload_selects,
-            )
-            .where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
-            .where(EventV2Model.version >= from_position)
-            .order_by(EventV2Model.version)
-        )
-
-        events: list[EventEnvelope] = []
-        omitted_output_record_fields = (
-            {"payload", "attempt_number"} if fields == LIGHT_GRAPH_PAYLOAD_FIELDS else {"payload"}
-        )
-        extract_compact_output_record = fields in {
-            LIGHT_GRAPH_PAYLOAD_FIELDS,
-            NODE_DETAIL_PAYLOAD_FIELDS,
-        }
-        for row in result.mappings():
-            event_type = str(row["event_type"])
-            # Full stored payloads for catalog-owned events must stay exactly as
-            # persisted: strict hydration forbids fields the legacy partial-read
-            # fallbacks would lift in below.
-            payload_is_full_stored = False
-            if event_type in self._catalog.event_specs and (
-                event_type != "output_record_accepted" or not extract_compact_output_record
-            ):
-                full_event = json.loads(str(row["__full_event"]))
-                payload = dict(cast(dict[str, Any], full_event).get("payload", {}))
-                payload_is_full_stored = True
-            elif event_type == "output_record_accepted" and extract_compact_output_record:
-                payload = {
-                    field: _json_extract_payload_value(field, row[f"__record_{field}"])
-                    for field in fields
-                    if row.get(f"__record_{field}") is not None
-                    and field not in omitted_output_record_fields
-                }
-            else:
-                payload = {
-                    field: _json_extract_payload_value(field, row[field])
-                    for field in fields
-                    if row.get(field) is not None
-                    and (field != "payload" or event_type.startswith("callback_"))
-                }
-            if event_type.startswith("callback_") and "payload" in fields:
-                payload.setdefault("payload", None)
-            if (
-                not payload_is_full_stored
-                and include_nested_value_fallbacks
-                and "status" in fields
-                and "status" not in payload
-                and (
-                    row.get("__record_value_status")
-                    if event_type == "output_record_accepted"
-                    else row.get("__value_status")
-                )
-            ):
-                value_status = (
-                    row["__record_value_status"]
-                    if event_type == "output_record_accepted"
-                    else row["__value_status"]
-                )
-                payload["status"] = _json_extract_value(value_status)
-            if (
-                not payload_is_full_stored
-                and include_nested_value_fallbacks
-                and "classification" in fields
-                and "classification" not in payload
-                and (
-                    row.get("__record_value_classification")
-                    if event_type == "output_record_accepted"
-                    else row.get("__value_classification")
-                )
-            ):
-                value_classification = (
-                    row["__record_value_classification"]
-                    if event_type == "output_record_accepted"
-                    else row["__value_classification"]
-                )
-                payload["classification"] = _json_extract_value(value_classification)
-            if not payload_is_full_stored and _is_verification_report_payload(payload):
-                value_payload: dict[str, Any] = {}
-                value_outcome = row.get(
-                    "__record_value_outcome"
-                    if event_type == "output_record_accepted"
-                    else "__value_outcome"
-                )
-                if value_outcome is not None:
-                    value_payload["outcome"] = _json_extract_value(value_outcome)
-                value_grades = row.get(
-                    "__record_value_grades"
-                    if event_type == "output_record_accepted"
-                    else "__value_grades"
-                )
-                if value_grades is not None:
-                    value_payload["grades"] = _json_extract_value(value_grades)
-                if value_payload:
-                    payload["value"] = value_payload
-            record_type = payload.get("record_type")
-            port = payload.get("port")
-            if not payload_is_full_stored and (
-                record_type in {"decision_request", "authority_request_record"}
-                or port
-                in {
-                    "decision_request",
-                    "authority_request_record",
-                }
-            ):
-                value_payload = {
-                    field: _json_extract_value(
-                        row[
-                            f"__record_decision_value_{field}"
-                            if event_type == "output_record_accepted"
-                            else f"__decision_value_{field}"
-                        ]
-                    )
-                    for field in DECISION_RECORD_VALUE_FIELDS
-                    if row.get(
-                        f"__record_decision_value_{field}"
-                        if event_type == "output_record_accepted"
-                        else f"__decision_value_{field}"
-                    )
-                    is not None
-                }
-                if value_payload:
-                    payload["value"] = value_payload
-            if event_type == "output_record_accepted" and extract_compact_output_record:
-                payload = {"record": payload}
-            envelope_type = (
-                CompactEventEnvelope
-                if event_type == "output_record_accepted" and extract_compact_output_record
-                else EventEnvelope
-            )
-            events.append(
-                envelope_type(
-                    event_id=str(row.get("event_id") or f"graph-event-{row['version']}"),
-                    run_id=run_id,
-                    position=int(row["version"]),
-                    event_type=str(row["event_type"]),
-                    schema_version=1,
-                    actor=Actor(kind=ActorKind.CONTROLLER),
-                    causation_id=(
-                        str(row["causation_id"]) if row.get("causation_id") is not None else None
-                    ),
-                    correlation_id=(
-                        str(row["correlation_id"])
-                        if row.get("correlation_id") is not None
-                        else None
-                    ),
-                    timestamp=datetime.fromisoformat(str(row["timestamp"])),
-                    payload=payload,
-                )
-            )
-        return events
+    ) -> list[HydratedEvent]:
+        return await self.read_run(run_id, from_position)
 
     async def read_run_summaries(
         self,
@@ -1290,7 +695,7 @@ class GraphEventStore:
                     timestamp=summary.timestamp,
                     payload=summary.payload,
                 )
-                for summary in (summarize_graph_event(event) for event in events)
+                for summary in (_complete_graph_event_summary(event) for event in events)
             ]
         )
         await self._session.flush()
@@ -1447,7 +852,7 @@ class GraphEventStore:
                     timestamp=summary.timestamp,
                     payload=summary.payload,
                 )
-                for summary in (summarize_graph_event(event) for event in events)
+                for summary in (_complete_graph_event_summary(event) for event in events)
             ]
         )
         snapshot = _projection_snapshot_from_events(self._catalog, run_id, events)
@@ -1482,7 +887,6 @@ class GraphEventStore:
                 run_id,
                 events,
                 position=position,
-                events_are_light=True,
             ),
         )
         self._session.add(GraphNodeDetailSummaryCheckpointModel(run_id=run_id, position=position))
@@ -1504,7 +908,7 @@ class GraphEventStore:
     ) -> dict[str, GraphNodeDetailSummaryModel]:
         node_ids: set[str] = set()
         for event in events:
-            light_event = _node_detail_light_event(event)
+            light_event = event
             light_payload = (
                 light_event.payload.stored_json()
                 if isinstance(light_event.payload, StrictPayload)
@@ -1577,52 +981,10 @@ class GraphEventStore:
         from_position: int = 0,
     ) -> list[GraphEventSummary]:
         """Legacy replay summary path retained for parity tests and fallback analysis."""
-        aggregate_id = graph_aggregate_id(run_id)
-        normal_result = await self._session.execute(
-            select(EventV2Model)
-            .where(EventV2Model.aggregate_id == aggregate_id)
-            .where(EventV2Model.version >= from_position)
-            .where(EventV2Model.event_type.not_in(HEAVY_GRAPH_EVENT_TYPES))
-            .order_by(EventV2Model.version)
-        )
-        summaries = [
-            _summary_from_event(EventEnvelope.model_validate(json.loads(row.payload)))
-            for row in normal_result.scalars()
+        return [
+            _complete_graph_event_summary(event)
+            for event in await self.read_run(run_id, from_position)
         ]
-
-        heavy_selects = [
-            func.json_extract(EventV2Model.payload, f"$.payload.{field}").label(field)
-            for field in SUMMARY_PAYLOAD_FIELDS
-        ]
-        heavy_result = await self._session.execute(
-            select(
-                EventV2Model.event_type,
-                EventV2Model.version,
-                EventV2Model.timestamp,
-                func.json_extract(EventV2Model.payload, "$.event_id").label("event_id"),
-                *heavy_selects,
-            )
-            .where(EventV2Model.aggregate_id == aggregate_id)
-            .where(EventV2Model.version >= from_position)
-            .where(EventV2Model.event_type.in_(HEAVY_GRAPH_EVENT_TYPES))
-            .order_by(EventV2Model.version)
-        )
-        for row in heavy_result.mappings():
-            payload = {
-                field: row[field] for field in SUMMARY_PAYLOAD_FIELDS if row.get(field) is not None
-            }
-            event_id = row.get("event_id")
-            summaries.append(
-                GraphEventSummary(
-                    event_id=str(event_id or f"graph-event-{row['version']}"),
-                    event_type=str(row["event_type"]),
-                    run_id=run_id,
-                    position=int(row["version"]),
-                    timestamp=str(row["timestamp"]),
-                    payload=payload,
-                )
-            )
-        return sorted(summaries, key=lambda event: event.position)
 
     async def current_position(self, run_id: str) -> int:
         result = await self._session.execute(
@@ -1633,59 +995,15 @@ class GraphEventStore:
         return int(result.scalar_one_or_none() or 0)
 
 
-def summarize_graph_event(event: GraphHistoryEvent) -> GraphEventSummary:
-    source_payload = event.payload
-    if event.event_type == "output_record_accepted":
-        source_payload = OutputRecordAcceptedPayload.model_validate(
-            event.payload
-        ).record.model_dump(mode="json", by_alias=True, exclude_none=True)
-    elif isinstance(source_payload, StrictPayload):
-        source_payload = source_payload.stored_json()
-    diagnostics = source_payload.get("diagnostics")
-    if isinstance(diagnostics, dict):
-        source_payload = {**source_payload, **cast(dict[str, Any], diagnostics)}
-    payload = {
-        key: value
-        for key, value in source_payload.items()
-        if key in SUMMARY_PAYLOAD_FIELDS
-        or key
-        in {
-            "blockers",
-            "graph_verifier_grades",
-            "patch_ops",
-            "patch_rejection_reasons",
-            "tokens_by_node",
-            "tokens_by_node_kind",
-        }
-    }
-    ops = source_payload.get("ops") or source_payload.get("operations")
-    if isinstance(ops, list):
-        payload["patch_ops"] = len(cast(list[Any], ops))
-    value = source_payload.get("value")
-    if isinstance(value, dict):
-        typed_value = cast(dict[str, Any], value)
-        grades = typed_value.get("grades")
-        if grades is not None:
-            value_summary: dict[str, Any] = {"grades": grades}
-            outcome = typed_value.get("outcome")
-            if isinstance(outcome, str):
-                value_summary["outcome"] = outcome
-            payload["value"] = value_summary
-    grades = source_payload.get("grades")
-    if grades is not None:
-        payload["grades"] = grades
+def _complete_graph_event_summary(event: GraphHistoryEvent) -> GraphEventSummary:
     return GraphEventSummary(
         event_id=event.event_id,
         event_type=event.event_type,
         run_id=event.run_id,
         position=event.position,
         timestamp=event.timestamp.isoformat(),
-        payload=payload,
+        payload=_history_payload(event),
     )
-
-
-def _summary_from_event(event: GraphHistoryEvent) -> GraphEventSummary:
-    return summarize_graph_event(event)
 
 
 def _projection_snapshot_from_events(
@@ -1847,7 +1165,6 @@ def _node_detail_summaries_from_events(
     events: Sequence[GraphHistoryEvent],
     *,
     position: int,
-    events_are_light: bool = False,
 ) -> dict[str, GraphNodeDetailSummary]:
     return _apply_node_detail_events(
         run_id,
@@ -1856,7 +1173,6 @@ def _node_detail_summaries_from_events(
         existing_node_ids=set(),
         summaries={},
         edge_ports={},
-        events_are_light=events_are_light,
     )
 
 
@@ -1868,27 +1184,25 @@ def _apply_node_detail_events(
     existing_node_ids: set[str],
     summaries: dict[str, GraphNodeDetailSummary],
     edge_ports: dict[str, str],
-    events_are_light: bool = False,
 ) -> dict[str, GraphNodeDetailSummary]:
     updated: dict[str, GraphNodeDetailSummary] = {}
     known_node_ids = set(existing_node_ids)
     edge_ports = dict(edge_ports)
 
     for event in events:
-        light_event = event if events_are_light else _node_detail_light_event(event)
-        payload = _history_payload(light_event)
-        if light_event.event_type == "edge_created":
+        payload = _history_payload(event)
+        if event.event_type == "edge_created":
             edge_id = payload.get("edge_id")
             to_port = payload.get("to_port")
             if isinstance(edge_id, str) and isinstance(to_port, str):
                 edge_ports[edge_id] = to_port
 
         direct_node_id = payload.get("node_id")
-        if light_event.event_type == "node_created" and isinstance(direct_node_id, str):
+        if event.event_type == "node_created" and isinstance(direct_node_id, str):
             known_node_ids.add(direct_node_id)
 
         referenced_node_ids = _referenced_node_ids(payload, known_node_ids)
-        event_response = _node_event_response(light_event)
+        event_response = _node_event_response(event)
         for node_id in sorted(referenced_node_ids):
             summary = summaries.get(node_id)
             if summary is None:
@@ -1897,12 +1211,12 @@ def _apply_node_detail_events(
                 summary,
                 event_response,
                 position=position,
-                is_callback=_is_callback_history_event(light_event),
+                is_callback=_is_callback_history_event(event),
             )
             summaries[node_id] = summary
             updated[node_id] = summary
 
-        event_updates = _node_detail_field_updates(light_event, edge_ports, summaries, position)
+        event_updates = _node_detail_field_updates(event, edge_ports, summaries, position)
         for node_id, summary in event_updates.items():
             known_node_ids.add(node_id)
             summaries[node_id] = summary
@@ -2094,8 +1408,7 @@ def _node_detail_field_updates(
                 position,
             )
             records = [dict(record) for record in summary.file_state_records]
-            record = _compact_file_state_record(payload)
-            records.append(record)
+            records.append(dict(payload))
             updates[node_id] = _replace_summary(
                 summary,
                 position=position,
@@ -2169,37 +1482,6 @@ def _is_callback_history_event(event: GraphHistoryEvent) -> bool:
     )
 
 
-def _node_detail_light_event(event: GraphHistoryEvent) -> GraphHistoryEvent:
-    source_payload = _history_payload(event)
-    if event.event_type == "output_record_accepted":
-        source_payload = OutputRecordAcceptedPayload.model_validate(
-            event.payload
-        ).record.model_dump(mode="json", by_alias=True, exclude_none=True)
-    payload = {
-        key: value
-        for key, value in source_payload.items()
-        if key in NODE_DETAIL_PAYLOAD_FIELDS
-        and (key != "payload" or event.event_type.startswith("callback_"))
-    }
-    if event.event_type.startswith("callback_"):
-        payload.setdefault("payload", None)
-    value = source_payload.get("value")
-    if _is_verification_report_payload(source_payload) and isinstance(value, dict):
-        typed_value = cast(dict[str, Any], value)
-        compact_value: dict[str, Any] = {}
-        outcome = typed_value.get("outcome")
-        if isinstance(outcome, str):
-            compact_value["outcome"] = outcome
-        grades = typed_value.get("grades")
-        if grades is not None:
-            compact_value["grades"] = grades
-        if compact_value:
-            payload["value"] = compact_value
-    if event.event_type == "output_record_accepted":
-        payload = {"record": payload}
-    return event.model_copy(update={"payload": payload})
-
-
 def _node_event_response(event: GraphHistoryEvent) -> dict[str, Any]:
     return {
         "event_id": event.event_id,
@@ -2217,7 +1499,7 @@ def _node_event_response(event: GraphHistoryEvent) -> dict[str, Any]:
 
 def _history_payload(event: GraphHistoryEvent) -> dict[str, Any]:
     if isinstance(event.payload, StrictPayload):
-        return cast(dict[str, Any], event.payload.stored_json())
+        return cast(dict[str, Any], event.payload.to_json())
     return dict(event.payload)
 
 
@@ -2321,7 +1603,7 @@ def _has_missing_preexisting_node_reference(
     known_node_ids = set(existing_node_ids)
     created_node_ids: set[str] = set()
     for event in events:
-        payload = _history_payload(_node_detail_light_event(event))
+        payload = _history_payload(event)
         node_id = payload.get("node_id")
         if event.event_type == "node_created" and isinstance(node_id, str):
             created_node_ids.add(node_id)
@@ -2347,52 +1629,6 @@ def _input_bound_edge_ids_needing_ports(events: Sequence[GraphHistoryEvent]) -> 
         if isinstance(edge_id, str):
             edge_ids.add(edge_id)
     return edge_ids
-
-
-def _classification_summary(record: dict[str, Any]) -> dict[str, Any]:
-    summary: dict[str, Any] = {
-        "verdict": record.get("verdict"),
-        "total_paths": 0,
-        "needs_gatekeeper": 0,
-        "classifications": {},
-    }
-    class_counts: dict[str, int] = {}
-    entries = record.get("classifications")
-    if isinstance(entries, list):
-        for raw_entry in cast(list[Any], entries):
-            if not isinstance(raw_entry, dict):
-                continue
-            entry = cast(dict[str, Any], raw_entry)
-            summary["total_paths"] = int(summary["total_paths"]) + 1
-            if entry.get("needs_gatekeeper") is True:
-                summary["needs_gatekeeper"] = int(summary["needs_gatekeeper"]) + 1
-            classification = entry.get("classification")
-            if isinstance(classification, str):
-                class_counts[classification] = class_counts.get(classification, 0) + 1
-    summary["classifications"] = class_counts
-    return summary
-
-
-def _compact_file_state_record(payload: dict[str, Any]) -> dict[str, Any]:
-    record: dict[str, Any] = {
-        "classification_summary": _classification_summary(payload),
-    }
-    for key in (
-        "record_id",
-        "record_kind",
-        "port",
-        "producer_node_id",
-        "snapshot_id",
-        "verdict",
-        "patch_bundle_id",
-    ):
-        value = payload.get(key)
-        if isinstance(value, str):
-            record[key] = value
-    diff_summary = payload.get("diff_summary")
-    if isinstance(diff_summary, dict):
-        record["diff_summary"] = dict(cast(dict[str, Any], diff_summary))
-    return record
 
 
 def _node_detail_summary_from_row(
@@ -2436,22 +1672,3 @@ def _assign_node_detail_summary(
     row.prompt_summary = (
         dict(summary.prompt_summary) if summary.prompt_summary is not None else None
     )
-
-
-def _json_extract_value(value: Any) -> Any:
-    if not isinstance(value, str):
-        return value
-    if not value:
-        return value
-    if value[0] not in "[{":
-        return value
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return value
-
-
-def _json_extract_payload_value(field: str, value: Any) -> Any:
-    if field in BOOLEAN_PAYLOAD_FIELDS and value in {0, 1}:
-        return bool(value)
-    return _json_extract_value(value)

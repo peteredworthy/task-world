@@ -24,12 +24,25 @@ from orchestrator.graph import (
     FileStateRecord,
     FinalInvariantBlocker,
     GraphProjection,
+    GraphRecordSummary,
+    GraphTopologyBinding,
+    GraphTopologyEdge,
+    GraphPatchAttempt,
+    GatekeeperCostRow,
+    GatekeeperPatternLibrarySizeRow,
+    GatekeeperReport,
     InMemoryEventStore,
     InputBindingProjection,
     InvalidTestBlockProjection,
     LeaseProjection,
     NodeCreationProjection,
     OversightDecisionProjection,
+    PlannerGenerations,
+    PlannerRegionLabels,
+    PlannerSessionCarryovers,
+    PlannerSessionCurrentNodes,
+    PlannerSessionStates,
+    PlannerSessions,
     PendingGateDecisionProjection,
     RequirementRevisionProjection,
     SequentialIdGenerator,
@@ -64,6 +77,117 @@ from orchestrator.graph import (
 from tests.graph_command_support import dispatch_graph_command
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "graph"
+
+
+def test_remaining_projection_value_models_are_strict_and_frozen() -> None:
+    models = (
+        (PlannerGenerations, {"values": {"planner-1": 1}}, {"values": {"bad": True}}),
+        (
+            PlannerSessions,
+            {"values": {"planner-1": "session-1"}},
+            {"values": {"bad": 1}},
+        ),
+        (
+            PlannerSessionStates,
+            {"values": {"session-1": "attached"}},
+            {"values": {"bad": None}},
+        ),
+        (
+            PlannerSessionCurrentNodes,
+            {"values": {"session-1": "planner-1"}},
+            {"values": {"bad": 1}},
+        ),
+        (
+            PlannerSessionCarryovers,
+            {"values": {"session-1": None}},
+            {"values": {"bad": 1}},
+        ),
+        (
+            PlannerRegionLabels,
+            {"values": {"planner-1": "Step 1"}},
+            {"values": {"bad": 1}},
+        ),
+        (
+            GatekeeperPatternLibrarySizeRow,
+            {"position": 1, "file_state_record_id": "file-state-1", "size": 0},
+            {"position": True, "file_state_record_id": "file-state-1", "size": 0},
+        ),
+        (
+            GatekeeperCostRow,
+            {
+                "model_id": "model-1",
+                "consults": 1,
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "cache_read_tokens": 3,
+                "cache_write_tokens": 4,
+                "cost_usd": 0.5,
+                "wall_time_ms": 6,
+                "executions": ["execution-1"],
+            },
+            {
+                "model_id": "model-1",
+                "consults": True,
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "cache_read_tokens": 3,
+                "cache_write_tokens": 4,
+                "cost_usd": 0.5,
+                "wall_time_ms": 6,
+                "executions": ["execution-1"],
+            },
+        ),
+        (
+            GatekeeperReport,
+            {
+                "run_id": "run-1",
+                "boundary_count": 0,
+                "deterministic_classifications": 0,
+                "gatekeeper_consults": 0,
+                "gatekeeper_resolved": 0,
+                "unresolved_residue": 0,
+                "total_classified": 0,
+                "hit_rate": 0.0,
+                "pattern_library_size": 0,
+                "pattern_library_size_over_time": [],
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.0,
+                "wall_time_ms": 0,
+                "models": {},
+            },
+            {
+                "run_id": "run-1",
+                "boundary_count": True,
+                "deterministic_classifications": 0,
+                "gatekeeper_consults": 0,
+                "gatekeeper_resolved": 0,
+                "unresolved_residue": 0,
+                "total_classified": 0,
+                "hit_rate": 0.0,
+                "pattern_library_size": 0,
+                "pattern_library_size_over_time": [],
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.0,
+                "wall_time_ms": 0,
+                "models": {},
+            },
+        ),
+    )
+
+    for model_type, payload, mistyped_payload in models:
+        model = model_type.model_validate(payload)
+        with pytest.raises(ValidationError):
+            model_type.model_validate({**payload, "unexpected": True})
+        with pytest.raises(ValidationError):
+            model_type.model_validate(mistyped_payload)
+        with pytest.raises(ValidationError):
+            setattr(model, next(iter(model.__class__.model_fields)), None)
 
 
 def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
@@ -115,7 +239,79 @@ def test_graph_patch_attempt_projection_uses_strict_rejection_reason() -> None:
     ]
 
     view = project_graph_patch_attempts(events, run_id="run-1", current_graph_position=3)
-    assert view["attempts"][0]["rejection_reason"] == "test_rejection"
+    assert view["attempts"][0].rejection_reason == "test_rejection"
+
+
+@pytest.mark.parametrize(
+    ("model", "payload"),
+    [
+        (GraphRecordSummary, {"record_id": "record-1"}),
+        (GraphTopologyBinding, {"record_ids": ["record-1"]}),
+        (
+            GraphTopologyEdge,
+            {
+                "edge_id": "edge-1",
+                "from_node_id": "worker-1",
+                "from_port": "candidate",
+                "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
+                "required": True,
+                "dependency_type": "input_binding",
+                "metadata": {},
+                "record_types": [],
+                "bound_records": [],
+            },
+        ),
+        (
+            GraphPatchAttempt,
+            {
+                "patch_id": "patch-1",
+                "current_graph_position": 1,
+                "status": "accepted",
+                "accepted_position": 1,
+            },
+        ),
+    ],
+)
+def test_task11_projection_records_are_strict_frozen_models(
+    model: type[Any], payload: dict[str, Any]
+) -> None:
+    value = model.model_validate(payload)
+
+    with pytest.raises(ValidationError):
+        model.model_validate({**payload, "unexpected": True})
+    with pytest.raises(ValidationError):
+        model.model_validate({**payload, **_mistyped_projection_field(payload)})
+    with pytest.raises(ValidationError):
+        setattr(value, next(iter(payload)), "mutated")
+
+
+def _mistyped_projection_field(payload: dict[str, Any]) -> dict[str, Any]:
+    if "record_id" in payload:
+        return {"record_id": 1}
+    if "record_ids" in payload:
+        return {"record_ids": "record-1"}
+    if "required" in payload:
+        return {"required": "true"}
+    return {"current_graph_position": "1"}
+
+
+def test_task11_accepted_record_summary_checkpoint_restores_a_model() -> None:
+    projection = initial_projection()
+    projection["accepted_record_summaries_by_id"]["record-1"] = GraphRecordSummary(
+        record_id="record-1", record_type="candidate", position=4
+    )
+
+    checkpoint = projection_to_checkpoint(projection)
+    restored = projection_from_checkpoint(checkpoint)
+
+    assert checkpoint["accepted_record_summaries_by_id"] == {
+        "record-1": {"record_id": "record-1", "record_type": "candidate", "position": 4}
+    }
+    assert isinstance(restored["accepted_record_summaries_by_id"]["record-1"], GraphRecordSummary)
+    assert (
+        restored["accepted_record_summaries_by_id"] == projection["accepted_record_summaries_by_id"]
+    )
 
 
 def test_empty_projection() -> None:
@@ -164,12 +360,12 @@ def test_empty_projection() -> None:
         "accepted_no_successor_patches_by_node": {},
         "accepted_no_successor_patch_ids_by_node": {},
         "latest_routine_snapshot_record": None,
-        "planner_generations": {},
-        "planner_sessions": {},
-        "planner_session_states": {},
-        "planner_session_current_nodes": {},
-        "planner_session_carryovers": {},
-        "planner_region_labels": {},
+        "planner_generations": PlannerGenerations(values={}),
+        "planner_sessions": PlannerSessions(values={}),
+        "planner_session_states": PlannerSessionStates(values={}),
+        "planner_session_current_nodes": PlannerSessionCurrentNodes(values={}),
+        "planner_session_carryovers": PlannerSessionCarryovers(values={}),
+        "planner_region_labels": PlannerRegionLabels(values={}),
         "requirement_revisions": {},
         "active_requirement_versions": {},
         "support_evidence": {},
@@ -1379,17 +1575,19 @@ def test_edge_projection_uses_typed_payload_and_preserves_topology_shape() -> No
 
     topology = project_graph_topology(build_graph_catalog(), events)
     topology_edge = topology["edges"][0]
-    assert topology_edge["edge_id"] == "edge-source-records"
-    assert topology_edge["required"] is False
-    assert topology_edge["accepted_record_selector"] == {
+    assert isinstance(topology_edge, GraphTopologyEdge)
+    assert topology_edge.edge_id == "edge-source-records"
+    assert topology_edge.required is False
+    assert topology_edge.accepted_record_selector == {
         "record_type": "candidate",
         "schema": "ImplementationCandidate",
     }
-    assert topology_edge["metadata"] == {
+    assert topology_edge.metadata == {
         "prompt_hydration_policy": "summary",
         "metadata": {"priority": "high"},
     }
-    assert topology_edge["binding"] == {
+    assert topology_edge.binding is not None
+    assert topology_edge.binding.model_dump(mode="json", exclude_none=True) == {
         "edge_id": "edge-source-records",
         "to_node_id": "summarizer-1",
         "to_port": "source_records",
@@ -1787,13 +1985,7 @@ def test_remaining_primitive_checkpoint_maps_are_validated() -> None:
     assert restored["node_preconditions"] == {"worker-1": ["inputs_bound"]}
     assert restored["node_command_definitions"] == {"worker-1": {"command": "test"}}
     assert restored["node_output_ports"] == {"worker-1": {"result": ["record-1"]}}
-    assert restored["accepted_record_summaries_by_id"] == {
-        "record-1": {
-            "record_id": "record-1",
-            "producer_node_id": "worker-1",
-            "position": 8,
-        }
-    }
+    assert restored["accepted_record_summaries_by_id"] == {}
     assert restored["node_pending_appeals"] == {"worker-1": True}
     assert restored["node_gate_decisions"] == {"gate-1": False}
     assert restored["completion_decision_passed"] is False
@@ -1805,12 +1997,15 @@ def test_remaining_primitive_checkpoint_maps_are_validated() -> None:
     assert restored["accepted_graph_patches_by_node"] == {"planner-1": ["patch-1"]}
     assert restored["accepted_no_successor_patches_by_node"] == {"planner-1": ["patch-3"]}
     assert restored["accepted_no_successor_patch_ids_by_node"] == {"planner-1": "patch-3"}
-    assert restored["planner_generations"] == {"planner-1": 4}
-    assert restored["planner_sessions"] == {"planner-1": "session-1"}
-    assert restored["planner_session_states"] == {"session-1": "active"}
-    assert restored["planner_session_current_nodes"] == {"session-1": "planner-1"}
-    assert restored["planner_session_carryovers"] == {"session-1": None, "session-2": "record-1"}
-    assert restored["planner_region_labels"] == {"planner-1": "Step 1"}
+    assert restored["planner_generations"].values == {"planner-1": 4}
+    assert restored["planner_sessions"].values == {"planner-1": "session-1"}
+    assert restored["planner_session_states"].values == {"session-1": "active"}
+    assert restored["planner_session_current_nodes"].values == {"session-1": "planner-1"}
+    assert restored["planner_session_carryovers"].values == {
+        "session-1": None,
+        "session-2": "record-1",
+    }
+    assert restored["planner_region_labels"].values == {"planner-1": "Step 1"}
     assert restored["active_requirement_versions"] == {"req-1": "v1"}
     assert restored["last_deferred_reasons"] == {"worker-1": "waiting"}
     assert restored["retry_not_before_by_node"] == {

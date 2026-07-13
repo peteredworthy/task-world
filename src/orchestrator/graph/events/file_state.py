@@ -1,6 +1,6 @@
 """Strict file-state, gatekeeper, and cleanup event specifications."""
 
-from typing import Any, Literal, TypeAlias, cast
+from typing import Any, Literal, TypeAlias
 
 from pydantic import Field
 
@@ -138,7 +138,11 @@ def reduce_file_state_accepted(
     }
     if record.producer_node_id:
         summary["producer_node_id"] = record.producer_node_id
-    next_state["accepted_record_summaries_by_id"][record.record_id] = cast(Any, summary)
+    from orchestrator.graph.projections import GraphRecordSummary
+
+    next_state["accepted_record_summaries_by_id"][record.record_id] = (
+        GraphRecordSummary.model_validate(summary)
+    )
     refresh_derived_topology_state(next_state)
     return next_state
 

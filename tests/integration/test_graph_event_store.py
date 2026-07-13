@@ -22,8 +22,8 @@ from orchestrator.graph import (
     PROJECTION_SCHEMA_VERSION,
     Actor,
     ActorKind,
-    CompactEventEnvelope,
     EventEnvelope,
+    EventMetadata,
     FakeClock,
     GraphCatalog,
     HydratedEvent,
@@ -43,6 +43,7 @@ from orchestrator.graph_runtime import (
 )
 from orchestrator.graph_runtime.store import graph_aggregate_id
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from tests.unit.graph_catalog_samples import EVENT_SAMPLES
 
 
 @pytest.fixture(scope="module")
@@ -1617,14 +1618,13 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
             )
 
     async with session_factory() as session:
-        summaries = await GraphEventStore(
+        store = GraphEventStore(
             session,
             catalog,
-        ).read_run_summaries(run_id)
-        verifier_detail = await GraphEventStore(
-            session,
-            catalog,
-        ).read_node_detail_summary(
+        )
+        summaries = await store.read_run_summaries(run_id)
+        full_events = await store.read_run(run_id)
+        verifier_detail = await store.read_node_detail_summary(
             run_id,
             "verifier-1",
         )
@@ -1634,48 +1634,20 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
         "evt-summary-2",
         "evt-summary-3",
     ]
-    assert summaries[0].payload == {
-        "lease_id": "lease-1",
-        "node_id": "worker-1",
-        "reason": "accepted",
-    }
-    assert summaries[1].payload == {
-        "kind": "worker",
-        "node_id": "worker-1",
-        "state": "planned",
-    }
-    assert summaries[2].payload == {
-        "outcome": "passed",
-        "port": "verification_report",
-        "producer_node_id": "verifier-1",
-        "record_id": "verification-1",
-        "record_kind": "verification",
-        "value": {
-            "outcome": "passed",
-            "grades": [{"requirement_id": "R-1", "grade": "A"}],
-        },
-    }
-    assert verifier_detail is not None
-    assert verifier_detail.output_records == [
-        {
-            "candidate_id": "candidate-1",
-            "outcome": "passed",
-            "port": "verification_report",
-            "producer_node_id": "verifier-1",
-            "record_id": "verification-1",
-            "record_kind": "verification",
-            "schema": "VerificationReport",
-            "verdict": "passed",
-            "value": {
-                "outcome": "passed",
-                "grades": [{"requirement_id": "R-1", "grade": "A"}],
-            },
-        }
+    assert [summary.payload for summary in summaries] == [
+        event.payload.to_json() for event in full_events
     ]
+    assert verifier_detail is not None
+    assert verifier_detail.output_records[0]["candidate_id"] == "candidate-1"
+    assert verifier_detail.output_records[0]["outcome"] == "passed"
+    assert verifier_detail.output_records[0]["value"] == {
+        "outcome": "passed",
+        "grades": [{"requirement_id": "R-1", "grade": "A"}],
+    }
 
 
 @pytest.mark.asyncio
-async def test_read_run_light_preserves_projection_fields_without_heavy_payloads(
+async def test_all_named_read_paths_return_complete_hydrated_payloads(
     session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-light"
@@ -1803,102 +1775,61 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
             )
 
     async with session_factory() as session:
-        events = await GraphEventStore(
-            session,
-            catalog,
-        ).read_run_light(run_id)
-
-    assert [event.event_id for event in events] == [
-        "evt-light-1",
-        "evt-light-2",
-        "evt-light-3",
-        "evt-light-4",
-        "evt-light-edge",
-        "evt-light-5",
-    ]
-    assert events[0].payload == {
-        "kind": "worker",
-        "node_id": "worker-1",
-        "resource_claims": [{"mode": "write", "scope": "repo"}],
-        "state": "planned",
-        "task_region_id": "step/task",
-    }
-    assert events[1].payload == {
-        "record": {
-            "candidate_id": "candidate-1",
-            "port": "candidate",
-            "producer_node_id": "worker-1",
-            "record_id": "candidate-1",
-            "record_kind": "output",
-            "record_type": "candidate",
-            "schema": "ImplementationCandidate",
-            "task_region_id": "step/task",
-        }
-    }
-    assert events[2].payload == {
-        "idempotency_key": "light-callback-1",
-        "lease_id": "lease-1",
-        "node_id": "worker-1",
-        "payload": {"output_records": large_payload},
-        "reason": "accepted",
-    }
-    assert events[3].payload == {
-        "bound_at_position": 2,
-        "edge_id": "edge-candidate",
-        "record_ids": ["candidate-1"],
-        "to_node_id": "verifier-1",
-        "to_port": "candidate_under_test",
-    }
-    assert events[4].payload == {
-        "binding_policy": "bind_latest",
-        "edge_id": "edge-candidate",
-        "freshness_policy": "latest_only",
-        "from_node_id": "worker-1",
-        "from_port": "candidate",
-        "metadata": {"purpose": "verify candidate"},
-        "prompt_hydration_policy": "artifact_reference",
-        "to_node_id": "verifier-1",
-        "to_port": "candidate_under_test",
-    }
-    assert events[5].payload == {
-        "record": {
-            "candidate_id": "candidate-check-1",
-            "classification": "passed",
-            "port": "check_result",
-            "producer_node_id": "check-1",
-            "record_id": "check-result-1",
-            "record_kind": "output",
-            "record_type": "check_result",
-            "schema": "CheckResult",
-            "status": "passed",
-            "task_region_id": "step/task",
-        }
-    }
-    assert all(
-        "value"
-        not in (
-            event.payload["record"]
-            if event.event_type == "output_record_accepted"
-            else event.payload
+        store = GraphEventStore(session, catalog)
+        full_events = await store.read_run(run_id)
+        named_readers = (
+            store.read_run_light,
+            store.read_run_summary_rebuild,
+            store.read_run_projection,
+            store.read_run_node_detail,
         )
-        for event in events
-    )
-    assert all(
-        "payload" not in event.payload or event.event_type == "callback_accepted"
-        for event in events
-    )
-    assert isinstance(events[1], CompactEventEnvelope)
-    assert isinstance(events[5], CompactEventEnvelope)
-    projection = initial_projection()
-    for event in events:
-        projection = reduce_event(catalog, projection, event)
-    assert projection["accepted_record_summaries_by_id"]["candidate-1"]["record_id"] == (
-        "candidate-1"
-    )
-    flattened_full_event = EventEnvelope.model_validate(events[1].model_dump())
-    legacy_projection = reduce_event(
-        catalog,
-        initial_projection(),
-        flattened_full_event,
-    )
-    assert "candidate-1" not in legacy_projection["accepted_record_summaries_by_id"]
+
+        for reader in named_readers:
+            events = await reader(run_id)
+            assert [(event.event_type, event.position) for event in events] == [
+                (event.metadata.event_type, event.metadata.position) for event in full_events
+            ]
+            assert [event.payload.to_json() for event in events] == [
+                event.payload.to_json() for event in full_events
+            ]
+
+    assert full_events[1].payload.to_json()["record"]["value"]["body"] == large_payload
+    assert full_events[2].payload.to_json()["payload"] == {"output_records": large_payload}
+
+
+@pytest.mark.asyncio
+async def test_catalog_event_samples_have_exact_complete_payload_parity_across_named_readers(
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
+) -> None:
+    run_id = "catalog-complete-reader-parity"
+    events = [
+        specification.create(
+            EventMetadata(
+                event_id=f"catalog-event-{position}",
+                run_id=run_id,
+                position=-1,
+                event_type=specification.name,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.SYSTEM),
+                timestamp=datetime(2026, 7, 12, tzinfo=UTC),
+            ),
+            specification.validate_payload(EVENT_SAMPLES[specification.name]),
+        )
+        for position, specification in enumerate(catalog.events, start=1)
+    ]
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session, catalog).append_events(run_id, 0, events)
+
+    async with session_factory() as session:
+        store = GraphEventStore(session, catalog)
+        full_events = await store.read_run(run_id)
+        for reader in (
+            store.read_run_light,
+            store.read_run_summary_rebuild,
+            store.read_run_projection,
+            store.read_run_node_detail,
+        ):
+            assert [event.payload.to_json() for event in await reader(run_id)] == [
+                event.payload.to_json() for event in full_events
+            ]

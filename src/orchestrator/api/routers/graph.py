@@ -52,11 +52,12 @@ from orchestrator.graph import (
     project_scheduler_view,
     project_task_states,
 )
-from orchestrator.graph_runtime import GraphController, StaleProjectionError
-from orchestrator.graph_runtime.store import (
+from orchestrator.graph_runtime import (
+    GraphController,
     GraphEventStore,
     GraphEventSummary,
     GraphNodeDetailSummary,
+    StaleProjectionError,
 )
 from orchestrator.state import RunNotFoundError
 from orchestrator.graph import build_graph_command_dependencies
@@ -485,7 +486,7 @@ def _summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_graph_projection_response(
-    run_id: str, events: list[EventEnvelope], *, catalog: GraphCatalog
+    run_id: str, events: Sequence[HydratedEvent], *, catalog: GraphCatalog
 ) -> GraphProjectionResponse:
     if not events:
         return GraphProjectionResponse(
@@ -555,7 +556,7 @@ def _graph_api_run_state(
 
 
 def build_graph_topology_response(
-    run_id: str, events: list[EventEnvelope], *, catalog: GraphCatalog
+    run_id: str, events: Sequence[HydratedEvent], *, catalog: GraphCatalog
 ) -> GraphTopologyResponse:
     if not events:
         return GraphTopologyResponse(run_id=run_id, event_count=0, nodes=[], edges=[])
@@ -568,7 +569,8 @@ def build_graph_topology_response(
             GraphTopologyNodeResponse(**cast(dict[str, Any], node)) for node in topology["nodes"]
         ],
         edges=[
-            GraphTopologyEdgeResponse(**cast(dict[str, Any], edge)) for edge in topology["edges"]
+            GraphTopologyEdgeResponse(**edge.model_dump(mode="json", by_alias=True))
+            for edge in topology["edges"]
         ],
     )
 
@@ -589,13 +591,16 @@ def build_graph_patch_attempts_response(
     return GraphPatchAttemptsResponse(
         run_id=run_id,
         current_graph_position=current_graph_position,
-        attempts=[GraphPatchAttemptResponse(**entry) for entry in attempts["attempts"]],
+        attempts=[
+            GraphPatchAttemptResponse(**entry.model_dump(mode="json"))
+            for entry in attempts["attempts"]
+        ],
     )
 
 
 def build_final_invariant_blockers_response(
     run_id: str,
-    events: list[EventEnvelope],
+    events: Sequence[HydratedEvent],
     *,
     failed_outbox_rows: list[GraphOutboxModel] | None = None,
     catalog: GraphCatalog,
@@ -649,7 +654,7 @@ async def append_requeue_audit_event(
 
 
 def build_graph_regions_response(
-    run_id: str, events: list[EventEnvelope], *, catalog: GraphCatalog
+    run_id: str, events: Sequence[HydratedEvent], *, catalog: GraphCatalog
 ) -> GraphRegionsResponse:
     if not events:
         return GraphRegionsResponse(run_id=run_id, event_count=0, regions=[])
@@ -681,7 +686,7 @@ def build_graph_regions_response(
 
 
 def build_scheduler_view_response(
-    run_id: str, events: list[EventEnvelope], *, catalog: GraphCatalog
+    run_id: str, events: Sequence[HydratedEvent], *, catalog: GraphCatalog
 ) -> SchedulerViewResponse:
     if not events:
         return SchedulerViewResponse(
@@ -774,7 +779,7 @@ def build_scheduler_view_response_from_snapshot(
 
 
 def build_decision_view_response(
-    run_id: str, events: list[EventEnvelope], *, catalog: GraphCatalog
+    run_id: str, events: Sequence[HydratedEvent], *, catalog: GraphCatalog
 ) -> DecisionViewResponse:
     if not events:
         return DecisionViewResponse(
@@ -839,7 +844,7 @@ def _payload_has_node_value(value: Any, node_id: str) -> bool:
     return False
 
 
-def _node_events_filter(event: EventEnvelope, node_id: str) -> bool:
+def _node_events_filter(event: HydratedEvent, node_id: str) -> bool:
     return _payload_has_node_value(event.payload, node_id)
 
 
@@ -1141,7 +1146,7 @@ def build_file_state_report_response(
     )
 
 
-def _is_callback_history_event(event: EventEnvelope) -> bool:
+def _is_callback_history_event(event: HydratedEvent) -> bool:
     if event.event_type in {
         "callback_accepted",
         "callback_rejected_stale",
@@ -1183,7 +1188,7 @@ def _active_lease_for_node(
 def build_node_detail_response(
     run_id: str,
     node_id: str,
-    events: list[EventEnvelope],
+    events: Sequence[HydratedEvent],
     *,
     payload_mode: Literal["full", "summary"] = "full",
     catalog: GraphCatalog,
@@ -1237,7 +1242,7 @@ def build_node_detail_response(
     )
 
 
-def _latest_prompt_summary(events: list[EventEnvelope]) -> dict[str, Any] | None:
+def _latest_prompt_summary(events: Sequence[HydratedEvent]) -> dict[str, Any] | None:
     for event in reversed(events):
         prompt_summary = event.payload.get("prompt_summary")
         if isinstance(prompt_summary, dict):
@@ -1246,16 +1251,16 @@ def _latest_prompt_summary(events: list[EventEnvelope]) -> dict[str, Any] | None
 
 
 def _node_detail_event_to_response(
-    event: EventEnvelope,
+    event: HydratedEvent,
     *,
     payload_mode: Literal["full", "summary"],
 ) -> GraphEventResponse:
     if payload_mode != "summary":
         return _event_to_response(event, payload_mode=payload_mode)
     if event.event_type == "output_record_accepted":
-        payload = _compact_node_detail_output_record(event.payload)
+        payload = _compact_node_detail_output_record(event.payload.to_json())
     elif event.event_type == "file_state_accepted":
-        payload = _compact_node_detail_file_state_record(event.payload)
+        payload = _compact_node_detail_file_state_record(event.payload.to_json())
     else:
         payload = _event_payload(event, payload_mode=payload_mode)
     return GraphEventResponse(
@@ -1287,6 +1292,13 @@ def build_node_detail_response_from_summary(
         file_state_records = _bounded_node_detail_records(
             _pick_file_state_records(full_events, summary.node_id)
         )
+    else:
+        response_events = [_summary_node_event_response(event) for event in response_events]
+        callback_history = [_summary_node_event_response(event) for event in callback_history]
+        output_records = [_compact_node_detail_output_record(record) for record in output_records]
+        file_state_records = [
+            _compact_node_detail_file_state_record(record) for record in file_state_records
+        ]
     return NodeDetailResponse(
         run_id=summary.run_id,
         node_id=summary.node_id,
@@ -1307,6 +1319,16 @@ def build_node_detail_response_from_summary(
         events=response_events,
         prompt_summary=summary.prompt_summary,
     )
+
+
+def _summary_node_event_response(event: GraphEventResponse) -> GraphEventResponse:
+    if event.event_type == "output_record_accepted":
+        payload = _compact_node_detail_output_record(event.payload)
+    elif event.event_type == "file_state_accepted":
+        payload = _compact_node_detail_file_state_record(event.payload)
+    else:
+        payload = _summary_payload(event.payload)
+    return event.model_copy(update={"payload": payload})
 
 
 def _full_node_event_responses(

@@ -416,29 +416,13 @@ async def test_append_keeps_graph_read_models_synchronized(
             build_graph_catalog(),
         )
         summaries = await store.read_run_summaries(run_id)
+        full_events = await store.read_run(run_id)
         snapshot = await store.read_projection_snapshot(run_id)
 
     assert [summary.position for summary in summaries] == [1, 2, 3, 4, 5]
-    assert summaries[2].payload == {
-        "node_id": "worker-1",
-        "new_state": "ready",
-    }
-    assert summaries[3].payload == {
-        "patch_id": "patch-summary",
-        "actor_role": "planner",
-        "proposed_by_node_id": "planner-test",
-        "blockers": ["waiting-for-input"],
-        "graph_verifier_grades": {"req-1": "pass"},
-        "tokens_by_node": {"worker-1": 30},
-        "tokens_by_node_kind": {"worker": 30},
-        "patch_ops": 2,
-    }
-    assert summaries[4].payload == {
-        "producer_node_id": "worker-1",
-        "record_id": "record-1",
-        "record_kind": "output",
-        "port": "candidate",
-    }
+    assert [summary.payload for summary in summaries] == [
+        event.payload.to_json() for event in full_events
+    ]
     assert snapshot is not None
     assert snapshot.position == 5
     assert snapshot.run_state == "active"
@@ -471,6 +455,33 @@ async def test_graph_read_models_roll_back_with_event_append(
     assert event_count == 0
     assert summary_count == 0
     assert snapshot_count == 0
+
+
+@pytest.mark.asyncio
+async def test_read_model_rows_store_complete_hydrated_payloads(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "read-model-complete-payloads"
+    events = _sample_events(run_id)
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session, build_graph_catalog()).append_events(run_id, 0, events)
+
+    async with session_factory() as session:
+        full_events = await GraphEventStore(session, build_graph_catalog()).read_run(run_id)
+        summaries = list(
+            (
+                await session.execute(
+                    select(GraphEventSummaryModel)
+                    .where(GraphEventSummaryModel.run_id == run_id)
+                    .order_by(GraphEventSummaryModel.position)
+                )
+            ).scalars()
+        )
+
+    assert [summary.payload for summary in summaries] == [
+        event.payload.to_json() for event in full_events
+    ]
 
 
 @pytest.mark.asyncio

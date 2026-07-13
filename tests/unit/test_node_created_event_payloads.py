@@ -19,6 +19,7 @@ from orchestrator.graph import (
     projection_to_checkpoint,
 )
 from orchestrator.graph_runtime.store import (
+    GRAPH_PAYLOAD_SCHEMA_GENERATION,
     GraphEventStore,
     graph_aggregate_id,
 )
@@ -320,8 +321,8 @@ def test_node_created_reducer_preserves_planner_recovery_and_authority_indexes()
     projection = build_projection(build_graph_catalog(), events)
 
     assert projection["planner_generation_budget"] == 4
-    assert projection["planner_generations"] == {"planner-1": 1}
-    assert projection["planner_sessions"] == {"planner-1": "session-1"}
+    assert projection["planner_generations"].values == {"planner-1": 1}
+    assert projection["planner_sessions"].values == {"planner-1": "session-1"}
     assert projection["node_allowed_actions"] == {"planner-1": ["submit_patch"]}
     assert projection["node_preconditions"] == {"planner-1": ["inputs_bound"]}
     assert projection["node_resource_claims"]["planner-1"][0].scope == "repo"
@@ -460,6 +461,7 @@ async def test_hidden_oracle_command_survives_all_sqlite_compact_readers() -> No
                     version=1,
                     event_type=event.event_type,
                     payload=event.model_dump_json(),
+                    payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
                     timestamp=event.timestamp.isoformat(),
                 )
             )
@@ -530,6 +532,7 @@ async def test_node_created_compact_replay_matches_full_replay() -> None:
                     version=1,
                     event_type=event.event_type,
                     payload=event.model_dump_json(),
+                    payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
                     timestamp=event.timestamp.isoformat(),
                 )
             )

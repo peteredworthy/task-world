@@ -12,10 +12,19 @@ from orchestrator.api import (
     build_graph_projection_response,
     build_graph_regions_response,
     build_graph_topology_response,
+    build_scheduler_view_response,
+    build_decision_view_response,
     build_node_detail_response,
     build_node_detail_response_from_summary,
 )
-from orchestrator.graph import Actor, ActorKind, CompactEventEnvelope, EventEnvelope, FakeClock
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    CompactEventEnvelope,
+    EventEnvelope,
+    FakeClock,
+    HydratedEvent,
+)
 from orchestrator.graph_runtime.store import GraphEventStore, GraphNodeDetailSummary
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import build_graph_catalog
@@ -64,6 +73,22 @@ def test_build_graph_projection_response_empty(*, catalog: GraphCatalog) -> None
     assert projection.task_states == {}
     assert projection.leases == {}
     assert projection.ready_nodes == []
+
+
+def test_graph_api_read_helpers_accept_hydrated_event_lists() -> None:
+    events: list[HydratedEvent] = []
+    catalog = build_graph_catalog()
+
+    assert build_graph_projection_response("run-empty", events, catalog=catalog).event_count == 0
+    assert build_graph_topology_response("run-empty", events, catalog=catalog).event_count == 0
+    assert (
+        build_final_invariant_blockers_response("run-empty", events, catalog=catalog).event_count
+        == 0
+    )
+    assert build_graph_regions_response("run-empty", events, catalog=catalog).event_count == 0
+    assert build_scheduler_view_response("run-empty", events, catalog=catalog).event_count == 0
+    assert build_decision_view_response("run-empty", events, catalog=catalog).event_count == 0
+    assert build_node_detail_response("run-empty", "node-1", events, catalog=catalog) is None
 
 
 def test_build_node_detail_filters_by_node_id(*, catalog: GraphCatalog) -> None:

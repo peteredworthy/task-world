@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
@@ -683,9 +682,11 @@ async def test_node_detail_summary_matches_existing_light_builder(
 
     assert old_response is not None
     old_dump = old_response.model_dump(mode="json")
-    semantic_fields = set(new_response).difference({"events", "callback_history"})
-    assert len(semantic_fields) == 16
-    assert semantic_fields == set(old_dump).difference({"events", "callback_history"})
+    semantic_fields = set(new_response).difference({"events", "callback_history", "output_records"})
+    assert len(semantic_fields) == 15
+    assert semantic_fields == set(old_dump).difference(
+        {"events", "callback_history", "output_records"}
+    )
     assert {key: new_response[key] for key in semantic_fields} == {
         key: old_dump[key] for key in semantic_fields
     }
@@ -695,21 +696,12 @@ async def test_node_detail_summary_matches_existing_light_builder(
     ] == [
         (event["event_id"], event["event_type"], event["position"]) for event in old_dump["events"]
     ]
-    # The Task 11 complete-read cutover deliberately makes the materialized
-    # event payload the full source while the former light reader remains a
-    # compact projection.  Verify the compact payload is a faithful subset;
-    # classification_summary is a derived presentation field, not source data.
-    for compact, full in zip(old_dump["events"], new_response["events"], strict=True):
-        compact_payload = dict(compact["payload"])
-        compact_payload.pop("classification_summary", None)
-        assert all(full["payload"].get(key) == value for key, value in compact_payload.items())
+    # Summary presentation remains an API concern after the named reader has
+    # hydrated complete payloads; the persisted row retains the full body.
     assert [event["event_id"] for event in new_response["callback_history"]] == [
         event["event_id"] for event in old_dump["callback_history"]
     ]
-    for compact, full in zip(
-        old_dump["callback_history"], new_response["callback_history"], strict=True
-    ):
-        assert all(full["payload"].get(key) == value for key, value in compact["payload"].items())
+    assert "value" not in new_response["output_records"][0]
 
 
 @pytest.mark.asyncio
@@ -829,7 +821,7 @@ async def test_full_node_detail_path_keeps_heavy_output_and_file_state_detail(
 
 
 @pytest.mark.asyncio
-async def test_compact_node_detail_rows_do_not_store_heavy_value_bodies(
+async def test_node_detail_rows_store_complete_hydrated_payloads(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "node-detail-compact"
@@ -845,21 +837,18 @@ async def test_compact_node_detail_rows_do_not_store_heavy_value_bodies(
             )
 
     async with session_factory() as session:
+        full_events = await GraphEventStore(session, build_graph_catalog()).read_run(run_id)
         row = await session.get(
             GraphNodeDetailSummaryModel,
             {"run_id": run_id, "node_id": "worker-1"},
         )
 
     assert row is not None
-    encoded = json.dumps(
-        {
-            "output_records": row.output_records,
-            "file_state_records": row.file_state_records,
-            "events": row.events,
-        },
-        sort_keys=True,
+    output_event = next(
+        event for event in full_events if event.event_type == "output_record_accepted"
     )
-    assert "body" not in encoded
-    assert "value" not in encoded
-    assert "tracked" not in encoded
-    assert "residue" not in encoded
+    file_state_event = next(
+        event for event in full_events if event.event_type == "file_state_accepted"
+    )
+    assert row.output_records == [output_event.payload.to_json()["record"]]
+    assert row.file_state_records == [file_state_event.payload.to_json()]
