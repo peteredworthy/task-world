@@ -796,3 +796,40 @@ Independent PASS evidence:
 Deferred Compatibility Cleanup Register entries D1-D6 remain assigned to Task
 13. The pre-existing staged continuation prompt was untouched. This durable
 bookkeeping update makes no source edit and no bookkeeping commit was requested.
+
+## Strict-cutover Task 12: architecture enforcement and change-spread gates
+
+Status: complete. Committed as `d5f11382a` after independent PASS.
+
+The existing shared AST inventory and architecture checker now enforce all ten
+architecture rules with exact diagnostics and adversarial controls. Stable JSON
+and Markdown metrics, catalog-discovered codemod assert-clean/idempotency tests,
+generic model/event/command change-spread contracts, and the single pre-commit
+architecture hook make strict-path regressions fail without adding a second
+scanner or domain-only acceptance gate.
+
+Independent PASS evidence:
+- Adversarial probes: 6 passed.
+- Focused architecture/change-spread/catalog suites: 156 passed.
+- Full codemod module: 100 passed.
+- Fixture corpus: 7 passed.
+- Broad graph matrix: 1,040 passed.
+- Full suite: 5,015 passed / 5 skipped / 3 warnings.
+- Catalog baseline: 44 events / 23 commands.
+- All 11 strict/current forbidden or migration metrics: 0.
+- Real codemod first/second-run changes: `0/0`; dirty fixture: `1/0`; clean
+  repository: `0/0`.
+- Architecture checker, JSON/Markdown metrics, pre-commit integration, Ruff,
+  format check (723 files already formatted), full Pyright (0 errors),
+  `git diff --check`, and commit hooks: green.
+
+The exact 18 deferred exemption identities remain visible and pinned by path,
+line, column, function, and rule. They comprise D1's 3 lease-history reads,
+D3's 7 record-history reads, and D6's 8 structural boundary/history reads.
+D2, D4, and D5 remain retained compatibility categories but have no raw-read
+exemption identities. This is not compatibility deletion: D1-D6 are deleted
+only in Task 13 after the database backup is verified and the reset completes.
+
+The source and pre-existing staged continuation prompt were preserved. This
+durable bookkeeping update changes only the two progress ledgers and is not
+committed.
