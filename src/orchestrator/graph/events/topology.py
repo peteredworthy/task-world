@@ -356,6 +356,7 @@ def handle_seed_compiled_events(
 SEED_COMPILED_EVENTS = CommandSpecification(
     "seed_compiled_events", SeedCompiledEventsCommand, handle_seed_compiled_events
 )
+COMMAND_SPECIFICATIONS = (SEED_COMPILED_EVENTS,)
 
 
 EVENT_SPECIFICATIONS = (

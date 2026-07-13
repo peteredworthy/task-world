@@ -1098,13 +1098,13 @@ def build_graph_catalog() -> GraphCatalog:
 
 The tuple names are public domain APIs; adding a normal event/command to an existing domain edits only its domain tuple, not `catalog.py`.
 
-- [ ] **Step 3: Cut command and reducer dispatch to catalog-only paths**
+- [ ] **Step 3: Cut current command and reducer dispatch to catalog-only paths**
 
-Delete `COMMAND_HANDLERS`, the event-type conditional in `reduce_event`, **`reduce_legacy_event` and every typed-spec reducer that delegates into it (register entry D6)**, per-event parse wrappers, `_typed_*` helpers, and `_UNCONVERTED_W5_BRIDGE`. Unknown names now raise typed catalog errors rather than producing a permissive fallback event; a deliberately invalid command may still produce `command_rejected` only after a known command's typed handler evaluates domain rules.
+Delete `COMMAND_HANDLERS`, current-path per-event parse wrappers, `_typed_*` helpers, and `_UNCONVERTED_W5_BRIDGE` only where they are proven unreachable from durable replay. Current typed dispatch resolves catalog specifications and never falls through to legacy handling; unknown current names raise typed catalog errors, while a deliberately invalid known command may still produce `command_rejected` after its typed handler evaluates domain rules. Retain `reduce_legacy_event`, all D1–D6 callers, and any typed-spec reducer required to replay history until Task 13's verified backup/reset sequence.
 
 - [ ] **Step 4: Delete compatibility models, validators, aliases, and `_commands.py`**
 
-Remove all W5 payload classes from `models.py`, their exports, `extra` helpers, and legacy before validators. Keep unrelated Pydantic normalizers only when they apply to non-W5 business records; the architecture guard in Task 12 will distinguish them by boundary/type ownership.
+Remove only obsolete strict-path W5 payload classes, exports, validators, and `_commands.py` content proven non-replay-critical. Keep D1–D6 compatibility helpers, aliases, models, and validators isolated to legacy replay. Delete `_commands.py` in this task only if every replay-critical caller has first been retained in an explicit legacy module without changing replay; otherwise defer file deletion to Task 13.
 
 **Do not sweep the Deferred Compatibility Cleanup Register in Task 9.** D1–D6 remain until Task 13 performs the explicit database backup/reset cutover.
 
@@ -1407,11 +1407,22 @@ Verify the backup exists and has the same byte size as the source. If `orchestra
 
 After the backup verification, remove `orchestrator.db`, start the application through the normal project command, and let Alembic/create-on-empty establish the current schema. Never remove the backup or journal and never add automatic reset code.
 
-- [ ] **Step 5: Run fresh-schema typed smoke tests through public interfaces**
+- [ ] **Step 5: Delete the deferred compatibility register after reset**
+
+Only after Step 3 verifies the backup exists and its byte size and Step 4 resets the working database, delete every D1–D6 site, including `reduce_legacy_event`, replay-only aliases, and any retained `_commands.py` caller. Then run the register grep gate:
+
+```bash
+grep -rn "lease_suspended\|graph_patch_proposed\|requirement_revision_proposed\|authority_resolution_recorded\|environment_failure_accepted\|check_result_classified\|reduce_legacy_event" \
+  src/orchestrator/graph src/orchestrator/graph_runtime
+```
+
+Expected: no matches. If `orchestrator.db` was absent, record that no reset was necessary before this cleanup; do not run the deletion before making that record.
+
+- [ ] **Step 6: Run fresh-schema typed smoke tests through public interfaces**
 
 Seed factory data, create a representative routine/run, execute lifecycle start, scheduling, callback/verification, checkpoint, compact read, node detail, summary, and graph completion. Assert every persisted graph row has generation 2 and can hydrate through the catalog.
 
-- [ ] **Step 6: Re-run integration and architecture gates after the smoke test**
+- [ ] **Step 7: Re-run integration and architecture gates after the smoke test**
 
 Run: `uv run pytest tests/integration/test_graph_dynamic_e2e.py tests/integration/test_graph_read_models.py tests/integration/test_graph_node_detail_read_models.py tests/integration/test_graph_startup_recovery.py -q`
 

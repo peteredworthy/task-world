@@ -61,8 +61,6 @@ from orchestrator.graph.events.requirements import (
 )
 from orchestrator.graph.events.records import OUTPUT_RECORD_ACCEPTED
 from orchestrator.graph.commands.file_state import (
-    RECORD_CLEANUP_APPLIED,
-    RECORD_GATEKEEPER_VERDICTS,
     handle_record_cleanup_applied,
     handle_record_gatekeeper_verdicts,
 )
@@ -446,14 +444,14 @@ POLICY_COMMAND_SPECIFICATIONS = (
     RECORD_DECISION,
     RECORD_REQUIREMENT_REVISION,
     RECORD_SUPPORT_EVIDENCE,
-    RECORD_GATEKEEPER_VERDICTS,
-    RECORD_CLEANUP_APPLIED,
 )
+COMMAND_SPECIFICATIONS = (*CALLBACK_COMMAND_SPECIFICATIONS, *POLICY_COMMAND_SPECIFICATIONS)
 
 
 __all__ = [
     "ACKNOWLEDGE_START",
     "CALLBACK_COMMAND_SPECIFICATIONS",
+    "COMMAND_SPECIFICATIONS",
     "SUBMIT_CALLBACK",
     "AcknowledgeStartCommand",
     "SubmitCallbackCommand",

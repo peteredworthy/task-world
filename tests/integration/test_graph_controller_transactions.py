@@ -5,7 +5,14 @@ import pytest
 from sqlalchemy import event
 
 from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, SequentialIdGenerator
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FakeClock,
+    SequentialIdGenerator,
+    UnknownGraphCommandError,
+)
 from orchestrator.graph_runtime import GraphController, StaleProjectionError
 from orchestrator.graph_runtime.store import graph_aggregate_id
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
@@ -87,6 +94,26 @@ async def test_graph_controller_reads_run_before_taking_write_lock(tmp_path: Pat
     ]
     assert pre_read_indexes
     assert min(pre_read_indexes) < begin_index
+
+
+async def test_graph_controller_rejects_unknown_commands_through_its_catalog(
+    tmp_path: Path,
+) -> None:
+    engine = create_engine(tmp_path / "graph-controller-unknown-command.db")
+    await init_db(engine)
+    controller = GraphController(
+        create_session_factory(engine),
+        FakeClock(),
+        SequentialIdGenerator(),
+        auto_dispatch=False,
+        catalog=build_graph_catalog(),
+        future_effects=build_graph_command_dependencies().future_effects,
+    )
+
+    with pytest.raises(UnknownGraphCommandError, match="unknown graph command: absent"):
+        await controller.handle_command("run-unknown-command", 0, "absent")
+
+    await engine.dispose()
 
 
 async def test_handle_command_raises_stale_projection_error_when_position_moves_before_write(

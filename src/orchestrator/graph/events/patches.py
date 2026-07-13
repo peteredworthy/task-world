@@ -1,8 +1,9 @@
 """Strict graph patch event specifications."""
 
 from __future__ import annotations
+
 from typing import Any
-from orchestrator.graph.models import EventEnvelope
+
 from orchestrator.graph.payloads import JsonValue, StrictPayload
 from orchestrator.graph.specifications import (
     EventMetadata,
@@ -35,34 +36,65 @@ class GraphPatchRejectedPayload(StrictPayload):
     count: int | None = None
 
 
-def _legacy_reduce(state: Any, payload: StrictPayload, metadata: EventMetadata) -> Any:
-    from orchestrator.graph.projections import reduce_legacy_event
+def reduce_graph_patch_accepted(
+    state: Any,
+    payload: GraphPatchAcceptedPayload,
+    metadata: EventMetadata,
+) -> Any:
+    """Apply the current accepted-patch facts without entering history replay."""
 
-    return reduce_legacy_event(
-        state,
-        EventEnvelope(
-            event_id=metadata.event_id,
-            run_id=metadata.run_id,
-            position=metadata.position,
-            event_type=metadata.event_type,
-            schema_version=metadata.payload_schema_generation,
-            actor=metadata.actor,
-            timestamp=metadata.timestamp,
-            payload=payload.to_json(),
-        ),
-    )
+    del metadata
+    from orchestrator.graph.projections import copy_projection, refresh_derived_topology_state
+
+    next_state = copy_projection(state)
+    planner_node_id = payload.proposed_by_node_id
+    patch_id = payload.patch_id
+    next_state["open_proposal_blockers"].pop(patch_id, None)
+    accepted = list(next_state["accepted_graph_patches_by_node"].get(planner_node_id, []))
+    accepted.append(patch_id)
+    next_state["accepted_graph_patches_by_node"][planner_node_id] = accepted
+    successor_node_ids = payload.successor_planner_node_ids
+    if successor_node_ids:
+        next_state["accepted_no_successor_patches_by_node"][planner_node_id] = []
+        next_state["accepted_no_successor_patch_ids_by_node"].pop(planner_node_id, None)
+        next_state["planner_successors"][planner_node_id] = successor_node_ids[0]
+    else:
+        no_successor_patches = list(
+            next_state["accepted_no_successor_patches_by_node"].get(planner_node_id, [])
+        )
+        no_successor_patches.append(patch_id)
+        next_state["accepted_no_successor_patches_by_node"][planner_node_id] = no_successor_patches
+        next_state["accepted_no_successor_patch_ids_by_node"][planner_node_id] = patch_id
+    refresh_derived_topology_state(next_state)
+    return next_state
+
+
+def reduce_graph_patch_rejected(
+    state: Any,
+    payload: GraphPatchRejectedPayload,
+    metadata: EventMetadata,
+) -> Any:
+    """Resolve a current rejected patch without entering history replay."""
+
+    del metadata
+    from orchestrator.graph.projections import copy_projection, refresh_derived_topology_state
+
+    next_state = copy_projection(state)
+    next_state["open_proposal_blockers"].pop(payload.patch_id, None)
+    refresh_derived_topology_state(next_state)
+    return next_state
 
 
 GRAPH_PATCH_ACCEPTED = EventSpecification(
     "graph_patch_accepted",
     GraphPatchAcceptedPayload,
-    _legacy_reduce,
+    reduce_graph_patch_accepted,
     ProjectionParticipation.MUTATES,
 )
 GRAPH_PATCH_REJECTED = EventSpecification(
     "graph_patch_rejected",
     GraphPatchRejectedPayload,
-    _legacy_reduce,
+    reduce_graph_patch_rejected,
     ProjectionParticipation.MUTATES,
 )
 EVENT_SPECIFICATIONS = (GRAPH_PATCH_ACCEPTED, GRAPH_PATCH_REJECTED)

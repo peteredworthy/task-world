@@ -1,6 +1,7 @@
 """Pure command applier for execution graph fixtures."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from itertools import chain
 from typing import Any, cast, overload
 
 from orchestrator.graph._commands import (
@@ -16,42 +17,23 @@ from orchestrator.graph._commands import (
     run_id,
 )
 from orchestrator.graph.catalog import GraphCatalog
-from orchestrator.graph.commands.callbacks import (
-    RAISE_APPEAL,
-    RECORD_DECISION,
-    RECORD_REQUIREMENT_REVISION,
-    RECORD_SUPPORT_EVIDENCE,
-    RECORD_CLEANUP_APPLIED,
-    RECORD_GATEKEEPER_VERDICTS,
+from orchestrator.graph.commands.callbacks import COMMAND_SPECIFICATIONS as CALLBACK_COMMAND_SPECS
+from orchestrator.graph.commands.file_state import (
+    COMMAND_SPECIFICATIONS as FILE_STATE_COMMAND_SPECS,
 )
-from orchestrator.graph.commands.lifecycle import (
-    RECORD_HEARTBEAT,
-)
-from orchestrator.graph.commands.patches import SUBMIT_PATCH
-from orchestrator.graph.commands.records import (
-    EVALUATE_FINAL_GATE,
-    EVALUATE_JOIN,
-)
-from orchestrator.graph.commands.schedule import (
-    RECONCILE,
-    SCHEDULE_TICK,
-)
+from orchestrator.graph.commands.lifecycle import COMMAND_SPECIFICATIONS as LIFECYCLE_COMMAND_SPECS
+from orchestrator.graph.commands.patches import COMMAND_SPECIFICATIONS as PATCH_COMMAND_SPECS
+from orchestrator.graph.commands.records import COMMAND_SPECIFICATIONS as RECORD_COMMAND_SPECS
+from orchestrator.graph.commands.schedule import COMMAND_SPECIFICATIONS as SCHEDULE_COMMAND_SPECS
 from orchestrator.graph.specifications import (
     CommandExecutionContext,
     HydratedEvent,
 )
-from orchestrator.graph.commands.lifecycle import (
-    ACCEPT_RUN,
-    START,
-    PAUSE,
-    RESUME,
-    CANCEL,
-    COMPLETE,
-    FAIL,
-    AGENT_DIED_COMMAND,
+from orchestrator.graph.events.topology import (
+    COMMAND_SPECIFICATIONS as TOPOLOGY_COMMAND_SPECS,
+    SEED_COMPILED_EVENTS,
+    SeedCompiledEventsCommand,
 )
-from orchestrator.graph.commands.callbacks import SUBMIT_CALLBACK, ACKNOWLEDGE_START
-from orchestrator.graph.events.topology import SEED_COMPILED_EVENTS, SeedCompiledEventsCommand
 
 ApplyCommandHandler = Callable[
     [
@@ -67,56 +49,52 @@ ApplyCommandHandler = Callable[
 ]
 
 
-COMMAND_SPECIFICATIONS = (
-    RECORD_HEARTBEAT,
-    ACCEPT_RUN,
-    START,
-    PAUSE,
-    RESUME,
-    CANCEL,
-    COMPLETE,
-    FAIL,
-    SUBMIT_CALLBACK,
-    ACKNOWLEDGE_START,
-    AGENT_DIED_COMMAND,
-    SEED_COMPILED_EVENTS,
-    SCHEDULE_TICK,
-    RECONCILE,
-    SUBMIT_PATCH,
-    EVALUATE_JOIN,
-    EVALUATE_FINAL_GATE,
-    RAISE_APPEAL,
-    RECORD_DECISION,
-    RECORD_REQUIREMENT_REVISION,
-    RECORD_SUPPORT_EVIDENCE,
-    RECORD_GATEKEEPER_VERDICTS,
-    RECORD_CLEANUP_APPLIED,
+COMMAND_SPECIFICATION_GROUPS = (
+    LIFECYCLE_COMMAND_SPECS,
+    CALLBACK_COMMAND_SPECS,
+    TOPOLOGY_COMMAND_SPECS,
+    SCHEDULE_COMMAND_SPECS,
+    PATCH_COMMAND_SPECS,
+    RECORD_COMMAND_SPECS,
+    FILE_STATE_COMMAND_SPECS,
 )
+COMMAND_SPECIFICATIONS = tuple(chain.from_iterable(COMMAND_SPECIFICATION_GROUPS))
 _CATALOG_COMMAND_NAMES = frozenset(spec.name for spec in COMMAND_SPECIFICATIONS)
 
 
 @overload
 def apply_command(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    clock: Clock,
-    id_gen: IdGenerator,
-    *,
-    catalog: None = None,
-    context: None = None,
-) -> list[EventEnvelope]: ...
+    catalog_or_projection: GraphCatalog,
+    projection_or_events: GraphProjection,
+    events_or_command: list[EventEnvelope],
+    command_or_payload: str,
+    payload_or_clock: Mapping[str, object],
+    context_or_id: CommandExecutionContext | None,
+) -> list[EventEnvelope | HydratedEvent]: ...
 
 
 @overload
 def apply_command(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    clock: Clock,
-    id_gen: IdGenerator,
+    catalog_or_projection: GraphProjection,
+    projection_or_events: list[EventEnvelope],
+    events_or_command: str,
+    command_or_payload: dict[str, Any],
+    payload_or_clock: Clock,
+    context_or_id: IdGenerator,
+    *,
+    catalog: None = None,
+    context: None = None,
+) -> list[EventEnvelope | HydratedEvent]: ...
+
+
+@overload
+def apply_command(
+    catalog_or_projection: GraphProjection,
+    projection_or_events: list[EventEnvelope],
+    events_or_command: str,
+    command_or_payload: dict[str, Any],
+    payload_or_clock: Clock,
+    context_or_id: IdGenerator,
     *,
     catalog: GraphCatalog,
     context: CommandExecutionContext,
@@ -124,17 +102,49 @@ def apply_command(
 
 
 def apply_command(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    clock: Clock,
-    id_gen: IdGenerator,
+    catalog_or_projection: GraphCatalog | GraphProjection,
+    projection_or_events: GraphProjection | list[EventEnvelope],
+    events_or_command: list[EventEnvelope] | str,
+    command_or_payload: str | Mapping[str, object],
+    payload_or_clock: Mapping[str, object] | Clock,
+    context_or_id: CommandExecutionContext | IdGenerator | None,
     *,
     catalog: GraphCatalog | None = None,
     context: CommandExecutionContext | None = None,
 ) -> list[EventEnvelope] | list[HydratedEvent] | list[EventEnvelope | HydratedEvent]:
-    """Apply a pure graph command and return events a controller would append."""
+    """Apply a strict catalog command, retaining the historical call form for replay fixtures."""
+
+    if isinstance(catalog_or_projection, GraphCatalog):
+        if not isinstance(projection_or_events, dict):
+            raise TypeError("typed graph command dispatch requires a graph projection")
+        if not isinstance(events_or_command, list):
+            raise TypeError("typed graph command dispatch requires prior events")
+        if not isinstance(command_or_payload, str):
+            raise TypeError("typed graph command dispatch requires a command name")
+        if not isinstance(payload_or_clock, Mapping):
+            raise TypeError("typed graph command dispatch requires an object payload")
+        specification = catalog_or_projection.resolve_command(command_or_payload)
+        if context_or_id is None or not isinstance(context_or_id, CommandExecutionContext):
+            msg = f"typed graph command {command_or_payload!r} requires an execution context"
+            raise ValueError(msg)
+        command = specification.validate(payload_or_clock)
+        if command_or_payload == SEED_COMPILED_EVENTS.name:
+            typed_command = cast(SeedCompiledEventsCommand, command)
+            for event in typed_command.events:
+                catalog_or_projection.resolve_event(event.metadata.event_type).serialize(event)
+        return specification.handle(
+            command,
+            projection_or_events,
+            tuple(events_or_command),
+            context_or_id,
+        )
+
+    projection = catalog_or_projection
+    events = cast(list[EventEnvelope], projection_or_events)
+    command_type = cast(str, events_or_command)
+    payload = cast(dict[str, Any], command_or_payload)
+    clock = cast(Clock, payload_or_clock)
+    id_gen = cast(IdGenerator, context_or_id)
 
     run_id_value = run_id(events, payload)
     make_event = event_factory(run_id_value, command_type, clock, id_gen)
@@ -164,4 +174,6 @@ __all__ = [
     "TERMINAL_RUN_STATES",
     "NONTERMINAL_RUN_STATES",
     "apply_command",
+    "COMMAND_SPECIFICATIONS",
+    "COMMAND_SPECIFICATION_GROUPS",
 ]

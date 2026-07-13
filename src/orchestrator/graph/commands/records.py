@@ -161,11 +161,13 @@ EVALUATE_JOIN = CommandSpecification("evaluate_join", EvaluateJoinCommand, handl
 EVALUATE_FINAL_GATE = CommandSpecification(
     "evaluate_final_gate", EvaluateFinalGateCommand, handle_evaluate_final_gate
 )
+COMMAND_SPECIFICATIONS = (EVALUATE_JOIN, EVALUATE_FINAL_GATE)
 
 
 __all__ = [
     "EVALUATE_FINAL_GATE",
     "EVALUATE_JOIN",
+    "COMMAND_SPECIFICATIONS",
     "EvaluateFinalGateCommand",
     "EvaluateJoinCommand",
     "handle_evaluate_final_gate",

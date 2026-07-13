@@ -152,6 +152,8 @@ DOMAIN_COMMAND_NAMES: dict[str, frozenset[str]] = {
 
 DOMAIN_EVENT_NAMES.update(ARCHITECTURE_DOMAIN_EVENT_NAMES)
 DOMAIN_COMMAND_NAMES.update(ARCHITECTURE_DOMAIN_COMMAND_NAMES)
+DOMAIN_EVENT_NAMES["catalog_cutover"] = BASELINE_EVENT_NAMES
+DOMAIN_COMMAND_NAMES["catalog_cutover"] = frozenset(BASELINE_COMMAND_NAMES)
 
 DOMAIN_COMPATIBILITY_MODEL_NAMES: dict[str, frozenset[str]] = {
     "vertical_slice": frozenset({"HeartbeatRecordedPayload", "LifecycleEventPayloadBase"}),
@@ -200,6 +202,12 @@ class NamedSite(SourceSite):
     name: str
 
 
+@dataclass(frozen=True, order=True)
+class CatalogCutoverSite(SourceSite):
+    classification: str
+    expression: str
+
+
 @dataclass(frozen=True)
 class DomainInventory:
     """A deterministic domain-filtered view of an inventory report."""
@@ -212,6 +220,7 @@ class DomainInventory:
     compatibility_models: tuple[PayloadModel, ...]
     allowlists: tuple[NamedSite, ...]
     partial_payload_consumers: tuple[SourceSite, ...]
+    catalog_cutover_sites: tuple[CatalogCutoverSite, ...] = ()
     architecture_diagnostics: tuple[ArchitectureDiagnostic, ...] = ()
 
     @property
@@ -222,6 +231,7 @@ class DomainInventory:
             or self.compatibility_models
             or self.allowlists
             or self.partial_payload_consumers
+            or self.catalog_cutover_sites
             or self.architecture_diagnostics
         )
 
@@ -250,6 +260,11 @@ class DomainInventory:
             "allowlist-based extraction"
             for site in self.partial_payload_consumers
         )
+        diagnostics.extend(
+            f"catalog cutover: {site.path}:{site.line}:{site.column}: "
+            f"{site.classification} ({site.expression})"
+            for site in self.catalog_cutover_sites
+        )
         diagnostics.extend(site.render() for site in self.architecture_diagnostics)
         return tuple(diagnostics)
 
@@ -267,6 +282,7 @@ class InventoryReport:
     command_handlers: tuple[CommandHandler, ...]
     allowlists: tuple[NamedSite, ...]
     partial_payload_consumers: tuple[SourceSite, ...]
+    catalog_cutover_sites: tuple[CatalogCutoverSite, ...] = ()
     scanned_paths: tuple[Path, ...] = ()
 
     @property
@@ -359,6 +375,7 @@ class InventoryReport:
         )
         allowlists = tuple(site for site in self.allowlists if relevant(site))
         partial_consumers = tuple(site for site in self.partial_payload_consumers if relevant(site))
+        catalog_cutover_sites = self.catalog_cutover_sites if needle == "catalog_cutover" else ()
         event_names = tuple(
             sorted(
                 {site.name for site in literal_sites}
@@ -405,6 +422,7 @@ class InventoryReport:
             compatibility_models=models,
             allowlists=allowlists,
             partial_payload_consumers=partial_consumers,
+            catalog_cutover_sites=catalog_cutover_sites,
             architecture_diagnostics=check_paths(self.scanned_paths, domain=domain),
         )
 
@@ -422,6 +440,7 @@ class InventoryReport:
             "command_handlers": _records(self.command_handlers),
             "allowlists": _records(self.allowlists),
             "partial_payload_consumers": _records(self.partial_payload_consumers),
+            "catalog_cutover_sites": _records(self.catalog_cutover_sites),
         }
 
     def to_json(self) -> str:
@@ -796,6 +815,97 @@ def _handler_annotation(
     return None
 
 
+def _catalog_cutover_sites(parsed: _ParsedFile) -> tuple[CatalogCutoverSite, ...]:
+    """Independently inventory live catalog fallback and central spec defects."""
+
+    sites: list[CatalogCutoverSite] = []
+    central_commands = parsed.path.as_posix().endswith(
+        "src/orchestrator/graph/commands/__init__.py"
+    )
+    for node in ast.walk(parsed.tree):
+        if (
+            isinstance(node, ast.Call)
+            and _is_apply_command_call(node)
+            and node.args
+            and isinstance(node.args[0], ast.Name)
+            and node.args[0].id == "projection"
+            and any(keyword.arg == "catalog" for keyword in node.keywords)
+            and not _inside_reduce_legacy_event(node, parsed)
+        ):
+            sites.append(
+                CatalogCutoverSite(
+                    str(parsed.path),
+                    node.lineno,
+                    node.col_offset,
+                    "legacy_apply_command",
+                    ast.unparse(node),
+                )
+            )
+        if (
+            central_commands
+            and isinstance(node, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(target, ast.Name) and target.id == "COMMAND_SPECIFICATIONS"
+                for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+            )
+            and isinstance(node.value, ast.Tuple)
+            and node.value.elts
+            and all(isinstance(element, ast.Name) for element in node.value.elts)
+        ):
+            sites.append(
+                CatalogCutoverSite(
+                    str(parsed.path),
+                    node.lineno,
+                    node.col_offset,
+                    "central_command_spec_enumeration",
+                    ast.unparse(node.value),
+                )
+            )
+        if not isinstance(node, ast.If) or _inside_reduce_legacy_event(node, parsed):
+            continue
+        if _catalog_membership_test(node.test) and any(
+            _is_apply_command_call(child) for child in ast.walk(node)
+        ):
+            sites.append(
+                CatalogCutoverSite(
+                    str(parsed.path),
+                    node.lineno,
+                    node.col_offset,
+                    "catalog_membership_fallback_dispatch",
+                    ast.unparse(node.test),
+                )
+            )
+    return tuple(sites)
+
+
+def _catalog_membership_test(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Compare)
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], (ast.In, ast.NotIn))
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Attribute)
+        and node.comparators[0].attr == "command_specs"
+    )
+
+
+def _is_apply_command_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "apply_command"
+    )
+
+
+def _inside_reduce_legacy_event(node: ast.AST, parsed: _ParsedFile) -> bool:
+    current = node
+    while current in parsed.parents:
+        current = parsed.parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current.name == "reduce_legacy_event"
+    return False
+
+
 def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     """Scan Python files and return a stable structural payload inventory."""
 
@@ -812,11 +922,13 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     handlers: list[CommandHandler] = []
     allowlists: list[NamedSite] = []
     partial_consumers: list[SourceSite] = []
+    catalog_cutover_sites: list[CatalogCutoverSite] = []
     command_names: set[str] = set()
     typed_command_names: set[str] = set()
     bridge_handlers: list[CommandHandler] = []
 
     for parsed in parsed_files:
+        catalog_cutover_sites.extend(_catalog_cutover_sites(parsed))
         for node in ast.walk(parsed.tree):
             if isinstance(node, ast.Call):
                 if _call_name(node.func) == "_make_strict_event" and len(node.args) >= 2:
@@ -1001,6 +1113,7 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
         command_handlers=tuple(sorted(handlers)),
         allowlists=tuple(sorted(allowlists)),
         partial_payload_consumers=tuple(sorted(set(partial_consumers))),
+        catalog_cutover_sites=tuple(sorted(catalog_cutover_sites)),
         scanned_paths=tuple(parsed.path for parsed in parsed_files),
     )
 

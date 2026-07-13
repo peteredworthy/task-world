@@ -1376,6 +1376,128 @@ def test_assert_clean_lists_every_remaining_ambiguous_site(tmp_path: Path) -> No
     assert "graph.py:3" in result.output
 
 
+def test_catalog_cutover_rewrites_mechanically_eligible_current_dispatch_once() -> None:
+    source = """\
+planned = apply_command(
+    projection, events, command_type, payload, clock, id_gen,
+    catalog=catalog, context=context,
+)
+"""
+
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["catalog_cutover"]).transform_source(
+        source, "src/orchestrator/graph_runtime/controller.py"
+    )
+
+    assert "catalog, projection, events, command_type, payload, context" in result.source
+    assert result.diagnostics == ()
+    second = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["catalog_cutover"]).transform_source(
+        result.source, "src/orchestrator/graph_runtime/controller.py"
+    )
+    assert second.source == result.source
+    assert second.changes == 0
+
+
+def test_catalog_cutover_rewrites_scenario_style_dispatch_in_any_production_module() -> None:
+    source = "planned = apply_command(projection, events, command_type, payload, clock, id_gen, catalog=catalog, context=context)\n"
+
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["catalog_cutover"]).transform_source(
+        source, "src/orchestrator/graph_runtime/arbitrary_production_module.py"
+    )
+
+    assert (
+        "apply_command(catalog, projection, events, command_type, payload, context)"
+        in result.source
+    )
+
+
+def test_catalog_cutover_assert_clean_reports_current_fallback_and_central_enumeration(
+    tmp_path: Path,
+) -> None:
+    commands = tmp_path / "src/orchestrator/graph/commands/__init__.py"
+    commands.parent.mkdir(parents=True)
+    commands.write_text("COMMAND_SPECIFICATIONS = (START, PAUSE)\n")
+    controller = tmp_path / "src/orchestrator/graph_runtime/controller.py"
+    controller.parent.mkdir(parents=True)
+    controller.write_text(
+        """\
+if command_type in catalog.command_specs:
+    apply_command(catalog, projection, events, command_type, payload, context)
+else:
+    apply_command(projection, events, command_type, payload, clock, id_gen)
+"""
+    )
+    for relative_path in (
+        "src/orchestrator/graph/catalog.py",
+        "src/orchestrator/graph/events/__init__.py",
+        "src/orchestrator/graph/projections.py",
+    ):
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n")
+
+    result = run_migration(DOMAIN_MIGRATIONS["catalog_cutover"], tmp_path, "assert-clean")
+
+    assert result.exit_code == 1
+    assert "W5CATALOG_FALLBACK_DISPATCH" in result.output
+    assert "W5CENTRAL_COMMAND_SPEC_ENUMERATION" in result.output
+
+
+def test_catalog_cutover_ignores_explicit_legacy_replay_boundary(tmp_path: Path) -> None:
+    projection = tmp_path / "src/orchestrator/graph/projections.py"
+    projection.parent.mkdir(parents=True)
+    projection.write_text(
+        """\
+def reduce_legacy_event(command_type, payload):
+    if command_type in catalog.command_specs:
+        return apply_command(projection, events, command_type, payload, clock, id_gen)
+    return None
+"""
+    )
+    for relative_path in (
+        "src/orchestrator/graph/catalog.py",
+        "src/orchestrator/graph/events/__init__.py",
+        "src/orchestrator/graph/commands/__init__.py",
+        "src/orchestrator/graph_runtime/controller.py",
+    ):
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n")
+
+    result = run_migration(DOMAIN_MIGRATIONS["catalog_cutover"], tmp_path, "assert-clean")
+
+    assert result.exit_code == 0
+
+
+def test_catalog_cutover_apply_is_idempotent(tmp_path: Path) -> None:
+    controller = tmp_path / "src/orchestrator/graph_runtime/controller.py"
+    controller.parent.mkdir(parents=True)
+    controller.write_text(
+        """\
+planned = apply_command(
+    projection, events, command_type, payload, clock, id_gen,
+    catalog=catalog, context=context,
+)
+"""
+    )
+    for relative_path in (
+        "src/orchestrator/graph/catalog.py",
+        "src/orchestrator/graph/commands/__init__.py",
+        "src/orchestrator/graph/events/__init__.py",
+        "src/orchestrator/graph/projections.py",
+    ):
+        path = tmp_path / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n")
+
+    first = run_migration(DOMAIN_MIGRATIONS["catalog_cutover"], tmp_path, "apply")
+    second = run_migration(DOMAIN_MIGRATIONS["catalog_cutover"], tmp_path, "apply")
+
+    assert first.exit_code == 0
+    assert "catalog, projection, events, command_type, payload, context" in controller.read_text()
+    assert second.exit_code == 0
+    assert second.output == ""
+
+
 def test_mixed_import_and_registry_entries_are_split_mechanically() -> None:
     source = """\
 from orchestrator.graph.models import HeartbeatRecordedPayload, KeepPayload

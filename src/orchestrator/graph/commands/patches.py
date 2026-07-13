@@ -60,6 +60,7 @@ def _typed_submit(
 
 
 SUBMIT_PATCH = CommandSpecification("submit_patch", SubmitPatchCommand, _typed_submit)
+COMMAND_SPECIFICATIONS = (SUBMIT_PATCH,)
 
 
 def handle_submit_patch(
@@ -79,6 +80,7 @@ def handle_submit_patch(
 
 __all__ = [
     "SUBMIT_PATCH",
+    "COMMAND_SPECIFICATIONS",
     "SubmitPatchCommand",
     "handle_submit_patch",
 ]

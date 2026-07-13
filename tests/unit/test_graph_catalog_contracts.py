@@ -1,0 +1,208 @@
+"""Catalog-wide contracts for the strict graph kernel."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any, ClassVar, cast
+
+import pytest
+from pydantic import ValidationError, model_validator
+
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    DuplicateGraphSpecificationError,
+    EventMetadata,
+    GraphCatalog,
+    UnknownGraphCommandError,
+    build_graph_catalog,
+    initial_projection,
+)
+from orchestrator.graph.commands import COMMAND_SPECIFICATION_GROUPS, apply_command
+from orchestrator.graph.events import EVENT_SPECIFICATION_GROUPS
+from orchestrator.graph.payloads import StrictPayload
+from orchestrator.graph.specifications import (
+    CommandExecutionContext,
+    CommandSpecification,
+    ProjectionParticipation,
+)
+from tests.unit.graph_catalog_samples import COMMAND_SAMPLES, EVENT_SAMPLES
+
+
+def test_catalog_composes_the_complete_unique_strict_surface() -> None:
+    catalog = build_graph_catalog()
+
+    assert len(catalog.events) == 44
+    assert len(catalog.commands) == 23
+    assert len({spec.name for spec in catalog.events}) == 44
+    assert len({spec.name for spec in catalog.commands}) == 23
+    assert all(spec.reducer is not None for spec in catalog.events)
+    assert build_graph_catalog() == catalog
+
+
+def test_catalog_rejects_duplicate_event_and_command_specifications() -> None:
+    catalog = build_graph_catalog()
+
+    with pytest.raises(DuplicateGraphSpecificationError, match=catalog.events[0].name):
+        GraphCatalog.compose((catalog.events[0], catalog.events[0]), ())
+    with pytest.raises(DuplicateGraphSpecificationError, match=catalog.commands[0].name):
+        GraphCatalog.compose((), (catalog.commands[0], catalog.commands[0]))
+
+
+def test_typed_dispatch_rejects_an_unknown_current_command_before_execution() -> None:
+    catalog = GraphCatalog.compose((), ())
+
+    with pytest.raises(UnknownGraphCommandError, match="unknown graph command: absent"):
+        apply_command(catalog, initial_projection(), [], "absent", {}, None)
+
+
+def test_production_catalog_rejects_an_unknown_current_command_before_execution() -> None:
+    with pytest.raises(UnknownGraphCommandError, match="unknown graph command: absent"):
+        apply_command(build_graph_catalog(), initial_projection(), [], "absent", {}, None)
+
+
+def test_catalog_dispatch_validates_a_known_command_once_before_its_handler() -> None:
+    counter = _ValidationCounter()
+
+    class CountingCommand(StrictPayload):
+        value: str
+        validation_counter: ClassVar[_ValidationCounter] = counter
+
+        @model_validator(mode="after")
+        def count_validation(self) -> "CountingCommand":
+            self.validation_counter.calls += 1
+            return self
+
+    def handle(
+        command: CountingCommand,
+        projection: Any,
+        events: tuple[Any, ...],
+        context: CommandExecutionContext,
+    ) -> list[object]:
+        del command, projection, events, context
+        return []
+
+    catalog = GraphCatalog.compose((), (CommandSpecification("count", CountingCommand, handle),))
+    context = CommandExecutionContext(
+        run_id="run-1",
+        current_position=0,
+        clock=cast(Any, _FixedClock()),
+        id_generator=cast(Any, _FixedIdGenerator()),
+        actor=Actor(kind=ActorKind.SYSTEM),
+        events=(),
+        future_effects=cast(Any, object()),
+    )
+
+    assert (
+        apply_command(catalog, initial_projection(), [], "count", {"value": "once"}, context) == []
+    )
+    assert counter.calls == 1
+
+
+def test_catalog_command_surface_is_derived_from_owner_domain_tuples() -> None:
+    owner_specs = tuple(spec for group in COMMAND_SPECIFICATION_GROUPS for spec in group)
+
+    assert tuple(spec.name for spec in build_graph_catalog().commands) == tuple(
+        spec.name for spec in owner_specs
+    )
+
+
+def test_catalog_event_surface_is_derived_from_owner_domain_tuples() -> None:
+    owner_specs = tuple(spec for group in EVENT_SPECIFICATION_GROUPS for spec in group)
+
+    assert tuple(spec.name for spec in build_graph_catalog().events) == tuple(
+        spec.name for spec in owner_specs
+    )
+
+
+def test_every_catalog_spec_has_an_explicit_current_producer_sample() -> None:
+    catalog = build_graph_catalog()
+
+    assert set(EVENT_SAMPLES) == {spec.name for spec in catalog.events}
+    assert set(COMMAND_SAMPLES) == {spec.name for spec in catalog.commands}
+
+
+@pytest.mark.parametrize("spec", build_graph_catalog().events, ids=lambda spec: spec.name)
+def test_every_event_contract_validates_serializes_and_hydrates_once(spec: object) -> None:
+    event_spec = spec
+    sample = EVENT_SAMPLES[event_spec.name]
+    payload = event_spec.validate_payload(sample)
+    metadata = EventMetadata(
+        event_id="event-1",
+        run_id="run-1",
+        position=1,
+        event_type=event_spec.name,
+        payload_schema_generation=2,
+        actor=Actor(kind=ActorKind.SYSTEM),
+        timestamp=datetime(2026, 7, 12, tzinfo=UTC),
+    )
+
+    stored = event_spec.serialize(event_spec.create(metadata, payload))
+
+    assert event_spec.hydrate(stored).payload == payload
+    assert event_spec.payload_type.model_json_schema()["type"] == "object"
+    assert event_spec.reducer is not None
+
+    with pytest.raises(ValidationError):
+        event_spec.validate_payload({**sample, "unexpected_catalog_key": True})
+    _assert_required_field_rejects_missing_and_wrong_type(event_spec, sample)
+    if event_spec.projection_participation is ProjectionParticipation.NEUTRAL:
+        assert event_spec.reducer is not None
+
+
+@pytest.mark.parametrize("spec", build_graph_catalog().commands, ids=lambda spec: spec.name)
+def test_every_command_contract_validates_and_generates_json_schema(spec: object) -> None:
+    command_spec = spec
+    sample = COMMAND_SAMPLES[command_spec.name]
+
+    assert type(command_spec.validate(sample)) is command_spec.payload_type
+    assert command_spec.payload_type.model_json_schema()
+
+    with pytest.raises(ValidationError):
+        command_spec.validate({**sample, "unexpected_catalog_key": True})
+    _assert_required_field_rejects_missing_and_wrong_type(command_spec, sample)
+
+
+def _assert_required_field_rejects_missing_and_wrong_type(
+    spec: object, sample: dict[str, object]
+) -> None:
+    required_name = next(
+        (name for name, field in spec.payload_type.model_fields.items() if field.is_required()),
+        None,
+    )
+    if required_name is None:
+        # Empty/default-only commands and audit records have no producer-required
+        # field to remove; their extra-key contract above remains meaningful.
+        assert not any(field.is_required() for field in spec.payload_type.model_fields.values())
+        return
+
+    # RootModel command schemas expose their discriminated union as ``root``;
+    # their producer contract is represented by the discriminator fields.
+    contract_field = required_name if required_name in sample else next(iter(sample))
+    missing = dict(sample)
+    del missing[contract_field]
+    with pytest.raises(ValidationError):
+        spec.validate_payload(missing) if hasattr(spec, "validate_payload") else spec.validate(
+            missing
+        )
+
+    mistyped = {**sample, contract_field: object()}
+    with pytest.raises(ValidationError):
+        spec.validate_payload(mistyped) if hasattr(spec, "validate_payload") else spec.validate(
+            mistyped
+        )
+
+
+class _ValidationCounter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+
+class _FixedClock:
+    def now(self) -> datetime:
+        return datetime(2026, 7, 12, tzinfo=UTC)
+
+
+class _FixedIdGenerator:
+    def next_id(self, prefix: str = "") -> str:
+        return f"{prefix}-1"

@@ -62,30 +62,27 @@ def run_scenario(
         projection = initial_projection()
         for event in events_before_command:
             projection = reduce_event(catalog, projection, event)
+        context = CommandExecutionContext(
+            run_id=run_id,
+            current_position=max((event.position for event in events_before_command), default=-1),
+            clock=clock,
+            id_generator=id_gen,
+            actor=Actor(
+                kind=ActorKind.CONTROLLER,
+                role=command_payload.get("actor_role")
+                if isinstance(command_payload.get("actor_role"), str)
+                else None,
+            ),
+            events=(),
+            future_effects=future_effects,
+        )
         for event in apply_command(
+            catalog,
             projection,
             events_before_command,
             command_type,
             typed_command_payload,
-            clock,
-            id_gen,
-            catalog=catalog,
-            context=CommandExecutionContext(
-                run_id=run_id,
-                current_position=max(
-                    (event.position for event in events_before_command), default=-1
-                ),
-                clock=clock,
-                id_generator=id_gen,
-                actor=Actor(
-                    kind=ActorKind.CONTROLLER,
-                    role=command_payload.get("actor_role")
-                    if isinstance(command_payload.get("actor_role"), str)
-                    else None,
-                ),
-                events=(),
-                future_effects=future_effects,
-            ),
+            context,
         ):
             store.append(_legacy_envelope(event))
 

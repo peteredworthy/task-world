@@ -116,48 +116,32 @@ class GraphController:
                     run_id,
                     patch_base_position + 1,
                 )
-        typed_payload = (
-            {
-                key: value
-                for key, value in dict(payload or {}).items()
-                if key != "run_id" and (command_type == "submit_patch" or key != "actor_role")
-            }
-            if command_type in self._catalog.command_specs
-            else command_payload
+        typed_payload = {
+            key: value
+            for key, value in dict(payload or {}).items()
+            if key != "run_id" and (command_type == "submit_patch" or key != "actor_role")
+        }
+        actor_role = command_payload.get("actor_role")
+        context = CommandExecutionContext(
+            run_id=run_id,
+            current_position=current_position,
+            clock=self._clock,
+            id_generator=self._id_gen,
+            actor=Actor(
+                kind=ActorKind.CONTROLLER,
+                role=actor_role if isinstance(actor_role, str) else None,
+            ),
+            events=(),
+            future_effects=self._future_effects,
         )
-        if command_type in self._catalog.command_specs:
-            actor_role = command_payload.get("actor_role")
-            context = CommandExecutionContext(
-                run_id=run_id,
-                current_position=current_position,
-                clock=self._clock,
-                id_generator=self._id_gen,
-                actor=Actor(
-                    kind=ActorKind.CONTROLLER,
-                    role=actor_role if isinstance(actor_role, str) else None,
-                ),
-                events=(),
-                future_effects=self._future_effects,
-            )
-            planned_events = apply_command(
-                projection,
-                command_events,
-                command_type,
-                typed_payload,
-                self._clock,
-                self._id_gen,
-                catalog=self._catalog,
-                context=context,
-            )
-        else:
-            planned_events = apply_command(
-                projection,
-                command_events,
-                command_type,
-                typed_payload,
-                self._clock,
-                self._id_gen,
-            )
+        planned_events = apply_command(
+            self._catalog,
+            projection,
+            command_events,
+            command_type,
+            typed_payload,
+            context,
+        )
         planned_events = self._add_dispatch_intent_events(
             planned_events,
             command_type,

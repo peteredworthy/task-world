@@ -179,6 +179,7 @@ def _typed_reconcile(
 
 SCHEDULE_TICK = CommandSpecification("schedule_tick", ScheduleTickCommand, _typed_schedule)
 RECONCILE = CommandSpecification("reconcile", ReconcileCommand, _typed_reconcile)
+COMMAND_SPECIFICATIONS = (SCHEDULE_TICK, RECONCILE)
 
 
 def handle_schedule_tick(

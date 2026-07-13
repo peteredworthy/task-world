@@ -1374,6 +1374,35 @@ class _MechanicalTransformer(cst.CSTTransformer):
         return updated_node
 
     def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.BaseExpression:
+        if (
+            self.migration.domain == "catalog_cutover"
+            and self.path.startswith(("src/orchestrator/graph/", "src/orchestrator/graph_runtime/"))
+            and isinstance(original_node.func, cst.Name)
+            and original_node.func.value == "apply_command"
+            and len(original_node.args) == 8
+        ):
+            positional = [argument for argument in updated_node.args if argument.keyword is None]
+            keywords = {
+                argument.keyword.value: argument
+                for argument in updated_node.args
+                if argument.keyword is not None
+            }
+            catalog = keywords.get("catalog")
+            context = keywords.get("context")
+            if (
+                len(positional) == 6
+                and catalog is not None
+                and context is not None
+                and len(keywords) == 2
+            ):
+                self.changes += 1
+                return updated_node.with_changes(
+                    args=(
+                        cst.Arg(catalog.value),
+                        *positional[:4],
+                        cst.Arg(context.value),
+                    )
+                )
         completed_lease_fixture = self._complete_lease_fixture(updated_node)
         if completed_lease_fixture is not None:
             return completed_lease_fixture
@@ -2090,6 +2119,8 @@ class StrictPayloadCutoverCodemod:
         }
         blocked_allowlists: set[str] = set()
         initial_diagnostics: list[CodemodDiagnostic] = []
+        if self.migration.domain == "catalog_cutover":
+            initial_diagnostics.extend(_catalog_cutover_diagnostics(tree, path, ast_parents))
         initial_diagnostics.extend(
             CodemodDiagnostic(
                 path,
@@ -2205,7 +2236,7 @@ class StrictPayloadCutoverCodemod:
                 )
                 for line in specification_assignment_lines
             )
-        if noncanonical_specifications:
+        if noncanonical_specifications and self.migration.domain != "catalog_cutover":
             initial_diagnostics.extend(
                 CodemodDiagnostic(
                     path,
@@ -2624,6 +2655,83 @@ def _ensure_required_imports(
     return module.code, changes
 
 
+def _catalog_cutover_diagnostics(
+    tree: ast.Module, path: str, parents: Mapping[ast.AST, ast.AST]
+) -> tuple[CodemodDiagnostic, ...]:
+    """Find current-path dispatch fallbacks and central hand-built spec tuples.
+
+    Replay is explicitly isolated in ``reduce_legacy_event``; no broader
+    name/path exemption is permitted because it could hide a live fallback.
+    """
+
+    diagnostics: list[CodemodDiagnostic] = []
+    central_commands = path.endswith("src/orchestrator/graph/commands/__init__.py")
+    for node in ast.walk(tree):
+        if (
+            central_commands
+            and isinstance(node, (ast.Assign, ast.AnnAssign))
+            and any(
+                isinstance(target, ast.Name) and target.id == "COMMAND_SPECIFICATIONS"
+                for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+            )
+            and isinstance(node.value, ast.Tuple)
+            and node.value.elts
+            and all(isinstance(element, ast.Name) for element in node.value.elts)
+        ):
+            diagnostics.append(
+                CodemodDiagnostic(
+                    path,
+                    node.lineno,
+                    node.col_offset,
+                    "W5CENTRAL_COMMAND_SPEC_ENUMERATION",
+                    "central COMMAND_SPECIFICATIONS must compose domain tuples",
+                )
+            )
+        if not isinstance(node, ast.If) or _is_legacy_replay_node(node, parents):
+            continue
+        if _is_catalog_membership_test(node.test) and any(
+            _is_apply_command_call(child) for child in ast.walk(node)
+        ):
+            diagnostics.append(
+                CodemodDiagnostic(
+                    path,
+                    node.lineno,
+                    node.col_offset,
+                    "W5CATALOG_FALLBACK_DISPATCH",
+                    "catalog-membership dispatch must not fall back to legacy apply_command",
+                )
+            )
+    return tuple(diagnostics)
+
+
+def _is_catalog_membership_test(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Compare)
+        and len(node.ops) == 1
+        and isinstance(node.ops[0], (ast.In, ast.NotIn))
+        and len(node.comparators) == 1
+        and isinstance(node.comparators[0], ast.Attribute)
+        and node.comparators[0].attr == "command_specs"
+    )
+
+
+def _is_apply_command_call(node: ast.AST) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "apply_command"
+    )
+
+
+def _is_legacy_replay_node(node: ast.AST, parents: Mapping[ast.AST, ast.AST]) -> bool:
+    current = node
+    while current in parents:
+        current = parents[current]
+        if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return current.name == "reduce_legacy_event"
+    return False
+
+
 VERTICAL_SLICE_MIGRATION = DomainMigration(
     domain="vertical_slice",
     paths=(
@@ -2868,6 +2976,20 @@ DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
 
 DOMAIN_MIGRATIONS.update(
     {
+        "catalog_cutover": DomainMigration(
+            domain="catalog_cutover",
+            paths=(
+                "src/orchestrator/graph/catalog.py",
+                "src/orchestrator/graph/commands/__init__.py",
+                "src/orchestrator/graph/events/__init__.py",
+                "src/orchestrator/graph/projections.py",
+                "src/orchestrator/graph_runtime/controller.py",
+            ),
+            # Catalog composition and strict-vs-history routing are semantic
+            # ownership decisions.  The codemod deliberately makes no edits
+            # here; --assert-clean proves no reviewed mechanical route remains.
+            transform_commands=False,
+        ),
         "complete_reads": DomainMigration(
             domain="complete_reads",
             paths=(

@@ -1041,6 +1041,63 @@ def read_nested(event):
     assert inventory_main(["--check-consumers", "no-such-domain", str(clean)]) == 2
 
 
+def test_catalog_cutover_inventory_classifies_current_dispatch_and_central_specs(
+    tmp_path: Path,
+) -> None:
+    commands = tmp_path / "src/orchestrator/graph/commands/__init__.py"
+    commands.parent.mkdir(parents=True)
+    commands.write_text("COMMAND_SPECIFICATIONS = (START, PAUSE)\n")
+    controller = tmp_path / "src/orchestrator/graph_runtime/controller.py"
+    controller.parent.mkdir(parents=True)
+    controller.write_text(
+        """\
+if command_type in catalog.command_specs:
+    return apply_command(catalog, projection, events, command_type, payload, context)
+return apply_command(projection, events, command_type, payload, clock, id_gen)
+"""
+    )
+
+    domain = scan_graph_payload_architecture([tmp_path]).for_domain("catalog_cutover")
+
+    assert {site.classification for site in domain.catalog_cutover_sites} == {
+        "catalog_membership_fallback_dispatch",
+        "central_command_spec_enumeration",
+    }
+    assert not domain.is_clean
+
+
+def test_catalog_cutover_inventory_excludes_reduce_legacy_event_only(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/graph/projections.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+def reduce_legacy_event(command_type, payload):
+    if command_type in catalog.command_specs:
+        return apply_command(projection, events, command_type, payload, clock, id_gen)
+    return None
+"""
+    )
+
+    domain = scan_graph_payload_architecture([tmp_path]).for_domain("catalog_cutover")
+
+    assert domain.catalog_cutover_sites == ()
+
+
+def test_catalog_cutover_inventory_detects_arbitrary_production_legacy_dispatch(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "arbitrary_production_module.py"
+    source.write_text(
+        "apply_command(projection, events, command_type, payload, clock, id_gen, catalog=catalog, context=context)\n"
+    )
+
+    domain = scan_graph_payload_architecture([source]).for_domain("catalog_cutover")
+
+    assert [site.classification for site in domain.catalog_cutover_sites] == [
+        "legacy_apply_command"
+    ]
+
+
 def test_consumer_report_lists_sites_deterministically(tmp_path: Path) -> None:
     source = tmp_path / "consumer_reads.py"
     source.write_text(CONSUMER_READ_SOURCE)

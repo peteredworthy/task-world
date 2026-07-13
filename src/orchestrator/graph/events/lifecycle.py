@@ -65,6 +65,11 @@ class CallbackRejectedPayload(CallbackPayload):
 class CallbackDuplicateReturnedPayload(CallbackPayload):
     prior_result: JsonValue | None
 
+    def to_json(self) -> dict[str, JsonValue]:
+        """Preserve the required nullable idempotency result during hydration."""
+
+        return cast(dict[str, JsonValue], self.model_dump(mode="json", by_alias=True))
+
 
 class RuntimeRetryScheduledPayload(StrictPayload):
     node_id: str
