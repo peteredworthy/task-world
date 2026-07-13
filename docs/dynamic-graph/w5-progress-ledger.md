@@ -654,3 +654,24 @@ GREEN (independently rerun by a fresh verifier, 2026-07-12, at `14c32a73c`):
 - `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime`:
   passed, 0 errors.
 - `uv run pytest tests/ -q`: 4,733 passed, 5 skipped (67s).
+
+## Strict-cutover Task 8: file-state, gatekeeper, and cleanup
+
+Status: complete. Committed as `f8e0717cf` after independent PASS.
+
+Typed commands and catalog events now own file-state, gatekeeper-verdict, and
+cleanup behavior. The domain uses one strict `GatekeeperVerdict` model, and
+runtime dispatch/gatekeeper boundaries accept typed values rather than
+duplicate or permissive payload shapes.
+
+Independent evidence: 234 focused tests, 7 fixture-corpus tests, 926 broad
+graph tests, and the full suite at 4,845 passed / 5 skipped / 3 warnings.
+Catalog baseline remained 44 events / 23 commands. Architecture, file-state
+`--assert-clean` and inventory, Ruff format/check, Pyright, `git diff --check`,
+and commit hooks were green.
+
+D5 retained legacy categories are exactly the
+`environment_failure_accepted` / `check_result_classified` branch in
+`src/orchestrator/graph/projections.py:2281` and the environment/check-result
+classification scan at `src/orchestrator/graph/projections.py:5449`. Delete
+both in Task 13 after database backup/reset.
