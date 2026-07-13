@@ -10,6 +10,7 @@ from typing import Any, cast
 from orchestrator.config.enums import ChecklistStatus, Priority, TaskStatus
 from orchestrator.state.models import Attempt, ChecklistItem, Run, TaskState
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import build_graph_catalog
 
 NOW = datetime(2026, 1, 1, 12, 0, 0)
 
@@ -21,7 +22,10 @@ class DummySession:
 
 class RecordingWorkflowService(WorkflowService):
     def __init__(self) -> None:
-        super().__init__(session=cast(Any, DummySession()))
+        super().__init__(
+            session=cast(Any, DummySession()),
+            graph_catalog=build_graph_catalog(),
+        )
         self.checkouts: list[tuple[str, str, str]] = []
 
     def _checkout_on_branch(self, worktree_path: str, run_id: str, commit_sha: str) -> bool:

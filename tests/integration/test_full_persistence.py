@@ -28,6 +28,8 @@ from orchestrator.state.models import (
     TaskState,
 )
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -72,7 +74,7 @@ def _make_run() -> Run:
     )
 
 
-async def test_state_survives_restart(db_path: Path) -> None:
+async def test_state_survives_restart(db_path: Path, *, catalog: GraphCatalog) -> None:
     """Create run and start it in one session, verify in a completely new session."""
     # --- Session 1: Create and start run ---
     engine1 = create_engine(str(db_path))
@@ -80,7 +82,7 @@ async def test_state_survives_restart(db_path: Path) -> None:
     factory1 = create_session_factory(engine1)
 
     async with factory1() as session1:
-        service1 = WorkflowService(session1)
+        service1 = WorkflowService(session1, graph_catalog=build_graph_catalog())
         run = _make_run()
         await service1.create_run(run)
         await service1.apply_start_run("run-1")
@@ -93,7 +95,7 @@ async def test_state_survives_restart(db_path: Path) -> None:
     factory2 = create_session_factory(engine2)
 
     async with factory2() as session2:
-        service2 = WorkflowService(session2)
+        service2 = WorkflowService(session2, graph_catalog=build_graph_catalog())
         loaded = await service2.get_run("run-1")
 
         assert loaded.status == RunStatus.ACTIVE
@@ -104,7 +106,7 @@ async def test_state_survives_restart(db_path: Path) -> None:
     await engine2.dispose()
 
 
-async def test_full_lifecycle_survives_restart(db_path: Path) -> None:
+async def test_full_lifecycle_survives_restart(db_path: Path, *, catalog: GraphCatalog) -> None:
     """Full lifecycle in session 1, verify final state in session 2."""
     # --- Session 1: Full lifecycle ---
     engine1 = create_engine(str(db_path))
@@ -112,7 +114,7 @@ async def test_full_lifecycle_survives_restart(db_path: Path) -> None:
     factory1 = create_session_factory(engine1)
 
     async with factory1() as session1:
-        service1 = WorkflowService(session1)
+        service1 = WorkflowService(session1, graph_catalog=build_graph_catalog())
         run = _make_run()
         await service1.create_run(run)
         await service1.apply_start_run("run-1")
@@ -130,7 +132,7 @@ async def test_full_lifecycle_survives_restart(db_path: Path) -> None:
     factory2 = create_session_factory(engine2)
 
     async with factory2() as session2:
-        service2 = WorkflowService(session2)
+        service2 = WorkflowService(session2, graph_catalog=build_graph_catalog())
         loaded = await service2.get_run("run-1")
 
         assert loaded.status == RunStatus.COMPLETED
@@ -147,7 +149,7 @@ async def test_full_lifecycle_survives_restart(db_path: Path) -> None:
     await engine2.dispose()
 
 
-async def test_events_survive_restart(db_path: Path) -> None:
+async def test_events_survive_restart(db_path: Path, *, catalog: GraphCatalog) -> None:
     """Events persist and can be queried from a new session."""
     # --- Session 1: Generate events ---
     engine1 = create_engine(str(db_path))
@@ -155,7 +157,7 @@ async def test_events_survive_restart(db_path: Path) -> None:
     factory1 = create_session_factory(engine1)
 
     async with factory1() as session1:
-        service1 = WorkflowService(session1)
+        service1 = WorkflowService(session1, graph_catalog=build_graph_catalog())
         run = _make_run()
         await service1.create_run(run)
         await service1.apply_start_run("run-1")

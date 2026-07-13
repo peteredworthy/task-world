@@ -1,5 +1,6 @@
 """Integration tests for graph human-decision API view."""
 
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -12,6 +13,7 @@ from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.graph import build_graph_catalog
+from tests.integration.signal_helpers import DrainFn
 
 
 def _routine() -> RoutineConfig:
@@ -383,7 +385,7 @@ async def test_record_decision_rejects_invalid_decision_at_api_boundary(
     )
 
     assert response.status_code == 422
-    assert "decision for authority must be one of" in response.text
+    assert "'granted', 'denied' or 'deferred'" in response.text
 
 
 async def test_decisions_endpoint_empty_for_non_graph_run(
@@ -403,3 +405,31 @@ async def test_decisions_endpoint_empty_for_non_graph_run(
     assert body["pending_gates"] == []
     assert body["appeals"] == []
     assert body["review"] == {"ready": False, "blockers": []}
+
+
+async def test_decision_openapi_uses_record_decision_command(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+) -> None:
+    *_, app = _shared_app_fixture
+    document = app.openapi()
+    request_schema = document["paths"]["/api/runs/{run_id}/graph/decisions"]["post"]["requestBody"][
+        "content"
+    ]["application/json"]["schema"]
+
+    assert request_schema == {"$ref": "#/components/schemas/RecordDecisionCommand"}
+
+
+async def test_decision_api_rejects_empty_decider_identity(
+    client_with_repo: tuple[AsyncClient, Path, DrainFn],
+) -> None:
+    client, _, _ = client_with_repo
+    response = await client.post(
+        "/api/runs/not-created/graph/decisions",
+        json={
+            "decision_type": "approval",
+            "node_id": "gate-1",
+            "decision": "approved",
+            "decider": "",
+        },
+    )
+    assert response.status_code == 422

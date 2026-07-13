@@ -712,18 +712,10 @@ async def test_macro_tool_routes_as_graph_patch_invocation() -> None:
     )
 
     assert result == "macro accepted"
-    assert received == [
-        {
-            "patch_id": "macro-work",
-            "base_graph_position": 42,
-            "macro_invocations": [
-                {
-                    "macro": "create_work_region",
-                    "args": {"region_id": "feature-region", "worker_id": "worker-feature"},
-                }
-            ],
-        }
-    ]
+    assert received[0]["patch_id"] == "macro-work"
+    assert received[0]["base_graph_position"] == 42
+    assert received[0]["ops"]
+    assert "macro_invocations" not in received[0]
 
 
 @pytest.mark.asyncio

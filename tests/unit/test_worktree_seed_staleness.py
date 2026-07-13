@@ -29,6 +29,8 @@ from orchestrator.db import (
 from orchestrator.runners import AgentRunnerExecutor
 from orchestrator.state import create_run_from_routine
 from orchestrator.workflow import LocalAutoVerifyRunner, PersistentEventEmitter, WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -82,7 +84,7 @@ def _routine() -> RoutineConfig:
 
 
 @pytest.fixture
-async def _harness(tmp_path: Path):
+async def _harness(tmp_path: Path, *, catalog: GraphCatalog):
     """Real sqlite engine + WorkflowService + AgentRunnerExecutor wired to a
     real repos_dir/worktrees_dir pair, so worktree creation actually runs git."""
     repos_dir = tmp_path / "repos"
@@ -109,6 +111,7 @@ async def _harness(tmp_path: Path):
             event_emitter=PersistentEventEmitter(event_store),
             auto_verify_runner=LocalAutoVerifyRunner(),
             global_config=global_config,
+            graph_catalog=build_graph_catalog(),
         )
         executor = AgentRunnerExecutor(
             session_factory=session_factory,

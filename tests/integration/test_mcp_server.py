@@ -13,6 +13,8 @@ from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.api import OrchestratorMCPServer
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 @pytest.fixture
@@ -26,8 +28,8 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+def service(session: AsyncSession, *, catalog: GraphCatalog) -> WorkflowService:
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 @pytest.fixture

@@ -11,6 +11,7 @@ from tests.graph_command_support import (
     SequentialIdGenerator,
     build_graph_command_dependencies,
 )
+from orchestrator.graph import build_graph_catalog
 
 
 COMMAND_MODULES = (
@@ -48,7 +49,9 @@ def test_typed_event_creator_returns_hydrated_events_with_ordered_unique_metadat
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     creator = TypedEventCreator(context)
 

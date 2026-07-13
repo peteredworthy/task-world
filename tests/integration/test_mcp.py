@@ -23,6 +23,8 @@ from orchestrator.workflow import InMemorySignalTransport
 from orchestrator.workflow.service import WorkflowService
 
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -43,8 +45,8 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+def service(session: AsyncSession, *, catalog: GraphCatalog) -> WorkflowService:
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 # ---------------------------------------------------------------------------

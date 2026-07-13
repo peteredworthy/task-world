@@ -33,7 +33,7 @@ from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.git import TestRunner
 from orchestrator.runners import AgentRunnerExecutor, fetch_codex_models
 from orchestrator.runners.agent_detector import ToolDetector
-from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import GraphCatalog
 
 if TYPE_CHECKING:
     from orchestrator.graph_runtime import GraphDispatchContext
@@ -48,6 +48,10 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
 def get_connection_manager(request: Request) -> ConnectionManager:
     """Get the WebSocket connection manager from app state."""
     return request.app.state.connection_manager  # type: ignore[no-any-return]
+
+
+def get_graph_catalog(request: Request) -> GraphCatalog:
+    return request.app.state.graph_catalog  # type: ignore[no-any-return]
 
 
 async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
@@ -90,12 +94,13 @@ async def get_event_store_v2(
 
 async def get_graph_store(
     session: Annotated[AsyncSession, Depends(get_session)],
+    catalog: Annotated[GraphCatalog, Depends(get_graph_catalog)],
 ) -> GraphEventStore:
     from orchestrator.graph_runtime.store import GraphEventStore
 
     return GraphEventStore(
         session,
-        build_graph_catalog(),
+        catalog,
     )
 
 
@@ -123,6 +128,7 @@ async def get_workflow_service(
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
     connection_manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     lock_manager: Annotated[Any, Depends(get_lock_manager)],
+    graph_catalog: Annotated[GraphCatalog, Depends(get_graph_catalog)],
 ) -> WorkflowService:
     emitter = PersistentEventEmitter(store_v2)
 
@@ -141,6 +147,7 @@ async def get_workflow_service(
 
     return WorkflowService(
         session=session,
+        graph_catalog=graph_catalog,
         repo=repo,
         event_emitter=emitter,
         auto_verify_runner=LocalAutoVerifyRunner(),
@@ -273,6 +280,7 @@ def get_current_user() -> str:
 
 def make_service_factory(
     *,
+    graph_catalog: GraphCatalog,
     connection_manager: ConnectionManager | None = None,
     lock_manager: Any | None = None,
     signal_transport_override: SignalTransport | None = None,
@@ -326,6 +334,7 @@ def make_service_factory(
 
         return WorkflowService(
             session=session,
+            graph_catalog=graph_catalog,
             repo=repo,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
@@ -372,6 +381,7 @@ def make_workflow_preparer(
 def make_graph_runner(
     session_factory: async_sessionmaker[AsyncSession],
     service_factory: Callable[[AsyncSession], Awaitable[WorkflowService]],
+    graph_catalog: GraphCatalog,
     connection_manager: ConnectionManager | None = None,
 ) -> Callable[[str], Awaitable[None]]:
     """Return a graph run driver callback for ``SignalConsumer``."""
@@ -427,6 +437,7 @@ def make_graph_runner(
         driver = GraphRunDriver(
             session_factory,
             service_factory,
+            catalog=graph_catalog,
             on_agent_output=on_agent_output,
             on_agent_usage=on_agent_usage,
         )

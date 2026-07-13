@@ -36,6 +36,7 @@ from orchestrator.graph import (
     initial_projection,
     reduce_event,
 )
+from orchestrator.graph import GraphCatalog
 
 
 def _event(event_type: str, payload: dict[str, object], position: int = -1) -> EventEnvelope:
@@ -51,7 +52,9 @@ def _event(event_type: str, payload: dict[str, object], position: int = -1) -> E
     )
 
 
-def test_snapshot_from_events_preserves_typed_environment_failures() -> None:
+def test_snapshot_from_events_preserves_typed_environment_failures(
+    *, catalog: GraphCatalog
+) -> None:
     snapshot = _snapshot_from_events(
         [
             _event(
@@ -63,7 +66,8 @@ def test_snapshot_from_events_preserves_typed_environment_failures() -> None:
                 },
                 position=12,
             )
-        ]
+        ],
+        catalog=build_graph_catalog(),
     )
 
     failure = snapshot.environment_failures["step/task"]
@@ -545,7 +549,9 @@ async def test_driver_renews_expired_lease_when_execution_is_still_running() -> 
     assert outcome.completed is True
 
 
-def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loop() -> None:
+def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loop(
+    *, catalog: GraphCatalog
+) -> None:
     clock = FakeClock()
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
@@ -567,7 +573,7 @@ def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loo
     projection = initial_projection()
     for event in events:
         projection = reduce_event(build_graph_catalog(), projection, event)
-    expired_snapshot = _snapshot_from_events(events)
+    expired_snapshot = _snapshot_from_events(events, catalog=build_graph_catalog())
     context = CommandExecutionContext(
         run_id="run-1",
         current_position=2,
@@ -575,7 +581,9 @@ def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loo
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     output = apply_command(
@@ -606,7 +614,8 @@ def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loo
                 timestamp=renewal.metadata.timestamp,
                 payload=renewal.payload.model_dump(mode="json"),
             ),
-        ]
+        ],
+        catalog=build_graph_catalog(),
     )
 
     assert _active_lease_wait_plan(expired_snapshot, clock.now()).timeout_seconds == 0.0

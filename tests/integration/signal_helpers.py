@@ -131,6 +131,7 @@ def make_drain_fn(app: FastAPI, transport: InMemorySignalTransport) -> DrainFn:
                     session,
                     auto_verify_runner=LocalAutoVerifyRunner(),
                     signal_transport=transport,
+                    graph_catalog=app.state.graph_catalog,
                 )
             await drain_signals(run_id, transport, session, service, executor=executor)
 

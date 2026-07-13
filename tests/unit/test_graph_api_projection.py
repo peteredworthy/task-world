@@ -19,6 +19,7 @@ from orchestrator.graph import Actor, ActorKind, CompactEventEnvelope, EventEnve
 from orchestrator.graph_runtime.store import GraphEventStore, GraphNodeDetailSummary
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import GraphCatalog
 
 
 def _event(
@@ -53,8 +54,8 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
     await engine.dispose()
 
 
-def test_build_graph_projection_response_empty() -> None:
-    projection = build_graph_projection_response("run-empty", [])
+def test_build_graph_projection_response_empty(*, catalog: GraphCatalog) -> None:
+    projection = build_graph_projection_response("run-empty", [], catalog=build_graph_catalog())
 
     assert projection.run_id == "run-empty"
     assert projection.event_count == 0
@@ -65,7 +66,7 @@ def test_build_graph_projection_response_empty() -> None:
     assert projection.ready_nodes == []
 
 
-def test_build_node_detail_filters_by_node_id() -> None:
+def test_build_node_detail_filters_by_node_id(*, catalog: GraphCatalog) -> None:
     events = [
         _event(
             "node_created",
@@ -143,7 +144,7 @@ def test_build_node_detail_filters_by_node_id() -> None:
         ),
     ]
 
-    detail = build_node_detail_response("run-node", "node-a", events)
+    detail = build_node_detail_response("run-node", "node-a", events, catalog=build_graph_catalog())
 
     assert detail is not None
     assert detail.node_id == "node-a"
@@ -165,7 +166,7 @@ def test_build_node_detail_filters_by_node_id() -> None:
     ]
 
 
-def test_build_node_detail_accepts_compact_output_record_envelope() -> None:
+def test_build_node_detail_accepts_compact_output_record_envelope(*, catalog: GraphCatalog) -> None:
     created = _event(
         "node_created",
         {"node_id": "node-a", "kind": "worker", "state": "completed"},
@@ -199,13 +200,17 @@ def test_build_node_detail_accepts_compact_output_record_envelope() -> None:
         }
     )
 
-    detail = build_node_detail_response("run-node", "node-a", [created, compact])
+    detail = build_node_detail_response(
+        "run-node", "node-a", [created, compact], catalog=build_graph_catalog()
+    )
 
     assert detail is not None
     assert detail.output_records == [compact.payload["record"]]
 
 
-def test_build_node_detail_exposes_contract_and_runtime_controls_separately() -> None:
+def test_build_node_detail_exposes_contract_and_runtime_controls_separately(
+    *, catalog: GraphCatalog
+) -> None:
     events = [
         _event(
             "node_created",
@@ -225,7 +230,9 @@ def test_build_node_detail_exposes_contract_and_runtime_controls_separately() ->
         )
     ]
 
-    detail = build_node_detail_response("run-node", "check-1", events)
+    detail = build_node_detail_response(
+        "run-node", "check-1", events, catalog=build_graph_catalog()
+    )
 
     assert detail is not None
     assert detail.contract is not None
@@ -338,7 +345,9 @@ def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None
     }
 
 
-def test_build_graph_topology_response_exposes_edge_contracts_and_bindings() -> None:
+def test_build_graph_topology_response_exposes_edge_contracts_and_bindings(
+    *, catalog: GraphCatalog
+) -> None:
     events = [
         _event(
             "node_created",
@@ -405,7 +414,7 @@ def test_build_graph_topology_response_exposes_edge_contracts_and_bindings() -> 
         ),
     ]
 
-    topology = build_graph_topology_response("run-topology", events)
+    topology = build_graph_topology_response("run-topology", events, catalog=build_graph_catalog())
 
     assert topology.event_count == 5
     assert {node.node_id for node in topology.nodes} == {"worker-1", "verifier-1"}
@@ -431,7 +440,9 @@ def test_build_graph_topology_response_exposes_edge_contracts_and_bindings() -> 
     assert edge.bound_records[0].schema_ == "ImplementationCandidate"
 
 
-def test_build_graph_topology_response_exposes_accumulated_many_bindings() -> None:
+def test_build_graph_topology_response_exposes_accumulated_many_bindings(
+    *, catalog: GraphCatalog
+) -> None:
     events = [
         _event(
             "node_created",
@@ -521,7 +532,7 @@ def test_build_graph_topology_response_exposes_accumulated_many_bindings() -> No
         ),
     ]
 
-    topology = build_graph_topology_response("run-topology", events)
+    topology = build_graph_topology_response("run-topology", events, catalog=build_graph_catalog())
 
     edge = topology.edges[0]
     assert edge.metadata["prompt_hydration_policy"] == "structured_json"
@@ -534,7 +545,9 @@ def test_build_graph_topology_response_exposes_accumulated_many_bindings() -> No
     assert [record.record_id for record in edge.bound_records] == ["candidate-1", "candidate-2"]
 
 
-def test_build_final_invariant_blockers_response_returns_typed_blockers() -> None:
+def test_build_final_invariant_blockers_response_returns_typed_blockers(
+    *, catalog: GraphCatalog
+) -> None:
     events = [
         _event(
             "run_lifecycle_changed",
@@ -572,7 +585,9 @@ def test_build_final_invariant_blockers_response_returns_typed_blockers() -> Non
         ),
     ]
 
-    response = build_final_invariant_blockers_response("run-blocked", events)
+    response = build_final_invariant_blockers_response(
+        "run-blocked", events, catalog=build_graph_catalog()
+    )
 
     assert response.run_id == "run-blocked"
     assert response.event_count == 3
@@ -583,7 +598,9 @@ def test_build_final_invariant_blockers_response_returns_typed_blockers() -> Non
     assert blocker.proposal_id == "proposal-1"
 
 
-def test_build_final_invariant_blockers_response_returns_pending_node_blocker() -> None:
+def test_build_final_invariant_blockers_response_returns_pending_node_blocker(
+    *, catalog: GraphCatalog
+) -> None:
     events = [
         _event(
             "run_lifecycle_changed",
@@ -602,7 +619,9 @@ def test_build_final_invariant_blockers_response_returns_pending_node_blocker() 
         ),
     ]
 
-    response = build_final_invariant_blockers_response("run-pending-node", events)
+    response = build_final_invariant_blockers_response(
+        "run-pending-node", events, catalog=build_graph_catalog()
+    )
 
     assert response.run_id == "run-pending-node"
     assert response.event_count == 2
@@ -616,7 +635,9 @@ def test_build_final_invariant_blockers_response_returns_pending_node_blocker() 
     assert response.blockers[1].kind == "task_not_accepted"
 
 
-def test_build_final_invariant_blockers_response_exposes_impossible_input_details() -> None:
+def test_build_final_invariant_blockers_response_exposes_impossible_input_details(
+    *, catalog: GraphCatalog
+) -> None:
     events = [
         _event(
             "run_lifecycle_changed",
@@ -648,7 +669,9 @@ def test_build_final_invariant_blockers_response_exposes_impossible_input_detail
         ),
     ]
 
-    response = build_final_invariant_blockers_response("run-impossible-input", events)
+    response = build_final_invariant_blockers_response(
+        "run-impossible-input", events, catalog=build_graph_catalog()
+    )
 
     blocker = next(blocker for blocker in response.blockers if blocker.kind == "impossible_input")
     assert blocker.node_id == "worker-1"
@@ -658,7 +681,7 @@ def test_build_final_invariant_blockers_response_exposes_impossible_input_detail
     assert blocker.state == "planned"
 
 
-def test_build_graph_regions_response_groups_states_and_blockers() -> None:
+def test_build_graph_regions_response_groups_states_and_blockers(*, catalog: GraphCatalog) -> None:
     events = [
         _event(
             "run_lifecycle_changed",
@@ -677,7 +700,7 @@ def test_build_graph_regions_response_groups_states_and_blockers() -> None:
         ),
     ]
 
-    response = build_graph_regions_response("run-regions", events)
+    response = build_graph_regions_response("run-regions", events, catalog=build_graph_catalog())
 
     assert response.run_id == "run-regions"
     assert response.event_count == 2

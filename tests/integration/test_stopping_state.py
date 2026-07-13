@@ -28,6 +28,8 @@ from orchestrator.workflow import RunStatusChanged
 from orchestrator.workflow import InMemorySignalTransport
 from orchestrator.workflow.service import WorkflowService
 from tests.conftest import CollectingEmitter, FakeClock
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
@@ -300,13 +302,15 @@ async def test_api_recover_stopping_returns_409(client_and_app: tuple[AsyncClien
 
 
 @pytest_asyncio.fixture
-async def svc_session() -> AsyncGenerator[tuple[WorkflowService, AsyncSession], None]:
+async def svc_session(
+    *, catalog: GraphCatalog
+) -> AsyncGenerator[tuple[WorkflowService, AsyncSession], None]:
     """In-memory DB with migrations; yields (service, session) for direct service calls."""
     engine = create_engine(":memory:")
     await init_db(engine)
     factory = create_session_factory(engine)
     async with factory() as session:
-        yield WorkflowService(session), session
+        yield WorkflowService(session, graph_catalog=build_graph_catalog()), session
     await engine.dispose()
 
 

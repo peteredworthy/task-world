@@ -12,6 +12,8 @@ from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
 from orchestrator.graph_runtime import seed_run
 from tests.integration.conftest import cleanup_runs_for_repo
 from tests.integration.signal_helpers import DrainFn
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 LEGACY_SUPER_PARENT_ROUTINE: dict[str, Any] = {
@@ -65,8 +67,7 @@ async def test_legacy_oversight_routes_are_gone(
 
 
 async def test_super_parent_routine_creates_graph_backed_run(
-    client_and_app: tuple[AsyncClient, Any],
-    repo_name: str,
+    client_and_app: tuple[AsyncClient, Any], repo_name: str, *, catalog: GraphCatalog
 ) -> None:
     client, app = client_and_app
 
@@ -88,6 +89,7 @@ async def test_super_parent_routine_creates_graph_backed_run(
         run_id=body["id"],
         clock=FakeClock(),
         id_gen=SequentialIdGenerator(),
+        catalog=build_graph_catalog(),
     )
     fetched = await client.get(f"/api/runs/{body['id']}")
     assert fetched.status_code == 200

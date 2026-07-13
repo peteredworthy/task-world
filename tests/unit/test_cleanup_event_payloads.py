@@ -54,7 +54,9 @@ def apply_command(projection, events, command_type, payload, clock, id_gen):
             id_generator=id_gen,
             actor=Actor(kind=ActorKind.CONTROLLER),
             events=(),
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         ),
     )
     return [_stored_event(event) if isinstance(event, HydratedEvent) else event for event in output]

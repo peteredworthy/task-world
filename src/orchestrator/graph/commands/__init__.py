@@ -18,11 +18,13 @@ from orchestrator.graph._commands import (
 )
 from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.commands.callbacks import COMMAND_SPECIFICATIONS as CALLBACK_COMMAND_SPECS
+from orchestrator.graph.commands.callbacks import RecordDecisionCommand
 from orchestrator.graph.commands.file_state import (
     COMMAND_SPECIFICATIONS as FILE_STATE_COMMAND_SPECS,
 )
 from orchestrator.graph.commands.lifecycle import COMMAND_SPECIFICATIONS as LIFECYCLE_COMMAND_SPECS
 from orchestrator.graph.commands.patches import COMMAND_SPECIFICATIONS as PATCH_COMMAND_SPECS
+from orchestrator.graph.commands.patches import SubmitPatchCommand, SubmitPatchFields
 from orchestrator.graph.commands.records import COMMAND_SPECIFICATIONS as RECORD_COMMAND_SPECS
 from orchestrator.graph.commands.schedule import COMMAND_SPECIFICATIONS as SCHEDULE_COMMAND_SPECS
 from orchestrator.graph.specifications import (
@@ -176,4 +178,7 @@ __all__ = [
     "apply_command",
     "COMMAND_SPECIFICATIONS",
     "COMMAND_SPECIFICATION_GROUPS",
+    "RecordDecisionCommand",
+    "SubmitPatchCommand",
+    "SubmitPatchFields",
 ]

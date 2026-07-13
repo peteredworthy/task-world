@@ -30,6 +30,7 @@ from orchestrator.graph_runtime import (
 from orchestrator.graph_runtime.controller import rebuild_projection
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 from orchestrator.graph.events.records import OutputRecordAcceptedPayload
+from orchestrator.graph import GraphCatalog
 
 ROUTINE_PATHS = [
     Path("routines/demo-task.yaml"),
@@ -92,7 +93,7 @@ def test_dynamic_graph_feature_routine_loads_with_graph_head_config() -> None:
 
 @pytest.mark.asyncio
 async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     routine = load_routine_from_path(Path("routines/demo-task.yaml"))
     clock = FakeClock()
@@ -119,6 +120,7 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
             id_gen=SequentialIdGenerator(),
             source_path="routines/demo-task.yaml",
             source_ref="test-ref",
+            catalog=build_graph_catalog(),
         )
         async with session_factory() as session:
             stored_events = await GraphEventStore(
@@ -131,7 +133,9 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
             outbox_count = int(outbox_count_result.scalar_one())
 
         assert result.projection_position == len(expected_events)
-        assert stored_events == result.events
+        assert [event.payload.to_json() for event in stored_events] == [
+            event.payload for event in result.events
+        ]
         assert rebuild_projection(build_graph_catalog(), stored_events) == rebuild_projection(
             build_graph_catalog(), result.events
         )
@@ -197,7 +201,9 @@ def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None
 
 
 @pytest.mark.asyncio
-async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) -> None:
+async def test_seed_dynamic_graph_feature_persists_run_inputs(
+    tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     routine = load_routine_from_path(DYNAMIC_FEATURE_ROUTINE_PATH)
     engine = create_engine(tmp_path / "seed-dynamic-feature.db")
     await init_db(engine)
@@ -220,6 +226,7 @@ async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) ->
             id_gen=SequentialIdGenerator(),
             source_path=str(DYNAMIC_FEATURE_ROUTINE_PATH),
             run_config=run_config,
+            catalog=build_graph_catalog(),
         )
         async with session_factory() as session:
             stored_events = await GraphEventStore(
@@ -239,7 +246,9 @@ async def test_seed_dynamic_graph_feature_persists_run_inputs(tmp_path: Path) ->
 
 
 @pytest.mark.asyncio
-async def test_controller_two_step_callback_completion_unblocks_next_step(tmp_path: Path) -> None:
+async def test_controller_two_step_callback_completion_unblocks_next_step(
+    tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     routine = RoutineConfig(
         id="two-step",
         name="Two Step",
@@ -267,12 +276,19 @@ async def test_controller_two_step_callback_completion_unblocks_next_step(tmp_pa
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     try:
         seed = await seed_run(
-            session_factory, routine, run_id="two-step", clock=clock, id_gen=id_gen
+            session_factory,
+            routine,
+            run_id="two-step",
+            clock=clock,
+            id_gen=id_gen,
+            catalog=build_graph_catalog(),
         )
         accepted = await controller.handle_command(
             "two-step", seed.projection_position, "accept_run"
@@ -296,7 +312,9 @@ async def test_controller_two_step_callback_completion_unblocks_next_step(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_controller_upstream_failure_blocks_next_step(tmp_path: Path) -> None:
+async def test_controller_upstream_failure_blocks_next_step(
+    tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     routine = RoutineConfig(
         id="two-step",
         name="Two Step",
@@ -324,12 +342,19 @@ async def test_controller_upstream_failure_blocks_next_step(tmp_path: Path) -> N
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     try:
         seed = await seed_run(
-            session_factory, routine, run_id="two-step", clock=clock, id_gen=id_gen
+            session_factory,
+            routine,
+            run_id="two-step",
+            clock=clock,
+            id_gen=id_gen,
+            catalog=build_graph_catalog(),
         )
         accepted = await controller.handle_command(
             "two-step", seed.projection_position, "accept_run"
@@ -360,7 +385,9 @@ async def test_controller_upstream_failure_blocks_next_step(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_demo_task_traverses_all_workers_in_step_order(tmp_path: Path) -> None:
+async def test_demo_task_traverses_all_workers_in_step_order(
+    tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     routine = load_routine_from_path(Path("routines/demo-task.yaml"))
     clock = FakeClock()
     id_gen = SequentialIdGenerator()
@@ -373,11 +400,20 @@ async def test_demo_task_traverses_all_workers_in_step_order(tmp_path: Path) -> 
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     try:
-        seed = await seed_run(session_factory, routine, run_id="demo", clock=clock, id_gen=id_gen)
+        seed = await seed_run(
+            session_factory,
+            routine,
+            run_id="demo",
+            clock=clock,
+            id_gen=id_gen,
+            catalog=build_graph_catalog(),
+        )
         accepted = await controller.handle_command("demo", seed.projection_position, "accept_run")
         result = await controller.handle_command("demo", accepted.projection_position, "start")
         leased_workers: list[str] = []
@@ -405,7 +441,9 @@ async def test_demo_task_traverses_all_workers_in_step_order(tmp_path: Path) -> 
 
 
 @pytest.mark.asyncio
-async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(tmp_path: Path) -> None:
+async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(
+    tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     """Measured 2026-06-12 locally: prints ms/node and events/node for demo-task.yaml."""
     routine = load_routine_from_path(Path("routines/demo-task.yaml"))
     run_id = "overhead-demo"
@@ -420,7 +458,9 @@ async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(tmp_path
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     started_at = perf_counter()
@@ -431,6 +471,7 @@ async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(tmp_path
             run_id=run_id,
             clock=clock,
             id_gen=id_gen,
+            catalog=build_graph_catalog(),
         )
         accepted = await controller.handle_command(
             run_id,

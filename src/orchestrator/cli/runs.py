@@ -15,6 +15,7 @@ from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
 from orchestrator.config.global_config import load_global_config
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import RunRepository
+from orchestrator.graph import GraphCatalog
 from orchestrator.config import discover_routines
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.locks import InMemoryLockManager
@@ -140,6 +141,7 @@ def create_run(
     """Create a new run."""
 
     async def _create() -> None:
+        catalog: GraphCatalog = ctx.obj["graph_catalog"]
         db_path = ctx.obj["db"]
         as_json = ctx.obj["json"]
 
@@ -216,7 +218,7 @@ def create_run(
                 if agent_cfg:
                     run.agent_runner_config = agent_cfg
 
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=catalog)
             run = await service.create_run(run)
 
         await engine.dispose()
@@ -247,6 +249,7 @@ def start_run(ctx: click.Context, run_id: str) -> None:
     """Start a run (DRAFT -> ACTIVE)."""
 
     async def _start() -> None:
+        catalog: GraphCatalog = ctx.obj["graph_catalog"]
         db_path = ctx.obj["db"]
         as_json = ctx.obj["json"]
 
@@ -259,6 +262,7 @@ def start_run(ctx: click.Context, run_id: str) -> None:
 
             service = WorkflowService(
                 session=session,
+                graph_catalog=catalog,
                 lock_manager=lock_manager,
             )
 

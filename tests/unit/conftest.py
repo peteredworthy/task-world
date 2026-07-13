@@ -24,6 +24,13 @@ import time
 from pathlib import Path
 
 import pytest
+from orchestrator.graph import GraphCatalog, build_graph_catalog
+
+
+@pytest.fixture
+def catalog() -> GraphCatalog:
+    return build_graph_catalog()
+
 
 _collection_start: float = 0.0
 _files_checked = 0

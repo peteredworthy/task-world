@@ -30,6 +30,8 @@ from orchestrator.db import (
 from orchestrator.git import WorktreeCommitError
 from orchestrator.state import Attempt, create_run_from_routine
 from orchestrator.workflow import LocalAutoVerifyRunner, PersistentEventEmitter, WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -87,7 +89,7 @@ async def _events(session, run_id: str) -> list[dict[str, Any]]:
     ]
 
 
-async def _service_with_building_run(repo_path: Path):
+async def _service_with_building_run(repo_path: Path, *, catalog: GraphCatalog):
     engine = create_engine(":memory:")
     await init_db(engine)
     session_factory = create_session_factory(engine)
@@ -100,6 +102,7 @@ async def _service_with_building_run(repo_path: Path):
         event_store_v2=event_store,
         event_emitter=PersistentEventEmitter(event_store),
         auto_verify_runner=LocalAutoVerifyRunner(),
+        graph_catalog=build_graph_catalog(),
     )
     run = create_run_from_routine(
         routine=_routine(),
@@ -119,11 +122,13 @@ async def _service_with_building_run(repo_path: Path):
 
 @pytest.mark.asyncio
 async def test_submit_auto_commit_records_completed_before_verifying(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     repo_path = tmp_path / "repo"
     initial_head = _init_repo(repo_path)
-    engine, session, service, run_id, task_id = await _service_with_building_run(repo_path)
+    engine, session, service, run_id, task_id = await _service_with_building_run(
+        repo_path, catalog=build_graph_catalog()
+    )
     try:
         (repo_path / "tracked.txt").write_text("builder change\n")
 
@@ -152,11 +157,13 @@ async def test_submit_auto_commit_records_completed_before_verifying(
 
 @pytest.mark.asyncio
 async def test_submit_auto_commit_noop_records_completed_false(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     repo_path = tmp_path / "repo"
     head = _init_repo(repo_path)
-    engine, session, service, run_id, task_id = await _service_with_building_run(repo_path)
+    engine, session, service, run_id, task_id = await _service_with_building_run(
+        repo_path, catalog=build_graph_catalog()
+    )
     try:
         result = await service.submit_for_verification(run_id, task_id)
 
@@ -177,11 +184,13 @@ async def test_submit_auto_commit_noop_records_completed_false(
 
 @pytest.mark.asyncio
 async def test_submit_auto_commit_failure_blocks_verifying(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     repo_path = tmp_path / "repo"
     _init_repo(repo_path)
-    engine, session, service, run_id, task_id = await _service_with_building_run(repo_path)
+    engine, session, service, run_id, task_id = await _service_with_building_run(
+        repo_path, catalog=build_graph_catalog()
+    )
     try:
         (repo_path / "tracked.txt").write_text("builder change\n")
         (repo_path / ".git" / "index.lock").write_text("locked\n")

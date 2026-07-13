@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any, cast
@@ -27,9 +28,12 @@ from orchestrator.graph import (
     EventEnvelope,
     GraphCatalog,
     GraphProjection,
+    HydratedEvent,
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
     PROJECTION_SCHEMA_VERSION,
     OutputRecordAcceptedPayload,
+    StoredEventEnvelope,
+    StrictPayload,
     initial_projection,
     merge_bound_record_ids,
     project_decision_view,
@@ -42,9 +46,14 @@ from orchestrator.graph import (
     reduce_event,
 )
 from orchestrator.graph_runtime.errors import (
+    EventPayloadCorruptionError,
+    IncompatibleGraphPayloadGenerationError,
     InvalidGraphEventPayloadError,
     StaleProjectionError,
 )
+
+GRAPH_PAYLOAD_SCHEMA_GENERATION = 2
+GraphHistoryEvent = EventEnvelope | HydratedEvent
 
 GRAPH_AGGREGATE_PREFIX = "graph:"
 _CHECKPOINT_PROJECTION_KEY = "_projection_checkpoint"
@@ -436,8 +445,21 @@ def _payload_with_durable_graph_position(
     return payload
 
 
-def stored_graph_event(event: EventEnvelope, *, run_id: str, position: int) -> EventEnvelope:
+def stored_graph_event(event: GraphHistoryEvent, *, run_id: str, position: int) -> EventEnvelope:
     """Return the durable stored form of one graph event at its final position."""
+    if isinstance(event, HydratedEvent):
+        event = EventEnvelope(
+            event_id=event.event_id,
+            run_id=event.run_id,
+            position=event.position,
+            event_type=event.event_type,
+            schema_version=event.schema_version,
+            actor=event.actor,
+            causation_id=event.causation_id,
+            correlation_id=event.correlation_id,
+            timestamp=event.timestamp,
+            payload=event.payload.to_json(),
+        )
     return event.model_copy(
         update={
             "run_id": run_id,
@@ -445,6 +467,49 @@ def stored_graph_event(event: EventEnvelope, *, run_id: str, position: int) -> E
             "payload": _payload_with_durable_graph_position(event, position, run_id),
         }
     )
+
+
+def _stored_envelope_from_json(
+    payload_json: str,
+    payload_schema_generation: int,
+) -> StoredEventEnvelope:
+    try:
+        return StoredEventEnvelope.model_validate_json(payload_json)
+    except ValidationError as stored_error:
+        try:
+            legacy = EventEnvelope.model_validate_json(payload_json)
+        except ValidationError:
+            raise stored_error
+        return StoredEventEnvelope(
+            event_id=legacy.event_id,
+            run_id=legacy.run_id,
+            position=legacy.position,
+            event_type=legacy.event_type,
+            payload_schema_generation=payload_schema_generation,
+            source_schema_version=legacy.schema_version,
+            actor=legacy.actor,
+            causation_id=legacy.causation_id,
+            correlation_id=legacy.correlation_id,
+            timestamp=legacy.timestamp,
+            payload=legacy.model_dump(mode="json")["payload"],
+        )
+
+
+def validate_stored_event_metadata(
+    stored: StoredEventEnvelope,
+    *,
+    run_id: str,
+    position: int,
+    event_type: str,
+    payload_schema_generation: int,
+) -> None:
+    if (
+        stored.run_id != run_id
+        or stored.position != position
+        or stored.event_type != event_type
+        or stored.payload_schema_generation != payload_schema_generation
+    ):
+        raise ValueError("stored envelope metadata does not match its database row")
 
 
 def validate_catalog_event_payload(catalog: GraphCatalog, event: EventEnvelope) -> None:
@@ -638,7 +703,7 @@ class GraphEventStore:
         self,
         run_id: str,
         expected_position: int,
-        events: list[EventEnvelope],
+        events: Sequence[GraphHistoryEvent],
         *,
         allow_invalid_payloads: bool = False,
     ) -> list[EventEnvelope]:
@@ -661,6 +726,7 @@ class GraphEventStore:
             raise StaleProjectionError(msg)
 
         stored_events: list[EventEnvelope] = []
+        hydrated_events: list[HydratedEvent] = []
         rows: list[EventV2Model] = []
         for offset, event in enumerate(events, start=1):
             position = expected_position + offset
@@ -668,15 +734,30 @@ class GraphEventStore:
             if not allow_invalid_payloads:
                 validate_catalog_event_payload(self._catalog, stored)
             stored_events.append(stored)
+            envelope = StoredEventEnvelope(
+                event_id=stored.event_id,
+                run_id=stored.run_id,
+                position=stored.position,
+                event_type=stored.event_type,
+                payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
+                source_schema_version=stored.schema_version,
+                actor=stored.actor,
+                causation_id=stored.causation_id,
+                correlation_id=stored.correlation_id,
+                timestamp=stored.timestamp,
+                payload=stored.model_dump(mode="json")["payload"],
+            )
             rows.append(
                 EventV2Model(
                     aggregate_id=graph_aggregate_id(run_id),
                     version=position,
                     event_type=stored.event_type,
-                    payload=stored.model_dump_json(),
+                    payload=envelope.model_dump_json(),
+                    payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
                     timestamp=stored.timestamp.isoformat(),
                 )
             )
+            hydrated_events.append(self._catalog.hydrate_event(envelope))
 
         self._session.add_all(rows)
         try:
@@ -684,20 +765,20 @@ class GraphEventStore:
         except IntegrityError as exc:
             msg = f"stale graph projection for run {run_id}"
             raise StaleProjectionError(msg) from exc
-        await self.append_event_summaries(run_id, stored_events)
+        await self.append_event_summaries(run_id, hydrated_events)
         await self.append_node_detail_summaries(
             run_id,
-            stored_events,
+            hydrated_events,
             expected_position=expected_position,
         )
         await self.advance_projection_snapshot(
             run_id,
-            stored_events,
+            hydrated_events,
             expected_position=expected_position,
         )
         return stored_events
 
-    async def read_run(self, run_id: str, from_position: int = 0) -> list[EventEnvelope]:
+    async def read_run(self, run_id: str, from_position: int = 0) -> list[HydratedEvent]:
         """Read graph events for a run ordered by run-local position."""
         result = await self._session.execute(
             select(EventV2Model)
@@ -705,17 +786,34 @@ class GraphEventStore:
             .where(EventV2Model.version >= from_position)
             .order_by(EventV2Model.version)
         )
-        events: list[EventEnvelope] = []
+        events: list[HydratedEvent] = []
         for row in result.scalars():
-            payload = json.loads(row.payload)
-            events.append(EventEnvelope.model_validate(payload))
+            if row.payload_schema_generation != GRAPH_PAYLOAD_SCHEMA_GENERATION:
+                raise IncompatibleGraphPayloadGenerationError(
+                    run_id, row.version, row.payload_schema_generation
+                )
+            try:
+                stored = _stored_envelope_from_json(row.payload, row.payload_schema_generation)
+                validate_stored_event_metadata(
+                    stored,
+                    run_id=run_id,
+                    position=row.version,
+                    event_type=row.event_type,
+                    payload_schema_generation=row.payload_schema_generation,
+                )
+                event = self._catalog.hydrate_event(stored)
+            except (TypeError, ValueError) as exc:
+                raise EventPayloadCorruptionError(
+                    run_id, row.version, row.event_type, str(exc)
+                ) from exc
+            events.append(event)
         return events
 
     async def read_run_positions(
         self,
         run_id: str,
         positions: list[int],
-    ) -> list[EventEnvelope]:
+    ) -> list[HydratedEvent]:
         """Read full graph events for exact run-local positions."""
         unique_positions = sorted(
             {position for position in positions if position > 0 and not isinstance(position, bool)}
@@ -728,10 +826,26 @@ class GraphEventStore:
             .where(EventV2Model.version.in_(unique_positions))
             .order_by(EventV2Model.version)
         )
-        events: list[EventEnvelope] = []
+        events: list[HydratedEvent] = []
         for row in result.scalars():
-            payload = json.loads(row.payload)
-            events.append(EventEnvelope.model_validate(payload))
+            if row.payload_schema_generation != GRAPH_PAYLOAD_SCHEMA_GENERATION:
+                raise IncompatibleGraphPayloadGenerationError(
+                    run_id, row.version, row.payload_schema_generation
+                )
+            try:
+                stored = _stored_envelope_from_json(row.payload, row.payload_schema_generation)
+                validate_stored_event_metadata(
+                    stored,
+                    run_id=run_id,
+                    position=row.version,
+                    event_type=row.event_type,
+                    payload_schema_generation=row.payload_schema_generation,
+                )
+                events.append(self._catalog.hydrate_event(stored))
+            except (TypeError, ValueError) as exc:
+                raise EventPayloadCorruptionError(
+                    run_id, row.version, row.event_type, str(exc)
+                ) from exc
         return events
 
     async def read_run_light(self, run_id: str, from_position: int = 0) -> list[EventEnvelope]:
@@ -1083,7 +1197,7 @@ class GraphEventStore:
     async def load_projection_with_tail(
         self,
         run_id: str,
-    ) -> tuple[GraphProjection, list[EventEnvelope], int]:
+    ) -> tuple[GraphProjection, list[HydratedEvent], int]:
         """Load the latest valid snapshot and fold only events after it.
 
         If the checkpoint is missing, version-mismatched, or malformed, rebuild
@@ -1161,7 +1275,7 @@ class GraphEventStore:
     async def append_event_summaries(
         self,
         run_id: str,
-        events: list[EventEnvelope],
+        events: Sequence[GraphHistoryEvent],
     ) -> None:
         """Append compact summary rows for newly stored graph events."""
         if not events:
@@ -1184,7 +1298,7 @@ class GraphEventStore:
     async def append_node_detail_summaries(
         self,
         run_id: str,
-        events: list[EventEnvelope],
+        events: Sequence[GraphHistoryEvent],
         *,
         expected_position: int,
     ) -> None:
@@ -1239,7 +1353,7 @@ class GraphEventStore:
     async def advance_projection_snapshot(
         self,
         run_id: str,
-        events: list[EventEnvelope],
+        events: Sequence[GraphHistoryEvent],
         *,
         expected_position: int,
     ) -> None:
@@ -1385,13 +1499,18 @@ class GraphEventStore:
     async def _node_detail_rows_for_events(
         self,
         run_id: str,
-        events: list[EventEnvelope],
+        events: Sequence[GraphHistoryEvent],
         known_node_ids: set[str],
     ) -> dict[str, GraphNodeDetailSummaryModel]:
         node_ids: set[str] = set()
         for event in events:
             light_event = _node_detail_light_event(event)
-            node_ids.update(_referenced_node_ids(light_event.payload, known_node_ids | node_ids))
+            light_payload = (
+                light_event.payload.stored_json()
+                if isinstance(light_event.payload, StrictPayload)
+                else dict(light_event.payload)
+            )
+            node_ids.update(_referenced_node_ids(light_payload, known_node_ids | node_ids))
         if not node_ids:
             return {}
         result = await self._session.execute(
@@ -1429,7 +1548,7 @@ class GraphEventStore:
     async def _edge_ports_for_input_bounds(
         self,
         run_id: str,
-        events: list[EventEnvelope],
+        events: Sequence[GraphHistoryEvent],
     ) -> dict[str, str]:
         edge_ids = _input_bound_edge_ids_needing_ports(events)
         if not edge_ids:
@@ -1514,12 +1633,14 @@ class GraphEventStore:
         return int(result.scalar_one_or_none() or 0)
 
 
-def summarize_graph_event(event: EventEnvelope) -> GraphEventSummary:
+def summarize_graph_event(event: GraphHistoryEvent) -> GraphEventSummary:
     source_payload = event.payload
     if event.event_type == "output_record_accepted":
         source_payload = OutputRecordAcceptedPayload.model_validate(
             event.payload
         ).record.model_dump(mode="json", by_alias=True, exclude_none=True)
+    elif isinstance(source_payload, StrictPayload):
+        source_payload = source_payload.stored_json()
     diagnostics = source_payload.get("diagnostics")
     if isinstance(diagnostics, dict):
         source_payload = {**source_payload, **cast(dict[str, Any], diagnostics)}
@@ -1563,14 +1684,14 @@ def summarize_graph_event(event: EventEnvelope) -> GraphEventSummary:
     )
 
 
-def _summary_from_event(event: EventEnvelope) -> GraphEventSummary:
+def _summary_from_event(event: GraphHistoryEvent) -> GraphEventSummary:
     return summarize_graph_event(event)
 
 
 def _projection_snapshot_from_events(
     catalog: GraphCatalog,
     run_id: str,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
 ) -> GraphProjectionSnapshotModel:
     row = GraphProjectionSnapshotModel(run_id=run_id)
     _assign_projection_snapshot(
@@ -1591,7 +1712,7 @@ def _assign_projection_snapshot(
     projection: GraphProjection,
     position: int,
     *,
-    events: list[EventEnvelope] | None = None,
+    events: Sequence[GraphHistoryEvent] | None = None,
 ) -> None:
     row.run_id = run_id
     row.position = position
@@ -1613,7 +1734,7 @@ def _assign_projection_snapshot(
 
 def _projection_from_events(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
 ) -> GraphProjection:
     projection = initial_projection()
     for event in events:
@@ -1662,7 +1783,7 @@ def _decisions_with_projection_checkpoint(
     }
 
 
-def _events_position(events: list[EventEnvelope]) -> int:
+def _events_position(events: Sequence[GraphHistoryEvent]) -> int:
     if not events:
         return 0
     return max(event.position for event in events)
@@ -1723,7 +1844,7 @@ def _add_node_detail_summaries(
 
 def _node_detail_summaries_from_events(
     run_id: str,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     position: int,
     events_are_light: bool = False,
@@ -1741,7 +1862,7 @@ def _node_detail_summaries_from_events(
 
 def _apply_node_detail_events(
     run_id: str,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     position: int,
     existing_node_ids: set[str],
@@ -1755,7 +1876,7 @@ def _apply_node_detail_events(
 
     for event in events:
         light_event = event if events_are_light else _node_detail_light_event(event)
-        payload = light_event.payload
+        payload = _history_payload(light_event)
         if light_event.event_type == "edge_created":
             edge_id = payload.get("edge_id")
             to_port = payload.get("to_port")
@@ -1791,12 +1912,12 @@ def _apply_node_detail_events(
 
 
 def _node_detail_field_updates(
-    event: EventEnvelope,
+    event: GraphHistoryEvent,
     edge_ports: dict[str, str],
     summaries: dict[str, GraphNodeDetailSummary],
     position: int,
 ) -> dict[str, GraphNodeDetailSummary]:
-    payload = event.payload
+    payload = _history_payload(event)
     updates: dict[str, GraphNodeDetailSummary] = {}
     if event.event_type == "node_created":
         node_id = payload.get("node_id")
@@ -2033,7 +2154,7 @@ def _append_node_event(
     )
 
 
-def _is_callback_history_event(event: EventEnvelope) -> bool:
+def _is_callback_history_event(event: GraphHistoryEvent) -> bool:
     if event.event_type in {
         "callback_accepted",
         "callback_rejected_stale",
@@ -2048,8 +2169,8 @@ def _is_callback_history_event(event: EventEnvelope) -> bool:
     )
 
 
-def _node_detail_light_event(event: EventEnvelope) -> EventEnvelope:
-    source_payload = event.payload
+def _node_detail_light_event(event: GraphHistoryEvent) -> GraphHistoryEvent:
+    source_payload = _history_payload(event)
     if event.event_type == "output_record_accepted":
         source_payload = OutputRecordAcceptedPayload.model_validate(
             event.payload
@@ -2079,15 +2200,25 @@ def _node_detail_light_event(event: EventEnvelope) -> EventEnvelope:
     return event.model_copy(update={"payload": payload})
 
 
-def _node_event_response(event: EventEnvelope) -> dict[str, Any]:
+def _node_event_response(event: GraphHistoryEvent) -> dict[str, Any]:
     return {
         "event_id": event.event_id,
         "event_type": event.event_type,
         "run_id": event.run_id,
         "position": event.position,
         "timestamp": event.timestamp.isoformat(),
-        "payload": dict(event.payload),
+        "payload": (
+            event.payload.stored_json()
+            if isinstance(event.payload, StrictPayload)
+            else dict(event.payload)
+        ),
     }
+
+
+def _history_payload(event: GraphHistoryEvent) -> dict[str, Any]:
+    if isinstance(event.payload, StrictPayload):
+        return cast(dict[str, Any], event.payload.stored_json())
+    return dict(event.payload)
 
 
 def _referenced_node_ids(payload: dict[str, Any], known_node_ids: set[str]) -> set[str]:
@@ -2167,7 +2298,7 @@ def _selected_lease(leases: list[dict[str, Any]]) -> dict[str, Any] | None:
     return fallback
 
 
-def _lease_update_ids(events: list[EventEnvelope]) -> set[str]:
+def _lease_update_ids(events: Sequence[GraphHistoryEvent]) -> set[str]:
     ids: set[str] = set()
     for event in events:
         if event.event_type not in {
@@ -2184,13 +2315,13 @@ def _lease_update_ids(events: list[EventEnvelope]) -> set[str]:
 
 
 def _has_missing_preexisting_node_reference(
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     existing_node_ids: set[str],
 ) -> bool:
     known_node_ids = set(existing_node_ids)
     created_node_ids: set[str] = set()
     for event in events:
-        payload = _node_detail_light_event(event).payload
+        payload = _history_payload(_node_detail_light_event(event))
         node_id = payload.get("node_id")
         if event.event_type == "node_created" and isinstance(node_id, str):
             created_node_ids.add(node_id)
@@ -2205,7 +2336,7 @@ def _has_missing_preexisting_node_reference(
     return False
 
 
-def _input_bound_edge_ids_needing_ports(events: list[EventEnvelope]) -> set[str]:
+def _input_bound_edge_ids_needing_ports(events: Sequence[GraphHistoryEvent]) -> set[str]:
     edge_ids: set[str] = set()
     for event in events:
         if event.event_type != "input_bound":

@@ -43,6 +43,7 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 class FixedClock:
@@ -380,15 +381,26 @@ async def _seed_active_run(
     clock: FixedClock,
     ids: SequentialIds,
     routine: RoutineConfig | None = None,
+    *,
+    catalog: GraphCatalog,
 ) -> GraphController:
-    await seed_run(session_factory, routine or _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    await seed_run(
+        session_factory,
+        routine or _routine(),
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+        catalog=build_graph_catalog(),
+    )
     controller = GraphController(
         session_factory,
         clock,
         ids,
         catalog=build_graph_catalog(),
         auto_dispatch=False,
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     position = await controller.current_position(run_id)
     accepted = await controller.handle_command(run_id, position, "accept_run")
@@ -416,6 +428,8 @@ async def _schedule_dispatch_and_wait(
 async def test_graph_runner_builder_verifier_pass_accepts_task(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-pass"
@@ -423,12 +437,15 @@ async def test_graph_runner_builder_verifier_pass_accepts_task(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "graph-runner-pass"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": ResidueSubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -445,6 +462,8 @@ async def test_graph_runner_builder_verifier_pass_accepts_task(
 async def test_parallel_worker_start_acknowledgements_retry_stale_positions(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-parallel-start"
@@ -458,12 +477,14 @@ async def test_parallel_worker_start_acknowledgements_retry_stale_positions(
         clock,
         ids,
         routine=_parallel_artifact_routine(),
+        catalog=build_graph_catalog(),
     )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": SubmitAgent()}),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -490,6 +511,8 @@ async def test_parallel_worker_start_acknowledgements_retry_stale_positions(
 async def test_graph_runner_verifier_fail_needs_revision(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-fail"
@@ -497,12 +520,15 @@ async def test_graph_runner_verifier_fail_needs_revision(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "graph-runner-fail"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("C")}),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -520,6 +546,8 @@ async def test_graph_runner_verifier_fail_needs_revision(
 async def test_graph_runner_restart_reattaches_running_builder(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     engine, session_factory = file_db
     db_path = tmp_path / "graph-runner.db"
@@ -528,7 +556,9 @@ async def test_graph_runner_restart_reattaches_running_builder(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "graph-runner-reattach"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     builder = BlockingSubmitAgent()
     running: dict[str, asyncio.Task[None]] = {}
     executor = GraphDispatchExecutor(
@@ -537,6 +567,7 @@ async def test_graph_runner_restart_reattaches_running_builder(
         AgentFactory({"worker": builder, "verifier": GradingAgent("A")}),
         worktree_path=repo,
         running_executions=running,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -568,7 +599,9 @@ async def test_graph_runner_restart_reattaches_running_builder(
             restarted_ids,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         restarted_executor = GraphDispatchExecutor(
             restarted_session_factory,
@@ -576,13 +609,19 @@ async def test_graph_runner_restart_reattaches_running_builder(
             AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
             worktree_path=repo,
             process_registry=live_process,
+            catalog=build_graph_catalog(),
         )
         restarted_dispatcher = OutboxDispatcher(
             restarted_session_factory,
             restarted_executor,
             restarted_clock,
         )
-        report = await recover(restarted_session_factory, restarted_dispatcher, run_id=run_id)
+        report = await recover(
+            restarted_session_factory,
+            restarted_dispatcher,
+            run_id=run_id,
+            catalog=build_graph_catalog(),
+        )
         await reconcile_runtime(restarted_controller, restarted_executor, report)
 
         await live_process.submit(restarted_session_factory, restarted_controller, run_id)
@@ -604,6 +643,8 @@ async def test_graph_runner_restart_reattaches_running_builder(
 async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-dead"
@@ -611,7 +652,9 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "graph-runner-dead"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     builder = BlockingSubmitAgent()
     running: dict[str, asyncio.Task[None]] = {}
     executor = GraphDispatchExecutor(
@@ -620,6 +663,7 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
         AgentFactory({"worker": builder, "verifier": GradingAgent("A")}),
         worktree_path=repo,
         running_executions=running,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -641,16 +685,21 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
         ids,
         catalog=build_graph_catalog(),
         auto_dispatch=False,
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     restarted_executor = GraphDispatchExecutor(
         session_factory,
         restarted_controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     restarted_dispatcher = OutboxDispatcher(session_factory, restarted_executor, clock)
-    report = await recover(session_factory, restarted_dispatcher, run_id=run_id)
+    report = await recover(
+        session_factory, restarted_dispatcher, run_id=run_id, catalog=build_graph_catalog()
+    )
     await reconcile_runtime(restarted_controller, restarted_executor, report)
 
     await _schedule_dispatch_and_wait(
@@ -675,6 +724,8 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
 async def test_reconcile_runtime_skips_lease_already_recovered_by_another_driver(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-reconcile-stale"
@@ -682,12 +733,15 @@ async def test_reconcile_runtime_skips_lease_already_recovered_by_another_driver
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "graph-runner-reconcile-stale"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     await controller.handle_command(
         run_id,
@@ -736,6 +790,8 @@ async def test_reconcile_runtime_skips_lease_already_recovered_by_another_driver
 async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-raise"
@@ -743,12 +799,15 @@ async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "graph-runner-raise"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     failing_executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": RaisingAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     failing_dispatcher = OutboxDispatcher(session_factory, failing_executor, clock)
 
@@ -783,6 +842,7 @@ async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
         controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     healthy_dispatcher = OutboxDispatcher(session_factory, healthy_executor, clock)
     await _schedule_dispatch_and_wait(controller, healthy_dispatcher, healthy_executor, run_id)
@@ -796,6 +856,8 @@ async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
 async def test_graph_runner_rejects_stale_generation_callback_through_stack(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-stale"
@@ -803,13 +865,16 @@ async def test_graph_runner_rejects_stale_generation_callback_through_stack(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "graph-runner-stale"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     builder = BlockingSubmitAgent()
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": builder, "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -849,6 +914,8 @@ async def test_graph_runner_rejects_stale_generation_callback_through_stack(
 async def test_graph_dispatch_requires_base_snapshot_id_without_inventing_identity(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-missing-snapshot"
@@ -856,12 +923,15 @@ async def test_graph_dispatch_requires_base_snapshot_id_without_inventing_identi
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "graph-runner-missing-snapshot"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock, max_attempts=1)
 
@@ -900,6 +970,8 @@ async def test_graph_dispatch_requires_base_snapshot_id_without_inventing_identi
 async def test_graph_dispatch_carries_projection_base_snapshot_id_to_callback(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-custom-snapshot"
@@ -907,12 +979,15 @@ async def test_graph_dispatch_carries_projection_base_snapshot_id_to_callback(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "graph-runner-custom-snapshot"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 

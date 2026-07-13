@@ -177,7 +177,7 @@ from orchestrator.git import (
 )
 from orchestrator.git.worktree import WorktreeManager
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
-from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import GraphCatalog
 
 
 @dataclass
@@ -307,6 +307,7 @@ class WorkflowService:
     def __init__(
         self,
         session: AsyncSession,
+        graph_catalog: GraphCatalog,
         repo: RunRepository | None = None,
         event_emitter: PersistentEventEmitter | None = None,
         clock: Clock | None = None,
@@ -319,6 +320,7 @@ class WorkflowService:
         event_store_v2: SqliteEventStore | None = None,
     ) -> None:
         self._session = session
+        self._catalog = graph_catalog
         self._repo = repo or RunRepository(session)
         if event_store_v2 is None:
             self._store_v2 = create_wired_event_store_v2(session)
@@ -333,6 +335,10 @@ class WorkflowService:
         self._signal_transport = signal_transport
         self._fan_out_policy = fan_out_policy or FanOutDelegationPolicy()
         self._delegation_recorder = DelegationRecorder(self._clock)
+
+    @property
+    def graph_catalog(self) -> GraphCatalog:
+        return self._catalog
 
     async def _update_parent_oversight_facts(
         self,
@@ -1181,9 +1187,9 @@ class WorkflowService:
         if _is_graph_run(run):
             graph_events = await GraphEventStore(
                 self._session,
-                build_graph_catalog(),
+                self._catalog,
             ).read_run(run_id)
-            if project_run_state(build_graph_catalog(), graph_events) in {"failed", "resuming"}:
+            if project_run_state(self._catalog, graph_events) in {"failed", "resuming"}:
                 reopen_marker = GRAPH_OPERATOR_REOPEN_PAUSE_REASON
         events = await handle_update_run_status(
             UpdateRunStatusCommand(

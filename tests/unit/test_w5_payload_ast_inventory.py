@@ -12,6 +12,7 @@ from scripts.w5_payload_ast_inventory import (
     render_consumer_report,
     scan_graph_payload_architecture,
     scan_payload_consumers,
+    _default_paths,
 )
 
 
@@ -133,6 +134,10 @@ emit("second", {})
 def test_repository_baseline_constants_have_expected_counts() -> None:
     assert len(BASELINE_EVENT_NAMES) == 44
     assert len(BASELINE_COMMAND_NAMES) == 23
+
+
+def test_catalog_inventory_default_scope_covers_all_production_roots() -> None:
+    assert _default_paths() == (Path("src/orchestrator"),)
 
 
 def test_inventory_recognizes_typed_lifecycle_specs_and_dispatch_sites() -> None:
@@ -1096,6 +1101,49 @@ def test_catalog_cutover_inventory_detects_arbitrary_production_legacy_dispatch(
     assert [site.classification for site in domain.catalog_cutover_sites] == [
         "legacy_apply_command"
     ]
+
+
+def test_catalog_injection_inventory_classifies_escapes_and_missing_injection(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src/orchestrator/api/deps.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+from orchestrator.graph import build_graph_catalog
+from orchestrator.graph_runtime import GraphEventStore
+
+GLOBAL_CATALOG = build_graph_catalog()
+
+def factory(session, catalog=build_graph_catalog()):
+    return GraphEventStore(session)
+"""
+    )
+
+    domain = scan_graph_payload_architecture([tmp_path]).for_domain("catalog_injection")
+
+    assert {site.classification for site in domain.catalog_cutover_sites} == {
+        "catalog_default_escape",
+        "catalog_global_escape",
+        "missing_catalog_injection",
+    }
+    assert not domain.is_clean
+
+
+def test_catalog_injection_inventory_allows_create_app_catalog_owner(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/api/app.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+def create_app():
+    catalog = build_graph_catalog()
+    return catalog
+"""
+    )
+
+    domain = scan_graph_payload_architecture([tmp_path]).for_domain("catalog_injection")
+
+    assert domain.catalog_cutover_sites == ()
 
 
 def test_consumer_report_lists_sites_deterministically(tmp_path: Path) -> None:

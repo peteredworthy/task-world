@@ -8,6 +8,7 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.state import Attempt, ModelTokenUsage
 from orchestrator.state.factory import create_run_from_routine
+from orchestrator.graph import build_graph_catalog
 
 
 def _routine() -> RoutineConfig:
@@ -190,6 +191,7 @@ def test_build_run_evidence_digest_response_hides_evidence_and_limits_nodes() ->
         pending_actions=[{"action_type": "clarification", "task_id": task_id}],
         max_nodes=2,
         include_node_evidence=False,
+        catalog=build_graph_catalog(),
     )
 
     assert digest.run_id == run.id
@@ -250,6 +252,7 @@ def test_build_run_evidence_digest_response_includes_sanitized_evidence() -> Non
         pending_actions=[],
         max_nodes=3,
         include_node_evidence=True,
+        catalog=build_graph_catalog(),
     )
 
     assert digest.representative_nodes[0].evidence_summary is not None
@@ -261,7 +264,7 @@ def test_build_run_evidence_digest_response_includes_sanitized_evidence() -> Non
 
 def test_build_run_evidence_digest_response_handles_legacy_run() -> None:
     run = create_run_from_routine(_routine(), repo_name="repo-legacy", source_branch="main")
-    digest = build_run_evidence_digest_response(run, [])
+    digest = build_run_evidence_digest_response(run, [], catalog=build_graph_catalog())
 
     assert digest.is_graph_backed is False
     assert digest.blockers == []

@@ -146,4 +146,4 @@ async def test_allow_invalid_payloads_escape_admits_intentional_corruption(
         read_back = await store.read_run(run_id)
 
     assert [event.event_id for event in read_back] == ["evt-1", "evt-2"]
-    assert read_back[1].payload == {"node_id": 123}
+    assert read_back[1].payload.to_json() == {"node_id": 123}

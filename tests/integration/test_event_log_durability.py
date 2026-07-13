@@ -52,6 +52,8 @@ from orchestrator.workflow import (
     deserialize_event,
 )
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
@@ -744,7 +746,7 @@ async def test_canonical_projection_snapshot_matches_after_events_v2_rebuild(
 
 
 async def test_workflow_service_api_dependency_path_commits_events_v2_then_rebuilds_without_journal(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     db_path = tmp_path / "service-api-proof" / "orchestrator.db"
     db_path.parent.mkdir()
@@ -787,7 +789,9 @@ async def test_workflow_service_api_dependency_path_commits_events_v2_then_rebui
                 )
 
         api_store.add_projection_listener(capture_pre_commit_boundary)
-        service = WorkflowService(session, event_store_v2=api_store)
+        service = WorkflowService(
+            session, event_store_v2=api_store, graph_catalog=build_graph_catalog()
+        )
 
         created = await service.create_run(_make_service_run(run_id))
         assert created.id == run_id

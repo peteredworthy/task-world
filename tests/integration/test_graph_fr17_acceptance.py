@@ -25,6 +25,7 @@ from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import GraphCatalog
 
 
 @pytest.fixture
@@ -40,12 +41,12 @@ async def fr17_app(
 
 
 async def test_fr17_less_used_readbacks_survive_projection_rebuild(
-    fr17_app: tuple[AsyncClient, Any],
+    fr17_app: tuple[AsyncClient, Any], *, catalog: GraphCatalog
 ) -> None:
     client, app = fr17_app
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     run_id = f"fr17-readback-{uuid4().hex[:8]}"
-    await _create_graph_run(session_factory, run_id)
+    await _create_graph_run(session_factory, run_id, catalog=build_graph_catalog())
     await _seed_less_used_readback_graph(session_factory, run_id)
 
     decision_response = await client.post(
@@ -96,8 +97,7 @@ async def test_fr17_less_used_readbacks_survive_projection_rebuild(
 
 
 async def _create_graph_run(
-    session_factory: async_sessionmaker[AsyncSession],
-    run_id: str,
+    session_factory: async_sessionmaker[AsyncSession], run_id: str, *, catalog: GraphCatalog
 ) -> None:
     run = create_run_from_routine(
         _routine(),
@@ -109,7 +109,7 @@ async def _create_graph_run(
     run.routine_embedded = _routine().model_dump(mode="json", by_alias=True)
     run.agent_runner_type = AgentRunnerType.CODEX_SERVER
     async with session_factory() as session:
-        await WorkflowService(session).create_run(run)
+        await WorkflowService(session, graph_catalog=build_graph_catalog()).create_run(run)
         stored = await session.get(RunModel, run_id)
         assert stored is not None
         stored.status = RunStatus.ACTIVE

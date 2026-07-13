@@ -33,6 +33,7 @@ from orchestrator.db import init_db
 from orchestrator.workflow import SignalConsumer, WorkflowService
 from tests.integration.conftest import cleanup_runs_for_repo
 from tests.integration.signal_helpers import DrainFn
+from orchestrator.graph import build_graph_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -64,8 +65,10 @@ async def db_backed_client_and_consumer() -> AsyncGenerator[
     )
     await init_db(app.state.engine)
 
-    async def create_service(session: AsyncSession) -> WorkflowService:
-        return WorkflowService(session)
+    async def create_service(
+        session: AsyncSession,
+    ) -> WorkflowService:
+        return WorkflowService(session, graph_catalog=build_graph_catalog())
 
     consumer = SignalConsumer(app.state.session_factory, create_service)
     transport = ASGITransport(app=app)  # type: ignore[arg-type]

@@ -13,6 +13,22 @@ from orchestrator.graph.commands.callbacks import RaiseAppealCommand, RecordDeci
 
 
 @pytest.mark.parametrize(
+    "decider",
+    ["", {}, {"kind": ""}, {"kind": "human", "id": ""}],
+)
+def test_record_decision_rejects_empty_decider_identity(decider: object) -> None:
+    with pytest.raises(ValidationError):
+        RecordDecisionCommand.model_validate(
+            {
+                "decision_type": "approval",
+                "node_id": "gate-1",
+                "decision": "approved",
+                "decider": decider,
+            }
+        )
+
+
+@pytest.mark.parametrize(
     ("model", "valid"),
     [
         (

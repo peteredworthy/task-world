@@ -42,7 +42,9 @@ async def test_fr07_macro_tools_route_expand_validate_and_read_back_patch_attemp
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     accepted_feedback = [

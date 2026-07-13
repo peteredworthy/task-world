@@ -19,6 +19,7 @@ from orchestrator.graph_runtime.dispatch import (
     _prompt_for_node,
 )
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import GraphCatalog
 
 
 def _event(
@@ -313,10 +314,12 @@ def _graph_events() -> list[EventEnvelope]:
     ]
 
 
-def test_planner_packet_includes_generation_frontier_evidence_and_rejections() -> None:
+def test_planner_packet_includes_generation_frontier_evidence_and_rejections(
+    *, catalog: GraphCatalog
+) -> None:
     events = _graph_events()
     context = _planner_context(events)
-    packet = _planner_packet(context)
+    packet = _planner_packet(context, catalog=build_graph_catalog())
 
     assert packet["planner_generation"] == {"index": 2, "budget": 8}
     assert packet["bound_requirements"] == [
@@ -414,7 +417,7 @@ def test_planner_packet_includes_generation_frontier_evidence_and_rejections() -
             assert op["op"] in PLANNER_OPS
 
 
-def test_planner_packet_includes_requirement_freshness_facts() -> None:
+def test_planner_packet_includes_requirement_freshness_facts(*, catalog: GraphCatalog) -> None:
     events = [
         *_graph_events(),
         _event(
@@ -443,7 +446,7 @@ def test_planner_packet_includes_requirement_freshness_facts() -> None:
         ),
     ]
 
-    packet = _planner_packet(_gap_planner_context(events))
+    packet = _planner_packet(_gap_planner_context(events), catalog=build_graph_catalog())
 
     assert packet["freshness"] == {
         "requirement_freshness": [
@@ -474,10 +477,12 @@ def test_planner_packet_includes_requirement_freshness_facts() -> None:
     }
 
 
-def test_planner_packet_deterministic_ordering_and_unknown_event_tolerance() -> None:
+def test_planner_packet_deterministic_ordering_and_unknown_event_tolerance(
+    *, catalog: GraphCatalog
+) -> None:
     base_events = _graph_events()
     base_context = _planner_context(base_events)
-    base_packet = _planner_packet(base_context)
+    base_packet = _planner_packet(base_context, catalog=build_graph_catalog())
 
     shuffled_events = [
         base_events[10],
@@ -498,7 +503,7 @@ def test_planner_packet_deterministic_ordering_and_unknown_event_tolerance() -> 
         base_events[14],
     ]
     shuffled_context = _planner_context(shuffled_events)
-    shuffled_packet = _planner_packet(shuffled_context)
+    shuffled_packet = _planner_packet(shuffled_context, catalog=build_graph_catalog())
 
     assert base_packet["open_planner_proposals"] == shuffled_packet["open_planner_proposals"]
     assert base_packet["accepted_planner_patches"] == shuffled_packet["accepted_planner_patches"]
@@ -514,13 +519,13 @@ def test_planner_packet_deterministic_ordering_and_unknown_event_tolerance() -> 
         _event("mystery_signal", {"text": "noise"}, -1),
     ]
     noisy_context = _planner_context(with_unknown)
-    assert _planner_packet(noisy_context) == shuffled_packet
+    assert _planner_packet(noisy_context, catalog=build_graph_catalog()) == shuffled_packet
 
 
-def test_prompt_routing_for_planner_worker_and_verifier() -> None:
+def test_prompt_routing_for_planner_worker_and_verifier(*, catalog: GraphCatalog) -> None:
     events = _graph_events()
     planner_context = _planner_context(events)
-    planner_prompt = _prompt_for_node(planner_context)
+    planner_prompt = _prompt_for_node(planner_context, catalog=build_graph_catalog())
     assert "Planner context packet:" in planner_prompt
     assert '"run_id": "run-planner-packet"' in planner_prompt
     assert "Planner mutation contract:" in planner_prompt
@@ -558,7 +563,7 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert "no_safe_mutation_termination" in planner_prompt
 
     gap_planner_context = _gap_planner_context(events)
-    gap_planner_prompt = _prompt_for_node(gap_planner_context)
+    gap_planner_prompt = _prompt_for_node(gap_planner_context, catalog=build_graph_catalog())
     assert "Planner context packet:" in gap_planner_prompt
     assert "gap_analysis_contract" in gap_planner_prompt
     assert "corrective_work_region" in gap_planner_prompt
@@ -594,7 +599,7 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
         base_snapshot_id="snapshot-0",
         dispatch_event_id="dispatch-worker",
     )
-    worker_prompt = _prompt_for_node(worker_context)
+    worker_prompt = _prompt_for_node(worker_context, catalog=build_graph_catalog())
     assert "Planner mutation contract" not in worker_prompt
     assert "submit_graph_patch" not in worker_prompt
     assert "horizon_region_templates" not in worker_prompt
@@ -633,7 +638,7 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
         base_snapshot_id="snapshot-0",
         dispatch_event_id="dispatch-dynamic-worker",
     )
-    dynamic_worker_prompt = _prompt_for_node(dynamic_worker_context)
+    dynamic_worker_prompt = _prompt_for_node(dynamic_worker_context, catalog=build_graph_catalog())
     assert "docs/graph-approach/dynamic-smoke-output.txt" in dynamic_worker_prompt
     assert "acceptance_command:" in dynamic_worker_prompt
     assert "corrective_evidence_required:" in dynamic_worker_prompt
@@ -697,7 +702,9 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
             )
         ],
     )
-    fallback_dynamic_worker_prompt = _prompt_for_node(fallback_dynamic_worker_context)
+    fallback_dynamic_worker_prompt = _prompt_for_node(
+        fallback_dynamic_worker_context, catalog=build_graph_catalog()
+    )
     assert "worker-ds-builder" in fallback_dynamic_worker_prompt
     assert "dynamic_feature_spec_path:" in fallback_dynamic_worker_prompt
     assert "dynamic_feature_spec_content:" in fallback_dynamic_worker_prompt
@@ -785,7 +792,7 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
         graph_projection=_projection(verifier_events),
         graph_events=verifier_events,
     )
-    verifier_prompt = _prompt_for_node(verifier_context)
+    verifier_prompt = _prompt_for_node(verifier_context, catalog=build_graph_catalog())
     assert "Verify task region region-1." in verifier_prompt
     assert "Candidate: candidate-1" in verifier_prompt
     assert "Rubric:" in verifier_prompt
@@ -848,7 +855,7 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
         graph_projection=_projection(summarizer_events),
         graph_events=summarizer_events,
     )
-    summarizer_prompt = _prompt_for_node(summarizer_context)
+    summarizer_prompt = _prompt_for_node(summarizer_context, catalog=build_graph_catalog())
     assert "Summarizer context packet:" in summarizer_prompt
     assert '"source_records"' in summarizer_prompt
     assert '"candidate-summary-source"' in summarizer_prompt
@@ -857,7 +864,7 @@ def test_prompt_routing_for_planner_worker_and_verifier() -> None:
     assert "worker_authority:" not in summarizer_prompt
 
 
-def test_verifier_prompt_is_bounded_for_oversized_rubric() -> None:
+def test_verifier_prompt_is_bounded_for_oversized_rubric(*, catalog: GraphCatalog) -> None:
     context = GraphDispatchContext(
         run_id="run-planner-packet",
         node_id="verifier-huge",
@@ -877,7 +884,7 @@ def test_verifier_prompt_is_bounded_for_oversized_rubric() -> None:
         dispatch_event_id="dispatch-verifier-huge",
     )
 
-    prompt = _prompt_for_node(context)
+    prompt = _prompt_for_node(context, catalog=build_graph_catalog())
 
     assert len(prompt) <= MAX_GRAPH_PROMPT_CHARS
     assert "Rubric:" in prompt
@@ -885,7 +892,7 @@ def test_verifier_prompt_is_bounded_for_oversized_rubric() -> None:
     assert "original_chars" in prompt
 
 
-def test_planner_packet_includes_dynamic_feature_inputs() -> None:
+def test_planner_packet_includes_dynamic_feature_inputs(*, catalog: GraphCatalog) -> None:
     context = _planner_context(_graph_events())
     context.node_payload["dynamic_feature"] = {
         "feature_spec_path": "docs/graph-approach/dynamic-smoke-feature-spec.md",
@@ -899,8 +906,8 @@ def test_planner_packet_includes_dynamic_feature_inputs() -> None:
         "Plan regions for docs/graph-approach/dynamic-smoke-feature-spec.md"
     )
 
-    packet = _planner_packet(context)
-    prompt = _prompt_for_node(context)
+    packet = _planner_packet(context, catalog=build_graph_catalog())
+    prompt = _prompt_for_node(context, catalog=build_graph_catalog())
 
     assert packet["dynamic_feature"]["feature_spec_path"] == (
         "docs/graph-approach/dynamic-smoke-feature-spec.md"
@@ -918,10 +925,10 @@ def test_planner_packet_includes_dynamic_feature_inputs() -> None:
     assert "dynamic_feature_hidden_oracle" in prompt
 
 
-def test_planner_packet_contract_fields_remain_stable() -> None:
+def test_planner_packet_contract_fields_remain_stable(*, catalog: GraphCatalog) -> None:
     events = _graph_events()
     context = _planner_context(events)
-    packet = _planner_packet(context)
+    packet = _planner_packet(context, catalog=build_graph_catalog())
 
     assert set(
         [
@@ -950,10 +957,12 @@ def test_planner_packet_contract_fields_remain_stable() -> None:
         assert isinstance(packet[entry], object)
 
 
-def test_gap_planner_packet_includes_gap_contract_and_corrective_examples() -> None:
+def test_gap_planner_packet_includes_gap_contract_and_corrective_examples(
+    *, catalog: GraphCatalog
+) -> None:
     events = _graph_events()
     context = _gap_planner_context(events)
-    packet = _planner_packet(context)
+    packet = _planner_packet(context, catalog=build_graph_catalog())
 
     assert packet["role"] == "gap_planner"
     assert packet["gap_analysis_contract"] == {
@@ -1003,7 +1012,7 @@ def test_gap_planner_packet_includes_gap_contract_and_corrective_examples() -> N
             assert node["task_region_id"] == "corrective_work_region"
 
 
-def test_gap_planner_packet_includes_blocking_obligations() -> None:
+def test_gap_planner_packet_includes_blocking_obligations(*, catalog: GraphCatalog) -> None:
     events = [
         *_graph_events(),
         _event(
@@ -1049,7 +1058,7 @@ def test_gap_planner_packet_includes_blocking_obligations() -> None:
             20,
         ),
     ]
-    packet = _planner_packet(_gap_planner_context(events))
+    packet = _planner_packet(_gap_planner_context(events), catalog=build_graph_catalog())
 
     assert packet["gap_analysis_obligations"] == [
         {

@@ -7,7 +7,12 @@ from orchestrator.graph.command_bindings import (
     check_command_uses_acceptance_fallback,
     resolve_check_command_definition,
 )
-from orchestrator.graph.commands import apply_command
+from orchestrator.graph.commands import (
+    RecordDecisionCommand,
+    SubmitPatchCommand,
+    SubmitPatchFields,
+    apply_command,
+)
 from orchestrator.graph.commands.file_state import (
     RecordCleanupAppliedCommand,
     RecordGatekeeperVerdictsCommand,
@@ -303,6 +308,9 @@ __all__ = [
     "VerifierVerdictProjection",
     "WorktreeStatus",
     "apply_command",
+    "RecordDecisionCommand",
+    "SubmitPatchCommand",
+    "SubmitPatchFields",
     "build_graph_command_dependencies",
     "build_projection",
     "check_command_reference",

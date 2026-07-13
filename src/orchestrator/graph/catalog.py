@@ -8,10 +8,15 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Protocol, TypeVar
 
+from pydantic import ValidationError
+
 from orchestrator.graph.models import EventEnvelope
+from orchestrator.graph.payloads import LegacyEventPayload
 from orchestrator.graph.specifications import (
     CommandSpecification,
     EventSpecification,
+    EventMetadata,
+    HydratedEvent,
     StoredEventEnvelope,
 )
 
@@ -93,6 +98,25 @@ class GraphCatalog:
             return self.command_specs[name]
         except KeyError as error:
             raise UnknownGraphCommandError(f"unknown graph command: {name}") from error
+
+    def hydrate_event(self, stored: StoredEventEnvelope) -> HydratedEvent:
+        """Hydrate one durable event through its owning specification."""
+
+        specification = self.event_specs.get(stored.event_type)
+        if specification is not None:
+            try:
+                return specification.hydrate(stored)
+            except ValidationError:
+                if stored.source_schema_version != 1:
+                    raise
+        if stored.source_schema_version == 1:
+            return HydratedEvent(
+                metadata=EventMetadata.model_validate(
+                    stored.model_dump(exclude={"payload", "source_schema_version"})
+                ),
+                payload=LegacyEventPayload(data=stored.payload),
+            )
+        raise UnknownGraphEventError(f"unknown graph event: {stored.event_type}")
 
     def reduce_stored_event(self, state: Any, event: EventEnvelope) -> tuple[bool, Any]:
         """Hydrate a catalog-owned event once; leave future-domain events to legacy projection."""

@@ -35,6 +35,8 @@ from orchestrator.runners import (
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.state.models import ActionLog, ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 @pytest.fixture
@@ -108,6 +110,8 @@ def _embedded_cost_routine() -> dict[str, object]:
 async def test_phase_handler_records_cost_and_interaction_logs_for_each_agent_execution(
     session_factory_fixture: async_sessionmaker[AsyncSession],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     phase_handler = PhaseHandler(
         AttemptStore(session_factory_fixture),
@@ -115,7 +119,7 @@ async def test_phase_handler_records_cost_and_interaction_logs_for_each_agent_ex
     )
 
     async with session_factory_fixture() as service_session:
-        service = WorkflowService(service_session)
+        service = WorkflowService(service_session, graph_catalog=build_graph_catalog())
         await service.create_run(_run_with_task())
         await service.apply_start_run("cost-run")
         await service.start_task("cost-run", "cost-task")
@@ -230,6 +234,8 @@ async def test_phase_handler_records_cost_and_interaction_logs_for_each_agent_ex
 async def test_phase_handler_records_recovering_cost_and_interaction_log_prompt(
     session_factory_fixture: async_sessionmaker[AsyncSession],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     phase_handler = PhaseHandler(
         AttemptStore(session_factory_fixture),
@@ -237,7 +243,7 @@ async def test_phase_handler_records_recovering_cost_and_interaction_log_prompt(
     )
 
     async with session_factory_fixture() as service_session:
-        service = WorkflowService(service_session)
+        service = WorkflowService(service_session, graph_catalog=build_graph_catalog())
         run = _run_with_task()
         run.routine_embedded = _embedded_cost_routine()
         await service.create_run(run)
@@ -316,6 +322,8 @@ async def test_phase_handler_records_recovering_cost_and_interaction_log_prompt(
 async def test_phase_handler_persists_per_model_cost_usage(
     session_factory_fixture: async_sessionmaker[AsyncSession],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     phase_handler = PhaseHandler(
         AttemptStore(session_factory_fixture),
@@ -323,7 +331,7 @@ async def test_phase_handler_persists_per_model_cost_usage(
     )
 
     async with session_factory_fixture() as service_session:
-        service = WorkflowService(service_session)
+        service = WorkflowService(service_session, graph_catalog=build_graph_catalog())
         await service.create_run(_run_with_task())
         await service.apply_start_run("cost-run")
         await service.start_task("cost-run", "cost-task")

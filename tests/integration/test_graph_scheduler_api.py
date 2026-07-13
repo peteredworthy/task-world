@@ -205,7 +205,9 @@ async def _seed_path_scoped_write_graph_run(app: Any, run_id: str) -> None:
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     await controller.handle_command(
         run_id,

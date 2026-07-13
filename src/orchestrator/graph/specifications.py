@@ -55,6 +55,7 @@ class StoredEventEnvelope(BaseModel):
     position: int
     event_type: str
     payload_schema_generation: int
+    source_schema_version: int | None = None
     actor: Actor
     causation_id: str | None = None
     correlation_id: str | None = None
@@ -69,6 +70,42 @@ class HydratedEvent(BaseModel):
 
     metadata: EventMetadata
     payload: SerializeAsAny[StrictPayload]
+
+    @property
+    def event_id(self) -> str:
+        return self.metadata.event_id
+
+    @property
+    def run_id(self) -> str:
+        return self.metadata.run_id
+
+    @property
+    def position(self) -> int:
+        return self.metadata.position
+
+    @property
+    def event_type(self) -> str:
+        return self.metadata.event_type
+
+    @property
+    def schema_version(self) -> int:
+        return self.metadata.payload_schema_generation
+
+    @property
+    def actor(self) -> Actor:
+        return self.metadata.actor
+
+    @property
+    def causation_id(self) -> str | None:
+        return self.metadata.causation_id
+
+    @property
+    def correlation_id(self) -> str | None:
+        return self.metadata.correlation_id
+
+    @property
+    def timestamp(self) -> datetime:
+        return self.metadata.timestamp
 
 
 class ProjectionParticipation(str, Enum):
@@ -156,7 +193,9 @@ class EventSpecification(Generic[PayloadT]):
         # Stored payloads are JSON-safe. Validating from JSON preserves strict
         # scalar rules while allowing JSON encodings of native types such as datetime.
         payload = self.payload_type.model_validate_json(json.dumps(stored.payload))
-        metadata = EventMetadata.model_validate(stored.model_dump(exclude={"payload"}))
+        metadata = EventMetadata.model_validate(
+            stored.model_dump(exclude={"payload", "source_schema_version"})
+        )
         return self.create(metadata, payload)
 
     def serialize(self, event: HydratedEvent) -> StoredEventEnvelope:

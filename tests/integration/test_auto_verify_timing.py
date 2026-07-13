@@ -24,6 +24,8 @@ from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow import InMemorySignalTransport
 
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 # ---------------------------------------------------------------------------
 # Fixtures / helpers
@@ -162,7 +164,7 @@ def _embedded_routine_with_auto_verify(cmd: str, must: bool = True) -> dict[str,
 
 @pytest.mark.asyncio
 async def test_failing_auto_verify_blocks_transition_even_with_done_checklist(
-    session: AsyncSession, tmp_path: Path
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """Failing must:true auto_verify blocks BUILDING->VERIFYING even when the
     builder has self-reported all checklist items as done.
@@ -171,7 +173,9 @@ async def test_failing_auto_verify_blocks_transition_even_with_done_checklist(
     checklist gate, so a builder cannot bypass it by pre-marking all items.
     """
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
 
     # 'false' always exits non-zero → must:true item will fail
     run = _make_run_with_auto_verify(str(tmp_path), auto_verify_cmd="false")
@@ -197,11 +201,13 @@ async def test_failing_auto_verify_blocks_transition_even_with_done_checklist(
 
 @pytest.mark.asyncio
 async def test_failing_auto_verify_never_bounces_through_verifying(
-    session: AsyncSession, tmp_path: Path
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """Failing must:true auto_verify should never emit BUILDING->VERIFYING->BUILDING."""
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
 
     run = _make_run_with_auto_verify(str(tmp_path), auto_verify_cmd="false")
     await service.create_run(run)
@@ -230,10 +236,14 @@ async def test_failing_auto_verify_never_bounces_through_verifying(
 
 
 @pytest.mark.asyncio
-async def test_passing_auto_verify_allows_transition(session: AsyncSession, tmp_path: Path) -> None:
+async def test_passing_auto_verify_allows_transition(
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     """When all must:true auto_verify items pass the transition proceeds to VERIFYING."""
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
 
     # 'echo ok' always exits zero → must:true item will pass
     run = _make_run_with_auto_verify(str(tmp_path), auto_verify_cmd="echo ok")

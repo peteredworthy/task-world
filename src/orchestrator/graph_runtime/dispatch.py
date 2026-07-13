@@ -11,7 +11,7 @@ import shutil
 import subprocess
 import tempfile
 from dataclasses import dataclass, field
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Literal, Protocol, cast
@@ -24,11 +24,12 @@ from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.graph import (
     CheckResultRecord,
     EventEnvelope,
+    HydratedEvent,
     GraphProjection,
     OutputRecordAcceptedPayload,
     RequirementRecord,
     StrictFileStateRecord,
-    build_graph_catalog,
+    StrictPayload,
     check_command_uses_acceptance_fallback,
     initial_projection,
     resolve_check_command_definition,
@@ -50,6 +51,7 @@ from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner, create_agent_runner
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 MAX_GRAPH_PROMPT_CHARS = _prompts.MAX_GRAPH_PROMPT_CHARS
 MAX_GRAPH_JSON_SECTION_CHARS = _prompts.MAX_GRAPH_JSON_SECTION_CHARS
@@ -174,6 +176,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         controller: GraphController,
         agent_factory: GraphAgentFactory,
         *,
+        catalog: GraphCatalog,
         worktree_path: str | Path,
         running_executions: dict[str, asyncio.Task[None]] | None = None,
         process_registry: GraphProcessRegistry | None = None,
@@ -185,6 +188,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self._session_factory = session_factory
         self._controller = controller
         self._agent_factory = agent_factory
+        self._catalog = catalog
         self._worktree_path = str(worktree_path)
         self._running = running_executions if running_executions is not None else {}
         self._process_registry = process_registry
@@ -379,10 +383,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
         async with self._session_factory() as session:
             events = await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                self._catalog,
             ).read_run(item.run_id)
 
-        projection = rebuild_projection(build_graph_catalog(), events)
+        projection = rebuild_projection(self._catalog, events)
         _guard_no_pending_compromised_file_state_bindings(projection, node_id)
         node_payload = _node_payload(events, node_id)
         node_kind = str(node_payload.get("kind", "worker"))
@@ -396,7 +400,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             node_kind=node_kind,
             node_role=_node_role(node_kind, node_payload),
             node_payload=node_payload,
-            requirements=_requirements_for_node(events, node_id),
+            requirements=_requirements_for_node(events, node_id, catalog=self._catalog),
             worktree_path=self._worktree_path,
             lease_id=str(payload["lease_id"]),
             lease_generation=_payload_int(payload, "generation"),
@@ -404,7 +408,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             base_snapshot_id=base_snapshot_id,
             dispatch_event_id=item.event_id,
             graph_projection=projection,
-            graph_events=list(events),
+            graph_events=[_legacy_envelope(event) for event in events],
         )
 
     def _execution_context(
@@ -413,7 +417,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         graph_patch_callback: Callable[[dict[str, Any]], Awaitable[str]] | None = None,
     ) -> ExecutionContext:
         node = context.node_payload
-        prompt = _prompt_for_node(context)
+        prompt = _prompt_for_node(context, catalog=self._catalog)
         return ExecutionContext(
             run_id=context.run_id,
             task_id=str(node.get("task_id") or node.get("task_region_id") or context.node_id),
@@ -440,7 +444,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "lease_id": context.lease_id,
                 "lease_generation": context.lease_generation,
                 "execution_id": context.execution_id,
-                "prompt_summary": _prompt_summary_for_node(context),
+                "prompt_summary": _prompt_summary_for_node(context, catalog=self._catalog),
             },
         )
 
@@ -692,15 +696,16 @@ class GraphDispatchExecutor(SideEffectExecutor):
         async with self._session_factory() as session:
             return await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                self._catalog,
             ).current_position(run_id)
 
     async def _events(self, run_id: str) -> list[EventEnvelope]:
         async with self._session_factory() as session:
-            return await GraphEventStore(
+            events = await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                self._catalog,
             ).read_run(run_id)
+        return [_legacy_envelope(event) for event in events]
 
     async def _record_gatekeeper_verdicts(
         self,
@@ -757,7 +762,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         if not isinstance(record_id, str):
             msg = f"cleanup_requested missing file_state_record_id: {cleanup_id}"
             raise ValueError(msg)
-        projection = rebuild_projection(build_graph_catalog(), events)
+        projection = rebuild_projection(self._catalog, events)
         compromised_record = projection["file_state_records"].get(record_id)
         if compromised_record is None:
             msg = f"unknown cleanup file_state record: {record_id}"
@@ -871,6 +876,7 @@ def build_graph_runtime(
     runner_config: dict[str, Any] | None = None,
     on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
     on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
+    catalog: GraphCatalog,
 ) -> tuple[GraphController, GraphDispatchExecutor]:
     """Assemble graph controller and dispatch executor without API imports."""
 
@@ -878,14 +884,15 @@ def build_graph_runtime(
         session_factory,
         clock,
         id_gen,
-        catalog=build_graph_catalog(),
+        catalog=catalog,
         auto_dispatch=False,
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(catalog).future_effects,
     )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         StaticGraphAgentFactory(runner_type, runner_config),
+        catalog=catalog,
         worktree_path=worktree_path,
         on_agent_output=on_agent_output,
         on_agent_usage=on_agent_usage,
@@ -893,17 +900,38 @@ def build_graph_runtime(
     return controller, executor
 
 
-def _node_payload(events: list[EventEnvelope], node_id: str) -> dict[str, Any]:
+def _node_payload(events: Sequence[EventEnvelope | HydratedEvent], node_id: str) -> dict[str, Any]:
     for event in events:
         if event.event_type != "node_created":
             continue
         if event.payload.get("node_id") == node_id:
-            return dict(event.payload)
+            return (
+                event.payload.to_json()
+                if isinstance(event.payload, StrictPayload)
+                else dict(event.payload)
+            )
     return {"node_id": node_id}
 
 
-def _requirements_for_node(events: list[EventEnvelope], node_id: str) -> list[str]:
-    projection = rebuild_projection(build_graph_catalog(), events)
+def _legacy_envelope(event: HydratedEvent) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=event.event_id,
+        run_id=event.run_id,
+        position=event.position,
+        event_type=event.event_type,
+        schema_version=event.schema_version,
+        actor=event.actor,
+        causation_id=event.causation_id,
+        correlation_id=event.correlation_id,
+        timestamp=event.timestamp,
+        payload=event.payload.to_json(),
+    )
+
+
+def _requirements_for_node(
+    events: Sequence[EventEnvelope | HydratedEvent], node_id: str, *, catalog: GraphCatalog
+) -> list[str]:
+    projection = rebuild_projection(catalog, events)
     _guard_no_pending_compromised_file_state_bindings(projection, node_id)
     bound_record_ids: set[str] = set()
     for port, binding in projection["input_bindings"].get(node_id, {}).items():
@@ -935,7 +963,9 @@ def _requirements_for_node(events: list[EventEnvelope], node_id: str) -> list[st
     if requirements:
         return requirements
 
-    dynamic_feature = _dynamic_feature_from_events(events)
+    dynamic_feature = _dynamic_feature_from_events(
+        [event if isinstance(event, EventEnvelope) else _legacy_envelope(event) for event in events]
+    )
     if dynamic_feature is not None:
         requirement = _dynamic_feature_acceptance_requirement(dynamic_feature)
         if requirement is not None:

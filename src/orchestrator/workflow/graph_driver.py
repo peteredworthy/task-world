@@ -22,7 +22,7 @@ from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktr
 from orchestrator.graph import (
     EnvironmentFailureProjection,
     EventEnvelope,
-    build_graph_catalog,
+    HydratedEvent,
     build_projection,
     project_leases,
     project_node_states,
@@ -45,6 +45,7 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 if TYPE_CHECKING:
     from orchestrator.workflow.service import WorkflowService
@@ -110,6 +111,7 @@ async def apply_graph_cancel_until_terminal(
     run_id: str,
     *,
     reason: str | None = None,
+    catalog: GraphCatalog,
 ) -> None:
     """Durably cancel graph runtime state before external callbacks can win.
 
@@ -121,9 +123,9 @@ async def apply_graph_cancel_until_terminal(
         session_factory,
         SystemClock(),
         UuidIdGenerator(),
-        catalog=build_graph_catalog(),
+        catalog=catalog,
         auto_dispatch=False,
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(catalog).future_effects,
     )
     payload: dict[str, object] = {}
     delay_seconds = 0.05
@@ -317,6 +319,7 @@ class GraphRunDriver:
         session_factory: async_sessionmaker[AsyncSession],
         create_service: Callable[[AsyncSession], Awaitable["WorkflowService"]],
         *,
+        catalog: GraphCatalog,
         clock: Clock | None = None,
         id_gen: IdGenerator | None = None,
         runtime_builder: Callable[..., tuple[GraphController, GraphDispatchExecutor]] | None = None,
@@ -331,6 +334,7 @@ class GraphRunDriver:
     ) -> None:
         self._session_factory = session_factory
         self._create_service = create_service
+        self._catalog = catalog
         self._clock = clock or SystemClock()
         self._id_gen = id_gen or UuidIdGenerator()
         self._runtime_builder = runtime_builder or build_graph_runtime
@@ -423,6 +427,7 @@ class GraphRunDriver:
                 source_path=run.routine_path,
                 source_ref=run.routine_commit,
                 run_config=seed_run_config,
+                catalog=self._catalog,
             )
             await self._bootstrap_graph_lifecycle(run_id)
         elif (
@@ -451,6 +456,7 @@ class GraphRunDriver:
             await self._clear_reopen_marker(run_id)
 
         runtime_kwargs: dict[str, Any] = {
+            "catalog": self._catalog,
             "worktree_path": Path(run.worktree_path),
             "runner_type": run.agent_runner_type,
             "runner_config": run.agent_runner_config,
@@ -479,7 +485,12 @@ class GraphRunDriver:
         # driver task.
         if not is_fresh:
             try:
-                report = await recover(self._session_factory, dispatcher, run_id=run_id)
+                report = await recover(
+                    self._session_factory,
+                    dispatcher,
+                    run_id=run_id,
+                    catalog=self._catalog,
+                )
                 await reconcile_graph(controller, run_id=run_id)
                 await reconcile_runtime(controller, executor, report)
             except Exception:
@@ -724,13 +735,13 @@ class GraphRunDriver:
         # run ACTIVE with no driver (see the graph_driver_crashed comment
         # below for the analogous risk in the main drive loop).
         events = await self._read_events(run_id)
-        run_state = project_run_state(build_graph_catalog(), events)
+        run_state = project_run_state(self._catalog, events)
         controller = GraphController(
             self._session_factory,
             self._clock,
             self._id_gen,
-            catalog=build_graph_catalog(),
-            future_effects=build_graph_command_dependencies().future_effects,
+            catalog=self._catalog,
+            future_effects=build_graph_command_dependencies(self._catalog).future_effects,
         )
         if run_state is None or run_state == "draft":
             await self._handle_command_at_head(controller, run_id, "accept_run")
@@ -755,15 +766,15 @@ class GraphRunDriver:
         failed kernel (mirrors _bootstrap_graph_lifecycle).
         """
         events = await self._read_events(run_id)
-        run_state = project_run_state(build_graph_catalog(), events)
+        run_state = project_run_state(self._catalog, events)
         if run_state not in {"failed", "resuming"}:
             return False
         controller = GraphController(
             self._session_factory,
             self._clock,
             self._id_gen,
-            catalog=build_graph_catalog(),
-            future_effects=build_graph_command_dependencies().future_effects,
+            catalog=self._catalog,
+            future_effects=build_graph_command_dependencies(self._catalog).future_effects,
         )
         payload: dict[str, object] = {"actor_role": "operator"}
         if run_state == "failed":
@@ -773,20 +784,21 @@ class GraphRunDriver:
 
     async def _read_projection(self, run_id: str) -> GraphProjectionSnapshot:
         events = await self._read_events(run_id)
-        return _snapshot_from_events(events)
+        return _snapshot_from_events(events, catalog=self._catalog)
 
     async def _read_events(self, run_id: str) -> list[EventEnvelope]:
         async with self._session_factory() as session:
-            return await GraphEventStore(
+            events = await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                self._catalog,
             ).read_run(run_id)
+        return [_legacy_graph_event(event) for event in events]
 
     async def _current_position(self, run_id: str) -> int:
         async with self._session_factory() as session:
             return await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                self._catalog,
             ).current_position(run_id)
 
     async def _get_run(self, run_id: str) -> Any:
@@ -1037,25 +1049,27 @@ def _align_datetime_timezone(value: datetime, reference: datetime) -> datetime:
     return value
 
 
-def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapshot:
+def _snapshot_from_events(
+    events: list[EventEnvelope], *, catalog: GraphCatalog
+) -> GraphProjectionSnapshot:
     # Fold once and reuse across every view below, instead of each project_*
     # call (plus a separate inline fold) re-folding the full event stream.
-    projection = build_projection(build_graph_catalog(), events)
-    leases = project_leases(build_graph_catalog(), events, projection=projection)
-    node_states = project_node_states(build_graph_catalog(), events, projection=projection)
+    projection = build_projection(catalog, events)
+    leases = project_leases(catalog, events, projection=projection)
+    node_states = project_node_states(catalog, events, projection=projection)
     active_leases = {
         lease_id: lease for lease_id, lease in leases.items() if lease.get("state") == "active"
     }
     return GraphProjectionSnapshot(
-        run_state=project_run_state(build_graph_catalog(), events, projection=projection),
-        ready_nodes=project_ready_nodes(build_graph_catalog(), events, projection=projection),
+        run_state=project_run_state(catalog, events, projection=projection),
+        ready_nodes=project_ready_nodes(catalog, events, projection=projection),
         active_leases=active_leases,
         schedulable_nodes=[
             node_id
             for node_id, state in node_states.items()
             if state in {"planned", "blocked", "ready"}
         ],
-        task_states=project_task_states(build_graph_catalog(), events, projection=projection),
+        task_states=project_task_states(catalog, events, projection=projection),
         node_states=node_states,
         failed_node_reasons=_failed_node_reasons(events),
         node_deferral_reasons=_node_deferral_reasons(events),
@@ -1065,6 +1079,21 @@ def _snapshot_from_events(events: list[EventEnvelope]) -> GraphProjectionSnapsho
             for task_region_id, failure in projection["environment_failures"].items()
         },
         node_max_attempts=_node_max_attempts(events),
+    )
+
+
+def _legacy_graph_event(event: HydratedEvent) -> EventEnvelope:
+    return EventEnvelope(
+        event_id=event.event_id,
+        run_id=event.run_id,
+        position=event.position,
+        event_type=event.event_type,
+        schema_version=event.schema_version,
+        actor=event.actor,
+        causation_id=event.causation_id,
+        correlation_id=event.correlation_id,
+        timestamp=event.timestamp,
+        payload=event.payload.to_json(),
     )
 
 

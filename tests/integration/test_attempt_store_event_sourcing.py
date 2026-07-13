@@ -33,6 +33,8 @@ from orchestrator.state.models import (
 )
 from orchestrator.workflow import deserialize_event
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 @pytest.fixture
@@ -79,10 +81,10 @@ def _run_with_task() -> Run:
 
 
 async def _create_started_attempt(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.create_run(_run_with_task())
         await service.apply_start_run("attempt-store-run")
         await service.start_task("attempt-store-run", "attempt-store-task")
@@ -112,10 +114,10 @@ async def _rebuild_read_models_from_events(session: AsyncSession) -> None:
 
 
 async def test_attempt_store_appends_events_and_projects_attempt_and_run_totals(
-    session_factory_fixture: async_sessionmaker[AsyncSession],
+    session_factory_fixture: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     session_factory = session_factory_fixture
-    await _create_started_attempt(session_factory)
+    await _create_started_attempt(session_factory, catalog=build_graph_catalog())
 
     store = AttemptStore(session_factory)
     await store.store_attempt_prompt(
@@ -181,10 +183,10 @@ async def test_attempt_store_appends_events_and_projects_attempt_and_run_totals(
 
 
 async def test_attempt_store_merges_token_usage_and_agent_metadata_via_events(
-    session_factory_fixture: async_sessionmaker[AsyncSession],
+    session_factory_fixture: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     session_factory = session_factory_fixture
-    await _create_started_attempt(session_factory)
+    await _create_started_attempt(session_factory, catalog=build_graph_catalog())
 
     store = AttemptStore(session_factory)
     await store.store_attempt_metrics(
@@ -222,10 +224,10 @@ async def test_attempt_store_merges_token_usage_and_agent_metadata_via_events(
 
 
 async def test_attempt_store_events_rebuild_attempt_and_run_read_models(
-    session_factory_fixture: async_sessionmaker[AsyncSession],
+    session_factory_fixture: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     session_factory = session_factory_fixture
-    await _create_started_attempt(session_factory)
+    await _create_started_attempt(session_factory, catalog=build_graph_catalog())
 
     store = AttemptStore(session_factory)
     await store.store_attempt_prompt(

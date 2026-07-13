@@ -26,6 +26,8 @@ from orchestrator.config.models import (
     TaskConfig,
 )
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -385,7 +387,7 @@ async def test_approve_step_audit_trail(
 
 @pytest.mark.asyncio
 async def test_executor_stops_at_human_approval_gate(
-    app: FastAPI,
+    app: FastAPI, *, catalog: GraphCatalog
 ) -> None:
     """Executor's _find_next_task returns blocked when step has unsatisfied human_approval gate."""
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
@@ -439,6 +441,7 @@ async def test_executor_stops_at_human_approval_gate(
             event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(
@@ -472,7 +475,7 @@ async def test_executor_stops_at_human_approval_gate(
 
 @pytest.mark.asyncio
 async def test_executor_proceeds_after_gate_approved(
-    app: FastAPI,
+    app: FastAPI, *, catalog: GraphCatalog
 ) -> None:
     """After human_approval gate is satisfied, _find_next_task returns the task."""
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
@@ -526,6 +529,7 @@ async def test_executor_proceeds_after_gate_approved(
             event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(
@@ -645,9 +649,7 @@ async def test_approve_step_respawns_agent_for_active_run(
 
 
 @pytest.mark.asyncio
-async def test_step_without_gate_not_blocked(
-    app: FastAPI,
-) -> None:
+async def test_step_without_gate_not_blocked(app: FastAPI, *, catalog: GraphCatalog) -> None:
     """Steps without a human_approval gate should not be blocked."""
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
 
@@ -695,6 +697,7 @@ async def test_step_without_gate_not_blocked(
             event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(

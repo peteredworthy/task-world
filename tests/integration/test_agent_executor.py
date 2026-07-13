@@ -23,6 +23,8 @@ from orchestrator.config import AgentRunnerType, RoutineSource, RunStatus
 from orchestrator.db import EventV2Model, init_db
 from orchestrator.db import RunRepository
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -104,11 +106,11 @@ async def session_factory(app: FastAPI) -> async_sessionmaker[AsyncSession]:
 
 
 @pytest.fixture
-async def service(app: FastAPI) -> AsyncGenerator[WorkflowService, None]:
+async def service(app: FastAPI, *, catalog: GraphCatalog) -> AsyncGenerator[WorkflowService, None]:
     """Create WorkflowService for tests."""
     sf: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with sf() as session:
-        yield WorkflowService(**_make_service_args(session))
+        yield WorkflowService(**_make_service_args(session), graph_catalog=build_graph_catalog())
 
 
 # ---------------------------------------------------------------------------
@@ -117,7 +119,7 @@ async def service(app: FastAPI) -> AsyncGenerator[WorkflowService, None]:
 
 
 async def test_executor_pauses_run_on_agent_not_available(
-    app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
+    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     """AgentNotAvailableError should pause the run."""
     executor = AgentRunnerExecutor(
@@ -130,7 +132,9 @@ async def test_executor_pauses_run_on_agent_not_available(
         from orchestrator.config import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
-        service = WorkflowService(**_make_service_args(session))
+        service = WorkflowService(
+            **_make_service_args(session), graph_catalog=build_graph_catalog()
+        )
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -162,6 +166,8 @@ async def test_executor_pauses_before_spawn_when_worktree_setup_fails(
     app: FastAPI,
     session_factory: async_sessionmaker[AsyncSession],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Missing source repo should pause before spawning an agent without a worktree."""
     from orchestrator.config.global_config import GlobalConfig, PathsConfig
@@ -183,7 +189,9 @@ async def test_executor_pauses_before_spawn_when_worktree_setup_fails(
         from orchestrator.config import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
-        service = WorkflowService(**_make_service_args(session))
+        service = WorkflowService(
+            **_make_service_args(session), graph_catalog=build_graph_catalog()
+        )
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -235,7 +243,7 @@ async def test_executor_pauses_before_spawn_when_worktree_setup_fails(
 
 
 async def test_executor_pauses_run_on_agent_execution_error(
-    app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
+    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     """AgentExecutionError should pause the run."""
     from orchestrator.config.global_config import GlobalConfig, NudgerConfig as GlobalNudgerConfig
@@ -259,7 +267,9 @@ async def test_executor_pauses_run_on_agent_execution_error(
         from orchestrator.config import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
-        service = WorkflowService(**_make_service_args(session))
+        service = WorkflowService(
+            **_make_service_args(session), graph_catalog=build_graph_catalog()
+        )
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -292,7 +302,7 @@ async def test_executor_pauses_run_on_agent_execution_error(
 
 
 async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
-    app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
+    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     """Non-zero subprocess exit should pause the run instead of retry-looping."""
     executor = AgentRunnerExecutor(
@@ -305,7 +315,9 @@ async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
         from orchestrator.config import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
-        service = WorkflowService(**_make_service_args(session))
+        service = WorkflowService(
+            **_make_service_args(session), graph_catalog=build_graph_catalog()
+        )
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -337,7 +349,7 @@ async def test_executor_pauses_run_when_agent_returns_unsuccessful_result(
 
 
 async def test_executor_pauses_when_agent_fails_to_complete_workflow(
-    app: FastAPI, session_factory: async_sessionmaker[AsyncSession]
+    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     """Executor should pause run when agent succeeds but workflow doesn't progress.
 
@@ -356,7 +368,9 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
         from orchestrator.config import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
-        service = WorkflowService(**_make_service_args(session))
+        service = WorkflowService(
+            **_make_service_args(session), graph_catalog=build_graph_catalog()
+        )
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -385,7 +399,11 @@ async def test_executor_pauses_when_agent_fails_to_complete_workflow(
 
 
 async def test_executor_persists_builder_prompt_before_execution(
-    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+    app: FastAPI,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Builder prompt should be persisted before agent execution starts."""
     executor = AgentRunnerExecutor(
@@ -398,7 +416,9 @@ async def test_executor_persists_builder_prompt_before_execution(
         from orchestrator.config import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
-        service = WorkflowService(**_make_service_args(session))
+        service = WorkflowService(
+            **_make_service_args(session), graph_catalog=build_graph_catalog()
+        )
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -439,7 +459,11 @@ async def test_executor_persists_builder_prompt_before_execution(
 
 
 async def test_agent_metadata_persisted_immediately(
-    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+    app: FastAPI,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Agent metadata (PID) should be persisted immediately when subprocess is created."""
     executor = AgentRunnerExecutor(
@@ -452,7 +476,9 @@ async def test_agent_metadata_persisted_immediately(
         from orchestrator.config import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
-        service = WorkflowService(**_make_service_args(session))
+        service = WorkflowService(
+            **_make_service_args(session), graph_catalog=build_graph_catalog()
+        )
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 
@@ -489,7 +515,11 @@ async def test_agent_metadata_persisted_immediately(
 
 
 async def test_agent_death_detection_on_startup(
-    app: FastAPI, session_factory: async_sessionmaker[AsyncSession], tmp_path: Path
+    app: FastAPI,
+    session_factory: async_sessionmaker[AsyncSession],
+    tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """On startup recovery, runs with dead agents should be paused."""
     executor1 = AgentRunnerExecutor(
@@ -502,7 +532,9 @@ async def test_agent_death_detection_on_startup(
         from orchestrator.config import discover_routines
         from orchestrator.state.factory import create_run_from_routine
 
-        service = WorkflowService(**_make_service_args(session))
+        service = WorkflowService(
+            **_make_service_args(session), graph_catalog=build_graph_catalog()
+        )
         routines = discover_routines([(FIXTURES, RoutineSource.LOCAL)])
         routine = next(r for r in routines if r.config.id == "simple-routine")
 

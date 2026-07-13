@@ -40,6 +40,7 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 class FixedClock:
@@ -175,17 +176,20 @@ async def file_db(
 async def test_file_state_boundary_accepts_residue_and_snapshots_captured_tree(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-accepted"
     _init_repo(repo)
     run_id = "file-state-accepted"
-    controller = await _seed_active_run(session_factory, run_id)
+    controller = await _seed_active_run(session_factory, run_id, catalog=build_graph_catalog())
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory(BoundaryFixtureAgent()),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
 
@@ -222,18 +226,21 @@ async def test_file_state_boundary_accepts_residue_and_snapshots_captured_tree(
 async def test_secret_file_state_rejection_releases_lease_and_retries_clean_attempt(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-secret"
     _init_repo(repo)
     run_id = "file-state-secret"
-    controller = await _seed_active_run(session_factory, run_id)
+    controller = await _seed_active_run(session_factory, run_id, catalog=build_graph_catalog())
     agent = SecretFixtureAgent()
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory(agent),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
 
@@ -276,18 +283,21 @@ async def test_secret_file_state_rejection_releases_lease_and_retries_clean_atte
 async def test_nested_secret_inside_ignored_directory_is_classified_and_not_snapshotted(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-nested-secret"
     _init_repo(repo)
     _append_gitignore_and_commit(repo, "secrets/")
     run_id = "file-state-nested-secret"
-    controller = await _seed_active_run(session_factory, run_id)
+    controller = await _seed_active_run(session_factory, run_id, catalog=build_graph_catalog())
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         AgentFactory(NestedIgnoredSecretAgent()),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
 
@@ -344,19 +354,27 @@ def test_symlinked_dir_inside_ignored_dir_is_classified_and_escape_rejected(
 
 
 async def _seed_active_run(
-    session_factory: async_sessionmaker[AsyncSession],
-    run_id: str,
+    session_factory: async_sessionmaker[AsyncSession], run_id: str, *, catalog: GraphCatalog
 ) -> GraphController:
     clock = FixedClock()
     ids = SequentialIds()
-    await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    await seed_run(
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+        catalog=build_graph_catalog(),
+    )
     controller = GraphController(
         session_factory,
         clock,
         ids,
         catalog=build_graph_catalog(),
         auto_dispatch=False,
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     position = await controller.current_position(run_id)
     accepted = await controller.handle_command(run_id, position, "accept_run")
@@ -538,6 +556,8 @@ class _UsageFixtureAgent:
 async def test_graph_dispatch_surfaces_agent_usage(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """The graph executor invokes the injected on_agent_usage callback with the
     execution result, so token/cost accounting can flow through the SAME shared
@@ -546,7 +566,7 @@ async def test_graph_dispatch_surfaces_agent_usage(
     repo = tmp_path / "repo-usage"
     _init_repo(repo)
     run_id = "graph-usage"
-    controller = await _seed_active_run(session_factory, run_id)
+    controller = await _seed_active_run(session_factory, run_id, catalog=build_graph_catalog())
 
     captured: list[ExecutionResult] = []
 
@@ -559,6 +579,7 @@ async def test_graph_dispatch_surfaces_agent_usage(
         AgentFactory(_UsageFixtureAgent()),
         worktree_path=repo,
         on_agent_usage=on_agent_usage,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
     await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)

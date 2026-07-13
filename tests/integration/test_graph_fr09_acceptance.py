@@ -21,6 +21,7 @@ from orchestrator.graph_runtime import (
 from orchestrator.runners import AgentRunner
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 BASE_SNAPSHOT_ID = "snapshot-fr09"
@@ -44,6 +45,8 @@ class _UnusedAgentFactory:
 async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less_used_nodes(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
@@ -57,7 +60,9 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     accepted = await controller.handle_command(
         run_id,
@@ -95,6 +100,7 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         controller,
         _UnusedAgentFactory(),
         worktree_path=tmp_path,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
     summarizer_context = await _capture_execution_context_from_pending_dispatch(
@@ -113,7 +119,9 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         _RunSeedIdGenerator(gap_run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     accepted_gap = await gap_controller.handle_command(
         gap_run_id,
@@ -150,6 +158,7 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         gap_controller,
         _UnusedAgentFactory(),
         worktree_path=tmp_path,
+        catalog=build_graph_catalog(),
     )
     gap_dispatcher = OutboxDispatcher(session_factory, gap_executor, clock)
     gap_context = await _capture_execution_context_from_pending_dispatch(

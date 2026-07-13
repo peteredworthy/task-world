@@ -26,6 +26,8 @@ from orchestrator.db import Base
 from orchestrator.db import create_session_factory
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 _TMP_DIR = Path(__file__).parent.parent.parent / "tmp"
@@ -113,7 +115,7 @@ async def _complete_task_via_service(service: WorkflowService, run_id: str, task
 
 
 async def test_recovery_state_persists_across_service_restart(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     """Completed task remains completed after service is re-instantiated from DB."""
     routine = _make_two_step_routine()
@@ -123,14 +125,14 @@ async def test_recovery_state_persists_across_service_restart(
 
     # --- Phase 1: service instance 1 ---
     async with session_factory() as session1:
-        svc1 = WorkflowService(session1)
+        svc1 = WorkflowService(session1, graph_catalog=build_graph_catalog())
         await svc1.create_run(run)
         await svc1.apply_start_run(run_id)
         await _complete_task_via_service(svc1, run_id, task1_id)
 
     # --- Phase 2: simulate restart — new service from same DB ---
     async with session_factory() as session2:
-        svc2 = WorkflowService(session2)
+        svc2 = WorkflowService(session2, graph_catalog=build_graph_catalog())
 
         # Load the run fresh from DB
         loaded = await svc2._repo.get(run_id)
@@ -153,7 +155,7 @@ async def test_recovery_state_persists_across_service_restart(
 
 
 async def test_recovery_can_continue_from_correct_step(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     """After restart, the second task can be started and completed normally."""
     routine = _make_two_step_routine()
@@ -164,14 +166,14 @@ async def test_recovery_can_continue_from_correct_step(
 
     # Phase 1: complete task 1 on service instance 1
     async with session_factory() as session1:
-        svc1 = WorkflowService(session1)
+        svc1 = WorkflowService(session1, graph_catalog=build_graph_catalog())
         await svc1.create_run(run)
         await svc1.apply_start_run(run_id)
         await _complete_task_via_service(svc1, run_id, task1_id)
 
     # Phase 2: restart — continue with task 2 on service instance 2
     async with session_factory() as session2:
-        svc2 = WorkflowService(session2)
+        svc2 = WorkflowService(session2, graph_catalog=build_graph_catalog())
         loaded = await svc2._repo.get(run_id)
 
         # Task 1 still completed, task 2 pending
@@ -191,7 +193,7 @@ async def test_recovery_can_continue_from_correct_step(
 
 
 async def test_recovery_task1_not_restarted_after_restart(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     """Reloading from DB does not create duplicate attempts for completed tasks."""
     routine = _make_two_step_routine()
@@ -201,14 +203,14 @@ async def test_recovery_task1_not_restarted_after_restart(
 
     # Complete task 1
     async with session_factory() as session1:
-        svc1 = WorkflowService(session1)
+        svc1 = WorkflowService(session1, graph_catalog=build_graph_catalog())
         await svc1.create_run(run)
         await svc1.apply_start_run(run_id)
         await _complete_task_via_service(svc1, run_id, task1_id)
 
     # After restart, verify task 1 has exactly one attempt
     async with session_factory() as session2:
-        svc2 = WorkflowService(session2)
+        svc2 = WorkflowService(session2, graph_catalog=build_graph_catalog())
         loaded = await svc2._repo.get(run_id)
         task1 = loaded.steps[0].tasks[0]
         assert task1.status == TaskStatus.COMPLETED

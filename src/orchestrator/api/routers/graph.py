@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Literal, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.api.deps import get_graph_store, get_session_factory, get_workflow_service
+from orchestrator.api.deps import (
+    get_graph_catalog,
+    get_graph_store,
+    get_session_factory,
+    get_workflow_service,
+)
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import RunStatus
 from orchestrator.db import GraphOutboxModel
@@ -21,8 +27,13 @@ from orchestrator.graph import (
     ActorKind,
     CompactEventEnvelope,
     EventEnvelope,
+    HydratedEvent,
     OutputRecordAcceptedPayload,
+    RecordDecisionCommand,
     RecordSelector,
+    SubmitPatchCommand,
+    SubmitPatchFields,
+    StrictPayload,
     build_projection,
     check_command_reference,
     project_final_invariant_blockers,
@@ -48,7 +59,8 @@ from orchestrator.graph_runtime.store import (
     GraphNodeDetailSummary,
 )
 from orchestrator.state import RunNotFoundError
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
 
@@ -198,36 +210,6 @@ class DecisionViewResponse(ApiModel):
     review: ReviewReadinessResponse
 
 
-class RecordGraphDecisionRequest(ApiModel):
-    decision_type: Literal["approval", "authority", "oversight"]
-    node_id: str = Field(min_length=1, max_length=200)
-    decision: str = Field(min_length=1, max_length=64)
-    decider: dict[str, Any] | str
-    scope: dict[str, Any] | None = None
-    expires_at: str | None = None
-    reason: str | None = None
-    record_id: str | None = Field(default=None, min_length=1, max_length=200)
-
-    @model_validator(mode="after")
-    def validate_decision_request(self) -> "RecordGraphDecisionRequest":
-        valid_by_type = {
-            "approval": {"approved", "rejected", "deferred"},
-            "authority": {"granted", "denied", "deferred"},
-            "oversight": {"accepted", "rejected", "invalid_test_accepted"},
-        }
-        valid = valid_by_type[self.decision_type]
-        if self.decision not in valid:
-            options = ", ".join(sorted(valid))
-            raise ValueError(f"decision for {self.decision_type} must be one of: {options}")
-        if isinstance(self.decider, str):
-            if not self.decider:
-                raise ValueError("decider must be a non-empty string or an actor object")
-            return self
-        if not isinstance(self.decider.get("kind"), str) or not self.decider["kind"]:
-            raise ValueError("decider actor object must include a non-empty kind")
-        return self
-
-
 class RecordGraphDecisionResponse(ApiModel):
     run_id: str
     graph_position: int
@@ -343,18 +325,11 @@ class GraphPatchAttemptsResponse(ApiModel):
     attempts: list[GraphPatchAttemptResponse]
 
 
-class SubmitGraphPatchRequest(ApiModel):
+class SubmitGraphPatchRequest(SubmitPatchFields):
     patch_id: str | None = Field(
         default=None, min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"
     )
     base_graph_position: int | None = Field(default=None, ge=0)
-    ops: list[dict[str, Any]]
-    rationale_record_id: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=200,
-        pattern=r"^[A-Za-z0-9_.:-]+$",
-    )
 
 
 class SubmitGraphPatchResponse(ApiModel):
@@ -411,7 +386,7 @@ class GraphRegionsResponse(ApiModel):
 
 
 def _event_to_response(
-    event: EventEnvelope,
+    event: EventEnvelope | HydratedEvent,
     *,
     payload_mode: Literal["full", "summary"] = "full",
 ) -> GraphEventResponse:
@@ -437,11 +412,11 @@ def _summary_to_response(event: GraphEventSummary) -> GraphEventResponse:
 
 
 def _event_payload(
-    event: EventEnvelope,
+    event: EventEnvelope | HydratedEvent,
     *,
     payload_mode: Literal["full", "summary"],
 ) -> dict[str, Any]:
-    payload = dict(event.payload)
+    payload = event.payload.to_json() if isinstance(event, HydratedEvent) else dict(event.payload)
     if payload_mode == "full":
         return payload
     return _summary_payload(payload)
@@ -510,8 +485,7 @@ def _summary_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def build_graph_projection_response(
-    run_id: str,
-    events: list[EventEnvelope],
+    run_id: str, events: list[EventEnvelope], *, catalog: GraphCatalog
 ) -> GraphProjectionResponse:
     if not events:
         return GraphProjectionResponse(
@@ -526,15 +500,15 @@ def build_graph_projection_response(
 
     # Fold once and reuse across every view below, instead of each project_*
     # call re-folding the full event stream from scratch.
-    projection = build_projection(build_graph_catalog(), events)
+    projection = build_projection(catalog, events)
     return GraphProjectionResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
-        run_state=project_run_state(build_graph_catalog(), events, projection=projection),
-        node_states=project_node_states(build_graph_catalog(), events, projection=projection),
-        task_states=project_task_states(build_graph_catalog(), events, projection=projection),
-        leases=project_leases(build_graph_catalog(), events, projection=projection),
-        ready_nodes=project_ready_nodes(build_graph_catalog(), events, projection=projection),
+        run_state=project_run_state(catalog, events, projection=projection),
+        node_states=project_node_states(catalog, events, projection=projection),
+        task_states=project_task_states(catalog, events, projection=projection),
+        leases=project_leases(catalog, events, projection=projection),
+        ready_nodes=project_ready_nodes(catalog, events, projection=projection),
     )
 
 
@@ -581,13 +555,12 @@ def _graph_api_run_state(
 
 
 def build_graph_topology_response(
-    run_id: str,
-    events: list[EventEnvelope],
+    run_id: str, events: list[EventEnvelope], *, catalog: GraphCatalog
 ) -> GraphTopologyResponse:
     if not events:
         return GraphTopologyResponse(run_id=run_id, event_count=0, nodes=[], edges=[])
 
-    topology = project_graph_topology(build_graph_catalog(), events)
+    topology = project_graph_topology(catalog, events)
     return GraphTopologyResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
@@ -602,7 +575,7 @@ def build_graph_topology_response(
 
 def build_graph_patch_attempts_response(
     run_id: str,
-    events: list[EventEnvelope],
+    events: Sequence[EventEnvelope | HydratedEvent],
     *,
     current_graph_position: int | None = None,
 ) -> GraphPatchAttemptsResponse:
@@ -625,13 +598,14 @@ def build_final_invariant_blockers_response(
     events: list[EventEnvelope],
     *,
     failed_outbox_rows: list[GraphOutboxModel] | None = None,
+    catalog: GraphCatalog,
 ) -> FinalInvariantBlockersResponse:
     return FinalInvariantBlockersResponse(
         run_id=run_id,
         event_count=max((event.position for event in events), default=0),
         blockers=[
             FinalInvariantBlockerResponse(**cast(dict[str, Any], blocker))
-            for blocker in project_final_invariant_blockers(build_graph_catalog(), events)
+            for blocker in project_final_invariant_blockers(catalog, events)
         ]
         + _failed_outbox_blocker_responses(run_id, failed_outbox_rows or []),
     )
@@ -675,17 +649,14 @@ async def append_requeue_audit_event(
 
 
 def build_graph_regions_response(
-    run_id: str,
-    events: list[EventEnvelope],
+    run_id: str, events: list[EventEnvelope], *, catalog: GraphCatalog
 ) -> GraphRegionsResponse:
     if not events:
         return GraphRegionsResponse(run_id=run_id, event_count=0, regions=[])
     # Fold once and reuse across both views below.
-    projection = build_projection(build_graph_catalog(), events)
-    task_states = project_task_states(build_graph_catalog(), events, projection=projection)
-    blockers = project_final_invariant_blockers(
-        build_graph_catalog(), events, projection=projection
-    )
+    projection = build_projection(catalog, events)
+    task_states = project_task_states(catalog, events, projection=projection)
+    blockers = project_final_invariant_blockers(catalog, events, projection=projection)
     blockers_by_region: dict[str, list[FinalInvariantBlockerResponse]] = {}
     for blocker in blockers:
         task_region_id = blocker.get("task_region_id")
@@ -710,8 +681,7 @@ def build_graph_regions_response(
 
 
 def build_scheduler_view_response(
-    run_id: str,
-    events: list[EventEnvelope],
+    run_id: str, events: list[EventEnvelope], *, catalog: GraphCatalog
 ) -> SchedulerViewResponse:
     if not events:
         return SchedulerViewResponse(
@@ -727,9 +697,9 @@ def build_scheduler_view_response(
         )
 
     # Fold once and reuse across both views below.
-    projection = build_projection(build_graph_catalog(), events)
-    scheduler_view = project_scheduler_view(build_graph_catalog(), events, projection=projection)
-    lease_view = project_lease_view(build_graph_catalog(), events, projection=projection)
+    projection = build_projection(catalog, events)
+    scheduler_view = project_scheduler_view(catalog, events, projection=projection)
+    lease_view = project_lease_view(catalog, events, projection=projection)
     return SchedulerViewResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
@@ -804,8 +774,7 @@ def build_scheduler_view_response_from_snapshot(
 
 
 def build_decision_view_response(
-    run_id: str,
-    events: list[EventEnvelope],
+    run_id: str, events: list[EventEnvelope], *, catalog: GraphCatalog
 ) -> DecisionViewResponse:
     if not events:
         return DecisionViewResponse(
@@ -816,7 +785,7 @@ def build_decision_view_response(
             review=ReviewReadinessResponse(ready=False, blockers=[]),
         )
 
-    view = project_decision_view(build_graph_catalog(), events)
+    view = project_decision_view(catalog, events)
     return DecisionViewResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
@@ -857,6 +826,8 @@ def build_decision_view_response_from_snapshot(
 
 
 def _payload_has_node_value(value: Any, node_id: str) -> bool:
+    if isinstance(value, StrictPayload):
+        return _payload_has_node_value(value.to_json(), node_id)
     if value == node_id:
         return True
     if isinstance(value, dict):
@@ -872,7 +843,9 @@ def _node_events_filter(event: EventEnvelope, node_id: str) -> bool:
     return _payload_has_node_value(event.payload, node_id)
 
 
-def _pick_output_records(events: list[EventEnvelope], node_id: str) -> list[dict[str, Any]]:
+def _pick_output_records(
+    events: Sequence[EventEnvelope | HydratedEvent], node_id: str
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for event in events:
         if event.event_type != "output_record_accepted":
@@ -901,7 +874,9 @@ def _pick_output_records(events: list[EventEnvelope], node_id: str) -> list[dict
     return records
 
 
-def _pick_file_state_records(events: list[EventEnvelope], node_id: str) -> list[dict[str, Any]]:
+def _pick_file_state_records(
+    events: Sequence[EventEnvelope | HydratedEvent], node_id: str
+) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for event in events:
         if event.event_type != "file_state_accepted":
@@ -909,7 +884,7 @@ def _pick_file_state_records(events: list[EventEnvelope], node_id: str) -> list[
         payload = event.payload
         if payload.get("producer_node_id") != node_id:
             continue
-        record = dict(payload)
+        record = payload.to_json() if isinstance(payload, StrictPayload) else dict(payload)
         record["classification_summary"] = _classification_summary(record)
         records.append(record)
     return records
@@ -1010,7 +985,7 @@ def _residue_by_record_path(
 
 
 def _gatekeeper_verdicts_by_record(
-    events: list[EventEnvelope],
+    events: Sequence[EventEnvelope | HydratedEvent],
 ) -> dict[str, list[FileStateGatekeeperVerdictResponse]]:
     by_record: dict[str, list[FileStateGatekeeperVerdictResponse]] = {}
     for event in events:
@@ -1130,13 +1105,12 @@ def _file_state_boundary_response(
 
 
 def build_file_state_report_response(
-    run_id: str,
-    events: list[EventEnvelope],
+    run_id: str, events: Sequence[EventEnvelope | HydratedEvent], *, catalog: GraphCatalog
 ) -> FileStateReportResponse:
     if not events:
         return FileStateReportResponse(run_id=run_id, event_count=0, nodes=[], gatekeeper=None)
 
-    residue_report = project_residue_report(build_graph_catalog(), events)
+    residue_report = project_residue_report(catalog, events)
     gatekeeper_report = project_gatekeeper_report(events).get(run_id)
     residue_by_path = _residue_by_record_path(residue_report)
     gatekeeper_verdicts = _gatekeeper_verdicts_by_record(events)
@@ -1145,7 +1119,9 @@ def build_file_state_report_response(
         if event.event_type != "file_state_accepted":
             continue
         boundary = _file_state_boundary_response(
-            dict(event.payload),
+            event.payload.to_json()
+            if isinstance(event.payload, StrictPayload)
+            else dict(event.payload),
             residue_by_path,
             gatekeeper_verdicts,
         )
@@ -1180,6 +1156,16 @@ def _is_callback_history_event(event: EventEnvelope) -> bool:
     )
 
 
+def _response_lease(lease: dict[str, Any] | None) -> dict[str, Any] | None:
+    if lease is None:
+        return None
+    result = dict(lease)
+    expires_at = result.get("expires_at")
+    if isinstance(expires_at, str) and expires_at.endswith("+00:00"):
+        result["expires_at"] = f"{expires_at[:-6]}Z"
+    return result
+
+
 def _active_lease_for_node(
     leases: dict[str, dict[str, Any]], node_id: str
 ) -> dict[str, Any] | None:
@@ -1188,9 +1174,9 @@ def _active_lease_for_node(
         if lease.get("node_id") != node_id:
             continue
         if lease.get("state") == "active":
-            return dict(lease)
+            return _response_lease(lease)
         if active is None:
-            active = dict(lease)
+            active = _response_lease(lease)
     return active
 
 
@@ -1200,16 +1186,17 @@ def build_node_detail_response(
     events: list[EventEnvelope],
     *,
     payload_mode: Literal["full", "summary"] = "full",
+    catalog: GraphCatalog,
 ) -> NodeDetailResponse | None:
     node_events = [event for event in events if _node_events_filter(event, node_id)]
     if not node_events:
         return None
 
     # Fold once and reuse across every view below.
-    projection = build_projection(build_graph_catalog(), events)
-    node_states = project_node_states(build_graph_catalog(), events, projection=projection)
-    node_metadata = project_node_metadata(build_graph_catalog(), events, projection=projection)
-    leases = project_leases(build_graph_catalog(), events, projection=projection)
+    projection = build_projection(catalog, events)
+    node_states = project_node_states(catalog, events, projection=projection)
+    node_metadata = project_node_metadata(catalog, events, projection=projection)
+    leases = project_leases(catalog, events, projection=projection)
     state = node_states.get(node_id)
     metadata = node_metadata.get(node_id, {})
     output_records = _pick_output_records(events, node_id)
@@ -1284,7 +1271,7 @@ def _node_detail_event_to_response(
 def build_node_detail_response_from_summary(
     summary: GraphNodeDetailSummary,
     *,
-    full_events: list[EventEnvelope] | None = None,
+    full_events: Sequence[EventEnvelope | HydratedEvent] | None = None,
 ) -> NodeDetailResponse:
     controls = _node_detail_controls_from_summary(summary)
     response_events = [GraphEventResponse(**event) for event in summary.events]
@@ -1315,7 +1302,7 @@ def build_node_detail_response_from_summary(
         input_ports=summary.input_ports,
         output_records=output_records,
         file_state_records=file_state_records,
-        active_lease=summary.active_lease,
+        active_lease=_response_lease(summary.active_lease),
         callback_history=callback_history,
         events=response_events,
         prompt_summary=summary.prompt_summary,
@@ -1324,7 +1311,7 @@ def build_node_detail_response_from_summary(
 
 def _full_node_event_responses(
     compact_events: list[dict[str, Any]],
-    full_events: list[EventEnvelope],
+    full_events: Sequence[EventEnvelope | HydratedEvent],
 ) -> list[GraphEventResponse]:
     full_by_position = {event.position: event for event in full_events}
     responses: list[GraphEventResponse] = []
@@ -1338,7 +1325,9 @@ def _full_node_event_responses(
     return responses
 
 
-def _node_detail_full_event_response(event: EventEnvelope) -> GraphEventResponse:
+def _node_detail_full_event_response(
+    event: EventEnvelope | HydratedEvent,
+) -> GraphEventResponse:
     return GraphEventResponse(
         event_id=event.event_id,
         event_type=event.event_type,
@@ -1349,7 +1338,9 @@ def _node_detail_full_event_response(event: EventEnvelope) -> GraphEventResponse
     )
 
 
-def _node_detail_full_event_payload(event: EventEnvelope) -> dict[str, Any]:
+def _node_detail_full_event_payload(
+    event: EventEnvelope | HydratedEvent,
+) -> dict[str, Any]:
     payload = dict(event.payload)
     if event.event_type in {
         "callback_accepted",
@@ -1635,12 +1626,14 @@ async def get_graph_projection(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
     service: Any = Depends(get_workflow_service),
+    *,
+    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> GraphProjectionResponse:
     snapshot = await graph_store.read_projection_snapshot(run_id)
     await graph_store.commit_read_model_changes()
     response = build_graph_projection_response_from_snapshot(run_id, snapshot)
     projection_events = await graph_store.read_run_projection(run_id)
-    projected_task_states = project_task_states(build_graph_catalog(), projection_events)
+    projected_task_states = project_task_states(catalog, projection_events)
     try:
         run = await service.get_run(run_id)
     except RunNotFoundError:
@@ -1660,9 +1653,11 @@ async def get_graph_projection(
 async def get_graph_topology(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
+    *,
+    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> GraphTopologyResponse:
     events = await graph_store.read_run_light(run_id)
-    return build_graph_topology_response(run_id, events)
+    return build_graph_topology_response(run_id, events, catalog=catalog)
 
 
 @router.get("/{run_id}/graph/patches", response_model=GraphPatchAttemptsResponse)
@@ -1689,38 +1684,37 @@ async def submit_operator_graph_patch(
     request: SubmitGraphPatchRequest,
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
     graph_store: GraphEventStore = Depends(get_graph_store),
+    *,
+    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> SubmitGraphPatchResponse:
     current_position = await graph_store.current_position(run_id)
     if current_position == 0:
         raise HTTPException(status_code=404, detail="Graph not found for run")
 
     patch_id = request.patch_id or f"operator-patch-{uuid4().hex}"
-    payload = request.model_dump(exclude_none=True)
-    payload.update(
-        {
-            "run_id": run_id,
-            "patch_id": patch_id,
-            "base_graph_position": request.base_graph_position
-            if request.base_graph_position is not None
-            else current_position,
-            "actor_role": "human",
-            "proposed_by_node_id": "human-operator",
-        }
+    command = SubmitPatchCommand(
+        **request.model_dump(exclude={"patch_id", "base_graph_position"}),
+        patch_id=patch_id,
+        base_graph_position=request.base_graph_position
+        if request.base_graph_position is not None
+        else current_position,
+        actor_role="human",
+        proposed_by_node_id="human-operator",
     )
     controller = GraphController(
         session_factory,
         _ApiGraphClock(),
         _ApiGraphIdGenerator(),
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(catalog).future_effects,
     )
     try:
         result = await controller.handle_command(
             run_id,
             current_position,
             "submit_patch",
-            payload,
+            cast(dict[str, object], command.to_json()),
         )
     except StaleProjectionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1751,6 +1745,8 @@ async def get_graph_final_blockers(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+    *,
+    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> FinalInvariantBlockersResponse:
     events = await graph_store.read_run_light(run_id)
     async with session_factory() as session:
@@ -1762,9 +1758,7 @@ async def get_graph_final_blockers(
         )
         failed_outbox_rows = list(result.scalars())
     return build_final_invariant_blockers_response(
-        run_id,
-        events,
-        failed_outbox_rows=failed_outbox_rows,
+        run_id, events, failed_outbox_rows=failed_outbox_rows, catalog=catalog
     )
 
 
@@ -1776,6 +1770,8 @@ async def requeue_failed_outbox_row(
     run_id: str = ApiPath(..., min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"),
     event_id: str = ApiPath(..., min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
+    *,
+    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> RequeueOutboxResponse:
     clock = _ApiGraphClock()
     async with session_factory() as session:
@@ -1793,7 +1789,7 @@ async def requeue_failed_outbox_row(
 
             store = GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             )
             current_position = await store.current_position(run_id)
             if current_position == 0:
@@ -1847,9 +1843,11 @@ async def requeue_failed_outbox_row(
 async def get_graph_regions(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
+    *,
+    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> GraphRegionsResponse:
     events = await graph_store.read_run_light(run_id)
-    return build_graph_regions_response(run_id, events)
+    return build_graph_regions_response(run_id, events, catalog=catalog)
 
 
 @router.get("/{run_id}/graph/events", response_model=list[GraphEventResponse])
@@ -1876,9 +1874,11 @@ async def get_graph_events(
 async def get_graph_scheduler_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
+    *,
+    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> SchedulerViewResponse:
     events = await graph_store.read_run_light(run_id)
-    return build_scheduler_view_response(run_id, events)
+    return build_scheduler_view_response(run_id, events, catalog=catalog)
 
 
 @router.get(
@@ -1889,9 +1889,11 @@ async def get_graph_scheduler_view(
 async def get_graph_decision_view(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
+    *,
+    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> DecisionViewResponse:
     events = await graph_store.read_run_light(run_id)
-    return build_decision_view_response(run_id, events)
+    return build_decision_view_response(run_id, events, catalog=catalog)
 
 
 @router.post(
@@ -1901,9 +1903,11 @@ async def get_graph_decision_view(
 )
 async def record_graph_decision(
     run_id: str,
-    request: RecordGraphDecisionRequest,
+    request: RecordDecisionCommand,
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
     graph_store: GraphEventStore = Depends(get_graph_store),
+    *,
+    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> RecordGraphDecisionResponse:
     current_position = await graph_store.current_position(run_id)
     if current_position == 0:
@@ -1914,15 +1918,15 @@ async def record_graph_decision(
         _ApiGraphClock(),
         _ApiGraphIdGenerator(),
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(catalog).future_effects,
     )
     try:
         result = await controller.handle_command(
             run_id,
             current_position,
             "record_decision",
-            request.model_dump(exclude_none=True),
+            cast(dict[str, object], request.to_json()),
         )
     except StaleProjectionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1934,7 +1938,7 @@ async def record_graph_decision(
 
     response_events = list(result.events)
     events = await graph_store.read_run_light(run_id)
-    if project_run_state(build_graph_catalog(), events) == "active":
+    if project_run_state(catalog, events) == "active":
         schedule_result = await controller.handle_command(
             run_id,
             result.projection_position,
@@ -1952,7 +1956,7 @@ async def record_graph_decision(
         run_id=run_id,
         graph_position=len(events),
         events=[_event_to_response(event) for event in response_events],
-        decision_view=build_decision_view_response(run_id, events),
+        decision_view=build_decision_view_response(run_id, events, catalog=catalog),
     )
 
 
@@ -1960,9 +1964,11 @@ async def record_graph_decision(
 async def get_graph_file_state_report(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
+    *,
+    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> FileStateReportResponse:
     events = await graph_store.read_run(run_id)
-    return build_file_state_report_response(run_id, events)
+    return build_file_state_report_response(run_id, events, catalog=catalog)
 
 
 @router.get("/{run_id}/graph/nodes/{node_id}", response_model=NodeDetailResponse)

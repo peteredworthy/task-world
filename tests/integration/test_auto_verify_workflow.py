@@ -23,6 +23,8 @@ from orchestrator.workflow.service import (
     find_task_config,
     resolve_auto_verify_config,
 )
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 @pytest.fixture
@@ -354,10 +356,14 @@ class TestResolveAutoVerifyConfig:
 # --- Integration tests with real DB and subprocess ---
 
 
-async def test_submit_without_auto_verify_unchanged(session: AsyncSession, tmp_path: Path) -> None:
+async def test_submit_without_auto_verify_unchanged(
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     """When no auto_verify config, submit_for_verification works as before."""
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
 
     run = _make_run_without_auto_verify(str(tmp_path))
     await service.create_run(run)
@@ -374,10 +380,14 @@ async def test_submit_without_auto_verify_unchanged(session: AsyncSession, tmp_p
     assert task.status == TaskStatus.VERIFYING
 
 
-async def test_submit_with_passing_auto_verify(session: AsyncSession, tmp_path: Path) -> None:
+async def test_submit_with_passing_auto_verify(
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     """When auto_verify items all pass, task stays in VERIFYING."""
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
 
     run = _make_run_with_auto_verify(
         str(tmp_path),
@@ -404,11 +414,15 @@ async def test_submit_with_passing_auto_verify(session: AsyncSession, tmp_path: 
     assert task.attempts[0].auto_verify_results[1]["passed"] is True
 
 
-async def test_submit_with_failing_must_auto_verify(session: AsyncSession, tmp_path: Path) -> None:
+async def test_submit_with_failing_must_auto_verify(
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     """When auto_verify must-items fail before the gate, the task stays BUILDING
     with feedback — no GateBlockedError, no transition to VERIFYING."""
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
 
     run = _make_run_with_auto_verify(
         str(tmp_path),
@@ -446,11 +460,13 @@ async def test_submit_with_failing_must_auto_verify(session: AsyncSession, tmp_p
 
 
 async def test_submit_with_failing_non_must_still_verifying(
-    session: AsyncSession, tmp_path: Path
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """When only non-must auto_verify items fail, task stays in VERIFYING."""
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
 
     run = _make_run_with_auto_verify(
         str(tmp_path),
@@ -475,10 +491,14 @@ async def test_submit_with_failing_non_must_still_verifying(
     assert task.attempts[0].auto_verify_results[1]["passed"] is False
 
 
-async def test_auto_verify_events_emitted(session: AsyncSession, tmp_path: Path) -> None:
+async def test_auto_verify_events_emitted(
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     """Auto-verify emits an AutoVerifyCompleted event."""
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
 
     run = _make_run_with_auto_verify(
         str(tmp_path),
@@ -503,11 +523,15 @@ async def test_auto_verify_events_emitted(session: AsyncSession, tmp_path: Path)
     assert av_payload["task_id"] == "task-1"
 
 
-async def test_auto_verify_failure_events(session: AsyncSession, tmp_path: Path) -> None:
+async def test_auto_verify_failure_events(
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     """When pre-gate auto-verify fails, AutoVerifyCompleted event is emitted
     and the task stays in BUILDING (no GateBlockedError)."""
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
 
     run = _make_run_with_auto_verify(
         str(tmp_path),
@@ -541,10 +565,12 @@ async def test_auto_verify_failure_events(session: AsyncSession, tmp_path: Path)
     assert av_payload["failing_must_items"] == ["check1"]
 
 
-async def test_no_runner_skips_auto_verify(session: AsyncSession, tmp_path: Path) -> None:
+async def test_no_runner_skips_auto_verify(
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     """When no auto_verify_runner is set, auto-verify is skipped even with config."""
     # Create service WITHOUT a runner
-    service = WorkflowService(session)
+    service = WorkflowService(session, graph_catalog=build_graph_catalog())
 
     run = _make_run_with_auto_verify(
         str(tmp_path),
@@ -561,7 +587,9 @@ async def test_no_runner_skips_auto_verify(session: AsyncSession, tmp_path: Path
     assert result.new_status == TaskStatus.VERIFYING
 
 
-async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: Path) -> None:
+async def test_auto_verify_revision_then_pass(
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     """Full cycle: pre-gate auto-verify blocks, fix, auto-verify passes, complete."""
     from orchestrator.config import AgentRunnerType
 
@@ -576,7 +604,9 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
     script.chmod(0o755)
 
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
 
     run = _make_run_with_auto_verify(
         str(tmp_path),
@@ -633,7 +663,7 @@ async def test_auto_verify_revision_then_pass(session: AsyncSession, tmp_path: P
 
 
 async def test_auto_verify_results_persist_across_sessions(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """Auto-verify results survive across separate database sessions."""
     db_path = tmp_path / "test_av.db"
@@ -645,7 +675,9 @@ async def test_auto_verify_results_persist_across_sessions(
 
     async with factory1() as session1:
         runner = LocalAutoVerifyRunner()
-        service1 = WorkflowService(session1, auto_verify_runner=runner)
+        service1 = WorkflowService(
+            session1, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+        )
 
         run = _make_run_with_auto_verify(
             str(tmp_path),
@@ -664,7 +696,7 @@ async def test_auto_verify_results_persist_across_sessions(
     factory2 = create_session_factory(engine2)
 
     async with factory2() as session2:
-        service2 = WorkflowService(session2)
+        service2 = WorkflowService(session2, graph_catalog=build_graph_catalog())
         task = await service2.get_task("run-av", "task-1")
         assert task.status == TaskStatus.VERIFYING
         assert len(task.attempts[0].auto_verify_results) == 1

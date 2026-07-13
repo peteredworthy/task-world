@@ -40,11 +40,14 @@ from orchestrator.state.models import (
 )
 from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow import derive_output_path, resolve_template
+from orchestrator.graph import build_graph_catalog
 
 
-async def _minimal_service_factory(session: AsyncSession) -> WorkflowService:
+async def _minimal_service_factory(
+    session: AsyncSession,
+) -> WorkflowService:
     """Minimal WorkflowService factory for test executor subclasses."""
-    return WorkflowService(session)
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
@@ -194,7 +197,7 @@ class TestFanOutExpansion:
         routine = _load_routine("fan-out-test")
         run = _make_fan_out_run(routine, str(tmp_path))
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
@@ -259,7 +262,7 @@ class TestFanOutExpansion:
 
         routine = _load_routine("fan-out-test")
         run = _make_fan_out_run(routine, str(tmp_path))
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         repo = RunRepository(session)
         await save_run(repo.session, run)
         await session.commit()
@@ -327,7 +330,7 @@ class TestFanOutExpansion:
         run.status = RunStatus.ACTIVE
         run.worktree_path = str(tmp_path)
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         repo = RunRepository(session)
         await save_run(repo.session, run)
         await session.commit()
@@ -353,7 +356,7 @@ class TestFanOutExpansion:
         routine = _load_routine("fan-out-test")
         run = _make_fan_out_run(routine, str(tmp_path))
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
@@ -383,7 +386,7 @@ class TestScriptExecution:
         routine = _load_routine("script-test")
         run = _make_script_run(routine, str(tmp_path))
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
@@ -431,7 +434,7 @@ class TestScriptExecution:
         )
         run = _make_script_run(routine, str(tmp_path), run_id="run-fail")
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
@@ -490,7 +493,7 @@ class TestScriptExecution:
         run.status = RunStatus.ACTIVE
         run.worktree_path = str(tmp_path)
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
@@ -526,7 +529,7 @@ class TestChildTaskStateManagement:
         output_dir.mkdir()
         (output_dir / "step-01.md").write_text("file 1")
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
@@ -602,7 +605,7 @@ class TestChildTaskStateManagement:
         output_dir.mkdir()
         (output_dir / "step-01.md").write_text("file 1")
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         repo = RunRepository(session)
         await save_run(repo.session, run)
         await session.commit()
@@ -670,7 +673,7 @@ class TestChildTaskStateManagement:
         output_dir.mkdir()
         (output_dir / "step-01.md").write_text("file 1")
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         repo = RunRepository(session)
         await save_run(repo.session, run)
         await session.commit()
@@ -708,7 +711,7 @@ class TestChildTaskStateManagement:
         (output_dir / "step-02.md").write_text("file 2")
 
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             repo = RunRepository(session)
             await save_run(repo.session, run)
             await session.commit()
@@ -720,7 +723,7 @@ class TestChildTaskStateManagement:
 
         async def complete_child(child_id: str) -> None:
             async with session_factory() as child_session:
-                child_service = WorkflowService(child_session)
+                child_service = WorkflowService(child_session, graph_catalog=build_graph_catalog())
                 await child_service.update_child_task_state(
                     run.id,
                     child_id,
@@ -734,7 +737,7 @@ class TestChildTaskStateManagement:
         await asyncio.gather(*(complete_child(child.id) for child in children))
 
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             repo = RunRepository(session)
             reloaded = await repo.get(run.id)
             child_ids = {child.id for child in children}
@@ -773,7 +776,7 @@ class TestChildTaskStateManagement:
         output_dir.mkdir()
         (output_dir / "step-01.md").write_text("file 1")
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         repo = RunRepository(session)
         await save_run(repo.session, run)
         await session.commit()
@@ -825,7 +828,7 @@ class TestChildTaskStateManagement:
         output_dir.mkdir()
         (output_dir / "step-01.md").write_text("file 1")
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         repo = RunRepository(session)
         await save_run(repo.session, run)
         await session.commit()
@@ -870,7 +873,7 @@ class TestChildTaskStateManagement:
         output_dir.mkdir()
         (output_dir / "step-01.md").write_text("file 1")
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         repo = RunRepository(session)
         await save_run(repo.session, run)
         await session.commit()
@@ -925,7 +928,7 @@ class TestChildTaskStateManagement:
         (output_dir / "step-01.md").write_text("file 1")
         (output_dir / "step-02.md").write_text("file 2")
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         repo = RunRepository(session)
         await save_run(repo.session, run)
         await session.commit()
@@ -969,7 +972,7 @@ class TestChildTaskStateManagement:
         (output_dir / "step-01.md").write_text("file 1")
         (output_dir / "step-02.md").write_text("file 2")
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         from orchestrator.db import RunRepository
 
         repo = RunRepository(session)
@@ -1033,7 +1036,7 @@ class TestChildTaskStateManagement:
         output_dir.mkdir()
         (output_dir / "step-01.md").write_text("file 1")
 
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         repo = RunRepository(session)
         await save_run(repo.session, run)
         await session.commit()
@@ -1141,7 +1144,7 @@ class TestFanOutRegression:
         executor = _FanOutExecutor(session_factory)
 
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             persisted_run = await service.get_run(run.id)
             parent_task = persisted_run.steps[0].tasks[0]
             await executor._execute_task(
@@ -1153,7 +1156,7 @@ class TestFanOutRegression:
             )
 
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             detail = await get_task_detail(run.id, parent_task.id, service)
             assert detail.current_attempt == 1
             assert len(detail.attempts) == 1
@@ -1167,7 +1170,7 @@ class TestFanOutRegression:
             assert "fan-out" in parent_logs.output.lower()
 
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             persisted_run = await service.get_run(run.id)
             children = [
                 task
@@ -1195,7 +1198,7 @@ class TestFanOutRegression:
             )
 
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             parent = await service.get_task(run.id, parent_task.id)
             assert parent.status == TaskStatus.COMPLETED
             assert parent.current_attempt == 1
@@ -1284,7 +1287,7 @@ class TestFanOutRegression:
 
         # Execute the fan-out task (all 6 children run concurrently)
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             persisted_run = await service.get_run(run.id)
             parent_task = persisted_run.steps[0].tasks[0]
             await executor._execute_task(
@@ -1297,7 +1300,7 @@ class TestFanOutRegression:
 
         # Verify: all 3 children persisted with correct state
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             persisted_run = await service.get_run(run.id)
             children = [
                 task
@@ -1363,7 +1366,11 @@ class TestFanOutRegression:
         await save_run(repo.session, run)
         await session.commit()
 
-        detail = await get_task_detail(run.id, run.steps[1].tasks[0].id, WorkflowService(session))
+        detail = await get_task_detail(
+            run.id,
+            run.steps[1].tasks[0].id,
+            WorkflowService(session, graph_catalog=build_graph_catalog()),
+        )
         assert detail.status == TaskStatus.COMPLETED.value
         assert detail.fan_out_children == []
 
@@ -1429,7 +1436,7 @@ class TestFanOutRegression:
         executor = _FanOutExecutor(session_factory)
 
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             persisted_run = await service.get_run(run.id)
             parent_task = persisted_run.steps[0].tasks[0]
             await executor._execute_task(
@@ -1441,7 +1448,7 @@ class TestFanOutRegression:
             )
 
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             parent = await service.get_task(run.id, parent_task.id)
             assert parent.status == TaskStatus.VERIFYING
             assert parent.current_attempt == 1
@@ -1543,7 +1550,7 @@ class TestFanOutRegression:
                     output_path.write_text(f"processed {output_rel}")
                     # Now pause the run so subsequent children can't start
                     async with session_factory() as sess:
-                        svc = WorkflowService(sess)
+                        svc = WorkflowService(sess, graph_catalog=build_graph_catalog())
                         await svc.apply_pause_run("run-pause", reason="test_pause")
                         await sess.commit()
                     return ExecutionResult(success=True, output_lines=[f"built {output_rel}"])
@@ -1553,7 +1560,9 @@ class TestFanOutRegression:
         class _PausingExecutor(AgentRunnerExecutor):
             def __init__(self, sf: async_sessionmaker[AsyncSession]) -> None:
                 super().__init__(
-                    session_factory=sf, service_factory=_minimal_service_factory, spawn_agents=False
+                    session_factory=sf,
+                    service_factory=_minimal_service_factory,
+                    spawn_agents=False,
                 )
                 self._agent = _PausingAgent()
 
@@ -1563,7 +1572,7 @@ class TestFanOutRegression:
         executor = _PausingExecutor(session_factory)
 
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             persisted_run = await service.get_run(run.id)
             parent_task = persisted_run.steps[0].tasks[0]
             await executor._execute_task(
@@ -1576,7 +1585,7 @@ class TestFanOutRegression:
 
         # Verify: parent stays in FAN_OUT_RUNNING (not FAILED)
         async with session_factory() as session:
-            service = WorkflowService(session)
+            service = WorkflowService(session, graph_catalog=build_graph_catalog())
             persisted_run = await service.get_run(run.id)
             parent = None
             completed_children = []

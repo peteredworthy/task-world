@@ -18,6 +18,8 @@ from orchestrator.workflow import InMemorySignalTransport
 from orchestrator.workflow.service import WorkflowService
 
 from tests.integration.signal_helpers import drain_signals
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -38,7 +40,7 @@ _needs_socket = pytest.mark.skipif(not _can_bind_socket(), reason="socket.bind b
 @pytest.mark.e2e
 @_needs_socket
 async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """CLIAgent reads callback instructions and drives workflow state over REST."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -84,7 +86,11 @@ async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state(
             assert resp.status_code == 202
 
             async with app.state.session_factory() as drain_session:
-                drain_service = WorkflowService(drain_session, signal_transport=signal_transport)
+                drain_service = WorkflowService(
+                    drain_session,
+                    signal_transport=signal_transport,
+                    graph_catalog=build_graph_catalog(),
+                )
                 await drain_signals(run_id, signal_transport, drain_session, drain_service)
                 await drain_session.commit()
 
@@ -145,7 +151,11 @@ async def test_cli_subprocess_calls_rest_api_and_changes_workflow_state(
             assert result.success is True
 
             async with app.state.session_factory() as drain_session:
-                service = WorkflowService(drain_session, signal_transport=signal_transport)
+                service = WorkflowService(
+                    drain_session,
+                    signal_transport=signal_transport,
+                    graph_catalog=build_graph_catalog(),
+                )
                 await drain_signals(run_id, signal_transport, drain_session, service)
                 await drain_session.commit()
 

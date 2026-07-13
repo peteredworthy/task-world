@@ -24,6 +24,8 @@ from orchestrator.config import ChecklistStatus, Priority, RoutineSource, RunSta
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 # Routine: Step 1 has a single setup task; Step 2 has 3 child tasks (fan-out).
 # Step 3 is the combine/finalise step after the fan-out.
@@ -181,9 +183,9 @@ async def _complete_task(service: WorkflowService, run_id: str, task_id: str) ->
     assert task.status == TaskStatus.COMPLETED
 
 
-async def test_fan_out_step_structure(session: AsyncSession) -> None:
+async def test_fan_out_step_structure(session: AsyncSession, *, catalog: GraphCatalog) -> None:
     """Fan-out step contains exactly 3 child tasks at creation."""
-    service = WorkflowService(session)
+    service = WorkflowService(session, graph_catalog=build_graph_catalog())
     run = _make_run()
     await service.create_run(run)
 
@@ -194,10 +196,10 @@ async def test_fan_out_step_structure(session: AsyncSession) -> None:
 
 
 async def test_fan_out_step_incomplete_while_children_pending(
-    session: AsyncSession,
+    session: AsyncSession, *, catalog: GraphCatalog
 ) -> None:
     """Fan-out step not completed while child tasks are still pending."""
-    service = WorkflowService(session)
+    service = WorkflowService(session, graph_catalog=build_graph_catalog())
     run = _make_run()
     await service.create_run(run)
     await service.apply_start_run(run.id)
@@ -221,10 +223,10 @@ async def test_fan_out_step_incomplete_while_children_pending(
 
 
 async def test_fan_out_step_completes_when_all_children_done(
-    session: AsyncSession,
+    session: AsyncSession, *, catalog: GraphCatalog
 ) -> None:
     """Fan-out step marked completed only after all child tasks finish."""
-    service = WorkflowService(session)
+    service = WorkflowService(session, graph_catalog=build_graph_catalog())
     run = _make_run()
     await service.create_run(run)
     await service.apply_start_run(run.id)
@@ -247,10 +249,10 @@ async def test_fan_out_step_completes_when_all_children_done(
 
 
 async def test_fan_out_run_completes_after_all_steps(
-    session: AsyncSession,
+    session: AsyncSession, *, catalog: GraphCatalog
 ) -> None:
     """Full workflow: setup → fan-out (3 children) → combine → run completed."""
-    service = WorkflowService(session)
+    service = WorkflowService(session, graph_catalog=build_graph_catalog())
     run = _make_run()
     await service.create_run(run)
     await service.apply_start_run(run.id)

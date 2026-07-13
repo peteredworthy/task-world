@@ -130,7 +130,9 @@ async def _seed_invalid_patch_graph_run(app: Any, run_id: str) -> GraphControlle
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
 
@@ -485,7 +487,7 @@ async def test_fr08_authority_denial_and_rejection_readbacks(
         },
     )
     assert invalid_shape.status_code == 422
-    assert "decision for authority must be one of" in invalid_shape.text
+    assert "'granted', 'denied' or 'deferred'" in invalid_shape.text
 
     events = events_resp.json()
     assert any(

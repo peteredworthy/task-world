@@ -319,6 +319,7 @@ COMMAND_SAMPLES: Final[dict[str, dict[str, object]]] = {
         "base_graph_position": 1,
         "actor_role": "planner",
         "proposed_by_node_id": "node-1",
+        "ops": [{"op": "retire_node", "node_id": "node-1"}],
     },
     "evaluate_join": {"node_id": "node-1"},
     "evaluate_final_gate": {"node_id": "node-1"},

@@ -33,7 +33,12 @@ from orchestrator.config import load_routine_from_path
 from orchestrator.config.enums import AgentRunnerType, RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
-from orchestrator.graph import build_graph_catalog, project_run_state, project_task_states
+from orchestrator.graph import (
+    build_graph_catalog,
+    expand_patch_macros,
+    project_run_state,
+    project_task_states,
+)
 from orchestrator.graph_runtime import GraphController, GraphDispatchContext, GraphDispatchExecutor
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner
@@ -52,6 +57,7 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
 from orchestrator.workflow.graph_driver import GraphRunDriver
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 ROUTINE_PATH = (
     Path(__file__).resolve().parents[2] / "routines" / "dynamic-graph-feature" / "routine.yaml"
@@ -341,8 +347,18 @@ def _gap_planner_patch(proposed_by: str) -> dict[str, Any]:
     }
 
 
-def _gap_planner_no_op() -> dict[str, Any]:
-    return {"patch_id": "patch-ds-gap-no-op", "base_graph_position": 0, "ops": []}
+def _gap_planner_no_op(node_id: str) -> dict[str, Any]:
+    return {
+        "patch_id": "patch-ds-gap-no-op",
+        "base_graph_position": 0,
+        "ops": [
+            {
+                "op": "set_allowed_actions",
+                "node_id": node_id,
+                "allowed_actions": ["submit_patch"],
+            }
+        ],
+    }
 
 
 def _recovery_gap_planner_patch(proposed_by: str) -> dict[str, Any]:
@@ -582,7 +598,7 @@ class DynamicPlannerAgent(_BaseAgent):
                     await submit_patch(_recovery_gap_planner_patch(context.node_id))
                 )
             elif self._gap_no_op_first:
-                self.patch_feedback.append(await submit_patch(_gap_planner_no_op()))
+                self.patch_feedback.append(await submit_patch(_gap_planner_no_op(context.node_id)))
                 self.patch_feedback.append(await submit_patch(_gap_planner_patch(context.node_id)))
             else:
                 self.patch_feedback.append(await submit_patch(_gap_planner_patch(context.node_id)))
@@ -642,13 +658,13 @@ class MacroPlannerAgent(_BaseAgent):
         assert context.graph_patch_callback is not None, "planner must receive patch callback"
         submit_patch = context.graph_patch_callback
         if context.node_role == "gap_planner":
-            self.patch_feedback.append(
-                await submit_patch(_macro_gap_planner_patch(context.node_id))
-            )
+            patch = expand_patch_macros(_macro_gap_planner_patch(context.node_id))
+            patch.pop("macro_invocations")
+            self.patch_feedback.append(await submit_patch(patch))
         else:
-            self.patch_feedback.append(
-                await submit_patch(_macro_root_planner_patch(context.node_id))
-            )
+            patch = expand_patch_macros(_macro_root_planner_patch(context.node_id))
+            patch.pop("macro_invocations")
+            self.patch_feedback.append(await submit_patch(patch))
         await on_submit()
         return ExecutionResult(success=True)
 
@@ -716,8 +732,10 @@ def _init_repo(path: Path) -> None:
     )
 
 
-async def _create_service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+async def _create_service(
+    session: AsyncSession,
+) -> WorkflowService:
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 async def _create_graph_run(
@@ -727,6 +745,7 @@ async def _create_graph_run(
     run_id: str,
     repo: Path,
     config: dict[str, Any],
+    catalog: GraphCatalog,
 ) -> None:
     run = create_run_from_routine(routine, repo_name=repo.name, source_branch="main", config=config)
     run.id = run_id
@@ -735,7 +754,7 @@ async def _create_graph_run(
     run.worktree_path = str(repo)
     run.agent_runner_type = AgentRunnerType.CODEX_SERVER
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.create_run(run)
 
 
@@ -745,6 +764,7 @@ def _driver(
     repo: Path,
     agents: dict[str, AgentRunner],
     dispatch_order: list[str],
+    catalog: GraphCatalog,
 ) -> GraphRunDriver:
     clock = FixedClock()
     ids = SequentialIds()
@@ -757,6 +777,7 @@ def _driver(
         worktree_path: str | Path,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        catalog: GraphCatalog,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg,
@@ -764,13 +785,16 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
             controller,
             AgentFactory(agents, dispatch_order),
             worktree_path=repo,
+            catalog=build_graph_catalog(),
         )
         return controller, executor
 
@@ -780,6 +804,7 @@ def _driver(
         clock=clock,
         id_gen=ids,
         runtime_builder=runtime_builder,
+        catalog=build_graph_catalog(),
     )
 
 
@@ -806,6 +831,8 @@ async def _run_status(
 async def test_dynamic_full_happy_path_completes(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """End-to-end: planner -> builder -> verifier pass.
 
@@ -819,7 +846,12 @@ async def test_dynamic_full_happy_path_completes(
     _init_repo(repo)
     run_id = "graph-dynamic-happy"
     await _create_graph_run(
-        session_factory, _routine(), run_id=run_id, repo=repo, config=_run_config()
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        repo=repo,
+        config=_run_config(),
+        catalog=build_graph_catalog(),
     )
     dispatch_order: list[str] = []
     driver = _driver(
@@ -831,6 +863,7 @@ async def test_dynamic_full_happy_path_completes(
             "verifier": VerifierAgent("A"),
         },
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)
@@ -881,6 +914,8 @@ async def test_dynamic_full_happy_path_completes(
 async def test_dynamic_macro_created_graph_skips_failure_branch_on_pass(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Planner-facing macros emit a failure branch that passed verification does not enter."""
 
@@ -889,7 +924,12 @@ async def test_dynamic_macro_created_graph_skips_failure_branch_on_pass(
     _init_repo(repo)
     run_id = "graph-dynamic-macro"
     await _create_graph_run(
-        session_factory, _routine(), run_id=run_id, repo=repo, config=_run_config()
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        repo=repo,
+        config=_run_config(),
+        catalog=build_graph_catalog(),
     )
     dispatch_order: list[str] = []
     driver = _driver(
@@ -901,6 +941,7 @@ async def test_dynamic_macro_created_graph_skips_failure_branch_on_pass(
             "verifier": VerifierAgent("A"),
         },
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)
@@ -927,6 +968,8 @@ async def test_dynamic_macro_created_graph_skips_failure_branch_on_pass(
 async def test_passed_verifier_with_failure_only_gap_terminalizes_to_final_check(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """A verifier pass must close failure-only corrective scaffolding.
 
@@ -941,7 +984,12 @@ async def test_passed_verifier_with_failure_only_gap_terminalizes_to_final_check
     _init_repo(repo)
     run_id = "graph-dynamic-passed-terminalization"
     await _create_graph_run(
-        session_factory, _routine(), run_id=run_id, repo=repo, config=_run_config()
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        repo=repo,
+        config=_run_config(),
+        catalog=build_graph_catalog(),
     )
     dispatch_order: list[str] = []
     driver = _driver(
@@ -953,6 +1001,7 @@ async def test_passed_verifier_with_failure_only_gap_terminalizes_to_final_check
             "verifier": VerifierAgent("A"),
         },
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)
@@ -988,6 +1037,8 @@ async def test_passed_verifier_with_failure_only_gap_terminalizes_to_final_check
 async def test_passed_verification_skips_gap_no_op_branch(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """A passed verification report must not enter the no-op gap branch."""
 
@@ -996,7 +1047,12 @@ async def test_passed_verification_skips_gap_no_op_branch(
     _init_repo(repo)
     run_id = "graph-dynamic-gap-noop"
     await _create_graph_run(
-        session_factory, _routine(), run_id=run_id, repo=repo, config=_run_config()
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        repo=repo,
+        config=_run_config(),
+        catalog=build_graph_catalog(),
     )
     dispatch_order: list[str] = []
     planner = DynamicPlannerAgent(gap_no_op_first=True)
@@ -1009,6 +1065,7 @@ async def test_passed_verification_skips_gap_no_op_branch(
             "verifier": VerifierAgent("A"),
         },
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)
@@ -1029,6 +1086,8 @@ async def test_passed_verification_skips_gap_no_op_branch(
 async def test_failed_corrective_verifier_continues_through_recovery_gap(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """A failed corrective verifier must create a fresh gap-planner continuation.
 
@@ -1043,7 +1102,12 @@ async def test_failed_corrective_verifier_continues_through_recovery_gap(
     _init_repo(repo)
     run_id = "graph-dynamic-corrective-retry"
     await _create_graph_run(
-        session_factory, _routine(), run_id=run_id, repo=repo, config=_run_config()
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        repo=repo,
+        config=_run_config(),
+        catalog=build_graph_catalog(),
     )
     dispatch_order: list[str] = []
     planner = DynamicPlannerAgent()
@@ -1057,6 +1121,7 @@ async def test_failed_corrective_verifier_continues_through_recovery_gap(
             "verifier": verifier,
         },
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)
@@ -1102,6 +1167,8 @@ async def test_failed_corrective_verifier_continues_through_recovery_gap(
 async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """The final invariant check exists and is bound, but its deterministic
     command fails. The run must not reach ``completed`` while the final invariant
@@ -1114,7 +1181,12 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
     _init_repo(repo)
     run_id = "graph-dynamic-no-submit-check"
     await _create_graph_run(
-        session_factory, _routine(), run_id=run_id, repo=repo, config=_failing_oracle_config()
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        repo=repo,
+        config=_failing_oracle_config(),
+        catalog=build_graph_catalog(),
     )
     dispatch_order: list[str] = []
     driver = _driver(
@@ -1126,6 +1198,7 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
             "verifier": VerifierAgent("A"),
         },
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)
@@ -1149,6 +1222,8 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
 async def test_dynamic_root_planner_accepted_patch_then_no_submit_does_not_duplicate(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """DG-5.1m: a root planner that gets an accepted patch but exits without plain
     submit is completed by the guard and is *not* re-leased for a duplicate root
@@ -1161,7 +1236,12 @@ async def test_dynamic_root_planner_accepted_patch_then_no_submit_does_not_dupli
     _init_repo(repo)
     run_id = "graph-dynamic-root-no-submit"
     await _create_graph_run(
-        session_factory, _routine(), run_id=run_id, repo=repo, config=_run_config()
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        repo=repo,
+        config=_run_config(),
+        catalog=build_graph_catalog(),
     )
     dispatch_order: list[str] = []
     driver = _driver(
@@ -1173,6 +1253,7 @@ async def test_dynamic_root_planner_accepted_patch_then_no_submit_does_not_dupli
             "verifier": VerifierAgent("A"),
         },
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)

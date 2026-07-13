@@ -289,7 +289,7 @@ async def _run_graph_startup_recovery(app: FastAPI) -> None:
             paused = await repo.list_by_status(RunStatus.PAUSED, include_action_logs=False)
             store = GraphEventStore(
                 session,
-                build_graph_catalog(),
+                app.state.graph_catalog,
             )
 
             to_rearm = await select_graph_runs_to_rearm(
@@ -350,6 +350,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # (signal consumer, stale-run sweeper, startup recovery, MCP handler).
     # Request handlers continue to use get_workflow_service() via Depends().
     service_factory = make_service_factory(
+        graph_catalog=app.state.graph_catalog,
         connection_manager=app.state.connection_manager,
         lock_manager=getattr(app.state, "lock_manager", None),
         signal_transport_override=getattr(app.state, "signal_transport", None),
@@ -510,6 +511,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         graph_runner=make_graph_runner(
             session_factory,
             service_factory,
+            app.state.graph_catalog,
             connection_manager=app.state.connection_manager,
         ),
         workflow_preparer=make_workflow_preparer(getattr(app.state, "runner_executor", None)),
@@ -621,6 +623,7 @@ def create_app(
         global_config: Optional pre-built global configuration. Falls back to
             loading from ``~/.orchestrator/config.yaml``.
     """
+    graph_catalog = build_graph_catalog()
     # Load global config for defaults
     global_cfg = global_config or load_global_config()
 
@@ -665,6 +668,7 @@ def create_app(
     app.state.session_factory = create_session_factory(engine)
     app.state.routine_dirs = routine_dirs or []
     app.state.global_config = global_cfg
+    app.state.graph_catalog = graph_catalog
 
     # WebSocket connection manager (with optional batching)
     if global_cfg.websocket.batching_enabled:
@@ -728,6 +732,7 @@ def create_app(
     from orchestrator.api.deps import make_service_factory as _make_sf
 
     app.state.service_factory = _make_sf(
+        graph_catalog=graph_catalog,
         connection_manager=app.state.connection_manager,
         lock_manager=app.state.lock_manager,
         global_config=global_cfg,

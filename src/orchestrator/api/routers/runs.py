@@ -18,6 +18,7 @@ from orchestrator.api.deps import (
     get_codex_models_fn,
     get_runner_executor,
     get_graph_store,
+    get_graph_catalog,
     get_event_emitter,
     get_event_store_v2,
     get_global_config,
@@ -28,6 +29,7 @@ from orchestrator.api.deps import (
     get_test_runner,
     get_workflow_service,
 )
+from orchestrator.graph import GraphCatalog
 from orchestrator.envfiles.resolution import resolve_env_specs
 from orchestrator.git import WorktreeResetError
 from orchestrator.runners.executor import AgentRunnerExecutor
@@ -619,6 +621,7 @@ async def get_run_evidence_digest(
     run_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     graph_store: Annotated[Any, Depends(get_graph_store)],
+    catalog: Annotated[GraphCatalog, Depends(get_graph_catalog)],
     max_nodes: int = Query(default=3, ge=1, le=10),
     include_node_evidence: bool = Query(default=True),
 ) -> RunEvidenceDigestResponse:
@@ -632,6 +635,7 @@ async def get_run_evidence_digest(
         pending_actions=pending_actions,
         max_nodes=max_nodes,
         include_node_evidence=include_node_evidence,
+        catalog=catalog,
     )
 
 
@@ -669,7 +673,12 @@ async def cancel_run(
         from orchestrator.workflow.graph_driver import apply_graph_cancel_until_terminal
 
         run = await service.cancel_run(run_id)
-        await apply_graph_cancel_until_terminal(session_factory, run_id, reason="api_cancel")
+        await apply_graph_cancel_until_terminal(
+            session_factory,
+            run_id,
+            reason="api_cancel",
+            catalog=service.graph_catalog,
+        )
         await executor.cancel_run(run_id)
         await _cancel_active_child_executors(run_id, service, executor)
         graph_position = await graph_store.current_position(run_id)

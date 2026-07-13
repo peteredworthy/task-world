@@ -27,6 +27,7 @@ from orchestrator.runners import AgentRunner
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 @pytest.fixture
@@ -132,6 +133,7 @@ async def _create_active_graph_run(
     *,
     run_id: str,
     repo: Path,
+    catalog: GraphCatalog,
 ) -> None:
     run = create_run_from_routine(routine, repo_name=repo.name, source_branch="main")
     run.id = run_id
@@ -141,7 +143,7 @@ async def _create_active_graph_run(
     run.worktree_path = str(repo)
     run.agent_runner_type = AgentRunnerType.CODEX_SERVER
     async with session_factory() as session:
-        await WorkflowService(session).create_run(run)
+        await WorkflowService(session, graph_catalog=build_graph_catalog()).create_run(run)
 
 
 async def _read_events(
@@ -179,8 +181,7 @@ def _run_id() -> str:
 
 
 async def test_fr12_recovery_reentry_skips_stale_report_and_rebuilds_readbacks(
-    fr12_app: tuple[AsyncClient, Any],
-    tmp_path: Path,
+    fr12_app: tuple[AsyncClient, Any], tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     client, app = fr12_app
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
@@ -190,16 +191,27 @@ async def test_fr12_recovery_reentry_skips_stale_report_and_rebuilds_readbacks(
     routine = _routine()
     clock = FixedClock()
     ids = SequentialIds(run_id)
-    await _create_active_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+    await _create_active_graph_run(
+        session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
     controller = GraphController(
         session_factory,
         clock,
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
-    await seed_run(session_factory, routine, run_id=run_id, clock=clock, id_gen=ids)
+    await seed_run(
+        session_factory,
+        routine,
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+        catalog=build_graph_catalog(),
+    )
     accepted = await controller.handle_command(
         run_id,
         await controller.current_position(run_id),
@@ -239,6 +251,7 @@ async def test_fr12_recovery_reentry_skips_stale_report_and_rebuilds_readbacks(
         NoRunningAgentFactory(),
         worktree_path=repo,
         process_registry=NeverRunningRegistry(),
+        catalog=build_graph_catalog(),
     )
 
     await reconcile_runtime(controller, executor, stale_report)

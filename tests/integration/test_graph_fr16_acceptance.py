@@ -38,6 +38,7 @@ from orchestrator.runners.types import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import GraphRunDriver, WorkflowService
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 @pytest.fixture
@@ -123,7 +124,13 @@ class CodexPlannerPatchAgent(CodexSubmitAgent):
             {
                 "patch_id": f"{context.node_id}-fr16-noop",
                 "base_graph_position": 0,
-                "ops": [],
+                "ops": [
+                    {
+                        "op": "set_allowed_actions",
+                        "node_id": context.node_id,
+                        "allowed_actions": ["submit_patch"],
+                    }
+                ],
             }
         )
         assert "accepted" in feedback
@@ -221,8 +228,10 @@ def _init_repo(path: Path) -> None:
     )
 
 
-async def _create_service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+async def _create_service(
+    session: AsyncSession,
+) -> WorkflowService:
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 async def _create_graph_run(
@@ -232,6 +241,7 @@ async def _create_graph_run(
     run_id: str,
     repo: Path,
     agent_runner_type: AgentRunnerType = AgentRunnerType.CODEX_SERVER,
+    catalog: GraphCatalog,
 ) -> None:
     run = create_run_from_routine(routine, repo_name=repo.name, source_branch="main")
     run.id = run_id
@@ -240,7 +250,7 @@ async def _create_graph_run(
     run.worktree_path = str(repo)
     run.agent_runner_type = agent_runner_type
     async with session_factory() as session:
-        await WorkflowService(session).create_run(run)
+        await WorkflowService(session, graph_catalog=build_graph_catalog()).create_run(run)
 
 
 def _driver(
@@ -250,6 +260,7 @@ def _driver(
     run_id: str,
     agents: dict[str, AgentRunner],
     clock: FixedClock | None = None,
+    catalog: GraphCatalog,
 ) -> GraphRunDriver:
     fixed_clock = clock or FixedClock()
     ids = SequentialIds(run_id)
@@ -262,6 +273,7 @@ def _driver(
         worktree_path: str | Path,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        catalog: GraphCatalog,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg,
@@ -269,13 +281,16 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
             controller,
             AgentFactory(agents),
             worktree_path=repo,
+            catalog=build_graph_catalog(),
         )
         return controller, executor
 
@@ -285,6 +300,7 @@ def _driver(
         clock=fixed_clock,
         id_gen=ids,
         runtime_builder=runtime_builder,
+        catalog=build_graph_catalog(),
     )
 
 
@@ -310,21 +326,23 @@ def _run_id(prefix: str) -> str:
 
 
 async def test_fr16_supported_codex_callbacks_complete_and_read_back(
-    fr16_app: tuple[AsyncClient, Any],
-    tmp_path: Path,
+    fr16_app: tuple[AsyncClient, Any], tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     client, app = fr16_app
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     repo = tmp_path / "fr16-supported"
     _init_repo(repo)
     run_id = _run_id("fr16-supported-callbacks")
-    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     outcome = await _driver(
         session_factory,
         repo=repo,
         run_id=run_id,
         agents={"worker": CodexSubmitAgent(), "verifier": CodexGradingAgent()},
+        catalog=build_graph_catalog(),
     ).run(run_id)
 
     assert outcome.completed is True
@@ -355,15 +373,20 @@ async def test_fr16_supported_codex_callbacks_complete_and_read_back(
 
 
 async def test_fr16_submit_graph_patch_callback_is_required_and_readable(
-    fr16_app: tuple[AsyncClient, Any],
-    tmp_path: Path,
+    fr16_app: tuple[AsyncClient, Any], tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     client, app = fr16_app
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     repo = tmp_path / "fr16-patch"
     _init_repo(repo)
     run_id = _run_id("fr16-submit-graph-patch")
-    await _create_graph_run(session_factory, _routine(planner=True), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory,
+        _routine(planner=True),
+        run_id=run_id,
+        repo=repo,
+        catalog=build_graph_catalog(),
+    )
 
     outcome = await _driver(
         session_factory,
@@ -374,6 +397,7 @@ async def test_fr16_submit_graph_patch_callback_is_required_and_readable(
             "worker": CodexSubmitAgent(),
             "verifier": CodexGradingAgent(),
         },
+        catalog=build_graph_catalog(),
     ).run(run_id)
 
     assert outcome.completed is True
@@ -389,20 +413,22 @@ async def test_fr16_submit_graph_patch_callback_is_required_and_readable(
 
 
 async def test_fr16_stale_callback_rejection_is_readable(
-    fr16_app: tuple[AsyncClient, Any],
-    tmp_path: Path,
+    fr16_app: tuple[AsyncClient, Any], tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     client, app = fr16_app
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     repo = tmp_path / "fr16-stale"
     _init_repo(repo)
     run_id = _run_id("fr16-stale-callback")
-    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
     driver = _driver(
         session_factory,
         repo=repo,
         run_id=run_id,
         agents={"worker": CodexSubmitAgent(), "verifier": CodexGradingAgent()},
+        catalog=build_graph_catalog(),
     )
     await driver.run(run_id)
 
@@ -419,7 +445,9 @@ async def test_fr16_stale_callback_rejection_is_readable(
         SequentialIds(f"{run_id}-stale"),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     position = await controller.current_position(run_id)
     await controller.handle_command(
@@ -449,8 +477,7 @@ async def test_fr16_stale_callback_rejection_is_readable(
 
 
 async def test_fr16_unsupported_runner_fails_before_graph_seeding(
-    fr16_app: tuple[AsyncClient, Any],
-    tmp_path: Path,
+    fr16_app: tuple[AsyncClient, Any], tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     client, app = fr16_app
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
@@ -463,6 +490,7 @@ async def test_fr16_unsupported_runner_fails_before_graph_seeding(
         run_id=run_id,
         repo=repo,
         agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await _driver(
@@ -470,6 +498,7 @@ async def test_fr16_unsupported_runner_fails_before_graph_seeding(
         repo=repo,
         run_id=run_id,
         agents={"worker": CodexSubmitAgent(), "verifier": CodexGradingAgent()},
+        catalog=build_graph_catalog(),
     ).run(run_id)
 
     run = await _get_json(client, f"/api/runs/{run_id}")
@@ -480,8 +509,7 @@ async def test_fr16_unsupported_runner_fails_before_graph_seeding(
 
 
 async def test_fr16_terminal_exhausted_failure_record_callback_readbacks(
-    fr16_app: tuple[AsyncClient, Any],
-    tmp_path: Path,
+    fr16_app: tuple[AsyncClient, Any], tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     client, app = fr16_app
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
@@ -493,6 +521,7 @@ async def test_fr16_terminal_exhausted_failure_record_callback_readbacks(
         _routine(max_attempts=2),
         run_id=run_id,
         repo=repo,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await _driver(
@@ -500,6 +529,7 @@ async def test_fr16_terminal_exhausted_failure_record_callback_readbacks(
         repo=repo,
         run_id=run_id,
         agents={"worker": CodexRaisingAgent(), "verifier": CodexGradingAgent()},
+        catalog=build_graph_catalog(),
     ).run(run_id)
 
     assert outcome.completed is False

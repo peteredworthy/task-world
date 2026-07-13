@@ -8,6 +8,7 @@ from orchestrator.graph.command_bindings import is_known_check_command_binding
 from orchestrator.graph.contracts import validate_edge_payload, validate_node_payload
 from orchestrator.graph.models import EventEnvelope, PatchEnvelope, normalize_record_selector
 from orchestrator.graph.projections import GraphProjection
+from orchestrator.graph.specifications import HydratedEvent
 
 
 @dataclass(frozen=True)
@@ -61,14 +62,22 @@ PLANNER_SUCCESSOR_PORTS = {
 }
 
 
-def classify_event(event: EventEnvelope) -> str:
+def classify_event(event: EventEnvelope | HydratedEvent) -> str:
     """Classify whether an event can invalidate a stale patch read-set."""
     if event.event_type == "node_state_changed":
-        new_state = event.payload.get("new_state")
+        new_state = (
+            event.payload.get("new_state")
+            if isinstance(event.payload, dict)
+            else getattr(event.payload, "new_state", None)
+        )
         if isinstance(new_state, str) and new_state in INVALIDATING_NODE_STATES:
             return "invalidating"
     if event.event_type == "run_lifecycle_changed":
-        to_state = event.payload.get("to_state")
+        to_state = (
+            event.payload.get("to_state")
+            if isinstance(event.payload, dict)
+            else getattr(event.payload, "to_state", None)
+        )
         if isinstance(to_state, str) and to_state in INVALIDATING_RUN_STATES:
             return "invalidating"
     if event.event_type in INVALIDATING_EVENT_TYPES:
@@ -712,16 +721,27 @@ def _validate_staleness(
     )
 
 
-def _event_touches_read_set(event: EventEnvelope, read_set: set[str]) -> bool:
-    node_id = event.payload.get("node_id")
+def _event_touches_read_set(event: EventEnvelope | HydratedEvent, read_set: set[str]) -> bool:
+    payload = event.payload
+    node_id = (
+        payload.get("node_id") if isinstance(payload, dict) else getattr(payload, "node_id", None)
+    )
     if isinstance(node_id, str) and node_id in read_set:
         return True
 
-    record_id = event.payload.get("record_id")
+    record_id = (
+        payload.get("record_id")
+        if isinstance(payload, dict)
+        else getattr(payload, "record_id", None)
+    )
     if isinstance(record_id, str) and record_id in read_set:
         return True
 
-    region_node_ids = event.payload.get("region_node_ids")
+    region_node_ids = (
+        payload.get("region_node_ids")
+        if isinstance(payload, dict)
+        else getattr(payload, "region_node_ids", None)
+    )
     return bool(_string_values_from_iterable(region_node_ids) & read_set)
 
 

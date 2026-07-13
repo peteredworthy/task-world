@@ -26,6 +26,8 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Run
 from orchestrator.workflow.service import WorkflowService
 from orchestrator.workflow import _create_repeat_step_copies, check_step_progression
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 @pytest.fixture
@@ -40,9 +42,9 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def service(session: AsyncSession) -> WorkflowService:
+def service(session: AsyncSession, *, catalog: GraphCatalog) -> WorkflowService:
     """Create WorkflowService with in-memory database."""
-    return WorkflowService(session)
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 def _make_routine_with_repeat_for(

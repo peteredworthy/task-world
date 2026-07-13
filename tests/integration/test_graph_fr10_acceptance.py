@@ -42,7 +42,9 @@ async def test_fr10_scheduler_readiness_command_precondition_and_retry_readbacks
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     first_tick = await controller.handle_command(

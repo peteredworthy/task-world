@@ -518,6 +518,7 @@ class SignalConsumer:
                 self._session_factory,
                 run_id,
                 reason=reason,
+                catalog=service.graph_catalog,
             )
 
         await service.apply_cancel_run(run_id, reason=reason)

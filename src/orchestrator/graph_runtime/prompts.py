@@ -16,7 +16,7 @@ from orchestrator.graph.models import FileStateRecord, GapClassificationRecord
 from orchestrator.graph.patch_validator import PLANNER_OPS
 from orchestrator.graph.projections import project_planner_freshness_packet
 from orchestrator.graph_runtime.horizon_templates import horizon_region_templates
-from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import GraphCatalog
 
 if TYPE_CHECKING:
     from orchestrator.graph_runtime.dispatch import GraphDispatchContext
@@ -116,7 +116,7 @@ def _summarizer_packet(context: GraphDispatchContext) -> dict[str, Any]:
     }
 
 
-def _prompt_for_node(context: GraphDispatchContext) -> str:
+def _prompt_for_node(context: GraphDispatchContext, *, catalog: GraphCatalog) -> str:
     node = context.node_payload
     if context.node_kind == "verifier":
         packet = _verifier_packet(context)
@@ -146,7 +146,7 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
             )
         )
     if context.node_kind == "planner":
-        packet = _planner_packet(context)
+        packet = _planner_packet(context, catalog=catalog)
         return _bounded_prompt(
             "\n".join(
                 [
@@ -184,8 +184,10 @@ def _prompt_for_node(context: GraphDispatchContext) -> str:
     return _worker_like_prompt(context)
 
 
-def _prompt_summary_for_node(context: GraphDispatchContext) -> dict[str, Any]:
-    packet = _packet_for_prompt_summary(context)
+def _prompt_summary_for_node(
+    context: GraphDispatchContext, *, catalog: GraphCatalog
+) -> dict[str, Any]:
+    packet = _packet_for_prompt_summary(context, catalog=catalog)
     summary: dict[str, Any] = {
         "node_id": context.node_id,
         "node_kind": context.node_kind,
@@ -218,13 +220,15 @@ def _prompt_summary_for_node(context: GraphDispatchContext) -> dict[str, Any]:
     return summary
 
 
-def _packet_for_prompt_summary(context: GraphDispatchContext) -> dict[str, Any]:
+def _packet_for_prompt_summary(
+    context: GraphDispatchContext, *, catalog: GraphCatalog
+) -> dict[str, Any]:
     if context.node_kind == "verifier":
         return _verifier_packet(context)
     if context.node_kind == "summarizer":
         return _summarizer_packet(context)
     if context.node_kind == "planner":
-        return _planner_packet(context)
+        return _planner_packet(context, catalog=catalog)
     if context.node_kind == "check":
         return {
             "node_id": context.node_id,
@@ -451,7 +455,7 @@ def _dynamic_feature_prompt_lines(
     return lines
 
 
-def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
+def _planner_packet(context: GraphDispatchContext, *, catalog: GraphCatalog) -> dict[str, Any]:
     projection = context.graph_projection
     events = sorted(context.graph_events, key=lambda event: event.position)
     node = context.node_payload
@@ -480,7 +484,7 @@ def _planner_packet(context: GraphDispatchContext) -> dict[str, Any]:
         "bound_requirements": list(context.requirements),
         "frontier": frontier,
         "evidence": evidence,
-        "freshness": project_planner_freshness_packet(build_graph_catalog(), events),
+        "freshness": project_planner_freshness_packet(catalog, events),
         "open_planner_proposals": proposals["open_proposals"],
         "accepted_planner_patches": proposals["accepted_patches"],
         "patch_rejections": proposals["patch_rejections"],

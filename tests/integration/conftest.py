@@ -34,10 +34,17 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.config import RoutineSource
 from orchestrator.db import init_db
+from orchestrator.graph import GraphCatalog, build_graph_catalog
 from orchestrator.workflow import InMemorySignalTransport
 
 from tests.integration.git_helpers import _commit_file, _git, _init_repo
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
+
+
+@pytest.fixture
+def catalog() -> GraphCatalog:
+    return build_graph_catalog()
+
 
 __all__ = ["_git", "_init_repo", "_commit_file", "_setup_conflict", "DrainFn"]
 

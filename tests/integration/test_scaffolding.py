@@ -8,6 +8,7 @@ import pytest
 from orchestrator.runners import copy_scaffolding, ensure_gitignore
 
 from tests.integration.git_helpers import _git
+from orchestrator.graph import build_graph_catalog
 
 
 @pytest.fixture
@@ -347,6 +348,7 @@ steps:
                 event_store_v2=event_store,
                 event_emitter=emitter,
                 auto_verify_runner=LocalAutoVerifyRunner(),
+                graph_catalog=build_graph_catalog(),
             )
 
             await service.create_run(run)
@@ -488,6 +490,7 @@ steps:
                 event_store_v2=event_store,
                 event_emitter=emitter,
                 auto_verify_runner=LocalAutoVerifyRunner(),
+                graph_catalog=build_graph_catalog(),
             )
 
             await service.create_run(run)

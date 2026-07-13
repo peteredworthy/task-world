@@ -55,7 +55,9 @@ def test_scenario_with_all_expected_events_passes() -> None:
         FakeClock(),
         SequentialIdGenerator(),
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     assert result.passed is True
@@ -75,7 +77,9 @@ def test_scenario_detects_missing_then_event() -> None:
         FakeClock(),
         SequentialIdGenerator(),
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     assert result.passed is False
@@ -93,7 +97,9 @@ def test_scenario_detects_wrong_payload_in_then_event() -> None:
         FakeClock(),
         SequentialIdGenerator(),
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     assert result.passed is False

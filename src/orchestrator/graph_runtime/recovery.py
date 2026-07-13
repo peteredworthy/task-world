@@ -8,10 +8,10 @@ from sqlalchemy import distinct, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.db import EventV2Model
-from orchestrator.graph import build_graph_catalog
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem
 from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, GraphEventStore
+from orchestrator.graph import GraphCatalog
 
 _TERMINAL_RUN_STATES = {"cancelled", "completed", "failed"}
 
@@ -29,6 +29,7 @@ async def recover(
     dispatcher: OutboxDispatcher,
     *,
     run_id: str | None = None,
+    catalog: GraphCatalog,
 ) -> RecoveryReport:
     """Rebuild projections and reconcile in-flight side effects."""
     pending_before = await dispatcher.pending_items(run_id=run_id)
@@ -40,12 +41,12 @@ async def recover(
     async with session_factory() as session:
         store = GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         )
-        run_ids = [run_id] if run_id is not None else await _run_ids(session)
+        run_ids = [run_id] if run_id is not None else await _run_ids(session, catalog=catalog)
         for current_run_id in run_ids:
             events = await store.read_run(current_run_id)
-            projection = rebuild_projection(build_graph_catalog(), events)
+            projection = rebuild_projection(catalog, events)
             for lease in projection["leases"].values():
                 if lease.get("state") != "active":
                     continue
@@ -89,7 +90,7 @@ async def reconcile_graph(
     )
 
 
-async def _run_ids(session: AsyncSession) -> list[str]:
+async def _run_ids(session: AsyncSession, *, catalog: GraphCatalog) -> list[str]:
     result = await session.execute(
         select(distinct(EventV2Model.aggregate_id)).where(
             EventV2Model.aggregate_id.like(f"{GRAPH_AGGREGATE_PREFIX}%")
@@ -97,7 +98,7 @@ async def _run_ids(session: AsyncSession) -> list[str]:
     )
     store = GraphEventStore(
         session,
-        build_graph_catalog(),
+        catalog,
     )
     run_ids: list[str] = []
     for aggregate_id in result.scalars():

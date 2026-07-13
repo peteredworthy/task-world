@@ -25,6 +25,7 @@ from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph_runtime.store import GraphNodeDetailSummary, graph_aggregate_id
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import GraphCatalog
 
 
 @pytest.fixture(scope="module")
@@ -64,7 +65,7 @@ def _event(
     )
 
 
-def test_node_detail_replays_unknown_generation_one_output_record() -> None:
+def test_node_detail_replays_unknown_generation_one_output_record(*, catalog: GraphCatalog) -> None:
     run_id = "legacy-output-record"
     response = build_node_detail_response(
         run_id,
@@ -84,6 +85,7 @@ def test_node_detail_replays_unknown_generation_one_output_record() -> None:
                 },
             )
         ],
+        catalog=build_graph_catalog(),
     )
 
     assert response.output_records == [
@@ -654,7 +656,7 @@ async def test_node_detail_rebuild_is_idempotent(
 
 @pytest.mark.asyncio
 async def test_node_detail_summary_matches_existing_light_builder(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "node-detail-parity"
     async with session_factory() as session:
@@ -675,10 +677,7 @@ async def test_node_detail_summary_matches_existing_light_builder(
         )
         light_events = await store.read_run_node_detail(run_id)
         old_response = build_node_detail_response(
-            run_id,
-            "worker-1",
-            light_events,
-            payload_mode="summary",
+            run_id, "worker-1", light_events, payload_mode="summary", catalog=build_graph_catalog()
         )
         new_response = await _materialized_response(session, run_id, "worker-1")
 
@@ -715,7 +714,7 @@ async def test_node_detail_summary_matches_existing_light_builder(
 
 @pytest.mark.asyncio
 async def test_completed_sequential_leases_match_existing_summary_selection(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "node-detail-lease-parity"
     events = [
@@ -786,10 +785,7 @@ async def test_completed_sequential_leases_match_existing_summary_selection(
         )
         light_events = await store.read_run_node_detail(run_id)
         old_response = build_node_detail_response(
-            run_id,
-            "worker-1",
-            light_events,
-            payload_mode="summary",
+            run_id, "worker-1", light_events, payload_mode="summary", catalog=build_graph_catalog()
         )
         new_response = await _materialized_response(session, run_id, "worker-1")
 
@@ -802,7 +798,7 @@ async def test_completed_sequential_leases_match_existing_summary_selection(
 
 @pytest.mark.asyncio
 async def test_full_node_detail_path_keeps_heavy_output_and_file_state_detail(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "node-detail-full"
     async with session_factory() as session:
@@ -822,10 +818,7 @@ async def test_full_node_detail_path_keeps_heavy_output_and_file_state_detail(
             build_graph_catalog(),
         ).read_run(run_id)
         response = build_node_detail_response(
-            run_id,
-            "worker-1",
-            events,
-            payload_mode="full",
+            run_id, "worker-1", events, payload_mode="full", catalog=build_graph_catalog()
         )
 
     assert response is not None

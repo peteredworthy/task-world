@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
+import json
 from pathlib import Path
 from typing import Any
 
@@ -24,13 +25,19 @@ from orchestrator.graph import (
     CompactEventEnvelope,
     EventEnvelope,
     FakeClock,
+    GraphCatalog,
+    HydratedEvent,
+    RunLifecycleChangedPayload,
     SequentialIdGenerator,
     initial_projection,
     reduce_event,
 )
 from orchestrator.graph_runtime import (
+    EventPayloadCorruptionError,
+    GRAPH_PAYLOAD_SCHEMA_GENERATION,
     GraphController,
     GraphEventStore,
+    IncompatibleGraphPayloadGenerationError,
     StaleProjectionError,
     seed_run,
 )
@@ -49,6 +56,21 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
 @pytest.fixture(scope="module")
 def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return create_session_factory(engine)
+
+
+@pytest.fixture
+def catalog() -> GraphCatalog:
+    return build_graph_catalog()
+
+
+class CountingGraphCatalog(GraphCatalog):
+    def __init__(self, catalog: GraphCatalog, calls: list[str]) -> None:
+        super().__init__(event_specs=catalog.event_specs, command_specs=catalog.command_specs)
+        object.__setattr__(self, "_calls", calls)
+
+    def hydrate_event(self, stored):
+        self._calls.append(stored.event_type)
+        return super().hydrate_event(stored)
 
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
@@ -84,43 +106,198 @@ def _routine() -> RoutineConfig:
     )
 
 
-def _rebuild_projection(events: list[EventEnvelope]) -> dict[str, Any]:
+def _rebuild_projection(events: list[EventEnvelope], *, catalog: GraphCatalog) -> dict[str, Any]:
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(build_graph_catalog(), projection, event)
+        projection = reduce_event(catalog, projection, event)
     return projection
 
 
 @pytest.mark.asyncio
 async def test_append_read_round_trip(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-round-trip"
     events = [
-        _event("evt-1", run_id, "run_lifecycle_changed", {"to_state": "active"}),
-        _event("evt-2", run_id, "node_created", {"node_id": "worker-1", "kind": "worker"}),
+        _event("evt-1", run_id, "run_lifecycle_changed", {"to_state": "active"}).model_copy(
+            update={"schema_version": 2}
+        ),
+        _event(
+            "evt-2", run_id, "node_created", {"node_id": "worker-1", "kind": "worker"}
+        ).model_copy(update={"schema_version": 2}),
     ]
 
     async with session_factory() as session:
         async with session.begin():
             stored = await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).append_events(run_id, 0, events)
 
     async with session_factory() as session:
         read_back = await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).read_run(run_id)
 
     assert [event.position for event in stored] == [1, 2]
-    assert read_back == stored
+    assert [event.metadata.position for event in read_back] == [1, 2]
+    assert all(isinstance(event, HydratedEvent) for event in read_back)
+    assert isinstance(read_back[0].payload, RunLifecycleChangedPayload)
+
+
+@pytest.mark.asyncio
+async def test_read_run_hydrates_each_stored_envelope_exactly_once(
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
+) -> None:
+    run_id = "store-hydrates-once"
+    calls: list[str] = []
+    counting_catalog = CountingGraphCatalog(catalog, calls)
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session, catalog).append_events(
+                run_id,
+                0,
+                [
+                    _event(
+                        "evt-once", run_id, "run_lifecycle_changed", {"to_state": "active"}
+                    ).model_copy(update={"schema_version": 2})
+                ],
+            )
+    async with session_factory() as session:
+        events = await GraphEventStore(session, counting_catalog).read_run(run_id)
+
+    assert calls == ["run_lifecycle_changed"]
+    assert isinstance(events[0].payload, RunLifecycleChangedPayload)
+
+
+@pytest.mark.asyncio
+async def test_invalid_stored_envelope_reports_stream_context(
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
+) -> None:
+    run_id = "store-invalid-envelope"
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                EventV2Model(
+                    aggregate_id=graph_aggregate_id(run_id),
+                    version=1,
+                    event_type="run_lifecycle_changed",
+                    payload='{"event_id":"evt-invalid"}',
+                    timestamp=datetime(2026, 1, 1, tzinfo=UTC).isoformat(),
+                    payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
+                )
+            )
+    async with session_factory() as session:
+        with pytest.raises(EventPayloadCorruptionError) as caught:
+            await GraphEventStore(session, catalog).read_run(run_id)
+
+    assert run_id in str(caught.value)
+    assert "position 1" in str(caught.value)
+    assert "run_lifecycle_changed" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("run_id", "wrong-run"),
+        ("position", 99),
+        ("event_type", "node_created"),
+        ("payload_schema_generation", 1),
+    ],
+)
+@pytest.mark.asyncio
+async def test_read_run_positions_rejects_stored_row_metadata_mismatch_before_hydration(
+    session_factory: async_sessionmaker[AsyncSession],
+    catalog: GraphCatalog,
+    field: str,
+    value: object,
+) -> None:
+    run_id = f"store-position-mismatch-{field}"
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session, catalog).append_events(
+                run_id,
+                0,
+                [
+                    _event(
+                        "evt-mismatch", run_id, "run_lifecycle_changed", {"to_state": "active"}
+                    ).model_copy(update={"schema_version": 2})
+                ],
+            )
+        row = (
+            await session.execute(
+                select(EventV2Model).where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
+            )
+        ).scalar_one()
+        payload = json.loads(row.payload)
+        payload[field] = value
+        row.payload = json.dumps(payload)
+        await session.commit()
+
+    calls: list[str] = []
+    async with session_factory() as session:
+        with pytest.raises(EventPayloadCorruptionError, match="metadata"):
+            await GraphEventStore(session, CountingGraphCatalog(catalog, calls)).read_run_positions(
+                run_id, [1]
+            )
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_graph_payload_generation_is_written_and_required(
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
+) -> None:
+    run_id = "store-generation-two"
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session, catalog).append_events(
+                run_id,
+                0,
+                [_event("evt-generation", run_id, "run_lifecycle_changed", {"to_state": "active"})],
+            )
+        row = (
+            await session.execute(
+                select(EventV2Model).where(EventV2Model.aggregate_id == graph_aggregate_id(run_id))
+            )
+        ).scalar_one()
+        assert row.payload_schema_generation == GRAPH_PAYLOAD_SCHEMA_GENERATION
+        row.payload_schema_generation = 1
+        await session.commit()
+
+    async with session_factory() as session:
+        with pytest.raises(IncompatibleGraphPayloadGenerationError, match=run_id):
+            await GraphEventStore(session, catalog).read_run(run_id)
+
+
+@pytest.mark.asyncio
+async def test_corrupt_graph_payload_error_includes_stream_context(
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
+) -> None:
+    run_id = "store-corrupt-context"
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                EventV2Model(
+                    aggregate_id=graph_aggregate_id(run_id),
+                    version=1,
+                    event_type="run_lifecycle_changed",
+                    payload="{bad-json",
+                    timestamp=datetime(2026, 1, 1, tzinfo=UTC).isoformat(),
+                    payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
+                )
+            )
+    async with session_factory() as session:
+        with pytest.raises(EventPayloadCorruptionError) as caught:
+            await GraphEventStore(session, catalog).read_run(run_id)
+    assert run_id in str(caught.value)
+    assert "position 1" in str(caught.value)
+    assert "run_lifecycle_changed" in str(caught.value)
 
 
 @pytest.mark.asyncio
 async def test_projection_snapshot_tail_matches_full_rebuild(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-snapshot-tail-parity"
     clock = FakeClock()
@@ -130,11 +307,20 @@ async def test_projection_snapshot_tail_matches_full_rebuild(
         clock,
         ids,
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
-    seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    seed = await seed_run(
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+        catalog=catalog,
+    )
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
     started = await controller.handle_command(run_id, accepted.projection_position, "start")
     await controller.handle_command(
@@ -147,7 +333,7 @@ async def test_projection_snapshot_tail_matches_full_rebuild(
     async with session_factory() as session:
         store = GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         )
         events = await store.read_run(run_id)
         checkpoint = await store.read_projection_checkpoint(run_id)
@@ -155,12 +341,12 @@ async def test_projection_snapshot_tail_matches_full_rebuild(
     assert checkpoint is not None
     assert checkpoint.position == max(event.position for event in events)
     assert checkpoint.schema_version == PROJECTION_SCHEMA_VERSION
-    assert checkpoint.projection == _rebuild_projection(events)
+    assert checkpoint.projection == _rebuild_projection(events, catalog=build_graph_catalog())
 
 
 @pytest.mark.asyncio
 async def test_handle_command_uses_valid_snapshot_without_parsing_old_events(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-command-valid-snapshot-no-replay"
     clock = FakeClock()
@@ -170,11 +356,20 @@ async def test_handle_command_uses_valid_snapshot_without_parsing_old_events(
         clock,
         ids,
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
-    seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    seed = await seed_run(
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+        catalog=catalog,
+    )
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
 
     async with session_factory() as session:
@@ -202,7 +397,7 @@ async def test_handle_command_uses_valid_snapshot_without_parsing_old_events(
 
 @pytest.mark.asyncio
 async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-stale-patch-history"
     controller = GraphController(
@@ -210,8 +405,10 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
         FakeClock(),
         SequentialIdGenerator(),
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -236,7 +433,7 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
         async with session.begin():
             await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).append_events(run_id, 0, setup_events)
 
     result = await controller.handle_command(
@@ -261,7 +458,7 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
 
 @pytest.mark.asyncio
 async def test_schedule_tick_uses_valid_snapshot_without_parsing_old_events(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-schedule-valid-snapshot-no-replay"
     clock = FakeClock()
@@ -271,11 +468,20 @@ async def test_schedule_tick_uses_valid_snapshot_without_parsing_old_events(
         clock,
         ids,
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
-    seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    seed = await seed_run(
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+        catalog=catalog,
+    )
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
     started = await controller.handle_command(run_id, accepted.projection_position, "start")
 
@@ -300,7 +506,7 @@ async def test_schedule_tick_uses_valid_snapshot_without_parsing_old_events(
 
 @pytest.mark.asyncio
 async def test_callback_idempotency_uses_valid_snapshot_without_replay(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-callback-idempotency-snapshot"
     controller = GraphController(
@@ -308,8 +514,10 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
         FakeClock(),
         SequentialIdGenerator(),
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -338,7 +546,7 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
         async with session.begin():
             await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).append_events(run_id, 0, setup_events)
 
     payload = {
@@ -370,7 +578,7 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
 
 @pytest.mark.asyncio
 async def test_projection_snapshot_schema_mismatch_is_rebuilt(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-snapshot-version-rebuild"
     clock = FakeClock()
@@ -380,11 +588,20 @@ async def test_projection_snapshot_schema_mismatch_is_rebuilt(
         clock,
         ids,
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
-    seed = await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    seed = await seed_run(
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+        catalog=catalog,
+    )
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
 
     async with session_factory() as session:
@@ -406,19 +623,19 @@ async def test_projection_snapshot_schema_mismatch_is_rebuilt(
     async with session_factory() as session:
         store = GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         )
         events = await store.read_run(run_id)
         checkpoint = await store.read_projection_checkpoint(run_id)
 
     assert checkpoint is not None
     assert checkpoint.schema_version == PROJECTION_SCHEMA_VERSION
-    assert checkpoint.projection == _rebuild_projection(events)
+    assert checkpoint.projection == _rebuild_projection(events, catalog=build_graph_catalog())
 
 
 @pytest.mark.asyncio
 async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-idle-deferral-dedup"
     controller = GraphController(
@@ -426,8 +643,10 @@ async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
         FakeClock(),
         SequentialIdGenerator(),
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -442,7 +661,7 @@ async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
         async with session.begin():
             await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).append_events(run_id, 0, setup_events)
 
     first = await controller.handle_command(
@@ -466,7 +685,7 @@ async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
     async with session_factory() as session:
         snapshot = await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).read_projection_snapshot(run_id)
 
     assert snapshot is not None
@@ -477,7 +696,7 @@ async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
 
 @pytest.mark.asyncio
 async def test_projection_checkpoint_records_terminal_flag(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     terminal_run_id = "store-terminal-recovery-skip"
     active_run_id = "store-active-recovery-arm"
@@ -485,7 +704,7 @@ async def test_projection_checkpoint_records_terminal_flag(
         async with session.begin():
             store = GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             )
             await store.append_events(
                 terminal_run_id,
@@ -522,7 +741,7 @@ async def test_projection_checkpoint_records_terminal_flag(
 
 @pytest.mark.asyncio
 async def test_append_events_stores_durable_input_binding_position(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-input-bound-position"
     events = [
@@ -545,23 +764,23 @@ async def test_append_events_stores_durable_input_binding_position(
         async with session.begin():
             stored = await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).append_events(run_id, 0, events)
 
     async with session_factory() as session:
         read_back = await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).read_run(run_id)
 
     assert stored[1].position == 2
     assert stored[1].payload["bound_at_position"] == 2
-    assert read_back[1].payload["bound_at_position"] == 2
+    assert read_back[1].payload.bound_at_position == 2
 
 
 @pytest.mark.asyncio
 async def test_append_events_adds_durable_base_fields_to_accepted_records(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-record-base-fields"
     events = [
@@ -809,13 +1028,13 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         async with session.begin():
             stored = await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).append_events(run_id, 0, events)
 
     async with session_factory() as session:
         read_back = await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).read_run(run_id)
 
     candidate = stored[0].payload["record"]
@@ -961,12 +1180,12 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "artifact_type": "context_source",
         "uri": "docs/spec.md",
     }
-    assert read_back == stored
+    assert [event.payload.to_json() for event in read_back] == [event.payload for event in stored]
 
 
 @pytest.mark.asyncio
 async def test_append_events_rejects_malformed_accepted_record_atomically(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-record-base-rejection"
     malformed_record = {
@@ -993,13 +1212,13 @@ async def test_append_events_rejects_malformed_accepted_record_atomically(
             async with session.begin():
                 await GraphEventStore(
                     session,
-                    build_graph_catalog(),
+                    catalog,
                 ).append_events(run_id, 0, events)
 
     async with session_factory() as session:
         store = GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         )
         assert await store.current_position(run_id) == 0
         assert await store.read_run(run_id) == []
@@ -1007,7 +1226,7 @@ async def test_append_events_rejects_malformed_accepted_record_atomically(
 
 @pytest.mark.asyncio
 async def test_append_events_rejects_invalid_supplied_durable_base_fields(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-record-base-invalid"
     invalid_schema_record = {
@@ -1038,7 +1257,7 @@ async def test_append_events_rejects_invalid_supplied_durable_base_fields(
             async with session.begin():
                 await GraphEventStore(
                     session,
-                    build_graph_catalog(),
+                    catalog,
                 ).append_events(
                     run_id,
                     0,
@@ -1057,7 +1276,7 @@ async def test_append_events_rejects_invalid_supplied_durable_base_fields(
             async with session.begin():
                 await GraphEventStore(
                     session,
-                    build_graph_catalog(),
+                    catalog,
                 ).append_events(
                     run_id,
                     0,
@@ -1074,19 +1293,21 @@ async def test_append_events_rejects_invalid_supplied_durable_base_fields(
     async with session_factory() as session:
         store = GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         )
         assert await store.current_position(run_id) == 0
         assert await store.read_run(run_id) == []
 
 
 @pytest.mark.asyncio
-async def test_per_run_isolation(session_factory: async_sessionmaker[AsyncSession]) -> None:
+async def test_per_run_isolation(
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
+) -> None:
     async with session_factory() as session:
         async with session.begin():
             store = GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             )
             await store.append_events(
                 "store-run-a",
@@ -1110,7 +1331,7 @@ async def test_per_run_isolation(session_factory: async_sessionmaker[AsyncSessio
     async with session_factory() as session:
         store = GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         )
         run_a = await store.read_run("store-run-a")
         run_b = await store.read_run("store-run-b")
@@ -1121,14 +1342,14 @@ async def test_per_run_isolation(session_factory: async_sessionmaker[AsyncSessio
 
 @pytest.mark.asyncio
 async def test_unique_version_conflict(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-conflict"
     async with session_factory() as session:
         async with session.begin():
             await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).append_events(
                 run_id,
                 0,
@@ -1147,7 +1368,7 @@ async def test_unique_version_conflict(
             async with session.begin():
                 await GraphEventStore(
                     session,
-                    build_graph_catalog(),
+                    catalog,
                 ).append_events(
                     run_id,
                     0,
@@ -1164,7 +1385,7 @@ async def test_unique_version_conflict(
 
 @pytest.mark.asyncio
 async def test_unique_constraint_race_surfaces_stale_projection_error(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     engine = create_engine(tmp_path / "graph-race.db")
     await init_db(engine)
@@ -1175,11 +1396,11 @@ async def test_unique_constraint_race_surfaces_stale_projection_error(
         async with session_factory() as reader_one, session_factory() as reader_two:
             position_one = await GraphEventStore(
                 reader_one,
-                build_graph_catalog(),
+                catalog,
             ).current_position(run_id)
             position_two = await GraphEventStore(
                 reader_two,
-                build_graph_catalog(),
+                catalog,
             ).current_position(run_id)
 
         assert position_one == 0
@@ -1189,7 +1410,7 @@ async def test_unique_constraint_race_surfaces_stale_projection_error(
             async with session.begin():
                 await GraphEventStore(
                     session,
-                    build_graph_catalog(),
+                    catalog,
                 ).append_events(
                     run_id,
                     position_one,
@@ -1208,7 +1429,7 @@ async def test_unique_constraint_race_surfaces_stale_projection_error(
                 async with session.begin():
                     await GraphEventStore(
                         session,
-                        build_graph_catalog(),
+                        catalog,
                     ).append_events(
                         run_id,
                         position_two,
@@ -1229,7 +1450,7 @@ async def test_unique_constraint_race_surfaces_stale_projection_error(
             stored_rows = list(rows.scalars())
             events = await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).read_run(run_id)
 
         assert len(stored_rows) == 1
@@ -1240,7 +1461,7 @@ async def test_unique_constraint_race_surfaces_stale_projection_error(
 
 @pytest.mark.asyncio
 async def test_graph_stream_coexists_with_legacy_workflow_events(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     """Legacy workflow events live in events_v2 under aggregate_id == run_id.
     The graph stream is namespaced (graph:<run_id>) so the two never contend
@@ -1263,7 +1484,7 @@ async def test_graph_stream_coexists_with_legacy_workflow_events(
         async with session.begin():
             store = GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             )
             # Graph stream starts empty despite the legacy row.
             assert await store.current_position(run_id) == 0
@@ -1282,7 +1503,7 @@ async def test_graph_stream_coexists_with_legacy_workflow_events(
     async with session_factory() as session:
         store = GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         )
         events = await store.read_run(run_id)
         assert [event.event_id for event in events] == ["evt-coexist-1"]
@@ -1290,13 +1511,15 @@ async def test_graph_stream_coexists_with_legacy_workflow_events(
 
 
 @pytest.mark.asyncio
-async def test_read_from_offset(session_factory: async_sessionmaker[AsyncSession]) -> None:
+async def test_read_from_offset(
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
+) -> None:
     run_id = "store-offset"
     async with session_factory() as session:
         async with session.begin():
             await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).append_events(
                 run_id,
                 0,
@@ -1316,7 +1539,7 @@ async def test_read_from_offset(session_factory: async_sessionmaker[AsyncSession
     async with session_factory() as session:
         events = await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).read_run(run_id, from_position=2)
 
     assert [event.event_id for event in events] == ["evt-offset-2", "evt-offset-3"]
@@ -1324,7 +1547,7 @@ async def test_read_from_offset(session_factory: async_sessionmaker[AsyncSession
 
 @pytest.mark.asyncio
 async def test_read_run_summaries_avoids_heavy_payload_materialization(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-summary"
     large_payload = [{"path": f".venv/file-{index}.py"} for index in range(1000)]
@@ -1333,7 +1556,7 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
         async with session.begin():
             await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).append_events(
                 run_id,
                 0,
@@ -1396,11 +1619,11 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
     async with session_factory() as session:
         summaries = await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).read_run_summaries(run_id)
         verifier_detail = await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).read_node_detail_summary(
             run_id,
             "verifier-1",
@@ -1453,7 +1676,7 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
 
 @pytest.mark.asyncio
 async def test_read_run_light_preserves_projection_fields_without_heavy_payloads(
-    session_factory: async_sessionmaker[AsyncSession],
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:
     run_id = "store-light"
     large_payload = [{"path": f".venv/file-{index}.py"} for index in range(1000)]
@@ -1462,7 +1685,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         async with session.begin():
             await GraphEventStore(
                 session,
-                build_graph_catalog(),
+                catalog,
             ).append_events(
                 run_id,
                 0,
@@ -1582,7 +1805,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
     async with session_factory() as session:
         events = await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).read_run_light(run_id)
 
     assert [event.event_id for event in events] == [
@@ -1668,13 +1891,13 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
     assert isinstance(events[5], CompactEventEnvelope)
     projection = initial_projection()
     for event in events:
-        projection = reduce_event(build_graph_catalog(), projection, event)
+        projection = reduce_event(catalog, projection, event)
     assert projection["accepted_record_summaries_by_id"]["candidate-1"]["record_id"] == (
         "candidate-1"
     )
     flattened_full_event = EventEnvelope.model_validate(events[1].model_dump())
     legacy_projection = reduce_event(
-        build_graph_catalog(),
+        catalog,
         initial_projection(),
         flattened_full_event,
     )

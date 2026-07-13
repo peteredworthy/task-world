@@ -46,6 +46,8 @@ from orchestrator.workflow import (
     deserialize_event,
     handle_update_latest_attempt,
 )
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -61,8 +63,8 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+def service(session: AsyncSession, *, catalog: GraphCatalog) -> WorkflowService:
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 def _make_simple_run() -> Run:
@@ -177,16 +179,16 @@ async def test_full_lifecycle(service: WorkflowService) -> None:
     assert result.new_status == TaskStatus.COMPLETED
 
 
-async def test_state_survives_restart(session: AsyncSession) -> None:
+async def test_state_survives_restart(session: AsyncSession, *, catalog: GraphCatalog) -> None:
     """State persists across service instances (simulated restart)."""
-    service1 = WorkflowService(session)
+    service1 = WorkflowService(session, graph_catalog=build_graph_catalog())
 
     run = _make_simple_run()
     await service1.create_run(run)
     await service1.apply_start_run("run-1")
 
     # Simulate restart by creating a new service with same session
-    service2 = WorkflowService(session)
+    service2 = WorkflowService(session, graph_catalog=build_graph_catalog())
     loaded = await service2.get_run("run-1")
     assert loaded.status == RunStatus.ACTIVE
     assert loaded.started_at is not None
@@ -330,8 +332,7 @@ async def test_complete_verification_projects_revision_without_save_run(
 
 
 async def test_attempt_replay_preserves_explicit_attempt_update_fields(
-    session: AsyncSession,
-    tmp_path: Path,
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
@@ -343,7 +344,7 @@ async def test_attempt_replay_preserves_explicit_attempt_update_fields(
     _git(repo, "commit", "-m", "initial")
     start_commit = _git(repo, "rev-parse", "HEAD")
 
-    service = WorkflowService(session)
+    service = WorkflowService(session, graph_catalog=build_graph_catalog())
     run = _make_simple_run()
     run.worktree_path = str(repo)
     run.agent_runner_type = AgentRunnerType.CLI_SUBPROCESS
@@ -658,10 +659,12 @@ async def test_complete_recovery_retry_projects_attempts_and_resumes_without_sav
 
 
 async def test_complete_recovery_skip_projects_attempt_step_and_run_without_save_run(
-    session: AsyncSession,
+    session: AsyncSession, *, catalog: GraphCatalog
 ) -> None:
     completed_at = datetime(2025, 1, 15, 13, 30, 0, tzinfo=timezone.utc)
-    service = WorkflowService(session, clock=_FixedClock(completed_at))
+    service = WorkflowService(
+        session, clock=_FixedClock(completed_at), graph_catalog=build_graph_catalog()
+    )
     run = _make_simple_run()
     run.routine_embedded = _embedded_simple_routine()
     failure_context = "validator crashed before skip"
@@ -749,10 +752,12 @@ async def test_complete_recovery_skip_projects_attempt_step_and_run_without_save
 
 
 async def test_complete_recovery_abandon_projects_failed_attempt_without_save_run(
-    session: AsyncSession,
+    session: AsyncSession, *, catalog: GraphCatalog
 ) -> None:
     completed_at = datetime(2025, 1, 15, 12, 45, 0, tzinfo=timezone.utc)
-    service = WorkflowService(session, clock=_FixedClock(completed_at))
+    service = WorkflowService(
+        session, clock=_FixedClock(completed_at), graph_catalog=build_graph_catalog()
+    )
     run = _make_simple_run()
     run.routine_embedded = _embedded_simple_routine()
     failure_context = "validator crashed before abandon"

@@ -149,7 +149,9 @@ async def _seed_fr11_ready_frontier(app: Any, run_id: str) -> GraphController:
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
 

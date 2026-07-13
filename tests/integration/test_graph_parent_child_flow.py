@@ -45,7 +45,9 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     run_id = "parent-child-flow"
     try:
@@ -122,7 +124,9 @@ async def test_child_oversight_maps_to_in_chain_appeal(tmp_path: Path) -> None:
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     run_id = "parent-child-appeal"
     try:

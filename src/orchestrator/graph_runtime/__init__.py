@@ -11,8 +11,10 @@ from orchestrator.graph_runtime.dispatch import (
 )
 from orchestrator.graph_runtime.errors import (
     CompromisedFileStateError,
+    EventPayloadCorruptionError,
     GraphRuntimeError,
     InvalidGraphEventPayloadError,
+    IncompatibleGraphPayloadGenerationError,
     OutboxAppendError,
     StaleProjectionError,
 )
@@ -40,6 +42,7 @@ from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, Side
 from orchestrator.graph_runtime.recovery import RecoveryReport, recover, reconcile_graph
 from orchestrator.graph_runtime.seeding import SeedRunResult, seed_run
 from orchestrator.graph_runtime.store import (
+    GRAPH_PAYLOAD_SCHEMA_GENERATION,
     GraphEventStore,
     stored_graph_event,
     validate_catalog_event_payload,
@@ -52,9 +55,12 @@ __all__ = [
     "GraphDispatchContext",
     "GraphDispatchExecutor",
     "GraphEventStore",
+    "GRAPH_PAYLOAD_SCHEMA_GENERATION",
     "GraphRuntimeError",
     "HORIZON_REGION_PURPOSES",
     "InvalidGraphEventPayloadError",
+    "EventPayloadCorruptionError",
+    "IncompatibleGraphPayloadGenerationError",
     "CompromisedFileStateError",
     "CleanupApplication",
     "FileStateBoundaryResult",

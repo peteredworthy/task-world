@@ -31,6 +31,8 @@ from orchestrator.git import WorktreeCommitError, WorktreeResetError, reset_work
 from orchestrator.runners import AgentRunnerExecutor
 from orchestrator.state import Attempt, create_run_from_routine
 from orchestrator.workflow import LocalAutoVerifyRunner, PersistentEventEmitter, WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -112,7 +114,7 @@ async def test_reset_worktree_changes_is_idempotent(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_prepare_worktree_reset_records_events_and_resets_before_resume(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     repo_path = tmp_path / "repo"
     _init_repo(repo_path)
@@ -129,6 +131,7 @@ async def test_prepare_worktree_reset_records_events_and_resets_before_resume(
             event_store_v2=event_store,
             event_emitter=PersistentEventEmitter(event_store),
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(
@@ -171,7 +174,7 @@ async def test_prepare_worktree_reset_records_events_and_resets_before_resume(
 
 @pytest.mark.asyncio
 async def test_prepare_worktree_reset_records_failure(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     engine = create_engine(":memory:")
     await init_db(engine)
@@ -186,6 +189,7 @@ async def test_prepare_worktree_reset_records_failure(
             event_store_v2=event_store,
             event_emitter=PersistentEventEmitter(event_store),
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(
@@ -233,7 +237,7 @@ async def test_prepare_worktree_reset_records_failure(
 
 @pytest.mark.asyncio
 async def test_resume_revert_records_reset_before_task_reverted(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     repo_path = tmp_path / "repo"
     initial_commit = _init_repo(repo_path)
@@ -254,6 +258,7 @@ async def test_resume_revert_records_reset_before_task_reverted(
             event_store_v2=event_store,
             event_emitter=PersistentEventEmitter(event_store),
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(
@@ -296,7 +301,7 @@ async def test_resume_revert_records_reset_before_task_reverted(
 
 @pytest.mark.asyncio
 async def test_apply_submission_records_commit_events_before_task_transition(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     repo_path = tmp_path / "repo"
     _init_repo(repo_path)
@@ -313,6 +318,7 @@ async def test_apply_submission_records_commit_events_before_task_transition(
             event_store_v2=event_store,
             event_emitter=PersistentEventEmitter(event_store),
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(
@@ -361,7 +367,7 @@ async def test_apply_submission_records_commit_events_before_task_transition(
 
 @pytest.mark.asyncio
 async def test_apply_submission_records_noop_commit_event_when_clean(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     repo_path = tmp_path / "repo"
     initial_commit = _init_repo(repo_path)
@@ -378,6 +384,7 @@ async def test_apply_submission_records_noop_commit_event_when_clean(
             event_store_v2=event_store,
             event_emitter=PersistentEventEmitter(event_store),
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(
@@ -413,7 +420,7 @@ async def test_apply_submission_records_noop_commit_event_when_clean(
 
 @pytest.mark.asyncio
 async def test_apply_submission_commit_failure_leaves_task_building(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     engine = create_engine(":memory:")
     await init_db(engine)
@@ -428,6 +435,7 @@ async def test_apply_submission_commit_failure_leaves_task_building(
             event_store_v2=event_store,
             event_emitter=PersistentEventEmitter(event_store),
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(
@@ -470,7 +478,7 @@ async def test_apply_submission_commit_failure_leaves_task_building(
 
 @pytest.mark.asyncio
 async def test_recover_run_reset_branch_records_events_before_recovery_state(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     repo_path = tmp_path / "repo"
     initial_commit = _init_repo(repo_path)
@@ -491,6 +499,7 @@ async def test_recover_run_reset_branch_records_events_before_recovery_state(
             event_store_v2=event_store,
             event_emitter=PersistentEventEmitter(event_store),
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(
@@ -528,7 +537,7 @@ async def test_recover_run_reset_branch_records_events_before_recovery_state(
 
 @pytest.mark.asyncio
 async def test_recover_run_reset_branch_failure_leaves_recovery_state_unchanged(
-    tmp_path: Path,
+    tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     repo_path = tmp_path / "repo"
     initial_commit = _init_repo(repo_path)
@@ -545,6 +554,7 @@ async def test_recover_run_reset_branch_failure_leaves_recovery_state_unchanged(
             event_store_v2=event_store,
             event_emitter=PersistentEventEmitter(event_store),
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(

@@ -14,7 +14,11 @@ from orchestrator.graph.models import EventEnvelope
 from orchestrator.graph.projections import build_projection, projection_to_checkpoint
 from orchestrator.graph.scenario import run_scenario
 from orchestrator.graph.store import InMemoryEventStore
-from orchestrator.graph_runtime.store import GraphEventStore, graph_aggregate_id
+from orchestrator.graph_runtime.store import (
+    GRAPH_PAYLOAD_SCHEMA_GENERATION,
+    GraphEventStore,
+    graph_aggregate_id,
+)
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "graph"
 
@@ -54,7 +58,9 @@ def test_all_fixtures_run_through_harness() -> None:
             FakeClock(),
             SequentialIdGenerator(),
             catalog=build_graph_catalog(),
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         assert result.scenario_name == scenario["name"], path.name
         assert result.passed, f"{path.name}::{scenario['name']}: {result.failures}"
@@ -115,7 +121,9 @@ async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
             FakeClock(),
             SequentialIdGenerator(),
             catalog=build_graph_catalog(),
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         assert result.passed, f"{path.name}::{scenario['name']}: {result.failures}"
 
@@ -127,6 +135,7 @@ async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
                 version=event.position,
                 event_type=event.event_type,
                 payload=event.model_dump_json(),
+                payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
                 timestamp=event.timestamp.isoformat(),
             )
             for event in stored_events

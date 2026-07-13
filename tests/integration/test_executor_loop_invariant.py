@@ -31,6 +31,8 @@ from orchestrator.db.access.mutations import save_run
 from orchestrator.runners.executor import AgentRunnerExecutor, NoTaskReason
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -99,13 +101,17 @@ def _minimal_routine(**step_kwargs: object) -> RoutineConfig:
 async def _create_active_run(
     session_factory: async_sessionmaker[AsyncSession],
     routine: RoutineConfig,
+    *,
+    catalog: GraphCatalog,
 ) -> str:
     """Create a run in the DB as ACTIVE with routine_embedded set.
 
     Returns the run_id.
     """
     async with session_factory() as session:
-        service = WorkflowService(**_make_service_args(session))
+        service = WorkflowService(
+            **_make_service_args(session), graph_catalog=build_graph_catalog()
+        )
         run = create_run_from_routine(
             routine=routine,
             repo_name="test-project",
@@ -223,7 +229,7 @@ class TestExecutorLoopNeverLeavesActive:
         routine = _routine_for_reason(reason)
 
         # 1. Create ACTIVE run
-        run_id = await _create_active_run(session_factory, routine)
+        run_id = await _create_active_run(session_factory, routine, catalog=build_graph_catalog())
 
         # 2. Mutate DB state to trigger the desired reason
         await _mutate_run_for_reason(session_factory, run_id, reason)
@@ -270,7 +276,7 @@ class TestExecutorLoopNeverLeavesActive:
     ) -> None:
         """Heartbeat dict is cleaned up after loop exits."""
         routine = _minimal_routine()
-        run_id = await _create_active_run(session_factory, routine)
+        run_id = await _create_active_run(session_factory, routine, catalog=build_graph_catalog())
 
         # Make all tasks complete so the loop exits quickly
         await _mutate_run_for_reason(session_factory, run_id, NoTaskReason.ALL_COMPLETE)

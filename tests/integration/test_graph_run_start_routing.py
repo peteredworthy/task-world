@@ -17,6 +17,7 @@ from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import SignalConsumer, WorkflowService
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import GraphCatalog
 
 
 def _routine_payload() -> dict[str, Any]:
@@ -79,7 +80,9 @@ async def test_explicit_legacy_run_records_execution_mode_legacy(
 
 
 @pytest.mark.asyncio
-async def test_run_start_routes_graph_mode_to_driver(tmp_path: Path) -> None:
+async def test_run_start_routes_graph_mode_to_driver(
+    tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     engine = create_engine(tmp_path / "routing.db")
     await init_db(engine)
     session_factory = create_session_factory(engine)
@@ -87,8 +90,10 @@ async def test_run_start_routes_graph_mode_to_driver(tmp_path: Path) -> None:
     workflow_called = False
     called_run_ids: list[str] = []
 
-    async def create_service(session: AsyncSession) -> WorkflowService:
-        return WorkflowService(session)
+    async def create_service(
+        session: AsyncSession,
+    ) -> WorkflowService:
+        return WorkflowService(session, graph_catalog=build_graph_catalog())
 
     async def graph_runner(run_id: str) -> None:
         called_run_ids.append(run_id)
@@ -100,7 +105,9 @@ async def test_run_start_routes_graph_mode_to_driver(tmp_path: Path) -> None:
 
     try:
         run_id = "graph-routing-run"
-        await _create_run(session_factory, run_id, execution_mode="graph")
+        await _create_run(
+            session_factory, run_id, execution_mode="graph", catalog=build_graph_catalog()
+        )
         consumer = SignalConsumer(
             session_factory,
             create_service,
@@ -121,7 +128,7 @@ async def test_run_start_routes_graph_mode_to_driver(tmp_path: Path) -> None:
 
 
 async def test_graph_cancel_route_appends_graph_cancel_before_signal_drain(
-    _shared_app_fixture: tuple[AsyncClient, Any, Path, Path, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Path, Path, Any], *, catalog: GraphCatalog
 ) -> None:
     client, drain, _, _, app = _shared_app_fixture
     run_id = "graph-cancel-api-run"
@@ -132,6 +139,7 @@ async def test_graph_cancel_route_appends_graph_cancel_before_signal_drain(
         execution_mode="graph",
         status=RunStatus.ACTIVE,
         agent_runner_type=AgentRunnerType.CODEX_SERVER,
+        catalog=build_graph_catalog(),
     )
     async with session_factory() as session:
         await GraphEventStore(
@@ -180,7 +188,7 @@ async def test_graph_cancel_route_appends_graph_cancel_before_signal_drain(
     ]
     assert events[-4].payload["to_state"] == "cancelling"
     assert events[-3].payload["lease_id"] == "lease-worker-1"
-    assert events[-2].payload == {
+    assert events[-2].payload.to_json() == {
         "node_id": "worker-1",
         "new_state": "cancelled",
         "trigger": "run_cancelled",
@@ -206,6 +214,7 @@ async def _create_run(
     execution_mode: str,
     status: RunStatus = RunStatus.DRAFT,
     agent_runner_type: AgentRunnerType = AgentRunnerType.CLI_SUBPROCESS,
+    catalog: GraphCatalog,
 ) -> None:
     routine = RoutineConfig.model_validate(_routine_payload())
     run = create_run_from_routine(routine, repo_name="routing-repo", source_branch="main")
@@ -215,7 +224,7 @@ async def _create_run(
     run.agent_runner_type = agent_runner_type
     async with session_factory() as session:
         if status == RunStatus.DRAFT:
-            await WorkflowService(session).create_run(run)
+            await WorkflowService(session, graph_catalog=build_graph_catalog()).create_run(run)
         else:
             await save_run(session, run)
             await session.commit()

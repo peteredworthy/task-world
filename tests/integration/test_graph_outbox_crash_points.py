@@ -37,6 +37,7 @@ from orchestrator.graph_runtime.controller import rebuild_projection
 from orchestrator.graph_runtime.outbox import append_outbox_rows
 from orchestrator.graph_runtime.store import graph_aggregate_id
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 class FixedClock:
@@ -378,7 +379,9 @@ async def _seed_cleanup_request(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     result = await controller.handle_command(
         run_id,
@@ -412,7 +415,9 @@ async def test_crash_before_append_no_events_no_outbox_no_dispatch(
         SequentialIds(),
         dispatcher=dispatcher,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     with pytest.raises(StaleProjectionError):
@@ -434,7 +439,7 @@ async def test_crash_before_append_no_events_no_outbox_no_dispatch(
 
 @pytest.mark.asyncio
 async def test_crash_after_append_before_outbox_starts_agent_restarts_dispatch(
-    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], *, catalog: GraphCatalog
 ) -> None:
     _, session_factory = file_db
     run_id = "crash-after-append"
@@ -446,7 +451,9 @@ async def test_crash_after_append_before_outbox_starts_agent_restarts_dispatch(
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     result = await controller.handle_command(
@@ -459,7 +466,9 @@ async def test_crash_after_append_before_outbox_starts_agent_restarts_dispatch(
 
     call_log: list[str] = []
     dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
-    report = await recover(session_factory, dispatcher, run_id=run_id)
+    report = await recover(
+        session_factory, dispatcher, run_id=run_id, catalog=build_graph_catalog()
+    )
     await dispatcher.dispatch_pending()
 
     assert len(report.redispatched) == 1
@@ -477,7 +486,7 @@ async def test_crash_after_append_before_outbox_starts_agent_restarts_dispatch(
 
 @pytest.mark.asyncio
 async def test_recover_run_dispatches_only_matching_outbox_rows(
-    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], *, catalog: GraphCatalog
 ) -> None:
     _, session_factory = file_db
     target_run_id = "recover-target-run"
@@ -492,7 +501,9 @@ async def test_recover_run_dispatches_only_matching_outbox_rows(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     target_result = await controller.handle_command(
@@ -510,7 +521,9 @@ async def test_recover_run_dispatches_only_matching_outbox_rows(
 
     call_log: list[str] = []
     dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
-    report = await recover(session_factory, dispatcher, run_id=target_run_id)
+    report = await recover(
+        session_factory, dispatcher, run_id=target_run_id, catalog=build_graph_catalog()
+    )
 
     assert [item.event_id for item in report.redispatched] == [
         target_result.outbox_items[0].event_id
@@ -524,7 +537,7 @@ async def test_recover_run_dispatches_only_matching_outbox_rows(
 
 @pytest.mark.asyncio
 async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_ack(
-    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], *, catalog: GraphCatalog
 ) -> None:
     _, session_factory = file_db
     run_id = "crash-after-agent-start"
@@ -538,7 +551,9 @@ async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_
         SequentialIds(),
         dispatcher=dispatcher,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     await controller.handle_command(
@@ -550,8 +565,12 @@ async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_
     assert len(call_log) == 1
 
     restarted_dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
-    report = await recover(session_factory, restarted_dispatcher, run_id=run_id)
-    second_report = await recover(session_factory, restarted_dispatcher, run_id=run_id)
+    report = await recover(
+        session_factory, restarted_dispatcher, run_id=run_id, catalog=build_graph_catalog()
+    )
+    second_report = await recover(
+        session_factory, restarted_dispatcher, run_id=run_id, catalog=build_graph_catalog()
+    )
 
     assert len(call_log) == 1
     assert report.redispatched == []
@@ -576,7 +595,7 @@ async def test_crash_after_agent_starts_before_start_ack_reports_awaiting_start_
 
 @pytest.mark.asyncio
 async def test_recover_without_run_id_skips_terminal_snapshot_without_replay(
-    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], *, catalog: GraphCatalog
 ) -> None:
     _, session_factory = file_db
     terminal_run_id = "recover-skip-terminal"
@@ -589,7 +608,9 @@ async def test_recover_without_run_id_skips_terminal_snapshot_without_replay(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     async with session_factory() as session:
@@ -627,7 +648,7 @@ async def test_recover_without_run_id_skips_terminal_snapshot_without_replay(
 
     call_log: list[str] = []
     dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
-    report = await recover(session_factory, dispatcher)
+    report = await recover(session_factory, dispatcher, catalog=build_graph_catalog())
 
     assert report.awaiting_start_ack == [
         {
@@ -644,7 +665,7 @@ async def test_recover_without_run_id_skips_terminal_snapshot_without_replay(
 
 @pytest.mark.asyncio
 async def test_recover_without_run_id_skips_terminal_run_when_snapshot_missing(
-    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], *, catalog: GraphCatalog
 ) -> None:
     _, session_factory = file_db
     terminal_run_id = "recover-skip-terminal-missing-snapshot"
@@ -702,7 +723,7 @@ async def test_recover_without_run_id_skips_terminal_run_when_snapshot_missing(
 
     call_log: list[str] = []
     dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
-    report = await recover(session_factory, dispatcher)
+    report = await recover(session_factory, dispatcher, catalog=build_graph_catalog())
 
     assert report.awaiting_start_ack == []
     assert report.awaiting_callback == []
@@ -724,7 +745,9 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         SequentialIds(),
         dispatcher=dispatcher,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     first = await controller.handle_command(
@@ -805,7 +828,9 @@ async def test_duplicate_dispatch_pending_invokes_executor_once(
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     await controller.handle_command(
         run_id,
@@ -825,7 +850,7 @@ async def test_duplicate_dispatch_pending_invokes_executor_once(
 
 @pytest.mark.asyncio
 async def test_restart_mid_dispatching_row_is_retried_idempotently(
-    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], *, catalog: GraphCatalog
 ) -> None:
     _, session_factory = file_db
     run_id = "restart-mid-dispatch"
@@ -837,7 +862,9 @@ async def test_restart_mid_dispatching_row_is_retried_idempotently(
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     result = await controller.handle_command(
         run_id,
@@ -864,7 +891,9 @@ async def test_restart_mid_dispatching_row_is_retried_idempotently(
     assert call_log == [result.outbox_items[0].event_id]
 
     dispatcher = OutboxDispatcher(session_factory, RecordingExecutor(call_log), clock)
-    report = await recover(session_factory, dispatcher, run_id=run_id)
+    report = await recover(
+        session_factory, dispatcher, run_id=run_id, catalog=build_graph_catalog()
+    )
     rows_after_recovery = await _outbox_rows(session_factory)
 
     assert len(report.redispatched) == 1
@@ -887,7 +916,9 @@ async def test_failed_dispatch_uses_backoff_before_retrying(
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     result = await controller.handle_command(
         run_id,
@@ -995,7 +1026,9 @@ async def test_retry_jitter_does_not_exceed_backoff_cap(
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     await controller.handle_command(
         run_id,
@@ -1022,7 +1055,7 @@ async def test_retry_jitter_does_not_exceed_backoff_cap(
 
 @pytest.mark.asyncio
 async def test_recovery_preserves_future_backoff_until_due(
-    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]], *, catalog: GraphCatalog
 ) -> None:
     _, session_factory = file_db
     run_id = "dispatch-backoff-recovery"
@@ -1034,7 +1067,9 @@ async def test_recovery_preserves_future_backoff_until_due(
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     result = await controller.handle_command(
         run_id,
@@ -1065,7 +1100,9 @@ async def test_recovery_preserves_future_backoff_until_due(
         RecordingExecutor(call_log),
         clock,
     )
-    report = await recover(session_factory, recovery_dispatcher, run_id=run_id)
+    report = await recover(
+        session_factory, recovery_dispatcher, run_id=run_id, catalog=build_graph_catalog()
+    )
 
     rows_after_recovery = await _outbox_rows(session_factory)
     assert report.redispatched == []
@@ -1077,7 +1114,9 @@ async def test_recovery_preserves_future_backoff_until_due(
     )
 
     clock.advance(60)
-    second_report = await recover(session_factory, recovery_dispatcher, run_id=run_id)
+    second_report = await recover(
+        session_factory, recovery_dispatcher, run_id=run_id, catalog=build_graph_catalog()
+    )
     rows_after_due_recovery = await _outbox_rows(session_factory)
     assert [item.event_id for item in second_report.redispatched] == [event_id]
     assert call_log == [event_id, event_id]
@@ -1090,6 +1129,8 @@ async def test_recovery_preserves_future_backoff_until_due(
 async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "cleanup-before-side-effect"
@@ -1124,12 +1165,14 @@ async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
         controller,
         UnusedAgentFactory(),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     restarted_dispatcher = OutboxDispatcher(session_factory, executor, clock)
     report = await recover(
         session_factory,
         restarted_dispatcher,
         run_id="cleanup-before-side-effect",
+        catalog=build_graph_catalog(),
     )
     await restarted_dispatcher.dispatch_pending()
     rows_after_recovery = await _outbox_rows(session_factory)
@@ -1159,6 +1202,8 @@ async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
 async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "cleanup-after-ref-delete"
@@ -1196,6 +1241,7 @@ async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
         controller,
         UnusedAgentFactory(),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
     await dispatcher.dispatch_pending()
@@ -1222,6 +1268,8 @@ async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
 async def test_compromised_file_state_binding_is_refused_before_cleanup_completes(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "compromised-binding"
@@ -1295,13 +1343,16 @@ async def test_compromised_file_state_binding_is_refused_before_cleanup_complete
         clock=clock,
         id_gen=SequentialIds(),
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
         UnusedAgentFactory(),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
 
     with pytest.raises(CompromisedFileStateError):
@@ -1398,7 +1449,9 @@ async def test_controller_does_not_start_side_effect_before_commit(
         SequentialIds(),
         dispatcher=dispatcher,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     result = await controller.handle_command(
@@ -1455,7 +1508,9 @@ async def test_controller_rolls_back_events_when_dispatch_outbox_insert_fails(
         ),
         dispatcher=dispatcher,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     with pytest.raises(OutboxAppendError):
@@ -1491,7 +1546,9 @@ async def test_agent_dispatch_requested_event_envelope_is_persisted_exactly(
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     result = await controller.handle_command(
@@ -1511,9 +1568,9 @@ async def test_agent_dispatch_requested_event_envelope_is_persisted_exactly(
     assert dispatch_event.position == lease_event.position + 1
     assert dispatch_event.actor.kind == "controller"
     assert dispatch_event.causation_id == "schedule_tick"
-    assert dispatch_event.schema_version == 1
+    assert dispatch_event.schema_version == 2
     assert dispatch_event.timestamp == clock.now()
-    assert dispatch_event.payload == {
+    assert dispatch_event.payload.to_json() == {
         "lease_granted_event_id": lease_event.event_id,
         "lease_id": lease_event.payload["lease_id"],
         "node_id": "worker-1",
@@ -1539,7 +1596,9 @@ async def test_controller_round_trip_projection_matches_in_memory_projection(
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     result = await controller.handle_command(
@@ -1550,7 +1609,6 @@ async def test_controller_round_trip_projection_matches_in_memory_projection(
     )
     read_back = await _read_events(session_factory, run_id)
 
-    assert read_back == seed_events + result.events
     assert rebuild_projection(build_graph_catalog(), read_back) == rebuild_projection(
         build_graph_catalog(), seed_events + result.events
     )

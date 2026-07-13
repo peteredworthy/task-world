@@ -68,6 +68,7 @@ class CatalogInjection:
     qualified_names: tuple[str, ...] = ()
     additional_arguments: tuple[str, ...] = ()
     factory_arguments: bool = False
+    test_only_unqualified: bool = False
 
 
 @dataclass(frozen=True)
@@ -676,6 +677,21 @@ class _MechanicalTransformer(cst.CSTTransformer):
             consumer.function_name: consumer for consumer in migration.allowlist_consumers
         }
         self._blocked_allowlists = blocked_allowlists
+        self._function_stack: list[str] = []
+        self._class_stack: list[str] = []
+        self._functions_needing_catalog: set[str] = set()
+
+    def visit_ClassDef(self, node: cst.ClassDef) -> None:
+        self._class_stack.append(node.name.value)
+
+    def leave_ClassDef(
+        self, original_node: cst.ClassDef, updated_node: cst.ClassDef
+    ) -> cst.BaseStatement:
+        self._class_stack.pop()
+        return updated_node
+
+    def visit_FunctionDef(self, node: cst.FunctionDef) -> None:
+        self._function_stack.append(node.name.value)
 
     def _resolved_names(self, node: cst.CSTNode) -> frozenset[str]:
         return frozenset(
@@ -889,6 +905,63 @@ class _MechanicalTransformer(cst.CSTTransformer):
     def leave_FunctionDef(
         self, original_node: cst.FunctionDef, updated_node: cst.FunctionDef
     ) -> cst.BaseStatement:
+        function_name = self._function_stack.pop()
+        if (
+            self.migration.domain == "catalog_injection"
+            and self.path.startswith("tests/")
+            and (
+                function_name in {"create_service", "_create_service"}
+                or function_name.endswith("service_factory")
+            )
+        ):
+            kwonly = tuple(
+                parameter
+                for parameter in updated_node.params.kwonly_params
+                if parameter.name.value != "catalog"
+            )
+            if kwonly != updated_node.params.kwonly_params:
+                self.changes += 1
+                return updated_node.with_changes(
+                    params=updated_node.params.with_changes(
+                        kwonly_params=kwonly,
+                        star_arg=(
+                            updated_node.params.star_arg if kwonly else cst.MaybeSentinel.DEFAULT
+                        ),
+                    )
+                )
+        all_parameters = (*updated_node.params.params, *updated_node.params.kwonly_params)
+        existing = {parameter.name.value for parameter in all_parameters}
+        if self.migration.domain == "catalog_injection" and (
+            function_name in self._functions_needing_catalog or "catalog" in existing
+        ):
+            if "catalog" not in existing and function_name != "create_app":
+                self.changes += 1
+                return updated_node.with_changes(
+                    params=updated_node.params.with_changes(
+                        kwonly_params=(
+                            *updated_node.params.kwonly_params,
+                            cst.Param(
+                                cst.Name("catalog"),
+                                annotation=cst.Annotation(cst.Name("GraphCatalog")),
+                            ),
+                        )
+                    )
+                )
+            if "catalog" in existing:
+                changed = False
+                kwonly = []
+                for parameter in updated_node.params.kwonly_params:
+                    if parameter.name.value == "catalog" and parameter.annotation is None:
+                        parameter = parameter.with_changes(
+                            annotation=cst.Annotation(cst.Name("GraphCatalog"))
+                        )
+                        changed = True
+                    kwonly.append(parameter)
+                if changed:
+                    self.changes += 1
+                    return updated_node.with_changes(
+                        params=updated_node.params.with_changes(kwonly_params=tuple(kwonly))
+                    )
         if original_node.name.value in self.migration.remove_functions:
             self.changes += 1
             return cst.RemoveFromParent()
@@ -1072,9 +1145,28 @@ class _MechanicalTransformer(cst.CSTTransformer):
             for route in self._catalog_injections
             if route.qualified_names and bool(resolved_names.intersection(route.qualified_names))
         ]
+        if (
+            not routes
+            and self.migration.domain == "catalog_injection"
+            and self.path.startswith("tests/")
+        ):
+            callable_name = (
+                original_node.func.value
+                if isinstance(original_node.func, cst.Name)
+                else original_node.func.attr.value
+                if isinstance(original_node.func, cst.Attribute)
+                else None
+            )
+            routes = [
+                route for route in self._catalog_injections if route.callable_name == callable_name
+            ]
         if len(routes) != 1:
             return None
         route = routes[0]
+        if route.callable_name == "GraphEventStore" and len(original_node.args) >= 2:
+            return None
+        if route.callable_name == "build_graph_command_dependencies" and original_node.args:
+            return None
         argument_names = (route.argument_name, *route.additional_arguments)
         existing_names = {
             argument.keyword.value
@@ -1099,7 +1191,12 @@ class _MechanicalTransformer(cst.CSTTransformer):
                             )
                         )
                         if route.factory_arguments
-                        else cst.Name(name),
+                        or (self.path.startswith("tests/") and name in {"catalog", "graph_catalog"})
+                        else (
+                            cst.Attribute(cst.Name("self"), cst.Name("_catalog"))
+                            if name == "catalog" and self._class_stack
+                            else cst.Name(name)
+                        ),
                         keyword=cst.Name(name),
                         equal=cst.AssignEqual(
                             whitespace_before=cst.SimpleWhitespace(""),
@@ -1374,6 +1471,24 @@ class _MechanicalTransformer(cst.CSTTransformer):
         return updated_node
 
     def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.BaseExpression:
+        if (
+            self.migration.domain == "catalog_injection"
+            and not self.path.endswith("src/orchestrator/api/app.py")
+            and not self.path.endswith("src/orchestrator/cli/main.py")
+            and not self.path.startswith("tests/")
+            and self._resolved_names(original_node.func).intersection(
+                {
+                    "orchestrator.graph.build_graph_catalog",
+                    "orchestrator.graph.catalog.build_graph_catalog",
+                }
+            )
+        ):
+            self.changes += 1
+            if self._function_stack and not self._class_stack:
+                self._functions_needing_catalog.add(self._function_stack[-1])
+            if self._class_stack:
+                return cst.Attribute(cst.Name("self"), cst.Name("_catalog"))
+            return cst.Name("catalog")
         if (
             self.migration.domain == "catalog_cutover"
             and self.path.startswith(("src/orchestrator/graph/", "src/orchestrator/graph_runtime/"))
@@ -1837,7 +1952,28 @@ class _MechanicalTransformer(cst.CSTTransformer):
         if event is not None:
             return event
         injection = self._inject_catalog(original_node, updated_node)
+        if (
+            injection is not None
+            and self.migration.domain == "catalog_injection"
+            and self._function_stack
+            and not self._class_stack
+            and not self.path.startswith("tests/")
+        ):
+            self._functions_needing_catalog.add(self._function_stack[-1])
         return injection if injection is not None else updated_node
+
+    def leave_Arg(self, original_node: cst.Arg, updated_node: cst.Arg) -> cst.Arg:
+        if (
+            self.migration.domain == "catalog_injection"
+            and self.path.startswith("tests/")
+            and original_node.keyword is not None
+            and original_node.keyword.value == "graph_catalog"
+            and isinstance(original_node.value, cst.Name)
+            and original_node.value.value in {"graph_catalog", "catalog"}
+        ):
+            self.changes += 1
+            return updated_node.with_changes(value=cst.Call(cst.Name("build_graph_catalog")))
+        return updated_node
 
     def leave_SimpleStatementLine(
         self,
@@ -2130,7 +2266,7 @@ class StrictPayloadCutoverCodemod:
                 f"catalog injection {route.callable_name} requires qualified_names",
             )
             for route in self.migration.catalog_injections
-            if not route.qualified_names
+            if not route.qualified_names and not route.test_only_unqualified
         )
         for node in ast.walk(tree):
             if not (
@@ -2236,7 +2372,11 @@ class StrictPayloadCutoverCodemod:
                 )
                 for line in specification_assignment_lines
             )
-        if noncanonical_specifications and self.migration.domain != "catalog_cutover":
+        if (
+            noncanonical_specifications
+            and self.migration.domain != "catalog_cutover"
+            and self.migration.command_routes
+        ):
             initial_diagnostics.extend(
                 CodemodDiagnostic(
                     path,
@@ -2976,6 +3116,197 @@ DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
 
 DOMAIN_MIGRATIONS.update(
     {
+        "catalog_injection": DomainMigration(
+            domain="catalog_injection",
+            paths=(
+                "src/orchestrator/api/app.py",
+                "src/orchestrator/api/deps.py",
+                "src/orchestrator/api/routers/graph.py",
+                "src/orchestrator/api/presenters/evidence_digest.py",
+                "src/orchestrator/cli/runs.py",
+                "src/orchestrator/cli/main.py",
+                "src/orchestrator/graph_runtime/controller.py",
+                "src/orchestrator/graph_runtime/store.py",
+                "src/orchestrator/graph_runtime/dispatch.py",
+                "src/orchestrator/graph_runtime/recovery.py",
+                "src/orchestrator/graph_runtime/seeding.py",
+                "src/orchestrator/graph_runtime/prompts.py",
+                "src/orchestrator/graph_runtime/errors.py",
+                "src/orchestrator/graph_runtime/__init__.py",
+                "src/orchestrator/workflow/service.py",
+                "src/orchestrator/workflow/graph_driver.py",
+                "tests/integration/test_graph_event_store.py",
+                "tests/integration/test_graph_api.py",
+            ),
+            catalog_injections=(
+                CatalogInjection(
+                    "GraphEventStore",
+                    qualified_names=(
+                        "GraphDispatchExecutor",
+                        "orchestrator.graph_runtime.GraphEventStore",
+                        "orchestrator.graph_runtime.store.GraphEventStore",
+                    ),
+                ),
+                CatalogInjection(
+                    "GraphController",
+                    qualified_names=(
+                        "WorkflowService",
+                        "orchestrator.graph_runtime.GraphController",
+                        "orchestrator.graph_runtime.controller.GraphController",
+                    ),
+                    additional_arguments=("future_effects",),
+                ),
+                CatalogInjection(
+                    "compile_routine",
+                    qualified_names=(
+                        "GraphRunDriver",
+                        "orchestrator.graph.compile_routine",
+                        "orchestrator.graph.compiler.compile_routine",
+                    ),
+                ),
+                CatalogInjection(
+                    "seed_run",
+                    qualified_names=(
+                        "recover",
+                        "orchestrator.graph_runtime.seed_run",
+                        "orchestrator.graph_runtime.seeding.seed_run",
+                    ),
+                ),
+                CatalogInjection(
+                    "GraphDispatchExecutor",
+                    qualified_names=(
+                        "orchestrator.graph_runtime.GraphDispatchExecutor",
+                        "orchestrator.graph_runtime.dispatch.GraphDispatchExecutor",
+                    ),
+                ),
+                CatalogInjection(
+                    "build_graph_command_dependencies",
+                    qualified_names=(
+                        "orchestrator.graph.build_graph_command_dependencies",
+                        "orchestrator.graph.composition.build_graph_command_dependencies",
+                    ),
+                ),
+                CatalogInjection(
+                    "build_run_evidence_digest_response",
+                    qualified_names=(
+                        "orchestrator.api.build_run_evidence_digest_response",
+                        "orchestrator.api.presenters.evidence_digest.build_run_evidence_digest_response",
+                    ),
+                ),
+                CatalogInjection(
+                    "WorkflowService",
+                    argument_name="graph_catalog",
+                    qualified_names=(
+                        "orchestrator.workflow.WorkflowService",
+                        "orchestrator.workflow.service.WorkflowService",
+                    ),
+                ),
+                CatalogInjection(
+                    "GraphRunDriver",
+                    qualified_names=(
+                        "orchestrator.workflow.GraphRunDriver",
+                        "orchestrator.workflow.graph_driver.GraphRunDriver",
+                    ),
+                ),
+                CatalogInjection(
+                    "recover",
+                    qualified_names=(
+                        "orchestrator.graph_runtime.recover",
+                        "orchestrator.graph_runtime.recovery.recover",
+                    ),
+                ),
+                *(
+                    CatalogInjection(
+                        name,
+                        qualified_names=(name, f"orchestrator.api.routers.graph.{name}"),
+                    )
+                    for name in (
+                        "build_graph_projection_response",
+                        "build_graph_topology_response",
+                        "build_final_invariant_blockers_response",
+                        "build_graph_regions_response",
+                        "build_scheduler_view_response",
+                        "build_decision_view_response",
+                        "build_file_state_report_response",
+                        "build_node_detail_response",
+                    )
+                ),
+                CatalogInjection(
+                    "_requirements_for_node",
+                    qualified_names=(
+                        "_requirements_for_node",
+                        "orchestrator.graph_runtime.dispatch._requirements_for_node",
+                    ),
+                ),
+                CatalogInjection(
+                    "_planner_packet",
+                    qualified_names=(
+                        "_planner_packet",
+                        "orchestrator.graph_runtime.prompts._planner_packet",
+                    ),
+                ),
+                CatalogInjection(
+                    "_prompt_for_node",
+                    qualified_names=(
+                        "_prompt_for_node",
+                        "_prompts._prompt_for_node",
+                        "orchestrator.graph_runtime.prompts._prompt_for_node",
+                    ),
+                ),
+                CatalogInjection(
+                    "_packet_for_prompt_summary",
+                    qualified_names=(
+                        "_packet_for_prompt_summary",
+                        "orchestrator.graph_runtime.prompts._packet_for_prompt_summary",
+                    ),
+                ),
+                CatalogInjection(
+                    "_prompt_summary_for_node",
+                    qualified_names=(
+                        "_prompt_summary_for_node",
+                        "_prompts._prompt_summary_for_node",
+                        "orchestrator.graph_runtime.prompts._prompt_summary_for_node",
+                    ),
+                ),
+                CatalogInjection(
+                    "_run_ids",
+                    qualified_names=("_run_ids", "orchestrator.graph_runtime.recovery._run_ids"),
+                ),
+                CatalogInjection(
+                    "_snapshot_from_events",
+                    qualified_names=(
+                        "_snapshot_from_events",
+                        "orchestrator.workflow.graph_driver._snapshot_from_events",
+                    ),
+                ),
+                *(
+                    CatalogInjection(name, test_only_unqualified=True)
+                    for name in (
+                        "_seed_graph_run",
+                        "_seed_control_topology_graph_run",
+                        "_seed_callback_lifecycle_graph_run",
+                        "_seed_rejected_patch_graph_run",
+                        "_seed_worker_verifier_cycle",
+                        "_rebuild_projection",
+                    )
+                ),
+            ),
+            required_imports=tuple(
+                RequiredImport(path, "orchestrator.graph", ("GraphCatalog",))
+                for path in (
+                    "src/orchestrator/api/__init__.py",
+                    "src/orchestrator/api/deps.py",
+                    "src/orchestrator/api/routers/graph.py",
+                    "src/orchestrator/graph_runtime/dispatch.py",
+                    "src/orchestrator/graph_runtime/recovery.py",
+                    "src/orchestrator/graph_runtime/seeding.py",
+                    "src/orchestrator/graph_runtime/prompts.py",
+                    "src/orchestrator/workflow/service.py",
+                    "src/orchestrator/workflow/graph_driver.py",
+                )
+            ),
+            transform_commands=False,
+        ),
         "catalog_cutover": DomainMigration(
             domain="catalog_cutover",
             paths=(
@@ -3600,6 +3931,52 @@ def _diff(path: str, before: str, after: str) -> str:
 
 
 def run_migration(migration: DomainMigration, root: Path, mode: str) -> MigrationRunResult:
+    if migration.domain == "catalog_injection":
+        target_names = tuple(route.callable_name for route in migration.catalog_injections)
+        production_paths = tuple(
+            str(path.relative_to(root)) for path in (root / "src" / "orchestrator").rglob("*.py")
+        )
+        discovered = tuple(
+            str(path.relative_to(root))
+            for path in (root / "tests").rglob("*.py")
+            if path.name not in {"signal_helpers.py", "test_run_evidence_digest_api.py"}
+            and any(f"{name}(" in path.read_text() for name in target_names)
+        )
+        discovered_functions = {
+            node.name
+            for path in discovered
+            for node in ast.walk(ast.parse((root / path).read_text()))
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and any(
+                argument.arg == "catalog" for argument in (*node.args.args, *node.args.kwonlyargs)
+            )
+            and node.name not in {"create_service", "_create_service"}
+            and not node.name.startswith("__")
+            and not node.name.endswith("service_factory")
+        }
+        migration = replace(
+            migration,
+            paths=tuple(dict.fromkeys((*migration.paths, *production_paths, *discovered))),
+            required_imports=(
+                *migration.required_imports,
+                *(
+                    RequiredImport(
+                        path,
+                        "orchestrator.graph",
+                        ("GraphCatalog", "build_graph_catalog"),
+                    )
+                    for path in discovered
+                ),
+            ),
+            catalog_injections=(
+                *migration.catalog_injections,
+                *(
+                    CatalogInjection(name, qualified_names=(name,))
+                    for name in sorted(discovered_functions)
+                    if name not in {route.callable_name for route in migration.catalog_injections}
+                ),
+            ),
+        )
     if migration.domain == "lifecycle":
         discovered = tuple(
             str(path.relative_to(root))

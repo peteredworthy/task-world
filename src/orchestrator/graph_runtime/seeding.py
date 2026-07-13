@@ -11,7 +11,8 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.graph import EventEnvelope, compile_routine
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime.controller import GraphController
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ async def seed_run(
     source_path: str | None = None,
     source_ref: str | None = None,
     run_config: dict[str, Any] | None = None,
+    catalog: GraphCatalog,
 ) -> SeedRunResult:
     """Compile and transactionally append a run's initial graph.
 
@@ -39,7 +41,7 @@ async def seed_run(
     durable graph topology and static input facts, so they do not produce
     side-effect outbox rows.
     """
-    catalog = build_graph_catalog()
+    catalog = catalog
     planned_events = compile_routine(
         routine,
         clock,
@@ -56,7 +58,7 @@ async def seed_run(
         id_gen,
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(catalog).future_effects,
     ).handle_command(
         run_id,
         expected_position,

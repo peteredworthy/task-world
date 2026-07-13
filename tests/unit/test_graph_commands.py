@@ -145,7 +145,9 @@ def _apply(
                 else None,
             ),
             events=(),
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         output = apply_command(
             _project(events),
@@ -203,7 +205,9 @@ def _apply_from_checkpoint(
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     output = apply_command(
         projection,
@@ -635,7 +639,9 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     output = apply_command(
@@ -775,7 +781,9 @@ def test_record_heartbeat_temporary_renewal_preserves_domain_rejections(
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     output = apply_command(
@@ -805,7 +813,9 @@ def test_record_heartbeat_public_path_rejects_legacy_shape() -> None:
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     with pytest.raises(ValidationError):
@@ -846,7 +856,9 @@ def test_typed_acknowledge_start_uses_projection_and_emits_start_effect() -> Non
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     output = apply_command(
@@ -880,7 +892,9 @@ def test_typed_submit_callback_emits_strict_outcome_and_unconverted_effects() ->
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     payload = _callback_payload(complete_node=True)
@@ -4899,22 +4913,20 @@ def test_patch_rejects_malformed_request_gate_record() -> None:
     assert "default_option must be one of options" in output[0].payload["reason"]
 
 
-def test_gap_planner_no_op_patch_accepts_through_submit_patch() -> None:
-    output = _apply(
-        [],
-        "submit_patch",
-        {
-            "run_id": "run-1",
-            "patch_id": "gap-no-op",
-            "proposed_by_node_id": "gap-planner-1",
-            "actor_role": "gap_planner",
-            "base_graph_position": -1,
-            "ops": [],
-        },
-    )
-
-    assert [event.event_type for event in output] == ["graph_patch_accepted"]
-    assert output[0].payload["actor_role"] == "gap_planner"
+def test_gap_planner_no_op_patch_is_rejected_at_command_boundary() -> None:
+    with pytest.raises(ValidationError):
+        _apply(
+            [],
+            "submit_patch",
+            {
+                "run_id": "run-1",
+                "patch_id": "gap-no-op",
+                "proposed_by_node_id": "gap-planner-1",
+                "actor_role": "gap_planner",
+                "base_graph_position": -1,
+                "ops": [],
+            },
+        )
 
 
 def test_gap_planner_corrective_work_patch_accepts_through_submit_patch() -> None:

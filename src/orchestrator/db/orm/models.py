@@ -348,6 +348,7 @@ class EventV2Model(Base):
     aggregate_id: Mapped[str] = mapped_column(String, nullable=False)
     event_type: Mapped[str] = mapped_column(String, nullable=False)
     payload: Mapped[str] = mapped_column(Text, nullable=False)  # JSON string
+    payload_schema_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
     timestamp: Mapped[str] = mapped_column(String, nullable=False)  # ISO 8601
     version: Mapped[int] = mapped_column(Integer, nullable=False)
 

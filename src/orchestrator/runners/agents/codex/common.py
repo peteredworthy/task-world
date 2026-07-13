@@ -23,7 +23,7 @@ from typing import Any, cast
 
 from typing_extensions import Protocol
 
-from orchestrator.graph import DEFAULT_NODE_CONTRACTS
+from orchestrator.graph import DEFAULT_NODE_CONTRACTS, expand_patch_macros
 from orchestrator.state.models import ActionLog
 from orchestrator.runners.types import (
     ChecklistUpdateCallback,
@@ -1251,7 +1251,13 @@ def _normalize_macro_tool_payload(tool_name: str, args: dict[str, Any]) -> dict[
     rationale_record_id = args.get("rationale_record_id")
     if isinstance(rationale_record_id, str):
         payload["rationale_record_id"] = rationale_record_id
-    return payload
+    try:
+        expanded = expand_patch_macros(payload)
+    except ValueError:
+        payload["ops"] = [{"op": "retire_node", "node_id": "__invalid_macro__"}]
+        return payload
+    expanded.pop("macro_invocations", None)
+    return expanded
 
 
 def _normalize_patch_payload(args: dict[str, Any]) -> dict[str, Any]:

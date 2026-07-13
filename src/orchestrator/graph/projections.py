@@ -101,6 +101,7 @@ from orchestrator.graph.events.topology import (
     PlannerSessionStateChangedPayload,
 )
 from orchestrator.graph.models import normalize_record_selector
+from orchestrator.graph.payloads import LegacyEventPayload
 from orchestrator.graph.specifications import HydratedEvent
 
 GraphHistoryEvent = EventEnvelope | HydratedEvent
@@ -1981,8 +1982,22 @@ def reduce_event(
     event: EventEnvelope | HydratedEvent,
 ) -> GraphProjection:
     if isinstance(event, HydratedEvent):
-        specification = catalog.resolve_event(event.metadata.event_type)
-        return specification.reduce(state, event)
+        if isinstance(event.payload, LegacyEventPayload):
+            event = EventEnvelope(
+                event_id=event.event_id,
+                run_id=event.run_id,
+                position=event.position,
+                event_type=event.event_type,
+                schema_version=1,
+                actor=event.actor,
+                causation_id=event.causation_id,
+                correlation_id=event.correlation_id,
+                timestamp=event.timestamp,
+                payload=event.payload.to_json(),
+            )
+        else:
+            specification = catalog.resolve_event(event.metadata.event_type)
+            return specification.reduce(state, event)
     if isinstance(event, CompactEventEnvelope):
         return reduce_compact_output_record_accepted(state, event)
     # Mixed persistence boundary: catalog-owned events hydrate exactly once;
@@ -2337,7 +2352,7 @@ def reduce_legacy_event(
 
 def project_run_state(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     projection: GraphProjection | None = None,
 ) -> str | None:
@@ -2360,7 +2375,7 @@ def project_run_state(
 
 def project_final_invariant_blockers(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     projection: GraphProjection | None = None,
 ) -> list[FinalInvariantBlocker]:
@@ -2369,11 +2384,12 @@ def project_final_invariant_blockers(
 
 
 def final_invariant_blockers_for_events(
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     projection: GraphProjection,
     *,
     include_completion_decision: bool = True,
 ) -> list[FinalInvariantBlocker]:
+    stored_events = [_history_event_envelope(event) for event in events]
     blockers: list[FinalInvariantBlocker] = []
     pending_states = {"planned", "ready", "leased", "running", "blocked", "suspended"}
     for node_id, node_state in sorted(projection["node_states"].items()):
@@ -2414,16 +2430,16 @@ def final_invariant_blockers_for_events(
                     "state": node_state,
                 }
             )
-    blockers.extend(_open_proposal_blockers(events, projection))
-    blockers.extend(_suspect_node_blockers(events, projection))
-    blockers.extend(_requirement_evidence_blockers(events, projection))
-    blockers.extend(_authority_revision_blockers(events, projection))
-    blockers.extend(_blocked_requirement_node_blockers(events, projection))
+    blockers.extend(_open_proposal_blockers(stored_events, projection))
+    blockers.extend(_suspect_node_blockers(stored_events, projection))
+    blockers.extend(_requirement_evidence_blockers(stored_events, projection))
+    blockers.extend(_authority_revision_blockers(stored_events, projection))
+    blockers.extend(_blocked_requirement_node_blockers(stored_events, projection))
     blockers.extend(_dead_required_input_blockers(projection))
     blockers.extend(_impossible_input_blockers(projection))
-    blockers.extend(_failed_check_result_blockers(events, projection))
+    blockers.extend(_failed_check_result_blockers(stored_events, projection))
     if include_completion_decision:
-        blockers.extend(_completion_decision_blockers(events, projection))
+        blockers.extend(_completion_decision_blockers(stored_events, projection))
     blockers.extend(_node_fulfillment_blockers(projection))
     blockers.extend(_non_terminal_node_blockers(projection, blockers, pending_states))
     for task_region_id, task_state in sorted(projection["task_states"].items()):
@@ -3225,7 +3241,7 @@ def project_planner_session(catalog: GraphCatalog, events: list[EventEnvelope]) 
 
 def project_node_states(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     projection: GraphProjection | None = None,
 ) -> dict[str, str]:
@@ -3296,7 +3312,7 @@ def project_graph_topology(catalog: GraphCatalog, events: list[EventEnvelope]) -
 
 
 def project_graph_patch_attempts(
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     run_id: str = "",
     current_graph_position: int | None = None,
@@ -3317,7 +3333,8 @@ def project_graph_patch_attempts(
             order.append(patch_id)
         return attempt
 
-    for event in events:
+    for history_event in events:
+        event = _history_event_envelope(history_event)
         payload = _graph_patch_payload_for_event(event) or event.payload
         patch_id = _patch_id(payload)
         if event.event_type == "graph_patch_proposed" and patch_id is not None:
@@ -3550,7 +3567,7 @@ def project_planner_freshness_packet(
 
 def project_leases(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     projection: GraphProjection | None = None,
 ) -> dict[str, dict[str, Any]]:
@@ -3560,7 +3577,7 @@ def project_leases(
 
 def project_ready_nodes(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     projection: GraphProjection | None = None,
 ) -> list[str]:
@@ -3570,7 +3587,7 @@ def project_ready_nodes(
 
 def project_scheduler_view(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     projection: GraphProjection | None = None,
 ) -> SchedulerView:
@@ -3609,7 +3626,7 @@ def project_scheduler_view(
 
 def project_lease_view(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     projection: GraphProjection | None = None,
 ) -> LeaseView:
@@ -3640,7 +3657,7 @@ def project_lease_view(
 
 def project_decision_view(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[GraphHistoryEvent],
     *,
     projection: GraphProjection | None = None,
 ) -> DecisionView:
@@ -3721,7 +3738,7 @@ def project_decision_view_from_projection(projection: GraphProjection) -> Decisi
 
 
 def project_residue_report(
-    catalog: GraphCatalog, events: list[EventEnvelope]
+    catalog: GraphCatalog, events: Sequence[GraphHistoryEvent]
 ) -> dict[str, list[dict[str, Any]]]:
     """Project accepted file-state residue classifications by path."""
     report: dict[str, list[dict[str, Any]]] = {}
@@ -4018,11 +4035,12 @@ def project_pattern_library(events: list[EventEnvelope]) -> dict[str, Any]:
     }
 
 
-def project_gatekeeper_report(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
+def project_gatekeeper_report(events: Sequence[GraphHistoryEvent]) -> dict[str, dict[str, Any]]:
     """Project gatekeeper cost, hit-rate, and pattern-library growth per run."""
     reports: dict[str, dict[str, Any]] = {}
     prefixes: dict[str, list[EventEnvelope]] = {}
-    for event in events:
+    for history_event in events:
+        event = _history_event_envelope(history_event)
         run = reports.setdefault(event.run_id, _empty_gatekeeper_report(event.run_id))
         prefixes.setdefault(event.run_id, []).append(event)
         if event.event_type == "file_state_accepted":
@@ -4493,7 +4511,7 @@ def _review_blocker(
     return f"{node_id}: {state}"
 
 
-def _latest_node_deferrals(events: list[EventEnvelope]) -> dict[str, str]:
+def _latest_node_deferrals(events: Sequence[GraphHistoryEvent]) -> dict[str, str]:
     reasons: dict[str, str] = {}
     for event in events:
         if event.event_type != "node_deferred":
@@ -4595,6 +4613,23 @@ def _history_event_type(event: GraphHistoryEvent) -> str:
     if isinstance(event, HydratedEvent):
         return event.metadata.event_type
     return event.event_type
+
+
+def _history_event_envelope(event: GraphHistoryEvent) -> EventEnvelope:
+    if isinstance(event, EventEnvelope):
+        return event
+    return EventEnvelope(
+        event_id=event.event_id,
+        run_id=event.run_id,
+        position=event.position,
+        event_type=event.event_type,
+        schema_version=event.schema_version,
+        actor=event.actor,
+        causation_id=event.causation_id,
+        correlation_id=event.correlation_id,
+        timestamp=event.timestamp,
+        payload=event.payload.to_json(),
+    )
 
 
 def _history_event_position(event: GraphHistoryEvent) -> int:

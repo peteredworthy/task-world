@@ -31,6 +31,7 @@ from orchestrator.runners.types import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import GraphRunDriver, WorkflowService
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 @pytest.fixture
@@ -233,8 +234,10 @@ def _init_repo(path: Path) -> None:
     )
 
 
-async def _create_service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+async def _create_service(
+    session: AsyncSession,
+) -> WorkflowService:
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 async def _create_graph_run(
@@ -243,6 +246,7 @@ async def _create_graph_run(
     *,
     run_id: str,
     repo: Path,
+    catalog: GraphCatalog,
 ) -> None:
     run = create_run_from_routine(routine, repo_name=repo.name, source_branch="main")
     run.id = run_id
@@ -251,7 +255,7 @@ async def _create_graph_run(
     run.worktree_path = str(repo)
     run.agent_runner_type = AgentRunnerType.CODEX_SERVER
     async with session_factory() as session:
-        await WorkflowService(session).create_run(run)
+        await WorkflowService(session, graph_catalog=build_graph_catalog()).create_run(run)
 
 
 def _driver(
@@ -259,6 +263,7 @@ def _driver(
     *,
     repo: Path,
     run_id: str,
+    catalog: GraphCatalog,
 ) -> GraphRunDriver:
     clock = FixedClock()
     ids = SequentialIds(run_id)
@@ -271,6 +276,7 @@ def _driver(
         worktree_path: str | Path,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        catalog: GraphCatalog,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg,
@@ -278,7 +284,9 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
@@ -291,6 +299,7 @@ def _driver(
                 }
             ),
             worktree_path=repo,
+            catalog=build_graph_catalog(),
         )
         return controller, executor
 
@@ -300,6 +309,7 @@ def _driver(
         clock=clock,
         id_gen=ids,
         runtime_builder=runtime_builder,
+        catalog=build_graph_catalog(),
     )
 
 
@@ -314,8 +324,7 @@ def _run_id() -> str:
 
 
 async def test_final_gate_completion_decision_and_region_readbacks(
-    final_gate_app: tuple[AsyncClient, Any],
-    tmp_path: Path,
+    final_gate_app: tuple[AsyncClient, Any], tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     client, app = final_gate_app
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
@@ -323,9 +332,13 @@ async def test_final_gate_completion_decision_and_region_readbacks(
     _init_repo(repo)
     run_id = _run_id()
     routine = _routine()
-    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
-    outcome = await _driver(session_factory, repo=repo, run_id=run_id).run(run_id)
+    outcome = await _driver(
+        session_factory, repo=repo, run_id=run_id, catalog=build_graph_catalog()
+    ).run(run_id)
 
     assert outcome.completed is True, outcome.blocked_reason
     run = await _get_json(client, f"/api/runs/{run_id}")

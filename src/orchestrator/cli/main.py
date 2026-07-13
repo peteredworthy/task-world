@@ -10,6 +10,7 @@ from orchestrator.cli.db import db
 from orchestrator.cli.repos import repos
 from orchestrator.cli.routines import routines
 from orchestrator.cli.runs import runs
+from orchestrator.graph import build_graph_catalog
 
 # Load .env file from current directory (for OPENAI_API_KEY, etc.)
 # This ensures environment variables are available when running via `orchestrator` CLI
@@ -25,6 +26,7 @@ def cli(ctx: click.Context, db: str, json: bool) -> None:
     ctx.ensure_object(dict)
     ctx.obj["db"] = db
     ctx.obj["json"] = json
+    ctx.obj["graph_catalog"] = build_graph_catalog()
 
 
 @click.command("serve")

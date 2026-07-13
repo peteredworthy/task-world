@@ -14,6 +14,8 @@ from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow import LocalAutoVerifyRunner
 from orchestrator.workflow.service import WorkflowService, find_step_config
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 # --- Unit tests for StepConfig schema ---
 
@@ -200,14 +202,16 @@ async def _run_task_to_verified(svc: WorkflowService, run_id: str, task_id: str)
 
 @pytest.mark.asyncio
 async def test_step_auto_verify_passing_completes_run(
-    session: AsyncSession, tmp_path: Path
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """When step_auto_verify passes (exit 0), run completes normally."""
     run = _make_run_with_step_auto_verify(
         tmp_path,
         step_auto_verify_items=[{"id": "sav1", "cmd": "true", "must": True}],
     )
-    svc = WorkflowService(session, auto_verify_runner=LocalAutoVerifyRunner())
+    svc = WorkflowService(
+        session, auto_verify_runner=LocalAutoVerifyRunner(), graph_catalog=build_graph_catalog()
+    )
     await svc.create_run(run)
     await _run_task_to_verified(svc, run.id, "task-1")
 
@@ -216,13 +220,17 @@ async def test_step_auto_verify_passing_completes_run(
 
 
 @pytest.mark.asyncio
-async def test_step_auto_verify_failing_halts_run(session: AsyncSession, tmp_path: Path) -> None:
+async def test_step_auto_verify_failing_halts_run(
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
+) -> None:
     """When step_auto_verify fails (exit non-0), run is halted as FAILED."""
     run = _make_run_with_step_auto_verify(
         tmp_path,
         step_auto_verify_items=[{"id": "sav1", "cmd": "false", "must": True}],
     )
-    svc = WorkflowService(session, auto_verify_runner=LocalAutoVerifyRunner())
+    svc = WorkflowService(
+        session, auto_verify_runner=LocalAutoVerifyRunner(), graph_catalog=build_graph_catalog()
+    )
     await svc.create_run(run)
     await _run_task_to_verified(svc, run.id, "task-1")
 
@@ -234,7 +242,7 @@ async def test_step_auto_verify_failing_halts_run(session: AsyncSession, tmp_pat
 
 @pytest.mark.asyncio
 async def test_step_auto_verify_resolves_run_config_placeholders(
-    session: AsyncSession, tmp_path: Path
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """{{key}} placeholders in step_auto_verify commands resolve against run.config.
 
@@ -248,7 +256,9 @@ async def test_step_auto_verify_resolves_run_config_placeholders(
         ],
         config={"marker": "sav-value"},
     )
-    svc = WorkflowService(session, auto_verify_runner=LocalAutoVerifyRunner())
+    svc = WorkflowService(
+        session, auto_verify_runner=LocalAutoVerifyRunner(), graph_catalog=build_graph_catalog()
+    )
     await svc.create_run(run)
     await _run_task_to_verified(svc, run.id, "task-1")
 
@@ -258,14 +268,14 @@ async def test_step_auto_verify_resolves_run_config_placeholders(
 
 @pytest.mark.asyncio
 async def test_step_auto_verify_skipped_without_runner(
-    session: AsyncSession, tmp_path: Path
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """When no auto_verify_runner is configured, step_auto_verify is skipped (run completes)."""
     run = _make_run_with_step_auto_verify(
         tmp_path,
         step_auto_verify_items=[{"id": "sav1", "cmd": "false", "must": True}],
     )
-    svc = WorkflowService(session, auto_verify_runner=None)
+    svc = WorkflowService(session, auto_verify_runner=None, graph_catalog=build_graph_catalog())
     await svc.create_run(run)
     await _run_task_to_verified(svc, run.id, "task-1")
 
@@ -275,14 +285,16 @@ async def test_step_auto_verify_skipped_without_runner(
 
 @pytest.mark.asyncio
 async def test_step_without_step_auto_verify_unaffected(
-    session: AsyncSession, tmp_path: Path
+    session: AsyncSession, tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """Steps without step_auto_verify complete normally (existing behavior unchanged)."""
     run = _make_run_with_step_auto_verify(
         tmp_path,
         step_auto_verify_items=[],
     )
-    svc = WorkflowService(session, auto_verify_runner=LocalAutoVerifyRunner())
+    svc = WorkflowService(
+        session, auto_verify_runner=LocalAutoVerifyRunner(), graph_catalog=build_graph_catalog()
+    )
     await svc.create_run(run)
     await _run_task_to_verified(svc, run.id, "task-1")
 

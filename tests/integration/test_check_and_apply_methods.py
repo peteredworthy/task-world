@@ -29,6 +29,8 @@ from orchestrator.state.errors import TaskNotFoundError
 from orchestrator.workflow import LocalAutoVerifyRunner
 from orchestrator.workflow import GateBlockedError, InvalidTransitionError
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 # ---------------------------------------------------------------------------
@@ -116,10 +118,14 @@ async def _setup_building(
     worktree_path: str | None = None,
     auto_verify_cmd: str | None = None,
     max_attempts: int = 3,
+    *,
+    catalog: GraphCatalog,
 ) -> WorkflowService:
     """Create, start, and begin a task; return the service with task in BUILDING."""
     runner = LocalAutoVerifyRunner()
-    service = WorkflowService(session, auto_verify_runner=runner)
+    service = WorkflowService(
+        session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+    )
     run = _make_run(
         run_id=run_id,
         task_id=task_id,
@@ -138,10 +144,16 @@ async def _setup_verifying(
     run_id: str = "run-1",
     task_id: str = "task-1",
     max_attempts: int = 3,
+    *,
+    catalog: GraphCatalog,
 ) -> WorkflowService:
     """Set up a task in VERIFYING state (checklist done, apply_submission called)."""
     service = await _setup_building(
-        session, run_id=run_id, task_id=task_id, max_attempts=max_attempts
+        session,
+        run_id=run_id,
+        task_id=task_id,
+        max_attempts=max_attempts,
+        catalog=build_graph_catalog(),
     )
     await service.update_checklist_item(run_id, task_id, "R1", ChecklistStatus.DONE)
     await service.apply_submission(run_id, task_id)
@@ -159,7 +171,7 @@ class TestCheckSubmission:
     @pytest.mark.asyncio
     async def test_gate_blocked_raises_when_checklist_open(self, session: AsyncSession) -> None:
         """OPEN critical item raises GateBlockedError — task stays BUILDING."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
 
         with pytest.raises(GateBlockedError):
             await service.check_submission("run-1", "task-1")
@@ -170,7 +182,7 @@ class TestCheckSubmission:
     @pytest.mark.asyncio
     async def test_passes_when_checklist_done(self, session: AsyncSession) -> None:
         """All checklist done → returns success=True, new_status=BUILDING (signal pending)."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
         await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
 
         result = await service.check_submission("run-1", "task-1")
@@ -184,7 +196,7 @@ class TestCheckSubmission:
     @pytest.mark.asyncio
     async def test_idempotent_when_already_verifying(self, session: AsyncSession) -> None:
         """If task is already VERIFYING, check_submission returns idempotent success."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
         await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
         await service.apply_submission("run-1", "task-1")  # advance to VERIFYING
 
@@ -198,7 +210,7 @@ class TestCheckSubmission:
         self, session: AsyncSession
     ) -> None:
         """Run must be ACTIVE or STOPPING; raises InvalidTransitionError otherwise."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
         await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
         await service.apply_submission("run-1", "task-1")  # → VERIFYING
         # Now pause the run so it is no longer ACTIVE
@@ -216,6 +228,7 @@ class TestCheckSubmission:
             session,
             worktree_path=str(tmp_path),
             auto_verify_cmd="false",
+            catalog=build_graph_catalog(),
         )
         await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -235,6 +248,7 @@ class TestCheckSubmission:
             session,
             worktree_path=str(tmp_path),
             auto_verify_cmd="echo ok",
+            catalog=build_graph_catalog(),
         )
         # Checklist is still OPEN — auto-verify should mark it done
 
@@ -271,6 +285,7 @@ class TestCheckSubmission:
             session,
             worktree_path=str(tmp_path),
             auto_verify_cmd="false",
+            catalog=build_graph_catalog(),
         )
         await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
 
@@ -291,7 +306,7 @@ class TestApplySubmission:
     @pytest.mark.asyncio
     async def test_transitions_building_to_verifying(self, session: AsyncSession) -> None:
         """After a passed check_submission, apply_submission advances to VERIFYING."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
         await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
         await service.check_submission("run-1", "task-1")
 
@@ -305,7 +320,7 @@ class TestApplySubmission:
     @pytest.mark.asyncio
     async def test_idempotent_when_already_verifying(self, session: AsyncSession) -> None:
         """Calling apply_submission on an already-VERIFYING task is idempotent."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
         await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
         await service.apply_submission("run-1", "task-1")
 
@@ -317,7 +332,7 @@ class TestApplySubmission:
     @pytest.mark.asyncio
     async def test_raises_when_run_not_active(self, session: AsyncSession) -> None:
         """apply_submission requires an ACTIVE or STOPPING run."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
         await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
         await service.apply_submission("run-1", "task-1")  # → VERIFYING
         await service.apply_pause_run("run-1", reason="test_pause")
@@ -333,7 +348,7 @@ class TestApplySubmission:
         signal is processed (e.g. a race or manual revert).  The gate is still
         enforced at apply time.
         """
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
         # Do NOT mark checklist done — gate will block at apply time
 
         with pytest.raises(GateBlockedError):
@@ -354,7 +369,7 @@ class TestCheckVerification:
     @pytest.mark.asyncio
     async def test_returns_success_when_task_verifying(self, session: AsyncSession) -> None:
         """Task in VERIFYING state → returns success=True, new_status=VERIFYING."""
-        service = await _setup_verifying(session)
+        service = await _setup_verifying(session, catalog=build_graph_catalog())
 
         result = await service.check_verification("run-1", "task-1")
 
@@ -367,7 +382,7 @@ class TestCheckVerification:
     @pytest.mark.asyncio
     async def test_raises_when_task_still_building(self, session: AsyncSession) -> None:
         """Task in BUILDING state → raises InvalidTransitionError."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
 
         with pytest.raises(InvalidTransitionError):
             await service.check_verification("run-1", "task-1")
@@ -376,7 +391,9 @@ class TestCheckVerification:
     async def test_raises_when_task_pending(self, session: AsyncSession) -> None:
         """Task in PENDING state → raises InvalidTransitionError."""
         runner = LocalAutoVerifyRunner()
-        service = WorkflowService(session, auto_verify_runner=runner)
+        service = WorkflowService(
+            session, auto_verify_runner=runner, graph_catalog=build_graph_catalog()
+        )
         run = _make_run()
         await service.create_run(run)
         await service.apply_start_run("run-1")
@@ -388,7 +405,7 @@ class TestCheckVerification:
     @pytest.mark.asyncio
     async def test_idempotent_when_already_completed(self, session: AsyncSession) -> None:
         """Task already COMPLETED → returns success=True, new_status=COMPLETED."""
-        service = await _setup_verifying(session)
+        service = await _setup_verifying(session, catalog=build_graph_catalog())
         await service.set_grade("run-1", "task-1", "R1", "A", "Looks good")
         await service.apply_verification("run-1", "task-1")
 
@@ -403,7 +420,7 @@ class TestCheckVerification:
 
         Uses max_attempts=1 so a failing grade exhausts retries → FAILED (not BUILDING).
         """
-        service = await _setup_verifying(session, max_attempts=1)
+        service = await _setup_verifying(session, max_attempts=1, catalog=build_graph_catalog())
         await service.set_grade("run-1", "task-1", "R1", "F", "Did not work")
         await service.apply_verification("run-1", "task-1")
 
@@ -415,7 +432,7 @@ class TestCheckVerification:
     @pytest.mark.asyncio
     async def test_raises_when_run_cancelled(self, session: AsyncSession) -> None:
         """Run in CANCELLED state → raises InvalidTransitionError."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
         await service.apply_cancel_run("run-1")
 
         with pytest.raises(InvalidTransitionError):
@@ -424,7 +441,7 @@ class TestCheckVerification:
     @pytest.mark.asyncio
     async def test_raises_for_unknown_task(self, session: AsyncSession) -> None:
         """Unknown task_id → raises TaskNotFoundError."""
-        service = await _setup_verifying(session)
+        service = await _setup_verifying(session, catalog=build_graph_catalog())
 
         with pytest.raises(TaskNotFoundError):
             await service.check_verification("run-1", "no-such-task")
@@ -441,7 +458,7 @@ class TestApplyVerification:
     @pytest.mark.asyncio
     async def test_completes_task_with_passing_grade(self, session: AsyncSession) -> None:
         """Passing grade → task moves to COMPLETED."""
-        service = await _setup_verifying(session)
+        service = await _setup_verifying(session, catalog=build_graph_catalog())
         await service.set_grade("run-1", "task-1", "R1", "A", "Perfect")
 
         result = await service.apply_verification("run-1", "task-1")
@@ -454,7 +471,7 @@ class TestApplyVerification:
     @pytest.mark.asyncio
     async def test_fails_task_with_failing_grade(self, session: AsyncSession) -> None:
         """Failing grade with max_attempts=1 → task moves to FAILED (no more retries)."""
-        service = await _setup_verifying(session, max_attempts=1)
+        service = await _setup_verifying(session, max_attempts=1, catalog=build_graph_catalog())
         await service.set_grade("run-1", "task-1", "R1", "F", "Incomplete")
 
         result = await service.apply_verification("run-1", "task-1")
@@ -469,7 +486,7 @@ class TestApplyVerification:
         self, session: AsyncSession
     ) -> None:
         """apply_verification is a thin wrapper; result matches complete_verification contract."""
-        service = await _setup_verifying(session)
+        service = await _setup_verifying(session, catalog=build_graph_catalog())
         await service.set_grade("run-1", "task-1", "R1", "A", "Good")
 
         result = await service.apply_verification("run-1", "task-1")
@@ -491,7 +508,7 @@ class TestCheckApplyRoundTrip:
     @pytest.mark.asyncio
     async def test_submission_round_trip(self, session: AsyncSession) -> None:
         """check_submission (pass) → apply_submission → task in VERIFYING."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
         await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)
 
         check = await service.check_submission("run-1", "task-1")
@@ -508,7 +525,7 @@ class TestCheckApplyRoundTrip:
     @pytest.mark.asyncio
     async def test_verification_round_trip(self, session: AsyncSession) -> None:
         """check_verification (pass) → apply_verification → task in terminal state."""
-        service = await _setup_verifying(session)
+        service = await _setup_verifying(session, catalog=build_graph_catalog())
         await service.set_grade("run-1", "task-1", "R1", "A", "Great")
 
         check = await service.check_verification("run-1", "task-1")
@@ -528,7 +545,7 @@ class TestCheckApplyRoundTrip:
         This simulates the HTTP endpoint pattern: exception → no signal enqueued
         → apply never runs → task stays BUILDING.
         """
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
         # checklist is OPEN — gate will block
 
         enqueued = False
@@ -545,7 +562,7 @@ class TestCheckApplyRoundTrip:
     @pytest.mark.asyncio
     async def test_full_task_lifecycle_via_check_and_apply(self, session: AsyncSession) -> None:
         """Complete lifecycle using only the new check/apply methods."""
-        service = await _setup_building(session)
+        service = await _setup_building(session, catalog=build_graph_catalog())
 
         # Builder marks checklist done and submits
         await service.update_checklist_item("run-1", "task-1", "R1", ChecklistStatus.DONE)

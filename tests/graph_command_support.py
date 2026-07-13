@@ -57,7 +57,9 @@ def dispatch_graph_command(
             role=actor_role if isinstance(actor_role, str) else None,
         ),
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     return [
         _legacy_envelope(event)

@@ -42,6 +42,7 @@ from orchestrator.api.schemas.tasks import (
     TurnMetricsSchema,
     UpdateChecklistRequest,
 )
+from orchestrator.graph import GraphCatalog
 
 __all__ = [
     "AddRepoRequest",
@@ -129,10 +130,12 @@ def build_graph_patch_attempts_response(*args: Any, **kwargs: Any) -> Any:
     return _graph_router.build_graph_patch_attempts_response(*args, **kwargs)
 
 
-def build_final_invariant_blockers_response(*args: Any, **kwargs: Any) -> Any:
+def build_final_invariant_blockers_response(
+    *args: Any, catalog: GraphCatalog, **kwargs: Any
+) -> Any:
     import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
 
-    return _graph_router.build_final_invariant_blockers_response(*args, **kwargs)
+    return _graph_router.build_final_invariant_blockers_response(*args, **kwargs, catalog=catalog)
 
 
 def append_requeue_audit_event(*args: Any, **kwargs: Any) -> Any:
@@ -141,16 +144,16 @@ def append_requeue_audit_event(*args: Any, **kwargs: Any) -> Any:
     return _graph_router.append_requeue_audit_event(*args, **kwargs)
 
 
-def build_graph_regions_response(*args: Any, **kwargs: Any) -> Any:
+def build_graph_regions_response(*args: Any, catalog: GraphCatalog, **kwargs: Any) -> Any:
     import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
 
-    return _graph_router.build_graph_regions_response(*args, **kwargs)
+    return _graph_router.build_graph_regions_response(*args, **kwargs, catalog=catalog)
 
 
-def build_graph_topology_response(*args: Any, **kwargs: Any) -> Any:
+def build_graph_topology_response(*args: Any, catalog: GraphCatalog, **kwargs: Any) -> Any:
     import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
 
-    return _graph_router.build_graph_topology_response(*args, **kwargs)
+    return _graph_router.build_graph_topology_response(*args, **kwargs, catalog=catalog)
 
 
 def is_clarification_pause_reason(*args: Any, **kwargs: Any) -> Any:

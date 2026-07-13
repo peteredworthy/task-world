@@ -14,6 +14,7 @@ from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state import Attempt, ModelTokenUsage
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import GraphCatalog
 
 
 def _routine() -> RoutineConfig:
@@ -217,7 +218,7 @@ async def test_evidence_digest_legacy_run_is_empty_for_graph_fields(
 
 
 async def test_evidence_digest_graph_run_limits_nodes_and_hides_evidence(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-digest-{uuid4().hex[:8]}"

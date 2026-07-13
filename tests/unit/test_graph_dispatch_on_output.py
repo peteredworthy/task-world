@@ -44,6 +44,7 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import GraphCatalog
 
 
 def _context(
@@ -322,7 +323,7 @@ def test_bound_record_hydration_policy_shapes_prompt_records() -> None:
     }
 
 
-def test_requirements_for_node_prefers_typed_requirement_record() -> None:
+def test_requirements_for_node_prefers_typed_requirement_record(*, catalog: GraphCatalog) -> None:
     events = [
         _event(
             "node_created",
@@ -374,10 +375,14 @@ def test_requirements_for_node_prefers_typed_requirement_record() -> None:
         ),
     ]
 
-    assert _requirements_for_node(events, "worker-1") == ["R-01: Typed requirement text."]
+    assert _requirements_for_node(events, "worker-1", catalog=build_graph_catalog()) == [
+        "R-01: Typed requirement text."
+    ]
 
 
-def test_requirements_for_node_falls_back_to_dynamic_feature_acceptance() -> None:
+def test_requirements_for_node_falls_back_to_dynamic_feature_acceptance(
+    *, catalog: GraphCatalog
+) -> None:
     events = [
         _event(
             "node_created",
@@ -401,13 +406,13 @@ def test_requirements_for_node_falls_back_to_dynamic_feature_acceptance() -> Non
         ),
     ]
 
-    assert _requirements_for_node(events, "verifier-1") == [
+    assert _requirements_for_node(events, "verifier-1", catalog=build_graph_catalog()) == [
         "dynamic_feature_acceptance: Write the smoke artifact. "
         "Acceptance command: test -f smoke.txt"
     ]
 
 
-def test_bound_requirements_override_dynamic_feature_acceptance() -> None:
+def test_bound_requirements_override_dynamic_feature_acceptance(*, catalog: GraphCatalog) -> None:
     events = [
         _event(
             "node_created",
@@ -460,7 +465,9 @@ def test_bound_requirements_override_dynamic_feature_acceptance() -> None:
         ),
     ]
 
-    assert _requirements_for_node(events, "worker-1") == ["R-01: Explicit requirement."]
+    assert _requirements_for_node(events, "worker-1", catalog=build_graph_catalog()) == [
+        "R-01: Explicit requirement."
+    ]
 
 
 def test_callback_conflict_reason_reports_submit_rejection() -> None:
@@ -640,6 +647,7 @@ class RecordingExecutor(GraphDispatchExecutor):
             cast(async_sessionmaker[AsyncSession], object()),
             cast(Any, object()),
             cast(Any, object()),
+            catalog=build_graph_catalog(),
             worktree_path="/tmp/worktree",
             on_agent_output=on_agent_output,
         )
@@ -706,7 +714,9 @@ class RecordingOutputSink:
 
 
 @pytest.mark.asyncio
-async def test_wait_for_all_timeout_returns_without_cancelling_active_task() -> None:
+async def test_wait_for_all_timeout_returns_without_cancelling_active_task(
+    *, catalog: GraphCatalog
+) -> None:
     release = asyncio.Event()
 
     async def _blocked() -> None:
@@ -720,6 +730,7 @@ async def test_wait_for_all_timeout_returns_without_cancelling_active_task() -> 
         cast(Any, object()),
         worktree_path="/tmp/worktree",
         running_executions=running,
+        catalog=build_graph_catalog(),
     )
 
     await executor.wait_for_all(timeout_seconds=0.0, active_execution_ids={"exec-active"})
@@ -883,12 +894,15 @@ async def test_gap_planner_no_op_graph_patch_callback_allows_submit() -> None:
 
 
 @pytest.mark.asyncio
-async def test_graph_patch_callback_rejects_unauthorized_node_contracts() -> None:
+async def test_graph_patch_callback_rejects_unauthorized_node_contracts(
+    *, catalog: GraphCatalog
+) -> None:
     executor = GraphDispatchExecutor(
         cast(async_sessionmaker[AsyncSession], object()),
         cast(Any, object()),
         cast(Any, object()),
         worktree_path="/tmp/worktree",
+        catalog=build_graph_catalog(),
     )
 
     for context in (
@@ -1917,13 +1931,16 @@ class AlwaysNonLockedErrorController:
 
 
 @pytest.mark.asyncio
-async def test_handle_command_retry_stale_retries_locked_operational_error_then_succeeds() -> None:
+async def test_handle_command_retry_stale_retries_locked_operational_error_then_succeeds(
+    *, catalog: GraphCatalog
+) -> None:
     controller = LockedOnceController(fail_times=1)
     executor = GraphDispatchExecutor(
         cast(async_sessionmaker[AsyncSession], object()),
         cast(Any, controller),
         cast(Any, object()),
         worktree_path="/tmp/worktree",
+        catalog=build_graph_catalog(),
     )
 
     result = await executor._handle_command_retry_stale(
@@ -1938,15 +1955,16 @@ async def test_handle_command_retry_stale_retries_locked_operational_error_then_
 
 
 @pytest.mark.asyncio
-async def test_handle_command_retry_stale_reraises_non_locked_operational_error_immediately() -> (
-    None
-):
+async def test_handle_command_retry_stale_reraises_non_locked_operational_error_immediately(
+    *, catalog: GraphCatalog
+) -> None:
     controller = AlwaysNonLockedErrorController()
     executor = GraphDispatchExecutor(
         cast(async_sessionmaker[AsyncSession], object()),
         cast(Any, controller),
         cast(Any, object()),
         worktree_path="/tmp/worktree",
+        catalog=build_graph_catalog(),
     )
 
     with pytest.raises(OperationalError):

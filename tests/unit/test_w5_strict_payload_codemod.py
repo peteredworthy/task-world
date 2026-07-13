@@ -1046,6 +1046,27 @@ def test_complete_reads_assert_clean_rejects_leftover_partial_consumer() -> None
     assert any(item.code == "W5ALLOWLIST_REFERENCE" for item in leftover.diagnostics)
 
 
+def test_catalog_injection_scope_includes_presenters_and_cli() -> None:
+    paths = set(DOMAIN_MIGRATIONS["catalog_injection"].paths)
+    assert "src/orchestrator/api/presenters/evidence_digest.py" in paths
+    assert "src/orchestrator/cli/runs.py" in paths
+
+
+def test_catalog_injection_run_scans_unlisted_workflow_production_file(tmp_path: Path) -> None:
+    workflow = tmp_path / "src" / "orchestrator" / "workflow"
+    workflow.mkdir(parents=True)
+    source = workflow / "sample.py"
+    source.write_text(
+        "from orchestrator.graph import build_graph_catalog\n\n"
+        "def compose():\n"
+        "    return build_graph_catalog()\n"
+    )
+
+    result = run_migration(DOMAIN_MIGRATIONS["catalog_injection"], tmp_path, "dry-run")
+
+    assert "src/orchestrator/workflow/sample.py" in result.output
+
+
 def test_other_domain_does_not_rewrite_node_detail_helper_call() -> None:
     source = "def use(event):\n    return _node_detail_light_event(event)\n"
     result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["topology"]).transform_source(
@@ -1763,6 +1784,47 @@ runtime = RuntimeController(store=store)
 
     assert "local = GraphController(store=store)" in result.source
     assert "runtime = RuntimeController(store=store, catalog=catalog)" in result.source
+
+
+def test_task10_catalog_injection_rewrites_factory_escape_and_missing_store_argument() -> None:
+    source = """\
+from orchestrator.graph import build_graph_catalog
+from orchestrator.graph_runtime import GraphEventStore
+
+def make_store(session, catalog):
+    return GraphEventStore(session, build_graph_catalog())
+"""
+
+    first = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["catalog_injection"]).transform_source(
+        source, "src/orchestrator/api/deps.py"
+    )
+    second = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["catalog_injection"]).transform_source(
+        first.source, "src/orchestrator/api/deps.py"
+    )
+
+    assert "GraphEventStore(session, catalog)" in first.source
+    assert first.changes == 1
+    assert second.source == first.source
+    assert second.changes == 0
+
+
+def test_task10_catalog_injection_adds_catalog_to_qualified_constructor_only() -> None:
+    source = """\
+from orchestrator.graph_runtime import GraphEventStore as Store
+
+def GraphEventStore(session):
+    return session
+
+local = GraphEventStore(session)
+runtime = Store(session)
+"""
+
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["catalog_injection"]).transform_source(
+        source, "src/orchestrator/api/deps.py"
+    )
+
+    assert "local = GraphEventStore(session)" in result.source
+    assert "runtime = Store(session, catalog=catalog)" in result.source
 
 
 def test_catalog_injection_without_qualified_contract_refuses_local_collision() -> None:

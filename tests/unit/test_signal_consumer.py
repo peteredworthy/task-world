@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from orchestrator.db import Base
 from orchestrator.db import EventV2Model
 from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, build_graph_catalog
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.workflow import (
     RunWorkflow,
@@ -23,7 +23,6 @@ from orchestrator.workflow import (
     WorkflowSignal,
 )
 from orchestrator.state.errors import RunNotFoundError
-from orchestrator.graph import build_graph_catalog
 
 
 @dataclass
@@ -39,6 +38,7 @@ class RecordingWorkflowService:
         self.calls: list[tuple[str, tuple[Any, ...], dict[str, Any]]] = []
         self.fail_methods = fail_methods or set()
         self.run = ServiceRun()
+        self.graph_catalog = build_graph_catalog()
 
     def _record(self, name: str, *args: Any, **kwargs: Any) -> None:
         self.calls.append((name, args, kwargs))
@@ -521,7 +521,7 @@ async def test_cancel_graph_run_appends_graph_cancel_before_run_row_failure(
         "run_lifecycle_changed",
     ]
     assert events[-4].payload["to_state"] == "cancelling"
-    assert events[-3].payload == {
+    assert events[-3].payload.to_json() == {
         "node_id": "worker-1",
         "lease_id": "lease-1",
         "trigger": "cancel_command_accepted",
@@ -529,7 +529,7 @@ async def test_cancel_graph_run_appends_graph_cancel_before_run_row_failure(
         "generation": 1,
         "execution_id": "exec-1",
     }
-    assert events[-2].payload == {
+    assert events[-2].payload.to_json() == {
         "node_id": "worker-1",
         "new_state": "cancelled",
         "trigger": "run_cancelled",

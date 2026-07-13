@@ -214,6 +214,17 @@ def test_submit_patch_command_accepts_macro_invocations() -> None:
             "base_graph_position": 0,
             "proposed_by_node_id": "planner-1",
             "actor_role": "planner",
+            "ops": [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-explicit",
+                        "kind": "worker",
+                        "state": "planned",
+                        "role": "builder",
+                    },
+                }
+            ],
             "macro_invocations": [
                 {
                     "macro": "create_work_region",

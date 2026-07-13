@@ -53,6 +53,7 @@ from orchestrator.runners.types import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import GraphRunDriver, WorkflowService
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 # --------------------------------------------------------------------------- #
@@ -138,13 +139,19 @@ class MultiTaskPlannerAgent:
             f"expected rejected but got: {self.invalid_feedback!r}"
         )
 
-        # Step 2: submit valid noop patch — empty ops, no read-set conflicts.
+        # Step 2: submit a valid planner-authority patch with no read-set conflicts.
         # This satisfies the planner's must-have-accepted-patch requirement.
         self.valid_feedback = await context.graph_patch_callback(
             {
                 "patch_id": "patch-multi-task-plan",
                 "base_graph_position": 0,
-                "ops": [],
+                "ops": [
+                    {
+                        "op": "set_allowed_actions",
+                        "node_id": context.node_id,
+                        "allowed_actions": ["submit_patch"],
+                    }
+                ],
             }
         )
         assert "accepted" in self.valid_feedback, (
@@ -355,8 +362,10 @@ def _init_repo(path: Path) -> None:
     )
 
 
-async def _create_service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+async def _create_service(
+    session: AsyncSession,
+) -> WorkflowService:
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 async def _create_graph_run(
@@ -365,6 +374,7 @@ async def _create_graph_run(
     *,
     run_id: str,
     repo: Path,
+    catalog: GraphCatalog,
 ) -> None:
     run = create_run_from_routine(routine, repo_name=repo.name, source_branch="main")
     run.id = run_id
@@ -373,7 +383,7 @@ async def _create_graph_run(
     run.worktree_path = str(repo)
     run.agent_runner_type = AgentRunnerType.CODEX_SERVER
     async with session_factory() as session:
-        await WorkflowService(session).create_run(run)
+        await WorkflowService(session, graph_catalog=build_graph_catalog()).create_run(run)
 
 
 def _driver(
@@ -382,6 +392,7 @@ def _driver(
     repo: Path,
     run_id: str,
     planner: AgentRunner | None = None,
+    catalog: GraphCatalog,
 ) -> GraphRunDriver:
     clock = FixedClock()
     ids = SequentialIds(run_id)
@@ -395,6 +406,7 @@ def _driver(
         worktree_path: str | Path,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        catalog: GraphCatalog,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg,
@@ -402,7 +414,9 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
@@ -415,6 +429,7 @@ def _driver(
                 }
             ),
             worktree_path=repo,
+            catalog=build_graph_catalog(),
         )
         return controller, executor
 
@@ -424,6 +439,7 @@ def _driver(
         clock=clock,
         id_gen=ids,
         runtime_builder=runtime_builder,
+        catalog=build_graph_catalog(),
     )
 
 
@@ -443,8 +459,7 @@ def _run_id() -> str:
 
 
 async def test_fr01_fr18_two_task_bootstrap_completes(
-    fr_e2e_app: tuple[AsyncClient, Any],
-    tmp_path: Path,
+    fr_e2e_app: tuple[AsyncClient, Any], tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """FR-01/FR-13/FR-18: two-task multi-region bootstrap completes with
     planner-submitted invalid-patch probe, multi-region evidence, and terminal
@@ -468,12 +483,18 @@ async def test_fr01_fr18_two_task_bootstrap_completes(
     _init_repo(repo)
     run_id = _run_id()
     routine = _two_task_routine()
-    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     planner_agent = MultiTaskPlannerAgent()
-    outcome = await _driver(session_factory, repo=repo, run_id=run_id, planner=planner_agent).run(
-        run_id
-    )
+    outcome = await _driver(
+        session_factory,
+        repo=repo,
+        run_id=run_id,
+        planner=planner_agent,
+        catalog=build_graph_catalog(),
+    ).run(run_id)
 
     assert outcome.completed is True, outcome.blocked_reason
 
@@ -557,8 +578,7 @@ async def test_fr01_fr18_two_task_bootstrap_completes(
 
 
 async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
-    fr_e2e_app: tuple[AsyncClient, Any],
-    tmp_path: Path,
+    fr_e2e_app: tuple[AsyncClient, Any], tmp_path: Path, *, catalog: GraphCatalog
 ) -> None:
     """FR-13: terminal blocked-progress scenario and invalid-patch probe.
 
@@ -584,12 +604,18 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
     # T-02's check command always fails; its completed no-successor recovery
     # planner transitions the graph from active to terminal failed.
     routine = _two_task_routine(t02_check_cmd="false")
-    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     planner_agent = MultiTaskPlannerAgent()
-    outcome = await _driver(session_factory, repo=repo, run_id=run_id, planner=planner_agent).run(
-        run_id
-    )
+    outcome = await _driver(
+        session_factory,
+        repo=repo,
+        run_id=run_id,
+        planner=planner_agent,
+        catalog=build_graph_catalog(),
+    ).run(run_id)
 
     # Run must stop without completion (T-02 check fails, region stays pending).
     assert outcome.completed is False, "expected blocked outcome"
@@ -638,7 +664,9 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
         SequentialIds(f"{run_id}-probe"),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     current_position = await controller.current_position(run_id)
     await controller.handle_command(

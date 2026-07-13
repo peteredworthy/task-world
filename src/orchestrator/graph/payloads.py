@@ -1,6 +1,6 @@
 """Strict JSON payload primitives for the execution graph."""
 
-from typing import cast
+from typing import Any, cast
 
 from pydantic import BaseModel, ConfigDict
 
@@ -26,5 +26,54 @@ class StrictPayload(BaseModel):
             dict[str, JsonValue], self.model_dump(mode="json", by_alias=True, exclude_none=True)
         )
 
+    def stored_json(self) -> dict[str, JsonValue]:
+        """Return fields present at the storage boundary, without inferred defaults."""
 
-__all__ = ["JsonValue", "StrictPayload"]
+        return cast(
+            dict[str, JsonValue],
+            self.model_dump(
+                mode="json",
+                by_alias=True,
+                exclude_none=True,
+                exclude_unset=True,
+            ),
+        )
+
+    def __getitem__(self, key: str) -> Any:
+        """Retained D-series read compatibility without reparsing the model."""
+
+        return self.to_json()[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Retained D-series read compatibility without reparsing the model."""
+
+        return self.to_json().get(key, default)
+
+    def items(self):
+        """Retained D-series mapping iteration over the concrete model."""
+
+        return self.to_json().items()
+
+
+class LegacyEventPayload(StrictPayload):
+    """Typed carrier retained only for schema-generation-1 replay."""
+
+    data: dict[str, JsonValue]
+
+    def to_json(self) -> dict[str, JsonValue]:
+        return self.data
+
+    def stored_json(self) -> dict[str, JsonValue]:
+        return self.data
+
+    def __getitem__(self, key: str) -> Any:
+        return self.data[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.data.get(key, default)
+
+    def items(self):
+        return self.data.items()
+
+
+__all__ = ["JsonValue", "LegacyEventPayload", "StrictPayload"]

@@ -62,7 +62,9 @@ def _typed_apply(events: list[EventEnvelope], command_type: str, payload: dict[s
             id_generator=ids,
             actor=Actor(kind=ActorKind.CONTROLLER),
             events=(),
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         ),
     )
 

@@ -1,9 +1,11 @@
 """Integration tests for graph compatibility projection endpoints."""
 
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 from typing import Any
 
+import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy import delete, func, select, update
@@ -19,7 +21,15 @@ from orchestrator.db import (
     GraphProjectionSnapshotModel,
     RunModel,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, build_graph_catalog
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FakeClock,
+    GraphCatalog,
+    SubmitPatchCommand,
+    build_graph_catalog,
+)
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.db.access.mutations import save_run
@@ -31,6 +41,12 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from orchestrator.graph import build_graph_command_dependencies
+from tests.integration.signal_helpers import DrainFn
+
+
+@pytest.fixture
+def catalog() -> GraphCatalog:
+    return build_graph_catalog()
 
 
 def _routine() -> RoutineConfig:
@@ -121,10 +137,7 @@ async def _save_manual_graph_run(app: Any, run_id: str) -> None:
         await session.commit()
 
 
-async def _seed_graph_run(
-    app: Any,
-    run_id: str,
-) -> None:
+async def _seed_graph_run(app: Any, run_id: str, *, catalog: GraphCatalog) -> None:
     clock = FakeClock()
     id_gen: IdGenerator = _RunSeedIdGenerator(run_id)
     routine = _routine()
@@ -139,6 +152,7 @@ async def _seed_graph_run(
         run_id=run_id,
         clock=clock,
         id_gen=id_gen,
+        catalog=catalog,
     )
     assert seed.projection_position > 0
 
@@ -149,8 +163,10 @@ async def _seed_graph_run(
         clock,
         id_gen,
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
     started = await controller.handle_command(run_id, accepted.projection_position, "start")
@@ -168,7 +184,7 @@ async def _seed_graph_run(
         await session.commit()
 
 
-async def _seed_control_topology_graph_run(app: Any, run_id: str) -> None:
+async def _seed_control_topology_graph_run(app: Any, run_id: str, *, catalog: GraphCatalog) -> None:
     await _save_manual_graph_run(app, run_id)
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}),
@@ -253,12 +269,14 @@ async def _seed_control_topology_graph_run(app: Any, run_id: str) -> None:
     async with session_factory() as session:
         await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).append_events(run_id, 0, events)
         await session.commit()
 
 
-async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
+async def _seed_callback_lifecycle_graph_run(
+    app: Any, run_id: str, *, catalog: GraphCatalog
+) -> None:
     await _save_manual_graph_run(app, run_id)
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}),
@@ -320,7 +338,7 @@ async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
     async with session_factory() as session:
         await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).append_events(run_id, 0, events)
         await session.commit()
 
@@ -328,9 +346,11 @@ async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
         session_factory,
         FakeClock(),
         _RunSeedIdGenerator(run_id),
-        catalog=build_graph_catalog(),
+        catalog=catalog,
         auto_dispatch=False,
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     heartbeat = await controller.handle_command(
         run_id,
@@ -345,7 +365,7 @@ async def _seed_callback_lifecycle_graph_run(app: Any, run_id: str) -> None:
     await controller.handle_command(run_id, heartbeat.projection_position, "cancel")
 
 
-async def _seed_rejected_patch_graph_run(app: Any, run_id: str) -> None:
+async def _seed_rejected_patch_graph_run(app: Any, run_id: str, *, catalog: GraphCatalog) -> None:
     await _save_manual_graph_run(app, run_id)
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     controller = GraphController(
@@ -353,8 +373,10 @@ async def _seed_rejected_patch_graph_run(app: Any, run_id: str) -> None:
         FakeClock(),
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     await controller.handle_command(
         run_id,
@@ -386,8 +408,8 @@ async def _seed_rejected_patch_graph_run(app: Any, run_id: str) -> None:
     )
 
 
-async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
-    await _seed_graph_run(app, run_id)
+async def _seed_worker_verifier_cycle(app: Any, run_id: str, *, catalog: GraphCatalog) -> None:
+    await _seed_graph_run(app, run_id, catalog=build_graph_catalog())
 
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     clock = FakeClock()
@@ -397,13 +419,15 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
         clock,
         id_gen,
         auto_dispatch=False,
-        catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        catalog=catalog,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     async with session_factory() as session:
         events = await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).read_run(run_id)
     position = max(event.position for event in events)
     worker_lease = next(event for event in events if event.event_type == "lease_granted")
@@ -567,12 +591,12 @@ async def test_graph_projection_empty_for_non_graph_run(
 
 
 async def test_graph_projection_reflects_seeded_events(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = "graph-seeded-run"
 
-    await _seed_graph_run(app, run_id)
+    await _seed_graph_run(app, run_id, catalog=build_graph_catalog())
 
     projection_resp = await client.get(f"/api/runs/{run_id}/graph")
     assert projection_resp.status_code == 200
@@ -685,7 +709,7 @@ async def test_graph_final_blockers_surface_failed_outbox_rows(
 
 
 async def test_operator_requeues_failed_outbox_row_with_audit_event(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-requeue-outbox-{uuid4().hex[:8]}"
@@ -694,7 +718,7 @@ async def test_operator_requeues_failed_outbox_row_with_audit_event(
     async with session_factory() as session:
         await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).append_events(
             run_id,
             0,
@@ -771,7 +795,7 @@ async def test_operator_requeues_failed_outbox_row_with_audit_event(
 
 
 async def test_operator_requeue_failed_outbox_row_rejects_invalid_requests(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-requeue-invalid-{uuid4().hex[:8]}"
@@ -780,7 +804,7 @@ async def test_operator_requeue_failed_outbox_row_rejects_invalid_requests(
     async with session_factory() as session:
         await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).append_events(
             run_id,
             0,
@@ -817,7 +841,7 @@ async def test_operator_requeue_failed_outbox_row_rejects_invalid_requests(
 
 
 async def test_requeue_audit_append_translates_stale_position_to_conflict(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     _client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-requeue-stale-{uuid4().hex[:8]}"
@@ -826,7 +850,7 @@ async def test_requeue_audit_append_translates_stale_position_to_conflict(
     async with session_factory() as session:
         await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).append_events(
             run_id,
             0,
@@ -851,7 +875,7 @@ async def test_requeue_audit_append_translates_stale_position_to_conflict(
             await append_requeue_audit_event(
                 GraphEventStore(
                     session,
-                    build_graph_catalog(),
+                    catalog,
                 ),
                 run_id=run_id,
                 current_position=1,
@@ -865,7 +889,7 @@ async def test_requeue_audit_append_translates_stale_position_to_conflict(
 
 
 async def test_operator_graph_patch_endpoint_accepts_human_patch(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-operator-patch-{uuid4().hex[:8]}"
@@ -874,7 +898,7 @@ async def test_operator_graph_patch_endpoint_accepts_human_patch(
     async with session_factory() as session:
         await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).append_events(
             run_id,
             0,
@@ -907,11 +931,11 @@ async def test_operator_graph_patch_endpoint_accepts_human_patch(
 
 
 async def test_graph_projection_uses_paused_run_row_as_effective_state(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-paused-effective-{uuid4().hex[:8]}"
-    await _seed_graph_run(app, run_id)
+    await _seed_graph_run(app, run_id, catalog=build_graph_catalog())
 
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
@@ -929,17 +953,17 @@ async def test_graph_projection_uses_paused_run_row_as_effective_state(
 
 
 async def test_graph_projection_recomputes_task_states_from_events(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-fresh-task-states-{uuid4().hex[:8]}"
-    await _seed_graph_run(app, run_id)
+    await _seed_graph_run(app, run_id, catalog=build_graph_catalog())
 
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
         snapshot = await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).read_projection_snapshot(run_id)
         assert snapshot is not None
         snapshot.task_states = {"task-1": "stale"}
@@ -953,12 +977,12 @@ async def test_graph_projection_recomputes_task_states_from_events(
 
 
 async def test_active_graph_execution_readback_uses_bounded_summary_paths(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = "graph-active-readback"
 
-    await _seed_graph_run(app, run_id)
+    await _seed_graph_run(app, run_id, catalog=build_graph_catalog())
 
     projection_resp = await client.get(f"/api/runs/{run_id}/graph")
     assert projection_resp.status_code == 200
@@ -991,11 +1015,11 @@ async def test_active_graph_execution_readback_uses_bounded_summary_paths(
 
 
 async def test_graph_projection_routes_recreate_deleted_read_models(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = "graph-read-model-api-rebuild"
-    await _seed_graph_run(app, run_id)
+    await _seed_graph_run(app, run_id, catalog=build_graph_catalog())
 
     session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
     async with session_factory() as session:
@@ -1037,11 +1061,11 @@ async def test_graph_projection_routes_recreate_deleted_read_models(
 
 
 async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = "graph-node-detail-cycle"
-    await _seed_worker_verifier_cycle(app, run_id)
+    await _seed_worker_verifier_cycle(app, run_id, catalog=build_graph_catalog())
 
     events_resp = await client.get(f"/api/runs/{run_id}/graph/events")
     assert events_resp.status_code == 200
@@ -1112,7 +1136,7 @@ async def test_node_detail_returns_inputs_outputs_filestate_callbacks(
 
 
 async def test_full_node_detail_hydrates_only_target_node_event_rows(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-node-detail-noisy-{uuid4().hex[:8]}"
@@ -1213,7 +1237,7 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
     async with session_factory() as session:
         await GraphEventStore(
             session,
-            build_graph_catalog(),
+            catalog,
         ).append_events(run_id, 0, events)
         await session.commit()
 
@@ -1256,11 +1280,11 @@ async def test_full_node_detail_hydrates_only_target_node_event_rows(
 
 
 async def test_fresh_control_and_topology_readbacks_preserve_runtime_controls(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-control-topology-{uuid4().hex[:8]}"
-    await _seed_control_topology_graph_run(app, run_id)
+    await _seed_control_topology_graph_run(app, run_id, catalog=build_graph_catalog())
 
     node_resp = await client.get(f"/api/runs/{run_id}/graph/nodes/worker-control")
     full_node_resp = await client.get(
@@ -1323,11 +1347,11 @@ async def test_fresh_control_and_topology_readbacks_preserve_runtime_controls(
 
 
 async def test_callback_lifecycle_readbacks_cover_heartbeat_cancel_artifact_and_failure(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-callback-lifecycle-{uuid4().hex[:8]}"
-    await _seed_callback_lifecycle_graph_run(app, run_id)
+    await _seed_callback_lifecycle_graph_run(app, run_id, catalog=build_graph_catalog())
 
     graph_resp = await client.get(f"/api/runs/{run_id}/graph")
     scheduler_resp = await client.get(f"/api/runs/{run_id}/graph/scheduler")
@@ -1372,11 +1396,11 @@ async def test_callback_lifecycle_readbacks_cover_heartbeat_cancel_artifact_and_
 
 
 async def test_patch_attempt_readback_surfaces_rejected_patch_diagnostics(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = f"graph-patch-probe-{uuid4().hex[:8]}"
-    await _seed_rejected_patch_graph_run(app, run_id)
+    await _seed_rejected_patch_graph_run(app, run_id, catalog=build_graph_catalog())
 
     patches_resp = await client.get(f"/api/runs/{run_id}/graph/patches")
     events_resp = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
@@ -1407,23 +1431,23 @@ async def test_patch_attempt_readback_surfaces_rejected_patch_diagnostics(
 
 
 async def test_node_detail_404_for_unknown_node(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
     run_id = "graph-node-detail-404"
-    await _seed_graph_run(app, run_id)
+    await _seed_graph_run(app, run_id, catalog=build_graph_catalog())
 
     response = await client.get(f"/api/runs/{run_id}/graph/nodes/nonexistent")
     assert response.status_code == 404
 
 
 async def test_is_graph_backed_flag_in_run_response(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
 
     run_id = "graph-backed-flag"
-    await _seed_graph_run(app, run_id)
+    await _seed_graph_run(app, run_id, catalog=build_graph_catalog())
 
     response = await client.get(f"/api/runs/{run_id}")
     assert response.status_code == 200
@@ -1509,12 +1533,12 @@ async def test_legacy_run_with_workflow_events_is_not_graph_backed(
 
 
 async def test_graph_events_from_position(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
 ) -> None:
     client, _drain, _, _, app = _shared_app_fixture
 
     run_id = "graph-events-position"
-    await _seed_graph_run(app, run_id)
+    await _seed_graph_run(app, run_id, catalog=build_graph_catalog())
 
     response = await client.get(f"/api/runs/{run_id}/graph/events?from_position=2")
     assert response.status_code == 200
@@ -1523,3 +1547,37 @@ async def test_graph_events_from_position(
     # Ensure the endpoint enforces floor-position filtering and ordering.
     assert all(event["position"] >= 2 for event in events)
     assert events == sorted(events, key=lambda item: item["position"])
+
+
+@pytest.mark.asyncio
+async def test_patch_openapi_reuses_strict_submit_patch_fields(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
+) -> None:
+    *_, app = _shared_app_fixture
+    document = app.openapi()
+    schemas = document["components"]["schemas"]
+    request_schema = schemas["SubmitGraphPatchRequest"]
+    command_schema = SubmitPatchCommand.model_json_schema()
+
+    assert request_schema["properties"]["ops"]["items"]["$ref"].endswith("/PatchOp")
+    assert command_schema["properties"]["ops"]["items"]["$ref"].endswith("/PatchOp")
+    assert (
+        request_schema["properties"]["rationale_record_id"]["anyOf"]
+        == command_schema["properties"]["rationale_record_id"]["anyOf"]
+    )
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {},
+        {"ops": []},
+        {"ops": [{"op": "retire_node", "node_id": "worker-1"}], "rationale_record_id": ""},
+    ],
+)
+async def test_patch_api_rejects_empty_strict_command_fields(
+    client_with_repo: tuple[AsyncClient, Path, DrainFn], body: dict[str, Any]
+) -> None:
+    client, _, _ = client_with_repo
+    response = await client.post("/api/runs/not-created/graph/patch", json=body)
+    assert response.status_code == 422

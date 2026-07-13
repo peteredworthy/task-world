@@ -16,6 +16,7 @@ from orchestrator.api.schemas.runs import (
 )
 from orchestrator.graph import (
     EventEnvelope,
+    GraphCatalog,
     GraphProjection,
     SchedulerView,
     build_projection,
@@ -26,7 +27,6 @@ from orchestrator.graph import (
     project_scheduler_view,
 )
 from orchestrator.state import Run
-from orchestrator.graph import build_graph_catalog
 
 
 def _now() -> datetime:
@@ -138,15 +138,16 @@ def _representative_nodes(
     decision_blockers: list[str],
     max_nodes: int,
     include_node_evidence: bool,
+    catalog: GraphCatalog,
 ) -> list[RepresentativeNodeEvidence]:
     if not events:
         return []
 
-    node_states = project_node_states(build_graph_catalog(), events, projection=projection)
+    node_states = project_node_states(catalog, events, projection=projection)
     if not node_states:
         return []
 
-    node_metadata = project_node_metadata(build_graph_catalog(), events, projection=projection)
+    node_metadata = project_node_metadata(catalog, events, projection=projection)
     creation_payloads = _node_creation_payloads(events)
 
     entries: list[RepresentativeNodeEvidence] = []
@@ -188,6 +189,7 @@ def build_run_evidence_digest_response(
     max_nodes: int = 3,
     include_node_evidence: bool = True,
     generated_at: datetime | None = None,
+    catalog: GraphCatalog,
 ) -> RunEvidenceDigestResponse:
     """Build a bounded evidence digest from the run and graph projections."""
     graph_event_count = _graph_event_count(events)
@@ -211,12 +213,10 @@ def build_run_evidence_digest_response(
         # Fold the event stream a single time and reuse the projection across
         # every view below, instead of each project_* call re-folding from
         # scratch (an O(n^2) full replay per call).
-        projection = build_projection(build_graph_catalog(), events)
-        scheduler_view = project_scheduler_view(
-            build_graph_catalog(), events, projection=projection
-        )
-        lease_view = project_lease_view(build_graph_catalog(), events, projection=projection)
-        decision_view = project_decision_view(build_graph_catalog(), events, projection=projection)
+        projection = build_projection(catalog, events)
+        scheduler_view = project_scheduler_view(catalog, events, projection=projection)
+        lease_view = project_lease_view(catalog, events, projection=projection)
+        decision_view = project_decision_view(catalog, events, projection=projection)
         scheduler = RunEvidenceDigestScheduler(
             graph_event_count=graph_event_count,
             ready_count=len(scheduler_view["ready"]),
@@ -247,6 +247,7 @@ def build_run_evidence_digest_response(
             decision_blockers=decision_view["review"]["blockers"],
             max_nodes=max_nodes,
             include_node_evidence=include_node_evidence,
+            catalog=catalog,
         )
     else:
         if run.pause_reason:

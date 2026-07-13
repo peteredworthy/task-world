@@ -32,6 +32,7 @@ from orchestrator.runners.types import (
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import GraphRunDriver, WorkflowService
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 class FixedClock:
@@ -239,8 +240,10 @@ async def _create_api_client(
     await app.state.engine.dispose()
 
 
-async def _create_service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+async def _create_service(
+    session: AsyncSession,
+) -> WorkflowService:
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 async def _create_graph_run(
@@ -249,6 +252,7 @@ async def _create_graph_run(
     *,
     run_id: str,
     repo: Path,
+    catalog: GraphCatalog,
 ) -> None:
     run = create_run_from_routine(routine, repo_name=repo.name, source_branch="main")
     run.id = run_id
@@ -257,7 +261,7 @@ async def _create_graph_run(
     run.worktree_path = str(repo)
     run.agent_runner_type = AgentRunnerType.CODEX_SERVER
     async with session_factory() as session:
-        await WorkflowService(session).create_run(run)
+        await WorkflowService(session, graph_catalog=build_graph_catalog()).create_run(run)
 
 
 def _driver(
@@ -266,6 +270,7 @@ def _driver(
     repo: Path,
     dispatch_order: list[str],
     on_agent_output: Any = None,
+    catalog: GraphCatalog,
 ) -> GraphRunDriver:
     clock = FixedClock()
     ids = SequentialIds()
@@ -285,6 +290,7 @@ def _driver(
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
         on_agent_output: Any = None,
+        catalog: GraphCatalog,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg,
@@ -292,7 +298,9 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
@@ -300,6 +308,7 @@ def _driver(
             AgentFactory(agents, dispatch_order),
             worktree_path=repo,
             on_agent_output=on_agent_output,
+            catalog=build_graph_catalog(),
         )
         return controller, executor
 
@@ -310,6 +319,7 @@ def _driver(
         id_gen=ids,
         runtime_builder=runtime_builder,
         on_agent_output=on_agent_output,
+        catalog=build_graph_catalog(),
     )
 
 
@@ -420,6 +430,8 @@ async def test_default_carrier_switch_round_trips(tmp_path: Path) -> None:
 async def test_common_routine_shapes_seed_and_complete_as_graph(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     routines = [
@@ -433,12 +445,14 @@ async def test_common_routine_shapes_seed_and_complete_as_graph(
         repo = tmp_path / f"repo-{routine.id}"
         _init_repo(repo)
         run_id = f"graph-{routine.id}"
-        await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+        await _create_graph_run(
+            session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+        )
         dispatch_order: list[str] = []
 
-        outcome = await _driver(session_factory, repo=repo, dispatch_order=dispatch_order).run(
-            run_id
-        )
+        outcome = await _driver(
+            session_factory, repo=repo, dispatch_order=dispatch_order, catalog=build_graph_catalog()
+        ).run(run_id)
         events = await _events(session_factory, run_id)
 
         assert outcome.completed is True
@@ -458,12 +472,20 @@ async def test_common_routine_shapes_seed_and_complete_as_graph(
 async def test_graph_run_observability_parity_through_run_apis(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     engine, session_factory = file_db
     repo = tmp_path / "repo-observability"
     _init_repo(repo)
     run_id = "graph-observability"
-    await _create_graph_run(session_factory, _single_step_routine(), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory,
+        _single_step_routine(),
+        run_id=run_id,
+        repo=repo,
+        catalog=build_graph_catalog(),
+    )
 
     batcher = OutputBatcher(session_factory=session_factory)
 
@@ -482,6 +504,7 @@ async def test_graph_run_observability_parity_through_run_apis(
         repo=repo,
         dispatch_order=dispatch_order,
         on_agent_output=on_agent_output,
+        catalog=build_graph_catalog(),
     ).run(run_id)
     assert outcome.completed is True
 

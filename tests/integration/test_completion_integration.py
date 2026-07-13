@@ -24,6 +24,8 @@ from orchestrator.git.worktree import WorktreeManager
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.models import Attempt
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 @pytest.fixture
@@ -81,7 +83,11 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 @pytest.mark.asyncio
 async def test_worktree_deleted_on_successful_completion(
-    db_session: AsyncSession, git_repo: tuple[Path, Path], simple_routine: RoutineConfig
+    db_session: AsyncSession,
+    git_repo: tuple[Path, Path],
+    simple_routine: RoutineConfig,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Test that worktree is deleted when run completes successfully with delete flag."""
     repo_path, worktrees_dir = git_repo
@@ -115,7 +121,9 @@ async def test_worktree_deleted_on_successful_completion(
     )
 
     # Create workflow service with global config
-    service = WorkflowService(db_session, global_config=global_config)
+    service = WorkflowService(
+        db_session, global_config=global_config, graph_catalog=build_graph_catalog()
+    )
     await service.create_run(run)
 
     # Complete verification (should complete the run and delete worktree)
@@ -134,7 +142,11 @@ async def test_worktree_deleted_on_successful_completion(
 
 @pytest.mark.asyncio
 async def test_worktree_kept_when_flag_false(
-    db_session: AsyncSession, git_repo: tuple[Path, Path], simple_routine: RoutineConfig
+    db_session: AsyncSession,
+    git_repo: tuple[Path, Path],
+    simple_routine: RoutineConfig,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Test that worktree is kept when delete_worktree_on_completion is False."""
     repo_path, worktrees_dir = git_repo
@@ -168,7 +180,9 @@ async def test_worktree_kept_when_flag_false(
     )
 
     # Create workflow service with global config
-    service = WorkflowService(db_session, global_config=global_config)
+    service = WorkflowService(
+        db_session, global_config=global_config, graph_catalog=build_graph_catalog()
+    )
     await service.create_run(run)
 
     # Complete verification
@@ -190,7 +204,11 @@ async def test_worktree_kept_when_flag_false(
 
 @pytest.mark.asyncio
 async def test_worktree_deleted_on_cancelled_run(
-    db_session: AsyncSession, git_repo: tuple[Path, Path], simple_routine: RoutineConfig
+    db_session: AsyncSession,
+    git_repo: tuple[Path, Path],
+    simple_routine: RoutineConfig,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Test that worktree is deleted when run is cancelled with delete flag."""
     repo_path, worktrees_dir = git_repo
@@ -217,7 +235,9 @@ async def test_worktree_deleted_on_cancelled_run(
     )
 
     # Create workflow service with global config
-    service = WorkflowService(db_session, global_config=global_config)
+    service = WorkflowService(
+        db_session, global_config=global_config, graph_catalog=build_graph_catalog()
+    )
     await service.create_run(run)
 
     # Cancel the run
@@ -232,7 +252,7 @@ async def test_worktree_deleted_on_cancelled_run(
 
 @pytest.mark.asyncio
 async def test_worktree_deleted_on_failed_run(
-    db_session: AsyncSession, git_repo: tuple[Path, Path]
+    db_session: AsyncSession, git_repo: tuple[Path, Path], *, catalog: GraphCatalog
 ) -> None:
     """Test that worktree is deleted when run fails with delete flag."""
     repo_path, worktrees_dir = git_repo
@@ -294,7 +314,9 @@ async def test_worktree_deleted_on_failed_run(
     )
 
     # Create workflow service with global config
-    service = WorkflowService(db_session, global_config=global_config)
+    service = WorkflowService(
+        db_session, global_config=global_config, graph_catalog=build_graph_catalog()
+    )
     await service.create_run(run)
 
     # Complete verification (should fail the task and run)
@@ -314,7 +336,11 @@ async def test_worktree_deleted_on_failed_run(
 
 @pytest.mark.asyncio
 async def test_no_error_when_worktree_manager_not_configured(
-    db_session: AsyncSession, git_repo: tuple[Path, Path], simple_routine: RoutineConfig
+    db_session: AsyncSession,
+    git_repo: tuple[Path, Path],
+    simple_routine: RoutineConfig,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Test that completion works when WorktreeManager is not configured."""
     # Create a run (no worktree created)
@@ -331,7 +357,7 @@ async def test_no_error_when_worktree_manager_not_configured(
         item.status = ChecklistStatus.DONE
 
     # Create workflow service WITHOUT global config (no worktree manager available)
-    service = WorkflowService(db_session, global_config=None)
+    service = WorkflowService(db_session, global_config=None, graph_catalog=build_graph_catalog())
     await service.create_run(run)
 
     # Complete verification (should complete without error)
@@ -347,7 +373,11 @@ async def test_no_error_when_worktree_manager_not_configured(
 
 @pytest.mark.asyncio
 async def test_no_error_when_worktree_path_not_set(
-    db_session: AsyncSession, git_repo: tuple[Path, Path], simple_routine: RoutineConfig
+    db_session: AsyncSession,
+    git_repo: tuple[Path, Path],
+    simple_routine: RoutineConfig,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Test that completion works when worktree_path is None."""
     repo_path, worktrees_dir = git_repo
@@ -374,7 +404,9 @@ async def test_no_error_when_worktree_path_not_set(
     )
 
     # Create workflow service with global config
-    service = WorkflowService(db_session, global_config=global_config)
+    service = WorkflowService(
+        db_session, global_config=global_config, graph_catalog=build_graph_catalog()
+    )
     await service.create_run(run)
 
     # Complete verification (should complete without error)

@@ -51,7 +51,9 @@ async def test_fr06_edges_bind_fanout_join_optional_bind_all_and_supersede(
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     first_callback = await controller.handle_command(

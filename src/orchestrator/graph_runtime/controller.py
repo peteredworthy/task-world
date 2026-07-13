@@ -122,6 +122,7 @@ class GraphController:
             if key != "run_id" and (command_type == "submit_patch" or key != "actor_role")
         }
         actor_role = command_payload.get("actor_role")
+        legacy_command_events = [_to_legacy_envelope(event) for event in command_events]
         context = CommandExecutionContext(
             run_id=run_id,
             current_position=current_position,
@@ -137,7 +138,7 @@ class GraphController:
         planned_events = apply_command(
             self._catalog,
             projection,
-            command_events,
+            legacy_command_events,
             command_type,
             typed_payload,
             context,
@@ -264,7 +265,7 @@ def _to_legacy_envelope(event: EventEnvelope | HydratedEvent) -> EventEnvelope:
 
 def rebuild_projection(
     catalog: GraphCatalog,
-    events: list[EventEnvelope],
+    events: Sequence[EventEnvelope | HydratedEvent],
 ) -> GraphProjection:
     projection = initial_projection()
     for event in events:

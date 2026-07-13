@@ -43,6 +43,7 @@ from orchestrator.runners.types import (
     SubmitCallback,
 )
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 class FixedClock:
@@ -220,6 +221,8 @@ async def file_db(
 async def test_gatekeeper_flow_metadata_only_pattern_reuse_and_replay(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-pattern"
@@ -227,7 +230,9 @@ async def test_gatekeeper_flow_metadata_only_pattern_reuse_and_replay(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "gatekeeper-pattern"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     fake = RecordingClassifier()
     executor = GraphDispatchExecutor(
         session_factory,
@@ -235,6 +240,7 @@ async def test_gatekeeper_flow_metadata_only_pattern_reuse_and_replay(
         AgentFactory({"worker": ResidueWorker(), "verifier": PatternVerifier()}),
         worktree_path=repo,
         residue_classifier=fake,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -280,6 +286,8 @@ async def test_gatekeeper_flow_metadata_only_pattern_reuse_and_replay(
 async def test_gatekeeper_cap_leaves_remainder_flagged(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-cap"
@@ -287,7 +295,9 @@ async def test_gatekeeper_cap_leaves_remainder_flagged(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "gatekeeper-cap"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     fake = RecordingClassifier()
     executor = GraphDispatchExecutor(
         session_factory,
@@ -296,6 +306,7 @@ async def test_gatekeeper_cap_leaves_remainder_flagged(
         worktree_path=repo,
         residue_classifier=fake,
         max_gatekeeper_items_per_boundary=3,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -321,6 +332,8 @@ async def test_gatekeeper_cap_leaves_remainder_flagged(
 async def test_secret_suspects_are_not_sent_to_gatekeeper(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-secret"
@@ -328,7 +341,9 @@ async def test_secret_suspects_are_not_sent_to_gatekeeper(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "gatekeeper-secret"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     fake = RecordingClassifier()
     executor = GraphDispatchExecutor(
         session_factory,
@@ -336,6 +351,7 @@ async def test_secret_suspects_are_not_sent_to_gatekeeper(
         AgentFactory({"worker": SecretWorker(), "verifier": PatternVerifier()}),
         worktree_path=repo,
         residue_classifier=fake,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -352,6 +368,8 @@ async def test_secret_suspects_are_not_sent_to_gatekeeper(
 async def test_gatekeeper_secret_verdict_scrubs_compromised_snapshot(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-retroactive-secret"
@@ -359,7 +377,9 @@ async def test_gatekeeper_secret_verdict_scrubs_compromised_snapshot(
     clock = FixedClock()
     ids = SequentialIds()
     run_id = "gatekeeper-retroactive-secret"
-    controller = await _seed_active_run(session_factory, run_id, clock, ids)
+    controller = await _seed_active_run(
+        session_factory, run_id, clock, ids, catalog=build_graph_catalog()
+    )
     fake = RecordingClassifier("secret")
     executor = GraphDispatchExecutor(
         session_factory,
@@ -367,6 +387,7 @@ async def test_gatekeeper_secret_verdict_scrubs_compromised_snapshot(
         AgentFactory({"worker": RetroactiveSecretWorker(), "verifier": PatternVerifier()}),
         worktree_path=repo,
         residue_classifier=fake,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -407,15 +428,26 @@ async def _seed_active_run(
     run_id: str,
     clock: FixedClock,
     ids: SequentialIds,
+    *,
+    catalog: GraphCatalog,
 ) -> GraphController:
-    await seed_run(session_factory, _routine(), run_id=run_id, clock=clock, id_gen=ids)
+    await seed_run(
+        session_factory,
+        _routine(),
+        run_id=run_id,
+        clock=clock,
+        id_gen=ids,
+        catalog=build_graph_catalog(),
+    )
     controller = GraphController(
         session_factory,
         clock,
         ids,
         catalog=build_graph_catalog(),
         auto_dispatch=False,
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     position = await controller.current_position(run_id)
     accepted = await controller.handle_command(run_id, position, "accept_run")

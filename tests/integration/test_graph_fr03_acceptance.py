@@ -51,7 +51,9 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     accepted = await controller.handle_command(

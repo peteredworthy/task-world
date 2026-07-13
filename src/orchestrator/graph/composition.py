@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 
 from orchestrator.graph._commands import LegacyFutureCommandEffects
-from orchestrator.graph.catalog import GraphCatalog, build_graph_catalog
+from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.specifications import FutureCommandEffects
 
 
@@ -15,11 +15,13 @@ class GraphCommandDependencies:
     future_effects: FutureCommandEffects
 
 
-def build_graph_command_dependencies() -> GraphCommandDependencies:
+def build_graph_command_dependencies(
+    catalog: GraphCatalog,
+) -> GraphCommandDependencies:
     """Compose the production graph kernel at the graph module boundary."""
 
     return GraphCommandDependencies(
-        catalog=build_graph_catalog(),
+        catalog=catalog,
         future_effects=LegacyFutureCommandEffects(),
     )
 

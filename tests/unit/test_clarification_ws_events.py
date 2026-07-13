@@ -38,6 +38,8 @@ from orchestrator.workflow import (
 )
 from orchestrator.workflow import WorkflowEvent
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +116,7 @@ def _make_run() -> Run:
 
 
 def _make_service(
-    session: AsyncSession,
-    recording_manager: RecordingConnectionManager,
+    session: AsyncSession, recording_manager: RecordingConnectionManager, *, catalog: GraphCatalog
 ) -> WorkflowService:
     """Build a WorkflowService wired to the recording ConnectionManager."""
     repo = RunRepository(session)
@@ -139,6 +140,7 @@ def _make_service(
         event_store_v2=event_store,
         event_emitter=emitter,
         auto_verify_runner=LocalAutoVerifyRunner(),
+        graph_catalog=build_graph_catalog(),
     )
 
 
@@ -148,11 +150,11 @@ def _make_service(
 
 
 @pytest.mark.asyncio
-async def test_ws_clarification_requested(session: AsyncSession) -> None:
+async def test_ws_clarification_requested(session: AsyncSession, *, catalog: GraphCatalog) -> None:
     """WorkflowService emits ClarificationRequested that reaches ConnectionManager."""
     run = _make_run()
     recording_manager = RecordingConnectionManager()
-    svc = _make_service(session, recording_manager)
+    svc = _make_service(session, recording_manager, catalog=build_graph_catalog())
 
     await svc.create_run(run)
 
@@ -185,11 +187,11 @@ async def test_ws_clarification_requested(session: AsyncSession) -> None:
 
 
 @pytest.mark.asyncio
-async def test_ws_clarification_responded(session: AsyncSession) -> None:
+async def test_ws_clarification_responded(session: AsyncSession, *, catalog: GraphCatalog) -> None:
     """WorkflowService emits ClarificationResponded that reaches ConnectionManager."""
     run = _make_run()
     recording_manager = RecordingConnectionManager()
-    svc = _make_service(session, recording_manager)
+    svc = _make_service(session, recording_manager, catalog=build_graph_catalog())
 
     await svc.create_run(run)
 

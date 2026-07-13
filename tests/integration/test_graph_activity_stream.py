@@ -35,6 +35,7 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import AgentOutputEvent, WorkflowService
 from orchestrator.workflow.graph_driver import GraphRunDriver
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 class FakeConnectionManager:
@@ -174,8 +175,10 @@ def _init_repo(path: Path) -> None:
     )
 
 
-async def _create_service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+async def _create_service(
+    session: AsyncSession,
+) -> WorkflowService:
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 async def _create_run(
@@ -184,6 +187,7 @@ async def _create_run(
     *,
     run_id: str,
     repo: Path,
+    catalog: GraphCatalog,
 ) -> None:
     run = create_run_from_routine(routine, repo_name=repo.name, source_branch="main")
     run.id = run_id
@@ -192,7 +196,7 @@ async def _create_run(
     run.worktree_path = str(repo)
     run.agent_runner_type = AgentRunnerType.CODEX_SERVER
     async with session_factory() as session:
-        await WorkflowService(session).create_run(run)
+        await WorkflowService(session, graph_catalog=build_graph_catalog()).create_run(run)
 
 
 def _driver(
@@ -201,6 +205,7 @@ def _driver(
     repo: Path,
     agents: dict[str, AgentRunner],
     on_agent_output: Any,
+    catalog: GraphCatalog,
 ) -> GraphRunDriver:
     clock = FixedClock()
     ids = SequentialIds()
@@ -214,6 +219,7 @@ def _driver(
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
         on_agent_output: Any = None,
+        catalog: GraphCatalog,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg,
@@ -221,7 +227,9 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
@@ -229,6 +237,7 @@ def _driver(
             AgentFactory(agents),
             worktree_path=repo,
             on_agent_output=on_agent_output,
+            catalog=build_graph_catalog(),
         )
         return controller, executor
 
@@ -239,6 +248,7 @@ def _driver(
         id_gen=ids,
         runtime_builder=runtime_builder,
         on_agent_output=on_agent_output,
+        catalog=build_graph_catalog(),
     )
 
 
@@ -259,12 +269,16 @@ async def _activity_events(
 async def test_graph_run_emits_agent_output_activity_events(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-graph-output"
     _init_repo(repo)
     run_id = "graph-output"
-    await _create_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
     batcher = OutputBatcher(session_factory=session_factory)
 
     async def on_agent_output(context: GraphDispatchContext, lines: list[str]) -> None:
@@ -285,6 +299,7 @@ async def test_graph_run_emits_agent_output_activity_events(
             "verifier": OutputAgent(["verifier line"], grade="A"),
         },
         on_agent_output=on_agent_output,
+        catalog=build_graph_catalog(),
     )
 
     await driver.run(run_id)
@@ -307,6 +322,8 @@ async def test_graph_run_emits_agent_output_activity_events(
 async def test_legacy_runs_activity_unchanged(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-legacy-output"
@@ -317,6 +334,7 @@ async def test_legacy_runs_activity_unchanged(
         _routine(execution_mode="legacy"),
         run_id=run_id,
         repo=repo,
+        catalog=build_graph_catalog(),
     )
     batcher = OutputBatcher(session_factory=session_factory)
 
@@ -334,13 +352,17 @@ async def test_legacy_runs_activity_unchanged(
 async def test_graph_run_broadcasts_output_via_connection_manager(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Graph-carrier agent output is broadcast live via connection_manager, not only after the node ends."""
     _, session_factory = file_db
     repo = tmp_path / "repo-graph-broadcast"
     _init_repo(repo)
     run_id = "graph-broadcast"
-    await _create_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     mgr = FakeConnectionManager()
     batcher = OutputBatcher(session_factory=session_factory, connection_manager=mgr)
@@ -365,6 +387,7 @@ async def test_graph_run_broadcasts_output_via_connection_manager(
             "verifier": OutputAgent(["verifier live line"], grade="A"),
         },
         on_agent_output=on_agent_output,
+        catalog=build_graph_catalog(),
     )
 
     await driver.run(run_id)
@@ -381,13 +404,17 @@ async def test_graph_run_broadcasts_output_via_connection_manager(
 async def test_graph_broadcast_events_carry_node_id(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Broadcast agent_output events include node_id so output is attributed to the producing graph node."""
     _, session_factory = file_db
     repo = tmp_path / "repo-graph-node-id"
     _init_repo(repo)
     run_id = "graph-node-id"
-    await _create_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     mgr = FakeConnectionManager()
     batcher = OutputBatcher(session_factory=session_factory, connection_manager=mgr)
@@ -412,6 +439,7 @@ async def test_graph_broadcast_events_carry_node_id(
             "verifier": OutputAgent(["verify output"], grade="A"),
         },
         on_agent_output=on_agent_output,
+        catalog=build_graph_catalog(),
     )
 
     await driver.run(run_id)

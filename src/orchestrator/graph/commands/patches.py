@@ -18,20 +18,22 @@ from orchestrator.graph.specifications import CommandExecutionContext, CommandSp
 from orchestrator.graph._commands import event_factory
 
 
-def _empty_patch_ops() -> list[PatchOp]:
-    return []
-
-
 def _empty_macro_invocations() -> list[dict[str, JsonValue]]:
     return []
 
 
-class SubmitPatchCommand(StrictPayload):
+class SubmitPatchFields(StrictPayload):
+    """Command-owned patch fields shared with transport adapters."""
+
+    ops: list[PatchOp] = Field(min_length=1)
+    rationale_record_id: str | None = Field(default=None, min_length=1)
+
+
+class SubmitPatchCommand(SubmitPatchFields):
     patch_id: str
     base_graph_position: int
     actor_role: str
     proposed_by_node_id: str
-    ops: list[PatchOp] = Field(default_factory=_empty_patch_ops)
     macro_invocations: list[dict[str, JsonValue]] = Field(default_factory=_empty_macro_invocations)
     session_id: str | None = None
     carryover_record_id: str | None = None
@@ -82,5 +84,6 @@ __all__ = [
     "SUBMIT_PATCH",
     "COMMAND_SPECIFICATIONS",
     "SubmitPatchCommand",
+    "SubmitPatchFields",
     "handle_submit_patch",
 ]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from math import inf, nan
+import inspect
 
 import pytest
 from pydantic import ValidationError
@@ -24,12 +25,44 @@ from orchestrator.graph import (
     RecordHeartbeatCommand,
     StoredEventEnvelope,
     StrictPayload,
+    SubmitPatchCommand,
     UnknownGraphCommandError,
     UnknownGraphEventError,
     apply_command,
     build_graph_catalog,
     build_graph_command_dependencies,
 )
+
+
+def test_submit_patch_command_requires_nonempty_ops_and_rationale() -> None:
+    base = {
+        "patch_id": "patch-1",
+        "base_graph_position": 0,
+        "actor_role": "planner",
+        "proposed_by_node_id": "planner-1",
+    }
+    with pytest.raises(ValidationError):
+        SubmitPatchCommand.model_validate(base)
+    with pytest.raises(ValidationError):
+        SubmitPatchCommand.model_validate({**base, "ops": []})
+    with pytest.raises(ValidationError):
+        SubmitPatchCommand.model_validate(
+            {
+                **base,
+                "ops": [{"op": "retire_node", "node_id": "worker-1"}],
+                "rationale_record_id": "",
+            }
+        )
+
+
+def test_graph_command_dependencies_require_catalog() -> None:
+    catalog = build_graph_catalog()
+    dependencies = build_graph_command_dependencies(catalog)
+    assert dependencies.catalog is catalog
+    assert (
+        inspect.signature(build_graph_command_dependencies).parameters["catalog"].default
+        is inspect.Parameter.empty
+    )
 
 
 class ExamplePayload(StrictPayload):
@@ -141,7 +174,9 @@ def test_command_specification_validates_once_and_requires_exact_class_at_dispat
         id_generator=FixedIds(),
         actor=ACTOR,
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     assert spec.handle(command, {}, (), context) == []
@@ -220,7 +255,9 @@ def test_heartbeat_command_emits_projection_neutral_typed_event() -> None:
         id_generator=FixedIds(),
         actor=ACTOR,
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     events = catalog.resolve_command("record_heartbeat").handle(
@@ -260,7 +297,9 @@ def test_public_apply_command_dispatches_heartbeat_through_injected_catalog_cont
         id_generator=FixedIds(),
         actor=ACTOR,
         events=(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     events = apply_command(

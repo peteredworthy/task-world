@@ -33,6 +33,8 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state import Attempt
 from orchestrator.workflow import LocalAutoVerifyRunner, PersistentEventEmitter
 from orchestrator.workflow.service import WorkflowService
+from orchestrator.graph import GraphCatalog
+from orchestrator.graph import build_graph_catalog
 
 
 class _NoopStartupMonitor:
@@ -139,7 +141,9 @@ async def test_deferred_startup_recovery_resumes_restart_paused_run() -> None:
         ],
     )
 
-    async def service_factory(session: Any) -> WorkflowService:
+    async def service_factory(
+        session: Any,
+    ) -> WorkflowService:
         repo = RunRepository(session)
         event_store = create_wired_event_store_v2(session)
         emitter = PersistentEventEmitter(event_store)
@@ -149,6 +153,7 @@ async def test_deferred_startup_recovery_resumes_restart_paused_run() -> None:
             event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
     async with session_factory() as session:
@@ -235,7 +240,9 @@ async def test_startup_recovery_resumes_cascade_child_before_parent() -> None:
         ],
     )
 
-    async def service_factory(session: Any) -> WorkflowService:
+    async def service_factory(
+        session: Any,
+    ) -> WorkflowService:
         repo = RunRepository(session)
         event_store = create_wired_event_store_v2(session)
         emitter = PersistentEventEmitter(event_store)
@@ -245,6 +252,7 @@ async def test_startup_recovery_resumes_cascade_child_before_parent() -> None:
             event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
     def _build_paused_run(repo_name: str, pause_reason: str) -> Any:
@@ -317,7 +325,9 @@ async def test_startup_recovery_resumes_cascade_child_before_parent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_apply_resume_run_continue_preserves_current_phase_state() -> None:
+async def test_apply_resume_run_continue_preserves_current_phase_state(
+    *, catalog: GraphCatalog
+) -> None:
     engine = create_engine(":memory:")
     await init_db(engine)
     session_factory = create_session_factory(engine)
@@ -351,6 +361,7 @@ async def test_apply_resume_run_continue_preserves_current_phase_state() -> None
             event_store_v2=event_store,
             event_emitter=emitter,
             auto_verify_runner=LocalAutoVerifyRunner(),
+            graph_catalog=build_graph_catalog(),
         )
 
         run = create_run_from_routine(

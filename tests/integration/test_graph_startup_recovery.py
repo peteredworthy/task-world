@@ -39,6 +39,7 @@ from tests.integration.test_graph_run_driver import (
 from orchestrator.workflow.graph_driver import GraphRunDriver
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 def _build_driver(
@@ -47,12 +48,20 @@ def _build_driver(
     repo: Path,
     agents: dict[str, AgentRunner],
     dispatch_order: list[str],
+    catalog: GraphCatalog,
 ) -> GraphRunDriver:
     clock = FixedClock()
     ids = SequentialIds()
 
     def runtime_builder(
-        sf, clock_arg, id_gen_arg, *, worktree_path, runner_type, runner_config=None
+        sf,
+        clock_arg,
+        id_gen_arg,
+        *,
+        worktree_path,
+        runner_type,
+        runner_config=None,
+        catalog: GraphCatalog,
     ):  # type: ignore[no-untyped-def]
         controller = GraphController(
             sf,
@@ -60,10 +69,16 @@ def _build_driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         executor = GraphDispatchExecutor(
-            sf, controller, AgentFactory(agents, dispatch_order), worktree_path=repo
+            sf,
+            controller,
+            AgentFactory(agents, dispatch_order),
+            worktree_path=repo,
+            catalog=build_graph_catalog(),
         )
         return controller, executor
 
@@ -73,13 +88,12 @@ def _build_driver(
         clock=clock,
         id_gen=ids,
         runtime_builder=runtime_builder,
+        catalog=build_graph_catalog(),
     )
 
 
 async def _seed_active_worker_lease(
-    session_factory: async_sessionmaker[AsyncSession],
-    *,
-    run_id: str,
+    session_factory: async_sessionmaker[AsyncSession], *, run_id: str, catalog: GraphCatalog
 ) -> None:
     clock = FixedClock()
     ids = SequentialIds()
@@ -89,7 +103,9 @@ async def _seed_active_worker_lease(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     await seed_run(
         session_factory,
@@ -97,6 +113,7 @@ async def _seed_active_worker_lease(
         run_id=run_id,
         clock=clock,
         id_gen=ids,
+        catalog=build_graph_catalog(),
     )
     await controller.handle_command(run_id, await controller.current_position(run_id), "accept_run")
     await controller.handle_command(run_id, await controller.current_position(run_id), "start")
@@ -116,6 +133,8 @@ async def _seed_active_worker_lease(
 async def test_resume_reschedules_dead_lease_to_completed(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """First drive leaves the worker lease active (execution 'died' after start
     ack). A second drive over the same DB with a fresh runtime recovers: the
@@ -125,11 +144,13 @@ async def test_resume_reschedules_dead_lease_to_completed(
     repo = tmp_path / "repo-dead-lease"
     _init_repo(repo)
     run_id = "graph-recover-dead-lease"
-    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     # Simulate a process restart after the scheduler granted a worker lease but
     # before any in-process executor is alive to acknowledge or submit it.
-    await _seed_active_worker_lease(session_factory, run_id=run_id)
+    await _seed_active_worker_lease(session_factory, run_id=run_id, catalog=build_graph_catalog())
     events_after_first = await _events(session_factory, run_id)
     assert project_run_state(build_graph_catalog(), events_after_first) != "completed"
 
@@ -141,6 +162,7 @@ async def test_resume_reschedules_dead_lease_to_completed(
         repo=repo,
         agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
         dispatch_order=order2,
+        catalog=build_graph_catalog(),
     )
     outcome2 = await driver2.run(run_id)
 
@@ -157,19 +179,24 @@ async def test_resume_reschedules_dead_lease_to_completed(
 async def test_resume_after_clean_completion_is_idempotent_noop(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],  # noqa: F811
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Re-arming an already-completed graph run does not re-seed or regress it."""
     _, session_factory = file_db
     repo = tmp_path / "repo-rearm-complete"
     _init_repo(repo)
     run_id = "graph-recover-complete"
-    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     driver = _build_driver(
         session_factory,
         repo=repo,
         agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
         dispatch_order=[],
+        catalog=build_graph_catalog(),
     )
     assert (await driver.run(run_id)).completed is True
     async with session_factory() as session:
@@ -185,6 +212,7 @@ async def test_resume_after_clean_completion_is_idempotent_noop(
         repo=repo,
         agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
         dispatch_order=[],
+        catalog=build_graph_catalog(),
     )
     await driver2.run(run_id)
     async with session_factory() as session:

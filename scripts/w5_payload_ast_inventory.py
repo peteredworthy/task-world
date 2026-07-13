@@ -154,6 +154,8 @@ DOMAIN_EVENT_NAMES.update(ARCHITECTURE_DOMAIN_EVENT_NAMES)
 DOMAIN_COMMAND_NAMES.update(ARCHITECTURE_DOMAIN_COMMAND_NAMES)
 DOMAIN_EVENT_NAMES["catalog_cutover"] = BASELINE_EVENT_NAMES
 DOMAIN_COMMAND_NAMES["catalog_cutover"] = frozenset(BASELINE_COMMAND_NAMES)
+DOMAIN_EVENT_NAMES["catalog_injection"] = BASELINE_EVENT_NAMES
+DOMAIN_COMMAND_NAMES["catalog_injection"] = frozenset(BASELINE_COMMAND_NAMES)
 
 DOMAIN_COMPATIBILITY_MODEL_NAMES: dict[str, frozenset[str]] = {
     "vertical_slice": frozenset({"HeartbeatRecordedPayload", "LifecycleEventPayloadBase"}),
@@ -283,6 +285,7 @@ class InventoryReport:
     allowlists: tuple[NamedSite, ...]
     partial_payload_consumers: tuple[SourceSite, ...]
     catalog_cutover_sites: tuple[CatalogCutoverSite, ...] = ()
+    catalog_injection_sites: tuple[CatalogCutoverSite, ...] = ()
     scanned_paths: tuple[Path, ...] = ()
 
     @property
@@ -375,7 +378,13 @@ class InventoryReport:
         )
         allowlists = tuple(site for site in self.allowlists if relevant(site))
         partial_consumers = tuple(site for site in self.partial_payload_consumers if relevant(site))
-        catalog_cutover_sites = self.catalog_cutover_sites if needle == "catalog_cutover" else ()
+        catalog_cutover_sites = (
+            self.catalog_cutover_sites
+            if needle == "catalog_cutover"
+            else self.catalog_injection_sites
+            if needle == "catalog_injection"
+            else ()
+        )
         event_names = tuple(
             sorted(
                 {site.name for site in literal_sites}
@@ -693,7 +702,13 @@ def _dynamic_classification(
         return "typed_specification", _resolve_parameter(
             expression, owner, parsed.calls, owner_name
         )
-    if owner_name == "_to_legacy_envelope":
+    if owner_name in {
+        "_history_event_envelope",
+        "_legacy_envelope",
+        "_to_legacy_envelope",
+        "reduce_event",
+        "stored_graph_event",
+    }:
         return "typed_event_serialization", ()
     if owner_name in {"make_event", "event_factory"}:
         return "generic_factory_definition", ()
@@ -878,6 +893,63 @@ def _catalog_cutover_sites(parsed: _ParsedFile) -> tuple[CatalogCutoverSite, ...
     return tuple(sites)
 
 
+def _catalog_injection_sites(parsed: _ParsedFile) -> tuple[CatalogCutoverSite, ...]:
+    """Inventory catalog ownership escapes independently from the LibCST migration."""
+
+    sites: list[CatalogCutoverSite] = []
+    for node in ast.walk(parsed.tree):
+        if not isinstance(node, ast.Call):
+            continue
+        call_name = _call_name(node.func)
+        resolved = parsed.imports.get(call_name or "", call_name or "")
+        if resolved.endswith("build_graph_catalog"):
+            owner = node
+            while owner in parsed.parents and not isinstance(
+                parsed.parents[owner], (ast.FunctionDef, ast.AsyncFunctionDef)
+            ):
+                owner = parsed.parents[owner]
+            function = parsed.parents.get(owner)
+            if isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) and (
+                function.name == "create_app"
+                or (function.name == "cli" and parsed.path.as_posix().endswith("cli/main.py"))
+            ):
+                continue
+            parent = parsed.parents.get(node)
+            if isinstance(parent, ast.arguments):
+                classification = "catalog_default_escape"
+            elif isinstance(parent, (ast.Assign, ast.AnnAssign)) and isinstance(
+                parsed.parents.get(parent), ast.Module
+            ):
+                classification = "catalog_global_escape"
+            else:
+                classification = "catalog_construction_escape"
+            sites.append(
+                CatalogCutoverSite(
+                    str(parsed.path),
+                    node.lineno,
+                    node.col_offset,
+                    classification,
+                    ast.unparse(node),
+                )
+            )
+            continue
+        if resolved.endswith(("GraphEventStore", "GraphController", "compile_routine")):
+            has_catalog = any(keyword.arg == "catalog" for keyword in node.keywords)
+            if resolved.endswith("GraphEventStore") and len(node.args) >= 2:
+                has_catalog = True
+            if not has_catalog:
+                sites.append(
+                    CatalogCutoverSite(
+                        str(parsed.path),
+                        node.lineno,
+                        node.col_offset,
+                        "missing_catalog_injection",
+                        ast.unparse(node),
+                    )
+                )
+    return tuple(sites)
+
+
 def _catalog_membership_test(node: ast.expr) -> bool:
     return (
         isinstance(node, ast.Compare)
@@ -923,12 +995,14 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
     allowlists: list[NamedSite] = []
     partial_consumers: list[SourceSite] = []
     catalog_cutover_sites: list[CatalogCutoverSite] = []
+    catalog_injection_sites: list[CatalogCutoverSite] = []
     command_names: set[str] = set()
     typed_command_names: set[str] = set()
     bridge_handlers: list[CommandHandler] = []
 
     for parsed in parsed_files:
         catalog_cutover_sites.extend(_catalog_cutover_sites(parsed))
+        catalog_injection_sites.extend(_catalog_injection_sites(parsed))
         for node in ast.walk(parsed.tree):
             if isinstance(node, ast.Call):
                 if _call_name(node.func) == "_make_strict_event" and len(node.args) >= 2:
@@ -1114,6 +1188,7 @@ def scan_graph_payload_architecture(paths: Sequence[Path]) -> InventoryReport:
         allowlists=tuple(sorted(allowlists)),
         partial_payload_consumers=tuple(sorted(set(partial_consumers))),
         catalog_cutover_sites=tuple(sorted(catalog_cutover_sites)),
+        catalog_injection_sites=tuple(sorted(catalog_injection_sites)),
         scanned_paths=tuple(parsed.path for parsed in parsed_files),
     )
 
@@ -1772,7 +1847,7 @@ def _run_consumer_scan(args: argparse.Namespace) -> int:
 
 
 def _default_paths() -> tuple[Path, ...]:
-    return (Path("src/orchestrator/graph"), Path("src/orchestrator/graph_runtime"))
+    return (Path("src/orchestrator"),)
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:

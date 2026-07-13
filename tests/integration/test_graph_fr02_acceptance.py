@@ -52,7 +52,9 @@ async def test_fr02_canonical_taxonomy_nodes_are_created_and_readable(
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
 
     accepted = await controller.handle_command(

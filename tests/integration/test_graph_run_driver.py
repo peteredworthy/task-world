@@ -48,6 +48,7 @@ from orchestrator.workflow.graph_driver import (
     _snapshot_from_events,
 )
 from orchestrator.graph import build_graph_command_dependencies
+from orchestrator.graph import GraphCatalog
 
 
 class FixedClock:
@@ -119,7 +120,13 @@ class PlannerPatchAgent(SubmitAgent):
                 {
                     "patch_id": f"{context.node_id}-noop",
                     "base_graph_position": 0,
-                    "ops": [],
+                    "ops": [
+                        {
+                            "op": "set_allowed_actions",
+                            "node_id": context.node_id,
+                            "allowed_actions": ["submit_patch"],
+                        }
+                    ],
                 }
             )
         await on_submit()
@@ -247,8 +254,10 @@ def _init_repo(path: Path) -> None:
     )
 
 
-async def _create_service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+async def _create_service(
+    session: AsyncSession,
+) -> WorkflowService:
+    return WorkflowService(session, graph_catalog=build_graph_catalog())
 
 
 async def _create_graph_run(
@@ -258,6 +267,7 @@ async def _create_graph_run(
     run_id: str,
     repo: Path,
     agent_runner_type: AgentRunnerType = AgentRunnerType.CODEX_SERVER,
+    catalog: GraphCatalog,
 ) -> None:
     run = create_run_from_routine(routine, repo_name=repo.name, source_branch="main")
     run.id = run_id
@@ -266,7 +276,7 @@ async def _create_graph_run(
     run.worktree_path = str(repo)
     run.agent_runner_type = agent_runner_type
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.create_run(run)
 
 
@@ -276,6 +286,7 @@ def _driver(
     repo: Path,
     agents: dict[str, AgentRunner],
     dispatch_order: list[str],
+    catalog: GraphCatalog,
 ) -> GraphRunDriver:
     clock = FixedClock()
     ids = SequentialIds()
@@ -291,6 +302,7 @@ def _driver(
         worktree_path: str | Path,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        catalog: GraphCatalog,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg,
@@ -298,13 +310,16 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
             controller,
             AgentFactory(agents, dispatch_order),
             worktree_path=repo,
+            catalog=build_graph_catalog(),
         )
         return controller, executor
 
@@ -315,6 +330,7 @@ def _driver(
         id_gen=ids,
         runtime_builder=runtime_builder,
         sleep=advance_clock,
+        catalog=build_graph_catalog(),
     )
 
 
@@ -362,18 +378,23 @@ async def _run_status(
 async def test_driver_runs_single_worker_verifier_to_accepted(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-accepted"
     _init_repo(repo)
     run_id = "graph-driver-accepted"
-    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
     dispatch_order: list[str] = []
     driver = _driver(
         session_factory,
         repo=repo,
         agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)
@@ -390,18 +411,23 @@ async def test_driver_runs_single_worker_verifier_to_accepted(
 async def test_driver_self_advances_across_node_boundaries(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-self-advance"
     _init_repo(repo)
     run_id = "graph-driver-self-advance"
-    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
     dispatch_order: list[str] = []
     driver = _driver(
         session_factory,
         repo=repo,
         agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     await driver.run(run_id)
@@ -413,6 +439,8 @@ async def test_driver_self_advances_across_node_boundaries(
 async def test_driver_dispatches_final_check_after_verifier_acceptance(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-final-check"
@@ -546,7 +574,9 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     dispatch_order: list[str] = []
     executor = GraphDispatchExecutor(
@@ -554,12 +584,15 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
         controller,
         AgentFactory({}, dispatch_order),
         worktree_path=repo,
+        catalog=build_graph_catalog(),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
     driver = GraphRunDriver.__new__(GraphRunDriver)
 
     async def read_projection(target_run_id: str):
-        return _snapshot_from_events(await _events(session_factory, target_run_id))
+        return _snapshot_from_events(
+            await _events(session_factory, target_run_id), catalog=build_graph_catalog()
+        )
 
     outcome = await driver.drive_to_quiescence(
         run_id,
@@ -598,18 +631,23 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
 async def test_driver_blocks_on_verifier_fail_without_completing(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-fail"
     _init_repo(repo)
     run_id = "graph-driver-fail"
-    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
     dispatch_order: list[str] = []
     driver = _driver(
         session_factory,
         repo=repo,
         agents={"worker": SubmitAgent(), "verifier": GradingAgent("C")},
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)
@@ -632,6 +670,8 @@ async def test_driver_rejects_unsupported_graph_runner_before_seeding(
     tmp_path: Path,
     agent_runner_type: AgentRunnerType,
     expected_runner: str,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / f"repo-unsupported-runner-{expected_runner}"
@@ -643,6 +683,7 @@ async def test_driver_rejects_unsupported_graph_runner_before_seeding(
         run_id=run_id,
         repo=repo,
         agent_runner_type=agent_runner_type,
+        catalog=build_graph_catalog(),
     )
     dispatch_order: list[str] = []
     driver = _driver(
@@ -650,6 +691,7 @@ async def test_driver_rejects_unsupported_graph_runner_before_seeding(
         repo=repo,
         agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)
@@ -667,18 +709,23 @@ async def test_driver_rejects_unsupported_graph_runner_before_seeding(
 async def test_driver_seed_is_idempotent_on_reentry(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-reentry"
     _init_repo(repo)
     run_id = "graph-driver-reentry"
-    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, _routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
     dispatch_order: list[str] = []
     driver = _driver(
         session_factory,
         repo=repo,
         agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     await driver.run(run_id)
@@ -696,12 +743,16 @@ async def test_driver_seed_is_idempotent_on_reentry(
 async def test_driver_planner_run_completes_only_when_no_pending_planner(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-planner"
     _init_repo(repo)
     run_id = "graph-driver-planner"
-    await _create_graph_run(session_factory, _planner_routine(), run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, _planner_routine(), run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
     dispatch_order: list[str] = []
     driver = _driver(
         session_factory,
@@ -712,6 +763,7 @@ async def test_driver_planner_run_completes_only_when_no_pending_planner(
             "verifier": GradingAgent("A"),
         },
         dispatch_order=dispatch_order,
+        catalog=build_graph_catalog(),
     )
 
     outcome = await driver.run(run_id)
@@ -730,6 +782,7 @@ async def _seed_and_force_failed_graph(
     run_id: str,
     clock: FixedClock,
     ids: SequentialIds,
+    catalog: GraphCatalog,
 ) -> None:
     """Seed a graph, bring the kernel to active, then force run_state failed.
 
@@ -743,6 +796,7 @@ async def _seed_and_force_failed_graph(
         clock=clock,
         id_gen=ids,
         run_config={},
+        catalog=build_graph_catalog(),
     )
     controller = GraphController(
         session_factory,
@@ -750,7 +804,9 @@ async def _seed_and_force_failed_graph(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies().future_effects,
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
     )
     for command in ("accept_run", "start"):
         position = await controller.current_position(run_id)
@@ -767,6 +823,7 @@ def _shared_driver(
     dispatch_order: list[str],
     clock: FixedClock,
     ids: SequentialIds,
+    catalog: GraphCatalog,
 ) -> GraphRunDriver:
     """Like ``_driver`` but reuses an existing clock/id generator.
 
@@ -785,6 +842,7 @@ def _shared_driver(
         worktree_path: str | Path,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        catalog: GraphCatalog,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg,
@@ -792,13 +850,16 @@ def _shared_driver(
             id_gen_arg,
             auto_dispatch=False,
             catalog=build_graph_catalog(),
-            future_effects=build_graph_command_dependencies().future_effects,
+            future_effects=build_graph_command_dependencies(
+                catalog=build_graph_catalog()
+            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
             controller,
             AgentFactory(agents, dispatch_order),
             worktree_path=repo,
+            catalog=build_graph_catalog(),
         )
         return controller, executor
 
@@ -809,6 +870,7 @@ def _shared_driver(
         id_gen=ids,
         runtime_builder=runtime_builder,
         sleep=advance_clock,
+        catalog=build_graph_catalog(),
     )
 
 
@@ -816,18 +878,22 @@ def _shared_driver(
 async def test_operator_resume_reopens_failed_graph_run(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-operator-reopen"
     _init_repo(repo)
     run_id = "graph-operator-reopen"
     routine = _routine()
-    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     clock = FixedClock()
     ids = SequentialIds()
     await _seed_and_force_failed_graph(
-        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids, catalog=build_graph_catalog()
     )
     assert (
         project_run_state(build_graph_catalog(), await _events(session_factory, run_id)) == "failed"
@@ -835,7 +901,7 @@ async def test_operator_resume_reopens_failed_graph_run(
 
     # Drive the run row to FAILED (operator-visible terminal state).
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.apply_start_run(run_id)
         await service.apply_fail_run(run_id, reason="forced_for_test")
     assert await _run_status(session_factory, run_id) == RunStatus.FAILED
@@ -843,7 +909,7 @@ async def test_operator_resume_reopens_failed_graph_run(
     # Operator resume flips the row FAILED -> ACTIVE but the service alone does
     # not touch the kernel: run_state is still "failed" afterwards.
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.apply_resume_run(run_id, resume_strategy="continue")
     assert await _run_status(session_factory, run_id) == RunStatus.ACTIVE
     assert (
@@ -860,6 +926,7 @@ async def test_operator_resume_reopens_failed_graph_run(
         dispatch_order=dispatch_order,
         clock=clock,
         ids=ids,
+        catalog=build_graph_catalog(),
     )
     await driver.run(run_id)
 
@@ -872,23 +939,27 @@ async def test_operator_resume_reopens_failed_graph_run(
 async def test_driver_does_not_reopen_failed_graph_without_operator_resume(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / "repo-no-reopen"
     _init_repo(repo)
     run_id = "graph-no-reopen"
     routine = _routine()
-    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     clock = FixedClock()
     ids = SequentialIds()
     await _seed_and_force_failed_graph(
-        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids, catalog=build_graph_catalog()
     )
 
     # Row driven to FAILED and left there: no operator resume occurred.
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.apply_start_run(run_id)
         await service.apply_fail_run(run_id, reason="forced_for_test")
     assert await _run_status(session_factory, run_id) == RunStatus.FAILED
@@ -901,6 +972,7 @@ async def test_driver_does_not_reopen_failed_graph_without_operator_resume(
         dispatch_order=dispatch_order,
         clock=clock,
         ids=ids,
+        catalog=build_graph_catalog(),
     )
     await driver.run(run_id)
 
@@ -916,6 +988,8 @@ async def test_driver_does_not_reopen_failed_graph_without_operator_resume(
 async def test_driver_does_not_reopen_crash_window_stranded_active_run(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """Row ACTIVE + kernel failed with NO operator resume must self-heal FAILED.
 
@@ -932,18 +1006,20 @@ async def test_driver_does_not_reopen_crash_window_stranded_active_run(
     _init_repo(repo)
     run_id = "graph-stranded-active"
     routine = _routine()
-    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     clock = FixedClock()
     ids = SequentialIds()
     await _seed_and_force_failed_graph(
-        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids, catalog=build_graph_catalog()
     )
 
     # Crash window: drive the row to ACTIVE but never fail it and never resume it.
     # No operator involvement => no reopen marker is stamped on pause_reason.
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.apply_start_run(run_id)
     assert await _run_status(session_factory, run_id) == RunStatus.ACTIVE
     assert (
@@ -961,6 +1037,7 @@ async def test_driver_does_not_reopen_crash_window_stranded_active_run(
         dispatch_order=dispatch_order,
         clock=clock,
         ids=ids,
+        catalog=build_graph_catalog(),
     )
     await driver.run(run_id)
 
@@ -982,6 +1059,8 @@ async def test_driver_does_not_reopen_crash_window_stranded_active_run(
 async def test_operator_reopen_marker_is_consumed_once(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """The reopen marker is stamped by the resume and cleared by the driver.
 
@@ -995,20 +1074,22 @@ async def test_operator_reopen_marker_is_consumed_once(
     _init_repo(repo)
     run_id = "graph-marker-consume"
     routine = _routine()
-    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     clock = FixedClock()
     ids = SequentialIds()
     await _seed_and_force_failed_graph(
-        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids, catalog=build_graph_catalog()
     )
 
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.apply_start_run(run_id)
         await service.apply_fail_run(run_id, reason="forced_for_test")
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.apply_resume_run(run_id, resume_strategy="continue")
 
     # apply_resume_run stamped the persisted reopen marker on the ACTIVE row.
@@ -1025,6 +1106,7 @@ async def test_operator_reopen_marker_is_consumed_once(
         dispatch_order=dispatch_order,
         clock=clock,
         ids=ids,
+        catalog=build_graph_catalog(),
     )
     await driver.run(run_id)
 
@@ -1043,6 +1125,8 @@ async def test_operator_reopen_marker_is_consumed_once(
 async def test_recover_run_then_resume_reopens_failed_graph_run(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """recover_run parks a FAILED graph run PAUSED; the resume must still reopen.
 
@@ -1060,17 +1144,19 @@ async def test_recover_run_then_resume_reopens_failed_graph_run(
     _init_repo(repo)
     run_id = "graph-recover-resume"
     routine = _routine()
-    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     clock = FixedClock()
     ids = SequentialIds()
     await _seed_and_force_failed_graph(
-        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids, catalog=build_graph_catalog()
     )
 
     # Drive the row to FAILED (operator-visible terminal state).
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.apply_start_run(run_id)
         await service.apply_fail_run(run_id, reason="forced_for_test")
     assert await _run_status(session_factory, run_id) == RunStatus.FAILED
@@ -1080,7 +1166,7 @@ async def test_recover_run_then_resume_reopens_failed_graph_run(
     async with session_factory() as session:
         target_task_id = (await RunRepository(session).get(run_id)).steps[0].tasks[0].id
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.recover_run(run_id, target_task_id=target_task_id, reset_branch=False)
     async with session_factory() as session:
         recovered = await RunRepository(session).get(run_id)
@@ -1093,7 +1179,7 @@ async def test_recover_run_then_resume_reopens_failed_graph_run(
     # Operator resume takes the ordinary PAUSED -> ACTIVE branch, but the reopen
     # marker must still be stamped because this is a graph run.
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.apply_resume_run(run_id, resume_strategy="continue")
     async with session_factory() as session:
         resumed = await RunRepository(session).get(run_id)
@@ -1113,6 +1199,7 @@ async def test_recover_run_then_resume_reopens_failed_graph_run(
         dispatch_order=dispatch_order,
         clock=clock,
         ids=ids,
+        catalog=build_graph_catalog(),
     )
     await driver.run(run_id)
 
@@ -1129,6 +1216,8 @@ async def test_recover_run_then_resume_reopens_failed_graph_run(
 async def test_clarification_resume_does_not_reopen_recovered_failed_graph(
     file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
     tmp_path: Path,
+    *,
+    catalog: GraphCatalog,
 ) -> None:
     """A clarification response must NOT reopen a graph run parked for recovery.
 
@@ -1148,24 +1237,26 @@ async def test_clarification_resume_does_not_reopen_recovered_failed_graph(
     _init_repo(repo)
     run_id = "graph-clarif-no-reopen"
     routine = _routine()
-    await _create_graph_run(session_factory, routine, run_id=run_id, repo=repo)
+    await _create_graph_run(
+        session_factory, routine, run_id=run_id, repo=repo, catalog=build_graph_catalog()
+    )
 
     clock = FixedClock()
     ids = SequentialIds()
     await _seed_and_force_failed_graph(
-        session_factory, routine, run_id=run_id, clock=clock, ids=ids
+        session_factory, routine, run_id=run_id, clock=clock, ids=ids, catalog=build_graph_catalog()
     )
 
     # Drive the row to FAILED, then operator-recover it: FAILED -> PAUSED
     # (pause_reason "recovered"), kernel untouched so run_state stays "failed".
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.apply_start_run(run_id)
         await service.apply_fail_run(run_id, reason="forced_for_test")
     async with session_factory() as session:
         target_task_id = (await RunRepository(session).get(run_id)).steps[0].tasks[0].id
     async with session_factory() as session:
-        service = WorkflowService(session)
+        service = WorkflowService(session, graph_catalog=build_graph_catalog())
         await service.recover_run(run_id, target_task_id=target_task_id, reset_branch=False)
     async with session_factory() as session:
         recovered = await RunRepository(session).get(run_id)
@@ -1187,7 +1278,9 @@ async def test_clarification_resume_does_not_reopen_recovered_failed_graph(
         recovered.pause_reason
     ):  # pragma: no cover - guard is False in this scenario
         async with session_factory() as session:
-            await WorkflowService(session).apply_resume_run(run_id, resume_strategy="continue")
+            await WorkflowService(session, graph_catalog=build_graph_catalog()).apply_resume_run(
+                run_id, resume_strategy="continue"
+            )
 
     async with session_factory() as session:
         after = await RunRepository(session).get(run_id)

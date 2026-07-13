@@ -29,7 +29,7 @@ from orchestrator.graph.commands.future_effects import require_future_effect
 from orchestrator.graph.commands.event_creator import TypedEventCreator
 from collections.abc import Callable
 
-from pydantic import ConfigDict, Field, RootModel
+from pydantic import ConfigDict, Field, RootModel, field_validator
 
 from orchestrator.graph._commands import (
     decision_output_record,
@@ -77,37 +77,46 @@ class RaiseAppealCommand(StrictPayload):
     lease_id: str | None = None
 
 
-class ApprovalDecisionCommand(StrictPayload):
+class DecisionCommandFields(StrictPayload):
+    node_id: str
+    decider: JsonValue
+    scope: dict[str, JsonValue] | None = None
+    expires_at: str | None = None
+    reason: str | None = None
+    record_id: str | None = None
+
+    @field_validator("decider")
+    @classmethod
+    def validate_decider_identity(cls, value: JsonValue) -> JsonValue:
+        if isinstance(value, str):
+            if value.strip():
+                return value
+            raise ValueError("decider identity must be non-empty")
+        if isinstance(value, dict):
+            kind = value.get("kind")
+            if not isinstance(kind, str) or not kind.strip():
+                raise ValueError("decider object must include a non-empty kind")
+            for field in ("id", "node_id", "role"):
+                identity = value.get(field)
+                if identity is not None and (not isinstance(identity, str) or not identity.strip()):
+                    raise ValueError(f"decider {field} must be non-empty when provided")
+            return value
+        raise ValueError("decider must be a non-empty string or identity object")
+
+
+class ApprovalDecisionCommand(DecisionCommandFields):
     decision_type: Literal["approval"]
-    node_id: str
     decision: Literal["approved", "rejected", "deferred"]
-    decider: JsonValue
-    scope: dict[str, JsonValue] | None = None
-    expires_at: str | None = None
-    reason: str | None = None
-    record_id: str | None = None
 
 
-class AuthorityDecisionCommand(StrictPayload):
+class AuthorityDecisionCommand(DecisionCommandFields):
     decision_type: Literal["authority"]
-    node_id: str
     decision: Literal["granted", "denied", "deferred"]
-    decider: JsonValue
-    scope: dict[str, JsonValue] | None = None
-    expires_at: str | None = None
-    reason: str | None = None
-    record_id: str | None = None
 
 
-class OversightDecisionCommand(StrictPayload):
+class OversightDecisionCommand(DecisionCommandFields):
     decision_type: Literal["oversight"]
-    node_id: str
     decision: Literal["accepted", "rejected", "invalid_test_accepted"]
-    decider: JsonValue
-    scope: dict[str, JsonValue] | None = None
-    expires_at: str | None = None
-    reason: str | None = None
-    record_id: str | None = None
 
 
 DecisionCommand = Annotated[
