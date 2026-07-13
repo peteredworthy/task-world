@@ -632,7 +632,7 @@ Scope:
 - No `lease_suspended` or proposal-alias specification exists in the catalog.
 
 Deferred (NOT deleted here — see the plan's Deferred Compatibility Cleanup
-Register, entries D1 and D2, swept in Task 9):
+Register, entries D1 and D2, retained through Task 9 and moved to Task 13):
 - `lease_suspended` branches in `reduce_legacy_event` and
   `_planner_generation_state`, and `GraphRecordKind.LEASE_SUSPENDED`.
 - `graph_patch_proposed`/proposal-status bookkeeping helpers
@@ -675,3 +675,35 @@ D5 retained legacy categories are exactly the
 `src/orchestrator/graph/projections.py:2281` and the environment/check-result
 classification scan at `src/orchestrator/graph/projections.py:5449`. Delete
 both in Task 13 after database backup/reset.
+
+## Strict-cutover Task 9: catalog composition and typed dispatch
+
+Status: complete. Committed as `000b19910` after independent PASS.
+
+The catalog now has an immutable owner-tuple composition model, production
+dispatch resolves catalog specifications first, patch specifications use
+strict reducers, the `catalog_cutover` codemod domain performs real automation,
+and contracts explicitly assert the 44-event / 23-command catalog.
+
+Independent evidence:
+- Direct probes: 8 passed.
+- Automation and contract suites: 207 passed.
+- Targeted suites: 1,206 passed.
+- Fixture corpus: 7 passed.
+- Broad graph matrix: 1,002 passed.
+- Full suite: 4,932 passed / 5 skipped / 3 warnings.
+- Catalog baseline: 44 events / 23 commands.
+- Architecture guard, catalog-cutover `--assert-clean`, inventory, Ruff format
+  and check, Pyright, `git diff --check`, and commit hooks: green.
+
+Compatibility deletion was intentionally revised out of Task 9. All Deferred
+Compatibility Cleanup Register entries D1-D6 remain, including
+`reduce_legacy_event`, its callers and delegating reducers, replay-only aliases,
+and their compatibility helpers, models, validators, and scans. The former
+zero-match register grep gate is likewise retained/moved to Task 13. Per the
+user's decision, Task 13 may delete those sites and require zero matches only
+after the plan's database backup has been verified and the reset completed.
+This entry makes no claim that D1-D6 or aliases were deleted in Task 9.
+
+The source, governing plan, and continuation prompt are preserved; this
+bookkeeping update changes only the progress file and this ledger.
