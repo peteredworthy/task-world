@@ -732,3 +732,67 @@ Independent evidence:
 Deferred Compatibility Cleanup Register entries D1-D6 remain retained. No
 source or continuation artifact was edited for this bookkeeping update, the
 database remains untouched, and no bookkeeping commit was requested.
+
+## Strict-cutover Task 11: complete-read measurement slice
+
+Status: complete. Committed as `cd795d576` after independent PASS.
+
+Strict projection models now carry complete payloads. Storage retains complete
+payloads, and the full, light, summary-rebuild, projection, and node-detail
+readers hydrate those complete payloads before any API presentation summary is
+applied. The four field allowlists and their partial extraction/reconstruction
+paths were deleted. The tracked profiler injects `build_graph_catalog()` and
+creates strict events from the explicit tracked
+`tests/unit/graph_catalog_samples.py` source; every generated payload is
+validated by its owning specification.
+
+Exact commands run on 2026-07-13:
+
+```text
+/usr/bin/time -l uv run python scripts/profile_graph_readback.py --events 300 --heavy-every 2 --payload-kb 64 --iterations 5
+/usr/bin/time -l uv run python scripts/profile_graph_readback.py --events 1000 --heavy-every 2 --payload-kb 128 --iterations 3
+```
+
+Builder measurements; wall and peak figures are medians over the configured
+samples, and payload bytes are compact serialized payload-list bytes:
+
+| Profile/read path | Median wall (ms) | Rows | Payload bytes | Median peak allocated bytes |
+|---|---:|---:|---:|---:|
+| Fixture-scale `read_run` baseline | 134.300 | 300 | 19,731,738 | 60,309,546 |
+| Fixture-scale `read_run_light` | 130.933 | 300 | 19,731,738 | 60,305,138 |
+| Fixture-scale `read_run_summary_rebuild` | 134.579 | 300 | 19,731,738 | 60,305,162 |
+| Fixture-scale `read_run_projection` | 131.563 | 300 | 19,731,738 | 60,305,138 |
+| Fixture-scale `read_run_node_detail` | 131.732 | 300 | 19,731,738 | 60,304,850 |
+| Generated `read_run` baseline | 758.873 | 1,000 | 131,308,839 | 397,744,576 |
+| Generated `read_run_light` | 758.221 | 1,000 | 131,308,839 | 397,652,704 |
+| Generated `read_run_summary_rebuild` | 762.158 | 1,000 | 131,308,839 | 397,652,544 |
+| Generated `read_run_projection` | 703.884 | 1,000 | 131,308,839 | 397,652,280 |
+| Generated `read_run_node_detail` | 694.720 | 1,000 | 131,308,839 | 397,651,584 |
+
+Builder process measurements: fixture-scale workload `3,942.652 ms`, process
+`4.94 s` real, profiler RSS `1,085,669,376` bytes, and `/usr/bin/time -l`
+maximum RSS `1,085,685,760` bytes; generated workload `14,925.970 ms`, process
+`15.97 s` real, profiler RSS `4,450,844,672` bytes, and `/usr/bin/time -l`
+maximum RSS `4,450,861,056` bytes.
+
+Independent verification reproduced the tracked profiler commands and found:
+- 300 rows: every reader returned `19,731,738` bytes; median allocated peaks
+  ranged from `60,304,850` to `60,309,546` bytes; payload parity was true.
+- 1,000 rows: every reader returned `131,308,839` bytes; median allocated peaks
+  ranged from `397,651,584` to `397,744,576` bytes; payload parity was true.
+
+Independent PASS evidence:
+- Focused parity: 190 passed.
+- Profiler/API: 17 passed.
+- Fixture corpus: 7 passed.
+- Broad graph: 1,025 passed.
+- Full suite: 4,964 passed / 5 skipped / 3 warnings.
+- Full Pyright: 0 errors.
+- Ruff check: green; format check: 720 files already formatted.
+- Architecture, complete-reads `--assert-clean`, complete-reads inventory,
+  catalog baseline 44 events / 23 commands, `git diff --check`, and commit
+  hooks: green.
+
+Deferred Compatibility Cleanup Register entries D1-D6 remain assigned to Task
+13. The pre-existing staged continuation prompt was untouched. This durable
+bookkeeping update makes no source edit and no bookkeeping commit was requested.
