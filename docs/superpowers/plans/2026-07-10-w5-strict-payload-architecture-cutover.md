@@ -11,7 +11,9 @@
 ## Global Constraints
 
 - Existing graph history is disposable; do not preserve, normalize, convert, or replay legacy payload variants.
-- Back up `orchestrator.db` before the explicit final reset; never add destructive startup behavior.
+- If `orchestrator.db` exists, verify a backup before the explicit final reset;
+  if absent, record Branch B and fresh initialize with no backup/reset. Never
+  add destructive startup behavior.
 - Strict payload models use `ConfigDict(strict=True, extra="forbid", frozen=True)` and contain no catch-all top-level `extra` field.
 - Raw JSON exists only at external API and database boundaries; reducers and command handlers receive concrete Pydantic payload types.
 - Parse once: hydration occurs in the injected catalog immediately after storage loading, never inside reducers or view helpers.
@@ -60,30 +62,37 @@
 
 ## Deferred Compatibility Cleanup Register (added 2026-07-12)
 
-Domain tasks (1–8) delete an alias's **catalog specification and strict-path support** but deliberately retain registered compatibility branches needed by durable replay. All D1–D6 cleanup is deferred to Task 13, after `orchestrator.db` is backed up and reset; Task 9 must not run the former zero-match deletion gate.
+Domain tasks (1–8) deleted an alias's **catalog specification and strict-path support** while retaining registered compatibility branches needed by durable replay. Task 13 closed D1-D6 after Branch B fresh initialization established the current strict schema; no backup/reset was necessary, and the register grep returned status 1 with no output.
 
 Rules:
-- A domain task marks its aliases "strict-path deleted, legacy-replay deferred" and adds a row here. It does NOT delete legacy reducer branches.
-- Task 13 sweeps this register after database backup/reset.
-- A row may only be closed by Task 13; closing it earlier requires an explicit design amendment.
+- Domain tasks marked aliases "strict-path deleted, legacy-replay deferred" and did not delete legacy reducer branches.
+- Task 13 alone closed the register after the required database precondition.
+- Branch B applied: `No worktree orchestrator.db existed; per Task 13, no backup or reset was necessary.` Normal startup then initialized the current strict schema before D1-D6 deletion.
 
 | # | Deferred item (code sites) | Deferred by | Deleted in |
 |---|---|---|---|
-| D1 | `lease_suspended`: branch in `reduce_legacy_event` (projections.py ~2160), `_planner_generation_state` suspended branch (~4582), `GraphRecordKind.LEASE_SUSPENDED` enum member (models.py) | Task 4 (done) | Task 13 after backup/reset |
-| D2 | `graph_patch_proposed` / proposal-status alias bookkeeping: `_graph_patch_payload_for_event`, `_open_proposal_blockers`, `_record_open_proposal_blocker`, proposal branch in patch-attempt `ensure_attempt`, `graph_patch_proposal` record/port check (~4852) | Task 6 (done) | Task 13 after backup/reset |
-| D3 | Legacy output-record parsing, sparse verification fallbacks, and raw `value.get(...)` logic reachable only via `reduce_legacy_event` / full-history scans: `reduce_legacy_event` (`projections.py`), `reduce_compact_output_record_accepted` / `_checkpoint_output_record_payload` / `_parse_output_record_payload` (`projections.py`), `_record_verification_result` (`projections.py`), and model selector compatibility helpers `_verification_payload_outcome`, `_check_result_payload_status`, and `_gap_classification_payload_classification` (`models.py`). Strict-path deleted, legacy-replay deferred. | Task 5 | Task 13 after backup/reset |
-| D4 | Strict-path deleted; legacy replay retained for `requirement_revision_proposed` and `authority_resolution_recorded` alias branches plus `_requires_authority_resolution(dict)` in `reduce_legacy_event` and full-history authority-blocker scans | Task 7 | Task 13 after `orchestrator.db` backup/reset |
-| D5 | `environment_failure_accepted` / `check_result_classified` branches (projections.py ~2213, ~5508) | Task 8 | Task 13 after backup/reset |
-| D6 | `reduce_legacy_event` itself, its callers in `_commands.py`, and typed-spec reducers that delegate into it (e.g. `events/patches.py`) | Tasks 1–8 (structural) | Task 13 after backup/reset |
+| D1 | `lease_suspended` reducer/planner branches and enum member | Task 4 (done) | Task 13 (`e63fb41ec`), deleted |
+| D2 | `graph_patch_proposed` / proposal-status alias bookkeeping and proposal port checks | Task 6 (done) | Task 13 (`e63fb41ec`), deleted |
+| D3 | Legacy output-record parsing, sparse verification fallbacks, raw selectors, and full-history compatibility reads | Task 5 (done) | Task 13 (`e63fb41ec`), deleted |
+| D4 | Requirement/authority aliases, authority-resolution helper, and full-history blocker scans | Task 7 (done) | Task 13 (`e63fb41ec`), deleted |
+| D5 | `environment_failure_accepted` / `check_result_classified` branches and classification scan | Task 8 (done) | Task 13 (`e63fb41ec`), deleted |
+| D6 | `reduce_legacy_event`, callers/delegates, generation-1 paths, and hidden compatibility adapters | Tasks 1–8 (structural) | Task 13 (`e63fb41ec`), deleted |
 
-Task 13 grep gate (run after database backup/reset; docs and Alembic migrations exempt):
+Final source reconciliation: `b63146d9b` removed the remaining legacy graph
+effects adapter after Task 13, and `0289de70c` enforced typed graph payload
+consumers without a production payload adapter. The catalog is 44/23, every
+measured strict/current, retired, and deferred compatibility metric is zero,
+and the latest independently verified suites are 1,083 graph tests and 5,101
+passed / 5 skipped / 3 warnings in the full suite.
+
+Task 13 grep gate (run after the Branch B absence record; docs and Alembic migrations exempt):
 
 ```bash
 grep -rn "lease_suspended\|graph_patch_proposed\|requirement_revision_proposed\|authority_resolution_recorded\|environment_failure_accepted\|check_result_classified\|reduce_legacy_event" \
   src/orchestrator/graph src/orchestrator/graph_runtime
 ```
 
-Expected: no matches.
+Observed: no matches; grep exited 1 with no output.
 
 ## Live Catalog Baseline
 
@@ -462,7 +471,7 @@ RECORD_HEARTBEAT = CommandSpecification(
 )
 ```
 
-The typed handler receives `RecordHeartbeatCommand`, uses the injected clock from `CommandExecutionContext`, and emits `HEARTBEAT_RECORDED.create(...)`. Keep a temporary explicit compatibility bridge for unconverted specifications, marked by the architecture test as an allowed migration-only symbol named `_UNCONVERTED_W5_BRIDGE`; Task 9 deletes it.
+The typed handler receives `RecordHeartbeatCommand`, uses the injected clock from `CommandExecutionContext`, and emits `HEARTBEAT_RECORDED.create(...)`. During migration, a temporary explicit compatibility bridge for unconverted specifications was marked by the architecture test as `_UNCONVERTED_W5_BRIDGE`. The completed cutover removed it in `b63146d9b`; `0289de70c` finalized typed consumers without a production payload adapter. All compatibility metrics are zero.
 
 - [ ] **Step 6: Run focused and existing heartbeat tests**
 
@@ -724,7 +733,7 @@ Use `tuple[ResourceClaimProjection, ...]` for resource claims and exact nullable
 
 Run: `uv run pytest tests/unit/test_lease_event_payloads.py tests/unit/test_scheduler.py tests/unit/test_graph_commands.py tests/unit/test_callbacks.py tests/unit/test_fixture_corpus.py -q`
 
-Expected: pass; there is no `lease_suspended` event specification in the catalog and no strict-path support for it. (Amended 2026-07-12: the `lease_suspended` branches inside `reduce_legacy_event` and `_planner_generation_state`, and the `GraphRecordKind.LEASE_SUSPENDED` enum member, are deliberately retained until Task 9 — durable history must replay until the Task 13 database cutover. Register entry D1.)
+Expected: pass; there is no `lease_suspended` event specification in the catalog and no strict-path support for it. (Historical amendment 2026-07-12: the `lease_suspended` branches inside `reduce_legacy_event` and `_planner_generation_state`, and the `GraphRecordKind.LEASE_SUSPENDED` enum member were retained through Task 9 for durable replay, then deleted by Task 13 after Branch B fresh initialization. Register entry D1 is closed.)
 
 - [ ] **Step 5: Commit the domain slice**
 
@@ -793,7 +802,7 @@ Expected: exit 0; record union/grade semantics are the only manual portion.
 
 - [ ] **Step 3: Implement strict record/verification event specifications**
 
-Use a discriminated `OutputRecordPayload` union and explicit verification fields. Move record acceptance and verification reducers into `events/records.py`; delete legacy output-record parsing, sparse verification fallbacks, and repeated `value.get(...)` logic **from the strict specification path only**. (Amended 2026-07-12: legacy parsing that is reachable only through `reduce_legacy_event` or full-history scans is NOT deleted here — it stays until Task 9 so existing durable history keeps replaying. List the exact retained sites under register entry D3 when you finish this task.)
+Use a discriminated `OutputRecordPayload` union and explicit verification fields. Move record acceptance and verification reducers into `events/records.py`; delete legacy output-record parsing, sparse verification fallbacks, and repeated `value.get(...)` logic **from the strict specification path only**. (Historical amendment 2026-07-12: legacy parsing reachable only through `reduce_legacy_event` or full-history scans was retained through Task 9 so durable history could replay. Task 13 deleted those D3 sites after Branch B fresh initialization; D3 is closed.)
 
 - [ ] **Step 4: Implement join/final-gate command specifications**
 
@@ -860,7 +869,7 @@ Expected: exit 0; opaque named patch values remain manual semantic choices, not 
 
 - [ ] **Step 2: Implement patch models/specifications and typed reducers**
 
-Move accepted/rejected attempt updates into `events/patches.py`. Keep `PatchEnvelope`/`PatchOp` as the typed business value for operations. Remove open-proposal replay bookkeeping from the strict specification path. (Amended 2026-07-12: the `graph_patch_proposed`/proposal-status bookkeeping inside `reduce_legacy_event` and the blocker/attempt scan helpers is deliberately retained until Task 9 — see register entry D2. Only the catalog and strict dispatch must be alias-free after this task.)
+Move accepted/rejected attempt updates into `events/patches.py`. Keep `PatchEnvelope`/`PatchOp` as the typed business value for operations. Remove open-proposal replay bookkeeping from the strict specification path. (Historical amendment 2026-07-12: the `graph_patch_proposed`/proposal-status bookkeeping inside `reduce_legacy_event` and the blocker/attempt scan helpers was retained through Task 9. Task 13 deleted those D2 sites after Branch B fresh initialization; D2 is closed.)
 
 - [ ] **Step 3: Implement the strict submit command and move its handler**
 
@@ -936,7 +945,7 @@ Expected: all four checks exit 0; no shared wrapper was hand-rewritten around th
 
 - [ ] **Step 2: Implement decision and requirement event modules**
 
-Define separate payload models when semantics differ; do not use one permissive decision base with many optional aliases. Move latest-decision, appeal resolution, authority requirement, revision, and evidence reducers into their owning modules. (Amended 2026-07-12: only the `requirement_revision_proposed` and `authority_resolution_recorded` branches and `_requires_authority_resolution(dict)` inside `reduce_legacy_event` and the authority blocker/full-history scans are retained as D4. Their deletion is deferred to Task 13 after `orchestrator.db` backup/reset.)
+Define separate payload models when semantics differ; do not use one permissive decision base with many optional aliases. Move latest-decision, appeal resolution, authority requirement, revision, and evidence reducers into their owning modules. (Historical amendment 2026-07-12: the `requirement_revision_proposed` and `authority_resolution_recorded` branches, `_requires_authority_resolution(dict)`, and authority blocker/full-history scans were retained as D4 through Task 9. Task 13 deleted them after Branch B fresh initialization; D4 is closed.)
 
 - [ ] **Step 3: Implement four strict command specifications**
 
@@ -987,7 +996,7 @@ Expected: all six event producers, two command entries, runtime consumers, paylo
 
 - [ ] **Step 1: Write strict file-state/gatekeeper/cleanup RED tests**
 
-Assert complete current producer shapes round-trip, malformed nested verdict/file entries fail, `resolved_count` and cost fields remain explicit, and audit `file_state_rejected` is registered as projection-neutral. Remove legacy environment/check-result alias tests because neither event is produced. (Amended 2026-07-12: removing the alias TESTS and catalog support is this task's scope; the `environment_failure_accepted`/`check_result_classified` reducer branches in `reduce_legacy_event` and the classification scan are deliberately retained until Task 9 — register entry D5.)
+Assert complete current producer shapes round-trip, malformed nested verdict/file entries fail, `resolved_count` and cost fields remain explicit, and audit `file_state_rejected` is registered as projection-neutral. Remove legacy environment/check-result alias tests because neither event is produced. (Historical amendment 2026-07-12: the `environment_failure_accepted`/`check_result_classified` reducer branches and classification scan were retained as D5 through Task 9. Task 13 deleted them after Branch B fresh initialization; D5 is closed.)
 
 Run: `uv run pytest tests/unit/test_cleanup_event_payloads.py tests/unit/test_graph_gatekeeper.py -q`
 
@@ -1026,7 +1035,7 @@ git commit -m "refactor: type file-state and gatekeeper graph domains"
 
 ---
 
-### Task 9: Complete Catalog Composition, Typed Dispatch, and Compatibility Deletion
+### Task 9: Complete Catalog Composition and Typed Dispatch Cutover
 
 **Files:**
 - Modify: `src/orchestrator/graph/catalog.py`
@@ -1100,13 +1109,13 @@ The tuple names are public domain APIs; adding a normal event/command to an exis
 
 - [ ] **Step 3: Cut current command and reducer dispatch to catalog-only paths**
 
-Delete `COMMAND_HANDLERS`, current-path per-event parse wrappers, `_typed_*` helpers, and `_UNCONVERTED_W5_BRIDGE` only where they are proven unreachable from durable replay. Current typed dispatch resolves catalog specifications and never falls through to legacy handling; unknown current names raise typed catalog errors, while a deliberately invalid known command may still produce `command_rejected` after its typed handler evaluates domain rules. Retain `reduce_legacy_event`, all D1–D6 callers, and any typed-spec reducer required to replay history until Task 13's verified backup/reset sequence.
+Delete `COMMAND_HANDLERS`, current-path per-event parse wrappers, `_typed_*` helpers, and `_UNCONVERTED_W5_BRIDGE` only where they are proven unreachable from durable replay. Current typed dispatch resolves catalog specifications and never falls through to legacy handling; unknown current names raise typed catalog errors, while a deliberately invalid known command may still produce `command_rejected` after its typed handler evaluates domain rules. Task 9 retained `reduce_legacy_event`, all D1–D6 callers, and typed-spec reducers required for durable replay. Task 13 deleted them after Branch B fresh initialization established the current strict schema.
 
 - [ ] **Step 4: Delete compatibility models, validators, aliases, and `_commands.py`**
 
 Remove only obsolete strict-path W5 payload classes, exports, validators, and `_commands.py` content proven non-replay-critical. Keep D1–D6 compatibility helpers, aliases, models, and validators isolated to legacy replay. Delete `_commands.py` in this task only if every replay-critical caller has first been retained in an explicit legacy module without changing replay; otherwise defer file deletion to Task 13.
 
-**Do not sweep the Deferred Compatibility Cleanup Register in Task 9.** D1–D6 remain until Task 13 performs the explicit database backup/reset cutover.
+**Task 9 did not sweep the Deferred Compatibility Cleanup Register.** D1–D6 remained through Task 9 and were deleted in Task 13 after Branch B fresh initialization; no backup/reset was necessary.
 
 - [ ] **Step 5: Run catalog and full unit graph tests**
 
@@ -1361,9 +1370,22 @@ git commit -m "test: enforce strict graph payload architecture"
 
 ### Task 13: Full Verification and Explicit Database Cutover
 
+**Database precondition (choose exactly one branch before D1-D6 deletion):**
+
+- **Branch A, database present:** stop the server, create and size-verify a
+  timestamped backup, remove only the disposable working database, and perform
+  normal fresh initialization onto the strict schema.
+- **Branch B, database absent:** record that no backup/reset is necessary, then
+  perform normal fresh initialization onto the strict schema.
+
+Both branches require successful fresh initialization before compatibility
+deletion. Task 13 used Branch B. Final source repairs are `b63146d9b` and
+`0289de70c`.
+
 **Files:**
 - Modify only if a verification failure exposes a real defect in the owning slice.
-- Create at runtime: timestamped `orchestrator.db.w5-strict-backup-YYYYMMDD-HHMMSS` outside git tracking.
+- Branch A only, create at runtime: timestamped
+  `orchestrator.db.w5-strict-backup-YYYYMMDD-HHMMSS` outside git tracking.
 
 **Interfaces:**
 - Fresh database must seed factory data and complete a representative typed graph run.
@@ -1393,30 +1415,44 @@ Run: `git diff --check`
 
 Expected: all commands exit 0; do not classify any failure as unrelated.
 
-- [ ] **Step 3: Stop the server and back up the database**
+- [ ] **Step 3: Stop the server and select Branch A or Branch B**
 
-Confirm no Orchestrator server process is using the database. Then run a timestamped copy before removal:
+Confirm no Orchestrator server process is using the database. For Branch A,
+run a timestamped copy before removal:
 
 ```bash
 cp orchestrator.db "orchestrator.db.w5-strict-backup-$(date +%Y%m%d-%H%M%S)"
 ```
 
-Verify the backup exists and has the same byte size as the source. If `orchestrator.db` is absent, record that no reset was necessary.
+For Branch A, verify the backup exists and has the same byte size as the source.
+For Branch B, record exactly that the worktree database is absent and no
+backup/reset is necessary.
 
 - [ ] **Step 4: Remove only the disposable working database and initialize fresh schema**
 
-After the backup verification, remove `orchestrator.db`, start the application through the normal project command, and let Alembic/create-on-empty establish the current schema. Never remove the backup or journal and never add automatic reset code.
+For Branch A, after backup verification, remove `orchestrator.db`. For Branch B,
+there is nothing to remove. Start the application through the normal project
+command and let Alembic/create-on-empty establish the current strict schema.
+Never remove a backup or journal and never add automatic reset code.
 
-- [ ] **Step 5: Delete the deferred compatibility register after reset**
+- [ ] **Step 5: Delete the deferred compatibility register after fresh initialization**
 
-Only after Step 3 verifies the backup exists and its byte size and Step 4 resets the working database, delete every D1–D6 site, including `reduce_legacy_event`, replay-only aliases, and any retained `_commands.py` caller. Then run the register grep gate:
+Only after Branch A backup/reset plus fresh initialization or Branch B absence
+record plus fresh initialization, delete every D1-D6 site, including
+`reduce_legacy_event`, replay-only aliases, and any retained `_commands.py`
+caller. Then run the register grep gate:
 
 ```bash
 grep -rn "lease_suspended\|graph_patch_proposed\|requirement_revision_proposed\|authority_resolution_recorded\|environment_failure_accepted\|check_result_classified\|reduce_legacy_event" \
   src/orchestrator/graph src/orchestrator/graph_runtime
 ```
 
-Expected: no matches. If `orchestrator.db` was absent, record that no reset was necessary before this cleanup; do not run the deletion before making that record.
+Expected: no matches. Task 13 used Branch B and recorded
+`No worktree orchestrator.db existed; per Task 13, no backup or reset was
+necessary.` Fresh initialization preceded deletion. Source repairs `b63146d9b`
+and `0289de70c` removed the final legacy effects adapter and enforced typed
+consumers without a production payload adapter; final metrics are 44/23 with
+all strict/current, retired, and deferred compatibility counts zero.
 
 - [ ] **Step 6: Run fresh-schema typed smoke tests through public interfaces**
 
@@ -1445,7 +1481,9 @@ Expected: pass against the fresh schema.
 - Modify: `AGENTS.md` only if new module/API navigation requires it under the repository maintenance rule.
 
 **Interfaces:**
-- Ledger names the retained/replaced compatibility work, every strict slice commit, exact verification commands/counts, database backup/reset evidence, and before/after metrics.
+- Ledger names the retained/replaced compatibility work, every strict slice
+  commit, exact verification commands/counts, Branch A backup/reset or Branch B
+  absence/fresh-initialization evidence, and before/after metrics.
 - Architecture docs identify domain module ownership and injected catalog composition.
 
 - [ ] **Step 1: Generate final metrics and catalog inventory**
@@ -1458,7 +1496,7 @@ Also capture the automation ledger for every slice: discovered mechanical sites,
 
 - [ ] **Step 2: Reconcile the ledger explicitly**
 
-Add a strict-cutover section that marks prior payload field inventories/semantic tests as retained and compatibility validators/aliases/allowlist work as replaced. Close the old queue items as follows: records, file-state, commands, and grades are completed by Tasks 5–8; allowlist generation is superseded by deletion in Task 11; legacy preservation is superseded by the approved destructive cutover.
+Add a strict-cutover section that marks prior payload field inventories/semantic tests as retained and compatibility validators/aliases/allowlist work as replaced. Close the old queue items as follows: records, file-state, commands, and grades are completed by Tasks 5–8; allowlist generation is superseded by deletion in Task 11; legacy preservation is superseded by the approved explicit Branch A/B cutover.
 
 - [ ] **Step 3: Refresh architecture and projection documentation**
 
@@ -1487,18 +1525,24 @@ git commit -m "docs: close W5 strict payload architecture"
 
 ## Final Acceptance Checklist
 
-- [ ] Exactly 44 live event specifications and 23 command specifications are cataloged; new raw emissions/dispatches are structurally impossible.
-- [ ] Every payload is strict/frozen/extra-forbid; no W5 compatibility normalizer or catch-all top-level field remains.
-- [ ] Every producer emits via an event specification; every reducer and command handler receives a concrete model.
-- [ ] Audit-only and projection-neutral events use the same create/store/hydrate/catalog path and are explicitly marked neutral.
-- [ ] The catalog is immutable, duplicate-checked, deterministic, and injected through compiler, controller, store, runtime, workflow, and API composition.
-- [ ] Stored payload generation mismatch and corrupted JSON fail with contextual domain errors.
-- [ ] The four allowlists and partial-event reconstruction code are deleted; all read modes preserve complete strict payloads.
-- [ ] Payload-shaped W5 projection records are concrete models.
-- [ ] Static architecture targets are all zero and pre-commit enforces them.
-- [ ] AST inventory classifies the entire migration surface; every mechanically eligible edit was performed by the LibCST codemod, every domain reports zero eligible sites remaining, and every second codemod run is empty.
-- [ ] The model-field, new-event, and new-command maintenance exercises demonstrate no storage or central-dispatch changes.
-- [ ] Every Deferred Compatibility Cleanup Register row (D1–D6) is deleted and the register grep gate returns no matches.
-- [ ] Corpus replay, graph-focused tests, full backend tests, Ruff, formatting, Pyright, and diff checks pass.
-- [ ] The database was backed up before reset, a fresh schema was initialized, and a representative typed graph completed.
-- [ ] Documentation records before/after metrics, retained/replaced work, complete-read measurements, and W5 closure.
+Builder reconciliation: complete against Tasks 5-13 evidence and Task 14
+generated metrics. Fresh independent Task 14 verification remains pending; no
+closure commit SHA exists. Final source commits: `b63146d9b` and `0289de70c`;
+latest independent evidence is 1,083 graph tests and 5,101 passed / 5 skipped /
+3 warnings in the full suite, with 44/23 and zero metrics.
+
+- [x] Exactly 44 live event specifications and 23 command specifications are cataloged; new raw emissions/dispatches are structurally impossible.
+- [x] Every payload is strict/frozen/extra-forbid; no W5 compatibility normalizer or catch-all top-level field remains.
+- [x] Every producer emits via an event specification; every reducer and command handler receives a concrete model.
+- [x] Audit-only and projection-neutral events use the same create/store/hydrate/catalog path and are explicitly marked neutral.
+- [x] The catalog is immutable, duplicate-checked, deterministic, and injected through compiler, controller, store, runtime, workflow, and API composition.
+- [x] Stored payload generation mismatch and corrupted JSON fail with contextual domain errors.
+- [x] The four allowlists and partial-event reconstruction code are deleted; all read modes preserve complete strict payloads.
+- [x] Payload-shaped W5 projection records are concrete models.
+- [x] Static architecture targets are all zero and pre-commit enforces them.
+- [x] AST inventory classifies the entire migration surface; every mechanically eligible edit was performed by the LibCST codemod, every domain reports zero eligible sites remaining, and every second codemod run is empty.
+- [x] The model-field, new-event, and new-command maintenance exercises demonstrate no storage or central-dispatch changes.
+- [x] Every Deferred Compatibility Cleanup Register row (D1–D6) is deleted and the register grep gate returns no matches.
+- [x] Corpus replay, graph-focused tests, full backend tests, Ruff, formatting, Pyright, and diff checks pass in Task 13 evidence; Task 14 rerun is pending below.
+- [x] Branch B recorded that no database existed and no backup/reset was necessary; normal startup initialized the fresh schema and representative typed graph smoke tests passed.
+- [x] Documentation records before/after metrics, retained/replaced work, complete-read measurements, and W5 closure.

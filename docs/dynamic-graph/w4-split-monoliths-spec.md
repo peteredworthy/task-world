@@ -1,5 +1,8 @@
 # W4 — Split the monoliths along command/role seams
 
+> Historical W4 design. Its `COMMAND_HANDLERS` registry guidance was superseded
+> and deleted by W5's immutable domain-owned command specification catalog.
+
 Addresses weakness **W4** (medium) and improvement **#5** in
 `dynamic-graph-implementation-review.html` (re-assessed 2026-07-03).
 

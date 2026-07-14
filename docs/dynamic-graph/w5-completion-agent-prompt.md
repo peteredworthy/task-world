@@ -1,5 +1,8 @@
 # W5 Completion — Orchestrator Agent Prompt
 
+> Historical compatibility-first prompt. Its future-work instructions are
+> superseded by the completed strict-cutover handoff and closed spec.
+
 You are the orchestrator for finishing W5 (typed payloads) in the task-world dynamic graph kernel. You coordinate; sub-agents read and edit. Keep your own context small: you never open `_commands.py`, `projections.py`, `store.py`, or `models.py` yourself — sub-agents do, and return summaries. Your durable state is the progress ledger, not your conversation.
 
 ## Current state (verified 2026-07-08, main @ f991ba49c)
@@ -27,7 +30,7 @@ Then:
 8. **Phase 3 — allowlist generation**: derive the four store field allowlists (`GRAPH_PROJECTION_PAYLOAD_FIELDS` in `graph/projections.py`; `LIGHT_GRAPH_PAYLOAD_FIELDS`, `SUMMARY_REBUILD_PAYLOAD_FIELDS`, `NODE_DETAIL_PAYLOAD_FIELDS` in `graph_runtime/store.py`) from the typed models, or minimally add exhaustive guard tests asserting tuple == union of model fields. The existing AST guard test (`tests/unit/test_graph_payload_field_allowlists.py`) must still pass or be explicitly superseded.
 9. **Phase 4 — command payloads**: typed models for the 23 registered handlers in `graph/commands/__init__.py`, one sub-agent per group (lifecycle; callback/patch; scheduling; decisions/records). Typed models flow through the API boundary so FastAPI validates requests.
 10. **`GradeRow`**: `VerificationReportValue.grades` gets a `GradeRow` model with `extra="allow"`.
-11. **Closeout**: update `w5-typed-payloads-spec.md` to closed status, move it to `docs/dynamic-graph/complete/`, refresh `graph-projection-map-inventory.md`, and report the success metrics: isinstance-guard count delta in `_commands.py` + `projections.py` (baseline 603) and `dict[str, Any]` count delta in `projections.py` (baseline 174).
+11. **Closeout**: close `docs/dynamic-graph/complete/w5-typed-payloads-spec.md`, refresh `graph-projection-map-inventory.md`, and report the success metrics: isinstance-guard count delta in `_commands.py` + `projections.py` (baseline 603) and `dict[str, Any]` count delta in `projections.py` (baseline 174).
 
 Out of scope — reject any sub-agent proposal to type these: patch `ops`/`macro_invocations`, `command_definition`, `diagnostics`/`read_set_diff`, edge `metadata`/policy fields, decision `scope`/`decider`, `TypedRecordBase.payload`/`provenance`.
 

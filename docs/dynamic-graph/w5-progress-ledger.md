@@ -876,3 +876,94 @@ Independent PASS evidence:
 Source, the pre-existing continuation prompt, and the current database were
 preserved. This durable bookkeeping update changes only the two progress
 ledgers, creates no backup or sidecar, and is not committed.
+
+### Final source repair follow-up
+
+Status: complete at `b63146d9b` and `0289de70c`.
+
+The legacy graph effects adapter was removed by `b63146d9b`; `0289de70c` then
+enforced direct typed graph payload consumers and removed production adapter
+use, without changing the Branch B database record. Latest independent source
+evidence is exactly 44 event specifications / 23 command specifications, all
+strict/current, retired-compatibility, deferred-compatibility,
+remaining-eligible, second-run, and unclassified metrics at 0, 1,083 graph
+tests passed, and 5,101 passed / 5 skipped / 3 warnings in the full suite. This
+follow-up supersedes the Task 13 test counts for final-source closure while
+preserving them above as contemporaneous `e63fb41ec` evidence.
+
+## Strict-cutover Task 14: documentation, metrics, and W5 closure
+
+Status: implementation and builder documentation complete; pending fresh
+independent verifier. No Task 14 commit exists, so no closure SHA is recorded.
+
+Task 14 reconciles rather than rewrites the historical entries above. The
+compatibility-first field inventories and semantic regression tests remain
+useful evidence. Compatibility validators, replay aliases, raw
+reducers/handlers, partial-read allowlists, and legacy replay preservation were
+replaced or deleted by the strict cutover. Records, commands, strict
+`GradeRow`, file-state, gatekeeper, and cleanup closed in Tasks 5-8. Proposed
+allowlist generation was superseded by Task 11's deletion of all four lists.
+Legacy preservation was superseded by the approved Task 13 cutover.
+
+Task 13's exact Branch B record remains: `No worktree orchestrator.db existed;
+per Task 13, no backup or reset was necessary.` Normal startup then initialized
+the current strict schema, after which Task 13 deleted D1-D6. The exact
+retired-name grep returned status 1 with no output. Task 14 did not repeat or
+modify any database operation.
+
+Generated final catalog/architecture metrics:
+
+| Metric | Final |
+|---|---:|
+| Event / command specifications | 44 / 23 |
+| Raw payload reads / raw boundary dictionaries / direct dictionary events | 0 / 0 / 0 |
+| Field allowlists / before normalizers / top-level payload extras | 0 / 0 / 0 |
+| Central command tables / central reducer branches | 0 / 0 |
+| Remaining eligible sites / second-run changes / unclassified dynamic sites | 0 / 0 / 0 |
+| Retired compatibility adapters / deferred D1-D6 sites | 0 / 0 |
+| `_commands.py` + `projections.py` `isinstance` | 412; baseline 603, delta -191 |
+| `projections.py` `dict[str, Any]` | 102; baseline 174, delta -72 |
+
+The closeout measurement reran all 14 registered codemod domains. For every
+domain it measured 0 currently discovered eligible sites, 0 transformations
+required, 0 unsafe diagnostics, 0 eligible sites remaining, and 0 second-run
+changes. Historical discovered/transformed/manual-semantic counts remain in
+the preserved per-task reports; Task 14 does not infer missing historical
+numbers.
+
+Task 11's independently reproduced complete-read baseline remains the physical
+cost reference: all five readers returned 19,731,738 payload bytes for 300 rows
+with 60,304,850-60,309,546-byte median allocated peaks, and 131,308,839 bytes
+for 1,000 rows with 397,651,584-397,744,576-byte peaks. Payload parity was true.
+
+Task 13's independent acceptance evidence remains preserved above. Final source
+repairs `b63146d9b` and `0289de70c` are the implementation baseline: 1,083
+broad graph tests and 5,101 passed / 5 skipped / 3 warnings in the full suite,
+with 44/23 and all metrics zero. Task 14's fresh builder documentation matrix is
+recorded in
+`docs/dynamic-graph/w5-task14-closeout-report.md`; an independent rerun/verdict is still
+required for documentation closure. Following verifier feedback and
+explicit user permission, Task 14 corrected the staged continuation prompt's
+stale future-work queue into a completed historical handoff.
+
+Fresh Task 14 documentation matrix: metrics 44/23 with every emitted
+architecture, migration, retired, and deferred count 0; architecture checker
+clean; D1-D6 grep status 1/no output; Ruff clean; format check 725 files;
+Pyright 0 errors; and `git diff --check` clean. Tests were not rerun for the
+documentation-only reconciliation; the independently verified final
+source-repair evidence is 1,083 graph and 5,101 full-suite tests (5 skipped, 3
+warnings). This remains pending independent verifier.
+
+Verifier-finding correction: operative plan text now consistently says Task 9
+retained D1-D6 and Task 13 deleted them after Branch B fresh initialization;
+the continuation prompt records that completed history; and the deferred column
+promotion precondition accepts either fresh initialization or verified reset
+onto the current strict schema generation. Documentation-only checks were
+rerun; status remains pending independent verifier.
+
+Latest reconciliation also removes the final operative Task 9 bridge-deletion
+instruction, renames Task 9 as the non-destructive catalog/dispatch cutover,
+documents both Task 13 database branches, fixes closed-spec links, and records
+`b63146d9b` / `0289de70c` plus the 1,083/5,101 final counts. It also records
+that production consumers are typed directly without a payload JSON
+compatibility adapter. No Task14 commit SHA exists or is predicted.

@@ -1,8 +1,42 @@
 # W5 Strict Payload Architecture Cutover
 
-**Status:** Approved direction; implementation plan pending
+**Status:** Implemented; Task 14 documentation pending independent verification
 
 **Date:** 2026-07-10
+
+## Outcome
+
+W5 implemented one strict architecture across exactly 44 event specifications
+and 23 command specifications. Payloads inherit the frozen, strict,
+`extra="forbid"` `StrictPayload` base; immutable domain-owned specification
+tuples compose into a duplicate-checked catalog injected from the API and CLI
+composition roots. Commands validate once before typed dispatch, events are
+created through their specifications, stored as generation-2 envelopes,
+hydrated once, and reduced with concrete payload models. Projection-neutral
+events use the same create/store/hydrate/catalog path.
+
+All full, light, summary-rebuild, projection/checkpoint, and node-detail reads
+retain complete hydrated payloads. The four mirrored field allowlists and
+partial reconstruction paths were deleted. Deferred Compatibility Cleanup
+Register rows D1-D6 and hidden compatibility adapters were deleted in Task 13;
+the retired-name grep returned status 1 with no output. The architecture
+checker, deterministic metrics, change-spread contracts, codemod idempotency
+tests, and pre-commit hook enforce the result.
+
+Final source repairs are `b63146d9b`, which removed the legacy graph effects
+adapter, and `0289de70c`, which enforced typed graph payload consumers and
+removed production adapter use. Latest independent evidence is 1,083 graph
+tests and 5,101 full-suite tests passing (5 skipped, 3 warnings), with the 44/23
+catalog and every measured architecture, retired-compatibility, and
+deferred-compatibility count at zero.
+
+Task 14 generated the final baseline: every strict/current architecture,
+retired-compatibility, deferred-compatibility, remaining-eligible,
+second-run-change, and unclassified-dynamic-site metric is zero. The historical
+two-file `isinstance` count fell from 603 to 412 (-191), and
+`projections.py` `dict[str, Any]` occurrences fell from 174 to 102 (-72).
+No Task 14 commit SHA is recorded because no commit has been created; fresh
+independent documentation verification remains pending.
 
 **Supersedes:** The compatibility-first migration strategy in
 `2026-07-09-w5-typed-payloads-completion-design.md` and the remaining queue in
@@ -179,11 +213,18 @@ No automatic destructive startup behavior is added. The operational cutover
 is explicit:
 
 1. Stop the server.
-2. Back up `orchestrator.db` as required by repository policy.
-3. Remove the disposable working database.
+2. If `orchestrator.db` exists, back it up and verify the backup before removal.
+3. If it does not exist, record that no backup/reset is necessary before
+   compatibility cleanup.
 4. Start the application and let Alembic/create-on-empty establish the current
    schema.
 5. Seed required factory data and run a typed graph smoke test.
+
+Task 13 took the absence branch. Its exact contemporaneous record is:
+`No worktree orchestrator.db existed; per Task 13, no backup or reset was
+necessary.` Normal startup then initialized the current strict schema, after
+which Task 13 deleted D1-D6 compatibility. No old database was converted or
+destroyed.
 
 No migration converts old graph events or snapshots. A payload schema
 generation on stored envelopes makes accidental use of an incompatible
@@ -229,11 +270,14 @@ Add static/catalog checks that prevent unregistered names and raw payload
 access. Remove superseded compatibility tests and replace repetitive model
 tests with catalog-wide contracts plus focused domain behavior tests.
 
-### 6. Destructive data cutover and verification
+### 6. Explicit database branch and verification
 
-Back up and reset the disposable database, then verify fresh-run creation,
-event replay, checkpoints, compact reads, node detail, summaries, and graph
-completion on the strict schema.
+If the database exists (Branch A), stop the server, create and verify a backup,
+reset the disposable database, and fresh initialize the strict schema. If the
+database is absent (Branch B), record the absence and fresh initialize the
+strict schema with no backup/reset. After either branch initializes
+successfully, delete compatibility and verify fresh-run creation, event replay,
+checkpoints, compact reads, node detail, summaries, and graph completion.
 
 ## Testing and enforcement
 

@@ -228,3 +228,5 @@ the removed factory. Focused architecture/codemod coverage passed 57 tests, the 
 focus passed 203 tests, full unit passed 3372 tests with the same three SQLite adapter warnings,
 and the focused serial integration slice passed 39 tests. The authoritative full serial
 integration run passed 1283 tests with 5 credential-dependent skips in 400.07 seconds.
+> Historical Task 2 evidence. Later plan amendments and source repairs
+> `b63146d9b` / `0289de70c` supersede its Task 9 deletion schedule.

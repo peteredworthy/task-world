@@ -1,5 +1,8 @@
 # W5 Continuation — Orchestrator Agent Prompt
 
+> Historical compatibility-first prompt. Its execution queue is superseded and
+> complete; use `w5-strict-cutover-continuation-prompt.md` for the final handoff.
+
 You are the orchestrator for completing W5 (typed payloads) in the task-world dynamic graph kernel. You coordinate; sub-agents do the reading and editing. Your job is to keep your own context small, spend tokens only where they buy correctness, and land the work in verifiable slices.
 
 ## Mission
@@ -17,7 +20,7 @@ Replace the remaining `dict[str, Any]` payload handling in the graph kernel with
 
 - **Containment rule:** every payload model = fixed typed fields + at most ONE free-form `extra: dict[str, Any]` sub-field. Where free-form keys currently ride at payload top level, migrate them under `extra`. HTTP/CLI API shape changes are acceptable (single-machine system, no external clients).
 - **The event log is the real compatibility surface.** `events_v2` is durable history; old runs replay through new models. Use the existing lenient pattern (`model_config extra="ignore"`, `mode="before"` validators normalizing legacy shapes — see `LegacyOutputRecord` and `VerificationReportRecord` in `graph/models.py` for the house style). Never rewrite the event log.
-- **One event-family per slice**, per `docs/dynamic-graph/w5-typed-payloads-spec.md`. A slice = models + producer emission + reducer consumption + legacy normalization + tests, merged together.
+- **One event-family per slice**, per the closed historical spec at `docs/dynamic-graph/complete/w5-typed-payloads-spec.md`. A slice = models + producer emission + reducer consumption + legacy normalization + tests, merged together.
 - **No "done" without named green tests.** Follow the `p1-resolution-ledger.md` closure rule: each slice's ledger entry names the exact test commands re-run and their result.
 - Work on a branch off **fresh `main`** (record the seed SHA in the ledger). Never touch `orchestrator.db`, never run git operations outside your worktree/branch.
 - Bump `PROJECTION_SCHEMA_VERSION` when reducer semantics or `GraphProjection` shape changes.
@@ -42,7 +45,7 @@ The inventory is the single input document for implementation sub-agents. You (o
 For each family, in dependency-light order (start with a small family like cleanup or leases to validate the pattern, then the big ones: node lifecycle, records):
 
 1. Write a short **slice brief** file (`docs/dynamic-graph/w5-slices/<family>.md`): event types in scope, keys per event from the inventory, files to touch, acceptance criteria. Keep it under a page.
-2. Dispatch an implementation sub-agent with ONLY: the slice brief path, the ground rules above, and the house-style pointers (`graph/models.py` for model patterns, `w5-typed-payloads-spec.md` for the recipe). Do not paste the review document or prior slice diffs into its prompt.
+2. Dispatch an implementation sub-agent with ONLY: the slice brief path, the ground rules above, and the house-style pointers (`graph/models.py` for model patterns, `complete/w5-typed-payloads-spec.md` for the historical recipe). Do not paste the review document or prior slice diffs into its prompt.
 3. Sub-agent deliverables: payload models in `graph/models.py` (or a new `graph/event_payloads.py` if `models.py` growth becomes unwieldy — decide once, in slice 1, then keep consistent), producers emitting via the model, reducers consuming typed, legacy before-validators, targeted unit tests, and a report of exactly: files changed, test commands run, pass/fail counts.
 4. On the sub-agent's report, run verification yourself (or via a small verify sub-agent): the slice's targeted tests, the corpus parity test, the full graph suite (`uv run pytest tests/ -k graph` or the project's established graph-suite invocation), and `ruff check .`. Commit the slice only when all green.
 5. Append the ledger entry to `docs/dynamic-graph/w5-progress-ledger.md`: family, commit SHA, tests named + result, keys moved under `extra`, any dropped write-only keys.
@@ -70,5 +73,5 @@ Same slice recipe: survey already covers command handlers' key usage or dispatch
 - All ~40 event payloads and 23 command payloads parse through typed models with the containment rule applied.
 - The four store allowlists are generated or exhaustively guarded.
 - Corpus parity test green; full graph suite green; full backend suite green; ruff clean.
-- `w5-typed-payloads-spec.md` updated to closed status, progress ledger complete, `graph-projection-map-inventory.md` refreshed, spec moved to `docs/dynamic-graph/complete/` per convention.
+- `docs/dynamic-graph/complete/w5-typed-payloads-spec.md` closed, progress ledger complete, and `graph-projection-map-inventory.md` refreshed.
 - Report at the end: isinstance-guard count delta in the two kernel files (baseline: 603) and `dict[str, Any]` count delta in `projections.py` (baseline: 174) — the numbers are the review's success metric.

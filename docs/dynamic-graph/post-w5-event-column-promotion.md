@@ -7,6 +7,27 @@
 **Current target:**
 `docs/superpowers/specs/2026-07-10-w5-strict-payload-architecture-design.md`
 
+## Final W5 Baseline
+
+W5 closed with exactly 44 event specifications and 23 command specifications.
+All measured raw-boundary, direct-dictionary construction, legacy normalizer,
+top-level payload-extra, central-dispatch, allowlist, remaining migration,
+second-run, unclassified dynamic-site, retired-compatibility, and deferred
+D1-D6 counts are zero. The historical two-kernel-file `isinstance` count fell
+from 603 to 412 (-191); `projections.py` `dict[str, Any]` occurrences fell from
+174 to 102 (-72). Remaining dictionaries include dynamic indexes and named
+opaque/public JSON, not a license to promote fields without measurements.
+
+Task 11 complete-read baselines provide the starting cost data:
+
+| Workload | Rows | Complete payload bytes per reader | Median allocated peak range |
+|---|---:|---:|---:|
+| Fixture scale | 300 | 19,731,738 | 60,304,850-60,309,546 bytes |
+| Generated scale | 1,000 | 131,308,839 | 397,651,584-397,744,576 bytes |
+
+All five readers had payload parity. These figures motivate investigation but
+do not approve relational promotion; this document remains deferred.
+
 ## Reminder
 
 Once every graph event and command uses the strict model-driven catalog,
@@ -39,7 +60,8 @@ Begin this follow-up only after:
   allowlists;
 - representative graph runs produce query and payload-size measurements;
 - event, checkpoint, summary, and node-detail access patterns are stable;
-- the database has been reset onto the strict payload schema generation.
+- the database is on the current strict payload schema generation, whether by
+  fresh initialization (the W5 Branch B path) or a verified reset.
 
 ## Questions to answer with measurements
 

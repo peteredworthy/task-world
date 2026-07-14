@@ -136,20 +136,25 @@ task-world/
 │   │       └── test_runner.py # TestRunner with polling and result tracking
 │   │
 │   ├── graph/                 # Pure dynamic execution graph kernel
+│   │   ├── payloads.py        # StrictPayload and recursive JSON value type
+│   │   ├── specifications.py  # Typed event/command specifications and envelopes
+│   │   ├── catalog.py         # Immutable, duplicate-checked catalog composition
+│   │   ├── events/            # Domain-owned payload models, reducers, event specs
+│   │   ├── commands/          # Domain-owned command models, handlers, command specs
+│   │   ├── compiler.py        # Routine-to-hydrated-graph compiler
 │   │   ├── command_bindings.py # Opaque check-command binding resolution
-│   │   ├── commands.py        # Command applier and graph event generation
-│   │   ├── compiler.py        # Routine-to-graph compiler
 │   │   ├── contracts.py       # Typed node/port contract registry
 │   │   ├── macros.py          # Planner-facing macro expansion to low-level patch ops
 │   │   ├── patch_validator.py # Pure graph patch validation
-│   │   ├── projections.py     # Event-sourced graph projections/read models
+│   │   ├── projections.py     # Typed event-sourced projections/checkpoints
 │   │   └── scheduler.py       # Pure readiness and lease scheduling helpers
 │   │
 │   ├── graph_runtime/         # Effectful graph runtime bridge
 │   │   ├── controller.py      # Applies graph commands and appends events/outbox rows
 │   │   ├── dispatch.py        # Outbox-to-runner/controller execution bridge
 │   │   ├── outbox.py          # Durable side-effect outbox mapping/dispatcher
-│   │   └── store.py           # Graph event store and summary read models
+│   │   ├── errors.py          # Contextual payload corruption/generation errors
+│   │   └── store.py           # Generation-2 storage, hydration, complete read paths
 │   │
 │   ├── runners/               # Agent execution: all runner types, detection, profiles
 │   │   ├── interface.py       # AgentRunner protocol definition
@@ -353,6 +358,79 @@ The remaining `workflow/delegation/` code is generic fan-out task bookkeeping,
 not the super-parent carrier. Delegation command fencing, idempotency records,
 result records, and review blockers are recorded through `DelegationRecorder`,
 which wraps the immutable `DelegationState` value object.
+
+### Strict Graph Payload Architecture
+
+Graph events and commands have one schema source: domain-owned Pydantic models
+and immutable specifications under `graph/events/` and `graph/commands/`.
+`StrictPayload` is strict, frozen, and `extra="forbid"`; unknown fields and
+coercions fail at the boundary. `build_graph_catalog()` deterministically
+flattens the public domain tuples into exactly 44 event and 23 command
+specifications. `GraphCatalog` rejects duplicate names and exposes immutable
+mapping views.
+
+The API application and CLI each construct a catalog at their composition root.
+The API instance is injected through FastAPI dependencies into compiler,
+controller, event store, runtime dispatch/recovery, workflow, and graph read
+routes. There is no mutable global registry and domain code does not construct a
+fallback catalog.
+
+**Command to event:**
+
+```text
+API/runtime input
+  → catalog.resolve_command(name)
+  → specification validates one concrete command model
+  → typed handler applies domain rules
+  → owning EventSpecification creates HydratedEvent with concrete StrictPayload
+  → GraphEventStore serializes complete generation-2 StoredEventEnvelope JSON
+```
+
+**Stored event to projection:**
+
+```text
+events_v2 row
+  → validate universal StoredEventEnvelope
+  → verify payload_schema_generation == 2
+  → injected catalog resolves the durable event name
+  → owning specification hydrates the concrete payload exactly once
+  → typed reducer receives that model and EventMetadata
+```
+
+Corrupt stored JSON or payload validation raises
+`EventPayloadCorruptionError` with run ID, position, event type, and detail. A
+generation mismatch raises `IncompatibleGraphPayloadGenerationError` with run,
+position, expected generation 2, and observed generation. Unknown names and
+duplicate specifications have explicit catalog errors; none fall back to raw
+dictionary handling.
+
+Projection-neutral and audit events are explicit catalog specifications with
+`ProjectionParticipation.NEUTRAL`. They use the same creation, persistence,
+hydration, schema-generation, and coverage path as mutating events; only their
+graph reducer is neutral.
+
+`GraphEventStore.read_run()` returns complete hydrated events.
+`read_run_light()`, `read_run_summary_rebuild()`, `read_run_projection()`, and
+`read_run_node_detail()` retain those complete payloads, while checkpoints
+serialize typed projection records. API presentation summaries happen after
+hydration. The former four payload-field allowlists and partial reconstruction
+paths are deleted.
+
+**Maintenance rule:** add or change a field, event, or command in its owning
+domain model/specification and behavior tests. Never add a central event-name or
+command-name conditional, and never mirror payload fields into storage/read
+lists. Generic catalog contracts automatically cover serialization, hydration,
+strictness, and registration. Physical promotion of measured JSON fields to
+columns remains deferred to
+`docs/dynamic-graph/post-w5-event-column-promotion.md`.
+
+W5's final source commits are `b63146d9b` (legacy graph effects adapter
+removal) and `0289de70c` (typed payload-consumer enforcement). Production
+consumers receive concrete models directly; there is no production
+payload JSON compatibility adapter. Latest independent evidence is 1,083 graph tests
+and 5,101 passed / 5 skipped / 3 warnings in the full suite, with a 44-event /
+23-command catalog and every measured architecture and compatibility metric at
+zero.
 
 ---
 
@@ -641,7 +719,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/graph/decisions` | Graph human decisions, appeals, and review readiness |
 | GET | `/api/runs/{id}/graph/patches` | Graph patch proposal/result readback |
 | GET | `/api/runs/{id}/graph/final-blockers` | Typed final invariant blocker readback |
-| POST | `/api/runs/{id}/graph/outbox/requeue/{event_id}` | Requeue a failed graph outbox side-effect row and append an audit event |
+| POST | `/api/runs/{id}/graph/outbox/requeue/{event_id}` | Requeue a failed graph outbox row and persist a typed `OutboxRequeued` workflow event in run activity audit history |
 | GET | `/api/runs/{id}/graph/regions` | Graph task-region state and blocker readback |
 | GET | `/api/runs/{id}/graph/file-state` | Graph file-state boundary and residue report |
 | GET | `/api/runs/{id}/graph/nodes/{node_id}` | Graph node detail with inputs, outputs, callbacks, and file-state facts |

@@ -30,3 +30,5 @@
 ## Outcome
 
 Implementation and every required verification gate are green. The combined Task 4/6 change was committed as `14c32a73c` (single combined commit; the plan prescribed one commit per domain). Independently re-verified 2026-07-12: codemod assert-clean and inventory checks for both domains, architecture guard, 416 targeted tests, Ruff, Pyright 0 errors, full suite 4,733 passed / 5 skipped.
+> Historical Tasks 4/6 evidence. The "until Task 9" wording was superseded;
+> D1-D6 remained through Task 12 and were deleted by Task 13.

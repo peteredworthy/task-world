@@ -1,127 +1,69 @@
 # GraphProjection Map Inventory
 
-This inventory covers map-shaped `GraphProjection` state and the nested
-map-like projection models used by `src/orchestrator/graph/models.py`,
-`src/orchestrator/graph/projections.py`, and `src/orchestrator/graph/_commands.py`.
+**Status:** Refreshed after the W5 strict payload cutover
 
-Outer `dict[id, ...]` indexes remain maps because graph ids are dynamic. The
-decision column describes whether the value shape is typed, restore-filtered,
-public JSON, or intentionally flexible.
+`GraphProjection` remains a `TypedDict` because its outer keys are named graph
+indexes and most nested maps are dynamic `id -> value` lookups. W5 did not try
+to eliminate dictionaries that represent indexes, public JSON, patch values,
+or intentionally opaque provider metadata. It eliminated raw event/command
+payload boundaries, legacy payload parsing, payload-shaped untyped projection
+records, and partial-read field mirrors.
 
-## GraphProjection State
+## Projection Value Classes
 
-| Field | Classification | Decision | Rationale |
-|---|---|---|---|
-| `node_states` | derived structural state | Keep map; restore-filtered | Dynamic `node_id -> state`; checkpoint restore drops non-string keys and non-`NodeState` values. |
-| `task_states` | derived structural state | Keep map; restore-filtered | Dynamic `task_region_id -> state`; checkpoint restore drops values outside the task-state set. |
-| `leases` | already sufficiently constrained by Pydantic | Typed | Values are `LeaseProjection`; malformed checkpoint entries are dropped. `resource_claims` is now `list[ResourceClaimProjection]`. |
-| `node_kinds` | derived structural state | Keep map; restore-filtered | Dynamic `node_id -> kind`; checkpoint restore drops values outside `NodeKind`. |
-| `node_roles` | derived structural state | Keep map; restore-filtered | Roles are extensible strings; checkpoint restore keeps only `str -> str`. |
-| `node_creation_positions` | derived structural state | Keep map; restore-filtered | Primitive ordering index; checkpoint restore keeps only `str -> int` and excludes bools. |
-| `node_task_regions` | derived structural state | Keep map; restore-filtered | Primitive `node_id -> task_region_id`; checkpoint restore keeps only `str -> str`. |
-| `node_attempts` | derived structural state | Keep map; restore-filtered | Primitive `node_id -> attempt_number`; checkpoint restore keeps only real ints. |
-| `node_candidates` | derived structural state | Keep map; restore-filtered | Primitive `node_id -> candidate_id`; checkpoint restore keeps only `str -> str`. |
-| `node_failed_candidates` | derived structural state | Keep map; restore-filtered | Primitive `node_id -> failed_candidate_id`; checkpoint restore keeps only `str -> str`. |
-| `node_resource_claims` | derived structural state | Converted to Pydantic values | Now `dict[str, list[ResourceClaimProjection]]`; malformed historical claim shapes are dropped, scheduler-invalid but structurally valid claims are preserved, and checkpoint/view output remains JSON dicts. |
-| `node_allowed_actions` | derived structural state | Keep map; restore-filtered | Extensible action names; checkpoint restore keeps only `str -> list[str]`. |
-| `node_preconditions` | derived structural state | Keep map; restore-filtered | Extensible scheduler preconditions; checkpoint restore keeps only `str -> list[str]`. |
-| `node_command_definitions` | flexible metadata bag | Explicit raw-value alias; restore-filtered outer shape | Command definitions carry provider-specific command metadata. The projection uses `CommandDefinitionProjection = dict[str, Any]` to make the flexible value explicit; restore keeps only `str -> dict` entries. |
-| `node_output_ports` | derived structural state | Keep nested map; restore-filtered | Compact `node_id -> port -> record_ids` lookup; checkpoint restore keeps only nested string lists. |
-| `accepted_output_records_by_node_port` | already sufficiently constrained by TypedDict/Pydantic | Typed | Nested dynamic index whose leaf uses `AcceptedOutputRecord` with typed `OutputRecordPayload`; checkpoint restore validates payloads. |
-| `accepted_record_summaries_by_id` | already sufficiently constrained by TypedDict/Pydantic | TypedDict public summary; restore-filtered | `GraphRecordSummary` stores selected scalar summary fields, preserves public JSON shape, and checkpoint restore keeps only known primitive fields. |
-| `output_records_by_node_port` | already sufficiently constrained by Pydantic | Typed | Nested dynamic index whose leaf is `OutputRecordPayload`; checkpoint restore validates payloads. |
-| `edges` | already sufficiently constrained by Pydantic | Typed | Values are `EdgeProjection`; selectors are normalized and malformed checkpoint entries are dropped. Edge metadata remains flexible by design. |
-| `input_bindings` | already sufficiently constrained by Pydantic | Typed | Nested dynamic index whose leaf is `InputBindingProjection`; malformed checkpoint entries are dropped. |
-| `node_pending_appeals` | derived structural state | Keep map; restore-filtered | Sparse `node_id -> bool` flag. |
-| `node_gate_decisions` | derived structural state | Keep map; restore-filtered | Sparse `node_id -> bool` gate result. |
-| `task_candidates` | already sufficiently constrained by Pydantic | Typed | Values are `list[CandidateProjection]`; malformed checkpoint entries are dropped. |
-| `verifier_verdicts` | already sufficiently constrained by Pydantic | Typed | Values are `VerifierVerdictProjection`; malformed checkpoint entries are dropped. |
-| `passed_verification_results_by_record_id` | already sufficiently constrained by Pydantic | Typed | Values are `VerificationResultProjection`; malformed checkpoint entries are dropped. |
-| `failed_verification_results_by_record_id` | already sufficiently constrained by Pydantic | Typed | Values are `VerificationResultProjection`; malformed checkpoint entries are dropped. |
-| `failed_verification_candidate_ids` | derived structural state | Keep map; restore-filtered | JSON-friendly set-as-map. Checkpoint restore keeps only `str -> bool`; no richer value shape. |
-| `recovery_nodes_by_record_id` | derived structural state | Converted to strict Pydantic values | Values are now `list[RecoveryNodeIndexEntry]`; malformed historical entries are dropped, unknown checkpoint keys are ignored, required strings must be non-empty, and checkpoint output remains dict-shaped. |
-| `check_results` | already sufficiently constrained by Pydantic | Typed | Values are `CheckResultProjection`; malformed checkpoint entries are dropped. |
-| `invalid_test_blocks` | already sufficiently constrained by Pydantic | Typed | Values are `InvalidTestBlockProjection`; malformed checkpoint entries are dropped. |
-| `configured_gates` | derived structural state | Keep nested map; restore-filtered | Dynamic `task_region_id -> gate_id -> bool` matrix. |
-| `gate_decisions` | derived structural state | Keep nested map; restore-filtered | Dynamic `task_region_id -> gate_id -> bool` matrix. |
-| `environment_failures` | already sufficiently constrained by Pydantic | Typed | Values are `EnvironmentFailureProjection`; malformed checkpoint entries are dropped. |
-| `file_state_records` | already sufficiently constrained by Pydantic | Typed | Values are `FileStateRecord`; malformed checkpoint entries are dropped. |
-| `planner_successors` | derived structural state | Keep map; restore-filtered | Primitive planner successor lookup. |
-| `accepted_graph_patches_by_node` | derived structural state | Keep map; restore-filtered | Primitive patch id history by planner node. |
-| `accepted_no_successor_patches_by_node` | derived structural state | Keep map; restore-filtered | Primitive no-successor patch id history. |
-| `accepted_no_successor_patch_ids_by_node` | derived structural state | Keep map; restore-filtered | Primitive latest no-successor patch id. Consolidation would be a separate cleanup. |
-| `latest_routine_snapshot_record` | derived structural state | Converted to strict Pydantic value | Now `LatestRoutineSnapshotRecord | None`; malformed checkpoint entries are dropped, unknown checkpoint keys are ignored, required strings must be non-empty, and JSON output remains dict-shaped. |
-| `planner_generations` | derived structural state | Keep map; restore-filtered | Primitive generation counter map. |
-| `planner_sessions` | derived structural state | Keep map; restore-filtered | Primitive planner-node to session id map. |
-| `planner_session_states` | derived structural state | Keep map; restore-filtered | Session states remain extensible strings; checkpoint restore keeps only `str -> str`. |
-| `planner_session_current_nodes` | derived structural state | Keep map; restore-filtered | Primitive session to current planner node map. |
-| `planner_session_carryovers` | derived structural state | Keep map; restore-filtered | Primitive session to optional carryover record id map. |
-| `planner_region_labels` | derived structural state | Keep map; restore-filtered | Primitive planner-node to display label map. |
-| `requirement_revisions` | already sufficiently constrained by Pydantic | Typed | Values are `RequirementRevisionProjection`; malformed checkpoint entries are dropped. |
-| `active_requirement_versions` | derived structural state | Keep map; restore-filtered | Primitive requirement id to active version id map. |
-| `support_evidence` | already sufficiently constrained by Pydantic | Typed | Values are `SupportEvidenceProjection`; malformed checkpoint entries are dropped. |
-| `last_deferred_reasons` | derived structural state | Keep map; restore-filtered | Primitive scheduler annotation map. |
-| `retry_not_before_by_node` | derived structural state | Keep map; restore-filtered | Primitive node to nullable timestamp string map. |
-| `node_creation_payloads` | already sufficiently constrained by Pydantic | Typed | Values are `NodeCreationProjection`; `resource_claims` is now `list[ResourceClaimProjection]`. |
-| `output_record_payloads` | already sufficiently constrained by Pydantic | Typed | Values are `OutputRecordPayload`; malformed checkpoint entries are dropped. |
-| `approval_decisions` | already sufficiently constrained by Pydantic | Typed | Values are `ApprovalDecisionProjection`; malformed checkpoint entries are dropped. |
-| `authority_decisions` | already sufficiently constrained by Pydantic | Typed | Values are `AuthorityDecisionProjection`; malformed checkpoint entries are dropped. |
-| `oversight_decisions` | already sufficiently constrained by Pydantic | Typed | Values are `OversightDecisionProjection`; malformed checkpoint entries are dropped. `scope` remains a flexible decision metadata bag. |
-| `decision_request_details` | already sufficiently constrained by Pydantic | Typed | Values are `PendingGateDecisionProjection`; malformed checkpoint entries are dropped. |
-| `callback_idempotency_events` | already sufficiently constrained by Pydantic | Typed | Values are `CallbackIdempotencyEvent`; malformed checkpoint entries are dropped. |
-| `open_proposal_blockers` | already sufficiently constrained by TypedDict/Pydantic | Keep TypedDict map; restore-filtered | Values use `FinalInvariantBlocker`, a public final-invariant view shape with heterogeneous blocker kinds. Checkpoint restore keeps known primitive fields, filters `support_ids` to strings, and drops entries missing `kind` or `reason`. |
-| `suspect_node_reasons` | derived structural state | Keep map; restore-filtered | Primitive node to reason map. |
-| `authority_revision_blockers` | already sufficiently constrained by TypedDict/Pydantic | Keep TypedDict map; restore-filtered | Same `FinalInvariantBlocker` public view shape as proposal blockers. Checkpoint restore keeps known primitive fields, filters `support_ids` to strings, and drops entries missing `kind` or `reason`. |
-| `cleanup_requested_events` | already sufficiently constrained by Pydantic | Typed | Values are `CleanupRequestedProjection`; malformed checkpoint entries are dropped. |
-| `cleanup_applied_ids` | derived structural state | Keep map; restore-filtered | JSON-friendly set-as-map. |
+| Classification | Current examples | Decision |
+|---|---|---|
+| Primitive dynamic indexes | node/task states, kinds, roles, positions, task regions, attempts, candidates, planner successor/session indexes, active requirement versions, retry times | Keep typed maps such as `dict[str, str]`, `dict[str, int]`, and nested primitive maps. Checkpoint restore validates their shape. |
+| Concrete projection records | `LeaseProjection`, `EdgeProjection`, `InputBindingProjection`, `CandidateProjection`, `VerifierVerdictProjection`, `VerificationResultProjection`, `CheckResultProjection`, `InvalidTestBlockProjection`, `EnvironmentFailureProjection`, `RequirementRevisionProjection`, `SupportEvidenceProjection`, `CleanupRequestedProjection` | Store concrete validated values rather than payload dictionaries. |
+| Strict business records | `OutputRecordPayload`, `FileStateRecord`, `NodeCreationProjection`, `ApprovalDecisionProjection`, `AuthorityDecisionProjection`, `OversightDecisionProjection`, `PendingGateDecisionProjection`, `CallbackIdempotencyEvent` | Preserve the owning typed record through projection and checkpoint paths. |
+| Typed index helpers | `ResourceClaimProjection`, `AcceptedOutputRecord`, `RecoveryNodeIndexEntry`, `LatestRoutineSnapshotRecord`, planner map wrappers | Retain explicit models/wrappers where leaf shape or restore semantics are richer than primitives. |
+| Public view records | `GraphRecordSummary`, `FinalInvariantBlocker`, topology/scheduler/decision views | Keep closed `TypedDict` or Pydantic response shapes where JSON output is the contract. |
 
-## Nested Models And Public Views
+The outer indexes remain maps because node IDs, record IDs, lease IDs, regions,
+ports, and requirements are runtime data. This is not raw payload dispatch.
 
-| Location | Classification | Decision | Rationale |
-|---|---|---|---|
-| `TypedRecordBase.payload`, `TypedRecordBase.provenance` | direct copied event payload | Intentionally raw | Forward-compatible event/record envelope metadata. |
-| `EventEnvelope.payload` | direct copied event payload | Intentionally raw | Central event envelope dispatches heterogeneous event payloads. Discriminated event payload models would be a larger API-boundary project. |
-| `OutputRecord.value`, `LegacyOutputRecord.value`, generic output payload helpers | direct copied event payload | Intentionally raw | Generic and legacy outputs must preserve arbitrary record values. |
-| `ResourceClaimProjection` | already sufficiently constrained by Pydantic | Converted | Projection-state claim shape that normalizes legacy `path` claims while preserving scheduler-invalid but structurally valid claims for scheduler readiness decisions. |
-| `ResourceClaim` | already sufficiently constrained by Pydantic | Keep strict | Command/patch model claim shape; external claims still require `external_resource_key`. |
-| `LeaseProjection.resource_claims` | derived structural state | Converted | Now `list[ResourceClaimProjection]`; scheduler command output still serializes claims as JSON dicts. |
-| `NodeCreationProjection.resource_claims` | direct copied event payload | Converted | Now `list[ResourceClaimProjection]`; direct event payload compatibility is preserved through legacy normalization. |
-| `NodeCreationProjection.decision_request`, `authority_request_record`, `authority_request`, `authority` | direct copied event payload | Intentionally raw for now | These fields copy command/event request payloads and are normalized into separate request records where needed. |
-| `NodeCreationProjection.command_definition` | flexible metadata bag | Explicit raw-value alias | Uses `CommandDefinitionProjection = dict[str, Any]`; command-binding definitions are provider-specific metadata and are separately checked by command-binding helpers. |
-| `EdgeProjection.accepted_record_selector` | already sufficiently constrained by Pydantic normalization | Keep JSON dict | Stored as JSON dict to preserve topology/checkpoint shape, but creation normalizes through `RecordSelector`. |
-| `EdgeProjection.purpose`, `description`, `selection`, `binding_policy`, `freshness_policy`, `prompt_hydration_policy`, `metadata` | flexible metadata bag | Intentionally raw | Edge policy/metadata fields are intentionally extensible and public topology output must remain dict-shaped. |
-| `InputBindingProjection.record_bound_positions` | derived structural state | Keep primitive map | Dynamic `record_id -> position` map; Pydantic validates the value type. |
-| `VerificationReportValue.grades` | public view/output shape | Intentionally raw for now | Verifier grade rows are heterogeneous public output from agent reports; typing them would require a separate report schema pass. |
-| `OversightDecisionProjection.decider`, `scope` and approval/authority decision `scope` fields | public view/output shape | Keep flexible metadata | Decision actor/scope values are exposed as JSON and may contain human/agent metadata beyond the current reducer needs. |
-| `CompletionDecisionValue.blockers` | public view/output shape | Keep TypedDict-compatible JSON | Final invariant blockers are typed in projection views as `FinalInvariantBlocker`; completion records preserve public JSON. |
-| `CheckResultValue.command`, `environment_policy`, `command_binding` | direct copied event payload | Intentionally raw | Command execution output stores command metadata and environment policy from command binding/runtime layers. |
-| `GraphPatchProposalValue.ops`, `macro_invocations`, `PatchOp.node`, `PatchOp.selection`, `PatchOp.metadata` | direct copied event/command payload | Intentionally raw | Patch operations are validated by patch-validator and macro expansion; public command JSON must be preserved. |
-| `GraphPatchResultRecord.diagnostics`, `read_set_diff` and `GraphPatchAttempt.diagnostics`, `read_set_diff` | public view/output shape | Intentionally raw | Diagnostics and read-set diffs are public troubleshooting payloads whose keys vary by validator result. |
-| `RecoveryPlanValue.graph_changes` | public view/output shape | Intentionally raw | Recovery plans summarize patch-like changes as JSON output; no stable richer schema in this pass. |
-| `CallbackEnvelope.records` | direct copied event payload | Intentionally raw | External callbacks submit heterogeneous output records; per-record validation happens after callback acceptance. |
-| `GraphTopologyNode.contract`, `GraphTopologyEdge.accepted_record_selector`, `metadata`, `source_port_contract`, `target_port_contract` | public view/output shape | Keep TypedDict JSON | Topology endpoints intentionally expose JSON dictionaries for contract and selector summaries. |
-| `GraphPatchAttempt` | public view/output shape | Keep TypedDict JSON | Public patch-attempt read model must remain dict-shaped for API/read-model consumers. |
-| `project_planner_chain`, `project_planner_session`, `project_node_metadata`, `project_planner_freshness_packet`, `project_pattern_library`, `project_gatekeeper_report`, `project_residue_report` | public view/output shape | Keep JSON dicts | These are read-model/API output shapes. They may gain additional TypedDicts later, but external JSON shape should not change. |
+## Intentionally Flexible Nested Values
 
-## Current Pass Summary
+These values remain dictionary-shaped by design and must not be described as
+untyped event envelopes:
 
-Converted or hardened in this pass:
+- command definitions and provider-specific command metadata;
+- patch operations, macro inputs, diagnostics, and read-set differences;
+- edge metadata, contracts, selectors, and policy objects;
+- decision actor/scope metadata;
+- check command/environment metadata;
+- callback-submitted heterogeneous record lists before per-record validation;
+- public topology and presentation JSON.
 
-1. `GraphProjection.node_resource_claims`, `LeaseProjection.resource_claims`,
-   and `NodeCreationProjection.resource_claims` now use
-   `ResourceClaimProjection`; strict command/patch validation remains on
-   `ResourceClaim`.
-2. `GraphProjection.recovery_nodes_by_record_id` now stores
-   `RecoveryNodeIndexEntry` Pydantic values.
-3. `GraphProjection.latest_routine_snapshot_record` now stores a
-   `LatestRoutineSnapshotRecord` Pydantic value.
-4. Remaining primitive checkpoint maps listed above now restore through
-   explicit shape filters instead of raw checkpoint merge-through.
-5. Related primitive checkpoint fields that can corrupt map consumers
-   (`run_state`, `ready_nodes`, `completion_decision_passed`,
-   `passed_verification_candidate_ids`, and `planner_generation_budget`) are
-   also restore-filtered.
+Where the value is JSON, current closed models use `JsonValue` rather than a
+catch-all top-level payload field. Flexible nested business values are named
+fields owned by a specific model or validation layer. W5's strict payload rule
+does not claim every nested dictionary was removed.
 
-Intentionally raw maps remain only where the payload is an external/public
-JSON shape, a direct heterogeneous event payload, or a broad metadata bag whose
-schema is owned by another validator layer.
+## Event And Read Boundaries
+
+The pre-W5 `EventEnvelope.payload` raw-dispatch description is superseded.
+Current persistence uses `StoredEventEnvelope` only at the JSON boundary and
+returns `HydratedEvent` with one concrete `StrictPayload`. The injected catalog
+validates generation 2 and hydrates once before typed reducer dispatch. There
+are no legacy output-record models/helpers in the current path and no
+`reduce_legacy_event` fallback.
+
+`GraphEventStore.read_run()` is the complete hydrated baseline.
+`read_run_light()`, `read_run_summary_rebuild()`, `read_run_projection()`, and
+`read_run_node_detail()` delegate to the complete read. Projection/checkpoint
+serialization preserves typed projection records, and API presentation
+summaries are applied only after hydration. No path mirrors payload fields into
+a hand-maintained allowlist.
+
+Task 11 verified payload parity for all five readers:
+
+| Workload | Rows | Payload bytes per reader | Median allocated peak range |
+|---|---:|---:|---:|
+| Fixture scale, 64 KiB heavy payload every second row | 300 | 19,731,738 | 60,304,850-60,309,546 bytes |
+| Generated, 128 KiB heavy payload every second row | 1,000 | 131,308,839 | 397,651,584-397,744,576 bytes |
+
+Payload parity was true for every semantic reader. Physical optimization based
+on these measurements remains deferred to
+`post-w5-event-column-promotion.md`; it must not reintroduce mirrored field
+lists.

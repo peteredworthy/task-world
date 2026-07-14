@@ -12,7 +12,8 @@ Closed:
 - Failed attempts use exponential backoff plus stable jitter.
 - Pending rows with future `next_attempt_at` are not claimed.
 - Failed outbox rows are visible through graph final blockers.
-- Operators can requeue a failed row through the graph API with an audit event.
+- Operators can requeue a failed row through the graph API with a typed
+  `OutboxRequeued` workflow event persisted into run activity audit history.
 - The graph driver waits for future outbox retry times before declaring a run blocked.
 
 Out of scope and still open as a separate performance improvement:
@@ -47,11 +48,12 @@ Evidence:
    already has the right shape (check `api/routers/graph.py` and the projection/store
    read model it uses). A run with failed outbox rows must be visibly blocked, not
    silently quiescent.
-3. **Requeue.** Operator endpoint (follow existing graph router conventions) that
-   resets a `failed` row to `pending` with attempts zeroed and an audit trail (either
-   an outbox column or a graph event — match whichever the codebase already uses for
-   operator actions). Executors are already documented at-least-once/idempotent, so
-   requeue is safe by contract.
+3. **Requeue.** `POST /api/runs/{run_id}/graph/outbox/requeue/{event_id}` resets a
+   `failed` row to `pending`, zeroes attempts, and atomically persists the typed
+   `OutboxRequeued` workflow event through `events_v2`; it is therefore visible in
+   the run activity audit rather than represented as an untyped graph payload.
+   Executors are already documented at-least-once/idempotent, so requeue is safe by
+   contract.
 
 Out of scope: batch/parallel claiming (improvement #7's parallelism half) — separate
 slice, do not mix in.

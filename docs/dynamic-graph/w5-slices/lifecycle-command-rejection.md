@@ -1,5 +1,8 @@
 # Lifecycle, Callback, Retry, and Audit Event Payloads
 
+> Superseded compatibility-first slice. W5 deleted the referenced allowlists,
+> catch-all `extra` fields, and legacy normalizers during the strict cutover.
+
 ## Scope
 
 Type the payloads for `run_lifecycle_changed`, `command_rejected`,

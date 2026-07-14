@@ -1,62 +1,73 @@
-# W5 Strict Cutover Continuation — Orchestrator Agent Prompt (Task 5 onward)
+# W5 Strict Cutover Historical Handoff
 
-You are the orchestrator finishing the W5 strict payload architecture cutover in the task-world dynamic graph kernel. You coordinate; sub-agents read and edit. Keep your own context small: never open `_commands.py`, `projections.py`, `models.py`, or `store.py` yourself — sub-agents do, and return summaries. Your durable state is `.superpowers/sdd/progress.md` and `docs/dynamic-graph/w5-progress-ledger.md`, not your conversation.
+This document is a completed historical handoff, not an execution prompt.
+The W5 strict payload architecture work queue is empty.
 
-## Authoritative documents (read in this order before anything else)
+## Authoritative Closure Documents
 
-1. `.superpowers/sdd/progress.md` — what is done, with commits.
-2. `docs/superpowers/plans/2026-07-10-w5-strict-payload-architecture-cutover.md` — the plan. Read the **Global Constraints**, the **Deferred Compatibility Cleanup Register (D1–D6)**, and the task section you are about to execute. Do not read all 15 task sections at once.
-3. `docs/dynamic-graph/w5-progress-ledger.md` — strict-cutover section at the bottom.
+1. `.superpowers/sdd/progress.md` records the completed task sequence.
+2. `docs/superpowers/plans/2026-07-10-w5-strict-payload-architecture-cutover.md`
+   records the final register and acceptance checklist.
+3. `docs/dynamic-graph/w5-progress-ledger.md` records slice evidence.
+4. `docs/dynamic-graph/complete/w5-typed-payloads-spec.md` is the closed spec.
+5. `docs/dynamic-graph/w5-task14-closeout-report.md` records final metrics.
 
-## Current state (verified 2026-07-12, worktree HEAD `14c32a73c`)
+## Completed State
 
-Done and committed — do NOT redo: Tasks 0, 1, 2, 3, 3.5, 4, 6. The catalog framework, strict `StrictPayload` base, LibCST codemod (`scripts/codemods/w5_strict_payload_cutover.py`), AST inventory (`scripts/w5_payload_ast_inventory.py`), and architecture guard (`scripts/check_graph_payload_architecture.py`) all exist and are green. Baseline is 44 events / 23 commands. Full suite: 4,733 passed, 5 skipped.
+Tasks 5 and 7-14 are complete:
 
-## Queue (execute in order; the outer loop runs until it is empty)
+| Task | Result | Final commit/evidence |
+|---|---|---|
+| 5 | Records, verification, join/final gate, strict `GradeRow` | `d12908002` |
+| 7 | Decisions, requirements, and evidence | `1bd87831b` |
+| 8 | File-state, gatekeeper, and cleanup | `f8e0717cf` |
+| 9 | Non-destructive catalog composition and typed dispatch cutover; D1-D6 retained | `000b19910` |
+| 10 | Catalog injection and generation-2 persistence | `87ecaefad` |
+| 11 | Complete payload reads and typed projection records | `cd795d576` |
+| 12 | Architecture enforcement and change-spread gates | `d5f11382a` |
+| 13 | Branch B fresh initialization, D1-D6 deletion, and strict source cutover | `e63fb41ec`; source repairs `b63146d9b`, `0289de70c` |
+| 14 | Documentation, ledger, and metrics reconciliation | Complete in working tree; no Task14 commit SHA exists |
 
-1. **Task 5** — Records, verification, join, final gate, strict `GradeRow`. Hardest remaining domain; reducer changes are subtle.
-2. **Task 7** — Appeals, decisions, requirements, evidence.
-3. **Task 8** — File-state, gatekeeper, cleanup.
-4. **Task 9** — Catalog composition, typed dispatch, compatibility deletion. **Sweeps the Deferred Compatibility Cleanup Register (D1–D6)** — deleting `reduce_legacy_event`, all alias branches, and running the register grep gate to zero matches is a hard verification requirement here, not a note.
-5. **Task 10** — Inject catalog through composition roots and persistence.
-6. **Task 11** — Complete payload reads; delete the four allowlists; typed projection records.
-7. **Task 12** — Architecture enforcement and change-spread gates.
-8. **Task 13** — Full verification and explicit database cutover (backup first; follow the plan's steps exactly — this is the only destructive step, do not improvise it).
-9. **Task 14** — Documentation, ledger reconciliation, metrics, closure. Check the plan's Final Acceptance Checklist, including the register row.
+Final source evidence after `b63146d9b` and `0289de70c`: exactly 44 event
+specifications and 23 command specifications; every strict/current,
+retired-compatibility, deferred-compatibility, remaining-eligible, second-run,
+and unclassified metric is zero; 1,083 graph tests and 5,101 full-suite tests
+pass (5 skipped, 3 warnings). Task14 remains pending independent documentation
+verification and intentionally has no future commit SHA.
 
-## Handoff facts from completed tasks (paste into relevant sub-agent briefs)
+## Queue
 
-- **Task 5 must NOT re-convert `output_record_accepted`.** Task 3 registered a minimal strict spec in `events/records.py` solely to hydrate compiler output; Task 5 completes its records-domain projection semantics in place.
-- `commands/lease_bridge.py` is deleted; the typed schedule command owns lease scheduling. Do not reintroduce a bridge.
-- **Deferral rule (register discipline):** domain tasks delete an alias's catalog spec and strict-path support only. Legacy branches inside `reduce_legacy_event` and full-history scans stay until Task 9 — durable history must replay until the Task 13 DB cutover. When Task 5/7/8 defers something, the builder must add/complete the matching register row (D3, D4, D5) in the plan and say so in the ledger entry. When Task 9 runs, every row D1–D6 dies and the register grep gate must return empty.
-- The plan's Task 4/6/5/7/8 sections carry dated 2026-07-12 amendments stating exactly what is deferred — sub-agents follow the amended text, not the original.
+Empty. There are no remaining W5 implementation tasks or register rows.
 
-## Ground rules (non-negotiable, paste into every sub-agent prompt)
+## Historical Decisions
 
-- Strict payloads: fixed typed fields, `extra="forbid"`, frozen. No catch-all `extra` maps, no `mode="before"` legacy normalizers in strict models.
-- Never rewrite the event log (`events_v2`). Never touch `orchestrator.db` outside Task 13's explicit scripted steps.
-- Every mechanically eligible edit goes through the LibCST codemod (`--apply`, then `--assert-clean` must be empty); manual edits are for semantics only.
-- TDD per task: RED tests first (record the failure), then GREEN.
-- Work only inside this worktree (`~/.codex/worktrees/f5be/task-world`). Never `cd` to the main project root, never run git operations there, never touch the main `orchestrator.db`, never bind port 8000.
-- Commit per plan step with the plan's commit message; append the ledger entry (task, commit SHA, exact commands + counts, deferrals registered) before popping the next queue item.
-- No "done" without a fresh verifier's named green output.
+- Task 3 registered the initial strict `output_record_accepted` specification;
+  Task 5 completed its records-domain semantics rather than creating another.
+- Domain tasks removed aliases from the catalog/strict path while preserving
+  D1-D6 replay support through Task 12.
+- Task 9 was intentionally non-destructive: it composed the immutable catalog
+  and cut current dispatch to typed specifications but did not sweep D1-D6.
+- Task 13 selected Branch B because no worktree database existed, initialized
+  the current strict schema, then deleted D1-D6 and obtained a zero-match grep.
+- Task 11 deleted all four payload allowlists rather than generating them.
+- Source repair `b63146d9b` removed the legacy graph effects adapter;
+  `0289de70c` enforced typed consumers and removed production adapter use.
 
-## Sub-agent strategy — context, spend, speed
+## Historical Engineering Ground Rules
 
-You manage three budgets. Sub-agents are how you keep all three under control:
+The following rules governed W5 and remain useful architecture constraints;
+they are not future-work instructions:
 
-- **Context**: you never hold file contents. Each sub-agent prompt is self-contained (plan section + ground rules + handoff facts); it returns a summary of files changed, commands run, and pass/fail counts — never diffs or file dumps. If a builder's report exceeds a page, ask it to compress to decisions + evidence.
-- **Spend**: match model to difficulty. Cheap (haiku-class) for surveys, brief extraction, doc/ledger updates, metric counts. Mid (sonnet-class) for verification and ordinary implementation (Tasks 7, 8, 10, 12, 14). Strongest available (opus-class) only where reducer semantics are subtle: Task 5, Task 9, Task 11. Never spend a strong model on doc moves or grep sweeps.
-- **Speed**: default serial — every domain task touches `projections.py` and `models.py`, so concurrent builders conflict. Run in parallel only genuinely disjoint work: e.g. a verification agent on the previous task's commit while a survey agent preps the next task's brief; or Task 12's guard-writing alongside Task 14's doc drafting. Cap at 2 concurrent agents.
-
-Per-task loop:
-
-1. **Brief** (cheap agent): extract the plan's task section + relevant register rows + handoff facts into a one-page brief.
-2. **Build** (model per table above): brief + ground rules. Deliverables: code, RED→GREEN evidence, codemod `--assert-clean` proof, register updates if deferring, one-page report.
-3. **Verify** (fresh mid agent, zero builder context — mandatory): independently rerun and report exact output of: the task's targeted tests; `uv run pytest tests/unit/test_fixture_corpus.py -q`; `uv run pytest tests/ -k graph -q`; `uv run python scripts/check_graph_payload_architecture.py`; codemod `--assert-clean` and `uv run python scripts/w5_payload_ast_inventory.py --check-domain <domain>` for the task's domains; `uv run ruff check .`; `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime`. Before commit on Tasks 9, 11, 13: full `uv run pytest tests/ -q`. For Task 9 additionally: the register grep gate returns no matches. Verdict is PASS or FAIL with evidence; builder self-reports are never sufficient.
-4. **On FAIL**: do not debug in your own context. Send the verifier's failure output to the builder (or a fresh builder with brief + failure). Re-verify with another clean agent. If the same failure survives 3 rounds, split the task into smaller slices and re-enter the loop.
-5. **On PASS**: commit, update `.superpowers/sdd/progress.md` (one line: task, commit, headline counts, deferrals) and append the ledger entry. Pop the next item.
-
-## Outer loop — do not stop early
-
-After every task, re-read `.superpowers/sdd/progress.md` against the queue. Finished ONLY when Tasks 5, 7–14 all have committed, verifier-passed entries; the register grep gate is empty; the plan's Final Acceptance Checklist holds; and the closeout metrics are reported. Context pressure, a stubborn task, or a long session are not reasons to stop: write state to progress.md and continue. If interrupted or compacted, your first action on resume is to re-read progress.md, the plan's register, and this prompt, then re-enter the loop at the first incomplete queue item.
+- Strict payloads use fixed fields, `extra="forbid"`, and frozen models; no
+  catch-all top-level extras or compatibility `mode="before"` normalizers.
+- Current event and command paths use domain-owned specifications and injected
+  catalog composition, never a mutable global registry or central name switch.
+- Storage uses generation-2 envelopes and one-time hydration; all semantic read
+  modes retain complete payloads.
+- Mechanically recognizable migration edits were performed through the LibCST
+  codemod and checked for clean/idempotent second runs.
+- Verification used fresh context, exact command/count evidence, Ruff, format,
+  Pyright, architecture metrics, and diff checks.
+- Database work followed one explicit path: Branch A verified backup/reset plus
+  fresh initialization, or Branch B absent-database record plus fresh
+  initialization, before compatibility deletion.
