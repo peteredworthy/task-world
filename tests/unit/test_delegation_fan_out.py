@@ -1,7 +1,5 @@
 """Unit tests for fan-out delegation policy primitives."""
 
-from orchestrator.graph import event_payload_json
-
 from orchestrator.config import RunStatus, TaskStatus
 from orchestrator.state import Run, TaskState
 from orchestrator.workflow import (
@@ -61,7 +59,7 @@ def test_fan_out_policy_waits_while_any_child_is_active() -> None:
 
     assert decision.kind == "wait"
     assert decision.stable_state == "WaitingOnDelegate"
-    assert event_payload_json(decision)["active_child_count"] == 1
+    assert decision.payload["active_child_count"] == 1
 
 
 def test_fan_out_policy_completes_when_all_children_completed() -> None:
@@ -112,7 +110,7 @@ def test_fan_out_parent_completion_can_wait_on_verifier_gate() -> None:
 
     assert decision.kind == "complete"
     assert decision.stable_state == "AwaitingGate"
-    assert event_payload_json(decision)["new_status"] == TaskStatus.VERIFYING.value
+    assert decision.payload["new_status"] == TaskStatus.VERIFYING.value
 
 
 def test_fan_out_start_parent_uses_stable_decision_vocabulary() -> None:

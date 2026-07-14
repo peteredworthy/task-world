@@ -33,6 +33,8 @@ CANONICAL_ROOTS = (
 
 _RULE_METRICS = {
     "W5RAW_PAYLOAD_READ": "event_payload_raw_reads_in_kernel",
+    "W5EVENT_PAYLOAD_JSON_PRODUCTION_USE": "production_event_payload_json_uses",
+    "W5RAW_EVENT_ENVELOPE_SIGNATURE": "raw_event_envelope_signatures",
     "W5RAW_BOUNDARY_DICT": "raw_event_or_command_boundary_dict_annotations",
     "W5DIRECT_DICTIONARY_EVENT": "direct_dictionary_event_construction_sites",
     "W5PAYLOAD_ALLOWLIST": "hand_maintained_payload_field_allowlists",
@@ -46,6 +48,8 @@ EXPECTED_METRICS = {
     "registered_event_specs": 44,
     "registered_command_specs": 23,
     "event_payload_raw_reads_in_kernel": 0,
+    "production_event_payload_json_uses": 0,
+    "raw_event_envelope_signatures": 0,
     "raw_event_or_command_boundary_dict_annotations": 0,
     "direct_dictionary_event_construction_sites": 0,
     "hand_maintained_payload_field_allowlists": 0,

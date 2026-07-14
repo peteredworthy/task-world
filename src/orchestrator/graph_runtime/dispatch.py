@@ -23,6 +23,7 @@ from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.graph import (
     CallbackDuplicateReturnedPayload,
+    CallbackRejectedPayload,
     CheckResultRecord,
     CleanupAppliedPayload,
     CleanupRequestedPayload,
@@ -34,10 +35,10 @@ from orchestrator.graph import (
     OutputRecordAcceptedPayload,
     RequirementRecord,
     StrictFileStateRecord,
+    NodeCreatedPayload,
     check_command_uses_acceptance_fallback,
     initial_projection,
     resolve_check_command_definition,
-    event_payload_json,
 )
 from orchestrator.graph_runtime import prompts as _prompts
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
@@ -928,7 +929,9 @@ def _node_payload(events: Sequence[HydratedEvent], node_id: str) -> dict[str, An
     for event in events:
         if event.event_type != "node_created":
             continue
-        if event_payload_json(event).get("node_id") == node_id:
+        if not isinstance(event.payload, NodeCreatedPayload):
+            raise TypeError("node_created event has an unexpected payload type")
+        if event.payload.node_id == node_id:
             return event.payload.to_json()
     return {"node_id": node_id}
 
@@ -950,21 +953,23 @@ def _requirements_for_node(
     for event in events:
         if event.event_type != "node_created":
             continue
-        requirement_node_id = event_payload_json(event).get("node_id")
-        if not isinstance(requirement_node_id, str) or requirement_node_id not in bound_record_ids:
+        if not isinstance(event.payload, NodeCreatedPayload):
+            raise TypeError("node_created event has an unexpected payload type")
+        payload = event.payload
+        if payload.node_id not in bound_record_ids:
             continue
-        requirement_record = event_payload_json(event).get("requirement_record")
-        if isinstance(requirement_record, dict):
+        if payload.requirement_record is not None:
             try:
-                record = RequirementRecord.model_validate(requirement_record)
+                record = RequirementRecord.model_validate(payload.requirement_record)
             except ValueError:
                 continue
             requirements.append(f"{record.value.id}: {record.value.text}")
             continue
-        requirement = event_payload_json(event).get("requirement")
-        if isinstance(requirement, dict):
-            req = cast(dict[str, Any], requirement)
-            requirements.append(f"{req.get('id', requirement_node_id)}: {req.get('desc', '')}")
+        if payload.requirement is not None:
+            requirement_id = payload.requirement.get("id", payload.node_id)
+            description = payload.requirement.get("desc", "")
+            if isinstance(requirement_id, str) and isinstance(description, str):
+                requirements.append(f"{requirement_id}: {description}")
     if requirements:
         return requirements
 
@@ -980,13 +985,15 @@ def _dynamic_feature_from_events(events: Sequence[HydratedEvent]) -> dict[str, A
     for event in reversed(events):
         if event.event_type != "node_created":
             continue
-        snapshot = event_payload_json(event).get("snapshot")
+        if not isinstance(event.payload, NodeCreatedPayload):
+            raise TypeError("node_created event has an unexpected payload type")
+        snapshot = event.payload.snapshot
         if isinstance(snapshot, dict):
             typed_snapshot = cast(dict[str, Any], snapshot)
             snapshot_feature = typed_snapshot.get("dynamic_feature")
             if isinstance(snapshot_feature, dict):
                 return cast(dict[str, Any], snapshot_feature)
-        payload_feature = event_payload_json(event).get("dynamic_feature")
+        payload_feature = event.payload.dynamic_feature
         if isinstance(payload_feature, dict):
             return cast(dict[str, Any], payload_feature)
     return None
@@ -1019,14 +1026,14 @@ def _callback_conflict_reason(events: list[HydratedEvent]) -> str | None:
     # conflict/staleness, so its prior_result must be inspected rather than
     # assumed to be an acceptance.
     for event in events:
-        if (
-            event.event_type in _CALLBACK_REJECTION_EVENT_TYPES
-            or event.event_type == "command_rejected"
-        ):
-            reason = event_payload_json(event).get("reason")
-            return (
-                str(reason) if isinstance(reason, str) and reason else "unknown callback conflict"
-            )
+        if event.event_type in _CALLBACK_REJECTION_EVENT_TYPES:
+            if not isinstance(event.payload, CallbackRejectedPayload):
+                raise TypeError(f"{event.event_type} event has an unexpected payload type")
+            return event.payload.reason or "unknown callback conflict"
+        if event.event_type == "command_rejected":
+            if not isinstance(event.payload, CommandRejectedPayload):
+                raise TypeError("command_rejected event has an unexpected payload type")
+            return event.payload.reason or "unknown callback conflict"
         if event.event_type == "callback_duplicate_returned":
             if not isinstance(event.payload, CallbackDuplicateReturnedPayload):
                 raise TypeError("callback_duplicate_returned event has an unexpected payload type")
@@ -1117,12 +1124,17 @@ def _rejected_cleanup_already_applied(
     events: list[HydratedEvent],
     cleanup_id: str,
 ) -> bool:
-    return any(
-        event.event_type == "command_rejected"
-        and event_payload_json(event).get("command_type") == "record_cleanup_applied"
-        and event_payload_json(event).get("reason") == f"cleanup already applied: {cleanup_id}"
-        for event in events
-    )
+    for event in events:
+        if event.event_type != "command_rejected":
+            continue
+        if not isinstance(event.payload, CommandRejectedPayload):
+            raise TypeError("command_rejected event has an unexpected payload type")
+        if (
+            event.payload.command_type == "record_cleanup_applied"
+            and event.payload.reason == f"cleanup already applied: {cleanup_id}"
+        ):
+            return True
+    return False
 
 
 async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any]:
@@ -1554,22 +1566,19 @@ def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str]
             "file_state_accepted",
         }:
             continue
-        payload = (
-            event_payload_json(event).get("record", {})
-            if event.event_type == "output_record_accepted"
-            else event_payload_json(event)
-        )
-        if not isinstance(payload, dict):
+        if event.event_type == "output_record_accepted":
+            if not isinstance(event.payload, OutputRecordAcceptedPayload):
+                raise TypeError("output_record_accepted event has an unexpected payload type")
+            record = event.payload.record
+        else:
+            if not isinstance(event.payload, StrictFileStateRecord):
+                raise TypeError("file_state_accepted event has an unexpected payload type")
+            record = event.payload
+        if not isinstance(record, StrictFileStateRecord) or record.record_id not in wanted:
             continue
-        record_payload = cast(dict[str, Any], payload)
-        record_id = record_payload.get("record_id")
-        if not isinstance(record_id, str) or record_id not in wanted:
-            continue
-        snapshot_id = record_payload.get("snapshot_id")
-        git = record_payload.get("git")
-        snapshot_ref = cast(dict[str, Any], git).get("ref") if isinstance(git, dict) else None
-        if isinstance(snapshot_id, str) and isinstance(snapshot_ref, str):
-            return snapshot_id, snapshot_ref
+        snapshot_ref = record.git.ref if record.git is not None else None
+        if record.snapshot_id is not None and snapshot_ref is not None:
+            return record.snapshot_id, snapshot_ref
     return None
 
 

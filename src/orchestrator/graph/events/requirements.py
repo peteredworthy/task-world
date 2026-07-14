@@ -52,7 +52,7 @@ def reduce_requirement_revision(
     )
 
     next_state = copy_projection(state)
-    values = payload.to_json()
+    values = payload.model_dump(mode="python", exclude_none=True)
     classification = requirement_revision_classification(values)
     requires_authority = requires_explicit_requirement_authority(values, classification)
     revision_values: dict[str, Any] = {
@@ -96,7 +96,7 @@ def reduce_support_evidence(
     from orchestrator.graph.projections import support_evidence_from_payload, copy_projection
 
     next_state = copy_projection(state)
-    values = payload.to_json()
+    values = payload.model_dump(mode="python", exclude_none=True)
     values["position"] = metadata.position
     support = support_evidence_from_payload(values)
     if support is not None:

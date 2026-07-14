@@ -1101,6 +1101,177 @@ def _architecture_facts(
 
     facts: list[ArchitectureFact] = []
     deferred: list[ArchitectureFact] = []
+    event_payload_json_targets = frozenset(
+        {
+            "orchestrator.graph.event_payload_json",
+            "orchestrator.graph.specifications.event_payload_json",
+        }
+    )
+    event_envelope_targets = frozenset(
+        {
+            "orchestrator.graph.EventEnvelope",
+            "orchestrator.graph.models.EventEnvelope",
+        }
+    )
+
+    def assigned_names(node: ast.Assign | ast.AnnAssign) -> set[str]:
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        return {target.id for target in targets if isinstance(target, ast.Name)}
+
+    Scope = ast.Module | ast.FunctionDef | ast.AsyncFunctionDef
+
+    def parent_scope(scope: Scope) -> Scope | None:
+        current: ast.AST = scope
+        while current in parsed.parents:
+            current = parsed.parents[current]
+            if isinstance(current, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+                return current
+        return None
+
+    def scope_nodes(scope: Scope) -> Iterable[ast.AST]:
+        """Yield nodes owned by one lexical scope, excluding nested scopes."""
+
+        def visit(node: ast.AST) -> Iterable[ast.AST]:
+            for child in ast.iter_child_nodes(node):
+                if isinstance(
+                    child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
+                ):
+                    continue
+                yield child
+                yield from visit(child)
+
+        yield from visit(scope)
+
+    def scope_bindings(scope: Scope) -> set[str]:
+        bindings = {
+            name
+            for node in scope_nodes(scope)
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            for name in assigned_names(node)
+        }
+        bindings.update(
+            node.name
+            for node in scope.body
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))
+        )
+        bindings.update(
+            alias.asname or alias.name
+            for node in scope_nodes(scope)
+            if isinstance(node, ast.ImportFrom)
+            for alias in node.names
+        )
+        bindings.update(
+            alias.asname or alias.name.split(".")[0]
+            for node in scope_nodes(scope)
+            if isinstance(node, ast.Import)
+            for alias in node.names
+        )
+        if isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            bindings.update(
+                argument.arg
+                for argument in (*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs)
+            )
+        return bindings
+
+    def local_imports(scope: Scope) -> dict[str, str]:
+        imports: dict[str, str] = {}
+        for node in scope_nodes(scope):
+            if isinstance(node, ast.ImportFrom) and node.module is not None:
+                imports.update(
+                    {
+                        alias.asname or alias.name: f"{node.module}.{alias.name}"
+                        for alias in node.names
+                    }
+                )
+            elif isinstance(node, ast.Import):
+                imports.update(
+                    {alias.asname or alias.name.split(".")[0]: alias.name for alias in node.names}
+                )
+        return imports
+
+    imports_by_scope: dict[int, dict[str, str]] = {}
+
+    def imports_for(scope: Scope | None) -> dict[str, str]:
+        if scope is None:
+            return {}
+        key = id(scope)
+        if key not in imports_by_scope:
+            imports = dict(imports_for(parent_scope(scope)))
+            imports.update(local_imports(scope))
+            imports_by_scope[key] = imports
+        return imports_by_scope[key]
+
+    aliases_by_scope: dict[tuple[int, frozenset[str], str], set[str]] = {}
+
+    def resolved_aliases(
+        scope: Scope | None, targets: frozenset[str], fallback_name: str
+    ) -> set[str]:
+        """Resolve aliases within one lexical scope and its lexical parents."""
+
+        if scope is None:
+            return set()
+        cache_key = (id(scope), targets, fallback_name)
+        if cache_key in aliases_by_scope:
+            return aliases_by_scope[cache_key]
+        inherited = resolved_aliases(parent_scope(scope), targets, fallback_name)
+        bindings = scope_bindings(scope)
+        aliases = set(inherited - bindings)
+        imports = imports_for(scope)
+        aliases.update(name for name, target in local_imports(scope).items() if target in targets)
+        if isinstance(scope, ast.Module) and fallback_name not in bindings:
+            aliases.add(fallback_name)
+        changed = True
+        while changed:
+            changed = False
+            for node in scope_nodes(scope):
+                if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+                    continue
+                value_is_target = (
+                    _qualified_call_name(node.value, imports) in targets
+                    or isinstance(node.value, ast.Name)
+                    and node.value.id in aliases
+                )
+                if not value_is_target:
+                    continue
+                before = len(aliases)
+                aliases.update(assigned_names(node))
+                changed = changed or len(aliases) != before
+        aliases_by_scope[cache_key] = aliases
+        return aliases
+
+    def qualified_name(node: ast.expr, scope: Scope | None) -> str | None:
+        return _qualified_call_name(node, imports_for(scope))
+
+    def is_event_payload_json_call(node: ast.Call) -> bool:
+        scope = _owner_function(node, parsed) or parsed.tree
+        return (
+            qualified_name(node.func, scope) in event_payload_json_targets
+            or isinstance(node.func, ast.Name)
+            and node.func.id
+            in resolved_aliases(scope, event_payload_json_targets, "event_payload_json")
+        )
+
+    def annotation_has_event_envelope(annotation: ast.expr | None, scope: Scope) -> bool:
+        if annotation is None:
+            return False
+        if isinstance(annotation, ast.Constant) and isinstance(annotation.value, str):
+            try:
+                return annotation_has_event_envelope(
+                    ast.parse(annotation.value, mode="eval").body, scope
+                )
+            except SyntaxError:
+                return False
+        return (
+            isinstance(annotation, ast.Name)
+            and annotation.id in resolved_aliases(scope, event_envelope_targets, "EventEnvelope")
+            or isinstance(annotation, ast.Attribute)
+            and qualified_name(annotation, scope) in event_envelope_targets
+            or any(
+                annotation_has_event_envelope(child, scope)
+                for child in ast.iter_child_nodes(annotation)
+                if isinstance(child, ast.expr)
+            )
+        )
 
     def add(node: ast.AST, rule: str) -> None:
         facts.append(
@@ -1127,6 +1298,12 @@ def _architecture_facts(
         function_name = _containing_function(node, parsed)
         if isinstance(node, ast.Call):
             if (
+                is_event_payload_json_call(node)
+                and "tests" not in parsed.path.parts
+                and "src" in parsed.path.parts
+            ):
+                add(node, "W5EVENT_PAYLOAD_JSON_PRODUCTION_USE")
+            if (
                 isinstance(node.func, ast.Attribute)
                 and node.func.attr == "get"
                 and isinstance(node.func.value, ast.Attribute)
@@ -1152,6 +1329,13 @@ def _architecture_facts(
         ):
             add_payload_read(node)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if any(
+                annotation_has_event_envelope(argument.annotation, node)
+                for argument in (*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs)
+            ):
+                add(node, "W5RAW_EVENT_ENVELOPE_SIGNATURE")
+            elif annotation_has_event_envelope(node.returns, node):
+                add(node, "W5RAW_EVENT_ENVELOPE_SIGNATURE")
             if node.name == "reduce_event":
                 for branch in (child for child in ast.walk(node) if isinstance(child, ast.If)):
                     if any(

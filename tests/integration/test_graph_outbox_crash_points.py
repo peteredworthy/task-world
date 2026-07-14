@@ -506,14 +506,11 @@ async def test_crash_after_append_before_outbox_starts_agent_restarts_dispatch(
     redispatched = report.redispatched[0]
     assert redispatched.run_id == run_id
     assert redispatched.kind == "agent_dispatch"
-    assert event_payload_json(redispatched)["run_id"] == run_id
-    assert event_payload_json(redispatched)["node_id"] == "worker-1"
-    assert (
-        event_payload_json(redispatched)["lease_id"]
-        == event_payload_json(result.outbox_items[0])["lease_id"]
-    )
-    assert event_payload_json(redispatched)["generation"] == 1
-    assert event_payload_json(redispatched)["classification"] == "agent_dispatch_pending"
+    assert redispatched.payload["run_id"] == run_id
+    assert redispatched.payload["node_id"] == "worker-1"
+    assert redispatched.payload["lease_id"] == result.outbox_items[0].payload["lease_id"]
+    assert redispatched.payload["generation"] == 1
+    assert redispatched.payload["classification"] == "agent_dispatch_pending"
     assert call_log == [result.outbox_items[0].event_id]
     assert await _outbox_statuses(session_factory) == ["completed"]
 
@@ -790,8 +787,8 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         "schedule_tick",
         {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
-    lease_id = str(event_payload_json(first.outbox_items[0])["lease_id"])
-    execution_id = str(event_payload_json(first.outbox_items[0])["execution_id"])
+    lease_id = str(first.outbox_items[0].payload["lease_id"])
+    execution_id = str(first.outbox_items[0].payload["execution_id"])
     started = await controller.handle_command(
         run_id,
         first.projection_position,
@@ -841,7 +838,7 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         "agent_dispatch_requested",
         "node_state_changed",
     ]
-    new_lease_id = str(event_payload_json(relearnt.outbox_items[0])["lease_id"])
+    new_lease_id = str(relearnt.outbox_items[0].payload["lease_id"])
     assert new_lease_id != lease_id
     assert projection_after_relearn["leases"][new_lease_id]["state"] == "active"
     assert call_log == [first.outbox_items[0].event_id, relearnt.outbox_items[0].event_id]

@@ -150,7 +150,7 @@ def _execute_schedule_tick(
     return schedule_tick_effects(
         projection,
         list(events),
-        command.to_json(),
+        command.model_dump(mode="python"),
         context.clock,
         context.id_generator,
         event_factory(context, "schedule_tick"),
@@ -195,7 +195,9 @@ def handle_schedule_tick(
     id_gen: IdGenerator,
 ) -> list[HydratedEvent]:
     del command_type
-    return schedule_tick_effects(projection, events, payload.to_json(), clock, id_gen, make_event)
+    return schedule_tick_effects(
+        projection, events, payload.model_dump(mode="python"), clock, id_gen, make_event
+    )
 
 
 def handle_reconcile(

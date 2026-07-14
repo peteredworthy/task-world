@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, SerializeAsAny
 
-from orchestrator.graph.models import Actor, EventEnvelope
+from orchestrator.graph.models import Actor
 from orchestrator.graph.payloads import JsonValue, StrictPayload
 
 if TYPE_CHECKING:
@@ -112,12 +112,10 @@ class HydratedEvent(BaseModel):
         return self.metadata.timestamp
 
 
-def event_payload_json(event: EventEnvelope | HydratedEvent) -> dict[str, JsonValue]:
+def event_payload_json(event: HydratedEvent) -> dict[str, JsonValue]:
     """Serialize a typed current event at the graph storage boundary."""
 
-    if isinstance(event, HydratedEvent):
-        return event.payload.to_json()
-    return cast(dict[str, JsonValue], event.payload)
+    return event.payload.to_json()
 
 
 class ProjectionParticipation(str, Enum):

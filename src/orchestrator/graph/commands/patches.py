@@ -62,7 +62,7 @@ def _typed_submit(
     return apply_patch_command(
         projection,
         list(events),
-        command.to_json(),
+        command.model_dump(mode="python"),
         event_factory(context, "submit_patch"),
         context.catalog,
         TypedEventCreator(context, assign_position=False),
@@ -87,7 +87,9 @@ def handle_submit_patch(
     del command_type
     del clock
     del id_gen
-    return apply_patch_command(projection, events, payload.to_json(), make_event, catalog, creator)
+    return apply_patch_command(
+        projection, events, payload.model_dump(mode="python"), make_event, catalog, creator
+    )
 
 
 __all__ = [

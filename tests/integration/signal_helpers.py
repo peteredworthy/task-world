@@ -1,7 +1,6 @@
 """Shared signal drain helpers for integration tests."""
 
 from __future__ import annotations
-from orchestrator.graph import event_payload_json
 
 from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
@@ -66,9 +65,9 @@ async def drain_signals(
             resume_strategy: str | None = None
             if signal.payload:
                 if "agent_runner_type" in signal.payload:
-                    agent_runner_type = _AT(event_payload_json(signal)["agent_runner_type"])
-                agent_runner_config = event_payload_json(signal).get("agent_runner_config")
-                resume_strategy = event_payload_json(signal).get("resume_strategy")
+                    agent_runner_type = _AT(signal.payload["agent_runner_type"])
+                agent_runner_config = signal.payload.get("agent_runner_config")
+                resume_strategy = signal.payload.get("resume_strategy")
             if (
                 executor is not None
                 and hasattr(executor, "prepare_worktree")

@@ -85,6 +85,7 @@ __all__ = [
     "build_graph_topology_response",
     "build_scheduler_view_response",
     "build_decision_view_response",
+    "record_decision_rejection_reason",
     "get_codex_models_fn",
     "get_agent_runner_display_name",
     "get_agent_runner_icon",
@@ -119,6 +120,7 @@ _GRAPH_ROUTER_SYMBOLS = {
     "build_graph_topology_response",
     "build_scheduler_view_response",
     "build_decision_view_response",
+    "record_decision_rejection_reason",
     "build_scheduler_view_response_from_snapshot",
     "build_node_detail_response",
     "build_node_detail_response_from_summary",
@@ -131,6 +133,12 @@ def build_graph_patch_attempts_response(*args: Any, **kwargs: Any) -> Any:
     import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
 
     return _graph_router.build_graph_patch_attempts_response(*args, **kwargs)
+
+
+def record_decision_rejection_reason(*args: Any, **kwargs: Any) -> Any:
+    import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
+
+    return _graph_router.record_decision_rejection_reason(*args, **kwargs)
 
 
 def build_final_invariant_blockers_response(

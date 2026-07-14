@@ -37,7 +37,6 @@ from orchestrator.graph.models import (
     DecisionRecord,
     FailureRecord,
     FileStateRecord,
-    GraphPatchAcceptedPayload,
     GraphPatchRejectedPayload,
     LegacyDeadInputPayloadBase,
     OutputRecord,
@@ -45,6 +44,9 @@ from orchestrator.graph.models import (
     PatchOp,
     RecoveryPlanRecord,
     VerificationResultProjection,
+    StrictCheckResultRecord,
+    StrictOutputRecordBase,
+    StrictVerificationReportRecord,
     VerificationReportRecord,
     normalize_record_selector,
     record_selector_matches,
@@ -63,11 +65,14 @@ from orchestrator.graph.events.topology import (
     REVISION_CREATED,
     SESSION_STATE_CHANGED,
     PlannerSessionStateChangedPayload,
+    NodeRetiredPayload,
+    NodeStateChangedPayload,
 )
 from orchestrator.graph.events.records import (
     OUTPUT_RECORD_ACCEPTED,
     VERIFICATION_FAILED,
     VERIFICATION_PASSED,
+    OutputRecordAcceptedPayload,
 )
 from orchestrator.graph.events.decisions import (
     APPEAL_OPENED,
@@ -91,7 +96,6 @@ from orchestrator.graph.specifications import (
     CommandExecutionContext,
     EventSpecification,
     HydratedEvent,
-    event_payload_json,
 )
 from orchestrator.graph.events.leases import (
     LEASE_EXPIRED,
@@ -100,7 +104,11 @@ from orchestrator.graph.events.leases import (
     LEASE_RENEWED,
     LEASE_REVOKED,
 )
-from orchestrator.graph.events.patches import GRAPH_PATCH_ACCEPTED, GRAPH_PATCH_REJECTED
+from orchestrator.graph.events.patches import (
+    GRAPH_PATCH_ACCEPTED,
+    GRAPH_PATCH_REJECTED,
+    GraphPatchAcceptedPayload,
+)
 
 
 class Clock(Protocol):
@@ -179,7 +187,8 @@ def typed_topology_event(
     """Validate a topology effect at its named specification boundary."""
 
     specification = _TOPOLOGY_EVENT_SPECS[event_type]
-    return make_event(event_type, specification.validate_payload(payload).to_json())
+    specification.validate_payload(payload)
+    return make_event(event_type, payload)
 
 
 def _release_active_node_leases(
@@ -447,18 +456,6 @@ def _parse_verification_report_record(
     output = _verification_report_record_payload_for_validation(payload, expected_producer_node_id)
     _canonicalize_verification_record_port(output)
     return VerificationReportRecord.model_validate(output)
-
-
-def _check_result_status_value(payload: dict[str, Any]) -> str:
-    status = payload.get("status")
-    if isinstance(status, str):
-        return status
-    value = payload.get("value")
-    if isinstance(value, dict):
-        value_status = cast(dict[str, Any], value).get("status")
-        if isinstance(value_status, str):
-            return value_status
-    return "unknown"
 
 
 def _check_result_record_payload_for_validation(
@@ -1186,10 +1183,9 @@ def schedule_tick_effects(
         and isinstance(lease.get("node_id"), str)
     ]
     retiring_node_ids = {
-        str(event_payload_json(event)["node_id"])
+        event.payload.node_id
         for event in output
-        if event.event_type == "node_retired"
-        and isinstance(event_payload_json(event).get("node_id"), str)
+        if event.event_type == "node_retired" and isinstance(event.payload, NodeRetiredPayload)
     }
     nodes: list[NodeScheduleInfo] = []
     readied_node_ids: set[str] = set()
@@ -3777,30 +3773,18 @@ def _source_repair_events(
 ) -> list[HydratedEvent]:
     del creator
     typed_source_events = source_events
-    accepted_records = [
-        cast(dict[str, Any], event_payload_json(event)["record"])
-        for event in typed_source_events
-        if event.event_type == "output_record_accepted"
-        and isinstance(event_payload_json(event)["record"], dict)
-        and isinstance(
-            cast(dict[str, Any], event_payload_json(event)["record"]).get("record_id"), str
-        )
-    ]
+    accepted_records: list[StrictOutputRecordBase] = []
+    for event in typed_source_events:
+        if event.event_type != "output_record_accepted":
+            continue
+        if not isinstance(event.payload, OutputRecordAcceptedPayload):
+            raise TypeError("output_record_accepted event has an unexpected payload type")
+        record = cast(Any, event.payload.record)
+        if not isinstance(record, StrictOutputRecordBase):
+            raise TypeError("output_record_accepted event has an unexpected record type")
+        accepted_records.append(record)
     repair_node_ids = {
-        node_id
-        for event in typed_source_events
-        for node_id in (
-            event_payload_json(event).get("proposed_by_node_id"),
-            event_payload_json(event).get("node_id"),
-        )
-        if (
-            event.event_type == "graph_patch_accepted"
-            or (
-                event.event_type == "node_state_changed"
-                and event_payload_json(event).get("new_state") == "completed"
-            )
-        )
-        and isinstance(node_id, str)
+        node_id for event in typed_source_events for node_id in _source_repair_node_ids(event)
     }
     patch_or_completion = bool(repair_node_ids)
     if not accepted_records and not patch_or_completion:
@@ -3810,12 +3794,10 @@ def _source_repair_events(
     active_lease_node_ids = _active_lease_node_ids(scoped_projection)
     output: list[HydratedEvent] = []
     for record in accepted_records:
-        record_id = cast(str, record["record_id"])
-        producer_node_id = record.get("producer_node_id") or record.get("node_id")
-        if not isinstance(producer_node_id, str):
-            continue
-        if _is_check_result_record_payload(record):
-            status = _check_result_status_value(record)
+        record_id = record.record_id
+        producer_node_id = record.producer_node_id
+        if isinstance(record, StrictCheckResultRecord):
+            status = record.value.status
             if status in {"passed", "pass", "ok"}:
                 output.extend(
                     _passed_check_terminalization_events(
@@ -3835,11 +3817,8 @@ def _source_repair_events(
                     )
                 )
             continue
-        if record.get("record_kind") == "verification":
-            verdict = record.get("verdict")
-            value = record.get("value")
-            if verdict is None and isinstance(value, dict):
-                verdict = cast(dict[str, Any], value).get("verdict")
+        if isinstance(record, StrictVerificationReportRecord):
+            verdict = record.outcome or record.verdict or record.value.outcome
             if verdict in {"passed", "pass"}:
                 output.extend(
                     _passed_verification_terminalization_events(
@@ -3868,6 +3847,19 @@ def _source_repair_events(
             )
         )
     return _dedupe_repair_events(output)
+
+
+def _source_repair_node_ids(event: HydratedEvent) -> tuple[str, ...]:
+    if event.event_type == "graph_patch_accepted":
+        if not isinstance(event.payload, GraphPatchAcceptedPayload):
+            raise TypeError("graph_patch_accepted event has an unexpected payload type")
+        return (event.payload.proposed_by_node_id,)
+    if event.event_type == "node_state_changed":
+        if not isinstance(event.payload, NodeStateChangedPayload):
+            raise TypeError("node_state_changed event has an unexpected payload type")
+        if event.payload.new_state == "completed":
+            return (event.payload.node_id,)
+    return ()
 
 
 def _planner_session_state_event(

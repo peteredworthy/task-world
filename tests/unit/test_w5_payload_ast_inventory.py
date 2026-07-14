@@ -126,6 +126,8 @@ EXPECTED_ARCHITECTURE_METRICS = {
     "registered_event_specs": 44,
     "registered_command_specs": 23,
     "event_payload_raw_reads_in_kernel": 0,
+    "production_event_payload_json_uses": 0,
+    "raw_event_envelope_signatures": 0,
     "raw_event_or_command_boundary_dict_annotations": 0,
     "direct_dictionary_event_construction_sites": 0,
     "hand_maintained_payload_field_allowlists": 0,
@@ -138,6 +140,242 @@ EXPECTED_ARCHITECTURE_METRICS = {
     "unclassified_dynamic_event_or_command_sites": 0,
     "retired_payload_compatibility_adapters": 0,
 }
+
+
+def test_architecture_checker_rejects_production_event_payload_json_use(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src/orchestrator/graph_runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def consume(event: HydratedEvent):\n    return event_payload_json(event)\n")
+
+    assert [item.rule for item in check_paths([source])] == ["W5EVENT_PAYLOAD_JSON_PRODUCTION_USE"]
+
+
+def test_architecture_checker_rejects_raw_event_envelope_signature(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/graph/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def consume(event: EventEnvelope | HydratedEvent):\n    return event\n")
+
+    assert [item.rule for item in check_paths([source])] == ["W5RAW_EVENT_ENVELOPE_SIGNATURE"]
+
+
+def test_architecture_checker_allows_terminal_test_payload_serialization(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "tests/unit/test_consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "def test_payload(event: HydratedEvent):\n    assert event_payload_json(event)\n"
+    )
+
+    assert check_paths([source]) == ()
+
+
+def test_architecture_checker_detects_event_payload_json_through_import_and_local_aliases(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src/orchestrator/graph_runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+from orchestrator.graph import event_payload_json as serialize
+import orchestrator.graph as graph
+
+reader = serialize
+
+def consume(event: HydratedEvent):
+    return reader(event), graph.event_payload_json(event)
+"""
+    )
+
+    assert [item.rule for item in check_paths([source])] == [
+        "W5EVENT_PAYLOAD_JSON_PRODUCTION_USE",
+        "W5EVENT_PAYLOAD_JSON_PRODUCTION_USE",
+    ]
+
+
+def test_architecture_checker_detects_qualified_event_payload_json_aliases_at_fixed_point(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src/orchestrator/graph_runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+import orchestrator.graph as graph
+
+reader = graph.event_payload_json
+reader_again = reader
+
+def consume(event: HydratedEvent):
+    return reader_again(event)
+"""
+    )
+
+    assert [item.rule for item in check_paths([source])] == ["W5EVENT_PAYLOAD_JSON_PRODUCTION_USE"]
+
+
+def test_architecture_checker_keeps_function_local_payload_aliases_in_lexical_scope(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src/orchestrator/graph_runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+from orchestrator.graph import event_payload_json
+
+def prohibited(event: HydratedEvent):
+    reader = event_payload_json
+    return reader(event)
+
+def unrelated(event: HydratedEvent):
+    reader = lambda value: value
+    return reader(event)
+"""
+    )
+
+    diagnostics = check_paths([source])
+
+    assert [item.rule for item in diagnostics] == ["W5EVENT_PAYLOAD_JSON_PRODUCTION_USE"]
+    assert diagnostics[0].expression == "reader(event)"
+
+
+def test_architecture_checker_inherits_nested_envelope_aliases_without_leaking_to_siblings(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src/orchestrator/graph/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+from orchestrator.graph import EventEnvelope
+
+def outer():
+    Raw = EventEnvelope
+
+    def prohibited(event: "list[Raw]") -> None:
+        return None
+
+    def unrelated(event: "list[Raw]") -> None:
+        Raw = object
+        return None
+
+def sibling(event: "list[Raw]") -> None:
+    return None
+"""
+    )
+
+    diagnostics = check_paths([source])
+
+    assert [item.rule for item in diagnostics] == ["W5RAW_EVENT_ENVELOPE_SIGNATURE"]
+    assert diagnostics[0].expression.startswith("def prohibited")
+
+
+def test_architecture_checker_local_import_shadows_inherited_envelope_alias(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src/orchestrator/graph/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+from orchestrator.graph import EventEnvelope
+
+def outer():
+    Raw = EventEnvelope
+
+    def unrelated(event: "list[Raw]") -> None:
+        from unrelated import Raw
+        return None
+"""
+    )
+
+    assert check_paths([source]) == ()
+
+
+def test_architecture_checker_detects_raw_event_envelope_signatures_through_aliases_and_returns(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src/orchestrator/graph/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+import typing
+import orchestrator.graph as graph
+from orchestrator.graph.models import EventEnvelope as RawEnvelope
+
+def qualified(event: graph.EventEnvelope) -> None:
+    return None
+
+def aliased(event: typing.Sequence[RawEnvelope]) -> "typing.Optional[RawEnvelope]":
+    return None
+"""
+    )
+
+    assert [item.rule for item in check_paths([source])] == [
+        "W5RAW_EVENT_ENVELOPE_SIGNATURE",
+        "W5RAW_EVENT_ENVELOPE_SIGNATURE",
+    ]
+
+
+def test_architecture_checker_detects_local_and_nested_forward_event_envelope_aliases(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "src/orchestrator/graph/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+from typing import Annotated
+import orchestrator.graph as graph
+
+Raw = graph.EventEnvelope
+RawAgain = Raw
+
+def consume(events: "Annotated[list['RawAgain'] | None, 'history']") -> None:
+    return None
+"""
+    )
+
+    assert [item.rule for item in check_paths([source])] == ["W5RAW_EVENT_ENVELOPE_SIGNATURE"]
+
+
+def test_architecture_checker_allows_unrelated_function_and_type_aliases(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/graph_runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+from typing import Annotated
+
+class EventEnvelope:
+    pass
+
+def encode(event):
+    return event
+
+reader = encode
+Raw = EventEnvelope
+
+def consume(events: "Annotated[list['Raw'], 'metadata']"):
+    return reader(events)
+"""
+    )
+
+    assert check_paths([source]) == ()
+
+
+def test_architecture_checker_allows_unrelated_event_payload_json_attribute(tmp_path: Path) -> None:
+    source = tmp_path / "src/orchestrator/graph_runtime/consumer.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+class Serializer:
+    def event_payload_json(self, event):
+        return event
+
+def consume(event: object):
+    return Serializer().event_payload_json(event)
+"""
+    )
+
+    assert check_paths([source]) == ()
 
 
 def test_architecture_metrics_emit_stable_json_and_separate_deferred_sites() -> None:
@@ -915,7 +1153,7 @@ def test_architecture_checker_keeps_typed_boundaries_clean(
             "unrelated EventEnvelope handler",
             "src/orchestrator/graph/events/example.py",
             "def handle_current(event: EventEnvelope):\n    return event.payload.get('node_id')\n",
-            ("W5RAW_PAYLOAD_READ",),
+            ("W5RAW_EVENT_ENVELOPE_SIGNATURE", "W5RAW_PAYLOAD_READ"),
             "def handle_current(event: HydratedEvent):\n    return event.payload.node_id\n",
         ),
         (
@@ -1145,7 +1383,10 @@ def test_event_envelope_annotation_never_bypasses_raw_read_rule(tmp_path: Path) 
         "def helper(event: EventEnvelope):\n    return event.payload.get('node_id')\n"
     )
 
-    assert [item.rule for item in check_paths([source])] == ["W5RAW_PAYLOAD_READ"]
+    assert [item.rule for item in check_paths([source])] == [
+        "W5RAW_EVENT_ENVELOPE_SIGNATURE",
+        "W5RAW_PAYLOAD_READ",
+    ]
 
 
 def test_hydrated_payload_local_alias_never_bypasses_mapping_read_rule(tmp_path: Path) -> None:
@@ -1247,6 +1488,7 @@ def external_boundary(event: EventEnvelope):
         ("W5RAW_PAYLOAD_READ", str(api), 6),
         ("W5RAW_PAYLOAD_READ", str(api), 11),
         ("W5RAW_PAYLOAD_READ", str(api), 16),
+        ("W5RAW_EVENT_ENVELOPE_SIGNATURE", str(api), 18),
         ("W5RAW_PAYLOAD_READ", str(workflow), 4),
         ("W5RAW_PAYLOAD_READ", str(workflow), 5),
     ]
@@ -1273,7 +1515,10 @@ class Dispatcher:
 
     diagnostics = check_paths([source])
 
-    assert [(item.rule, item.line) for item in diagnostics] == [("W5RAW_PAYLOAD_READ", 9)]
+    assert [(item.rule, item.line) for item in diagnostics] == [
+        ("W5EVENT_PAYLOAD_JSON_PRODUCTION_USE", 8),
+        ("W5RAW_PAYLOAD_READ", 9),
+    ]
 
 
 def test_retry_helper_narrowed_strict_payload_never_bypasses_mapping_read_rule(

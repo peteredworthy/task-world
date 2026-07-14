@@ -891,7 +891,7 @@ async def test_graph_runner_rejects_stale_generation_callback_through_stack(
     await dispatcher.dispatch_pending()
     await asyncio.wait_for(builder.started.wait(), timeout=2)
 
-    dispatch_payload = event_payload_json(scheduled.outbox_items[0])
+    dispatch_payload = scheduled.outbox_items[0].payload
     stale = await controller.handle_command(
         run_id,
         await controller.current_position(run_id),
@@ -967,7 +967,7 @@ async def test_graph_dispatch_requires_base_snapshot_id_without_inventing_identi
         event.event_type in {"callback_accepted", "callback_rejected_stale", "agent_died"}
         for event in events
     )
-    assert not executor.is_running(str(event_payload_json(failed)["execution_id"]))
+    assert not executor.is_running(str(failed.payload["execution_id"]))
 
 
 @pytest.mark.asyncio
@@ -1004,7 +1004,7 @@ async def test_graph_dispatch_carries_projection_base_snapshot_id_to_callback(
     await dispatcher.dispatch_pending()
     await executor.wait_for_all()
 
-    dispatch_payload = event_payload_json(scheduled.outbox_items[0])
+    dispatch_payload = scheduled.outbox_items[0].payload
     events = await _read_events(session_factory, run_id)
     lease_granted = next(event for event in events if event.event_type == "lease_granted")
     assert event_payload_json(lease_granted)["base_snapshot_id"] == "routine-snapshot-record"

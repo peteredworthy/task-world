@@ -33,7 +33,6 @@ from orchestrator.graph import (
     build_graph_command_dependencies,
     ProjectionParticipation,
     EventMetadata,
-    event_payload_json,
 )
 from orchestrator.graph_runtime.store import (
     GRAPH_PAYLOAD_SCHEMA_GENERATION,
@@ -91,7 +90,7 @@ def test_heartbeat_is_native_datetime_until_json_storage_boundary() -> None:
     )
 
     assert event.payload.observed_at == clock.now()
-    assert isinstance(event_payload_json(HEARTBEAT_RECORDED.serialize(event))["observed_at"], str)
+    assert isinstance(HEARTBEAT_RECORDED.serialize(event).payload["observed_at"], str)
 
 
 STRICT_LIFECYCLE_EVENT_SAMPLES: dict[str, tuple[dict[str, Any], str]] = {

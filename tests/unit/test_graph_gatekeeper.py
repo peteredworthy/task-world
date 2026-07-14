@@ -25,6 +25,8 @@ from orchestrator.graph import (
 from orchestrator.graph import build_graph_catalog
 from orchestrator.graph.specifications import CommandExecutionContext
 from orchestrator.graph import StoredEventEnvelope
+from orchestrator.graph.events.topology import NodeReadyPayload
+from orchestrator.graph.specifications import EventMetadata
 
 
 def apply_command(projection, events, command_type, payload, clock, id_gen):
@@ -237,6 +239,33 @@ def test_project_pattern_library_derives_and_merges_globs() -> None:
     assert library["paths"]["reports/a.xml"]["classification"] == "test_artifact"
     assert library["patterns"]["root.py"]["classification"] == "test_artifact"
     assert "*.py" not in library["patterns"]
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload"),
+    (
+        ("file_state_accepted", NodeReadyPayload(node_id="node-1")),
+        ("gatekeeper_verdict_recorded", NodeReadyPayload(node_id="node-1")),
+    ),
+)
+def test_project_pattern_library_fails_closed_for_corrupt_recognized_history(
+    event_type: str, payload: object
+) -> None:
+    corrupt = HydratedEvent(
+        metadata=EventMetadata(
+            event_id="corrupt-1",
+            run_id="run-1",
+            position=1,
+            event_type=event_type,
+            payload_schema_generation=2,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=FakeClock().now(),
+        ),
+        payload=payload,
+    )
+
+    with pytest.raises(TypeError, match=f"{event_type} event has an unexpected payload type"):
+        project_pattern_library([corrupt])
 
 
 def test_record_gatekeeper_verdicts_requires_execution_id() -> None:

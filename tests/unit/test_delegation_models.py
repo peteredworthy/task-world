@@ -1,7 +1,5 @@
 """Unit tests for reusable delegated-work coordination primitives."""
 
-from orchestrator.graph import event_payload_json
-
 from datetime import UTC, datetime
 
 import pytest
@@ -359,7 +357,7 @@ def test_delegation_value_nested_json_fields_are_immutable() -> None:
     with pytest.raises(TypeError):
         work.policy_metadata["nested"]["other"] = "value"
     with pytest.raises(TypeError):
-        event_payload_json(decision)["paths"][0] = "docs/other.json"
+        decision.payload["paths"][0] = "docs/other.json"
 
     assert work.model_dump(mode="json")["policy_metadata"] == {"nested": {"items": ["a"]}}
     assert decision.model_dump(mode="json")["payload"] == {"paths": ["docs/evidence.json"]}

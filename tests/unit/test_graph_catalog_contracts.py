@@ -14,6 +14,7 @@ from orchestrator.graph import (
     DuplicateGraphSpecificationError,
     EventMetadata,
     GraphCatalog,
+    HydratedEvent,
     UnknownGraphCommandError,
     build_graph_catalog,
     initial_projection,
@@ -29,7 +30,8 @@ from orchestrator.graph.specifications import (
     ProjectionParticipation,
     StoredEventEnvelope,
 )
-from orchestrator.graph._commands import _project_with_events
+from orchestrator.graph._commands import _project_with_events, _source_repair_events
+from orchestrator.graph.events.topology import NodeReadyPayload
 from tests.unit.graph_catalog_samples import COMMAND_SAMPLES, EVENT_SAMPLES
 
 
@@ -202,6 +204,33 @@ def test_source_repair_rejects_a_generation_one_current_envelope() -> None:
 
     with pytest.raises(ValueError, match="generation 2"):
         _project_with_events(initial_projection(), [event], catalog)
+
+
+def test_source_repair_fails_closed_for_corrupt_accepted_record_event() -> None:
+    corrupt = HydratedEvent(
+        metadata=EventMetadata(
+            event_id="event-1",
+            run_id="run-1",
+            position=1,
+            event_type="output_record_accepted",
+            payload_schema_generation=2,
+            actor=Actor(kind=ActorKind.SYSTEM),
+            timestamp=datetime(2026, 7, 12, tzinfo=UTC),
+        ),
+        payload=NodeReadyPayload(node_id="node-1"),
+    )
+
+    with pytest.raises(
+        TypeError, match="output_record_accepted event has an unexpected payload type"
+    ):
+        _source_repair_events(
+            initial_projection(),
+            [corrupt],
+            [corrupt],
+            lambda _event_type, _payload: corrupt,
+            build_graph_catalog(),
+            object(),
+        )
 
 
 def test_catalog_rejects_generation_one_stored_events_without_legacy_hydration() -> None:

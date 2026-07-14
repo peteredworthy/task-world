@@ -42,7 +42,6 @@ from orchestrator.graph import (
     StrictFileStateRecord,
     build_projection,
     check_command_reference,
-    event_payload_json,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
     node_contract_summary,
@@ -604,6 +603,22 @@ def build_graph_patch_attempts_response(
             for entry in attempts["attempts"]
         ],
     )
+
+
+def record_decision_rejection_reason(events: Sequence[HydratedEvent]) -> str | None:
+    """Return the typed record-decision rejection reason, failing closed on mismatches."""
+
+    rejection_reason: str | None = None
+    for event in events:
+        if event.event_type == "command_rejected":
+            if type(event.payload) is not CommandRejectedPayload:
+                msg = "command_rejected event has an unexpected payload type"
+                raise TypeError(msg)
+            rejection_reason = event.payload.reason
+        elif isinstance(event.payload, CommandRejectedPayload):
+            msg = "CommandRejectedPayload has an unexpected event type"
+            raise TypeError(msg)
+    return rejection_reason
 
 
 def build_final_invariant_blockers_response(
@@ -1906,18 +1921,14 @@ async def record_graph_decision(
             run_id,
             current_position,
             "record_decision",
-            cast(dict[str, object], request.to_json()),
+            cast(dict[str, object], request.model_dump(mode="json")),
         )
     except StaleProjectionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    rejected = [
-        event_payload_json(event)
-        for event in result.events
-        if event.event_type == "command_rejected"
-    ]
-    if rejected:
-        raise HTTPException(status_code=409, detail=rejected[-1]["reason"])
+    rejection_reason = record_decision_rejection_reason(result.events)
+    if rejection_reason is not None:
+        raise HTTPException(status_code=409, detail=rejection_reason)
 
     response_events = list(result.events)
     events = await graph_store.read_run_light(run_id)

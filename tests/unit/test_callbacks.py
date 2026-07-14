@@ -2,6 +2,8 @@
 
 from typing import Any
 
+import pytest
+
 from orchestrator.graph import (
     Actor,
     ActorKind,
@@ -119,7 +121,7 @@ def test_duplicate_same_payload_returns_prior() -> None:
     assert isinstance(event.payload, CallbackAcceptedPayload)
     assert result.prior_result == {
         "outcome": "callback_accepted",
-        "payload": event.payload.model_dump(mode="json", exclude_none=True),
+        "payload": event.payload.model_dump(mode="json"),
     }
 
 
@@ -137,6 +139,117 @@ def test_duplicate_different_payload_rejected() -> None:
     result = validate_callback(_request(), _projection(), [event])
 
     assert result.outcome == CallbackOutcome.REJECTED_IDEMPOTENCY_CONFLICT
+
+
+def test_corrupt_callback_accepted_history_raises_during_duplicate_validation() -> None:
+    accepted = _event(
+        "callback_accepted",
+        {
+            "node_id": "worker-1",
+            "idempotency_key": "key-1",
+            "payload": {"payload_hash": "hash-a"},
+            "reason": "accepted",
+        },
+    )
+    corrupt = accepted.model_copy(
+        update={
+            "payload": _event(
+                "callback_rejected_conflict",
+                {
+                    "node_id": "worker-1",
+                    "idempotency_key": "key-1",
+                    "payload": {"payload_hash": "hash-a"},
+                    "reason": "conflict",
+                },
+            ).payload
+        }
+    )
+
+    with pytest.raises(TypeError, match="callback_accepted history event"):
+        validate_callback(_request(), _projection(), [corrupt])
+
+
+def test_corrupt_lease_expired_history_raises_during_stale_validation() -> None:
+    expired = _event(
+        "lease_expired",
+        {
+            "lease_id": "lease-1",
+            "node_id": "worker-1",
+            "generation": 1,
+            "execution_id": "exec-1",
+            "reason": "lease_expired_without_callback",
+            "expires_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+    corrupt = expired.model_copy(
+        update={
+            "payload": _event(
+                "callback_accepted",
+                {
+                    "node_id": "worker-1",
+                    "idempotency_key": "key-1",
+                    "payload": {"payload_hash": "hash-a"},
+                    "reason": "accepted",
+                },
+            ).payload
+        }
+    )
+
+    with pytest.raises(TypeError, match="lease_expired history event"):
+        validate_callback(
+            _request(),
+            _projection(
+                node_states={"worker-1": "failed"},
+                leases={"lease-1": _lease("expired")},
+            ),
+            [corrupt],
+        )
+
+
+def test_corrupt_node_state_history_raises_during_stale_validation() -> None:
+    lease_expired = _event(
+        "lease_expired",
+        {
+            "lease_id": "lease-1",
+            "node_id": "worker-1",
+            "generation": 1,
+            "execution_id": "exec-1",
+            "reason": "lease_expired_without_callback",
+            "expires_at": "2026-01-01T00:00:00+00:00",
+        },
+    )
+    node_state_changed = _event(
+        "node_state_changed",
+        {
+            "node_id": "worker-1",
+            "new_state": "failed",
+            "trigger": "lease_expired_without_callback",
+            "reason": "lease_expired_without_callback",
+        },
+    )
+    corrupt = node_state_changed.model_copy(
+        update={
+            "payload": _event(
+                "callback_accepted",
+                {
+                    "node_id": "worker-1",
+                    "idempotency_key": "key-1",
+                    "payload": {"payload_hash": "hash-a"},
+                    "reason": "accepted",
+                },
+            ).payload
+        }
+    )
+
+    with pytest.raises(TypeError, match="node_state_changed history event"):
+        validate_callback(
+            _request(),
+            _projection(
+                node_states={"worker-1": "failed"},
+                leases={"lease-1": _lease("expired")},
+            ),
+            [lease_expired, corrupt],
+        )
 
 
 def test_projected_prior_rejection_does_not_return_duplicate() -> None:

@@ -22,9 +22,9 @@ from orchestrator.graph import (
     GraphProjection,
     HydratedEvent,
     InputBoundPayload,
+    NodeStateChangedPayload,
     PROJECTION_SCHEMA_VERSION,
     StoredEventEnvelope,
-    event_payload_json,
     initial_projection,
     merge_bound_record_ids,
     project_decision_view,
@@ -1426,7 +1426,9 @@ def _is_callback_history_event(event: HydratedEvent) -> bool:
         return True
     if event.event_type != "node_state_changed":
         return False
-    return event_payload_json(event).get("trigger") == "runtime_start_acknowledged"
+    if not isinstance(event.payload, NodeStateChangedPayload):
+        raise TypeError("node_state_changed event has an unexpected payload type")
+    return event.payload.trigger == "runtime_start_acknowledged"
 
 
 def _node_event_response(event: HydratedEvent) -> dict[str, Any]:

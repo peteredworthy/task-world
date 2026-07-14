@@ -74,6 +74,10 @@ from orchestrator.graph import (
     reduce_event,
     support_evidence_freshness_from_projection,
 )
+from orchestrator.graph.events.topology import NodeReadyPayload
+from orchestrator.graph.events.records import OutputRecordAcceptedPayload
+from orchestrator.graph.projections import _failed_check_result_blockers
+from orchestrator.graph.specifications import EventMetadata
 from orchestrator.graph.catalog import UnknownGraphEventError
 from tests.graph_command_support import dispatch_graph_command
 from tests.graph_command_support import with_metadata_position
@@ -890,6 +894,62 @@ def test_task_candidate_projection_uses_typed_payload() -> None:
     assert projected.position == 31
     assert projected.file_state_record_ids == ["file-state-1"]
     assert projected.supersedes_task_region_ids == ["task-old"]
+
+
+def test_task_candidate_projection_preserves_explicit_zero_attempt_number() -> None:
+    projection = reduce_event(
+        build_graph_catalog(),
+        initial_projection(),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "candidate-zero",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-zero",
+                        "task_region_id": "task-1",
+                        "attempt_number": 0,
+                        "value": {"summary": "initial candidate"},
+                    }
+                },
+            ),
+            32,
+        ),
+    )
+    projection["node_attempts"]["worker-1"] = 3
+
+    # Replaying with a later node attempt must not overwrite the record's explicit zero.
+    projection = reduce_event(
+        build_graph_catalog(),
+        projection,
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "candidate-zero-later",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-zero-later",
+                        "task_region_id": "task-1",
+                        "attempt_number": 0,
+                        "value": {"summary": "initial candidate"},
+                    }
+                },
+            ),
+            33,
+        ),
+    )
+
+    assert projection["task_candidates"]["task-1"][-1].attempt_number == 0
 
 
 def test_task_candidate_projection_checkpoint_round_trips_typed_payload() -> None:
@@ -4264,6 +4324,68 @@ def test_failed_check_result_blocks_projected_completion_after_task_acceptance()
         },
     ]
     assert project_run_state(build_graph_catalog(), events) == "active"
+
+
+def test_failed_check_blockers_fail_closed_for_corrupt_accepted_record_event() -> None:
+    corrupt = HydratedEvent(
+        metadata=EventMetadata(
+            event_id="corrupt-check-record",
+            run_id="run-1",
+            position=1,
+            event_type="output_record_accepted",
+            payload_schema_generation=2,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=FakeClock().now(),
+        ),
+        payload=NodeReadyPayload(node_id="node-1"),
+    )
+
+    with pytest.raises(
+        TypeError, match="output_record_accepted event has an unexpected payload type"
+    ):
+        _failed_check_result_blockers([corrupt], initial_projection())
+
+
+def test_failed_check_blockers_fail_closed_for_corrupt_record_variant() -> None:
+    corrupt = HydratedEvent(
+        metadata=EventMetadata(
+            event_id="corrupt-record-variant",
+            run_id="run-1",
+            position=1,
+            event_type="output_record_accepted",
+            payload_schema_generation=2,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=FakeClock().now(),
+        ),
+        payload=OutputRecordAcceptedPayload.model_construct(
+            record=NodeReadyPayload(node_id="node-1")
+        ),
+    )
+
+    with pytest.raises(
+        TypeError, match="output_record_accepted event has an unexpected record type"
+    ):
+        _failed_check_result_blockers([corrupt], initial_projection())
+
+
+def test_failed_check_blockers_ignore_valid_non_check_output_records() -> None:
+    event = _event(
+        "output_record_accepted",
+        {
+            "record": {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "worker-1",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-1",
+                "value": {"summary": "candidate"},
+            }
+        },
+    )
+
+    assert _failed_check_result_blockers([event], initial_projection()) == []
 
 
 def test_failed_check_result_recovery_lineage_unblocks_original_task() -> None:

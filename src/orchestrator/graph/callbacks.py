@@ -1,13 +1,13 @@
 """Pure callback validation for execution graph leases."""
 
 from dataclasses import dataclass
-from typing import Any, Sequence, cast
+from typing import Any, Sequence
 
 from orchestrator.graph.events.leases import LeaseExpiredPayload
 from orchestrator.graph.events.lifecycle import CallbackAcceptedPayload
 from orchestrator.graph.events.topology import NodeStateChangedPayload
 from orchestrator.graph.projections import GraphProjection
-from orchestrator.graph.specifications import HydratedEvent, event_payload_json
+from orchestrator.graph.specifications import HydratedEvent
 
 
 @dataclass(frozen=True)
@@ -170,13 +170,15 @@ def _lease_expiry_recorded(
     lease_id: str,
     node_id: str,
 ) -> bool:
-    return any(
-        _history_event_type(event) == "lease_expired"
-        and isinstance(event.payload, LeaseExpiredPayload)
-        and event.payload.lease_id == lease_id
-        and event.payload.node_id == node_id
-        for event in events
-    )
+    return any(_lease_expired_matches(event, lease_id, node_id) for event in events)
+
+
+def _lease_expired_matches(event: HydratedEvent, lease_id: str, node_id: str) -> bool:
+    if _history_event_type(event) != "lease_expired":
+        return False
+    if not isinstance(event.payload, LeaseExpiredPayload):
+        raise TypeError("lease_expired history event must carry LeaseExpiredPayload")
+    return event.payload.lease_id == lease_id and event.payload.node_id == node_id
 
 
 def _latest_node_failure_is_lease_expiry(events: Sequence[HydratedEvent], node_id: str) -> bool:
@@ -184,7 +186,7 @@ def _latest_node_failure_is_lease_expiry(events: Sequence[HydratedEvent], node_i
         if _history_event_type(event) != "node_state_changed":
             continue
         if not isinstance(event.payload, NodeStateChangedPayload):
-            continue
+            raise TypeError("node_state_changed history event must carry NodeStateChangedPayload")
         if event.payload.node_id != node_id:
             continue
         if event.payload.new_state != "failed":
@@ -226,20 +228,27 @@ def _validate_idempotency(
         if _history_event_type(event) not in _IDEMPOTENCY_EVENT_TYPES:
             continue
         if not isinstance(event.payload, CallbackAcceptedPayload):
-            continue
+            raise TypeError("callback_accepted history event must carry CallbackAcceptedPayload")
         if event.payload.idempotency_key != request.idempotency_key:
             continue
         if event.payload.node_id != request.node_id:
             continue
 
-        stored_payload = event_payload_json(event)
-        if _stored_callback_payload(stored_payload) == request.payload:
+        payload = event.payload
+        if payload.payload == request.payload:
             return CallbackValidationResult(
                 outcome=CallbackOutcome.DUPLICATE_IDEMPOTENT,
                 reason="duplicate idempotency key",
                 prior_result={
                     "outcome": _history_event_type(event),
-                    "payload": stored_payload,
+                    "payload": {
+                        "node_id": payload.node_id,
+                        "lease_id": payload.lease_id,
+                        "lease_generation": payload.lease_generation,
+                        "idempotency_key": payload.idempotency_key,
+                        "payload": payload.payload,
+                        "reason": payload.reason,
+                    },
                 },
             )
         return CallbackValidationResult(
@@ -263,15 +272,6 @@ def _history_event_position(event: HydratedEvent) -> int:
 
 def _callback_idempotency_projection_key(node_id: str, idempotency_key: str) -> str:
     return f"{node_id}\0{idempotency_key}"
-
-
-def _stored_callback_payload(event_payload: dict[str, Any]) -> dict[str, Any] | None:
-    payload = event_payload.get("payload")
-    if payload is None:
-        return None
-    if isinstance(payload, dict):
-        return cast(dict[str, Any], payload)
-    return {"payload": payload}
 
 
 def _rejected_stale(reason: str) -> CallbackValidationResult:

@@ -23,9 +23,12 @@ from orchestrator.graph import (
     EventEnvelope,
     EventMetadata,
     FakeClock,
+    GraphPatchAcceptedPayload,
     HydratedEvent,
+    NodeCreatedPayload,
     event_payload_json,
 )
+from orchestrator.api import record_decision_rejection_reason
 from orchestrator.graph_runtime.store import GraphEventStore, GraphNodeDetailSummary
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import build_graph_catalog
@@ -355,7 +358,7 @@ def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None
     detail = build_node_detail_response_from_summary(summary, full_events=full_events)
 
     assert [event.position for event in detail.events] == [2]
-    assert event_payload_json(detail.events[0])["record"]["record_id"] == "out-a"
+    assert detail.events[0].payload["record"]["record_id"] == "out-a"
     assert "value" not in detail.events[0].payload
     assert detail.output_records[0]["record_id"] == "out-a"
     assert detail.output_records[0]["producer_node_id"] == "node-a"
@@ -783,6 +786,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
                 "base_graph_position": 2,
                 "actor_role": "planner",
                 "successor_planner_node_ids": ["planner-2"],
+                "ops": [{"op": "create_node", "node_id": "worker-1"}],
             },
             position=2,
         ),
@@ -865,6 +869,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
     assert accepted.created_edge_ids == ["edge-1"]
     assert accepted.diagnostics["actor_role"] == "planner"
     assert accepted.diagnostics["successor_planner_node_ids"] == ["planner-2"]
+    assert accepted.diagnostics["ops"] == [{"op": "create_node", "node_id": "worker-1"}]
 
     rejected = response.attempts[1]
     assert rejected.status == "rejected"
@@ -875,3 +880,133 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
         "patch_read_set": ["worker-1"],
         "conflicting_event_ids": ["event-9"],
     }
+
+
+def test_patch_attempt_readback_merges_declared_actor_role_with_diagnostics() -> None:
+    response = build_graph_patch_attempts_response(
+        "run-patches",
+        [
+            _event(
+                "graph_patch_rejected",
+                {
+                    "patch_id": "patch-rejected",
+                    "proposed_by_node_id": "planner-1",
+                    "base_graph_position": 2,
+                    "actor_role": "planner",
+                    "reason": "patch conflicts with current graph state",
+                    "diagnostics": {"macro": "create_join", "valid": False},
+                },
+                position=3,
+            )
+        ],
+    )
+
+    attempt = response.attempts[0]
+
+    assert attempt.diagnostics == {
+        "actor_role": "planner",
+        "macro": "create_join",
+        "valid": False,
+    }
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload"),
+    (
+        ("graph_patch_accepted", NodeCreatedPayload(node_id="node-1", kind="worker")),
+        (
+            "graph_patch_rejected",
+            GraphPatchAcceptedPayload(
+                patch_id="patch-1",
+                base_graph_position=1,
+                actor_role="planner",
+                proposed_by_node_id="planner-1",
+                successor_planner_node_ids=[],
+            ),
+        ),
+        (
+            "node_created",
+            GraphPatchAcceptedPayload(
+                patch_id="patch-1",
+                base_graph_position=1,
+                actor_role="planner",
+                proposed_by_node_id="planner-1",
+                successor_planner_node_ids=[],
+            ),
+        ),
+        (
+            "edge_created",
+            NodeCreatedPayload(node_id="node-1", kind="worker"),
+        ),
+    ),
+)
+def test_patch_attempt_readback_fails_closed_for_mismatched_typed_events(
+    event_type: str, payload: object
+) -> None:
+    event = _event(
+        event_type,
+        {
+            "patch_id": "patch-1",
+            "proposed_by_node_id": "planner-1",
+            "base_graph_position": 1,
+            "actor_role": "planner",
+            "successor_planner_node_ids": [],
+        }
+        if event_type == "graph_patch_accepted"
+        else {
+            "patch_id": "patch-1",
+            "proposed_by_node_id": "planner-1",
+            "base_graph_position": 1,
+            "actor_role": "planner",
+            "reason": "rejected",
+        }
+        if event_type == "graph_patch_rejected"
+        else {"node_id": "node-1", "kind": "worker", "state": "planned"}
+        if event_type == "node_created"
+        else {
+            "edge_id": "edge-1",
+            "from_node_id": "planner-1",
+            "from_port": "graph_patch",
+            "to_node_id": "worker-1",
+            "to_port": "input",
+            "required": True,
+            "dependency_type": "input_binding",
+        },
+    ).model_copy(update={"payload": payload})
+    events: list[HydratedEvent] = [
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-1",
+                "proposed_by_node_id": "planner-1",
+                "base_graph_position": 1,
+                "actor_role": "planner",
+                "successor_planner_node_ids": [],
+            },
+        )
+    ]
+    if event_type == "graph_patch_accepted":
+        events = [event]
+    else:
+        events.append(event)
+
+    with pytest.raises(TypeError, match=f"{event_type} event has an unexpected payload type"):
+        build_graph_patch_attempts_response("run-1", events)
+
+
+def test_record_decision_rejection_requires_the_command_rejected_payload_pair() -> None:
+    rejected = _event(
+        "command_rejected", {"command_type": "record_decision", "reason": "not allowed"}
+    )
+    mismatched_type = rejected.model_copy(
+        update={"metadata": rejected.metadata.model_copy(update={"event_type": "node_created"})}
+    )
+    mismatched_payload = rejected.model_copy(
+        update={"payload": NodeCreatedPayload(node_id="node-1", kind="worker")}
+    )
+
+    assert record_decision_rejection_reason([rejected]) == "not allowed"
+    with pytest.raises(TypeError, match="command_rejected event has an unexpected payload type"):
+        record_decision_rejection_reason([mismatched_payload])
+    with pytest.raises(TypeError, match="unexpected event type"):
+        record_decision_rejection_reason([mismatched_type])

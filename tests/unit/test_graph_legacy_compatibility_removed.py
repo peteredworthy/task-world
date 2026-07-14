@@ -32,6 +32,9 @@ def test_graph_sources_do_not_retain_retired_compatibility_names() -> None:
         "_D3_LEGACY_RECORD_EVENT_TYPES",
         "LegacyFutureCommandEffects",
         "Task 9 deletion seam",
+        "requirement_support_evaluated",
+        "requirement_freshness_evaluated",
+        "requirement_evidence_freshness_recorded",
     }
     source = "\n".join(
         path.read_text()
@@ -84,3 +87,39 @@ def test_graph_sources_do_not_retain_retired_payload_adapter_patterns() -> None:
     }
 
     assert not {pattern for pattern in retired_adapter_patterns if pattern in source}
+
+
+def test_graph_decision_paths_do_not_read_event_payload_json() -> None:
+    root = Path(__file__).parents[2] / "src" / "orchestrator" / "graph"
+    decision_paths = (
+        root / "_commands.py",
+        root / "callbacks.py",
+        root / "patch_validator.py",
+        root / "projections.py",
+    )
+
+    offenders = [
+        path.relative_to(root).as_posix()
+        for path in decision_paths
+        if "event_payload_json" in path.read_text()
+    ]
+
+    assert offenders == []
+
+
+def test_graph_decision_paths_do_not_serialize_typed_payloads() -> None:
+    root = Path(__file__).parents[2] / "src" / "orchestrator" / "graph"
+    decision_paths = (
+        root / "_commands.py",
+        root / "callbacks.py",
+        root / "patch_validator.py",
+        root / "projections.py",
+    )
+
+    offenders = [
+        path.relative_to(root).as_posix()
+        for path in decision_paths
+        if ".to_json(" in path.read_text()
+    ]
+
+    assert offenders == []

@@ -43,7 +43,7 @@ from orchestrator.graph.specifications import (
     FutureCommandEffects,
 )
 from orchestrator.graph._commands import typed_topology_event
-from orchestrator.graph.events.leases import LEASE_RELEASED
+from orchestrator.graph.events.leases import LEASE_RELEASED, LeaseReleasedPayload
 from orchestrator.graph._commands import make_strict_event
 from orchestrator.graph.events.decisions import (
     APPEAL_OPENED,
@@ -55,13 +55,20 @@ from orchestrator.graph.events.decisions import (
 from orchestrator.graph.events.requirements import (
     REQUIREMENT_REVISION_RECORDED,
     SUPPORT_EVIDENCE_RECORDED,
+    RequirementRevisionPayload,
+    SupportEvidencePayload,
 )
 from orchestrator.graph.events.records import OUTPUT_RECORD_ACCEPTED
 from orchestrator.graph.commands.file_state import (
     handle_record_cleanup_applied,
     handle_record_gatekeeper_verdicts,
 )
-from orchestrator.graph.events.topology import INPUT_BOUND, NODE_CREATED, NODE_STATE_CHANGED
+from orchestrator.graph.events.topology import (
+    INPUT_BOUND,
+    NODE_CREATED,
+    NODE_STATE_CHANGED,
+    InputBoundPayload,
+)
 
 
 class RaiseAppealCommand(StrictPayload):
@@ -124,9 +131,6 @@ DecisionCommand = Annotated[
 
 class RecordDecisionCommand(RootModel[DecisionCommand]):
     model_config = ConfigDict(strict=True, frozen=True)
-
-    def to_json(self) -> dict[str, JsonValue]:
-        return self.root.to_json()
 
 
 class RecordRequirementRevisionCommand(StrictPayload):
@@ -318,8 +322,7 @@ def handle_record_decision(
                 creator, "record_decision", f"terminal run: {projection['run_state']}"
             )
         ]
-    values = command.to_json()
-    values.pop("decision_type")
+    values = _decision_event_values(decision_command)
     task_region_id = projection["node_task_regions"].get(decision_command.node_id)
     if task_region_id is not None:
         values["task_region_id"] = task_region_id
@@ -356,9 +359,8 @@ def handle_record_decision(
             make_event,
             record_selector_aliases(record),
         ):
-            output.append(
-                creator.create(INPUT_BOUND, INPUT_BOUND.validate_payload(event.payload.to_json()))
-            )
+            if isinstance(event.payload, InputBoundPayload):
+                output.append(creator.create(INPUT_BOUND, event.payload))
     output.append(
         creator.create(
             NODE_STATE_CHANGED,
@@ -371,9 +373,8 @@ def handle_record_decision(
     )
     make_event = event_factory(context, "record_decision")
     for event in release_active_node_leases(projection, decision_command.node_id, make_event):
-        output.append(
-            creator.create(LEASE_RELEASED, LEASE_RELEASED.validate_payload(event.payload.to_json()))
-        )
+        if isinstance(event.payload, LeaseReleasedPayload):
+            output.append(creator.create(LEASE_RELEASED, event.payload))
     return output
 
 
@@ -389,7 +390,20 @@ def handle_record_requirement_revision(
     return [
         creator.create(
             REQUIREMENT_REVISION_RECORDED,
-            REQUIREMENT_REVISION_RECORDED.validate_payload(command.to_json()),
+            RequirementRevisionPayload(
+                requirement_id=command.requirement_id,
+                version_id=command.version_id,
+                record_id=command.record_id,
+                classification=command.classification,
+                change_classification=command.change_classification,
+                requires_authority=command.requires_authority,
+                new_behavior=command.new_behavior,
+                behavior_change=command.behavior_change,
+                semantic_change=command.semantic_change,
+                validation_strengthening=command.validation_strengthening,
+                active=True if command.active is None else command.active,
+                previous_version_id=command.previous_version_id,
+            ),
         )
     ]
 
@@ -416,11 +430,29 @@ def handle_record_support_evidence(
     return [
         creator.create(
             SUPPORT_EVIDENCE_RECORDED,
-            SUPPORT_EVIDENCE_RECORDED.validate_payload(
-                {**command.to_json(), "requirement_version_id": version_id}
+            SupportEvidencePayload(
+                support_id=command.support_id,
+                evidence_id=command.evidence_id,
+                requirement_id=command.requirement_id,
+                requirement_version_id=version_id,
+                status="active" if command.status is None else command.status,
+                stale_reason=command.stale_reason,
+                confidence=command.confidence,
             ),
         )
     ]
+
+
+def _decision_event_values(command: DecisionCommandFields) -> dict[str, JsonValue]:
+    return {
+        "node_id": command.node_id,
+        "decider": command.decider,
+        "scope": command.scope,
+        "expires_at": command.expires_at,
+        "reason": command.reason,
+        "record_id": command.record_id,
+        "decision": getattr(command, "decision"),
+    }
 
 
 RAISE_APPEAL = CommandSpecification("raise_appeal", RaiseAppealCommand, handle_raise_appeal)
