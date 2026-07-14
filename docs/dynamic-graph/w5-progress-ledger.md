@@ -833,3 +833,46 @@ only in Task 13 after the database backup is verified and the reset completes.
 The source and pre-existing staged continuation prompt were preserved. This
 durable bookkeeping update changes only the two progress ledgers and is not
 committed.
+
+## Strict-cutover Task 13: legacy compatibility deletion and database cutover
+
+Status: complete. Committed as `e63fb41ec` after independent PASS.
+
+The graph kernel is hydrated-only from command dispatch through append and
+projection. All Deferred Compatibility Cleanup Register entries D1-D6 and all
+hidden compatibility adapters are deleted, including legacy reducers, replay
+aliases and ports, fallback parsers and selectors, authority-resolution scans,
+generation-1 producers and downgrade paths, raw envelope round trips, and
+strict-payload mapping emulation. Outbox journal flushing is atomic with the
+database transaction. The FR-13 terminal-state fix remains covered alongside
+the partial-region blocker and invalid-patch-at-quiescence acceptance paths.
+
+Database cutover evidence:
+- Branch B exact contemporaneous absence record: `No worktree orchestrator.db
+  existed; per Task 13, no backup or reset was necessary.`
+- The approved normal startup command used `127.0.0.1:8765`; `/health` returned
+  `{"status":"ok"}`, `GET /api/agents` exposed factory agents `Builder`,
+  `Planner`, and `Verifier`, and the server exited 0 after `SIGINT`.
+- The current `orchestrator.db` is ignored, regular, non-symlink, and closed.
+  It has no WAL/SHM sidecars and no `orchestrator.db.w5-strict-backup-*` backup.
+  Historical Branch B cannot be replayed non-destructively after startup
+  created the current database.
+
+Independent PASS evidence:
+- Approved typed smoke: 3 passed.
+- Approved post-cutover integrations: 29 passed.
+- Focused verification: 223 passed.
+- Broad graph matrix: 1,054 passed.
+- Full suite: 5,055 passed / 5 skipped / 3 warnings.
+- Catalog baseline: exactly 44 event specifications / 23 command
+  specifications.
+- All measured strict/current architecture, retired compatibility, and
+  deferred compatibility metrics: 0.
+- The exact D1-D6/retired-name grep returned status 1 with no output, confirming
+  zero matches.
+- Architecture and pre-commit checks, Ruff check, Ruff format check (724 files),
+  Pyright, diff checks, and commit hooks: PASS.
+
+Source, the pre-existing continuation prompt, and the current database were
+preserved. This durable bookkeeping update changes only the two progress
+ledgers, creates no backup or sidecar, and is not committed.
