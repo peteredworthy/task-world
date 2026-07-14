@@ -8,7 +8,6 @@ from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     Actor,
     ActorKind,
-    EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
     UnknownGraphCommandError,
@@ -16,6 +15,7 @@ from orchestrator.graph import (
 from orchestrator.graph_runtime import GraphController, StaleProjectionError
 from orchestrator.graph_runtime.store import graph_aggregate_id
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import StoredEventEnvelope
 
 
 async def test_graph_controller_write_commands_begin_immediate(tmp_path: Path) -> None:
@@ -168,15 +168,28 @@ async def test_handle_command_raises_stale_projection_error_when_position_moves_
         if injected["done"] or statement.upper() != "BEGIN IMMEDIATE":
             return
         injected["done"] = True
-        event = EventEnvelope(
-            event_id="racer-event",
-            run_id=run_id,
-            position=position + 1,
-            event_type="lease_renewed",
-            schema_version=1,
-            actor=Actor(kind=ActorKind.CONTROLLER),
-            timestamp=clock.now(),
-            payload={},
+        event = (
+            build_graph_catalog()
+            .resolve_event("lease_renewed")
+            .hydrate(
+                StoredEventEnvelope(
+                    event_id="racer-event",
+                    run_id=run_id,
+                    position=position + 1,
+                    event_type="lease_renewed",
+                    payload_schema_generation=2,
+                    actor=Actor(kind=ActorKind.CONTROLLER),
+                    timestamp=clock.now(),
+                    payload={
+                        "lease_id": "racer-lease",
+                        "node_id": "racer-node",
+                        "generation": 1,
+                        "execution_id": "racer-execution",
+                        "observed_at": clock.now().isoformat(),
+                        "expires_at": clock.now().isoformat(),
+                    },
+                )
+            )
         )
         with sqlite3.connect(db_path) as connection:
             connection.execute(

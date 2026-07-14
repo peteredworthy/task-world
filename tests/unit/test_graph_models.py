@@ -1059,30 +1059,30 @@ def test_graph_patch_proposal_record_round_trips() -> None:
     )
 
 
-def test_graph_patch_proposal_record_accepts_macro_invocation_plan() -> None:
-    assert_round_trips(
-        GraphPatchProposalRecord,
-        {
-            "record_id": "proposal-1",
-            "record_kind": "output",
-            "record_type": "graph_patch_proposal",
-            "producer_node_id": "planner-1",
-            "port": "graph_patch",
-            "schema": "GraphPatch",
-            "value": {
-                "patch_id": "patch-1",
-                "proposed_by_node_id": "planner-1",
-                "base_graph_position": 3,
-                "macro_invocations": [
-                    {
-                        "macro": "create_work_region",
-                        "args": {"region_id": "feature-region"},
-                    }
-                ],
-                "expected_downstream_effects": [],
-            },
-        },
-    )
+def test_graph_patch_proposal_record_rejects_graph_patch_port_alias() -> None:
+    with pytest.raises(ValueError, match="graph_patch_proposal"):
+        GraphPatchProposalRecord.model_validate(
+            {
+                "record_id": "proposal-1",
+                "record_kind": "output",
+                "record_type": "graph_patch_proposal",
+                "producer_node_id": "planner-1",
+                "port": "graph_patch",
+                "schema": "GraphPatch",
+                "value": {
+                    "patch_id": "patch-1",
+                    "proposed_by_node_id": "planner-1",
+                    "base_graph_position": 3,
+                    "macro_invocations": [
+                        {
+                            "macro": "create_work_region",
+                            "args": {"region_id": "feature-region"},
+                        }
+                    ],
+                    "expected_downstream_effects": [],
+                },
+            }
+        )
 
 
 def test_graph_patch_proposal_record_rejects_empty_plan() -> None:
@@ -1585,7 +1585,6 @@ def test_all_models_import_and_enums_cover_prd_values() -> None:
         "node_retired",
         "node_state_changed",
         "lease_granted",
-        "lease_suspended",
         "lease_revoked",
         "callback_received",
         "callback_accepted",

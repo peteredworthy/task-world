@@ -22,14 +22,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.graph import (
+    CallbackDuplicateReturnedPayload,
     CheckResultRecord,
-    EventEnvelope,
+    CleanupAppliedPayload,
+    CleanupRequestedPayload,
+    CommandRejectedPayload,
+    GraphPatchAcceptedPayload,
+    GraphPatchRejectedPayload,
     HydratedEvent,
     GraphProjection,
     OutputRecordAcceptedPayload,
     RequirementRecord,
     StrictFileStateRecord,
-    StrictPayload,
     check_command_uses_acceptance_fallback,
     initial_projection,
     resolve_check_command_definition,
@@ -79,7 +83,7 @@ _evaluated_record_citations = _prompts.evaluated_record_citations
 _add_evaluated_record_citations = _prompts.add_evaluated_record_citations
 
 
-def _empty_event_list() -> list[EventEnvelope]:
+def _empty_event_list() -> list[HydratedEvent]:
     return []
 
 
@@ -110,7 +114,7 @@ class GraphDispatchContext:
     base_snapshot_id: str
     dispatch_event_id: str
     graph_projection: GraphProjection = field(default_factory=initial_projection)
-    graph_events: list[EventEnvelope] = field(default_factory=_empty_event_list)
+    graph_events: list[HydratedEvent] = field(default_factory=_empty_event_list)
     node_role: str = ""
 
 
@@ -409,7 +413,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             base_snapshot_id=base_snapshot_id,
             dispatch_event_id=item.event_id,
             graph_projection=projection,
-            graph_events=[_legacy_envelope(event) for event in events],
+            graph_events=events,
         )
 
     def _execution_context(
@@ -460,27 +464,20 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 "lease_generation": context.lease_generation,
             },
         )
-        rejection = next(
-            (
-                event
-                for event in result.events
-                if event.event_type == "command_rejected"
-                and (
-                    (
-                        event.schema_version == 1
-                        and event.payload.get("command_type") == "record_heartbeat"
-                    )
-                    or (
-                        event.schema_version != 1
-                        and event_payload_json(event).get("command_type") == "record_heartbeat"
-                    )
-                )
-            ),
-            None,
-        )
-        if rejection is not None:
-            reason = rejection.payload.get("reason") or "record_heartbeat rejected"
-            raise ValueError(str(reason))
+        rejection_payload: CommandRejectedPayload | None = None
+        for event in result.events:
+            if event.event_type != "command_rejected":
+                continue
+            if not isinstance(event.payload, CommandRejectedPayload):
+                raise TypeError("command_rejected event has an unexpected payload type")
+            if event.payload.command_type == "record_heartbeat":
+                rejection_payload = event.payload
+                break
+        if rejection_payload is not None:
+            reason = cast(str | None, rejection_payload.reason)
+            if reason is None:
+                reason = "record_heartbeat rejected"
+            raise ValueError(reason)
 
     async def _submit_callback(
         self,
@@ -614,32 +611,43 @@ class GraphDispatchExecutor(SideEffectExecutor):
             "submit_patch",
             payload,
         )
-        accepted = [event for event in result.events if event.event_type == "graph_patch_accepted"]
-        if accepted:
-            patch_id = accepted[0].payload.get("patch_id", payload.get("patch_id", "unknown"))
-            raw_successors = accepted[0].payload.get("successor_planner_node_ids")
-            successors = (
-                [item for item in cast(list[object], raw_successors) if isinstance(item, str)]
-                if isinstance(raw_successors, list)
-                else []
-            )
+        accepted = next(
+            (event for event in result.events if event.event_type == "graph_patch_accepted"),
+            None,
+        )
+        if accepted is not None:
+            accepted_payload = accepted.payload
+            if not isinstance(accepted_payload, GraphPatchAcceptedPayload):
+                raise TypeError("graph_patch_accepted event has an unexpected payload type")
+            patch_id = accepted_payload.patch_id
+            successors = accepted_payload.successor_planner_node_ids
             return (
                 f"graph patch {patch_id} accepted; "
                 f"successor planner nodes: {json.dumps(successors, sort_keys=True)}"
             )
 
         rejection = next(
-            (
-                event
-                for event in result.events
-                if event.event_type in {"graph_patch_rejected", "command_rejected"}
-            ),
+            (event for event in result.events if event.event_type == "graph_patch_rejected"),
             None,
         )
         if rejection is not None:
-            reason = rejection.payload.get("reason") or "unknown rejection"
-            patch_id = rejection.payload.get("patch_id", payload.get("patch_id", "unknown"))
-            return f"graph patch {patch_id} rejected: {reason}"
+            rejection_payload = rejection.payload
+            if not isinstance(rejection_payload, GraphPatchRejectedPayload):
+                raise TypeError("graph_patch_rejected event has an unexpected payload type")
+            return f"graph patch {rejection_payload.patch_id} rejected: {rejection_payload.reason}"
+
+        command_rejection = next(
+            (event for event in result.events if event.event_type == "command_rejected"),
+            None,
+        )
+        if command_rejection is not None:
+            rejection_payload = command_rejection.payload
+            if not isinstance(rejection_payload, CommandRejectedPayload):
+                raise TypeError("command_rejected event has an unexpected payload type")
+            patch_id = rejection_payload.patch_id
+            if patch_id is None:
+                patch_id = str(payload.get("patch_id", "unknown"))
+            return f"graph patch {patch_id} rejected: {rejection_payload.reason}"
 
         return "graph patch command completed without accepted or rejected patch event"
 
@@ -709,28 +717,31 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 self._catalog,
             ).current_position(run_id)
 
-    async def _events(self, run_id: str) -> list[EventEnvelope]:
+    async def _events(self, run_id: str) -> list[HydratedEvent]:
         async with self._session_factory() as session:
             events = await GraphEventStore(
                 session,
                 self._catalog,
             ).read_run(run_id)
-        return [_legacy_envelope(event) for event in events]
+        return events
 
     async def _record_gatekeeper_verdicts(
         self,
         context: GraphDispatchContext,
         projection_position: int,
-        accepted_events: list[EventEnvelope],
+        accepted_events: list[HydratedEvent],
     ) -> None:
         if self._residue_classifier is None:
             return
         current_position = projection_position
         for event in accepted_events:
-            if event.event_type != "file_state_accepted":
+            if event.event_type != "file_state_accepted" or not isinstance(
+                event.payload, StrictFileStateRecord
+            ):
                 continue
+            record = event.payload
             metadata = metadata_from_file_state_record(
-                event.payload,
+                record,
                 max_items=self._max_gatekeeper_items_per_boundary,
             )
             if not metadata:
@@ -744,9 +755,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 current_position,
                 "record_gatekeeper_verdicts",
                 {
-                    "file_state_record_id": event_payload_json(event).get("record_id"),
+                    "file_state_record_id": record.record_id,
                     "execution_id": context.execution_id,
-                    "consult_id": f"{context.execution_id}:{event_payload_json(event).get('record_id')}",
+                    "consult_id": f"{context.execution_id}:{record.record_id}",
                     "model_id": model_ids[0] if len(model_ids) == 1 else "mixed",
                     "verdicts": verdicts,
                 },
@@ -760,7 +771,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
         that ``cleanup_applied`` was already committed after an earlier
         filesystem cleanup; in that case the side effect intent is complete.
         """
-        events = await self._events(item.run_id)
+        async with self._session_factory() as session:
+            events = await GraphEventStore(session, self._catalog).read_run(item.run_id)
         cleanup_id = str(item.payload.get("cleanup_id", ""))
         if _cleanup_applied_exists(events, cleanup_id):
             return
@@ -768,10 +780,10 @@ class GraphDispatchExecutor(SideEffectExecutor):
         if cleanup_event is None:
             msg = f"unknown cleanup_requested: {cleanup_id}"
             raise ValueError(msg)
-        record_id = cleanup_event.payload.get("file_state_record_id")
-        if not isinstance(record_id, str):
-            msg = f"cleanup_requested missing file_state_record_id: {cleanup_id}"
-            raise ValueError(msg)
+        cleanup_payload = cleanup_event.payload
+        if not isinstance(cleanup_payload, CleanupRequestedPayload):
+            raise TypeError("cleanup_requested event has an unexpected payload type")
+        record_id = cleanup_payload.file_state_record_id
         projection = rebuild_projection(self._catalog, events)
         compromised_record = projection["file_state_records"].get(record_id)
         if compromised_record is None:
@@ -780,8 +792,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
 
         cleanup = apply_cleanup_requested(
             worktree_path=self._worktree_path,
-            cleanup_request=cleanup_event.payload,
-            compromised_record=compromised_record.model_dump(mode="json"),
+            cleanup_request=cleanup_payload,
+            compromised_record=compromised_record,
         )
         result = await self._handle_command_retry_stale(
             item.run_id,
@@ -797,28 +809,20 @@ class GraphDispatchExecutor(SideEffectExecutor):
         )
         if _rejected_cleanup_already_applied(result.events, cleanup_id):
             return
-        rejected = next(
-            (
-                event
-                for event in result.events
-                if event.event_type == "command_rejected"
-                and (
-                    (
-                        event.schema_version == 1
-                        and event.payload.get("command_type") == "record_cleanup_applied"
-                    )
-                    or (
-                        event.schema_version != 1
-                        and event_payload_json(event).get("command_type")
-                        == "record_cleanup_applied"
-                    )
-                )
-            ),
-            None,
-        )
-        if rejected is not None:
-            msg = str(rejected.payload.get("reason") or "record_cleanup_applied rejected")
-            raise ValueError(msg)
+        rejection_payload: CommandRejectedPayload | None = None
+        for event in result.events:
+            if event.event_type != "command_rejected":
+                continue
+            if not isinstance(event.payload, CommandRejectedPayload):
+                raise TypeError("command_rejected event has an unexpected payload type")
+            if event.payload.command_type == "record_cleanup_applied":
+                rejection_payload = event.payload
+                break
+        if rejection_payload is not None:
+            reason = cast(str | None, rejection_payload.reason)
+            if reason is None:
+                reason = "record_cleanup_applied rejected"
+            raise ValueError(reason)
 
 
 async def reconcile_runtime(
@@ -920,36 +924,17 @@ def build_graph_runtime(
     return controller, executor
 
 
-def _node_payload(events: Sequence[EventEnvelope | HydratedEvent], node_id: str) -> dict[str, Any]:
+def _node_payload(events: Sequence[HydratedEvent], node_id: str) -> dict[str, Any]:
     for event in events:
         if event.event_type != "node_created":
             continue
         if event_payload_json(event).get("node_id") == node_id:
-            return (
-                event.payload.to_json()
-                if isinstance(event.payload, StrictPayload)
-                else dict(event.payload)
-            )
+            return event.payload.to_json()
     return {"node_id": node_id}
 
 
-def _legacy_envelope(event: HydratedEvent) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=event.event_id,
-        run_id=event.run_id,
-        position=event.position,
-        event_type=event.event_type,
-        schema_version=event.schema_version,
-        actor=event.actor,
-        causation_id=event.causation_id,
-        correlation_id=event.correlation_id,
-        timestamp=event.timestamp,
-        payload=event.payload.to_json(),
-    )
-
-
 def _requirements_for_node(
-    events: Sequence[EventEnvelope | HydratedEvent], node_id: str, *, catalog: GraphCatalog
+    events: Sequence[HydratedEvent], node_id: str, *, catalog: GraphCatalog
 ) -> list[str]:
     projection = rebuild_projection(catalog, events)
     _guard_no_pending_compromised_file_state_bindings(projection, node_id)
@@ -983,9 +968,7 @@ def _requirements_for_node(
     if requirements:
         return requirements
 
-    dynamic_feature = _dynamic_feature_from_events(
-        [event if isinstance(event, EventEnvelope) else _legacy_envelope(event) for event in events]
-    )
+    dynamic_feature = _dynamic_feature_from_events(events)
     if dynamic_feature is not None:
         requirement = _dynamic_feature_acceptance_requirement(dynamic_feature)
         if requirement is not None:
@@ -993,7 +976,7 @@ def _requirements_for_node(
     return requirements
 
 
-def _dynamic_feature_from_events(events: list[EventEnvelope]) -> dict[str, Any] | None:
+def _dynamic_feature_from_events(events: Sequence[HydratedEvent]) -> dict[str, Any] | None:
     for event in reversed(events):
         if event.event_type != "node_created":
             continue
@@ -1027,7 +1010,7 @@ def _dynamic_feature_acceptance_requirement(
 _CALLBACK_REJECTION_EVENT_TYPES = {"callback_rejected_conflict", "callback_rejected_stale"}
 
 
-def _callback_conflict_reason(events: list[EventEnvelope]) -> str | None:
+def _callback_conflict_reason(events: list[HydratedEvent]) -> str | None:
     # A ``callback_duplicate_returned`` event only means "we've seen this
     # idempotency key before" — the prior result it replays may itself have
     # been a rejection (historic event logs can contain duplicate-of-rejection
@@ -1045,14 +1028,18 @@ def _callback_conflict_reason(events: list[EventEnvelope]) -> str | None:
                 str(reason) if isinstance(reason, str) and reason else "unknown callback conflict"
             )
         if event.event_type == "callback_duplicate_returned":
+            if not isinstance(event.payload, CallbackDuplicateReturnedPayload):
+                raise TypeError("callback_duplicate_returned event has an unexpected payload type")
             duplicate_reason = _duplicate_of_rejection_reason(event.payload)
             if duplicate_reason is not None:
                 return duplicate_reason
     return None
 
 
-def _duplicate_of_rejection_reason(payload: dict[str, Any]) -> str | None:
-    prior_result = payload.get("prior_result")
+def _duplicate_of_rejection_reason(
+    payload: CallbackDuplicateReturnedPayload,
+) -> str | None:
+    prior_result = payload.prior_result
     if not isinstance(prior_result, dict):
         return None
     prior = cast(dict[str, Any], prior_result)
@@ -1102,27 +1089,32 @@ def _guard_no_pending_compromised_file_state_bindings(
 
 
 def _cleanup_requested_event(
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     cleanup_id: str,
-) -> EventEnvelope | None:
+) -> HydratedEvent | None:
     for event in events:
         if event.event_type != "cleanup_requested":
             continue
-        if event_payload_json(event).get("cleanup_id") == cleanup_id:
+        if not isinstance(event.payload, CleanupRequestedPayload):
+            raise TypeError("cleanup_requested event has an unexpected payload type")
+        if event.payload.cleanup_id == cleanup_id:
             return event
     return None
 
 
-def _cleanup_applied_exists(events: list[EventEnvelope], cleanup_id: str) -> bool:
-    return any(
-        event.event_type == "cleanup_applied"
-        and event_payload_json(event).get("cleanup_id") == cleanup_id
-        for event in events
-    )
+def _cleanup_applied_exists(events: list[HydratedEvent], cleanup_id: str) -> bool:
+    for event in events:
+        if event.event_type != "cleanup_applied":
+            continue
+        if not isinstance(event.payload, CleanupAppliedPayload):
+            raise TypeError("cleanup_applied event has an unexpected payload type")
+        if event.payload.cleanup_id == cleanup_id:
+            return True
+    return False
 
 
 def _rejected_cleanup_already_applied(
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     cleanup_id: str,
 ) -> bool:
     return any(
@@ -1324,7 +1316,7 @@ def _check_result_from_bound_verification_if_redundant(
 
 
 def _latest_passed_verification_citation(
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     record_ids: list[str],
 ) -> dict[str, Any] | None:
     wanted = set(record_ids)
@@ -1563,9 +1555,7 @@ def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str]
         }:
             continue
         payload = (
-            event.payload.get("record", {})
-            if event.schema_version == 1 and event.event_type == "output_record_accepted"
-            else event_payload_json(event).get("record", {})
+            event_payload_json(event).get("record", {})
             if event.event_type == "output_record_accepted"
             else event_payload_json(event)
         )
@@ -1585,7 +1575,7 @@ def _bound_file_state_snapshot(context: GraphDispatchContext) -> tuple[str, str]
 
 def _check_command_definition(
     node: dict[str, Any],
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
 ) -> dict[str, Any]:
     command_definition = resolve_check_command_definition(node, events)
     if command_definition is None:

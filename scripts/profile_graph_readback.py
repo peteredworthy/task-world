@@ -25,7 +25,7 @@ from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     Actor,
     ActorKind,
-    EventEnvelope,
+    EventMetadata,
     GraphCatalog,
     HydratedEvent,
     build_graph_catalog,
@@ -66,19 +66,22 @@ class ReaderMeasurement:
     payload_parity: bool
 
 
-def _event(event_type: str, payload: dict[str, Any], index: int) -> EventEnvelope:
-    return EventEnvelope(
+def _event(
+    catalog: GraphCatalog, event_type: str, payload: dict[str, Any], index: int
+) -> HydratedEvent:
+    specification = catalog.resolve_event(event_type)
+    metadata = EventMetadata(
         event_id=f"profile-{event_type}-{index}",
         run_id=RUN_ID,
         position=-1,
         event_type=event_type,
-        schema_version=1,
+        payload_schema_generation=2,
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="profile",
         correlation_id=None,
         timestamp=datetime(2026, 1, 1, tzinfo=UTC) + timedelta(seconds=index),
-        payload=payload,
     )
+    return specification.create(metadata, specification.validate_payload(payload))
 
 
 def _sample_payload(
@@ -105,9 +108,9 @@ def _synthetic_events(
     event_count: int,
     heavy_every: int,
     payload_kb: int,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     catalog = build_graph_catalog()
-    events: list[EventEnvelope] = []
+    events: list[HydratedEvent] = []
     for index in range(event_count):
         if (index + 1) % heavy_every == 0:
             event_type = "output_record_accepted"
@@ -115,7 +118,7 @@ def _synthetic_events(
         else:
             event_type = "run_lifecycle_changed"
             payload = _sample_payload(catalog, event_type, EVENT_SAMPLES[event_type])
-        events.append(_event(event_type, payload, index))
+        events.append(_event(catalog, event_type, payload, index))
     return events
 
 

@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.api import create_app
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, event_payload_json
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import StoredEventEnvelope
 
 
 @pytest.fixture
@@ -69,7 +70,7 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
         },
     )
     assert [event.event_type for event in accepted.events].count("graph_patch_accepted") == 1, [
-        event.payload.get("reason") for event in accepted.events
+        event_payload_json(event).get("reason") for event in accepted.events
     ]
     rejected = await controller.handle_command(
         run_id,
@@ -94,7 +95,7 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
         },
     )
     assert [event.event_type for event in rejected.events] == ["graph_patch_rejected"]
-    assert "unknown input port" in str(rejected.events[0].payload["reason"])
+    assert "unknown input port" in str(event_payload_json(rejected.events[0])["reason"])
 
     joined = await controller.handle_command(
         run_id,
@@ -109,8 +110,8 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert joined.events[0].payload["record"]["record_type"] == "join_result"
-    assert joined.events[0].payload["record"]["value"] == {
+    assert event_payload_json(joined.events[0])["record"]["record_type"] == "join_result"
+    assert event_payload_json(joined.events[0])["record"]["value"] == {
         "status": "ready",
         "source_record_ids": ["candidate-1"],
     }
@@ -466,16 +467,22 @@ async def _get_json(client: AsyncClient, path: str) -> Any:
 
 
 def _event(run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{uuid4().hex}",
-        run_id=run_id,
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{uuid4().hex}",
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
     )

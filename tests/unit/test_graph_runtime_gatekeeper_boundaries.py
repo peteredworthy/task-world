@@ -3,7 +3,10 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.graph import GatekeeperVerdict as DomainGatekeeperVerdict
+from orchestrator.graph import (
+    GatekeeperVerdict as DomainGatekeeperVerdict,
+    StrictFileStateRecord,
+)
 from orchestrator.graph_runtime import GatekeeperVerdict, metadata_from_file_state_record
 
 
@@ -32,6 +35,47 @@ def test_runtime_gatekeeper_verdict_accepts_confidence_boundaries(confidence: fl
 
 def test_runtime_exports_the_graph_domain_gatekeeper_verdict() -> None:
     assert GatekeeperVerdict is DomainGatekeeperVerdict
+
+
+def test_metadata_extraction_accepts_strict_file_state_record_and_excludes_secrets() -> None:
+    record = StrictFileStateRecord.model_validate(
+        {
+            "record_id": "record-1",
+            "producer_node_id": "worker-1",
+            "residue": [
+                {
+                    "path": "artifact.xml",
+                    "needs_gatekeeper": True,
+                    "classification": "unknown_ignored",
+                    "source": "ignored",
+                    "matched_rule": "none",
+                    "size_bytes": 17,
+                    "entropy": 2.5,
+                },
+                {
+                    "path": "secret.pem",
+                    "needs_gatekeeper": True,
+                    "classification": "secret",
+                    "source": "untracked",
+                    "matched_rule": "secret_name",
+                },
+            ],
+        }
+    )
+
+    metadata = metadata_from_file_state_record(record, max_items=1)
+
+    assert [item.model_dump() for item in metadata] == [
+        {
+            "path": "artifact.xml",
+            "size_bytes": 17,
+            "entropy": 2.5,
+            "source": "ignored",
+            "prior_classification": "unknown_ignored",
+            "matched_rule": "none",
+            "record_id": "record-1",
+        }
+    ]
 
 
 @pytest.mark.parametrize(
@@ -86,7 +130,9 @@ def test_metadata_extraction_rejects_invalid_numeric_values(field: str, value: o
         field: value,
     }
     with pytest.raises(ValidationError):
-        metadata_from_file_state_record({"record_id": "record-1", "residue": [entry]}, max_items=1)
+        StrictFileStateRecord.model_validate(
+            {"record_id": "record-1", "producer_node_id": "worker-1", "residue": [entry]}
+        )
 
 
 @pytest.mark.parametrize(
@@ -111,10 +157,14 @@ def test_metadata_extraction_rejects_missing_required_metadata(
         "size_bytes": None,
         "entropy": None,
     }
-    record: dict[str, object] = {"record_id": "record-1", "residue": [entry]}
+    record: dict[str, object] = {
+        "record_id": "record-1",
+        "producer_node_id": "worker-1",
+        "residue": [entry],
+    }
     if record_field is not None:
         record.pop(record_field)
     if entry_field is not None:
         entry.pop(entry_field)
     with pytest.raises(ValidationError):
-        metadata_from_file_state_record(record, max_items=1)
+        metadata_from_file_state_record(StrictFileStateRecord.model_validate(record), max_items=1)

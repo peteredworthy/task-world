@@ -7,7 +7,6 @@ from orchestrator.graph.events.lifecycle import COMMAND_REJECTED, CommandRejecte
 from orchestrator.graph.events.records import OUTPUT_RECORD_ACCEPTED, OutputRecordAcceptedPayload
 from orchestrator.graph.events.topology import NODE_STATE_CHANGED, NodeStateChangedPayload
 from orchestrator.graph.models import (
-    EventEnvelope,
     StrictCompletionDecisionRecord,
     StrictJoinResultRecord,
 )
@@ -78,7 +77,7 @@ def _join_completed(
 def handle_evaluate_join(
     command: EvaluateJoinCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
     del events
@@ -116,7 +115,7 @@ def handle_evaluate_join(
 def handle_evaluate_final_gate(
     command: EvaluateFinalGateCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
     if projection["node_kinds"].get(command.node_id) != "final_gate":

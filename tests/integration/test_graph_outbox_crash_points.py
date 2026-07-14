@@ -18,7 +18,7 @@ from orchestrator.db import (
     create_session_factory,
     init_db,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, HydratedEvent, event_payload_json
 from orchestrator.graph_runtime import (
     CompromisedFileStateError,
     GraphDispatchContext,
@@ -38,6 +38,7 @@ from orchestrator.graph_runtime.outbox import append_outbox_rows
 from orchestrator.graph_runtime.store import graph_aggregate_id
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 from orchestrator.graph import GraphCatalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 class FixedClock:
@@ -170,20 +171,50 @@ async def file_db_with_path(
 
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=event_id,
-        run_id=run_id,
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        causation_id="test",
-        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=event_id,
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
     )
+
+
+def _hydrate_current_events(events: list[EventEnvelope]) -> list[Any]:
+    catalog = build_graph_catalog()
+    return [
+        (
+            event
+            if isinstance(event, HydratedEvent)
+            else catalog.resolve_event(event.event_type).hydrate(
+                StoredEventEnvelope(
+                    event_id=event.event_id,
+                    run_id=event.run_id,
+                    position=event.position,
+                    event_type=event.event_type,
+                    payload_schema_generation=2,
+                    actor=event.actor,
+                    causation_id=event.causation_id,
+                    correlation_id=event.correlation_id,
+                    timestamp=event.timestamp,
+                    payload=event.payload,
+                )
+            )
+        )
+        for event in events
+    ]
 
 
 async def _seed_runnable_worker(
@@ -475,11 +506,14 @@ async def test_crash_after_append_before_outbox_starts_agent_restarts_dispatch(
     redispatched = report.redispatched[0]
     assert redispatched.run_id == run_id
     assert redispatched.kind == "agent_dispatch"
-    assert redispatched.payload["run_id"] == run_id
-    assert redispatched.payload["node_id"] == "worker-1"
-    assert redispatched.payload["lease_id"] == result.outbox_items[0].payload["lease_id"]
-    assert redispatched.payload["generation"] == 1
-    assert redispatched.payload["classification"] == "agent_dispatch_pending"
+    assert event_payload_json(redispatched)["run_id"] == run_id
+    assert event_payload_json(redispatched)["node_id"] == "worker-1"
+    assert (
+        event_payload_json(redispatched)["lease_id"]
+        == event_payload_json(result.outbox_items[0])["lease_id"]
+    )
+    assert event_payload_json(redispatched)["generation"] == 1
+    assert event_payload_json(redispatched)["classification"] == "agent_dispatch_pending"
     assert call_log == [result.outbox_items[0].event_id]
     assert await _outbox_statuses(session_factory) == ["completed"]
 
@@ -756,8 +790,8 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         "schedule_tick",
         {"lease_seconds": 60, "base_snapshot_id": "S0", "max_grants": 10},
     )
-    lease_id = str(first.outbox_items[0].payload["lease_id"])
-    execution_id = str(first.outbox_items[0].payload["execution_id"])
+    lease_id = str(event_payload_json(first.outbox_items[0])["lease_id"])
+    execution_id = str(event_payload_json(first.outbox_items[0])["execution_id"])
     started = await controller.handle_command(
         run_id,
         first.projection_position,
@@ -796,8 +830,8 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert died.events[3].payload["record"]["record_type"] == "recovery_plan"
-    assert died.events[3].payload["record"]["value"]["action"] == "retry"
+    assert event_payload_json(died.events[3])["record"]["record_type"] == "recovery_plan"
+    assert event_payload_json(died.events[3])["record"]["value"]["action"] == "retry"
     assert projection_after_death["leases"][lease_id]["state"] == "revoked"
     assert projection_after_death["node_states"]["worker-1"] == "ready"
     assert any(event.event_type == "runtime_retry_scheduled" for event in died.events)
@@ -807,7 +841,7 @@ async def test_crash_point_4_agent_died_revokes_lease_and_allows_release(
         "agent_dispatch_requested",
         "node_state_changed",
     ]
-    new_lease_id = str(relearnt.outbox_items[0].payload["lease_id"])
+    new_lease_id = str(event_payload_json(relearnt.outbox_items[0])["lease_id"])
     assert new_lease_id != lease_id
     assert projection_after_relearn["leases"][new_lease_id]["state"] == "active"
     assert call_log == [first.outbox_items[0].event_id, relearnt.outbox_items[0].event_id]
@@ -1254,7 +1288,7 @@ async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
         event
         for event in events_after
         if event.event_type == "file_state_accepted"
-        and event.payload.get("supersedes_record_id") == record_id
+        and event_payload_json(event).get("supersedes_record_id") == record_id
     ]
 
     assert _ref_exists(repo, old_ref) is False
@@ -1572,10 +1606,10 @@ async def test_agent_dispatch_requested_event_envelope_is_persisted_exactly(
     assert dispatch_event.timestamp == clock.now()
     assert dispatch_event.payload.to_json() == {
         "lease_granted_event_id": lease_event.event_id,
-        "lease_id": lease_event.payload["lease_id"],
+        "lease_id": event_payload_json(lease_event)["lease_id"],
         "node_id": "worker-1",
         "generation": 1,
-        "execution_id": lease_event.payload["execution_id"],
+        "execution_id": event_payload_json(lease_event)["execution_id"],
         "base_snapshot_id": "S0",
         "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["src/**"]}],
     }
@@ -1610,5 +1644,5 @@ async def test_controller_round_trip_projection_matches_in_memory_projection(
     read_back = await _read_events(session_factory, run_id)
 
     assert rebuild_projection(build_graph_catalog(), read_back) == rebuild_projection(
-        build_graph_catalog(), seed_events + result.events
+        build_graph_catalog(), _hydrate_current_events(seed_events + result.events)
     )

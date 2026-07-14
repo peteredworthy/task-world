@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
-import json
 import inspect
+import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
@@ -34,29 +34,31 @@ from orchestrator.graph.events.file_state import (
     GatekeeperVerdictRecordedPayload,
 )
 from orchestrator.graph.models import StrictFileEntry, StrictFileStateRecord, StrictGitDiffSummary
+from orchestrator.graph import StoredEventEnvelope
 
 
 def apply_command(projection, events, command_type, payload, clock, id_gen):
     payload = dict(payload)
     run_id = payload.pop("run_id")
+    catalog = build_graph_catalog()
+    hydrated_events = tuple(events)
     output = apply_typed_command(
+        catalog,
         projection,
-        events,
+        hydrated_events,
         command_type,
         payload,
-        clock,
-        id_gen,
-        catalog=build_graph_catalog(),
-        context=CommandExecutionContext(
+        CommandExecutionContext(
             run_id=run_id,
-            current_position=len(events),
+            current_position=max(
+                (event.metadata.position for event in hydrated_events), default=-1
+            ),
             clock=clock,
             id_generator=id_gen,
             actor=Actor(kind=ActorKind.CONTROLLER),
-            events=(),
-            future_effects=build_graph_command_dependencies(
-                catalog=build_graph_catalog()
-            ).future_effects,
+            events=hydrated_events,
+            future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+            catalog=catalog,
         ),
     )
     return [_stored_event(event) if isinstance(event, HydratedEvent) else event for event in output]
@@ -64,15 +66,21 @@ def apply_command(projection, events, command_type, payload, clock, id_gen):
 
 def _stored_event(event: HydratedEvent) -> EventEnvelope:
     metadata = event.metadata
-    return EventEnvelope(
-        event_id=metadata.event_id,
-        run_id=metadata.run_id,
-        position=metadata.position,
-        event_type=metadata.event_type,
-        schema_version=metadata.payload_schema_generation,
-        actor=metadata.actor,
-        timestamp=metadata.timestamp,
-        payload=event.payload.to_json(),
+    return (
+        build_graph_catalog()
+        .resolve_event(metadata.event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=metadata.event_id,
+                run_id=metadata.run_id,
+                position=metadata.position,
+                event_type=metadata.event_type,
+                payload_schema_generation=2,
+                actor=metadata.actor,
+                timestamp=metadata.timestamp,
+                payload=event.payload.to_json(),
+            )
+        )
     )
 
 
@@ -156,7 +164,7 @@ def test_gatekeeper_verdict_requires_every_metric(field: str) -> None:
 def test_file_state_record_requires_nonempty_producer_node_id(
     producer_node_id: str | None,
 ) -> None:
-    values = _file_state_event("file-state-1", "snapshot-1", []).payload.copy()
+    values = _file_state_event("file-state-1", "snapshot-1", []).payload.to_json()
     if producer_node_id is None:
         values.pop("producer_node_id")
     else:
@@ -427,11 +435,15 @@ def test_cleanup_producers_emit_payloads_validated_by_typed_models() -> None:
         SequentialIdGenerator(),
     )
     requested_event = next(event for event in emitted if event.event_type == "cleanup_requested")
-    requested = CleanupRequestedPayload.model_validate_json(json.dumps(requested_event.payload))
+    requested_payload = requested_event.payload.to_json()
+    requested = CleanupRequestedPayload.model_validate_json(json.dumps(requested_payload))
     assert requested.cleanup_id == "file-state-1:gatekeeper-secret"
 
-    requested_event.payload["cleanup_id"] = "cleanup-1"
-    events = [*events, requested_event]
+    requested_payload["cleanup_id"] = "cleanup-1"
+    events = [
+        *events,
+        _event("cleanup_requested", requested_payload, position=requested_event.position),
+    ]
     applied = apply_command(
         _project(events),
         events,
@@ -446,7 +458,9 @@ def test_cleanup_producers_emit_payloads_validated_by_typed_models() -> None:
         SequentialIdGenerator(),
     )
 
-    applied_payload = CleanupAppliedPayload.model_validate_json(json.dumps(applied[0].payload))
+    applied_payload = CleanupAppliedPayload.model_validate_json(
+        json.dumps(applied[0].payload.to_json())
+    )
     assert applied[0].event_type == "cleanup_applied"
     assert applied_payload.cleanup_id == "cleanup-1"
     assert applied_payload.superseding_record_id == "file-state-1-cleanup"
@@ -462,15 +476,21 @@ def _project(events: list[EventEnvelope]) -> Any:
 
 
 def _event(event_type: str, payload: dict[str, Any], *, position: int) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{position}",
+                run_id="run-1",
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )
 
 
@@ -484,6 +504,7 @@ def _file_state_event(
         {
             "record_id": record_id,
             "record_kind": "file_state",
+            "record_type": "file_state",
             "producer_node_id": "worker-1",
             "port": "file_state",
             "schema": "FileStateRecord",

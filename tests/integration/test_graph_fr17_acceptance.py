@@ -26,6 +26,7 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
 from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import GraphCatalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 @pytest.fixture
@@ -574,18 +575,24 @@ async def _get_json(client: AsyncClient, path: str) -> Any:
 
 
 def _event(run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{uuid4().hex}",
-        run_id=run_id,
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{uuid4().hex}",
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
     )
 
 

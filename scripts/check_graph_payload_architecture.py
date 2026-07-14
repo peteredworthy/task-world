@@ -97,6 +97,15 @@ DOMAIN_EVENT_NAMES: dict[str, frozenset[str]] = {
     ),
 }
 
+_RETIRED_GRAPH_PAYLOAD_NAMES = frozenset(
+    {
+        "LegacyEventPayload",
+        "_D3_LEGACY_RECORD_EVENT_TYPES",
+        "source_schema_version",
+    }
+)
+_RETIRED_D_SERIES_MAPPING_METHODS = frozenset({"__getitem__", "get", "items"})
+
 
 @dataclass(frozen=True, order=True)
 class ArchitectureDiagnostic:
@@ -161,45 +170,6 @@ def _raw_payload_function(
 def _diagnostic(path: Path, node: ast.AST, category: str) -> ArchitectureDiagnostic:
     return ArchitectureDiagnostic(
         str(path), node.lineno, node.col_offset, category, ast.unparse(node)
-    )
-
-
-def _has_schema_generation_one_boundary(node: ast.AST, operator: type[ast.cmpop]) -> bool:
-    return any(
-        isinstance(child, ast.Compare)
-        and isinstance(child.left, ast.Attribute)
-        and child.left.attr == "schema_version"
-        and len(child.ops) == 1
-        and isinstance(child.ops[0], operator)
-        and len(child.comparators) == 1
-        and isinstance(child.comparators[0], ast.Constant)
-        and child.comparators[0].value == 1
-        for child in ast.walk(node)
-    )
-
-
-def _is_d3_legacy_replay_branch(
-    branch: ast.If,
-    functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef],
-) -> bool:
-    predicate = functions.get("_is_d3_legacy_record_replay_event")
-    adapter = functions.get("reduce_d3_legacy_record_replay")
-    if predicate is None or adapter is None:
-        return False
-    test_calls = {
-        _call_name(call.func) for call in ast.walk(branch.test) if isinstance(call, ast.Call)
-    }
-    body_calls = {
-        _call_name(call.func)
-        for statement in branch.body
-        for call in ast.walk(statement)
-        if isinstance(call, ast.Call)
-    }
-    return (
-        "_is_d3_legacy_record_replay_event" in test_calls
-        and "reduce_d3_legacy_record_replay" in body_calls
-        and _has_schema_generation_one_boundary(predicate, ast.Eq)
-        and _has_schema_generation_one_boundary(adapter, ast.NotEq)
     )
 
 
@@ -270,12 +240,9 @@ def _scan_file(path: Path, domain: str) -> list[ArchitectureDiagnostic]:
                 found_converted_branch = False
                 for branch in (child for child in ast.walk(node) if isinstance(child, ast.If)):
                     branch_events = _strings(branch.test).intersection(event_names)
-                    is_d3_legacy_replay = _is_d3_legacy_replay_branch(branch, functions)
-                    if branch_events and not is_d3_legacy_replay:
+                    if branch_events:
                         found_converted_branch = True
                         diagnostics.append(_diagnostic(path, branch, "converted reducer branch"))
-                    elif is_d3_legacy_replay:
-                        found_converted_branch = True
                 if not found_converted_branch and _strings(node).intersection(event_names):
                     diagnostics.append(_diagnostic(path, node, "converted reducer branch"))
                 reducer_calls = [child for child in ast.walk(node) if isinstance(child, ast.Call)]
@@ -321,6 +288,292 @@ def _scan_file(path: Path, domain: str) -> list[ArchitectureDiagnostic]:
     return diagnostics
 
 
+def _strict_cutover_diagnostics(path: Path) -> list[ArchitectureDiagnostic]:
+    """Reject retired generation-1 carriers and mapping compatibility seams."""
+    tree = ast.parse(path.read_text(), filename=str(path))
+    diagnostics: list[ArchitectureDiagnostic] = []
+    functions = {
+        node.name: node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    command_result_functions = {"handle_command"}
+    while True:
+        function_aliases = {
+            target.id: value.id
+            for node in tree.body
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            and (value := node.value) is not None
+            and isinstance(value, ast.Name)
+            for target in (node.targets if isinstance(node, ast.Assign) else [node.target])
+            if isinstance(target, ast.Name)
+        }
+        aliases_changed = True
+        while aliases_changed:
+            aliases_changed = False
+            for alias, target in tuple(function_aliases.items()):
+                resolved = function_aliases.get(target, target)
+                if resolved != target:
+                    function_aliases[alias] = resolved
+                    aliases_changed = True
+
+        def call_returns_command_result(value: ast.expr, callable_aliases: set[str]) -> bool:
+            call = value.value if isinstance(value, ast.Await) else value
+            return isinstance(call, ast.Call) and (
+                _call_name(call.func) in command_result_functions
+                or (isinstance(call.func, ast.Name) and call.func.id in callable_aliases)
+            )
+
+        wrappers: set[str] = set()
+        for name, function in functions.items():
+            callable_aliases = {
+                alias
+                for alias, target in function_aliases.items()
+                if target in command_result_functions
+            }
+            result_names: set[str] = set()
+            changed = True
+            while changed:
+                changed = False
+                for child in ast.walk(function):
+                    if not isinstance(child, (ast.Assign, ast.AnnAssign)) or child.value is None:
+                        continue
+                    targets = child.targets if isinstance(child, ast.Assign) else [child.target]
+                    if (
+                        isinstance(child.value, ast.Attribute)
+                        and child.value.attr == "handle_command"
+                    ):
+                        for target in targets:
+                            if isinstance(target, ast.Name) and target.id not in callable_aliases:
+                                callable_aliases.add(target.id)
+                                changed = True
+                    if call_returns_command_result(child.value, callable_aliases) or (
+                        isinstance(child.value, ast.Name) and child.value.id in result_names
+                    ):
+                        for target in targets:
+                            if isinstance(target, ast.Name) and target.id not in result_names:
+                                result_names.add(target.id)
+                                changed = True
+            if any(
+                isinstance(child, ast.Return)
+                and child.value is not None
+                and (
+                    call_returns_command_result(child.value, callable_aliases)
+                    or isinstance(child.value, ast.Name)
+                    and child.value.id in result_names
+                )
+                for child in ast.walk(function)
+            ):
+                wrappers.add(name)
+        if wrappers <= command_result_functions:
+            break
+        command_result_functions.update(wrappers)
+
+    def is_strict_model_name(node: ast.expr) -> bool:
+        name = _call_name(node)
+        return name is not None and (name.endswith("Payload") or name.startswith("Strict"))
+
+    for function in (
+        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
+        arguments = (
+            *function.args.posonlyargs,
+            *function.args.args,
+            *function.args.kwonlyargs,
+        )
+        parameter_aliases = {
+            argument.arg
+            for argument in arguments
+            if argument.annotation is not None and is_strict_model_name(argument.annotation)
+        }
+        aliases = set(parameter_aliases)
+        strict_event_names = {
+            argument.arg
+            for argument in arguments
+            if argument.annotation is not None
+            and ast.unparse(argument.annotation) == "HydratedEvent"
+        }
+        strict_event_collections = {
+            argument.arg
+            for argument in arguments
+            if argument.annotation is not None
+            and "HydratedEvent" in ast.unparse(argument.annotation)
+            and "EventEnvelope" not in ast.unparse(argument.annotation)
+            and ast.unparse(argument.annotation) != "HydratedEvent"
+        }
+        command_result_names: set[str] = set()
+        payload_sequences: set[str] = set()
+        callable_aliases: set[str] = set()
+
+        def assigned_names(node: ast.Assign | ast.AnnAssign) -> set[str]:
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            return {target.id for target in targets if isinstance(target, ast.Name)}
+
+        def is_command_result(value: ast.expr) -> bool:
+            return (
+                isinstance(value, ast.Await)
+                and isinstance(value.value, ast.Call)
+                and (
+                    _call_name(value.value.func) in command_result_functions
+                    or isinstance(value.value.func, ast.Name)
+                    and value.value.func.id in callable_aliases
+                )
+            )
+
+        changed = True
+        while changed:
+            changed = False
+            for node in ast.walk(function):
+                if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.value is None:
+                    continue
+                if isinstance(node.value, ast.Attribute) and node.value.attr == "handle_command":
+                    before = len(callable_aliases)
+                    callable_aliases.update(assigned_names(node))
+                    changed = changed or len(callable_aliases) != before
+                if is_command_result(node.value):
+                    before = len(command_result_names)
+                    command_result_names.update(assigned_names(node))
+                    changed = changed or len(command_result_names) != before
+
+        def is_result_events(node: ast.expr) -> bool:
+            return (
+                isinstance(node, ast.Attribute)
+                and node.attr == "events"
+                and isinstance(node.value, ast.Name)
+                and node.value.id in command_result_names
+            )
+
+        def is_strict_event_collection(node: ast.expr) -> bool:
+            if isinstance(node, ast.Name):
+                return node.id in strict_event_collections
+            return (
+                isinstance(node, ast.Call)
+                and _call_name(node.func) == "reversed"
+                and len(node.args) == 1
+                and isinstance(node.args[0], ast.Name)
+                and node.args[0].id in strict_event_collections
+            )
+
+        for node in ast.walk(function):
+            if isinstance(node, (ast.For, ast.comprehension)) and (
+                is_result_events(node.iter) or is_strict_event_collection(node.iter)
+            ):
+                if isinstance(node.target, ast.Name):
+                    strict_event_names.add(node.target.id)
+
+        def is_strict_event_expression(node: ast.expr) -> bool:
+            if isinstance(node, ast.Name):
+                return node.id in strict_event_names
+            if not (
+                isinstance(node, ast.Call)
+                and _call_name(node.func) == "next"
+                and node.args
+                and isinstance(node.args[0], ast.GeneratorExp)
+            ):
+                return False
+            return is_strict_event_expression(node.args[0].elt)
+
+        for node in ast.walk(function):
+            if (
+                isinstance(node, (ast.Assign, ast.AnnAssign))
+                and node.value is not None
+                and is_strict_event_expression(node.value)
+            ):
+                strict_event_names.update(assigned_names(node))
+
+        def is_strict_payload_expression(node: ast.expr) -> bool:
+            if isinstance(node, ast.Name):
+                return node.id in aliases
+            if (
+                isinstance(node, ast.Attribute)
+                and node.attr == "payload"
+                and isinstance(node.value, ast.Name)
+            ):
+                return node.value.id in strict_event_names
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "to_json"
+            ):
+                return is_strict_payload_expression(node.func.value)
+            return (
+                isinstance(node, ast.Subscript)
+                and isinstance(node.value, ast.Name)
+                and node.value.id in payload_sequences
+            )
+
+        def is_event_payload_json_expression(node: ast.expr) -> bool:
+            return (
+                isinstance(node, ast.Call)
+                and _call_name(node.func) == "event_payload_json"
+                and len(node.args) == 1
+                and is_strict_event_expression(node.args[0])
+            )
+
+        for node in ast.walk(function):
+            if (
+                isinstance(node, ast.Call)
+                and _call_name(node.func) == "isinstance"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Name)
+                and is_strict_model_name(node.args[1])
+            ):
+                aliases.add(node.args[0].id)
+            if (
+                isinstance(node, (ast.Assign, ast.AnnAssign))
+                and (value := node.value) is not None
+                and isinstance(value, ast.Call)
+                and isinstance(value.func, ast.Attribute)
+                and value.func.attr in {"model_validate", "model_validate_json"}
+                and is_strict_model_name(value.func.value)
+            ):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                aliases.update(target.id for target in targets if isinstance(target, ast.Name))
+            if isinstance(node, (ast.Assign, ast.AnnAssign)) and node.value is not None:
+                is_parameter_json_adapter = (
+                    isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Attribute)
+                    and node.value.func.attr == "to_json"
+                    and isinstance(node.value.func.value, ast.Name)
+                    and node.value.func.value.id in parameter_aliases
+                )
+                if (
+                    is_strict_payload_expression(node.value)
+                    or is_event_payload_json_expression(node.value)
+                ) and not is_parameter_json_adapter:
+                    aliases.update(assigned_names(node))
+                if isinstance(node.value, ast.ListComp) and is_strict_payload_expression(
+                    node.value.elt
+                ):
+                    payload_sequences.update(assigned_names(node))
+        for node in ast.walk(function):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr in _RETIRED_D_SERIES_MAPPING_METHODS
+                and is_strict_payload_expression(node.func.value)
+            ):
+                diagnostics.append(_diagnostic(path, node, "W5RAW_PAYLOAD_READ"))
+            elif isinstance(node, ast.Subscript) and is_strict_payload_expression(node.value):
+                diagnostics.append(_diagnostic(path, node, "W5RAW_PAYLOAD_READ"))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and _call_name(node.func) == "EventEnvelope":
+            diagnostics.append(_diagnostic(path, node, "W5RAW_EVENT_ENVELOPE_CONSTRUCTION"))
+        if isinstance(node, ast.Name) and node.id in _RETIRED_GRAPH_PAYLOAD_NAMES:
+            diagnostics.append(_diagnostic(path, node, "retired graph payload compatibility"))
+        if isinstance(node, ast.ClassDef) and node.name == "LegacyEventPayload":
+            diagnostics.append(_diagnostic(path, node, "retired graph payload compatibility"))
+        if isinstance(node, ast.ClassDef) and node.name in {"StrictPayload", "LegacyEventPayload"}:
+            for member in node.body:
+                if (
+                    isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and member.name in _RETIRED_D_SERIES_MAPPING_METHODS
+                ):
+                    diagnostics.append(_diagnostic(path, member, "retired D-series mapping method"))
+    return diagnostics
+
+
 def check_paths(
     paths: Sequence[Path], *, domain: str | None = None
 ) -> tuple[ArchitectureDiagnostic, ...]:
@@ -343,6 +596,13 @@ def check_paths(
             for site in (*report.dynamic_event_sites, *report.dynamic_command_sites)
             if site.classification == "unresolved"
         )
+        expanded = [
+            candidate
+            for path in paths
+            for candidate in (path.rglob("*.py") if path.is_dir() else [path])
+        ]
+        for path in expanded:
+            diagnostics.extend(_strict_cutover_diagnostics(path))
         return tuple(sorted(set(diagnostics)))
     expanded: list[Path] = []
     for path in paths:

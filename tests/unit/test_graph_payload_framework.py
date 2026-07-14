@@ -167,6 +167,7 @@ def test_command_specification_validates_once_and_requires_exact_class_at_dispat
 
     spec = CommandSpecification(name="example", payload_type=ExamplePayload, handler=handle)
     command = spec.validate({"node_id": "n-1", "generation": 1})
+    catalog = build_graph_catalog()
     context = CommandExecutionContext(
         run_id="run-1",
         current_position=4,
@@ -174,9 +175,8 @@ def test_command_specification_validates_once_and_requires_exact_class_at_dispat
         id_generator=FixedIds(),
         actor=ACTOR,
         events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
+        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+        catalog=catalog,
     )
 
     assert spec.handle(command, {}, (), context) == []
@@ -258,6 +258,7 @@ def test_heartbeat_command_emits_projection_neutral_typed_event() -> None:
         future_effects=build_graph_command_dependencies(
             catalog=build_graph_catalog()
         ).future_effects,
+        catalog=catalog,
     )
 
     events = catalog.resolve_command("record_heartbeat").handle(
@@ -300,9 +301,11 @@ def test_public_apply_command_dispatches_heartbeat_through_injected_catalog_cont
         future_effects=build_graph_command_dependencies(
             catalog=build_graph_catalog()
         ).future_effects,
+        catalog=catalog,
     )
 
     events = apply_command(
+        catalog,
         {
             "run_state": "active",
             "leases": {
@@ -318,10 +321,7 @@ def test_public_apply_command_dispatches_heartbeat_through_injected_catalog_cont
         [],
         "record_heartbeat",
         {"node_id": "worker-1", "lease_id": "lease-1", "lease_generation": 2},
-        context.clock,
-        context.id_generator,
-        catalog=catalog,
-        context=context,
+        context,
     )
 
     event = events[0]

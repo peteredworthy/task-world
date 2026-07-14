@@ -2,23 +2,31 @@
 
 import pytest
 
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import (
+    EventMetadata,
+    HydratedEvent,
+    build_graph_catalog,
+    build_graph_command_dependencies,
+)
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
-from orchestrator.graph.models import Actor, ActorKind, EventEnvelope
+from orchestrator.graph.models import Actor, ActorKind
 from orchestrator.graph.scenario import run_scenario
 from orchestrator.graph.store import DuplicateEventError, InMemoryEventStore
 
 
-def make_event(run_id: str, event_type: str, payload: dict[str, object]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-event",
-        run_id=run_id,
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+def make_event(run_id: str, event_type: str, payload: dict[str, object]) -> HydratedEvent:
+    specification = build_graph_catalog().resolve_event(event_type)
+    return specification.create(
+        EventMetadata(
+            event_id=f"{event_type}-event",
+            run_id=run_id,
+            position=-1,
+            event_type=event_type,
+            payload_schema_generation=2,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=FakeClock().now(),
+        ),
+        specification.validate_payload(payload),
     )
 
 
@@ -46,7 +54,6 @@ def test_scenario_with_all_expected_events_passes() -> None:
                         "new_state": "completed",
                     }
                 },
-                {"command_recorded": {"command_type": "raise_appeal"}},
                 {"command_rejected": {"command_type": "raise_appeal"}},
             ],
             "then_projection": {"build-A-1": "completed"},
@@ -62,7 +69,7 @@ def test_scenario_with_all_expected_events_passes() -> None:
 
     assert result.passed is True
     assert result.failures == []
-    assert [event.position for event in result.events_produced] == [0, 1, 2, 3]
+    assert [event.position for event in result.events_produced] == [0, 1, 2]
     assert result.projection_snapshot == {"build-A-1": "completed"}
 
 
@@ -130,9 +137,13 @@ def test_sequential_id_generator() -> None:
 def test_in_memory_store_append_and_read() -> None:
     store = InMemoryEventStore()
 
-    first = store.append(make_event("run-1", "node_created", {"node_id": "A"}))
-    second = store.append(make_event("run-1", "node_state_changed", {"node_id": "A"}))
-    other_run = store.append(make_event("run-2", "node_created", {"node_id": "B"}))
+    first = store.append(make_event("run-1", "node_created", {"node_id": "A", "kind": "worker"}))
+    second = store.append(
+        make_event("run-1", "node_state_changed", {"node_id": "A", "new_state": "ready"})
+    )
+    other_run = store.append(
+        make_event("run-2", "node_created", {"node_id": "B", "kind": "worker"})
+    )
 
     assert first.position == 0
     assert second.position == 1
@@ -145,9 +156,11 @@ def test_in_memory_store_append_and_read() -> None:
 
 def test_duplicate_event_raises() -> None:
     store = InMemoryEventStore()
-    store.append(make_event("run-1", "node_created", {"node_id": "A"}))
-    duplicate = make_event("run-1", "node_state_changed", {"node_id": "A"})
-    duplicate = duplicate.model_copy(update={"position": 0})
+    store.append(make_event("run-1", "node_created", {"node_id": "A", "kind": "worker"}))
+    duplicate = make_event("run-1", "node_state_changed", {"node_id": "A", "new_state": "ready"})
+    duplicate = duplicate.model_copy(
+        update={"metadata": duplicate.metadata.model_copy(update={"position": 0})}
+    )
 
     with pytest.raises(DuplicateEventError):
         store.append(duplicate)

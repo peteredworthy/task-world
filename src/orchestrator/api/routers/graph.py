@@ -9,7 +9,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query
-from pydantic import Field, ValidationError
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -21,21 +21,28 @@ from orchestrator.api.deps import (
 )
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import RunStatus
-from orchestrator.db import GraphOutboxModel
+from orchestrator.db import (
+    GraphOutboxModel,
+    commit_with_event_outbox,
+    create_wired_event_store_v2,
+    rollback_with_event_outbox,
+)
 from orchestrator.graph import (
-    Actor,
-    ActorKind,
-    CompactEventEnvelope,
-    EventEnvelope,
+    CommandRejectedPayload,
+    GraphPatchRejectedPayload,
+    GatekeeperVerdictRecordedPayload,
     HydratedEvent,
     OutputRecordAcceptedPayload,
+    NodeStateChangedPayload,
     RecordDecisionCommand,
     RecordSelector,
     SubmitPatchCommand,
     SubmitPatchFields,
     StrictPayload,
+    StrictFileStateRecord,
     build_projection,
     check_command_reference,
+    event_payload_json,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
     node_contract_summary,
@@ -60,6 +67,7 @@ from orchestrator.graph_runtime import (
     StaleProjectionError,
 )
 from orchestrator.state import RunNotFoundError
+from orchestrator.workflow import OutboxRequeued
 from orchestrator.graph import build_graph_command_dependencies
 from orchestrator.graph import GraphCatalog
 
@@ -387,7 +395,7 @@ class GraphRegionsResponse(ApiModel):
 
 
 def _event_to_response(
-    event: EventEnvelope | HydratedEvent,
+    event: HydratedEvent,
     *,
     payload_mode: Literal["full", "summary"] = "full",
 ) -> GraphEventResponse:
@@ -413,11 +421,11 @@ def _summary_to_response(event: GraphEventSummary) -> GraphEventResponse:
 
 
 def _event_payload(
-    event: EventEnvelope | HydratedEvent,
+    event: HydratedEvent,
     *,
     payload_mode: Literal["full", "summary"],
 ) -> dict[str, Any]:
-    payload = event.payload.to_json() if isinstance(event, HydratedEvent) else dict(event.payload)
+    payload = event.payload.to_json()
     if payload_mode == "full":
         return payload
     return _summary_payload(payload)
@@ -577,7 +585,7 @@ def build_graph_topology_response(
 
 def build_graph_patch_attempts_response(
     run_id: str,
-    events: Sequence[EventEnvelope | HydratedEvent],
+    events: Sequence[HydratedEvent],
     *,
     current_graph_position: int | None = None,
 ) -> GraphPatchAttemptsResponse:
@@ -638,19 +646,6 @@ def _failed_outbox_blocker_responses(
         )
         for row in rows
     ]
-
-
-async def append_requeue_audit_event(
-    store: GraphEventStore,
-    *,
-    run_id: str,
-    current_position: int,
-    audit_event: EventEnvelope,
-) -> None:
-    try:
-        await store.append_events(run_id, current_position, [audit_event])
-    except StaleProjectionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 def build_graph_regions_response(
@@ -848,29 +843,16 @@ def _node_events_filter(event: HydratedEvent, node_id: str) -> bool:
     return _payload_has_node_value(event.payload, node_id)
 
 
-def _pick_output_records(
-    events: Sequence[EventEnvelope | HydratedEvent], node_id: str
-) -> list[dict[str, Any]]:
+def _pick_output_records(events: Sequence[HydratedEvent], node_id: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for event in events:
+        if type(event) is not HydratedEvent:
+            raise TypeError("node detail events require HydratedEvent instances")
         if event.event_type != "output_record_accepted":
             continue
-        if isinstance(event, CompactEventEnvelope):
-            payload = dict(event.payload["record"])
-        else:
-            try:
-                payload = OutputRecordAcceptedPayload.model_validate(
-                    event.payload
-                ).record.model_dump(mode="json", by_alias=True, exclude_none=True)
-            except ValidationError:
-                # Task 5 D3: detail scans retain raw historical record payloads
-                # until the Task 13 durable-history cutover.
-                if event.schema_version != 1:
-                    raise
-                raw_record = event.payload.get("record")
-                if not isinstance(raw_record, dict):
-                    continue
-                payload = dict(cast(dict[str, Any], raw_record))
+        payload = OutputRecordAcceptedPayload.model_validate(
+            event.payload.to_json()
+        ).record.model_dump(mode="json", by_alias=True, exclude_none=True)
         if payload.get("record_kind") == "file_state":
             continue
         if payload.get("producer_node_id") != node_id:
@@ -879,20 +861,23 @@ def _pick_output_records(
     return records
 
 
-def _pick_file_state_records(
-    events: Sequence[EventEnvelope | HydratedEvent], node_id: str
-) -> list[dict[str, Any]]:
+def _pick_file_state_records(events: Sequence[HydratedEvent], node_id: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     for event in events:
         if event.event_type != "file_state_accepted":
             continue
-        payload = event.payload
-        if payload.get("producer_node_id") != node_id:
+        if not isinstance(event.payload, StrictFileStateRecord):
+            raise TypeError("file_state_accepted event has an unexpected payload type")
+        if event.payload.producer_node_id != node_id:
             continue
-        record = payload.to_json() if isinstance(payload, StrictPayload) else dict(payload)
+        record = _file_state_record_json(event.payload)
         record["classification_summary"] = _classification_summary(record)
         records.append(record)
     return records
+
+
+def _file_state_record_json(payload: StrictFileStateRecord) -> dict[str, Any]:
+    return cast(dict[str, Any], payload.to_json())
 
 
 def _classification_summary(record: dict[str, Any]) -> dict[str, Any]:
@@ -990,32 +975,24 @@ def _residue_by_record_path(
 
 
 def _gatekeeper_verdicts_by_record(
-    events: Sequence[EventEnvelope | HydratedEvent],
+    events: Sequence[HydratedEvent],
 ) -> dict[str, list[FileStateGatekeeperVerdictResponse]]:
     by_record: dict[str, list[FileStateGatekeeperVerdictResponse]] = {}
     for event in events:
         if event.event_type != "gatekeeper_verdict_recorded":
             continue
-        record_id = event.payload.get("file_state_record_id")
-        verdicts = event.payload.get("verdicts")
-        if not isinstance(record_id, str) or not isinstance(verdicts, list):
-            continue
-        for raw_verdict in cast(list[Any], verdicts):
-            if not isinstance(raw_verdict, dict):
-                continue
-            verdict = cast(dict[str, Any], raw_verdict)
-            path = verdict.get("path")
-            if not isinstance(path, str):
-                continue
-            classification = cast(str | None, verdict.get("classification"))
+        if not isinstance(event.payload, GatekeeperVerdictRecordedPayload):
+            raise TypeError("gatekeeper_verdict_recorded event has an unexpected payload type")
+        record_id = event.payload.file_state_record_id
+        for verdict in event.payload.verdicts:
             by_record.setdefault(record_id, []).append(
                 FileStateGatekeeperVerdictResponse(
-                    path=path,
-                    verdict="reject" if classification == "secret" else "allow",
-                    classification=classification,
-                    rationale=cast(str | None, verdict.get("rationale")),
-                    confidence=cast(float | None, verdict.get("confidence")),
-                    model_id=cast(str | None, verdict.get("model_id")),
+                    path=verdict.path,
+                    verdict="reject" if verdict.classification == "secret" else "allow",
+                    classification=verdict.classification,
+                    rationale=verdict.rationale,
+                    confidence=verdict.confidence,
+                    model_id=verdict.model_id,
                 )
             )
     return by_record
@@ -1110,7 +1087,7 @@ def _file_state_boundary_response(
 
 
 def build_file_state_report_response(
-    run_id: str, events: Sequence[EventEnvelope | HydratedEvent], *, catalog: GraphCatalog
+    run_id: str, events: Sequence[HydratedEvent], *, catalog: GraphCatalog
 ) -> FileStateReportResponse:
     if not events:
         return FileStateReportResponse(run_id=run_id, event_count=0, nodes=[], gatekeeper=None)
@@ -1124,9 +1101,7 @@ def build_file_state_report_response(
         if event.event_type != "file_state_accepted":
             continue
         boundary = _file_state_boundary_response(
-            event.payload.to_json()
-            if isinstance(event.payload, StrictPayload)
-            else dict(event.payload),
+            event.payload.to_json(),
             residue_by_path,
             gatekeeper_verdicts,
         )
@@ -1157,7 +1132,8 @@ def _is_callback_history_event(event: HydratedEvent) -> bool:
         return True
     return (
         event.event_type == "node_state_changed"
-        and event.payload.get("trigger") == "runtime_start_acknowledged"
+        and isinstance(event.payload, NodeStateChangedPayload)
+        and event.payload.trigger == "runtime_start_acknowledged"
     )
 
 
@@ -1244,9 +1220,11 @@ def build_node_detail_response(
 
 def _latest_prompt_summary(events: Sequence[HydratedEvent]) -> dict[str, Any] | None:
     for event in reversed(events):
-        prompt_summary = event.payload.get("prompt_summary")
-        if isinstance(prompt_summary, dict):
-            return dict(cast(dict[str, Any], prompt_summary))
+        if (
+            isinstance(event.payload, NodeStateChangedPayload)
+            and event.payload.prompt_summary is not None
+        ):
+            return dict(event.payload.prompt_summary)
     return None
 
 
@@ -1276,7 +1254,7 @@ def _node_detail_event_to_response(
 def build_node_detail_response_from_summary(
     summary: GraphNodeDetailSummary,
     *,
-    full_events: Sequence[EventEnvelope | HydratedEvent] | None = None,
+    full_events: Sequence[HydratedEvent] | None = None,
 ) -> NodeDetailResponse:
     controls = _node_detail_controls_from_summary(summary)
     response_events = [GraphEventResponse(**event) for event in summary.events]
@@ -1333,7 +1311,7 @@ def _summary_node_event_response(event: GraphEventResponse) -> GraphEventRespons
 
 def _full_node_event_responses(
     compact_events: list[dict[str, Any]],
-    full_events: Sequence[EventEnvelope | HydratedEvent],
+    full_events: Sequence[HydratedEvent],
 ) -> list[GraphEventResponse]:
     full_by_position = {event.position: event for event in full_events}
     responses: list[GraphEventResponse] = []
@@ -1348,7 +1326,7 @@ def _full_node_event_responses(
 
 
 def _node_detail_full_event_response(
-    event: EventEnvelope | HydratedEvent,
+    event: HydratedEvent,
 ) -> GraphEventResponse:
     return GraphEventResponse(
         event_id=event.event_id,
@@ -1361,9 +1339,9 @@ def _node_detail_full_event_response(
 
 
 def _node_detail_full_event_payload(
-    event: EventEnvelope | HydratedEvent,
+    event: HydratedEvent,
 ) -> dict[str, Any]:
-    payload = dict(event.payload)
+    payload = cast(dict[str, Any], event.payload.to_json())
     if event.event_type in {
         "callback_accepted",
         "file_state_accepted",
@@ -1743,15 +1721,15 @@ async def submit_operator_graph_patch(
 
     rejection = next(
         (
-            event
+            event.payload
             for event in result.events
             if event.event_type in {"graph_patch_rejected", "command_rejected"}
+            and isinstance(event.payload, (GraphPatchRejectedPayload, CommandRejectedPayload))
         ),
         None,
     )
     if rejection is not None:
-        reason = rejection.payload.get("reason", "graph patch rejected")
-        raise HTTPException(status_code=409, detail=str(reason))
+        raise HTTPException(status_code=409, detail=rejection.reason)
 
     return SubmitGraphPatchResponse(
         run_id=run_id,
@@ -1792,12 +1770,10 @@ async def requeue_failed_outbox_row(
     run_id: str = ApiPath(..., min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"),
     event_id: str = ApiPath(..., min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
-    *,
-    catalog: GraphCatalog = Depends(get_graph_catalog),
 ) -> RequeueOutboxResponse:
     clock = _ApiGraphClock()
     async with session_factory() as session:
-        async with session.begin():
+        try:
             result = await session.execute(
                 select(GraphOutboxModel)
                 .where(GraphOutboxModel.run_id == run_id)
@@ -1809,49 +1785,31 @@ async def requeue_failed_outbox_row(
             if row.status != "failed":
                 raise HTTPException(status_code=409, detail="Outbox row is not failed")
 
-            store = GraphEventStore(
-                session,
-                catalog,
-            )
-            current_position = await store.current_position(run_id)
-            if current_position == 0:
-                raise HTTPException(status_code=404, detail="Graph not found for run")
-
             now = clock.now()
             previous_attempts = row.attempts
             previous_last_error = row.last_error
-            audit_payload = {
-                "run_id": run_id,
-                "outbox_id": row.outbox_id,
-                "event_id": row.event_id,
-                "kind": row.kind,
-                "previous_status": row.status,
-                "previous_attempts": previous_attempts,
-                "previous_last_error": previous_last_error,
-                "operator": "human-operator",
-                "graph_position": current_position + 1,
-            }
             row.status = "pending"
             row.attempts = 0
             row.next_attempt_at = None
             row.last_error = None
             row.updated_at = now
-            await append_requeue_audit_event(
-                store,
-                run_id=run_id,
-                current_position=current_position,
-                audit_event=EventEnvelope(
-                    event_id=f"outbox-requeued-{uuid4().hex}",
-                    run_id=run_id,
-                    position=-1,
-                    event_type="outbox_requeued",
-                    schema_version=1,
-                    actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
-                    causation_id=event_id,
+            await create_wired_event_store_v2(session).append(
+                OutboxRequeued(
                     timestamp=now,
-                    payload=audit_payload,
-                ),
+                    run_id=run_id,
+                    outbox_id=row.outbox_id,
+                    event_id=row.event_id,
+                    kind=row.kind,
+                    previous_status="failed",
+                    previous_attempts=previous_attempts,
+                    previous_last_error=previous_last_error,
+                    operator="human-operator",
+                )
             )
+            await commit_with_event_outbox(session)
+        except Exception:
+            await rollback_with_event_outbox(session)
+            raise
 
     return RequeueOutboxResponse(
         run_id=run_id,
@@ -1953,10 +1911,13 @@ async def record_graph_decision(
     except StaleProjectionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
-    rejected = [event.payload for event in result.events if event.event_type == "command_rejected"]
+    rejected = [
+        event_payload_json(event)
+        for event in result.events
+        if event.event_type == "command_rejected"
+    ]
     if rejected:
-        reason = rejected[-1].get("reason", "decision rejected")
-        raise HTTPException(status_code=409, detail=str(reason))
+        raise HTTPException(status_code=409, detail=rejected[-1]["reason"])
 
     response_events = list(result.events)
     events = await graph_store.read_run_light(run_id)

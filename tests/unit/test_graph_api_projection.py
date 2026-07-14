@@ -20,15 +20,17 @@ from orchestrator.api import (
 from orchestrator.graph import (
     Actor,
     ActorKind,
-    CompactEventEnvelope,
     EventEnvelope,
+    EventMetadata,
     FakeClock,
     HydratedEvent,
+    event_payload_json,
 )
 from orchestrator.graph_runtime.store import GraphEventStore, GraphNodeDetailSummary
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import GraphCatalog
+from orchestrator.graph import UnknownGraphEventError
 
 
 def _event(
@@ -38,18 +40,19 @@ def _event(
     run_id: str = "run-1",
     position: int = -1,
 ) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-event",
-        run_id=run_id,
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    catalog = build_graph_catalog()
+    specification = catalog.resolve_event(event_type)
+    return specification.create(
+        EventMetadata(
+            event_id=f"{event_type}-event",
+            run_id=run_id,
+            position=position,
+            event_type=event_type,
+            payload_schema_generation=2,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=FakeClock().now(),
+        ),
+        specification.validate_payload(payload),
     )
 
 
@@ -130,11 +133,12 @@ def test_build_node_detail_filters_by_node_id(*, catalog: GraphCatalog) -> None:
                 "record": {
                     "record_id": "out-a",
                     "record_kind": "output",
-                    "record_type": "output_summary",
+                    "record_type": "candidate",
                     "producer_node_id": "node-a",
-                    "port": "output",
-                    "schema": "OutputSummary",
-                    "value": {"task_region_id": "task-a"},
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "out-a",
+                    "value": {"summary": "task-a"},
                 }
             },
         ),
@@ -144,20 +148,31 @@ def test_build_node_detail_filters_by_node_id(*, catalog: GraphCatalog) -> None:
                 "record": {
                     "record_id": "out-b",
                     "record_kind": "output",
-                    "record_type": "output_summary",
+                    "record_type": "candidate",
                     "producer_node_id": "node-b",
-                    "port": "output",
-                    "schema": "OutputSummary",
-                    "value": {"task_region_id": "task-b"},
+                    "port": "candidate",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "out-b",
+                    "value": {"summary": "task-b"},
                 }
             },
         ),
         _event(
             "file_state_accepted",
             {
-                "path": "README.md",
+                "record_id": "file-state-a",
+                "record_kind": "file_state",
                 "producer_node_id": "node-a",
-                "state": "unchanged",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "tracked": [
+                    {
+                        "path": "README.md",
+                        "classification": "source",
+                        "source": "tracked",
+                        "rejected": False,
+                    }
+                ],
             },
         ),
         _event(
@@ -181,7 +196,7 @@ def test_build_node_detail_filters_by_node_id(*, catalog: GraphCatalog) -> None:
     assert len(detail.output_records) == 1
     assert detail.output_records[0]["record_id"] == "out-a"
     assert len(detail.file_state_records) == 1
-    assert detail.file_state_records[0]["path"] == "README.md"
+    assert detail.file_state_records[0]["tracked"][0]["path"] == "README.md"
     assert [e.event_id for e in detail.events] == [
         "node_created-event",
         "node_state_changed-event",
@@ -191,46 +206,32 @@ def test_build_node_detail_filters_by_node_id(*, catalog: GraphCatalog) -> None:
     ]
 
 
-def test_build_node_detail_accepts_compact_output_record_envelope(*, catalog: GraphCatalog) -> None:
+def test_build_node_detail_accepts_hydrated_output_record(*, catalog: GraphCatalog) -> None:
     created = _event(
         "node_created",
         {"node_id": "node-a", "kind": "worker", "state": "completed"},
     )
-    compact = CompactEventEnvelope.model_validate(
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "out-a",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "node-a",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "candidate_id": "out-a",
-                    "value": {"summary": "compact"},
-                }
-            },
-        ).model_dump()
-        | {
-            "payload": {
-                "record": {
-                    "record_id": "out-a",
-                    "record_kind": "output",
-                    "producer_node_id": "node-a",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                }
+    accepted = _event(
+        "output_record_accepted",
+        {
+            "record": {
+                "record_id": "out-a",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "producer_node_id": "node-a",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "candidate_id": "out-a",
+                "value": {"summary": "compact"},
             }
-        }
+        },
     )
-
     detail = build_node_detail_response(
-        "run-node", "node-a", [created, compact], catalog=build_graph_catalog()
+        "run-node", "node-a", [created, accepted], catalog=build_graph_catalog()
     )
 
     assert detail is not None
-    assert detail.output_records == [compact.payload["record"]]
+    assert detail.output_records == [event_payload_json(accepted)["record"]]
 
 
 def test_build_node_detail_exposes_contract_and_runtime_controls_separately(
@@ -317,13 +318,15 @@ def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None
                 "record": {
                     "record_id": "out-a",
                     "record_kind": "output",
-                    "record_type": "output",
+                    "record_type": "candidate",
                     "producer_node_id": "node-a",
                     "port": "candidate",
-                    "schema": "GenericOutput",
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "out-a",
                     "value": {
+                        "summary": "bounded output",
                         "body": long_body,
-                        "paths": [f"file-{index}" for index in range(201)],
+                        "changed_paths": [f"file-{index}" for index in range(201)],
                     },
                 }
             },
@@ -336,11 +339,12 @@ def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None
                 "record": {
                     "record_id": "out-b",
                     "record_kind": "output",
-                    "record_type": "output",
+                    "record_type": "candidate",
                     "producer_node_id": "node-b",
                     "port": "candidate",
-                    "schema": "GenericOutput",
-                    "value": {"body": "unrelated"},
+                    "schema": "ImplementationCandidate",
+                    "candidate_id": "out-b",
+                    "value": {"summary": "unrelated"},
                 }
             },
             run_id="run-node",
@@ -351,20 +355,20 @@ def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None
     detail = build_node_detail_response_from_summary(summary, full_events=full_events)
 
     assert [event.position for event in detail.events] == [2]
-    assert detail.events[0].payload["record"]["record_id"] == "out-a"
+    assert event_payload_json(detail.events[0])["record"]["record_id"] == "out-a"
     assert "value" not in detail.events[0].payload
     assert detail.output_records[0]["record_id"] == "out-a"
     assert detail.output_records[0]["producer_node_id"] == "node-a"
     bounded_body = detail.output_records[0]["value"]["body"]
     assert len(bounded_body) < len(long_body)
     assert bounded_body.endswith("...[truncated 100000 chars]")
-    assert detail.output_records[0]["value"]["__truncated_fields"][0]["field"] == "body"
-    assert detail.output_records[0]["value"]["__truncated_fields"][0]["original_length"] == len(
-        long_body
-    )
-    assert len(detail.output_records[0]["value"]["paths"]) == 200
-    assert detail.output_records[0]["value"]["__truncated_fields"][1] == {
-        "field": "paths",
+    truncated_fields = {
+        entry["field"]: entry for entry in detail.output_records[0]["value"]["__truncated_fields"]
+    }
+    assert truncated_fields["body"]["original_length"] == len(long_body)
+    assert len(detail.output_records[0]["value"]["changed_paths"]) == 200
+    assert truncated_fields["changed_paths"] == {
+        "field": "changed_paths",
         "original_length": 201,
         "retained_items": 200,
     }
@@ -757,6 +761,11 @@ def test_batch_graph_backed_detection_ignores_legacy_aggregates() -> None:
     assert _graph_backed_run_ids_from_rows(rows) == {"run-graph"}
 
 
+def test_retired_graph_patch_proposed_event_is_rejected(*, catalog: GraphCatalog) -> None:
+    with pytest.raises(UnknownGraphEventError, match="graph_patch_proposed"):
+        catalog.resolve_event("graph_patch_proposed")
+
+
 @pytest.mark.asyncio
 async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_patches(
     session: AsyncSession,
@@ -766,15 +775,6 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
         build_graph_catalog(),
     )
     events = [
-        _event(
-            "graph_patch_proposed",
-            {
-                "patch_id": "patch-accepted",
-                "proposed_by_node_id": "planner-1",
-                "base_graph_position": 2,
-            },
-            position=1,
-        ),
         _event(
             "graph_patch_accepted",
             {
@@ -850,7 +850,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
     )
 
     assert response.run_id == "run-patches"
-    assert response.current_graph_position == 7
+    assert response.current_graph_position == 6
     assert [attempt.patch_id for attempt in response.attempts] == [
         "patch-accepted",
         "patch-rejected",
@@ -860,7 +860,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
     assert accepted.status == "accepted"
     assert accepted.proposed_by_node_id == "planner-1"
     assert accepted.base_graph_position == 2
-    assert accepted.accepted_position == 2
+    assert accepted.accepted_position == 1
     assert accepted.created_node_ids == ["worker-1"]
     assert accepted.created_edge_ids == ["edge-1"]
     assert accepted.diagnostics["actor_role"] == "planner"

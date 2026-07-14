@@ -4,7 +4,17 @@ from datetime import datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Discriminator, Field, RootModel, Tag, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Discriminator,
+    Field,
+    RootModel,
+    Tag,
+    TypeAdapter,
+    ValidationError,
+    model_validator,
+)
 
 from orchestrator.graph.payloads import StrictPayload
 
@@ -464,19 +474,45 @@ def _selector_matches_payload(
     if isinstance(schema, str) and isinstance(payload_schema, str) and schema != payload_schema:
         return False
     if isinstance(selector, VerificationReportSelector):
+        if selector.outcome is None:
+            return True
+        try:
+            record = cast(
+                OutputRecordPayload,
+                TypeAdapter(OutputRecordPayload).validate_python(record_payload),
+            )
+        except ValidationError:
+            return False
         return (
-            selector.outcome is None
-            or _verification_payload_outcome(record_payload) == selector.outcome
+            isinstance(record, StrictVerificationReportRecord)
+            and record.outcome == selector.outcome
         )
     if isinstance(selector, CheckResultSelector):
+        if selector.status is None:
+            return True
+        try:
+            record = cast(
+                OutputRecordPayload,
+                TypeAdapter(OutputRecordPayload).validate_python(record_payload),
+            )
+        except ValidationError:
+            return False
         return (
-            selector.status is None
-            or _check_result_payload_status(record_payload) == selector.status
+            isinstance(record, StrictCheckResultRecord) and record.value.status == selector.status
         )
     if isinstance(selector, GapClassificationSelector):
+        if selector.classification is None:
+            return True
+        try:
+            record = cast(
+                OutputRecordPayload,
+                TypeAdapter(OutputRecordPayload).validate_python(record_payload),
+            )
+        except ValidationError:
+            return False
         return (
-            selector.classification is None
-            or _gap_classification_payload_classification(record_payload) == selector.classification
+            isinstance(record, StrictGapClassificationRecord)
+            and record.value.classification == selector.classification
         )
     return True
 
@@ -533,54 +569,6 @@ def _payload_record_types(record_payload: dict[str, Any], aliases: set[str]) -> 
         }:
             output.add(candidate)
     return output
-
-
-def _verification_payload_outcome(record_payload: dict[str, Any]) -> str | None:
-    outcome = record_payload.get("outcome")
-    if isinstance(outcome, str):
-        if outcome in {"passed", "failed"}:
-            return outcome
-    value = record_payload.get("value")
-    if isinstance(value, dict):
-        value_outcome = cast(dict[str, Any], value).get("outcome")
-        if value_outcome in {"passed", "failed"}:
-            return cast(str, value_outcome)
-    verdict = record_payload.get("verdict")
-    if verdict in {"passed", "pass"}:
-        return "passed"
-    if verdict in {"failed", "fail"}:
-        return "failed"
-    if isinstance(value, dict):
-        value_verdict = cast(dict[str, Any], value).get("verdict")
-        if value_verdict in {"passed", "pass"}:
-            return "passed"
-        if value_verdict in {"failed", "fail"}:
-            return "failed"
-    return None
-
-
-def _check_result_payload_status(record_payload: dict[str, Any]) -> str | None:
-    status = record_payload.get("status")
-    if isinstance(status, str):
-        return status
-    value = record_payload.get("value")
-    if isinstance(value, dict):
-        value_status = cast(dict[str, Any], value).get("status")
-        if isinstance(value_status, str):
-            return value_status
-    return None
-
-
-def _gap_classification_payload_classification(record_payload: dict[str, Any]) -> str | None:
-    classification = record_payload.get("classification")
-    if isinstance(classification, str):
-        return classification
-    value = record_payload.get("value")
-    if isinstance(value, dict):
-        value_classification = cast(dict[str, Any], value).get("classification")
-        if isinstance(value_classification, str):
-            return value_classification
-    return None
 
 
 class EdgeModel(GraphBaseModel):
@@ -1934,7 +1922,7 @@ class GraphPatchProposalRecord(TypedRecordBase):
     record_id: str
     record_kind: Literal["output"]
     producer_node_id: str
-    port: Literal["graph_patch_proposal", "graph_patch"]
+    port: Literal["graph_patch_proposal"]
     schema_: Literal["GraphPatch"] = Field(alias="schema")
     value: GraphPatchProposalValue
 
@@ -1942,6 +1930,9 @@ class GraphPatchProposalRecord(TypedRecordBase):
     def graph_patch_proposal_fields_are_consistent(self) -> "GraphPatchProposalRecord":
         if self.record_type != "graph_patch_proposal":
             msg = "record_type must be graph_patch_proposal"
+            raise ValueError(msg)
+        if self.port != "graph_patch_proposal":
+            msg = "port must be graph_patch_proposal"
             raise ValueError(msg)
         return self
 
@@ -2534,6 +2525,25 @@ class StrictGraphPatchProposalRecord(StrictOutputRecordBase):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
     value: StrictGraphPatchProposalValue
 
+    @model_validator(mode="after")
+    def graph_patch_proposal_fields_are_consistent(self) -> "StrictGraphPatchProposalRecord":
+        if self.record_kind != "output":
+            msg = "record_kind must be output"
+            raise ValueError(msg)
+        if self.record_type != "graph_patch_proposal":
+            msg = "record_type must be graph_patch_proposal"
+            raise ValueError(msg)
+        if self.port != "graph_patch_proposal":
+            msg = "port must be graph_patch_proposal"
+            raise ValueError(msg)
+        if self.schema_ != "GraphPatch":
+            msg = "schema must be GraphPatch"
+            raise ValueError(msg)
+        if not self.value.ops and not self.value.macro_invocations:
+            msg = "graph patch proposal must include ops or macro_invocations"
+            raise ValueError(msg)
+        return self
+
 
 class StrictRequirementRecord(StrictOutputRecordBase):
     model_config = ConfigDict(strict=True, extra="forbid", frozen=True, populate_by_name=True)
@@ -2690,7 +2700,6 @@ class GraphRecordKind(str, Enum):
     NODE_RETIRED = "node_retired"
     NODE_STATE_CHANGED = "node_state_changed"
     LEASE_GRANTED = "lease_granted"
-    LEASE_SUSPENDED = "lease_suspended"
     LEASE_REVOKED = "lease_revoked"
     CALLBACK_RECEIVED = "callback_received"
     CALLBACK_ACCEPTED = "callback_accepted"

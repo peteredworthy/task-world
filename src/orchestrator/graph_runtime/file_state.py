@@ -14,11 +14,13 @@ from typing import cast
 
 from orchestrator.git import SnapshotResult, WorktreeError, delete_snapshot_ref, snapshot
 from orchestrator.graph import (
+    CleanupRequestedPayload,
     FileStateRecord,
     FileStateClassification,
     FileStatePath,
     FileStatePathKind,
     FileStatePolicy,
+    StrictFileStateRecord,
     WorktreeStatus,
     classify_file_state,
     default_file_state_policy,
@@ -141,14 +143,16 @@ def capture_file_state_boundary(
 def apply_cleanup_requested(
     *,
     worktree_path: str | Path,
-    cleanup_request: dict[str, object],
-    compromised_record: dict[str, object] | FileStateRecord,
+    cleanup_request: CleanupRequestedPayload,
+    compromised_record: dict[str, object] | FileStateRecord | StrictFileStateRecord,
 ) -> CleanupApplication:
     """Re-snapshot without gatekeeper-secret paths and delete the compromised ref."""
     compromised_payload = _file_state_record_payload(compromised_record)
-    cleanup_id = str(cleanup_request.get("cleanup_id", ""))
-    paths = _cleanup_paths(cleanup_request)
-    old_snapshot_id = str(cleanup_request.get("snapshot_id") or compromised_payload["snapshot_id"])
+    cleanup_id = cleanup_request.cleanup_id
+    paths = list(cleanup_request.paths)
+    old_snapshot_id = cleanup_request.snapshot_id
+    if old_snapshot_id is None:
+        old_snapshot_id = str(compromised_payload["snapshot_id"])
     snap = snapshot(
         worktree_path,
         f"graph file-state cleanup {cleanup_id}",
@@ -167,8 +171,10 @@ def apply_cleanup_requested(
     )
 
 
-def _file_state_record_payload(record: dict[str, object] | FileStateRecord) -> dict[str, object]:
-    if isinstance(record, FileStateRecord):
+def _file_state_record_payload(
+    record: dict[str, object] | FileStateRecord | StrictFileStateRecord,
+) -> dict[str, object]:
+    if isinstance(record, (FileStateRecord, StrictFileStateRecord)):
         return cast(dict[str, object], record.model_dump(mode="json"))
     return record
 
@@ -215,17 +221,6 @@ def _file_state_output_record(
         "residue": [entry.to_record() for entry in classification.residue],
         "rejected_paths": [],
     }
-
-
-def _cleanup_paths(cleanup_request: dict[str, object]) -> list[str]:
-    raw_paths = cleanup_request.get("paths")
-    if not isinstance(raw_paths, list):
-        return []
-    paths: list[str] = []
-    for raw_path in cast(list[object], raw_paths):
-        if isinstance(raw_path, str) and raw_path:
-            paths.append(raw_path)
-    return paths
 
 
 def _cleanup_superseding_record(

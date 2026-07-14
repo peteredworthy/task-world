@@ -17,7 +17,8 @@ def test_profiler_generates_catalog_valid_events_from_tracked_samples() -> None:
     assert SAMPLE_SOURCE == "tests/unit/graph_catalog_samples.py"
     assert len(events) == 12
     for event in events:
-        validate_catalog_event_payload(catalog, event)
+        specification = catalog.resolve_event(event.event_type)
+        validate_catalog_event_payload(catalog, specification.serialize(event))
 
 
 @pytest.mark.asyncio

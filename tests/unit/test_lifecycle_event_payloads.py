@@ -20,6 +20,7 @@ from orchestrator.graph import (
     FakeClock,
     HEARTBEAT_RECORDED,
     HeartbeatRecordedPayload,
+    HydratedEvent,
     RunLifecycleChangedPayload,
     RuntimeRetryScheduledPayload,
     SequentialIdGenerator,
@@ -32,35 +33,35 @@ from orchestrator.graph import (
     build_graph_command_dependencies,
     ProjectionParticipation,
     EventMetadata,
+    event_payload_json,
 )
 from orchestrator.graph_runtime.store import (
     GRAPH_PAYLOAD_SCHEMA_GENERATION,
     GraphEventStore,
     graph_aggregate_id,
 )
+from orchestrator.graph import StoredEventEnvelope
 
 
-def _typed_apply(events: list[EventEnvelope], command_type: str, payload: dict[str, Any]):
+def _typed_apply(events: list[HydratedEvent], command_type: str, payload: dict[str, Any]):
     clock = FakeClock()
     ids = SequentialIdGenerator()
+    catalog = build_graph_catalog()
     return apply_command(
-        build_projection(build_graph_catalog(), events),
+        catalog,
+        build_projection(catalog, events),
         events,
         command_type,
         {key: value for key, value in payload.items() if key != "run_id"},
-        clock,
-        ids,
-        catalog=build_graph_catalog(),
-        context=CommandExecutionContext(
+        CommandExecutionContext(
             run_id=str(payload.get("run_id", "run-1")),
-            current_position=max((e.position for e in events), default=-1),
+            current_position=max((event.metadata.position for event in events), default=-1),
             clock=clock,
             id_generator=ids,
             actor=Actor(kind=ActorKind.CONTROLLER),
             events=(),
-            future_effects=build_graph_command_dependencies(
-                catalog=build_graph_catalog()
-            ).future_effects,
+            future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+            catalog=catalog,
         ),
     )
 
@@ -90,7 +91,7 @@ def test_heartbeat_is_native_datetime_until_json_storage_boundary() -> None:
     )
 
     assert event.payload.observed_at == clock.now()
-    assert isinstance(HEARTBEAT_RECORDED.serialize(event).payload["observed_at"], str)
+    assert isinstance(event_payload_json(HEARTBEAT_RECORDED.serialize(event))["observed_at"], str)
 
 
 STRICT_LIFECYCLE_EVENT_SAMPLES: dict[str, tuple[dict[str, Any], str]] = {
@@ -452,7 +453,7 @@ async def test_sqlite_compact_readers_retain_runtime_retry_not_before() -> None:
                     aggregate_id=graph_aggregate_id("run-1"),
                     version=1,
                     event_type=event.event_type,
-                    payload=event.model_dump_json(),
+                    payload=_stored_event_json(event),
                     payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
                     timestamp=event.timestamp.isoformat(),
                 )
@@ -470,7 +471,7 @@ async def test_sqlite_compact_readers_retain_runtime_retry_not_before() -> None:
             )
             for reader in readers:
                 compact_events = await reader("run-1")
-                assert compact_events[0].payload["retry_not_before"] == retry_not_before
+                assert compact_events[0].payload.retry_not_before == retry_not_before
                 assert build_projection(build_graph_catalog(), compact_events)[
                     "retry_not_before_by_node"
                 ] == {"worker-1": retry_not_before}
@@ -503,13 +504,35 @@ def _active_lease_events() -> list[EventEnvelope]:
 
 
 def _event(event_type: str, payload: dict[str, Any], *, position: int) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{position}",
+                run_id="run-1",
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )
+
+
+def _stored_event_json(event: EventEnvelope) -> str:
+    metadata = event.metadata
+    return StoredEventEnvelope(
+        event_id=metadata.event_id,
+        run_id=metadata.run_id,
+        position=metadata.position,
+        event_type=metadata.event_type,
+        payload_schema_generation=metadata.payload_schema_generation,
+        actor=metadata.actor,
+        causation_id=metadata.causation_id,
+        correlation_id=metadata.correlation_id,
+        timestamp=metadata.timestamp,
+        payload=event.payload.to_json(),
+    ).model_dump_json()

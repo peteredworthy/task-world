@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, cast, get_type_hints
 
 import pytest
 from pydantic import ValidationError, model_validator
@@ -17,7 +17,9 @@ from orchestrator.graph import (
     UnknownGraphCommandError,
     build_graph_catalog,
     initial_projection,
+    reduce_event,
 )
+from orchestrator.graph.models import EventEnvelope
 from orchestrator.graph.commands import COMMAND_SPECIFICATION_GROUPS, apply_command
 from orchestrator.graph.events import EVENT_SPECIFICATION_GROUPS
 from orchestrator.graph.payloads import StrictPayload
@@ -25,7 +27,9 @@ from orchestrator.graph.specifications import (
     CommandExecutionContext,
     CommandSpecification,
     ProjectionParticipation,
+    StoredEventEnvelope,
 )
+from orchestrator.graph._commands import _project_with_events
 from tests.unit.graph_catalog_samples import COMMAND_SAMPLES, EVENT_SAMPLES
 
 
@@ -91,12 +95,143 @@ def test_catalog_dispatch_validates_a_known_command_once_before_its_handler() ->
         actor=Actor(kind=ActorKind.SYSTEM),
         events=(),
         future_effects=cast(Any, object()),
+        catalog=catalog,
     )
 
     assert (
         apply_command(catalog, initial_projection(), [], "count", {"value": "once"}, context) == []
     )
     assert counter.calls == 1
+
+
+def test_command_specification_rejects_raw_event_results() -> None:
+    class RawResultCommand(StrictPayload):
+        pass
+
+    def handle(
+        command: RawResultCommand,
+        projection: Any,
+        events: tuple[Any, ...],
+        context: CommandExecutionContext,
+    ) -> list[EventEnvelope]:
+        del command, projection, events, context
+        return [
+            EventEnvelope(
+                event_id="event-raw",
+                run_id="run-1",
+                position=1,
+                event_type="run_lifecycle_changed",
+                schema_version=2,
+                actor=Actor(kind=ActorKind.SYSTEM),
+                timestamp=datetime(2026, 7, 12, tzinfo=UTC),
+                payload={"to_state": "active"},
+            )
+        ]
+
+    catalog = GraphCatalog.compose(
+        (), (CommandSpecification("raw-result", RawResultCommand, handle),)
+    )
+    context = CommandExecutionContext(
+        run_id="run-1",
+        current_position=0,
+        clock=cast(Any, _FixedClock()),
+        id_generator=cast(Any, _FixedIdGenerator()),
+        actor=Actor(kind=ActorKind.SYSTEM),
+        events=(),
+        future_effects=cast(Any, object()),
+        catalog=catalog,
+    )
+
+    with pytest.raises(TypeError, match="HydratedEvent"):
+        apply_command(catalog, initial_projection(), [], "raw-result", {}, context)
+
+
+def test_reduce_event_accepts_only_hydrated_events() -> None:
+    raw_event = EventEnvelope(
+        event_id="event-raw",
+        run_id="run-1",
+        position=1,
+        event_type="run_lifecycle_changed",
+        schema_version=2,
+        actor=Actor(kind=ActorKind.SYSTEM),
+        timestamp=datetime(2026, 7, 12, tzinfo=UTC),
+        payload={"to_state": "active"},
+    )
+
+    assert get_type_hints(reduce_event)["event"].__name__ == "HydratedEvent"
+    with pytest.raises(TypeError, match="HydratedEvent"):
+        reduce_event(build_graph_catalog(), initial_projection(), cast(Any, raw_event))
+
+
+def test_source_repair_projection_matches_catalog_reduction_for_current_event() -> None:
+    catalog = build_graph_catalog()
+    specification = catalog.resolve_event("node_state_changed")
+    event = specification.create(
+        EventMetadata(
+            event_id="event-1",
+            run_id="run-1",
+            position=1,
+            event_type="node_state_changed",
+            payload_schema_generation=2,
+            actor=Actor(kind=ActorKind.SYSTEM),
+            timestamp=datetime(2026, 7, 12, tzinfo=UTC),
+        ),
+        specification.validate_payload({"node_id": "node-1", "new_state": "running"}),
+    )
+
+    expected = specification.reduce(initial_projection(), event)
+
+    assert _project_with_events(initial_projection(), [event], catalog) == expected
+
+
+def test_source_repair_rejects_a_generation_one_current_envelope() -> None:
+    catalog = build_graph_catalog()
+    specification = catalog.resolve_event("node_state_changed")
+    event = specification.create(
+        EventMetadata(
+            event_id="event-1",
+            run_id="run-1",
+            position=1,
+            event_type="node_state_changed",
+            payload_schema_generation=1,
+            actor=Actor(kind=ActorKind.SYSTEM),
+            timestamp=datetime(2026, 7, 12, tzinfo=UTC),
+        ),
+        specification.validate_payload({"node_id": "node-1", "new_state": "running"}),
+    )
+
+    with pytest.raises(ValueError, match="generation 2"):
+        _project_with_events(initial_projection(), [event], catalog)
+
+
+def test_catalog_rejects_generation_one_stored_events_without_legacy_hydration() -> None:
+    catalog = build_graph_catalog()
+    stored = StoredEventEnvelope(
+        event_id="event-1",
+        run_id="run-1",
+        position=1,
+        event_type="node_state_changed",
+        payload_schema_generation=1,
+        actor=Actor(kind=ActorKind.SYSTEM),
+        timestamp=datetime(2026, 7, 12, tzinfo=UTC),
+        payload={"node_id": "node-1", "new_state": "running"},
+    )
+
+    with pytest.raises(ValueError, match="generation 2"):
+        catalog.hydrate_event(stored)
+
+
+def test_command_context_requires_an_explicit_catalog() -> None:
+    with pytest.raises(TypeError, match="catalog"):
+        CommandExecutionContext(
+            run_id="run-1",
+            current_position=0,
+            clock=cast(Any, _FixedClock()),
+            id_generator=cast(Any, _FixedIdGenerator()),
+            actor=Actor(kind=ActorKind.SYSTEM),
+            events=(),
+            future_effects=cast(Any, object()),
+        )
 
 
 def test_catalog_command_surface_is_derived_from_owner_domain_tuples() -> None:

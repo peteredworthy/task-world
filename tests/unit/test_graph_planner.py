@@ -11,9 +11,12 @@ from orchestrator.graph import (
     project_planner_chain,
     project_run_state,
     reduce_event,
+    event_payload_json,
 )
 from tests.graph_command_support import dispatch_graph_command
+from tests.graph_command_support import with_metadata_position
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 def test_planner_lifecycle_states() -> None:
@@ -47,8 +50,8 @@ def test_horizon_patch_creates_region_and_successor() -> None:
     )
     assert any(
         event.event_type == "node_deferred"
-        and event.payload
-        == {"node_id": "planner-1", "reason": "missing_required_input:region_summary"}
+        and event.payload.node_id == "planner-1"
+        and event.payload.reason == "missing_required_input:region_summary"
         for event in scheduled
     )
 
@@ -95,7 +98,7 @@ def test_planner_patch_canonicalizes_verification_result_edge_port() -> None:
     )
 
     edge = next(event for event in accepted if event.event_type == "edge_created")
-    assert edge.payload["from_port"] == "verification_report"
+    assert event_payload_json(edge)["from_port"] == "verification_report"
 
 
 def test_planner_patch_rejects_hidden_oracle_check_command_text() -> None:
@@ -129,7 +132,7 @@ def test_planner_patch_rejects_hidden_oracle_check_command_text() -> None:
     )
 
     assert [event.event_type for event in rejected] == ["graph_patch_rejected"]
-    assert rejected[0].payload["reason"] == (
+    assert event_payload_json(rejected[0])["reason"] == (
         "check node cannot expose hidden_oracle_command; use command_binding: check-final"
     )
 
@@ -153,9 +156,14 @@ def test_planner_patch_binds_dynamic_feature_hidden_oracle_command() -> None:
                         },
                         "routine_id": "routine-1",
                         "name": "Test Routine",
+                        "description": None,
                         "content_hash": "test-content-hash",
+                        "source_path": None,
+                        "source_ref": None,
                         "step_count": 1,
                         "task_count": 1,
+                        "builder_agent": None,
+                        "verifier_agent": None,
                     },
                 }
             },
@@ -202,8 +210,10 @@ def test_planner_patch_binds_dynamic_feature_hidden_oracle_command() -> None:
         ),
     )
 
-    check = next(event for event in accepted if event.payload.get("node_id") == "check-final")
-    assert check.payload["command_definition"] == {
+    check = next(
+        event for event in accepted if event_payload_json(event).get("node_id") == "check-final"
+    )
+    assert event_payload_json(check)["command_definition"] == {
         "id": "check-final",
         "cmd": "uv run pytest tests/oracle -q",
         "must": True,
@@ -252,7 +262,9 @@ def test_planner_patch_rejects_dynamic_nodes_without_required_input_edges() -> N
     )
 
     assert [event.event_type for event in rejected] == ["graph_patch_rejected"]
-    assert rejected[0].payload["reason"] == "gap planner requires verification input edge"
+    assert (
+        event_payload_json(rejected[0])["reason"] == "gap planner requires verification input edge"
+    )
 
 
 def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None:
@@ -385,7 +397,7 @@ def test_successor_readiness_via_milestone_records() -> None:
         },
     )
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "planner-1"
+        event.event_type == "lease_granted" and event.payload.node_id == "planner-1"
         for event in scheduled
     )
 
@@ -426,11 +438,11 @@ def test_generation_budget_rejects_and_gates() -> None:
         "node_created",
         "node_state_changed",
     ]
-    assert rejected[0].payload["reason"] == "planner_generation_budget_exhausted"
-    assert rejected[0].payload["budget"] == 1
-    assert rejected[0].payload["count"] == 2
-    assert rejected[1].payload["kind"] == "gate"
-    assert rejected[2].payload["new_state"] == "ready"
+    assert event_payload_json(rejected[0])["reason"] == "planner_generation_budget_exhausted"
+    assert event_payload_json(rejected[0])["budget"] == 1
+    assert event_payload_json(rejected[0])["count"] == 2
+    assert event_payload_json(rejected[1])["kind"] == "gate"
+    assert event_payload_json(rejected[2])["new_state"] == "ready"
 
 
 def test_parallel_successor_planners_rejected() -> None:
@@ -440,7 +452,7 @@ def test_parallel_successor_planners_rejected() -> None:
     projection = _project([*events, *_append(events, rejected)])
 
     assert [event.event_type for event in rejected] == ["graph_patch_rejected"]
-    assert rejected[0].payload["reason"] == "multiple_successor_planners_not_allowed"
+    assert event_payload_json(rejected[0])["reason"] == "multiple_successor_planners_not_allowed"
     assert "planner-a" not in projection["node_states"]
     assert "planner-b" not in projection["node_states"]
     assert project_planner_chain(build_graph_catalog(), [*events, *_append(events, rejected)]) == [
@@ -771,9 +783,9 @@ def _submit_patch(
     ops: list[dict[str, Any]],
 ) -> list[EventEnvelope]:
     planner_id = next(
-        event.payload["node_id"]
+        event.payload.node_id
         for event in events
-        if event.event_type == "node_created" and event.payload.get("role") == "planner"
+        if event.event_type == "node_created" and event_payload_json(event).get("role") == "planner"
     )
     return _apply(
         events,
@@ -826,22 +838,26 @@ def _project(events: list[EventEnvelope]) -> Any:
 
 
 def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{payload.get('node_id', payload.get('patch_id', 'event'))}",
-        run_id="run-1",
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{payload.get('node_id', payload.get('patch_id', 'event'))}",
+                run_id="run-1",
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )
 
 
 def _with_positions(events: list[EventEnvelope]) -> list[EventEnvelope]:
-    return [
-        event.model_copy(update={"position": index}) for index, event in enumerate(events, start=1)
-    ]
+    return [with_metadata_position(event, index) for index, event in enumerate(events, start=1)]
 
 
 def _append(
@@ -850,6 +866,6 @@ def _append(
 ) -> list[EventEnvelope]:
     position = max((event.position for event in existing_events), default=0)
     return [
-        event.model_copy(update={"position": position + offset})
+        with_metadata_position(event, position + offset)
         for offset, event in enumerate(new_events, start=1)
     ]

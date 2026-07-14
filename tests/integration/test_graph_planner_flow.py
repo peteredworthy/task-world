@@ -11,12 +11,17 @@ from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     EventEnvelope,
+    HydratedEvent,
     compile_routine,
     project_planner_chain,
     project_run_state,
+    event_payload_json,
 )
 from orchestrator.graph_runtime import GraphController, GraphEventStore
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import (
+    build_graph_catalog,
+    build_graph_command_dependencies,
+)
 
 
 class FixedClock:
@@ -135,12 +140,12 @@ async def test_budget_exhaustion_routes_to_gate_through_controller(tmp_path: Pat
 
         assert any(
             event.event_type == "graph_patch_rejected"
-            and event.payload["reason"] == "planner_generation_budget_exhausted"
+            and event_payload_json(event)["reason"] == "planner_generation_budget_exhausted"
             for event in events
         )
         assert any(
             event.event_type == "node_created"
-            and event.payload.get("role") == "planner_generation_budget_gate"
+            and event_payload_json(event).get("role") == "planner_generation_budget_gate"
             for event in events
         )
         assert project_run_state(build_graph_catalog(), events) != "completed"
@@ -195,7 +200,7 @@ async def _complete_node(
     lease = next(
         event
         for event in events
-        if event.event_type == "lease_granted" and event.payload["node_id"] == node_id
+        if event.event_type == "lease_granted" and event_payload_json(event)["node_id"] == node_id
     )
     events = await _command(
         session_factory,
@@ -242,7 +247,7 @@ async def _drive_region(
     worker_lease = next(
         event
         for event in events
-        if event.event_type == "lease_granted" and event.payload["node_id"] == worker_id
+        if event.event_type == "lease_granted" and event_payload_json(event)["node_id"] == worker_id
     )
     await _command(
         session_factory,
@@ -293,7 +298,8 @@ async def _drive_region(
     verifier_lease = next(
         event
         for event in events
-        if event.event_type == "lease_granted" and event.payload["node_id"] == verifier_id
+        if event.event_type == "lease_granted"
+        and event_payload_json(event)["node_id"] == verifier_id
     )
     await _command(
         session_factory,
@@ -473,26 +479,26 @@ def _selector_edge(
     }
 
 
-def _start_payload(lease: EventEnvelope) -> dict[str, Any]:
+def _start_payload(lease: HydratedEvent) -> dict[str, Any]:
     return {
-        "node_id": lease.payload["node_id"],
-        "execution_id": lease.payload["execution_id"],
-        "lease_id": lease.payload["lease_id"],
-        "lease_generation": lease.payload["generation"],
+        "node_id": event_payload_json(lease)["node_id"],
+        "execution_id": event_payload_json(lease)["execution_id"],
+        "lease_id": event_payload_json(lease)["lease_id"],
+        "lease_generation": event_payload_json(lease)["generation"],
     }
 
 
 def _callback_payload(
     node_id: str,
-    lease: EventEnvelope,
+    lease: HydratedEvent,
     output_records: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
         "node_id": node_id,
-        "execution_id": lease.payload["execution_id"],
-        "lease_id": lease.payload["lease_id"],
-        "lease_generation": lease.payload["generation"],
-        "base_snapshot_id": lease.payload["base_snapshot_id"],
+        "execution_id": event_payload_json(lease)["execution_id"],
+        "lease_id": event_payload_json(lease)["lease_id"],
+        "lease_generation": event_payload_json(lease)["generation"],
+        "base_snapshot_id": event_payload_json(lease)["base_snapshot_id"],
         "observed_graph_position": lease.position,
         "idempotency_key": f"callback-{node_id}-{lease.position}",
         "payload": {

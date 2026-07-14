@@ -12,6 +12,7 @@ from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import StoredEventEnvelope
 
 
 def _routine() -> RoutineConfig:
@@ -38,15 +39,21 @@ def _routine() -> RoutineConfig:
 
 
 def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{uuid4().hex}",
-        run_id="placeholder",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{uuid4().hex}",
+                run_id="placeholder",
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )
 
 

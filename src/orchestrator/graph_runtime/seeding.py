@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config.models import RoutineConfig
-from orchestrator.graph import EventEnvelope, compile_routine
+from orchestrator.graph import HydratedEvent, compile_routine
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime.controller import GraphController
 from orchestrator.graph import build_graph_command_dependencies
@@ -17,7 +17,7 @@ from orchestrator.graph import GraphCatalog
 
 @dataclass(frozen=True)
 class SeedRunResult:
-    events: list[EventEnvelope]
+    events: list[HydratedEvent]
     projection_position: int
 
 
@@ -41,7 +41,6 @@ async def seed_run(
     durable graph topology and static input facts, so they do not produce
     side-effect outbox rows.
     """
-    catalog = catalog
     planned_events = compile_routine(
         routine,
         clock,

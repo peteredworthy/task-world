@@ -9,6 +9,7 @@ from typing import Any, Protocol, Sequence, cast
 from orchestrator.graph.callbacks import (
     CallbackRequest,
 )
+from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.command_bindings import canonicalize_check_command_definition
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
@@ -25,8 +26,6 @@ from orchestrator.graph.events.file_state import (
     FILE_STATE_REJECTED,
 )
 from orchestrator.graph.models import (
-    Actor,
-    ActorKind,
     AnalysisSummaryRecord,
     ArtifactReferenceRecord,
     AuthorityDecisionRecord,
@@ -36,11 +35,9 @@ from orchestrator.graph.models import (
     CompletionDecisionRecord,
     DecisionRequestRecord,
     DecisionRecord,
-    EventEnvelope,
     FailureRecord,
     FileStateRecord,
     GraphPatchAcceptedPayload,
-    GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
     LegacyDeadInputPayloadBase,
     OutputRecord,
@@ -78,7 +75,6 @@ from orchestrator.graph.events.decisions import (
 from orchestrator.graph.patch_validator import validate_patch
 from orchestrator.graph.projections import (
     GraphProjection,
-    reduce_legacy_event,
 )
 from orchestrator.graph.scheduler import (
     NodeScheduleInfo,
@@ -92,7 +88,7 @@ from orchestrator.graph.events.lifecycle import (
     COMMAND_REJECTED,
 )
 from orchestrator.graph.specifications import (
-    EventMetadata,
+    CommandExecutionContext,
     EventSpecification,
     HydratedEvent,
     event_payload_json,
@@ -176,76 +172,22 @@ _TOPOLOGY_EVENT_SPECS: dict[str, EventSpecification[Any]] = {
 
 
 def typed_topology_event(
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     event_type: str,
     payload: dict[str, Any],
-) -> EventEnvelope:
+) -> HydratedEvent:
     """Validate a topology effect at its named specification boundary."""
 
     specification = _TOPOLOGY_EVENT_SPECS[event_type]
     return make_event(event_type, specification.validate_payload(payload).to_json())
 
 
-def _typed_lifecycle_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    model = _LIFECYCLE_EVENT_PAYLOAD_MODELS.get(event_type)
-    if model is None:
-        return payload
-    return model.model_validate(payload).model_dump(mode="json")
-
-
-def apply_command(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    """Apply a pure graph command and return events a controller would append."""
-
-    if any(item.schema_version != 1 for item in events):
-        raise ValueError("legacy command replay accepts only schema generation 1 events")
-    run_id = _run_id(events, payload)
-    make_event = _event_factory(run_id, command_type, clock, id_gen)
-
-    if command_type == "seed_compiled_events":
-        return _apply_seed_compiled_events(projection, payload, make_event)
-    if command_type == "submit_patch":
-        return _apply_patch_command(projection, events, payload, make_event)
-    if command_type == "schedule_tick":
-        return schedule_tick_effects(projection, events, payload, clock, id_gen, make_event)
-    if command_type == "reconcile":
-        return _apply_reconcile(projection, events, make_event)
-    if command_type == "raise_appeal":
-        raise ValueError("raise_appeal requires typed command dispatch")
-    if command_type == "record_decision":
-        raise ValueError("record_decision requires typed command dispatch")
-    if command_type == "record_gatekeeper_verdicts":
-        raise ValueError("record_gatekeeper_verdicts requires typed command dispatch")
-    if command_type == "record_requirement_revision":
-        raise ValueError("record_requirement_revision requires typed command dispatch")
-    if command_type == "record_support_evidence":
-        raise ValueError("record_support_evidence requires typed command dispatch")
-    if command_type == "record_cleanup_applied":
-        raise ValueError("record_cleanup_applied requires typed command dispatch")
-    return [
-        _make_strict_event(
-            make_event,
-            COMMAND_REJECTED,
-            {
-                "command_type": command_type,
-                "reason": f"unknown command: {command_type}",
-            },
-        )
-    ]
-
-
 def _release_active_node_leases(
     projection: GraphProjection,
     node_id: str,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
-    output: list[EventEnvelope] = []
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
+    output: list[HydratedEvent] = []
     for lease_id, lease in sorted(projection["leases"].items()):
         if lease.get("node_id") != node_id or lease.get("state") not in {"active", "suspended"}:
             continue
@@ -267,8 +209,8 @@ def _release_active_node_leases(
 def _apply_seed_compiled_events(
     projection: GraphProjection,
     payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
     del projection, payload
     return [
         _command_rejected(
@@ -335,8 +277,8 @@ def _accepted_file_state_record_events(
     projection: GraphProjection,
     expected_producer_node_id: str,
     record_payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
     record_payload.setdefault("producer_node_id", expected_producer_node_id)
     record_payload.setdefault("port", "file_state")
     record_payload.setdefault("schema", "FileStateRecord")
@@ -388,8 +330,8 @@ def _accepted_verification_record_events(
     request: CallbackRequest,
     expected_producer_node_id: str,
     record_payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
     candidate_id = _candidate_id_from_payload(record_payload)
     if candidate_id is None:
         return []
@@ -563,26 +505,6 @@ def _analysis_summary_record_payload_for_validation(
     output = dict(payload)
     output.setdefault("producer_node_id", expected_producer_node_id)
     output.setdefault("record_type", "analysis_summary")
-    return output
-
-
-GRAPH_PATCH_PROPOSAL_PORTS = frozenset({"graph_patch_proposal", "graph_patch"})
-
-
-def _is_graph_patch_proposal_record_payload(payload: dict[str, Any]) -> bool:
-    return (
-        payload.get("record_type") == "graph_patch_proposal"
-        or payload.get("port") in GRAPH_PATCH_PROPOSAL_PORTS
-    )
-
-
-def _graph_patch_proposal_record_payload_for_validation(
-    payload: dict[str, Any],
-    expected_producer_node_id: str,
-) -> dict[str, Any]:
-    output = dict(payload)
-    output.setdefault("producer_node_id", expected_producer_node_id)
-    output.setdefault("record_type", "graph_patch_proposal")
     return output
 
 
@@ -872,10 +794,10 @@ def _input_bound_events_for_record(
     port: str,
     record_id: str,
     record_payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     aliases: set[str] | None = None,
-) -> list[EventEnvelope]:
-    output: list[EventEnvelope] = []
+) -> list[HydratedEvent]:
+    output: list[HydratedEvent] = []
     # Output records are facts produced by the leased node. Edges are the only
     # authority for routing those facts into downstream required inputs.
     for edge in projection["edges"].values():
@@ -988,10 +910,12 @@ def _target_port_contract_for_edge(
 
 def _apply_patch_command(
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+    catalog: GraphCatalog,
+    creator: Any,
+) -> list[HydratedEvent]:
     actor_role = str(payload.get("actor_role", "planner"))
     run_state = projection["run_state"]
     if run_state is not None and run_state != "active":
@@ -1165,7 +1089,7 @@ def _apply_patch_command(
                 },
             )
         )
-    output.extend(_source_repair_events(projection, events, output, make_event))
+    output.extend(_source_repair_events(projection, events, output, make_event, catalog, creator))
     return output
 
 
@@ -1235,12 +1159,12 @@ def _planner_budget_rejection(
 
 def schedule_tick_effects(
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     payload: dict[str, Any],
     clock: Clock,
     id_gen: IdGenerator,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
     from orchestrator.graph.commands.schedule import node_schedule_info
 
     output = _expired_lease_events(projection, clock.now(), make_event)
@@ -1407,11 +1331,11 @@ def schedule_tick_effects(
 
 
 def _append_node_deferred_if_changed(
-    output: list[EventEnvelope],
+    output: list[HydratedEvent],
     projection: GraphProjection,
     node_id: str,
     reason: str,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
 ) -> None:
     if projection.get("last_deferred_reasons", {}).get(node_id) == reason:
         return
@@ -1436,9 +1360,9 @@ def _dead_input_from_readiness(
 
 def _apply_reconcile(
     projection: GraphProjection,
-    events: list[EventEnvelope],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    events: list[HydratedEvent],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
     run_state = projection["run_state"]
     if run_state in TERMINAL_RUN_STATES:
         return [_command_rejected(make_event, "reconcile", f"terminal run: {run_state}")]
@@ -1447,10 +1371,10 @@ def _apply_reconcile(
 
 def _repair_events(
     projection: GraphProjection,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
     active_lease_node_ids = _active_lease_node_ids(projection)
-    output: list[EventEnvelope] = []
+    output: list[HydratedEvent] = []
     output.extend(
         _failed_check_recovery_events(
             projection,
@@ -1499,42 +1423,27 @@ def _active_lease_node_ids(projection: GraphProjection) -> list[str]:
 
 def _project_with_events(
     projection: GraphProjection,
-    source_events: list[EventEnvelope],
+    source_events: list[HydratedEvent],
+    catalog: GraphCatalog,
 ) -> GraphProjection:
     output = projection
     for event in source_events:
-        if event.event_type == OUTPUT_RECORD_ACCEPTED.name:
-            payload = OUTPUT_RECORD_ACCEPTED.validate_payload(event.payload)
-            metadata = EventMetadata(
-                event_id=event.event_id,
-                run_id=event.run_id,
-                position=event.position,
-                event_type=event.event_type,
-                payload_schema_generation=event.schema_version,
-                actor=event.actor,
-                causation_id=event.causation_id,
-                correlation_id=event.correlation_id,
-                timestamp=event.timestamp,
-            )
-            output = OUTPUT_RECORD_ACCEPTED.reduce(
-                output, OUTPUT_RECORD_ACCEPTED.create(metadata, payload)
-            )
-        else:
-            output = reduce_legacy_event(output, event)
+        if event.metadata.payload_schema_generation != 2:
+            msg = "source repair accepts only catalog-created generation 2 events"
+            raise ValueError(msg)
+        specification = catalog.resolve_event(event.metadata.event_type)
+        output = specification.reduce(output, event)
     return output
 
 
-def _dedupe_repair_events(repair_events: list[EventEnvelope]) -> list[EventEnvelope]:
-    seen: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
-    output: list[EventEnvelope] = []
+def _dedupe_repair_events(repair_events: list[HydratedEvent]) -> list[HydratedEvent]:
+    seen: list[tuple[str, object]] = []
+    output: list[HydratedEvent] = []
     for event in repair_events:
-        key = (
-            event.event_type,
-            tuple(sorted((key, repr(value)) for key, value in event.payload.items())),
-        )
-        if key in seen:
+        key = (event.event_type, event.payload)
+        if any(key == previous for previous in seen):
             continue
-        seen.add(key)
+        seen.append(key)
         output.append(event)
     return output
 
@@ -1542,10 +1451,10 @@ def _dedupe_repair_events(repair_events: list[EventEnvelope]) -> list[EventEnvel
 def _failed_check_recovery_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     *,
     record_ids: set[str] | None = None,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     if projection["run_state"] != "active":
         return []
     if active_lease_node_ids:
@@ -1561,7 +1470,7 @@ def _failed_check_recovery_events(
     if routine_snapshot is None:
         return []
 
-    output: list[EventEnvelope] = []
+    output: list[HydratedEvent] = []
     for failed_check in _current_failed_check_results(projection):
         if record_ids is not None and failed_check["record_id"] not in record_ids:
             continue
@@ -1639,10 +1548,10 @@ def _failed_check_recovery_events(
 def _failed_verification_recovery_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     *,
     record_ids: set[str] | None = None,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     if projection["run_state"] != "active":
         return []
     if active_lease_node_ids or projection["ready_nodes"]:
@@ -1654,7 +1563,7 @@ def _failed_verification_recovery_events(
     if routine_snapshot is None:
         return []
 
-    output: list[EventEnvelope] = []
+    output: list[HydratedEvent] = []
     for verification in _current_failed_verification_results(projection):
         if record_ids is not None and verification["record_id"] not in record_ids:
             continue
@@ -1822,16 +1731,16 @@ def _candidate_verdict_position(
 def _passed_verification_terminalization_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     *,
     record_ids: set[str] | None = None,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     if projection["run_state"] != "active":
         return []
     if active_lease_node_ids or projection["ready_nodes"]:
         return []
 
-    output: list[EventEnvelope] = []
+    output: list[HydratedEvent] = []
     passed_verifications = _current_passed_verification_results(projection)
     latest_passed_verification = passed_verifications[-1] if passed_verifications else None
     for verification in passed_verifications:
@@ -1860,16 +1769,16 @@ def _passed_verification_terminalization_events(
 def _passed_check_terminalization_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     *,
     check_node_ids: set[str] | None = None,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     if projection["run_state"] != "active":
         return []
     if active_lease_node_ids or projection["ready_nodes"]:
         return []
 
-    output: list[EventEnvelope] = []
+    output: list[HydratedEvent] = []
     for check_node_id, result in sorted(projection["check_results"].items()):
         if check_node_ids is not None and check_node_id not in check_node_ids:
             continue
@@ -1883,10 +1792,10 @@ def _passed_check_terminalization_events(
 def _no_successor_recovery_terminal_failure_events(
     projection: GraphProjection,
     active_lease_node_ids: list[str],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     *,
     recovery_node_ids: set[str] | None = None,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     if projection["run_state"] != "active":
         return []
     if active_lease_node_ids or projection["ready_nodes"]:
@@ -2074,13 +1983,13 @@ def _downstream_node_ids(projection: GraphProjection, start_node_id: str) -> set
 def _passed_verification_final_check_edges(
     projection: GraphProjection,
     verification: dict[str, str],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     *,
     allow_create: bool = True,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     verifier_node_id = verification["node_id"]
     record_id = verification["record_id"]
-    output: list[EventEnvelope] = []
+    output: list[HydratedEvent] = []
     check_node_ids = _final_checks_waiting_for_verification_evidence(projection)
     if allow_create and not check_node_ids and not _has_final_invariant_check(projection):
         check_node_id = f"check-final-invariant-{_stable_graph_id_part(record_id)}"
@@ -2329,8 +2238,8 @@ def _selector_value_match(edge: dict[str, Any], key: str) -> Any:
 def _retire_node_events(
     projection: GraphProjection,
     node_id: str,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
     if projection["node_states"].get(node_id) in {"completed", "failed", "cancelled", "retired"}:
         return []
     return [
@@ -2635,9 +2544,9 @@ def _decision_output_record(
 
 def _request_record_events_for_node(
     node_payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
-    output: list[EventEnvelope] = []
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
+    output: list[HydratedEvent] = []
     for record_payload, to_port in _request_record_bindings_for_node(node_payload):
         output.append(
             make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": record_payload})
@@ -2769,12 +2678,12 @@ def _request_payload_string(node_payload: dict[str, Any], key: str) -> str | Non
 def _patch_op_events(
     op: PatchOp,
     projection: GraphProjection,
-    events: list[EventEnvelope],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    events: list[HydratedEvent],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     *,
     inherited_session_id: str | None = None,
     carryover_record_id: str | None = None,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     op_payload = _op_payload(op)
     if op.op == "create_node" and isinstance(op.node, dict):
         node_payload = dict(op.node)
@@ -2949,9 +2858,9 @@ def _ensure_optional_session_carryover_input(node_payload: dict[str, Any]) -> No
 def _expired_lease_events(
     projection: GraphProjection,
     now: datetime,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
-    expired: list[EventEnvelope] = []
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
+    expired: list[HydratedEvent] = []
     for lease in projection["leases"].values():
         if not _lease_is_expired(lease, now):
             continue
@@ -3074,8 +2983,8 @@ def _node_payload_for_op(op_payload: dict[str, Any], *, default_kind: str) -> di
 def _input_bound_events_for_edge(
     projection: GraphProjection,
     edge_payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
     if edge_payload.get("dependency_type", "input_binding") != "input_binding":
         return []
     edge_id = edge_payload.get("edge_id")
@@ -3093,7 +3002,7 @@ def _input_bound_events_for_edge(
     typed_to_node_id = cast(str, to_node_id)
     typed_to_port = cast(str, to_port)
 
-    output: list[EventEnvelope] = []
+    output: list[HydratedEvent] = []
     for producer_node_id in _edge_backfill_producer_node_ids(
         projection,
         edge_payload,
@@ -3178,45 +3087,28 @@ def _record_selector_aliases(record_payload: dict[str, Any]) -> set[str]:
 
 
 def _event_factory(
-    run_id: str,
+    context: CommandExecutionContext,
     command_type: str,
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> Callable[[str, dict[str, Any]], EventEnvelope]:
-    def make_event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-        topology_specification = _TOPOLOGY_EVENT_SPECS.get(event_type)
-        typed_payload = (
-            topology_specification.validate_payload(payload).to_json()
-            if topology_specification is not None
-            else _typed_lifecycle_event_payload(event_type, payload)
-        )
-        return EventEnvelope(
-            event_id=id_gen.next_id("event"),
-            run_id=run_id,
-            position=-1,
-            event_type=event_type,
-            schema_version=1,
-            actor=Actor(kind=ActorKind.CONTROLLER),
-            causation_id=command_type,
-            timestamp=clock.now(),
-            payload=typed_payload,
-        )
+) -> Callable[[str, dict[str, Any]], HydratedEvent]:
+    """Create only catalog-backed generation-2 events for command handlers."""
+    from orchestrator.graph.commands.event_creator import TypedEventCreator
 
-    return make_event
+    creator = TypedEventCreator(context, assign_position=False, causation_id=command_type)
+    return creator.create_named
 
 
-def _run_id(events: Sequence[EventEnvelope | HydratedEvent], payload: dict[str, Any]) -> str:
+def _run_id(events: Sequence[HydratedEvent], payload: dict[str, Any]) -> str:
     run_id = payload.get("run_id")
     if isinstance(run_id, str):
         return run_id
     if events:
         event = events[-1]
-        return event.metadata.run_id if isinstance(event, HydratedEvent) else event.run_id
+        return event.metadata.run_id
     return "run-1"
 
 
 def _current_position(
-    events: Sequence[EventEnvelope | HydratedEvent],
+    events: Sequence[HydratedEvent],
     payload: dict[str, Any] | None = None,
 ) -> int:
     if not events:
@@ -3224,10 +3116,7 @@ def _current_position(
         if isinstance(current, int) and not isinstance(current, bool):
             return current
         return -1
-    return max(
-        event.metadata.position if isinstance(event, HydratedEvent) else event.position
-        for event in events
-    )
+    return max(event.metadata.position for event in events)
 
 
 def _claim_from_dict(claim: Any) -> ResourceClaim:
@@ -3311,22 +3200,18 @@ __all__ = [
 
 
 def _make_strict_event(
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     specification: EventSpecification[Any],
     payload: dict[str, Any],
-) -> EventEnvelope:
-    validated = specification.validate_payload(payload)
-    return make_event(
-        specification.name,
-        cast(dict[str, Any], validated.model_dump(mode="json", by_alias=True, exclude_unset=True)),
-    )
+) -> HydratedEvent:
+    return make_event(specification.name, payload)
 
 
 def make_strict_event(
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     specification: EventSpecification[Any],
     payload: dict[str, Any],
-) -> EventEnvelope:
+) -> HydratedEvent:
     return _make_strict_event(make_event, specification, payload)
 
 
@@ -3341,9 +3226,9 @@ def _has_passed_completion_decision(projection: GraphProjection) -> bool:
 
 def _lifecycle_completion_decision_event(
     payload: dict[str, Any],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     id_gen: IdGenerator,
-) -> EventEnvelope:
+) -> HydratedEvent:
     record_id = payload.get("completion_decision_record_id") or payload.get("record_id")
     if not isinstance(record_id, str) or not record_id:
         record_id = id_gen.next_id("completion-decision")
@@ -3371,10 +3256,10 @@ def _lifecycle_completion_decision_event(
 
 def _cancel_active_lease_events(
     projection: GraphProjection,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     trigger: Any,
-) -> list[EventEnvelope]:
-    output: list[EventEnvelope] = []
+) -> list[HydratedEvent]:
+    output: list[HydratedEvent] = []
     for lease_id, lease in sorted(projection["leases"].items()):
         if lease.get("state") not in {"active", "suspended"}:
             continue
@@ -3515,8 +3400,8 @@ def _file_state_authority_conflict(
 
 def _file_state_rejected_events(
     request: CallbackRequest,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
     rejection = request.payload.get("file_state_rejected") if request.payload is not None else None
     if not isinstance(rejection, dict):
         return []
@@ -3620,15 +3505,6 @@ def _output_record_contract_conflict(
                 AnalysisSummaryRecord.model_validate(record_payload)
             except ValueError as exc:
                 return f"analysis_summary record at index {index} is invalid: {exc}"
-        if _is_graph_patch_proposal_record_payload(record_payload):
-            record_payload = _graph_patch_proposal_record_payload_for_validation(
-                record_payload,
-                expected_producer_node_id,
-            )
-            try:
-                GraphPatchProposalRecord.model_validate(record_payload)
-            except ValueError as exc:
-                return f"graph_patch_proposal record at index {index} is invalid: {exc}"
         if _is_artifact_reference_record_payload(record_payload):
             record_payload = _artifact_reference_record_payload_for_validation(
                 record_payload,
@@ -3645,8 +3521,8 @@ def _accepted_output_record_events(
     projection: GraphProjection,
     request: CallbackRequest,
     expected_producer_node_id: str,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> list[HydratedEvent]:
     raw_records = request.payload.get("output_records") if request.payload is not None else None
     if not isinstance(raw_records, list):
         return []
@@ -3656,7 +3532,7 @@ def _accepted_output_record_events(
         typed_raw_records,
         expected_producer_node_id,
     )
-    output: list[EventEnvelope] = []
+    output: list[HydratedEvent] = []
     for raw_record in typed_raw_records:
         if not isinstance(raw_record, dict):
             continue
@@ -3746,30 +3622,6 @@ def _accepted_output_record_events(
             )
             try:
                 record = AnalysisSummaryRecord.model_validate(record_payload)
-            except ValueError:
-                continue
-            payload = record.model_dump(mode="json")
-            output.append(
-                make_strict_event(make_event, OUTPUT_RECORD_ACCEPTED, {"record": payload})
-            )
-            output.extend(
-                _input_bound_events_for_record(
-                    projection,
-                    record.producer_node_id,
-                    record.port,
-                    record.record_id,
-                    payload,
-                    make_event,
-                )
-            )
-            continue
-        if _is_graph_patch_proposal_record_payload(record_payload):
-            record_payload = _graph_patch_proposal_record_payload_for_validation(
-                record_payload,
-                expected_producer_node_id,
-            )
-            try:
-                record = GraphPatchProposalRecord.model_validate(record_payload)
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
@@ -3917,13 +3769,17 @@ def _required_output_record_conflict(
 
 def _source_repair_events(
     projection: GraphProjection,
-    events: list[EventEnvelope],
-    source_events: list[EventEnvelope],
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> list[EventEnvelope]:
+    events: list[HydratedEvent],
+    source_events: list[HydratedEvent],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+    catalog: GraphCatalog,
+    creator: Any,
+) -> list[HydratedEvent]:
+    del creator
+    typed_source_events = source_events
     accepted_records = [
         cast(dict[str, Any], event_payload_json(event)["record"])
-        for event in source_events
+        for event in typed_source_events
         if event.event_type == "output_record_accepted"
         and isinstance(event_payload_json(event)["record"], dict)
         and isinstance(
@@ -3932,7 +3788,7 @@ def _source_repair_events(
     ]
     repair_node_ids = {
         node_id
-        for event in source_events
+        for event in typed_source_events
         for node_id in (
             event_payload_json(event).get("proposed_by_node_id"),
             event_payload_json(event).get("node_id"),
@@ -3950,9 +3806,9 @@ def _source_repair_events(
     if not accepted_records and not patch_or_completion:
         return []
 
-    scoped_projection = _project_with_events(projection, source_events)
+    scoped_projection = _project_with_events(projection, typed_source_events, catalog)
     active_lease_node_ids = _active_lease_node_ids(scoped_projection)
-    output: list[EventEnvelope] = []
+    output: list[HydratedEvent] = []
     for record in accepted_records:
         record_id = cast(str, record["record_id"])
         producer_node_id = record.get("producer_node_id") or record.get("node_id")
@@ -4019,8 +3875,8 @@ def _planner_session_state_event(
     node_id: str,
     state: str,
     lease_generation: int,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-) -> EventEnvelope | None:
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+) -> HydratedEvent | None:
     if not _is_chain_planner(projection, node_id):
         return None
     session_id = projection["planner_sessions"].values.get(node_id)
@@ -4154,12 +4010,12 @@ def _positive_int(value: Any, default: int) -> int:
 
 
 def _lifecycle_event(
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     command_type: str,
     from_state: str,
     to_state: str,
     trigger: Any,
-) -> EventEnvelope:
+) -> HydratedEvent:
     return _make_strict_event(
         make_event,
         RUN_LIFECYCLE_CHANGED,
@@ -4173,10 +4029,10 @@ def _lifecycle_event(
 
 
 def _command_rejected(
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     command_type: str,
     reason: str,
-) -> EventEnvelope:
+) -> HydratedEvent:
     return _make_strict_event(
         make_event,
         COMMAND_REJECTED,

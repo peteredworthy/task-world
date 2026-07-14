@@ -15,7 +15,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.db import GraphOutboxModel
-from orchestrator.graph import EventEnvelope
+from orchestrator.graph import HydratedEvent
 from orchestrator.graph_runtime.errors import OutboxAppendError
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ class Clock(Protocol):
     def now(self) -> datetime: ...
 
 
-def outbox_payload_for_event(event: EventEnvelope) -> tuple[str, dict[str, object]] | None:
+def outbox_payload_for_event(event: HydratedEvent) -> tuple[str, dict[str, object]] | None:
     """Map accepted graph events to durable side-effect intent.
 
     The explicit slice-2.1 mapping is:
@@ -78,7 +78,7 @@ def outbox_payload_for_event(event: EventEnvelope) -> tuple[str, dict[str, objec
             "run_id": event.run_id,
             "classification": "agent_dispatch_pending",
         }
-        payload.update(event.payload)
+        payload.update(event.payload.to_json())
         return "agent_dispatch", payload
     if event.event_type == "cleanup_requested":
         payload = {
@@ -86,14 +86,14 @@ def outbox_payload_for_event(event: EventEnvelope) -> tuple[str, dict[str, objec
             "run_id": event.run_id,
             "classification": "snapshot_cleanup_pending",
         }
-        payload.update(event.payload)
+        payload.update(event.payload.to_json())
         return "snapshot_cleanup", payload
     return None
 
 
 async def append_outbox_rows(
     session: AsyncSession,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     clock: Clock,
 ) -> list[OutboxItem]:
     """Insert outbox rows for side-effect-bearing events in the caller transaction."""

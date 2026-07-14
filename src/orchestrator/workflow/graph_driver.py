@@ -20,9 +20,14 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktree
 from orchestrator.graph import (
+    AgentDiedPayload,
+    CommandRejectedPayload,
     EnvironmentFailureProjection,
-    EventEnvelope,
     HydratedEvent,
+    NodeCreatedPayload,
+    NodeDeferredPayload,
+    NodeStateChangedPayload,
+    RunLifecycleChangedPayload,
     build_projection,
     project_leases,
     project_node_states,
@@ -152,12 +157,15 @@ async def apply_graph_cancel_until_terminal(
 
         if any(
             event.event_type == "run_lifecycle_changed"
-            and event.payload.get("to_state") == "cancelled"
+            and isinstance(event.payload, RunLifecycleChangedPayload)
+            and event.payload.to_state == "cancelled"
             for event in result.events
         ):
             return
         if any(
-            event.event_type == "command_rejected" and event.payload.get("command_type") == "cancel"
+            event.event_type == "command_rejected"
+            and isinstance(event.payload, CommandRejectedPayload)
+            and event.payload.command_type == "cancel"
             for event in result.events
         ):
             return
@@ -691,6 +699,14 @@ class GraphRunDriver:
                     ):
                         previous_position = None
                         continue
+                    if _has_exhausted_terminal_failure(projection):
+                        await self._handle_command_at_head(
+                            controller,
+                            run_id,
+                            "fail",
+                            {"reason": "max_attempts_exhausted"},
+                        )
+                        projection = await read_projection(run_id)
                 return classify_graph_outcome(run_id, projection)
             # No-progress guard: compare the event-log head AFTER the loop has
             # finished its schedule/dispatch/wait/read/renew/quiescence pass.
@@ -723,6 +739,14 @@ class GraphRunDriver:
                 ):
                     previous_position = None
                     continue
+                if _has_exhausted_terminal_failure(projection):
+                    await self._handle_command_at_head(
+                        controller,
+                        run_id,
+                        "fail",
+                        {"reason": "max_attempts_exhausted"},
+                    )
+                    projection = await read_projection(run_id)
                 return classify_graph_outcome(run_id, projection)
             previous_position = position
 
@@ -786,13 +810,13 @@ class GraphRunDriver:
         events = await self._read_events(run_id)
         return _snapshot_from_events(events, catalog=self._catalog)
 
-    async def _read_events(self, run_id: str) -> list[EventEnvelope]:
+    async def _read_events(self, run_id: str) -> list[HydratedEvent]:
         async with self._session_factory() as session:
             events = await GraphEventStore(
                 session,
                 self._catalog,
             ).read_run(run_id)
-        return [_legacy_graph_event(event) for event in events]
+        return events
 
     async def _current_position(self, run_id: str) -> int:
         async with self._session_factory() as session:
@@ -1050,7 +1074,7 @@ def _align_datetime_timezone(value: datetime, reference: datetime) -> datetime:
 
 
 def _snapshot_from_events(
-    events: list[EventEnvelope], *, catalog: GraphCatalog
+    events: list[HydratedEvent], *, catalog: GraphCatalog
 ) -> GraphProjectionSnapshot:
     # Fold once and reuse across every view below, instead of each project_*
     # call (plus a separate inline fold) re-folding the full event stream.
@@ -1082,55 +1106,32 @@ def _snapshot_from_events(
     )
 
 
-def _legacy_graph_event(event: HydratedEvent) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=event.event_id,
-        run_id=event.run_id,
-        position=event.position,
-        event_type=event.event_type,
-        schema_version=event.schema_version,
-        actor=event.actor,
-        causation_id=event.causation_id,
-        correlation_id=event.correlation_id,
-        timestamp=event.timestamp,
-        payload=event.payload.to_json(),
-    )
-
-
-def _failed_node_reasons(events: list[EventEnvelope]) -> dict[str, str]:
+def _failed_node_reasons(events: list[HydratedEvent]) -> dict[str, str]:
     reasons: dict[str, str] = {}
     for event in events:
-        node_id = event.payload.get("node_id")
-        if not isinstance(node_id, str):
-            continue
-        if event.event_type == "agent_died":
-            reason = event.payload.get("reason")
-            if isinstance(reason, str):
-                reasons[node_id] = reason
-        elif event.event_type == "node_state_changed":
-            if event.payload.get("new_state") != "failed":
-                continue
-            reason = event.payload.get("reason")
-            if isinstance(reason, str):
-                reasons[node_id] = reason
+        if event.event_type == "agent_died" and isinstance(event.payload, AgentDiedPayload):
+            reasons[event.payload.node_id] = event.payload.reason
+        elif (
+            event.event_type == "node_state_changed"
+            and isinstance(event.payload, NodeStateChangedPayload)
+            and event.payload.new_state == "failed"
+            and event.payload.reason is not None
+        ):
+            reasons[event.payload.node_id] = event.payload.reason
     return reasons
 
 
-def _node_deferral_reasons(events: list[EventEnvelope]) -> dict[str, str]:
+def _node_deferral_reasons(events: list[HydratedEvent]) -> dict[str, str]:
     reasons: dict[str, str] = {}
     for event in events:
-        if event.event_type != "node_deferred":
-            continue
-        node_id = event.payload.get("node_id")
-        reason = event.payload.get("reason")
-        if isinstance(node_id, str) and isinstance(reason, str):
-            reasons[node_id] = reason
+        if event.event_type == "node_deferred" and isinstance(event.payload, NodeDeferredPayload):
+            reasons[event.payload.node_id] = event.payload.reason
     return reasons
 
 
 def _missing_input_sources(
     projection: Any,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
 ) -> dict[str, list[str]]:
     details: dict[str, list[str]] = {}
     reasons = _node_deferral_reasons(events)
@@ -1155,7 +1156,7 @@ def _missing_input_sources(
     return details
 
 
-def _node_max_attempts(events: list[EventEnvelope]) -> dict[str, int]:
+def _node_max_attempts(events: list[HydratedEvent]) -> dict[str, int]:
     """Each executable node's compiled retry budget, from its node_created event.
 
     Mirrors ``graph_runtime.dispatch._node_payload``'s lookup (first writer for
@@ -1164,14 +1165,13 @@ def _node_max_attempts(events: list[EventEnvelope]) -> dict[str, int]:
     """
     max_attempts: dict[str, int] = {}
     for event in events:
-        if event.event_type != "node_created":
+        if event.event_type != "node_created" or not isinstance(event.payload, NodeCreatedPayload):
             continue
-        node_id = event.payload.get("node_id")
-        if not isinstance(node_id, str) or node_id in max_attempts:
+        node_id = event.payload.node_id
+        if node_id in max_attempts:
             continue
-        value = event.payload.get("max_attempts")
-        if isinstance(value, int) and not isinstance(value, bool):
-            max_attempts[node_id] = value
+        if event.payload.max_attempts is not None:
+            max_attempts[node_id] = event.payload.max_attempts
     return max_attempts
 
 
@@ -1263,6 +1263,15 @@ def _blocked_reason(projection: GraphProjectionSnapshot) -> str:
         suffix = "" if len(blocked_tasks) <= 3 else f" (+{len(blocked_tasks) - 3} more)"
         return f"graph quiescent with non-accepted task(s): {', '.join(blocked_tasks[:3])}{suffix}"
     return "graph quiescent without completion"
+
+
+def _has_exhausted_terminal_failure(projection: GraphProjectionSnapshot) -> bool:
+    """Identify a quiescent failure that cannot be retried or recovered."""
+    return any(
+        projection.failed_node_reasons.get(node_id) == "max_attempts_exhausted"
+        for node_id, state in projection.node_states.items()
+        if state == "failed"
+    )
 
 
 def _nonterminal_node_details(

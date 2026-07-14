@@ -9,9 +9,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    FakeClock,
+    HydratedEvent,
+    NodeDeferredPayload,
+    NodeStateChangedPayload,
+    event_payload_json,
+)
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import StoredEventEnvelope
 
 
 BASE_SNAPSHOT_ID = "snapshot-fr10"
@@ -63,13 +72,14 @@ async def test_fr10_scheduler_readiness_command_precondition_and_retry_readbacks
         },
     )
     assert _event_payloads(first_tick.events, "node_deferred") == [
-        {
-            "node_id": "check-missing-command",
-            "reason": "precondition_failed:has_command_definition",
-        }
+        NodeDeferredPayload(
+            node_id="check-missing-command",
+            reason="precondition_failed:has_command_definition",
+        )
     ]
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "check-bound-command"
+        event.event_type == "lease_granted"
+        and event_payload_json(event)["node_id"] == "check-bound-command"
         for event in first_tick.events
     )
 
@@ -85,16 +95,16 @@ async def test_fr10_scheduler_readiness_command_precondition_and_retry_readbacks
             "retry_backoff_seconds": 60,
         },
     )
-    retry_not_before = retry_scheduled.events[2].payload["retry_not_before"]
+    retry_not_before = event_payload_json(retry_scheduled.events[2])["retry_not_before"]
     assert retry_scheduled.events[2].event_type == "runtime_retry_scheduled"
-    assert retry_scheduled.events[2].payload["retry_after_seconds"] == 60
-    assert retry_scheduled.events[4].payload == {
-        "node_id": "worker-retry",
-        "new_state": "blocked",
-        "trigger": "agent_died_retry_backoff_scheduled",
-        "retry_not_before": retry_not_before,
-        "attempt_number": 1,
-    }
+    assert event_payload_json(retry_scheduled.events[2])["retry_after_seconds"] == 60
+    state_changed = retry_scheduled.events[4].payload
+    assert isinstance(state_changed, NodeStateChangedPayload)
+    assert state_changed.node_id == "worker-retry"
+    assert state_changed.new_state == "blocked"
+    assert state_changed.trigger == "agent_died_retry_backoff_scheduled"
+    assert state_changed.retry_not_before == retry_not_before
+    assert state_changed.attempt_number == 1
 
     immediate_tick = await controller.handle_command(
         run_id,
@@ -108,9 +118,8 @@ async def test_fr10_scheduler_readiness_command_precondition_and_retry_readbacks
         },
     )
     assert {
-        event.payload["node_id"]: event.payload["reason"]
-        for event in immediate_tick.events
-        if event.event_type == "node_deferred"
+        payload.node_id: payload.reason
+        for payload in _event_payloads(immediate_tick.events, "node_deferred")
     } == {
         "worker-retry": f"retry_backoff_until:{retry_not_before}",
     }
@@ -158,7 +167,8 @@ async def test_fr10_scheduler_readiness_command_precondition_and_retry_readbacks
         },
     )
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "worker-retry"
+        event.event_type == "lease_granted"
+        and event_payload_json(event)["node_id"] == "worker-retry"
         for event in final_tick.events
     )
 
@@ -300,16 +310,22 @@ def _event(
     clock: FakeClock,
     event_type: str,
     payload: dict[str, Any],
-) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{uuid4().hex}",
-        run_id=run_id,
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=clock.now(),
-        payload=payload,
+) -> HydratedEvent:
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{uuid4().hex}",
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=clock.now(),
+                payload=payload,
+            )
+        )
     )
 
 
@@ -319,8 +335,12 @@ async def _get_json(client: AsyncClient, path: str) -> Any:
     return response.json()
 
 
-def _event_payloads(events: list[EventEnvelope], event_type: str) -> list[dict[str, Any]]:
-    return [event.payload for event in events if event.event_type == event_type]
+def _event_payloads(events: list[HydratedEvent], event_type: str) -> list[NodeDeferredPayload]:
+    return [
+        event.payload
+        for event in events
+        if event.event_type == event_type and isinstance(event.payload, NodeDeferredPayload)
+    ]
 
 
 def _event_types(events: list[dict[str, Any]]) -> set[str]:

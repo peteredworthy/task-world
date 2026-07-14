@@ -11,10 +11,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, event_payload_json
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.runners import route_tool_call
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import StoredEventEnvelope
 
 
 class _RunSeedIdGenerator:
@@ -247,9 +248,9 @@ async def _route_macro(
         )
         if result.events[0].event_type == "graph_patch_accepted":
             return "accepted"
-        reason = result.events[0].payload.get("reason") or result.events[0].payload.get(
-            "rejection_reason"
-        )
+        reason = event_payload_json(result.events[0]).get("reason") or event_payload_json(
+            result.events[0]
+        ).get("rejection_reason")
         return f"rejected: {result.events[0].event_type}: {reason}"
 
     return await route_tool_call(
@@ -390,18 +391,24 @@ def _event(
     event_type: str,
     payload: dict[str, Any],
 ) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{uuid4().hex}",
-        run_id=run_id,
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=clock.now(),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{uuid4().hex}",
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=clock.now(),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
     )
 
 

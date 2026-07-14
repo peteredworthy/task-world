@@ -11,13 +11,28 @@ from pydantic import ValidationError
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    AgentDiedPayload,
+    CommandRejectedPayload,
+    DeadInputDetectedPayload,
     CommandExecutionContext,
     EventEnvelope,
     FakeClock,
     HeartbeatRecordedPayload,
     HydratedEvent,
+    InputBoundPayload,
+    LeaseExpiredPayload,
+    LeaseGrantedPayload,
+    LeaseReleasedPayload,
+    LeaseRevokedPayload,
+    NodeCreatedPayload,
+    NodeDeferredPayload,
+    NodeRetiredPayload,
+    NodeStateChangedPayload,
+    OutputRecordAcceptedPayload,
     SequentialIdGenerator,
     StoredEventEnvelope,
+    StrictPayload,
+    UnknownGraphEventError,
     apply_command,
     build_graph_catalog,
     build_graph_command_dependencies,
@@ -27,58 +42,102 @@ from orchestrator.graph import (
     projection_from_checkpoint,
     projection_to_checkpoint,
     reduce_event,
+    event_payload_json,
 )
 from orchestrator.graph.commands.future_effects import (
     FUTURE_EFFECT_EVENT_NAMES,
     require_future_effect,
 )
+from orchestrator.graph._commands import _dedupe_repair_events
+from tests.unit.graph_catalog_samples import EVENT_SAMPLES
 
 
-def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+def _event(
+    event_type: str, payload: dict[str, Any] | StrictPayload, position: int = -1
+) -> HydratedEvent:
+    specification = build_graph_catalog().resolve_event(event_type)
+    stored_payload = payload.to_json() if isinstance(payload, StrictPayload) else payload
+    return specification.hydrate(
+        StoredEventEnvelope(
+            event_id=f"{event_type}-{position}",
+            run_id="run-1",
+            position=position,
+            event_type=event_type,
+            payload_schema_generation=2,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=FakeClock().now(),
+            payload=stored_payload,
+        )
     )
 
 
-def _hydrated_event(event_type: str, payload: dict[str, Any], position: int = -1) -> HydratedEvent:
+def _hydrated_event(
+    event_type: str, payload: dict[str, Any] | StrictPayload, position: int = -1
+) -> HydratedEvent:
     """Construct a strict event at the same boundary as compiled topology."""
 
-    event = _event(event_type, payload, position)
-    stored = StoredEventEnvelope(
-        event_id=event.event_id,
-        run_id=event.run_id,
-        position=event.position,
-        event_type=event.event_type,
-        payload_schema_generation=event.schema_version,
-        actor=event.actor,
-        timestamp=event.timestamp,
-        payload=event.payload,
+    return _event(event_type, payload, position)
+
+
+def test_repair_event_deduplication_uses_concrete_frozen_payload_equality() -> None:
+    first = _event(
+        "node_state_changed",
+        NodeStateChangedPayload(node_id="worker-1", new_state="ready"),
     )
-    return build_graph_catalog().resolve_event(event_type).hydrate(stored)
+    duplicate = _event(
+        "node_state_changed",
+        NodeStateChangedPayload(node_id="worker-1", new_state="ready"),
+    )
+    different_payload = _event(
+        "node_state_changed",
+        NodeStateChangedPayload(node_id="worker-1", new_state="retired"),
+    )
+
+    assert _dedupe_repair_events([first, duplicate, different_payload]) == [
+        first,
+        different_payload,
+    ]
+
+
+def _assert_input_bound(
+    event: HydratedEvent,
+    *,
+    edge_id: str,
+    to_node_id: str,
+    to_port: str,
+    record_ids: list[str],
+    bound_at_position: int,
+    binding_policy: str | None = None,
+    trigger: str | None = None,
+) -> None:
+    assert isinstance(event.payload, InputBoundPayload)
+    assert event.payload.edge_id == edge_id
+    assert event.payload.to_node_id == to_node_id
+    assert event.payload.to_port == to_port
+    assert event.payload.record_ids == record_ids
+    assert event.payload.bound_at_position == bound_at_position
+    assert event.payload.binding_policy == binding_policy
+    assert event.payload.trigger == trigger
 
 
 def test_future_effect_adapter_is_explicit_and_fails_closed() -> None:
     for event_type in FUTURE_EFFECT_EVENT_NAMES:
-        event = _event(event_type, {})
+        specification = build_graph_catalog().resolve_event(event_type)
+        event = _event(event_type, specification.validate_payload(EVENT_SAMPLES[event_type]))
         assert require_future_effect(event) is event
-    for event_type in ("command_rejected", "callback_accepted", "unknown_future_event"):
+    for event_type in ("command_rejected", "callback_accepted"):
         with pytest.raises(ValueError, match="future-effect adapter rejected"):
-            require_future_effect(_event(event_type, {}))
+            specification = build_graph_catalog().resolve_event(event_type)
+            require_future_effect(
+                _event(event_type, specification.validate_payload(EVENT_SAMPLES[event_type]))
+            )
+    with pytest.raises(UnknownGraphEventError, match="unknown graph event: unknown_future_event"):
+        _event("unknown_future_event", {})
 
 
 @pytest.mark.parametrize("command_type", ["start", "submit_callback", "agent_died"])
 def test_converted_commands_require_catalog_and_context(command_type: str) -> None:
-    with pytest.raises(ValueError, match="requires a catalog and context"):
+    with pytest.raises(TypeError):
         apply_command(
             initial_projection(), [], command_type, {}, FakeClock(), SequentialIdGenerator()
         )
@@ -95,7 +154,7 @@ def _legacy_has_passed_completion_decision(events: list[EventEnvelope]) -> bool:
     for event in events:
         if event.event_type != "output_record_accepted":
             continue
-        record = event.payload.get("record")
+        record = event_payload_json(event).get("record")
         if not isinstance(record, dict):
             continue
         if record.get("record_type") != "completion_decision":
@@ -113,9 +172,9 @@ def _legacy_retry_not_before(events: list[EventEnvelope], node_id: str) -> str |
     for event in events:
         if event.event_type != "runtime_retry_scheduled":
             continue
-        if event.payload.get("node_id") != node_id:
+        if event_payload_json(event).get("node_id") != node_id:
             continue
-        value = event.payload.get("retry_not_before")
+        value = event_payload_json(event).get("retry_not_before")
         retry_not_before = value if isinstance(value, str) and value else None
     return retry_not_before
 
@@ -148,8 +207,10 @@ def _apply(
             future_effects=build_graph_command_dependencies(
                 catalog=build_graph_catalog()
             ).future_effects,
+            catalog=catalog,
         )
         output = apply_command(
+            catalog,
             _project(events),
             events,
             command_type,
@@ -158,23 +219,24 @@ def _apply(
                 for key, value in raw_payload.items()
                 if key != "run_id" and (command_type == "submit_patch" or key != "actor_role")
             },
-            clock,
-            ids,
-            catalog=catalog,
-            context=context,
+            context,
         )
         return [
             event
-            if isinstance(event, EventEnvelope)
-            else EventEnvelope(
-                event_id=event.metadata.event_id,
-                run_id=event.metadata.run_id,
-                position=event.metadata.position,
-                event_type=event.metadata.event_type,
-                schema_version=event.metadata.payload_schema_generation,
-                actor=event.metadata.actor,
-                timestamp=event.metadata.timestamp,
-                payload=event.payload.model_dump(mode="json", exclude_none=True),
+            if isinstance(event, HydratedEvent)
+            else build_graph_catalog()
+            .resolve_event(event.event_type)
+            .hydrate(
+                StoredEventEnvelope(
+                    event_id=event.event_id,
+                    run_id=event.run_id,
+                    position=event.position,
+                    event_type=event.event_type,
+                    payload_schema_generation=2,
+                    actor=event.actor,
+                    timestamp=event.timestamp,
+                    payload=event.payload,
+                )
             )
             for event in output
         ]
@@ -205,32 +267,33 @@ def _apply_from_checkpoint(
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
+        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+        catalog=catalog,
     )
     output = apply_command(
+        catalog,
         projection,
         events,
         command_type,
         {key: value for key, value in raw_payload.items() if key != "run_id"},
-        clock,
-        ids,
-        catalog=catalog,
-        context=context,
+        context,
     )
     return [
         event
-        if isinstance(event, EventEnvelope)
-        else EventEnvelope(
-            event_id=event.metadata.event_id,
-            run_id=event.metadata.run_id,
-            position=event.metadata.position,
-            event_type=event.metadata.event_type,
-            schema_version=event.metadata.payload_schema_generation,
-            actor=event.metadata.actor,
-            timestamp=event.metadata.timestamp,
-            payload=event.payload.model_dump(mode="json", exclude_none=True),
+        if isinstance(event, HydratedEvent)
+        else build_graph_catalog()
+        .resolve_event(event.event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=event.event_id,
+                run_id=event.run_id,
+                position=event.position,
+                event_type=event.event_type,
+                payload_schema_generation=2,
+                actor=event.actor,
+                timestamp=event.timestamp,
+                payload=event.payload,
+            )
         )
         for event in output
     ]
@@ -535,7 +598,7 @@ def test_lifecycle_legal_transitions() -> None:
         lifecycle_event = next(
             event for event in output if event.event_type == "run_lifecycle_changed"
         )
-        assert lifecycle_event.payload["to_state"] == expected_state
+        assert event_payload_json(lifecycle_event)["to_state"] == expected_state
 
 
 def test_cancel_revokes_active_lease_and_cancels_running_node() -> None:
@@ -564,57 +627,33 @@ def test_cancel_revokes_active_lease_and_cancels_running_node() -> None:
         "lease_revoked",
         "node_state_changed",
     ]
-    assert output[1].payload == {
-        "node_id": "worker-1",
-        "lease_id": "lease-1",
-        "trigger": "cancel_command_accepted",
-        "reason": "run_cancelled",
-        "generation": 2,
-        "execution_id": "exec-1",
-    }
-    assert output[2].payload == {
-        "node_id": "worker-1",
-        "new_state": "cancelled",
-        "trigger": "run_cancelled",
-        "reason": "run_cancelled",
-    }
+    assert isinstance(output[1].payload, LeaseRevokedPayload)
+    assert output[1].payload.node_id == "worker-1"
+    assert output[1].payload.lease_id == "lease-1"
+    assert output[1].payload.trigger == "cancel_command_accepted"
+    assert output[1].payload.reason == "run_cancelled"
+    assert output[1].payload.generation == 2
+    assert output[1].payload.execution_id == "exec-1"
+    assert isinstance(output[2].payload, NodeStateChangedPayload)
+    assert output[2].payload.node_id == "worker-1"
+    assert output[2].payload.new_state == "cancelled"
+    assert output[2].payload.trigger == "run_cancelled"
+    assert output[2].payload.reason == "run_cancelled"
 
     projected = _project([*events, *output])
     assert projected["leases"]["lease-1"]["state"] == "revoked"
     assert projected["node_states"]["worker-1"] == "cancelled"
 
 
-def test_cancel_revokes_suspended_lease_without_reopening_terminal_node() -> None:
-    events = [
-        _event("run_lifecycle_changed", {"to_state": "paused"}, 0),
-        _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "failed"}, 1),
-        _event(
-            "lease_granted",
-            {
-                "node_id": "worker-1",
-                "lease_id": "lease-1",
-                "generation": 0,
-                "execution_id": "exec-1",
-                "base_snapshot_id": "S0",
-                "expires_at": "2026-01-01T00:05:00+00:00",
-                "resource_claims": [],
-            },
-            2,
-        ),
-        _event("lease_suspended", {"node_id": "worker-1", "lease_id": "lease-1"}, 3),
-    ]
-
-    output = _apply(events, "cancel")
-
-    assert [event.event_type for event in output] == ["run_lifecycle_changed", "lease_revoked"]
-    projected = _project([*events, *output])
-    assert projected["leases"]["lease-1"]["state"] == "revoked"
-    assert projected["node_states"]["worker-1"] == "failed"
+def test_retired_lease_suspended_event_is_rejected_by_the_catalog() -> None:
+    with pytest.raises(UnknownGraphEventError, match="unknown graph event: lease_suspended"):
+        _event("lease_suspended", {"node_id": "worker-1", "lease_id": "lease-1"}, 3)
 
 
 def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_renewal() -> None:
     clock = FakeClock()
     ids = SequentialIdGenerator()
+    catalog = build_graph_catalog()
     events = [
         _event("run_lifecycle_changed", {"to_state": "active"}, 0),
         _event("node_created", {"node_id": "worker-1", "kind": "worker"}, 1),
@@ -639,20 +678,17 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
+        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+        catalog=catalog,
     )
 
     output = apply_command(
+        catalog,
         _project(events),
         events,
         "record_heartbeat",
         {"lease_id": "lease-1", "node_id": "worker-1", "lease_generation": 2},
-        clock,
-        ids,
-        catalog=build_graph_catalog(),
-        context=context,
+        context,
     )
 
     assert [
@@ -666,7 +702,7 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
     assert isinstance(renewal, HydratedEvent)
     assert renewal.payload.generation == 2
     assert renewal.payload.execution_id == "exec-1"
-    assert renewal.payload.expires_at.isoformat() > events[-1].payload["expires_at"]
+    assert renewal.payload.expires_at.isoformat() > event_payload_json(events[-1])["expires_at"]
 
 
 @pytest.mark.parametrize(
@@ -774,6 +810,7 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
 def test_record_heartbeat_temporary_renewal_preserves_domain_rejections(
     events: list[EventEnvelope], payload: dict[str, Any], reason: str
 ) -> None:
+    catalog = build_graph_catalog()
     context = CommandExecutionContext(
         run_id="run-1",
         current_position=len(events) - 1,
@@ -781,20 +818,17 @@ def test_record_heartbeat_temporary_renewal_preserves_domain_rejections(
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
+        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+        catalog=catalog,
     )
 
     output = apply_command(
+        catalog,
         _project(events),
         events,
         "record_heartbeat",
         payload,
-        context.clock,
-        context.id_generator,
-        catalog=build_graph_catalog(),
-        context=context,
+        context,
     )
 
     assert len(output) == 1
@@ -806,6 +840,7 @@ def test_record_heartbeat_temporary_renewal_preserves_domain_rejections(
 def test_record_heartbeat_public_path_rejects_legacy_shape() -> None:
     clock = FakeClock()
     ids = SequentialIdGenerator()
+    catalog = build_graph_catalog()
     context = CommandExecutionContext(
         run_id="run-1",
         current_position=2,
@@ -813,21 +848,18 @@ def test_record_heartbeat_public_path_rejects_legacy_shape() -> None:
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
+        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+        catalog=catalog,
     )
 
     with pytest.raises(ValidationError):
         apply_command(
+            catalog,
             {},
             [],
             "record_heartbeat",
             {"lease_id": "lease-1", "node_id": "worker-1", "generation": 2},
-            clock,
-            ids,
-            catalog=build_graph_catalog(),
-            context=context,
+            context,
         )
 
 
@@ -849,6 +881,7 @@ def test_typed_acknowledge_start_uses_projection_and_emits_start_effect() -> Non
             2,
         ),
     ]
+    catalog = build_graph_catalog()
     context = CommandExecutionContext(
         run_id="run-1",
         current_position=2,
@@ -856,12 +889,12 @@ def test_typed_acknowledge_start_uses_projection_and_emits_start_effect() -> Non
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
+        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+        catalog=catalog,
     )
 
     output = apply_command(
+        catalog,
         _project(events),
         events,
         "acknowledge_start",
@@ -871,20 +904,18 @@ def test_typed_acknowledge_start_uses_projection_and_emits_start_effect() -> Non
             "lease_generation": 1,
             "execution_id": "exec-1",
         },
-        context.clock,
-        context.id_generator,
-        catalog=build_graph_catalog(),
-        context=context,
+        context,
     )
 
     assert len(output) == 1
-    assert isinstance(output[0], EventEnvelope)
+    assert isinstance(output[0], HydratedEvent)
     assert output[0].event_type == "node_state_changed"
-    assert output[0].payload["new_state"] == "running"
+    assert event_payload_json(output[0])["new_state"] == "running"
 
 
 def test_typed_submit_callback_emits_strict_outcome_and_unconverted_effects() -> None:
     events = _active_lease_events()
+    catalog = build_graph_catalog()
     context = CommandExecutionContext(
         run_id="run-1",
         current_position=len(events) - 1,
@@ -892,28 +923,25 @@ def test_typed_submit_callback_emits_strict_outcome_and_unconverted_effects() ->
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
+        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+        catalog=catalog,
     )
 
     payload = _callback_payload(complete_node=True)
     payload.pop("run_id")
     output = apply_command(
+        catalog,
         _project(events),
         events,
         "submit_callback",
         payload,
-        context.clock,
-        context.id_generator,
-        catalog=build_graph_catalog(),
-        context=context,
+        context,
     )
 
     assert isinstance(output[0], HydratedEvent)
     assert output[0].metadata.event_type == "callback_accepted"
     assert any(
-        isinstance(event, EventEnvelope) and event.event_type == "node_state_changed"
+        isinstance(event, HydratedEvent) and event.event_type == "node_state_changed"
         for event in output
     )
 
@@ -922,7 +950,7 @@ def test_lifecycle_illegal_transition_rejected() -> None:
     output = _apply([_event("run_lifecycle_changed", {"to_state": "queued"}, 0)], "complete")
 
     assert output[0].event_type == "command_rejected"
-    assert output[0].payload["command_type"] == "complete"
+    assert event_payload_json(output[0])["command_type"] == "complete"
 
 
 def test_lifecycle_complete_rejected_with_final_blocker_evidence() -> None:
@@ -943,18 +971,17 @@ def test_lifecycle_complete_rejected_with_final_blocker_evidence() -> None:
     output = _apply(events, "complete")
 
     assert [event.event_type for event in output] == ["command_rejected"]
-    assert output[0].payload == {
-        "command_type": "complete",
-        "reason": "final invariant blockers remain",
-        "blockers": [
-            {
-                "kind": "task_not_accepted",
-                "reason": "task region has not reached accepted",
-                "task_region_id": "task-1",
-                "state": "pending",
-            }
-        ],
-    }
+    assert isinstance(output[0].payload, CommandRejectedPayload)
+    assert output[0].payload.command_type == "complete"
+    assert output[0].payload.reason == "final invariant blockers remain"
+    assert output[0].payload.blockers == [
+        {
+            "kind": "task_not_accepted",
+            "reason": "task region has not reached accepted",
+            "task_region_id": "task-1",
+            "state": "pending",
+        }
+    ]
 
 
 def test_lifecycle_complete_accepts_clean_graph_without_blockers() -> None:
@@ -964,13 +991,13 @@ def test_lifecycle_complete_accepts_clean_graph_without_blockers() -> None:
         "output_record_accepted",
         "run_lifecycle_changed",
     ]
-    assert output[0].payload["record"]["record_type"] == "completion_decision"
-    assert output[0].payload["record"]["producer_node_id"] == "run_lifecycle"
-    assert output[0].payload["record"]["port"] == "completion_decision"
-    assert output[0].payload["record"]["schema"] == "CompletionDecision"
-    assert output[0].payload["record"]["value"] == {"status": "passed", "blockers": []}
-    assert output[0].payload["record"]["provenance"] == {"source": "lifecycle_complete"}
-    assert output[1].payload["to_state"] == "completed"
+    assert event_payload_json(output[0])["record"]["record_type"] == "completion_decision"
+    assert event_payload_json(output[0])["record"]["producer_node_id"] == "run_lifecycle"
+    assert event_payload_json(output[0])["record"]["port"] == "completion_decision"
+    assert event_payload_json(output[0])["record"]["schema"] == "CompletionDecision"
+    assert event_payload_json(output[0])["record"]["value"] == {"status": "passed", "blockers": []}
+    assert event_payload_json(output[0])["record"]["provenance"] == {"source": "lifecycle_complete"}
+    assert event_payload_json(output[1])["to_state"] == "completed"
 
 
 def test_evaluate_final_gate_emits_blocked_completion_decision() -> None:
@@ -997,7 +1024,7 @@ def test_evaluate_final_gate_emits_blocked_completion_decision() -> None:
         "output_record_accepted",
         "node_state_changed",
     ]
-    decision = output[0].payload["record"]
+    decision = event_payload_json(output[0])["record"]
     assert decision["record_type"] == "completion_decision"
     assert decision["producer_node_id"] == "gate-final"
     assert decision["port"] == "completion_decision"
@@ -1013,13 +1040,12 @@ def test_evaluate_final_gate_emits_blocked_completion_decision() -> None:
             }
         ],
     }
-    assert output[1].payload == {
-        "node_id": "gate-final",
-        "new_state": "completed",
-        "trigger": "final_gate_evaluated",
-        "completion_status": "blocked",
-        "completion_decision_record_id": decision["record_id"],
-    }
+    assert isinstance(output[1].payload, NodeStateChangedPayload)
+    assert output[1].payload.node_id == "gate-final"
+    assert output[1].payload.new_state == "completed"
+    assert output[1].payload.trigger == "final_gate_evaluated"
+    assert output[1].payload.completion_status == "blocked"
+    assert output[1].payload.completion_decision_record_id == decision["record_id"]
 
 
 @pytest.mark.parametrize(
@@ -1049,8 +1075,8 @@ def test_record_evaluation_rejects_invalid_nodes_and_empty_joins(
     output = _apply(events, command_type, {"run_id": "run-1", **payload})
 
     assert [event.event_type for event in output] == ["command_rejected"]
-    assert output[0].payload["command_type"] == command_type
-    assert output[0].payload["reason"] == reason
+    assert event_payload_json(output[0])["command_type"] == command_type
+    assert event_payload_json(output[0])["reason"] == reason
 
 
 def test_evaluate_final_gate_releases_runtime_lease_when_present() -> None:
@@ -1077,11 +1103,10 @@ def test_evaluate_final_gate_releases_runtime_lease_when_present() -> None:
         "node_state_changed",
         "lease_released",
     ]
-    assert output[2].payload == {
-        "node_id": "gate-final",
-        "lease_id": "lease-final",
-        "generation": 2,
-    }
+    assert isinstance(output[2].payload, LeaseReleasedPayload)
+    assert output[2].payload.node_id == "gate-final"
+    assert output[2].payload.lease_id == "lease-final"
+    assert output[2].payload.generation == 2
 
 
 def test_evaluate_join_emits_join_result_and_releases_lease() -> None:
@@ -1134,7 +1159,7 @@ def test_evaluate_join_emits_join_result_and_releases_lease() -> None:
         "node_state_changed",
         "lease_released",
     ]
-    join_result = output[0].payload["record"]
+    join_result = event_payload_json(output[0])["record"]
     assert join_result["record_type"] == "join_result"
     assert join_result["producer_node_id"] == "join-1"
     assert join_result["port"] == "join_result"
@@ -1143,13 +1168,12 @@ def test_evaluate_join_emits_join_result_and_releases_lease() -> None:
         "status": "ready",
         "source_record_ids": ["candidate-1", "check-result-1"],
     }
-    assert output[1].payload["new_state"] == "completed"
-    assert output[1].payload["trigger"] == "join_evaluated"
-    assert output[2].payload == {
-        "node_id": "join-1",
-        "lease_id": "lease-join",
-        "generation": 1,
-    }
+    assert event_payload_json(output[1])["new_state"] == "completed"
+    assert event_payload_json(output[1])["trigger"] == "join_evaluated"
+    assert isinstance(output[2].payload, LeaseReleasedPayload)
+    assert output[2].payload.node_id == "join-1"
+    assert output[2].payload.lease_id == "lease-join"
+    assert output[2].payload.generation == 1
 
 
 def test_evaluate_final_gate_passed_decision_allows_lifecycle_completion() -> None:
@@ -1167,9 +1191,12 @@ def test_evaluate_final_gate_passed_decision_allows_lifecycle_completion() -> No
     )
     completion = _apply([*events, *decision_events], "complete")
 
-    assert decision_events[0].payload["record"]["value"] == {"status": "passed", "blockers": []}
+    assert event_payload_json(decision_events[0])["record"]["value"] == {
+        "status": "passed",
+        "blockers": [],
+    }
     assert [event.event_type for event in completion] == ["run_lifecycle_changed"]
-    assert completion[0].payload["to_state"] == "completed"
+    assert event_payload_json(completion[0])["to_state"] == "completed"
 
 
 def test_lifecycle_complete_rejected_when_final_gate_has_no_completion_decision() -> None:
@@ -1185,7 +1212,7 @@ def test_lifecycle_complete_rejected_when_final_gate_has_no_completion_decision(
     output = _apply(events, "complete")
 
     assert [event.event_type for event in output] == ["command_rejected"]
-    assert output[0].payload["blockers"] == [
+    assert event_payload_json(output[0])["blockers"] == [
         {
             "kind": "missing_completion_decision",
             "reason": "final gate has not produced a completion_decision",
@@ -1246,7 +1273,7 @@ def test_record_support_evidence_command_uses_active_requirement_version() -> No
     )
 
     assert [event.event_type for event in output] == ["support_evidence_recorded"]
-    assert output[0].payload["requirement_version_id"] == "R-1.v1"
+    assert event_payload_json(output[0])["requirement_version_id"] == "R-1.v1"
     assert (
         project_requirement_freshness_facts(build_graph_catalog(), [*events, *output])[0][
             "unsupported"
@@ -1268,8 +1295,8 @@ def test_record_support_evidence_rejects_unknown_active_requirement_version() ->
     )
 
     assert [event.event_type for event in output] == ["command_rejected"]
-    assert output[0].payload["command_type"] == "record_support_evidence"
-    assert output[0].payload["reason"] == "unknown active requirement version: R-1"
+    assert event_payload_json(output[0])["command_type"] == "record_support_evidence"
+    assert event_payload_json(output[0])["reason"] == "unknown active requirement version: R-1"
 
 
 def test_callback_accept_emits_boundary_events() -> None:
@@ -1283,7 +1310,7 @@ def test_callback_accept_emits_boundary_events() -> None:
         "node_state_changed",
         "lease_released",
     ]
-    candidate_record = output[1].payload["record"]
+    candidate_record = event_payload_json(output[1])["record"]
     assert candidate_record["file_state_record_id"] == "file-state-1"
     assert candidate_record["file_state_record_ids"] == ["file-state-1"]
     assert candidate_record["value"]["file_state_record_ids"] == ["file-state-1"]
@@ -1324,7 +1351,10 @@ def test_callback_rejects_candidate_file_state_citation_mismatch() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "file_state_record_ids does not match bound records" in output[0].payload["reason"]
+    assert (
+        "file_state_record_ids does not match bound records"
+        in event_payload_json(output[0])["reason"]
+    )
 
 
 def test_callback_rejects_malformed_candidate_record() -> None:
@@ -1350,8 +1380,8 @@ def test_callback_rejects_malformed_candidate_record() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "candidate record at index 0 is invalid" in output[0].payload["reason"]
-    assert "Field required" in output[0].payload["reason"]
+    assert "candidate record at index 0 is invalid" in event_payload_json(output[0])["reason"]
+    assert "Field required" in event_payload_json(output[0])["reason"]
 
 
 def test_callback_accepts_analysis_summary_record() -> None:
@@ -1408,8 +1438,8 @@ def test_callback_accepts_analysis_summary_record() -> None:
         "node_state_changed",
         "lease_released",
     ]
-    assert output[4].payload["record"]["record_type"] == "analysis_summary"
-    assert output[4].payload["record"]["value"]["source_record_ids"] == ["candidate-1"]
+    assert event_payload_json(output[4])["record"]["record_type"] == "analysis_summary"
+    assert event_payload_json(output[4])["record"]["value"]["source_record_ids"] == ["candidate-1"]
 
 
 def test_callback_rejects_malformed_analysis_summary_record_atomically() -> None:
@@ -1456,7 +1486,9 @@ def test_callback_rejects_malformed_analysis_summary_record_atomically() -> None
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "analysis_summary record at index 2 is invalid" in output[0].payload["reason"]
+    assert (
+        "analysis_summary record at index 2 is invalid" in event_payload_json(output[0])["reason"]
+    )
 
 
 def test_callback_accepts_graph_patch_proposal_record() -> None:
@@ -1503,40 +1535,8 @@ def test_callback_accepts_graph_patch_proposal_record() -> None:
         "node_state_changed",
         "lease_released",
     ]
-    assert output[1].payload["record"]["record_type"] == "graph_patch_proposal"
-    assert output[1].payload["record"]["value"]["patch_id"] == "patch-1"
-
-
-def test_callback_rejects_malformed_graph_patch_proposal_record_atomically() -> None:
-    output = _apply(
-        _planner_active_lease_events(),
-        "submit_callback",
-        _callback_payload(
-            node_id="planner-1",
-            payload={
-                "payload_hash": "hash-a",
-                "output_records": [
-                    {
-                        "record_id": "proposal-1",
-                        "record_kind": "output",
-                        "producer_node_id": "planner-1",
-                        "port": "graph_patch_proposal",
-                        "schema": "GraphPatch",
-                        "value": {
-                            "patch_id": "patch-1",
-                            "proposed_by_node_id": "planner-1",
-                            "base_graph_position": 3,
-                            "ops": [],
-                            "macro_invocations": [],
-                        },
-                    }
-                ],
-            },
-        ),
-    )
-
-    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "graph_patch_proposal record at index 0 is invalid" in output[0].payload["reason"]
+    assert event_payload_json(output[1])["record"]["record_type"] == "graph_patch_proposal"
+    assert event_payload_json(output[1])["record"]["value"]["patch_id"] == "patch-1"
 
 
 def test_callback_before_acknowledge_start_rejected_and_leaves_lease_intact() -> None:
@@ -1549,7 +1549,7 @@ def test_callback_before_acknowledge_start_rejected_and_leaves_lease_intact() ->
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == "node not running: leased"
+    assert event_payload_json(output[0])["reason"] == "node not running: leased"
 
     projected = _project([*events, *output])
     assert projected["node_states"]["worker-1"] == "leased"
@@ -1567,7 +1567,7 @@ def test_callback_claiming_non_mutating_cannot_complete_leased_node() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == "node not running: leased"
+    assert event_payload_json(output[0])["reason"] == "node not running: leased"
 
     projected = _project([*events, *output])
     assert projected["node_states"]["worker-1"] == "leased"
@@ -1586,11 +1586,10 @@ def test_schedule_tick_defers_node_without_base_snapshot() -> None:
     )
 
     assert not any(event.event_type == "lease_granted" for event in output)
-    assert any(
-        event.event_type == "node_deferred"
-        and event.payload == {"node_id": "worker-1", "reason": "missing_base_snapshot"}
-        for event in output
-    )
+    deferred = next(event for event in output if event.event_type == "node_deferred")
+    assert isinstance(deferred.payload, NodeDeferredPayload)
+    assert deferred.payload.node_id == "worker-1"
+    assert deferred.payload.reason == "missing_base_snapshot"
 
 
 def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -> None:
@@ -1643,16 +1642,15 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
         "node_state_changed",
         "node_ready",
     ]
-    assert output[0].payload == {
-        "lease_id": "lease-1",
-        "node_id": "verifier-1",
-        "generation": 1,
-        "execution_id": "exec-1",
-        "expires_at": expired_at.isoformat().replace("+00:00", "Z"),
-        "reason": "lease_expired_without_callback",
-    }
-    assert output[1].payload["record"]["record_type"] == "failure_record"
-    assert output[1].payload["record"]["value"] == {
+    assert isinstance(output[0].payload, LeaseExpiredPayload)
+    assert output[0].payload.lease_id == "lease-1"
+    assert output[0].payload.node_id == "verifier-1"
+    assert output[0].payload.generation == 1
+    assert output[0].payload.execution_id == "exec-1"
+    assert output[0].payload.expires_at == expired_at
+    assert output[0].payload.reason == "lease_expired_without_callback"
+    assert event_payload_json(output[1])["record"]["record_type"] == "failure_record"
+    assert event_payload_json(output[1])["record"]["value"] == {
         "failed_node_id": "verifier-1",
         "phase": "runtime",
         "error_class": "lease_expired_without_callback",
@@ -1663,14 +1661,15 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
         "reason": "lease_expired_without_callback",
         "expires_at": expired_at.isoformat(),
     }
-    assert output[2].payload == {
-        "node_id": "verifier-1",
-        "new_state": "failed",
-        "trigger": "lease_expired_without_callback",
-        "reason": "lease_expired_without_callback",
-    }
+    assert isinstance(output[2].payload, NodeStateChangedPayload)
+    assert output[2].payload.node_id == "verifier-1"
+    assert output[2].payload.new_state == "failed"
+    assert output[2].payload.trigger == "lease_expired_without_callback"
+    assert output[2].payload.reason == "lease_expired_without_callback"
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "worker-2"
+        event.event_type == "lease_granted"
+        and isinstance(event.payload, LeaseGrantedPayload)
+        and event.payload.node_id == "worker-2"
         for event in output
     )
 
@@ -1741,7 +1740,7 @@ def test_late_callback_after_uncontested_lease_expiry_is_accepted() -> None:
         "node_state_changed",
         "lease_released",
     ]
-    assert output[0].payload["reason"] == "accepted_late_expired_lease"
+    assert event_payload_json(output[0])["reason"] == "accepted_late_expired_lease"
 
 
 def test_callback_rejects_completion_without_required_output_record() -> None:
@@ -1757,7 +1756,7 @@ def test_callback_rejects_completion_without_required_output_record() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == (
+    assert event_payload_json(output[0])["reason"] == (
         "node completion missing required output record ports: candidate, file_state"
     )
 
@@ -1821,13 +1820,14 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
         "node_state_changed",
         "lease_released",
     ]
-    assert output[2].payload == {
-        "edge_id": "edge-candidate",
-        "to_node_id": "verifier-1",
-        "to_port": "candidate_under_test",
-        "record_ids": ["candidate-1"],
-        "bound_at_position": 0,
-    }
+    _assert_input_bound(
+        output[2],
+        edge_id="edge-candidate",
+        to_node_id="verifier-1",
+        to_port="candidate_under_test",
+        record_ids=["candidate-1"],
+        bound_at_position=0,
+    )
 
     schedule_output = _apply(
         [*events, *output],
@@ -1835,7 +1835,9 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "verifier-1"
+        event.event_type == "lease_granted"
+        and isinstance(event.payload, LeaseGrantedPayload)
+        and event.payload.node_id == "verifier-1"
         for event in schedule_output
     )
 
@@ -1896,9 +1898,9 @@ def test_callback_accepts_artifact_reference_output_record() -> None:
         "node_state_changed",
         "lease_released",
     ]
-    assert output[4].payload["record"]["record_type"] == "artifact_reference"
-    assert output[4].payload["record"]["port"] == "artifact_reference"
-    assert output[4].payload["record"]["value"]["uri"] == "docs/out.txt"
+    assert event_payload_json(output[4])["record"]["record_type"] == "artifact_reference"
+    assert event_payload_json(output[4])["record"]["port"] == "artifact_reference"
+    assert event_payload_json(output[4])["record"]["value"]["uri"] == "docs/out.txt"
 
 
 def test_callback_binds_first_record_only_for_one_cardinality_input() -> None:
@@ -2171,13 +2173,14 @@ def test_callback_accepts_gap_analysis_output_and_binds_classified_gap() -> None
         "output_record_accepted",
         "input_bound",
     ]
-    assert output[2].payload == {
-        "edge_id": "edge-gap-classification",
-        "to_node_id": "worker-2",
-        "to_port": "classified_gap",
-        "record_ids": ["gap-classification-1"],
-        "bound_at_position": 0,
-    }
+    _assert_input_bound(
+        output[2],
+        edge_id="edge-gap-classification",
+        to_node_id="worker-2",
+        to_port="classified_gap",
+        record_ids=["gap-classification-1"],
+        bound_at_position=0,
+    )
 
 
 def test_callback_accepts_classified_gap_port_and_binds_classified_gap() -> None:
@@ -2239,13 +2242,14 @@ def test_callback_accepts_classified_gap_port_and_binds_classified_gap() -> None
         "output_record_accepted",
         "input_bound",
     ]
-    assert output[2].payload == {
-        "edge_id": "edge-classified-gap",
-        "to_node_id": "worker-2",
-        "to_port": "classified_gap",
-        "record_ids": ["classified-gap-1"],
-        "bound_at_position": 0,
-    }
+    _assert_input_bound(
+        output[2],
+        edge_id="edge-classified-gap",
+        to_node_id="worker-2",
+        to_port="classified_gap",
+        record_ids=["classified-gap-1"],
+        bound_at_position=0,
+    )
 
 
 def test_callback_value_selector_blocks_no_gap_from_corrective_worker() -> None:
@@ -2395,14 +2399,15 @@ def test_patch_create_edge_backfills_existing_verification_record() -> None:
         "edge_created",
         "input_bound",
     ]
-    assert output[2].payload == {
-        "edge_id": "edge-verifier-final",
-        "to_node_id": "check-final",
-        "to_port": "verification_evidence",
-        "record_ids": ["verification-1"],
-        "bound_at_position": 0,
-        "trigger": "edge_backfill",
-    }
+    _assert_input_bound(
+        output[2],
+        edge_id="edge-verifier-final",
+        to_node_id="check-final",
+        to_port="verification_evidence",
+        record_ids=["verification-1"],
+        bound_at_position=0,
+        trigger="edge_backfill",
+    )
 
 
 def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> None:
@@ -2572,7 +2577,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         "node_state_changed",
         "lease_released",
     ]
-    accepted_record = output[1].payload["record"]
+    accepted_record = event_payload_json(output[1])["record"]
     assert accepted_record["outcome"] == "passed"
     assert accepted_record["value"]["outcome"] == "passed"
     assert accepted_record["candidate_record_id"] == "candidate-1"
@@ -2584,19 +2589,20 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         "file-state-1",
     ]
     assert accepted_record["evidence"]["file_state_record_ids"] == ["file-state-1"]
-    assert output[2].payload["candidate_id"] == "candidate-1"
-    assert output[2].payload["outcome"] == "passed"
-    assert output[2].payload["evidence"]["evaluated_record_ids"] == [
+    assert event_payload_json(output[2])["candidate_id"] == "candidate-1"
+    assert event_payload_json(output[2])["outcome"] == "passed"
+    assert event_payload_json(output[2])["evidence"]["evaluated_record_ids"] == [
         "candidate-1",
         "file-state-1",
     ]
-    assert output[3].payload == {
-        "edge_id": "edge-verifier-gap",
-        "to_node_id": "planner-gap",
-        "to_port": "verification_evidence",
-        "record_ids": ["verification-1"],
-        "bound_at_position": 0,
-    }
+    _assert_input_bound(
+        output[3],
+        edge_id="edge-verifier-gap",
+        to_node_id="planner-gap",
+        to_port="verification_evidence",
+        record_ids=["verification-1"],
+        bound_at_position=0,
+    )
 
     schedule_output = _apply(
         [*events, *output],
@@ -2604,7 +2610,9 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "planner-gap"
+        event.event_type == "lease_granted"
+        and isinstance(event.payload, LeaseGrantedPayload)
+        and event.payload.node_id == "planner-gap"
         for event in schedule_output
     )
 
@@ -2688,8 +2696,8 @@ def test_verifier_callback_rejects_verification_record_with_status_key() -> None
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "verification record at index 0 is invalid" in output[0].payload["reason"]
-    assert "uses outcome, not status" in output[0].payload["reason"]
+    assert "verification record at index 0 is invalid" in event_payload_json(output[0])["reason"]
+    assert "uses outcome, not status" in event_payload_json(output[0])["reason"]
 
 
 def test_verifier_callback_failed_output_has_explicit_failed_outcome() -> None:
@@ -2778,15 +2786,18 @@ def test_verifier_callback_failed_output_has_explicit_failed_outcome() -> None:
     )
 
     accepted_record = next(
-        event.payload["record"] for event in output if event.event_type == "output_record_accepted"
+        event.payload.record
+        for event in output
+        if event.event_type == "output_record_accepted"
+        and isinstance(event.payload, OutputRecordAcceptedPayload)
     )
     failed_event = next(
         event.payload for event in output if event.event_type == "verification_failed"
     )
-    assert accepted_record["outcome"] == "failed"
-    assert accepted_record["value"]["outcome"] == "failed"
-    assert accepted_record["value"]["grades"][0]["reason"] == "missing regression evidence"
-    assert failed_event["outcome"] == "failed"
+    assert accepted_record.outcome == "failed"
+    assert accepted_record.value.outcome == "failed"
+    assert accepted_record.value.grades[0].reason == "missing regression evidence"
+    assert failed_event.outcome == "failed"
 
 
 def test_verifier_callback_rejects_completion_without_grades() -> None:
@@ -2873,7 +2884,9 @@ def test_verifier_callback_rejects_completion_without_grades() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == "verification record at index 0 missing grades"
+    assert (
+        event_payload_json(output[0])["reason"] == "verification record at index 0 missing grades"
+    )
 
 
 def test_verifier_callback_rejects_stale_status_with_outcome() -> None:
@@ -2963,7 +2976,7 @@ def test_verifier_callback_rejects_stale_status_with_outcome() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "uses outcome, not status" in output[0].payload["reason"]
+    assert "uses outcome, not status" in event_payload_json(output[0])["reason"]
 
 
 def test_verifier_callback_rejects_report_shaped_output_with_value_status() -> None:
@@ -3054,7 +3067,7 @@ def test_verifier_callback_rejects_report_shaped_output_with_value_status() -> N
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "value uses outcome, not status" in output[0].payload["reason"]
+    assert "value uses outcome, not status" in event_payload_json(output[0])["reason"]
 
 
 def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding() -> None:
@@ -3203,14 +3216,15 @@ def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding
         "node_state_changed",
         "lease_released",
     ]
-    assert output[1].payload["record"]["port"] == "verification_report"
-    assert output[3].payload == {
-        "edge_id": "edge-corrective-verifier-final",
-        "to_node_id": "check-final",
-        "to_port": "verification_evidence",
-        "record_ids": ["verification-fix"],
-        "bound_at_position": 0,
-    }
+    assert event_payload_json(output[1])["record"]["port"] == "verification_report"
+    _assert_input_bound(
+        output[3],
+        edge_id="edge-corrective-verifier-final",
+        to_node_id="check-final",
+        to_port="verification_evidence",
+        record_ids=["verification-fix"],
+        bound_at_position=0,
+    )
 
     schedule_output = _apply(
         [*events, *output],
@@ -3218,7 +3232,9 @@ def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "check-final"
+        event.event_type == "lease_granted"
+        and isinstance(event.payload, LeaseGrantedPayload)
+        and event.payload.node_id == "check-final"
         for event in schedule_output
     )
 
@@ -3288,7 +3304,7 @@ def test_verifier_callback_rejects_unbound_verification_candidate() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "not bound" in output[0].payload["reason"]
+    assert "not bound" in event_payload_json(output[0])["reason"]
 
 
 def test_verifier_callback_rejects_mismatched_candidate_record_citation() -> None:
@@ -3366,7 +3382,10 @@ def test_verifier_callback_rejects_mismatched_candidate_record_citation() -> Non
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "candidate_record_ids does not match bound records" in output[0].payload["reason"]
+    assert (
+        "candidate_record_ids does not match bound records"
+        in event_payload_json(output[0])["reason"]
+    )
 
 
 def test_check_result_rejects_mismatched_evaluated_record_citation() -> None:
@@ -3454,7 +3473,10 @@ def test_check_result_rejects_mismatched_evaluated_record_citation() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "value.evaluated_record_ids does not match bound records" in output[0].payload["reason"]
+    assert (
+        "value.evaluated_record_ids does not match bound records"
+        in event_payload_json(output[0])["reason"]
+    )
 
 
 def test_callback_rejects_malformed_check_result_record() -> None:
@@ -3536,8 +3558,10 @@ def test_callback_rejects_malformed_check_result_record() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "check_result record at index 0 is invalid" in output[0].payload["reason"]
-    assert "Input should be 'passed', 'failed' or 'timeout'" in output[0].payload["reason"]
+    assert "check_result record at index 0 is invalid" in event_payload_json(output[0])["reason"]
+    assert (
+        "Input should be 'passed', 'failed' or 'timeout'" in event_payload_json(output[0])["reason"]
+    )
 
 
 def test_worker_smuggled_verification_record_rejected_atomically() -> None:
@@ -3592,7 +3616,7 @@ def test_worker_smuggled_verification_record_rejected_atomically() -> None:
 
     event_types = [event.event_type for event in output]
     assert event_types == ["callback_rejected_conflict"]
-    assert "not produced by a verifier" in output[0].payload["reason"]
+    assert "not produced by a verifier" in event_payload_json(output[0])["reason"]
     assert "callback_accepted" not in event_types
     assert "output_record_accepted" not in event_types
     assert "verification_passed" not in event_types
@@ -3672,7 +3696,7 @@ def test_callback_rejects_output_record_producer_forgery_without_partial_events(
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "producer_node_id does not match lease node" in output[0].payload["reason"]
+    assert "producer_node_id does not match lease node" in event_payload_json(output[0])["reason"]
     assert "output_record_accepted" not in [event.event_type for event in output]
     assert "input_bound" not in [event.event_type for event in output]
 
@@ -3687,16 +3711,14 @@ def test_callback_rejects_output_record_producer_forgery_without_partial_events(
 
     assert not any(
         event.event_type in {"node_ready", "lease_granted"}
-        and event.payload.get("node_id") == "consumer-1"
+        and event_payload_json(event).get("node_id") == "consumer-1"
         for event in schedule_output
     )
     assert any(
         event.event_type == "node_deferred"
-        and event.payload
-        == {
-            "node_id": "consumer-1",
-            "reason": "missing_required_input:candidate_under_test",
-        }
+        and isinstance(event.payload, NodeDeferredPayload)
+        and event.payload.node_id == "consumer-1"
+        and event.payload.reason == "missing_required_input:candidate_under_test"
         for event in schedule_output
     )
 
@@ -3736,7 +3758,7 @@ def test_callback_with_mixed_honest_and_forged_records_rejected_atomically() -> 
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "producer_node_id does not match lease node" in output[0].payload["reason"]
+    assert "producer_node_id does not match lease node" in event_payload_json(output[0])["reason"]
 
 
 def test_callback_rejects_forged_file_state_record_atomically() -> None:
@@ -3768,7 +3790,7 @@ def test_callback_rejects_forged_file_state_record_atomically() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "producer_node_id does not match lease node" in output[0].payload["reason"]
+    assert "producer_node_id does not match lease node" in event_payload_json(output[0])["reason"]
     assert "file_state_accepted" not in [event.event_type for event in output]
 
 
@@ -3908,7 +3930,7 @@ def test_callback_rejects_file_state_path_outside_lease_write_scope() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == (
+    assert event_payload_json(output[0])["reason"] == (
         "file_state path outside lease write authority at index 1: src/app.py"
     )
 
@@ -3948,7 +3970,7 @@ def test_callback_rejects_file_state_path_with_only_read_authority() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == (
+    assert event_payload_json(output[0])["reason"] == (
         "file_state path outside lease write authority at index 1: docs/out.md"
     )
 
@@ -4044,7 +4066,7 @@ def test_callback_rejects_file_state_path_outside_path_in_scope_write_claim() ->
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == (
+    assert event_payload_json(output[0])["reason"] == (
         "file_state path outside lease write authority at index 1: "
         "src/orchestrator/api/routers/graph.py"
     )
@@ -4073,7 +4095,10 @@ def test_callback_rejects_forged_file_state_rejected_node_id() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "file_state_rejected node_id does not match lease node" in output[0].payload["reason"]
+    assert (
+        "file_state_rejected node_id does not match lease node"
+        in event_payload_json(output[0])["reason"]
+    )
     assert "file_state_rejected" not in [event.event_type for event in output]
 
 
@@ -4119,7 +4144,7 @@ def test_callback_rejects_unregistered_output_port() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == (
+    assert event_payload_json(output[0])["reason"] == (
         "output record at index 0 uses unknown output port: diagnostic"
     )
 
@@ -4147,7 +4172,7 @@ def test_callback_rejects_incompatible_explicit_record_type() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == (
+    assert event_payload_json(output[0])["reason"] == (
         "output record at index 0 has incompatible record_type for candidate: check_result"
     )
     assert "output_record_accepted" not in [event.event_type for event in output]
@@ -4176,7 +4201,7 @@ def test_callback_rejects_explicit_producer_port_mismatch() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == (
+    assert event_payload_json(output[0])["reason"] == (
         "output record at index 0 producer_port does not match port: check_result"
     )
     assert "output_record_accepted" not in [event.event_type for event in output]
@@ -4205,7 +4230,7 @@ def test_callback_rejects_explicit_record_run_id_mismatch() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert output[0].payload["reason"] == (
+    assert event_payload_json(output[0])["reason"] == (
         "output record at index 0 run_id does not match callback run: other-run"
     )
     assert "output_record_accepted" not in [event.event_type for event in output]
@@ -4303,10 +4328,10 @@ def test_patch_accept_emits_graph_events() -> None:
     )
 
     assert [event.event_type for event in output] == ["graph_patch_accepted", "node_created"]
-    assert output[0].payload["patch_id"] == "patch-1"
-    assert output[0].payload["proposed_by_node_id"] == "planner-1"
-    assert output[0].payload["actor_role"] == "planner"
-    assert output[0].payload["base_graph_position"] == -1
+    assert event_payload_json(output[0])["patch_id"] == "patch-1"
+    assert event_payload_json(output[0])["proposed_by_node_id"] == "planner-1"
+    assert event_payload_json(output[0])["actor_role"] == "planner"
+    assert event_payload_json(output[0])["base_graph_position"] == -1
 
 
 def test_patch_create_edge_preserves_producer_class_constraints() -> None:
@@ -4340,8 +4365,8 @@ def test_patch_create_edge_preserves_producer_class_constraints() -> None:
     )
 
     assert [event.event_type for event in output] == ["graph_patch_accepted", "edge_created"]
-    assert output[1].payload["from_node_kind"] == "verifier"
-    assert output[1].payload["from_node_role"] == "verifier"
+    assert event_payload_json(output[1])["from_node_kind"] == "verifier"
+    assert event_payload_json(output[1])["from_node_role"] == "verifier"
 
 
 def test_submit_patch_rejects_verification_selector_with_status_before_acceptance() -> None:
@@ -4541,7 +4566,7 @@ def test_patch_rejects_planner_authored_verifier_candidate_id() -> None:
 
     assert [event.event_type for event in output] == ["graph_patch_rejected"]
     assert (
-        output[0].payload["reason"]
+        event_payload_json(output[0])["reason"]
         == "node verifier-1 must not declare candidate_id; verifiers derive the "
         "candidate from the required candidate_under_test input edge"
     )
@@ -4575,7 +4600,7 @@ def test_patch_rejects_planner_authored_check_candidate_id() -> None:
 
     assert [event.event_type for event in output] == ["graph_patch_rejected"]
     assert (
-        output[0].payload["reason"]
+        event_payload_json(output[0])["reason"]
         == "node check-1 must not declare candidate_id; checks derive evaluated "
         "candidates from bound candidate or verification evidence inputs"
     )
@@ -4609,10 +4634,9 @@ def test_patch_rejected_after_run_cancellation() -> None:
     )
 
     assert [event.event_type for event in output] == ["command_rejected"]
-    assert output[0].payload == {
-        "command_type": "submit_patch",
-        "reason": "run_not_active:cancelled",
-    }
+    assert isinstance(output[0].payload, CommandRejectedPayload)
+    assert output[0].payload.command_type == "submit_patch"
+    assert output[0].payload.reason == "run_not_active:cancelled"
 
 
 def test_patch_accept_adds_default_worker_write_authority() -> None:
@@ -4643,15 +4667,15 @@ def test_patch_accept_adds_default_worker_write_authority() -> None:
     )
 
     assert [event.event_type for event in output] == ["graph_patch_accepted", "node_created"]
-    assert output[1].payload["resource_claims"] == [
+    assert event_payload_json(output[1])["resource_claims"] == [
         {"mode": "write", "scope": "repo", "paths": ["."]}
     ]
-    assert output[1].payload["allowed_actions"] == [
+    assert event_payload_json(output[1])["allowed_actions"] == [
         "submit_records",
         "request_clarification",
         "raise_appeal",
     ]
-    assert output[1].payload["preconditions"] == []
+    assert event_payload_json(output[1])["preconditions"] == []
 
 
 def test_patch_accept_emits_human_gate_request_record_and_binding() -> None:
@@ -4690,7 +4714,7 @@ def test_patch_accept_emits_human_gate_request_record_and_binding() -> None:
         "output_record_accepted",
         "input_bound",
     ]
-    request_record = output[2].payload["record"]
+    request_record = event_payload_json(output[2])["record"]
     assert request_record == {
         "record_id": "decision-request-gate-review",
         "record_kind": "graph_record",
@@ -4705,14 +4729,15 @@ def test_patch_accept_emits_human_gate_request_record_and_binding() -> None:
             "consequence_summary": "Review graph expansion.",
         },
     }
-    assert output[3].payload == {
-        "edge_id": "edge-decision-request-gate-review-to-gate-review-decision_request",
-        "to_node_id": "gate-review",
-        "to_port": "decision_request",
-        "record_ids": ["decision-request-gate-review"],
-        "bound_at_position": 0,
-        "binding_policy": "bind_latest",
-    }
+    _assert_input_bound(
+        output[3],
+        edge_id="edge-decision-request-gate-review-to-gate-review-decision_request",
+        to_node_id="gate-review",
+        to_port="decision_request",
+        record_ids=["decision-request-gate-review"],
+        bound_at_position=0,
+        binding_policy="bind_latest",
+    )
     projected = _project(output)
     assert projected["input_bindings"]["gate-review"]["decision_request"]["record_ids"] == [
         "decision-request-gate-review"
@@ -4753,7 +4778,7 @@ def test_patch_accept_emits_authority_request_record_and_binding() -> None:
         "output_record_accepted",
         "input_bound",
     ]
-    assert output[2].payload["record"] == {
+    assert event_payload_json(output[2])["record"] == {
         "record_id": "authority-request-gate-authority",
         "record_kind": "graph_record",
         "record_type": "authority_request_record",
@@ -4766,8 +4791,8 @@ def test_patch_accept_emits_authority_request_record_and_binding() -> None:
             "reason": "Worker needs docs write access.",
         },
     }
-    assert output[3].payload["to_port"] == "authority_request_record"
-    assert output[3].payload["record_ids"] == ["authority-request-gate-authority"]
+    assert event_payload_json(output[3])["to_port"] == "authority_request_record"
+    assert event_payload_json(output[3])["record_ids"] == ["authority-request-gate-authority"]
 
 
 def test_patch_accepts_authority_request_typed_record_envelope() -> None:
@@ -4808,7 +4833,7 @@ def test_patch_accepts_authority_request_typed_record_envelope() -> None:
         "output_record_accepted",
         "input_bound",
     ]
-    assert output[2].payload["record"]["value"] == {
+    assert event_payload_json(output[2])["record"]["value"] == {
         "requested_authority": ["repo:docs/**:write"],
         "target_node_id": "worker-docs",
         "reason": "Worker needs docs write access.",
@@ -4875,7 +4900,7 @@ def test_patch_accepts_authority_request_edge_to_worker_authority_input() -> Non
         "node_created",
         "edge_created",
     ]
-    assert output[-1].payload["to_port"] == "authority"
+    assert event_payload_json(output[-1])["to_port"] == "authority"
 
 
 def test_patch_rejects_malformed_request_gate_record() -> None:
@@ -4908,9 +4933,9 @@ def test_patch_rejects_malformed_request_gate_record() -> None:
     )
 
     assert [event.event_type for event in output] == ["graph_patch_rejected"]
-    assert output[0].payload["patch_id"] == "patch-bad-request"
-    assert "invalid request record for node gate-review" in output[0].payload["reason"]
-    assert "default_option must be one of options" in output[0].payload["reason"]
+    assert event_payload_json(output[0])["patch_id"] == "patch-bad-request"
+    assert "invalid request record for node gate-review" in event_payload_json(output[0])["reason"]
+    assert "default_option must be one of options" in event_payload_json(output[0])["reason"]
 
 
 def test_gap_planner_no_op_patch_is_rejected_at_command_boundary() -> None:
@@ -4955,7 +4980,7 @@ def test_gap_planner_corrective_work_patch_accepts_through_submit_patch() -> Non
     )
 
     assert [event.event_type for event in output] == ["graph_patch_accepted", "node_created"]
-    assert output[1].payload["task_region_id"] == "corrective_work_region"
+    assert event_payload_json(output[1])["task_region_id"] == "corrective_work_region"
 
 
 def test_patch_accept_emits_events_for_all_v1_ops() -> None:
@@ -5036,11 +5061,11 @@ def test_patch_accept_emits_events_for_all_v1_ops() -> None:
         "node_authority_changed",
         "plan_region_marked_suspect",
     ]
-    assert output[1].payload["kind"] == "gate"
-    assert output[3].payload["kind"] == "worker"
-    assert output[4].payload["kind"] == "appeal"
-    assert output[6].payload["resource_claims"] == [{"mode": "read", "scope": "repo"}]
-    assert output[7].payload["allowed_actions"] == ["submit_records"]
+    assert event_payload_json(output[1])["kind"] == "gate"
+    assert event_payload_json(output[3])["kind"] == "worker"
+    assert event_payload_json(output[4])["kind"] == "appeal"
+    assert event_payload_json(output[6])["resource_claims"] == [{"mode": "read", "scope": "repo"}]
+    assert event_payload_json(output[7])["allowed_actions"] == ["submit_records"]
 
 
 def test_patch_reject_emits_rejection() -> None:
@@ -5058,11 +5083,11 @@ def test_patch_reject_emits_rejection() -> None:
     )
 
     assert output[0].event_type == "graph_patch_rejected"
-    assert "cannot perform create_gate" in output[0].payload["reason"]
-    assert output[0].payload["patch_id"] == "patch-1"
-    assert output[0].payload["proposed_by_node_id"] == "planner-1"
-    assert output[0].payload["actor_role"] == "planner"
-    assert output[0].payload["base_graph_position"] == -1
+    assert "cannot perform create_gate" in event_payload_json(output[0])["reason"]
+    assert event_payload_json(output[0])["patch_id"] == "patch-1"
+    assert event_payload_json(output[0])["proposed_by_node_id"] == "planner-1"
+    assert event_payload_json(output[0])["actor_role"] == "planner"
+    assert event_payload_json(output[0])["base_graph_position"] == -1
 
 
 def test_malformed_patch_rejection_preserves_submitter_evidence() -> None:
@@ -5136,13 +5161,13 @@ def test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_
     output = _apply([], "seed_compiled_events", {"run_id": "run-1", "events": hydrated_events})
 
     assert [event.event_type for event in output] == [event.event_type for event in seed_events]
-    assert output[0].payload["resource_claims"] == []
-    assert output[1].payload["record"]["value"] == {
+    assert event_payload_json(output[0])["resource_claims"] == []
+    assert event_payload_json(output[1])["record"]["value"] == {
         "routine_id": "routine-1",
         "routine_name": "Routine",
     }
     assert "accepted_record_selector" not in output[3].payload
-    assert output[4].payload["record_ids"] == []
+    assert event_payload_json(output[4])["record_ids"] == []
 
 
 def test_seed_compiled_events_rejects_already_seeded_run() -> None:
@@ -5218,7 +5243,7 @@ def test_schedule_tick_grants_leases() -> None:
         "lease_granted",
         "node_state_changed",
     ]
-    assert output[1].payload["node_id"] == "worker-1"
+    assert event_payload_json(output[1])["node_id"] == "worker-1"
 
 
 def test_schedule_tick_path_in_scope_write_claim_blocks_overlapping_path() -> None:
@@ -5284,7 +5309,9 @@ def test_schedule_tick_path_in_scope_write_claim_allows_disjoint_path() -> None:
     )
 
     granted_node_ids = [
-        event.payload["node_id"] for event in output if event.event_type == "lease_granted"
+        event.payload.node_id
+        for event in output
+        if event.event_type == "lease_granted" and isinstance(event.payload, LeaseGrantedPayload)
     ]
     assert granted_node_ids == ["worker-2"]
 
@@ -5381,15 +5408,15 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
         "edge_created",
         "input_bound",
     ]
-    recovery_node = output[0].payload
+    recovery_node = event_payload_json(output[0])
     assert recovery_node["node_id"] == "planner-recover-check-result-r1"
     assert recovery_node["kind"] == "planner"
     assert recovery_node["role"] == "gap_planner"
     assert recovery_node["recovery_reason"] == "failed_required_check"
-    assert output[2].payload["to_port"] == "verification_evidence"
-    assert output[2].payload["record_ids"] == ["check-result-r1"]
-    assert output[4].payload["to_port"] == "routine_snapshot"
-    assert output[4].payload["record_ids"] == ["routine-snapshot-record"]
+    assert event_payload_json(output[2])["to_port"] == "verification_evidence"
+    assert event_payload_json(output[2])["record_ids"] == ["check-result-r1"]
+    assert event_payload_json(output[4])["to_port"] == "routine_snapshot"
+    assert event_payload_json(output[4])["record_ids"] == ["routine-snapshot-record"]
 
     next_output = _apply(
         events + output,
@@ -5399,8 +5426,9 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
 
     assert any(
         event.event_type == "lease_granted"
-        and event.payload["node_id"] == "planner-recover-check-result-r1"
-        and event.payload["base_snapshot_id"] == "routine-snapshot-record"
+        and isinstance(event.payload, LeaseGrantedPayload)
+        and event.payload.node_id == "planner-recover-check-result-r1"
+        and event.payload.base_snapshot_id == "routine-snapshot-record"
         for event in next_output
     )
 
@@ -5484,18 +5512,18 @@ def test_reconcile_recovers_runtime_failed_check_without_check_result() -> None:
         "edge_created",
         "input_bound",
     ]
-    recovery_node = output[0].payload
+    recovery_node = event_payload_json(output[0])
     assert recovery_node["node_id"] == "planner-recover-failure-check-runtime-failed"
     assert recovery_node["recovery_reason"] == "failed_required_check"
-    evidence_edge = output[1].payload
+    evidence_edge = event_payload_json(output[1])
     assert evidence_edge["from_node_id"] == "check-runtime-failed"
     assert evidence_edge["from_port"] == "failure_record"
     assert evidence_edge["accepted_record_selector"] == {
         "record_type": "failure_record",
         "schema": "FailureRecord",
     }
-    assert output[2].payload["to_port"] == "verification_evidence"
-    assert output[2].payload["record_ids"] == ["failure-check-runtime-failed"]
+    assert event_payload_json(output[2])["to_port"] == "verification_evidence"
+    assert event_payload_json(output[2])["record_ids"] == ["failure-check-runtime-failed"]
 
     recovered_events = [
         *events,
@@ -5734,8 +5762,8 @@ def test_reconcile_is_idempotent_and_rejects_terminal_runs() -> None:
     assert any(event.event_type == "node_created" for event in output)
     assert second_output == []
     assert [event.event_type for event in terminal_output] == ["command_rejected"]
-    assert terminal_output[0].payload["command_type"] == "reconcile"
-    assert terminal_output[0].payload["reason"] == "terminal run: completed"
+    assert event_payload_json(terminal_output[0])["command_type"] == "reconcile"
+    assert event_payload_json(terminal_output[0])["reason"] == "terminal run: completed"
 
 
 def test_callback_check_result_emits_scoped_failed_check_recovery() -> None:
@@ -5851,13 +5879,15 @@ def test_callback_check_result_emits_scoped_failed_check_recovery() -> None:
 
     assert any(
         event.event_type == "node_created"
-        and event.payload["node_id"] == "planner-recover-check-result-r1"
+        and isinstance(event.payload, NodeCreatedPayload)
+        and event.payload.node_id == "planner-recover-check-result-r1"
         for event in output
     )
     assert any(
         event.event_type == "input_bound"
-        and event.payload["to_port"] == "verification_evidence"
-        and event.payload["record_ids"] == ["check-result-r1"]
+        and isinstance(event.payload, InputBoundPayload)
+        and event.payload.to_port == "verification_evidence"
+        and event.payload.record_ids == ["check-result-r1"]
         for event in output
     )
 
@@ -6053,11 +6083,11 @@ def test_reconcile_fails_after_no_successor_failed_check_recovery() -> None:
     output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     assert [event.event_type for event in output] == ["run_lifecycle_changed"]
-    assert output[0].payload["to_state"] == "failed"
-    assert output[0].payload["trigger"] == "recovery_planner_no_successor"
-    assert output[0].payload["node_id"] == "planner-recover-check-result-r1"
-    assert output[0].payload["patch_id"] == "patch-no-safe-mutation"
-    assert output[0].payload["recovery_of_record_id"] == "check-result-r1"
+    assert event_payload_json(output[0])["to_state"] == "failed"
+    assert event_payload_json(output[0])["trigger"] == "recovery_planner_no_successor"
+    assert event_payload_json(output[0])["node_id"] == "planner-recover-check-result-r1"
+    assert event_payload_json(output[0])["patch_id"] == "patch-no-safe-mutation"
+    assert event_payload_json(output[0])["recovery_of_record_id"] == "check-result-r1"
 
 
 def test_reconcile_does_not_fail_after_environment_no_successor_recovery() -> None:
@@ -6138,7 +6168,8 @@ def test_reconcile_does_not_fail_after_environment_no_successor_recovery() -> No
     output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     assert not any(
-        event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
+        event.event_type == "run_lifecycle_changed"
+        and event_payload_json(event).get("to_state") == "failed"
         for event in output
     )
 
@@ -6149,7 +6180,7 @@ def test_lifecycle_resume_reopens_failed_run_for_operator_only() -> None:
     # No actor_role: rejected.
     rejected = _apply(failed_events, "resume")
     assert rejected[0].event_type == "command_rejected"
-    assert "operator" in rejected[0].payload["reason"]
+    assert "operator" in event_payload_json(rejected[0])["reason"]
 
     # Non-operator actor: rejected.
     rejected_planner = _apply(
@@ -6167,14 +6198,14 @@ def test_lifecycle_resume_reopens_failed_run_for_operator_only() -> None:
             {"run_id": "run-1", "actor_role": actor_role},
         )
         assert reopened[0].event_type == "run_lifecycle_changed"
-        assert reopened[0].payload["from_state"] == "failed"
-        assert reopened[0].payload["to_state"] == "resuming"
+        assert event_payload_json(reopened[0])["from_state"] == "failed"
+        assert event_payload_json(reopened[0])["to_state"] == "resuming"
 
     # Second resume completes the reopen: resuming -> active (ungated).
     resuming_events = [_event("run_lifecycle_changed", {"to_state": "resuming"}, 0)]
     activated = _apply(resuming_events, "resume")
     assert activated[0].event_type == "run_lifecycle_changed"
-    assert activated[0].payload["to_state"] == "active"
+    assert event_payload_json(activated[0])["to_state"] == "active"
 
 
 def test_reconcile_no_successor_skips_recovery_with_executable_successors() -> None:
@@ -6280,7 +6311,8 @@ def test_reconcile_no_successor_skips_recovery_with_executable_successors() -> N
     output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     assert not any(
-        event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
+        event.event_type == "run_lifecycle_changed"
+        and event_payload_json(event).get("to_state") == "failed"
         for event in output
     )
 
@@ -6289,8 +6321,8 @@ def test_reconcile_no_successor_skips_recovery_with_executable_successors() -> N
     dead_end_output = _apply(events[:5], "reconcile", {"run_id": "run-1"})
     assert any(
         event.event_type == "run_lifecycle_changed"
-        and event.payload.get("to_state") == "failed"
-        and event.payload.get("trigger") == "recovery_planner_no_successor"
+        and event_payload_json(event).get("to_state") == "failed"
+        and event_payload_json(event).get("trigger") == "recovery_planner_no_successor"
         for event in dead_end_output
     )
 
@@ -6342,8 +6374,10 @@ def test_reconcile_no_successor_skips_superseded_failed_verification() -> None:
             "verification_failed",
             {
                 "node_id": "verifier-a",
+                "verifier_node_id": "verifier-a",
                 "record_id": "vf-1",
                 "candidate_id": "cand-1",
+                "outcome": "failed",
                 "task_region_id": "region-a",
             },
             4,
@@ -6387,8 +6421,10 @@ def test_reconcile_no_successor_skips_superseded_failed_verification() -> None:
             "verification_passed",
             {
                 "node_id": "verifier-a-retry",
+                "verifier_node_id": "verifier-a-retry",
                 "record_id": "vp-1",
                 "candidate_id": "cand-2",
+                "outcome": "passed",
                 "task_region_id": "region-a",
             },
             8,
@@ -6398,7 +6434,8 @@ def test_reconcile_no_successor_skips_superseded_failed_verification() -> None:
     output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     assert not any(
-        event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
+        event.event_type == "run_lifecycle_changed"
+        and event_payload_json(event).get("to_state") == "failed"
         for event in output
     )
 
@@ -6407,8 +6444,8 @@ def test_reconcile_no_successor_skips_superseded_failed_verification() -> None:
     dead_end_output = _apply(events[:7], "reconcile", {"run_id": "run-1"})
     assert any(
         event.event_type == "run_lifecycle_changed"
-        and event.payload.get("to_state") == "failed"
-        and event.payload.get("trigger") == "recovery_planner_no_successor"
+        and event_payload_json(event).get("to_state") == "failed"
+        and event_payload_json(event).get("trigger") == "recovery_planner_no_successor"
         for event in dead_end_output
     )
 
@@ -6464,8 +6501,10 @@ def test_reconcile_does_not_fail_recovered_run_w2_shape() -> None:
             "verification_failed",
             {
                 "node_id": "verifier-impl",
+                "verifier_node_id": "verifier-impl",
                 "record_id": "vf-impl-1",
                 "candidate_id": "cand-impl-1",
+                "outcome": "failed",
                 "task_region_id": "region-impl",
             },
             4,
@@ -6563,8 +6602,10 @@ def test_reconcile_does_not_fail_recovered_run_w2_shape() -> None:
             "verification_passed",
             {
                 "node_id": "verifier-repair",
+                "verifier_node_id": "verifier-repair",
                 "record_id": "vp-repair-1",
                 "candidate_id": "cand-repair-1",
+                "outcome": "passed",
                 "task_region_id": "corrective_work_region",
             },
             12,
@@ -6619,7 +6660,8 @@ def test_reconcile_does_not_fail_recovered_run_w2_shape() -> None:
     output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     assert not any(
-        event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
+        event.event_type == "run_lifecycle_changed"
+        and event_payload_json(event).get("to_state") == "failed"
         for event in output
     )
 
@@ -6733,7 +6775,9 @@ def test_reconcile_ignores_retired_failed_check_recovery_target() -> None:
 
     output = _apply(events, "reconcile", {"run_id": "run-1"})
 
-    recovery_node = next(event.payload for event in output if event.event_type == "node_created")
+    recovery_node = next(
+        event_payload_json(event) for event in output if event.event_type == "node_created"
+    )
     assert recovery_node["node_id"] == "planner-recover-check-result-r1"
     assert recovery_node["recovery_reason"] == "failed_required_check"
 
@@ -6863,7 +6907,7 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
                 "node_id": "verifier-corrective",
                 "verifier_node_id": "verifier-corrective",
                 "candidate_id": "candidate-fix",
-                "verdict": "failed",
+                "outcome": "failed",
                 "record_id": "verification-fix-failed",
                 "task_region_id": "corrective_work_region",
             },
@@ -6897,19 +6941,19 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
         "edge_created",
         "input_bound",
     ]
-    recovery_node = output[0].payload
+    recovery_node = event_payload_json(output[0])
     assert recovery_node["node_id"] == "planner-recover-verification-fix-failed"
     assert recovery_node["role"] == "gap_planner"
     assert recovery_node["recovery_reason"] == "failed_verification"
-    assert output[1].payload["accepted_record_selector"] == {
+    assert event_payload_json(output[1])["accepted_record_selector"] == {
         "record_type": "verification_report",
         "schema": "VerificationReport",
         "outcome": "failed",
     }
-    assert output[2].payload["to_port"] == "verification_evidence"
-    assert output[2].payload["record_ids"] == ["verification-fix-failed"]
-    assert output[4].payload["to_port"] == "routine_snapshot"
-    assert output[4].payload["record_ids"] == ["routine-snapshot-record"]
+    assert event_payload_json(output[2])["to_port"] == "verification_evidence"
+    assert event_payload_json(output[2])["record_ids"] == ["verification-fix-failed"]
+    assert event_payload_json(output[4])["to_port"] == "routine_snapshot"
+    assert event_payload_json(output[4])["record_ids"] == ["routine-snapshot-record"]
 
     next_output = _apply(
         events + output,
@@ -6919,8 +6963,9 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
 
     assert any(
         event.event_type == "lease_granted"
-        and event.payload["node_id"] == "planner-recover-verification-fix-failed"
-        and event.payload["base_snapshot_id"] == "routine-snapshot-record"
+        and isinstance(event.payload, LeaseGrantedPayload)
+        and event.payload.node_id == "planner-recover-verification-fix-failed"
+        and event.payload.base_snapshot_id == "routine-snapshot-record"
         for event in next_output
     )
 
@@ -7026,7 +7071,7 @@ def test_schedule_tick_does_not_duplicate_existing_failed_verification_recovery(
                 "node_id": "verifier-implementation",
                 "verifier_node_id": "verifier-implementation",
                 "candidate_id": "candidate-1",
-                "verdict": "failed",
+                "outcome": "failed",
                 "record_id": "verification-implementation-failed",
                 "task_region_id": "implementation-region",
             },
@@ -7198,7 +7243,7 @@ def test_passed_corrective_verifier_releases_final_check_without_recovery() -> N
                 "node_id": "verifier-corrective",
                 "verifier_node_id": "verifier-corrective",
                 "candidate_id": "candidate-fix",
-                "verdict": "passed",
+                "outcome": "passed",
                 "record_id": "verification-fix-passed",
                 "task_region_id": "corrective_work_region",
             },
@@ -7225,11 +7270,13 @@ def test_passed_corrective_verifier_releases_final_check_without_recovery() -> N
 
     assert not any(
         event.event_type == "node_created"
-        and event.payload.get("recovery_reason") == "failed_verification"
+        and event_payload_json(event).get("recovery_reason") == "failed_verification"
         for event in output
     )
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "check-final"
+        event.event_type == "lease_granted"
+        and isinstance(event.payload, LeaseGrantedPayload)
+        and event.payload.node_id == "check-final"
         for event in output
     )
 
@@ -7306,7 +7353,7 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
                 "node_id": "verifier-implementation",
                 "verifier_node_id": "verifier-implementation",
                 "candidate_id": "candidate-1",
-                "verdict": "passed",
+                "outcome": "passed",
                 "record_id": "verification-implementation-passed",
                 "task_region_id": "implementation-region",
             },
@@ -7433,24 +7480,27 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
         event
         for event in output
         if event.event_type == "edge_created"
-        and event.payload.get("metadata", {}).get("purpose")
+        and event_payload_json(event).get("metadata", {}).get("purpose")
         == "passed_verification_final_invariant_recovery"
     )
-    assert recovery_edge.payload["from_node_id"] == "verifier-implementation"
-    assert recovery_edge.payload["to_node_id"] == "check-final"
-    assert recovery_edge.payload["accepted_record_selector"] == {
+    assert event_payload_json(recovery_edge)["from_node_id"] == "verifier-implementation"
+    assert event_payload_json(recovery_edge)["to_node_id"] == "check-final"
+    assert event_payload_json(recovery_edge)["accepted_record_selector"] == {
         "record_type": "verification_report",
         "schema": "VerificationReport",
         "outcome": "passed",
     }
     assert any(
         event.event_type == "input_bound"
-        and event.payload["to_node_id"] == "check-final"
-        and event.payload["record_ids"] == ["verification-implementation-passed"]
+        and isinstance(event.payload, InputBoundPayload)
+        and event.payload.to_node_id == "check-final"
+        and event.payload.record_ids == ["verification-implementation-passed"]
         for event in output
     )
     retired_node_ids = {
-        event.payload["node_id"] for event in output if event.event_type == "node_retired"
+        event.payload.node_id
+        for event in output
+        if event.event_type == "node_retired" and isinstance(event.payload, NodeRetiredPayload)
     }
     assert retired_node_ids == {"planner-gap", "worker-corrective", "verifier-corrective"}
 
@@ -7461,7 +7511,9 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
     )
 
     assert any(
-        event.event_type == "lease_granted" and event.payload["node_id"] == "check-final"
+        event.event_type == "lease_granted"
+        and isinstance(event.payload, LeaseGrantedPayload)
+        and event.payload.node_id == "check-final"
         for event in next_output
     )
     task_states = project_task_states(build_graph_catalog(), [*events, *output])
@@ -7509,7 +7561,7 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
                 "node_id": "verifier-implementation",
                 "verifier_node_id": "verifier-implementation",
                 "candidate_id": "candidate-1",
-                "verdict": "passed",
+                "outcome": "passed",
                 "record_id": "verification-implementation-passed",
                 "task_region_id": "implementation-region",
             },
@@ -7577,12 +7629,14 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
 
     assert not any(
         event.event_type == "edge_created"
-        and event.payload.get("from_node_id") == "verifier-implementation"
-        and event.payload.get("to_node_id") == "check-final"
+        and event_payload_json(event).get("from_node_id") == "verifier-implementation"
+        and event_payload_json(event).get("to_node_id") == "check-final"
         for event in output
     )
     assert any(
-        event.event_type == "node_retired" and event.payload["node_id"] == "planner-gap"
+        event.event_type == "node_retired"
+        and isinstance(event.payload, NodeRetiredPayload)
+        and event.payload.node_id == "planner-gap"
         for event in output
     )
 
@@ -7593,7 +7647,7 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
     )
     assert any(
         event.event_type == "edge_created"
-        and event.payload.get("metadata", {}).get("purpose")
+        and event_payload_json(event).get("metadata", {}).get("purpose")
         == "passed_verification_final_invariant_recovery"
         for event in valid_output
     )
@@ -7734,16 +7788,17 @@ def test_corrective_passed_verification_repoints_stranded_final_check() -> None:
         event
         for event in output
         if event.event_type == "edge_created"
-        and event.payload.get("metadata", {}).get("purpose")
+        and event_payload_json(event).get("metadata", {}).get("purpose")
         == "passed_verification_final_invariant_recovery"
     ]
     assert len(recovery_edges) == 1
-    assert recovery_edges[0].payload["from_node_id"] == "verifier-corrective"
-    assert recovery_edges[0].payload["to_node_id"] == "check-final"
+    assert event_payload_json(recovery_edges[0])["from_node_id"] == "verifier-corrective"
+    assert event_payload_json(recovery_edges[0])["to_node_id"] == "check-final"
     assert any(
         event.event_type == "input_bound"
-        and event.payload["to_node_id"] == "check-final"
-        and event.payload["record_ids"] == ["verification-corrective-passed"]
+        and isinstance(event.payload, InputBoundPayload)
+        and event.payload.to_node_id == "check-final"
+        and event.payload.record_ids == ["verification-corrective-passed"]
         for event in output
     )
 
@@ -7827,9 +7882,11 @@ def test_passed_final_check_retires_failure_continuation() -> None:
 
     output = _apply(events, "reconcile", {"run_id": "run-1"})
 
-    assert [event.payload["node_id"] for event in output if event.event_type == "node_retired"] == [
-        "planner-gap-final"
-    ]
+    assert [
+        event.payload.node_id
+        for event in output
+        if event.event_type == "node_retired" and isinstance(event.payload, NodeRetiredPayload)
+    ] == ["planner-gap-final"]
     task_states = project_task_states(build_graph_catalog(), [*events, *output])
     assert task_states["final-gap-region"] == "accepted"
 
@@ -7878,12 +7935,11 @@ def test_schedule_tick_marks_planned_node_ready_when_required_input_bound() -> N
         "lease_granted",
         "node_state_changed",
     ]
-    assert output[0].payload["node_id"] == "worker-1"
-    assert output[1].payload == {
-        "node_id": "worker-1",
-        "new_state": "ready",
-        "trigger": "readiness_evaluator",
-    }
+    assert event_payload_json(output[0])["node_id"] == "worker-1"
+    assert isinstance(output[1].payload, NodeStateChangedPayload)
+    assert output[1].payload.node_id == "worker-1"
+    assert output[1].payload.new_state == "ready"
+    assert output[1].payload.trigger == "readiness_evaluator"
 
 
 def test_output_record_binds_to_producer_class_edge() -> None:
@@ -7969,10 +8025,11 @@ def test_output_record_binds_to_producer_class_edge() -> None:
 
     assert any(
         event.event_type == "input_bound"
-        and event.payload["edge_id"] == "edge-verifier-class-final"
-        and event.payload["to_node_id"] == "check-final"
-        and event.payload["to_port"] == "verification_evidence"
-        and event.payload["record_ids"] == ["verification-1"]
+        and isinstance(event.payload, InputBoundPayload)
+        and event.payload.edge_id == "edge-verifier-class-final"
+        and event.payload.to_node_id == "check-final"
+        and event.payload.to_port == "verification_evidence"
+        and event.payload.record_ids == ["verification-1"]
         for event in output
     )
 
@@ -8020,7 +8077,8 @@ def test_output_record_does_not_bind_to_non_matching_producer_class_edge() -> No
 
     assert not any(
         event.event_type == "input_bound"
-        and event.payload["edge_id"] == "edge-verifier-class-final"
+        and isinstance(event.payload, InputBoundPayload)
+        and event.payload.edge_id == "edge-verifier-class-final"
         for event in output
     )
 
@@ -8065,9 +8123,10 @@ def test_schedule_tick_defers_missing_required_input() -> None:
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
-    assert [(event.event_type, event.payload) for event in output] == [
-        ("node_deferred", {"node_id": "worker-1", "reason": "missing_required_input:candidate"})
-    ]
+    assert [event.event_type for event in output] == ["node_deferred"]
+    assert isinstance(output[0].payload, NodeDeferredPayload)
+    assert output[0].payload.node_id == "worker-1"
+    assert output[0].payload.reason == "missing_required_input:candidate"
 
 
 def test_schedule_tick_emits_dead_input_for_terminal_failed_source() -> None:
@@ -8106,18 +8165,15 @@ def test_schedule_tick_emits_dead_input_for_terminal_failed_source() -> None:
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
-    assert [(event.event_type, event.payload) for event in output] == [
-        (
-            "dead_input_detected",
-            {
-                "node_id": "worker-1",
-                "from_node_id": "producer-1",
-                "to_port": "candidate",
-                "reason": "upstream_failed:producer-1",
-            },
-        ),
-        ("node_deferred", {"node_id": "worker-1", "reason": "upstream_failed:producer-1"}),
-    ]
+    assert [event.event_type for event in output] == ["dead_input_detected", "node_deferred"]
+    assert isinstance(output[0].payload, DeadInputDetectedPayload)
+    assert output[0].payload.node_id == "worker-1"
+    assert output[0].payload.from_node_id == "producer-1"
+    assert output[0].payload.to_port == "candidate"
+    assert output[0].payload.reason == "upstream_failed:producer-1"
+    assert isinstance(output[1].payload, NodeDeferredPayload)
+    assert output[1].payload.node_id == "worker-1"
+    assert output[1].payload.reason == "upstream_failed:producer-1"
 
 
 def test_schedule_tick_dedupes_unchanged_missing_required_input() -> None:
@@ -8152,9 +8208,10 @@ def test_schedule_tick_dedupes_unchanged_missing_required_input() -> None:
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
-    assert [(event.event_type, event.payload) for event in first] == [
-        ("node_deferred", {"node_id": "worker-1", "reason": "missing_required_input:candidate"})
-    ]
+    assert [event.event_type for event in first] == ["node_deferred"]
+    assert isinstance(first[0].payload, NodeDeferredPayload)
+    assert first[0].payload.node_id == "worker-1"
+    assert first[0].payload.reason == "missing_required_input:candidate"
     assert second == []
 
 
@@ -8194,9 +8251,10 @@ def test_schedule_tick_defers_unapproved_gate_input() -> None:
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
-    assert [(event.event_type, event.payload) for event in output] == [
-        ("node_deferred", {"node_id": "worker-1", "reason": "gate_not_approved:gate-1"})
-    ]
+    assert [event.event_type for event in output] == ["node_deferred"]
+    assert isinstance(output[0].payload, NodeDeferredPayload)
+    assert output[0].payload.node_id == "worker-1"
+    assert output[0].payload.reason == "gate_not_approved:gate-1"
 
 
 def test_schedule_tick_allows_approved_gate_input() -> None:
@@ -8288,12 +8346,10 @@ def test_schedule_tick_defers_ungranted_authority_request_input() -> None:
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
-    assert [(event.event_type, event.payload) for event in output] == [
-        (
-            "node_deferred",
-            {"node_id": "worker-1", "reason": "authority_not_granted:authority-1"},
-        )
-    ]
+    assert [event.event_type for event in output] == ["node_deferred"]
+    assert isinstance(output[0].payload, NodeDeferredPayload)
+    assert output[0].payload.node_id == "worker-1"
+    assert output[0].payload.reason == "authority_not_granted:authority-1"
 
 
 def test_schedule_tick_allows_granted_authority_request_input() -> None:
@@ -8365,8 +8421,8 @@ def test_schedule_tick_projection_ready_state_comes_from_node_state_changed() ->
         "node_state_changed",
         "node_deferred",
     ]
-    assert output[1].payload["new_state"] == "ready"
-    assert output[2].payload["reason"] == "max_grants_reached"
+    assert event_payload_json(output[1])["new_state"] == "ready"
+    assert event_payload_json(output[2])["reason"] == "max_grants_reached"
     assert projection["node_states"]["worker-1"] == "ready"
     assert projection["ready_nodes"] == ["worker-1"]
 
@@ -8383,12 +8439,10 @@ def test_schedule_tick_check_precondition_requires_command_definition() -> None:
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
-    assert [(event.event_type, event.payload) for event in output] == [
-        (
-            "node_deferred",
-            {"node_id": "check-1", "reason": "precondition_failed:has_command_definition"},
-        )
-    ]
+    assert [event.event_type for event in output] == ["node_deferred"]
+    assert isinstance(output[0].payload, NodeDeferredPayload)
+    assert output[0].payload.node_id == "check-1"
+    assert output[0].payload.reason == "precondition_failed:has_command_definition"
 
 
 def test_schedule_tick_rechecks_ready_check_precondition_requires_command_definition() -> None:
@@ -8403,12 +8457,10 @@ def test_schedule_tick_rechecks_ready_check_precondition_requires_command_defini
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
-    assert [(event.event_type, event.payload) for event in output] == [
-        (
-            "node_deferred",
-            {"node_id": "check-1", "reason": "precondition_failed:has_command_definition"},
-        )
-    ]
+    assert [event.event_type for event in output] == ["node_deferred"]
+    assert isinstance(output[0].payload, NodeDeferredPayload)
+    assert output[0].payload.node_id == "check-1"
+    assert output[0].payload.reason == "precondition_failed:has_command_definition"
 
 
 def test_schedule_tick_check_precondition_passes_with_command_definition() -> None:
@@ -8490,9 +8542,10 @@ def test_schedule_tick_external_claim_missing_key_is_invalid() -> None:
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
-    assert [(event.event_type, event.payload) for event in output] == [
-        ("node_deferred", {"node_id": "external-1", "reason": "invalid_claim:external_missing_key"})
-    ]
+    assert [event.event_type for event in output] == ["node_deferred"]
+    assert isinstance(output[0].payload, NodeDeferredPayload)
+    assert output[0].payload.node_id == "external-1"
+    assert output[0].payload.reason == "invalid_claim:external_missing_key"
 
 
 def test_acknowledge_start_validates_lease_identity_and_marks_running() -> None:
@@ -8526,16 +8579,11 @@ def test_acknowledge_start_validates_lease_identity_and_marks_running() -> None:
         },
     )
 
-    assert [(event.event_type, event.payload) for event in output] == [
-        (
-            "node_state_changed",
-            {
-                "node_id": "planner-1",
-                "new_state": "running",
-                "trigger": "runtime_start_acknowledged",
-            },
-        )
-    ]
+    assert [event.event_type for event in output] == ["node_state_changed"]
+    assert isinstance(output[0].payload, NodeStateChangedPayload)
+    assert output[0].payload.node_id == "planner-1"
+    assert output[0].payload.new_state == "running"
+    assert output[0].payload.trigger == "runtime_start_acknowledged"
 
 
 def test_acknowledge_start_rejects_wrong_execution_id() -> None:
@@ -8570,7 +8618,7 @@ def test_acknowledge_start_rejects_wrong_execution_id() -> None:
     )
 
     assert output[0].event_type == "command_rejected"
-    assert output[0].payload["reason"] == "execution_incompatible"
+    assert event_payload_json(output[0])["reason"] == "execution_incompatible"
 
 
 def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
@@ -8611,15 +8659,14 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[0].payload == {
-        "lease_id": "lease-1",
-        "node_id": "worker-1",
-        "generation": 1,
-        "execution_id": "exec-1",
-        "reason": "process_exit",
-    }
-    assert output[2].payload["policy"] == "v1_requeue_same_node_after_agent_death"
-    assert output[3].payload["record"] == {
+    assert isinstance(output[0].payload, AgentDiedPayload)
+    assert output[0].payload.lease_id == "lease-1"
+    assert output[0].payload.node_id == "worker-1"
+    assert output[0].payload.generation == 1
+    assert output[0].payload.execution_id == "exec-1"
+    assert output[0].payload.reason == "process_exit"
+    assert event_payload_json(output[2])["policy"] == "v1_requeue_same_node_after_agent_death"
+    assert event_payload_json(output[3])["record"] == {
         "record_id": "recovery-plan-worker-1-lease-1",
         "record_kind": "output",
         "record_type": "recovery_plan",
@@ -8633,12 +8680,11 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
             "reason": "process_exit",
         },
     }
-    assert output[4].payload == {
-        "node_id": "worker-1",
-        "new_state": "ready",
-        "trigger": "agent_died_retry_scheduled",
-        "attempt_number": 1,
-    }
+    assert isinstance(output[4].payload, NodeStateChangedPayload)
+    assert output[4].payload.node_id == "worker-1"
+    assert output[4].payload.new_state == "ready"
+    assert output[4].payload.trigger == "agent_died_retry_scheduled"
+    assert output[4].payload.attempt_number == 1
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["worker-1"] == "ready"
 
@@ -8680,8 +8726,8 @@ def test_agent_died_check_missing_command_fails_without_retry() -> None:
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[2].payload["record"]["record_type"] == "failure_record"
-    assert output[2].payload["record"]["value"] == {
+    assert event_payload_json(output[2])["record"]["record_type"] == "failure_record"
+    assert event_payload_json(output[2])["record"]["value"] == {
         "failed_node_id": "check-1",
         "phase": "runtime",
         "error_class": "runtime_configuration_error",
@@ -8691,12 +8737,11 @@ def test_agent_died_check_missing_command_fails_without_retry() -> None:
         "lease_generation": 1,
         "reason": "check node missing command_definition",
     }
-    assert output[3].payload == {
-        "node_id": "check-1",
-        "new_state": "failed",
-        "trigger": "non_retryable_runtime_error",
-        "reason": "check node missing command_definition",
-    }
+    assert isinstance(output[3].payload, NodeStateChangedPayload)
+    assert output[3].payload.node_id == "check-1"
+    assert output[3].payload.new_state == "failed"
+    assert output[3].payload.trigger == "non_retryable_runtime_error"
+    assert output[3].payload.reason == "check node missing command_definition"
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["check-1"] == "failed"
 
@@ -8737,11 +8782,11 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
     projection = _project([*events, *output])
 
     assert output[2].event_type == "runtime_retry_scheduled"
-    assert output[2].payload["retry_after_seconds"] == 60
-    assert output[2].payload["retry_not_before"] == retry_not_before
+    assert event_payload_json(output[2])["retry_after_seconds"] == 60
+    assert event_payload_json(output[2])["retry_not_before"] == retry_not_before
     assert output[3].event_type == "output_record_accepted"
-    assert output[3].payload["record"]["record_type"] == "recovery_plan"
-    assert output[3].payload["record"]["value"] == {
+    assert event_payload_json(output[3])["record"]["record_type"] == "recovery_plan"
+    assert event_payload_json(output[3])["record"]["value"] == {
         "action": "retry",
         "responsible_actor": "controller",
         "graph_changes": [{"op": "set_node_state", "node_id": "worker-1", "state": "blocked"}],
@@ -8749,13 +8794,12 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         "retry_after_seconds": 60,
         "retry_not_before": retry_not_before,
     }
-    assert output[4].payload == {
-        "node_id": "worker-1",
-        "new_state": "blocked",
-        "trigger": "agent_died_retry_backoff_scheduled",
-        "retry_not_before": retry_not_before,
-        "attempt_number": 1,
-    }
+    assert isinstance(output[4].payload, NodeStateChangedPayload)
+    assert output[4].payload.node_id == "worker-1"
+    assert output[4].payload.new_state == "blocked"
+    assert output[4].payload.trigger == "agent_died_retry_backoff_scheduled"
+    assert output[4].payload.retry_not_before == retry_not_before
+    assert output[4].payload.attempt_number == 1
     assert projection["node_states"]["worker-1"] == "blocked"
 
     immediate = _apply(
@@ -8763,15 +8807,10 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         "schedule_tick",
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
-    assert [(event.event_type, event.payload) for event in immediate] == [
-        (
-            "node_deferred",
-            {
-                "node_id": "worker-1",
-                "reason": f"retry_backoff_until:{retry_not_before}",
-            },
-        )
-    ]
+    assert [event.event_type for event in immediate] == ["node_deferred"]
+    assert isinstance(immediate[0].payload, NodeDeferredPayload)
+    assert immediate[0].payload.node_id == "worker-1"
+    assert immediate[0].payload.reason == f"retry_backoff_until:{retry_not_before}"
 
     clock.advance(61)
     later = _apply(
@@ -8787,12 +8826,11 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         "lease_granted",
         "node_state_changed",
     ]
-    assert later[2].payload["node_id"] == "worker-1"
-    assert later[3].payload == {
-        "node_id": "worker-1",
-        "new_state": "leased",
-        "trigger": "scheduler_grants_lease",
-    }
+    assert event_payload_json(later[2])["node_id"] == "worker-1"
+    assert isinstance(later[3].payload, NodeStateChangedPayload)
+    assert later[3].payload.node_id == "worker-1"
+    assert later[3].payload.new_state == "leased"
+    assert later[3].payload.trigger == "scheduler_grants_lease"
 
 
 def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
@@ -8842,8 +8880,8 @@ def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[2].payload["record"]["record_type"] == "failure_record"
-    assert output[2].payload["record"]["value"] == {
+    assert event_payload_json(output[2])["record"]["record_type"] == "failure_record"
+    assert event_payload_json(output[2])["record"]["value"] == {
         "failed_node_id": "worker-1",
         "phase": "runtime",
         "error_class": "max_attempts_exhausted",
@@ -8855,14 +8893,13 @@ def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
         "attempt_number": 2,
         "max_attempts": 2,
     }
-    assert output[3].payload == {
-        "node_id": "worker-1",
-        "new_state": "failed",
-        "trigger": "max_attempts_exhausted",
-        "reason": "max_attempts_exhausted",
-        "attempt_number": 2,
-        "max_attempts": 2,
-    }
+    assert isinstance(output[3].payload, NodeStateChangedPayload)
+    assert output[3].payload.node_id == "worker-1"
+    assert output[3].payload.new_state == "failed"
+    assert output[3].payload.trigger == "max_attempts_exhausted"
+    assert output[3].payload.reason == "max_attempts_exhausted"
+    assert output[3].payload.attempt_number == 2
+    assert output[3].payload.max_attempts == 2
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["worker-1"] == "failed"
 
@@ -8905,8 +8942,8 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[2].payload["record"]["record_type"] == "failure_record"
-    assert output[2].payload["record"]["value"] == {
+    assert event_payload_json(output[2])["record"]["record_type"] == "failure_record"
+    assert event_payload_json(output[2])["record"]["value"] == {
         "failed_node_id": "planner-1",
         "phase": "runtime",
         "error_class": "agent_rate_limited",
@@ -8916,12 +8953,11 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
         "lease_generation": 1,
         "reason": reason,
     }
-    assert output[3].payload == {
-        "node_id": "planner-1",
-        "new_state": "failed",
-        "trigger": "agent_rate_limited",
-        "reason": reason,
-    }
+    assert isinstance(output[3].payload, NodeStateChangedPayload)
+    assert output[3].payload.node_id == "planner-1"
+    assert output[3].payload.new_state == "failed"
+    assert output[3].payload.trigger == "agent_rate_limited"
+    assert output[3].payload.reason == reason
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["planner-1"] == "failed"
 
@@ -8970,9 +9006,9 @@ def test_agent_died_usage_limit_revokes_lease_and_fails_without_retry() -> None:
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[2].payload["record"]["value"]["error_class"] == "agent_rate_limited"
-    assert output[2].payload["record"]["value"]["retryable"] is False
-    assert output[3].payload["trigger"] == "agent_rate_limited"
+    assert event_payload_json(output[2])["record"]["value"]["error_class"] == "agent_rate_limited"
+    assert event_payload_json(output[2])["record"]["value"]["retryable"] is False
+    assert event_payload_json(output[3])["trigger"] == "agent_rate_limited"
     assert projection["leases"]["lease-1"]["state"] == "revoked"
     assert projection["node_states"]["verifier-1"] == "failed"
 
@@ -9028,11 +9064,10 @@ def test_agent_died_completes_non_gap_planner_after_accepted_patch() -> None:
         "lease_revoked",
         "node_state_changed",
     ]
-    assert output[2].payload == {
-        "node_id": "planner-1",
-        "new_state": "completed",
-        "trigger": "accepted_graph_patch_before_agent_death",
-    }
+    assert isinstance(output[2].payload, NodeStateChangedPayload)
+    assert output[2].payload.node_id == "planner-1"
+    assert output[2].payload.new_state == "completed"
+    assert output[2].payload.trigger == "accepted_graph_patch_before_agent_death"
     assert projection["node_states"]["planner-1"] == "completed"
 
 
@@ -9093,8 +9128,8 @@ def test_agent_died_requeues_gap_planner_after_accepted_patch() -> None:
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[3].payload["record"]["record_type"] == "recovery_plan"
-    assert output[4].payload["new_state"] == "ready"
+    assert event_payload_json(output[3])["record"]["record_type"] == "recovery_plan"
+    assert event_payload_json(output[4])["new_state"] == "ready"
 
 
 def test_agent_died_rejects_unknown_or_inactive_lease() -> None:
@@ -9135,9 +9170,9 @@ def test_agent_died_rejects_unknown_or_inactive_lease() -> None:
     )
 
     assert unknown_output[0].event_type == "command_rejected"
-    assert unknown_output[0].payload["reason"] == "unknown lease"
+    assert event_payload_json(unknown_output[0])["reason"] == "unknown lease"
     assert inactive_output[0].event_type == "command_rejected"
-    assert inactive_output[0].payload["reason"] == "lease not active"
+    assert event_payload_json(inactive_output[0])["reason"] == "lease not active"
 
 
 def test_agent_died_requires_execution_id_when_lease_records_one() -> None:
@@ -9173,9 +9208,9 @@ def test_agent_died_requires_execution_id_when_lease_records_one() -> None:
     )
 
     assert omitted[0].event_type == "command_rejected"
-    assert omitted[0].payload["reason"] == "missing execution_id"
+    assert event_payload_json(omitted[0])["reason"] == "missing execution_id"
     assert mismatched[0].event_type == "command_rejected"
-    assert mismatched[0].payload["reason"] == "execution_incompatible"
+    assert event_payload_json(mismatched[0])["reason"] == "execution_incompatible"
     assert matching[0].event_type == "agent_died"
 
 
@@ -9220,7 +9255,9 @@ def test_schedule_tick_expires_past_leases_only() -> None:
     )
 
     assert [
-        event.payload["lease_id"] for event in output if event.event_type == "lease_expired"
+        event.payload.lease_id
+        for event in output
+        if event.event_type == "lease_expired" and isinstance(event.payload, LeaseExpiredPayload)
     ] == ["past-lease"]
 
 
@@ -9232,7 +9269,7 @@ def test_raise_appeal_accepts_well_formed() -> None:
     )
 
     assert [event.event_type for event in output] == ["appeal_opened", "node_created"]
-    assert output[1].payload["kind"] == "oversight"
+    assert event_payload_json(output[1])["kind"] == "oversight"
 
 
 def test_raise_appeal_rejects_malformed() -> None:
@@ -9272,8 +9309,8 @@ def test_record_decision_accepts_approval() -> None:
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[0].payload["task_region_id"] == "task-1"
-    assert output[1].payload["record"] == {
+    assert event_payload_json(output[0])["task_region_id"] == "task-1"
+    assert event_payload_json(output[1])["record"] == {
         "record_id": "decision_record-gate-1",
         "record_kind": "output",
         "record_type": "decision_record",
@@ -9286,7 +9323,7 @@ def test_record_decision_accepts_approval() -> None:
             "decider": {"kind": "human", "id": "alice"},
         },
     }
-    assert output[2].payload["new_state"] == "completed"
+    assert event_payload_json(output[2])["new_state"] == "completed"
 
 
 def test_record_decision_accepts_authority_request_with_typed_record() -> None:
@@ -9322,8 +9359,8 @@ def test_record_decision_accepts_authority_request_with_typed_record() -> None:
         "output_record_accepted",
         "node_state_changed",
     ]
-    assert output[0].payload["decision"] == "granted"
-    assert output[1].payload["record"] == {
+    assert event_payload_json(output[0])["decision"] == "granted"
+    assert event_payload_json(output[1])["record"] == {
         "record_id": "authority_decision-authority-1",
         "record_kind": "output",
         "record_type": "authority_decision",
@@ -9338,7 +9375,7 @@ def test_record_decision_accepts_authority_request_with_typed_record() -> None:
             "expires_at": "2026-01-02T00:00:00+00:00",
         },
     }
-    assert output[2].payload["new_state"] == "completed"
+    assert event_payload_json(output[2])["new_state"] == "completed"
 
 
 def test_record_decision_binds_authority_decision_to_worker_input() -> None:
@@ -9404,18 +9441,18 @@ def test_record_decision_binds_authority_decision_to_worker_input() -> None:
         "node_state_changed",
         "lease_released",
     ]
-    assert output[2].payload == {
-        "edge_id": "edge-authority",
-        "to_node_id": "worker-1",
-        "to_port": "authority",
-        "record_ids": ["authority_decision-authority-1"],
-        "bound_at_position": 0,
-    }
-    assert output[4].payload == {
-        "node_id": "authority-1",
-        "lease_id": "lease-authority-1",
-        "generation": 1,
-    }
+    _assert_input_bound(
+        output[2],
+        edge_id="edge-authority",
+        to_node_id="worker-1",
+        to_port="authority",
+        record_ids=["authority_decision-authority-1"],
+        bound_at_position=0,
+    )
+    assert isinstance(output[4].payload, LeaseReleasedPayload)
+    assert output[4].payload.node_id == "authority-1"
+    assert output[4].payload.lease_id == "lease-authority-1"
+    assert output[4].payload.generation == 1
 
 
 def test_record_decision_rejects_authority_for_non_authority_target() -> None:
@@ -9445,10 +9482,9 @@ def test_record_decision_rejects_authority_for_non_authority_target() -> None:
     )
 
     assert [event.event_type for event in output] == ["command_rejected"]
-    assert output[0].payload == {
-        "command_type": "record_decision",
-        "reason": "authority decisions require authority_request target",
-    }
+    assert isinstance(output[0].payload, CommandRejectedPayload)
+    assert output[0].payload.command_type == "record_decision"
+    assert output[0].payload.reason == "authority decisions require authority_request target"
 
 
 def test_record_decision_rejects_missing_target() -> None:
@@ -9526,7 +9562,7 @@ def test_record_decision_rejects_unknown_target() -> None:
     )
 
     assert output[0].event_type == "command_rejected"
-    assert "unknown target node" in output[0].payload["reason"]
+    assert "unknown target node" in event_payload_json(output[0])["reason"]
 
 
 def test_record_decision_rejects_terminal_target() -> None:
@@ -9543,7 +9579,7 @@ def test_record_decision_rejects_terminal_target() -> None:
     )
 
     assert output[0].event_type == "command_rejected"
-    assert "terminal target node" in output[0].payload["reason"]
+    assert "terminal target node" in event_payload_json(output[0])["reason"]
 
 
 def test_record_decision_rejects_terminal_run() -> None:
@@ -9563,7 +9599,7 @@ def test_record_decision_rejects_terminal_run() -> None:
     )
 
     assert output[0].event_type == "command_rejected"
-    assert "terminal run" in output[0].payload["reason"]
+    assert "terminal run" in event_payload_json(output[0])["reason"]
 
 
 def test_submit_patch_accepts_edge_between_revision_attempt_embedded_nodes() -> None:
@@ -9610,10 +9646,10 @@ def test_submit_patch_accepts_edge_between_revision_attempt_embedded_nodes() -> 
         "node_created",
         "edge_created",
     ]
-    assert output[2].payload["kind"] == "worker"
-    assert output[3].payload["kind"] == "verifier"
-    assert output[4].payload["from_node_id"] == "worker-revision-2"
-    assert output[4].payload["to_node_id"] == "verifier-revision-2"
+    assert event_payload_json(output[2])["kind"] == "worker"
+    assert event_payload_json(output[3])["kind"] == "verifier"
+    assert event_payload_json(output[4])["from_node_id"] == "worker-revision-2"
+    assert event_payload_json(output[4])["to_node_id"] == "verifier-revision-2"
 
 
 def test_callback_binds_required_input_by_wildcard_producer_class_edge() -> None:
@@ -9739,11 +9775,12 @@ def test_callback_binds_required_input_by_wildcard_producer_class_edge() -> None
 
     assert any(
         event.event_type == "input_bound"
-        and event.payload["edge_id"] == "edge-verification-evidence"
-        and event.payload["to_node_id"] == "check-final"
-        and event.payload["record_ids"] == ["verification-replacement"]
+        and isinstance(event.payload, InputBoundPayload)
+        and event.payload.edge_id == "edge-verification-evidence"
+        and event.payload.to_node_id == "check-final"
+        and event.payload.record_ids == ["verification-replacement"]
         for event in output
-    ), [(event.event_type, event.payload.get("reason")) for event in output]
+    )
 
 
 def test_schedule_tick_marks_dead_required_input_when_required_source_failed_unbound() -> None:
@@ -9771,9 +9808,7 @@ def test_schedule_tick_marks_dead_required_input_when_required_source_failed_unb
         {"run_id": "run-1", "base_snapshot_id": "S0", "lease_seconds": 300, "max_grants": 10},
     )
 
-    assert [(event.event_type, event.payload) for event in output] == [
-        (
-            "node_deferred",
-            {"node_id": "worker-1", "reason": "dead_required_input:candidate:producer-1"},
-        )
-    ]
+    assert [event.event_type for event in output] == ["node_deferred"]
+    assert isinstance(output[0].payload, NodeDeferredPayload)
+    assert output[0].payload.node_id == "worker-1"
+    assert output[0].payload.reason == "dead_required_input:candidate:producer-1"

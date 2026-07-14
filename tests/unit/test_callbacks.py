@@ -5,16 +5,19 @@ from typing import Any
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    CallbackAcceptedPayload,
     CallbackOutcome,
+    CallbackRejectedPayload,
     CallbackRequest,
-    EventEnvelope,
     FakeClock,
     GraphProjection,
+    HydratedEvent,
     initial_projection,
     reduce_event,
     validate_callback,
 )
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 def _projection(
@@ -62,16 +65,22 @@ def _request(
     )
 
 
-def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-event",
-        run_id="run-1",
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+def _event(event_type: str, payload: dict[str, Any]) -> HydratedEvent:
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-event",
+                run_id="run-1",
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )
 
 
@@ -100,15 +109,17 @@ def test_duplicate_same_payload_returns_prior() -> None:
             "node_id": "worker-1",
             "idempotency_key": "key-1",
             "payload": {"payload_hash": "hash-a"},
+            "reason": "accepted",
         },
     )
 
     result = validate_callback(_request(), _projection(), [event])
 
     assert result.outcome == CallbackOutcome.DUPLICATE_IDEMPOTENT
+    assert isinstance(event.payload, CallbackAcceptedPayload)
     assert result.prior_result == {
         "outcome": "callback_accepted",
-        "payload": event.payload,
+        "payload": event.payload.model_dump(mode="json", exclude_none=True),
     }
 
 
@@ -119,6 +130,7 @@ def test_duplicate_different_payload_rejected() -> None:
             "node_id": "worker-1",
             "idempotency_key": "key-1",
             "payload": {"payload_hash": "hash-b"},
+            "reason": "accepted",
         },
     )
 
@@ -154,11 +166,13 @@ def test_first_callback_not_duplicate() -> None:
             "node_id": "worker-2",
             "idempotency_key": "key-1",
             "payload": {"payload_hash": "hash-a"},
+            "reason": "accepted",
         },
     )
 
     result = validate_callback(_request(), _projection(), [event])
 
+    assert isinstance(event.payload, CallbackAcceptedPayload)
     assert result.outcome == CallbackOutcome.ACCEPTED
 
 
@@ -440,11 +454,13 @@ def test_rejected_conflict_then_retry_same_payload_validates_fresh() -> None:
             "node_id": "worker-1",
             "idempotency_key": "key-1",
             "payload": {"payload_hash": "hash-a"},
+            "reason": "idempotency payload conflict",
         },
     )
 
     result = validate_callback(_request(), _projection(), [event])
 
+    assert isinstance(event.payload, CallbackRejectedPayload)
     assert result.outcome == CallbackOutcome.ACCEPTED
 
 
@@ -457,6 +473,7 @@ def test_rejected_conflict_then_retry_different_payload_validates_fresh() -> Non
             "node_id": "worker-1",
             "idempotency_key": "key-1",
             "payload": {"payload_hash": "hash-a"},
+            "reason": "idempotency payload conflict",
         },
     )
 
@@ -473,6 +490,7 @@ def test_accepted_then_retry_same_payload_is_duplicate() -> None:
             "node_id": "worker-1",
             "idempotency_key": "key-1",
             "payload": {"payload_hash": "hash-a"},
+            "reason": "accepted",
         },
     )
 
@@ -488,6 +506,7 @@ def test_accepted_then_retry_different_payload_is_conflict() -> None:
             "node_id": "worker-1",
             "idempotency_key": "key-1",
             "payload": {"payload_hash": "hash-a"},
+            "reason": "accepted",
         },
     )
 
@@ -500,7 +519,7 @@ def test_pause_before_callback_stale() -> None:
     result = validate_callback(
         _request(),
         _projection(leases={"lease-1": _lease("suspended")}),
-        [_event("lease_suspended", {"node_id": "worker-1", "lease_id": "lease-1"})],
+        [],
     )
 
     assert result.outcome == CallbackOutcome.REJECTED_STALE

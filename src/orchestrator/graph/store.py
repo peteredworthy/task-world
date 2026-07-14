@@ -2,7 +2,7 @@
 
 from collections import defaultdict
 
-from orchestrator.graph.models import EventEnvelope
+from orchestrator.graph.specifications import HydratedEvent
 
 
 class DuplicateEventError(ValueError):
@@ -13,32 +13,34 @@ class InMemoryEventStore:
     """Append-only in-memory event store keyed by run ID."""
 
     def __init__(self) -> None:
-        self._events_by_run: dict[str, list[EventEnvelope]] = defaultdict(list)
+        self._events_by_run: dict[str, list[HydratedEvent]] = defaultdict(list)
         self._positions: set[tuple[str, int]] = set()
 
-    def append(self, event: EventEnvelope) -> EventEnvelope:
-        position = event.position
+    def append(self, event: HydratedEvent) -> HydratedEvent:
+        position = event.metadata.position
         if position < 0:
-            position = self.snapshot_position(event.run_id) + 1
-        key = (event.run_id, position)
+            position = self.snapshot_position(event.metadata.run_id) + 1
+        key = (event.metadata.run_id, position)
         if key in self._positions:
-            msg = f"Duplicate event position for run {event.run_id}: {position}"
+            msg = f"Duplicate event position for run {event.metadata.run_id}: {position}"
             raise DuplicateEventError(msg)
 
-        stored = event.model_copy(update={"position": position})
-        self._events_by_run[event.run_id].append(stored)
+        stored = event.model_copy(
+            update={"metadata": event.metadata.model_copy(update={"position": position})}
+        )
+        self._events_by_run[event.metadata.run_id].append(stored)
         self._positions.add(key)
         return stored
 
-    def read_from(self, run_id: str, from_position: int = 0) -> list[EventEnvelope]:
+    def read_from(self, run_id: str, from_position: int = 0) -> list[HydratedEvent]:
         return [
             event
             for event in self._events_by_run.get(run_id, [])
-            if event.position >= from_position
+            if event.metadata.position >= from_position
         ]
 
     def snapshot_position(self, run_id: str) -> int:
         events = self._events_by_run.get(run_id, [])
         if not events:
             return -1
-        return max(event.position for event in events)
+        return max(event.metadata.position for event in events)

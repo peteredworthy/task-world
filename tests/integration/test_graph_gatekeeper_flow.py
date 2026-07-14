@@ -19,6 +19,7 @@ from orchestrator.graph import (
     project_gatekeeper_report,
     project_residue_report,
     reduce_event,
+    event_payload_json,
 )
 from orchestrator.graph_runtime import (
     GatekeeperVerdict,
@@ -360,7 +361,7 @@ async def test_secret_suspects_are_not_sent_to_gatekeeper(
     assert fake.calls == []
     events = await _read_events(session_factory, run_id)
     rejection = next(event for event in events if event.event_type == "file_state_rejected")
-    rejected_paths = {entry["path"] for entry in rejection.payload["rejected_paths"]}
+    rejected_paths = {entry["path"] for entry in event_payload_json(rejection)["rejected_paths"]}
     assert rejected_paths == {"fake_key.pem"}
 
 
@@ -399,28 +400,33 @@ async def test_gatekeeper_secret_verdict_scrubs_compromised_snapshot(
     superseding = next(
         event
         for event in accepted_records
-        if event.payload.get("supersedes_record_id") == original.payload["record_id"]
+        if event_payload_json(event).get("supersedes_record_id")
+        == event_payload_json(original)["record_id"]
     )
-    old_snapshot_id = str(original.payload["snapshot_id"])
-    new_snapshot_id = str(superseding.payload["snapshot_id"])
+    old_snapshot_id = str(event_payload_json(original)["snapshot_id"])
+    new_snapshot_id = str(event_payload_json(superseding)["snapshot_id"])
     old_ref = f"refs/orchestrator/snapshots/{old_snapshot_id}"
     new_ref = f"refs/orchestrator/snapshots/{new_snapshot_id}"
 
     assert _ref_exists(repo, old_ref) is False
     assert _ref_exists(repo, new_ref) is True
-    assert "residue.txt" not in _tree_paths(repo, str(superseding.payload["git"]["commit_sha"]))
+    assert "residue.txt" not in _tree_paths(
+        repo, str(event_payload_json(superseding)["git"]["commit_sha"])
+    )
     assert any(event.event_type == "cleanup_requested" for event in events)
     assert any(event.event_type == "cleanup_applied" for event in events)
 
     projection = initial_projection()
     for event in events:
         projection = reduce_event(build_graph_catalog(), projection, event)
-    original_record = projection["file_state_records"][original.payload["record_id"]]
-    superseding_record = projection["file_state_records"][superseding.payload["record_id"]]
+    original_record = projection["file_state_records"][event_payload_json(original)["record_id"]]
+    superseding_record = projection["file_state_records"][
+        event_payload_json(superseding)["record_id"]
+    ]
     assert original_record.compromised is True
     assert original_record.superseded_pending is False
-    assert original_record.superseded_by_record_id == superseding.payload["record_id"]
-    assert superseding_record.supersedes_record_id == original.payload["record_id"]
+    assert original_record.superseded_by_record_id == event_payload_json(superseding)["record_id"]
+    assert superseding_record.supersedes_record_id == event_payload_json(original)["record_id"]
 
 
 async def _seed_active_run(

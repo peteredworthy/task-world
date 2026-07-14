@@ -19,6 +19,7 @@ from orchestrator.graph import (
     build_graph_catalog,
     project_run_state,
     project_task_states,
+    event_payload_json,
 )
 from orchestrator.graph_runtime import (
     GraphController,
@@ -49,6 +50,7 @@ from orchestrator.workflow.graph_driver import (
 )
 from orchestrator.graph import build_graph_command_dependencies
 from orchestrator.graph import GraphCatalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 class FixedClock:
@@ -351,18 +353,24 @@ def _graph_event(
     event_type: str,
     payload: dict[str, Any],
 ) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id=run_id,
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{position}",
+                run_id=run_id,
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
     )
 
 
@@ -530,9 +538,12 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
             "verification_passed",
             {
                 "node_id": "verifier-1",
+                "verifier_node_id": "verifier-1",
+                "candidate_id": "candidate-1",
+                "outcome": "passed",
                 "record_id": "verification-1",
                 "task_region_id": "region-implementation",
-                "value": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
+                "evidence": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
             },
         ),
         _graph_event(
@@ -606,25 +617,24 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
     final_check_event_types = [
         event.event_type
         for event in final_events
-        if event.payload.get("node_id") == "check-final"
-        or event.payload.get("producer_node_id") == "check-final"
+        if event_payload_json(event).get("node_id") == "check-final"
+        or event_payload_json(event).get("producer_node_id") == "check-final"
     ]
     assert dispatch_order == []
     assert "lease_granted" in final_check_event_types
     assert "callback_accepted" in final_check_event_types
     assert any(
         event.event_type == "output_record_accepted"
-        and event.payload["record"].get("producer_node_id") == "check-final"
-        and event.payload["record"].get("port") == "check_result"
+        and event_payload_json(event)["record"].get("producer_node_id") == "check-final"
+        and event_payload_json(event)["record"].get("port") == "check_result"
         for event in final_events
     )
     assert (
         project_task_states(build_graph_catalog(), final_events)["region-final-invariant"]
         == "accepted"
     )
-    assert outcome.completed is False
-    assert outcome.blocked_reason is not None
-    assert "ready node(s) not dispatched" not in outcome.blocked_reason
+    assert outcome.completed is True
+    assert outcome.blocked_reason is None
 
 
 @pytest.mark.asyncio
@@ -1049,7 +1059,8 @@ async def test_driver_does_not_reopen_crash_window_stranded_active_run(
     # A "resuming" lifecycle transition is produced ONLY by the reopen path's
     # kernel resume command, so its absence proves no reopen was issued.
     assert not any(
-        event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "resuming"
+        event.event_type == "run_lifecycle_changed"
+        and event_payload_json(event).get("to_state") == "resuming"
         for event in events_after
     )
     assert await _run_status(session_factory, run_id) == RunStatus.FAILED

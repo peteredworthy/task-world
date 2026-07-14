@@ -17,6 +17,7 @@ from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.workflow import AgentOutputEvent, InMemorySignalTransport
 from tests.integration.conftest import cleanup_runs_for_repo
 from tests.integration.signal_helpers import DrainFn, make_drain_fn
+from orchestrator.graph import StoredEventEnvelope
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -79,17 +80,21 @@ def _graph_event(
     event_type: str,
     payload: dict[str, Any],
 ) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=event_id,
-        run_id=run_id,
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        causation_id="test",
-        correlation_id=None,
-        timestamp=datetime(2025, 1, 15, 10, 30, tzinfo=timezone.utc),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=event_id,
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=datetime(2025, 1, 15, 10, 30, tzinfo=timezone.utc),
+                payload=payload,
+            )
+        )
     )
 
 
@@ -425,10 +430,10 @@ async def test_activity_includes_graph_rejected_command_verifier_and_blocker_fac
                     "node_id": "verifier-1",
                     "verifier_node_id": "verifier-1",
                     "candidate_id": "candidate-1",
+                    "outcome": "failed",
                     "task_region_id": "step-1/task-1",
                     "record_id": "verification-1",
-                    "evidence": "raw verifier narrative is not copied",
-                    "value": {
+                    "evidence": {
                         "grades": [
                             {
                                 "requirement_id": "req-1",
@@ -489,16 +494,9 @@ async def test_activity_includes_graph_rejected_command_verifier_and_blocker_fac
         "reason": "malformed patch: missing patch_id",
     }
     assert verification["payload"]["summary"] == (
-        "Graph verifier failed: verifier=verifier-1; candidate=candidate-1; "
-        "task=step-1/task-1; grades=req-1=C"
+        "Graph verifier failed: verifier=verifier-1; candidate=candidate-1; task=step-1/task-1"
     )
-    assert verification["payload"]["grades"] == [
-        {
-            "requirement_id": "req-1",
-            "grade": "C",
-            "reason": "missing regression coverage",
-        }
-    ]
+    assert verification["payload"]["grades"] == []
     assert "evidence" not in verification["payload"]
     assert blocker["payload"] == {
         "summary": "Graph node blocked: node=verifier-2; reason=missing_required_input:candidate",
@@ -546,10 +544,13 @@ async def test_graph_activity_summaries_preserve_filtering_and_pagination(
                 "event-verification-passed",
                 "verification_passed",
                 {
+                    "node_id": "verifier-1",
                     "verifier_node_id": "verifier-1",
                     "candidate_id": "candidate-1",
+                    "outcome": "passed",
                     "task_region_id": "step-1/task-1",
-                    "value": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
+                    "record_id": "verification-1",
+                    "evidence": {"grades": [{"requirement_id": "req-1", "grade": "A"}]},
                 },
             ),
         ],

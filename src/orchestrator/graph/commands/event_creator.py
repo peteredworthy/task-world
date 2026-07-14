@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, TypeVar
 
 from orchestrator.graph.payloads import StrictPayload
@@ -24,9 +25,11 @@ class TypedEventCreator:
         context: CommandExecutionContext,
         *,
         assign_position: bool = True,
+        causation_id: str | None = None,
     ) -> None:
         self._context = context
         self._assign_position = assign_position
+        self._causation_id = causation_id
         self._created_count = 0
 
     def create(
@@ -37,6 +40,11 @@ class TypedEventCreator:
         metadata = self._metadata(specification)
         self._created_count += 1
         return specification.create(metadata, payload)
+
+    def create_named(self, event_type: str, payload: Mapping[str, object]) -> HydratedEvent:
+        """Validate a named payload through the injected catalog and create it."""
+        specification = self._context.catalog.resolve_event(event_type)
+        return self.create(specification, specification.validate_payload(payload))
 
     def _metadata(self, specification: EventSpecification[Any]) -> EventMetadata:
         context = self._context
@@ -49,6 +57,7 @@ class TypedEventCreator:
             event_type=specification.name,
             payload_schema_generation=2,
             actor=context.actor,
+            causation_id=self._causation_id,
             timestamp=context.clock.now(),
         )
 

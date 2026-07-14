@@ -18,7 +18,7 @@ from orchestrator.graph.events.file_state import (
 )
 from orchestrator.graph.events.lifecycle import COMMAND_REJECTED, CommandRejectedPayload
 from orchestrator.graph.events.records import OUTPUT_RECORD_ACCEPTED, OutputRecordAcceptedPayload
-from orchestrator.graph.models import EventEnvelope, StrictFileStateRecord
+from orchestrator.graph.models import StrictFileStateRecord
 from orchestrator.graph.payloads import StrictPayload
 from orchestrator.graph.specifications import (
     CommandExecutionContext,
@@ -46,7 +46,7 @@ class RecordCleanupAppliedCommand(StrictPayload):
 def handle_record_gatekeeper_verdicts(
     command: RecordGatekeeperVerdictsCommand,
     projection: Any,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
     del events
@@ -136,7 +136,7 @@ def handle_record_gatekeeper_verdicts(
 def handle_record_cleanup_applied(
     command: RecordCleanupAppliedCommand,
     projection: Any,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
     del events

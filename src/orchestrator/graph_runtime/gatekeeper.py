@@ -14,11 +14,12 @@ from typing import Protocol, cast
 from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.graph import (
-    EventEnvelope,
     FileStateDeclaration,
     FileStatePolicy,
     FileStateTaxonomy,
     GatekeeperVerdict,
+    HydratedEvent,
+    StrictFileStateRecord,
     project_pattern_library,
 )
 
@@ -57,7 +58,7 @@ class ClaudeGatekeeperClassifier:
 
 
 def policy_with_pattern_library(
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     base_policy: FileStatePolicy | None = None,
 ) -> FileStatePolicy:
     """Return a policy extended with deterministic pattern-library declarations."""
@@ -91,37 +92,29 @@ def policy_with_pattern_library(
 
 
 def metadata_from_file_state_record(
-    record: dict[str, object],
+    record: StrictFileStateRecord,
     *,
     max_items: int,
 ) -> list[ResidueMetadata]:
     """Extract capped metadata-only residue items from a file-state record."""
-    record_id = record.get("record_id")
-    residue = record.get("residue")
-    if not isinstance(residue, list):
-        return []
+    record_id = record.record_id
     items: list[ResidueMetadata] = []
-    for raw_entry in cast(list[object], residue):
+    for entry in record.residue:
         if len(items) >= max_items:
             break
-        if not isinstance(raw_entry, dict):
+        if entry.needs_gatekeeper is not True:
             continue
-        entry = cast(dict[str, object], raw_entry)
-        if entry.get("needs_gatekeeper") is not True:
-            continue
-        if entry.get("classification") == "secret":
+        if entry.classification == "secret":
             continue
         items.append(
-            ResidueMetadata.model_validate(
-                {
-                    "path": entry.get("path"),
-                    "size_bytes": entry.get("size_bytes"),
-                    "entropy": entry.get("entropy"),
-                    "source": entry.get("source"),
-                    "prior_classification": entry.get("classification"),
-                    "matched_rule": entry.get("matched_rule"),
-                    "record_id": record_id,
-                }
+            ResidueMetadata(
+                path=entry.path,
+                size_bytes=entry.size_bytes,
+                entropy=entry.entropy,
+                source=cast(str, entry.source),
+                prior_classification=cast(str, entry.classification),
+                matched_rule=cast(str, entry.matched_rule),
+                record_id=record_id,
             )
         )
     return items

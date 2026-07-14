@@ -17,6 +17,8 @@ from orchestrator.graph import (
     reduce_event,
 )
 from tests.graph_command_support import dispatch_graph_command
+from tests.graph_command_support import with_metadata_position
+from orchestrator.graph import StoredEventEnvelope
 
 
 def test_parent_child_routine_compiles_to_planner_chain() -> None:
@@ -196,7 +198,7 @@ def _compile_active_parent_child() -> list[EventEnvelope | HydratedEvent]:
     events = _compile(_parent_child_routine())
     return [
         *_with_positions([_event("run_lifecycle_changed", {"to_state": "active"})]),
-        *[event.model_copy(update={"position": event.position + 1}) for event in events],
+        *[with_metadata_position(event, event.position + 1) for event in events],
     ]
 
 
@@ -513,22 +515,26 @@ def _event_snapshot(event: HydratedEvent) -> dict[str, Any]:
 
 
 def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{payload.get('node_id', payload.get('patch_id', 'event'))}",
-        run_id="run-1",
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{payload.get('node_id', payload.get('patch_id', 'event'))}",
+                run_id="run-1",
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )
 
 
 def _with_positions(events: list[EventEnvelope]) -> list[EventEnvelope]:
-    return [
-        event.model_copy(update={"position": index}) for index, event in enumerate(events, start=1)
-    ]
+    return [with_metadata_position(event, index) for index, event in enumerate(events, start=1)]
 
 
 def _append(
@@ -537,6 +543,6 @@ def _append(
 ) -> list[EventEnvelope]:
     position = max((event.position for event in existing_events), default=0)
     return [
-        event.model_copy(update={"position": position + offset})
+        with_metadata_position(event, position + offset)
         for offset, event in enumerate(new_events, start=1)
     ]

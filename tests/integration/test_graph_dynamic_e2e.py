@@ -35,6 +35,7 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     build_graph_catalog,
+    event_payload_json,
     expand_patch_macros,
     project_run_state,
     project_task_states,
@@ -879,7 +880,7 @@ async def test_dynamic_full_happy_path_completes(
     assert not any(event.causation_id == "reconcile" for event in events)
 
     accepted_patches = [
-        event.payload.get("patch_id")
+        event_payload_json(event).get("patch_id")
         for event in events
         if event.event_type == "graph_patch_accepted"
     ]
@@ -889,23 +890,23 @@ async def test_dynamic_full_happy_path_completes(
     assert task_states, "expected dynamic task regions to be projected"
     assert all(state == "accepted" for state in task_states.values()), task_states
     passed_reports = [
-        event.payload
+        event_payload_json(event)
         for event in events
         if event.event_type == "output_record_accepted"
-        and event.payload["record"].get("record_type") == "verification_report"
-        and event.payload["record"].get("value", {}).get("outcome") == "passed"
+        and event_payload_json(event)["record"].get("record_type") == "verification_report"
+        and event_payload_json(event)["record"].get("value", {}).get("outcome") == "passed"
     ]
     assert passed_reports, "expected explicit passed verification_report outcome"
     assert any(
         event.event_type == "edge_created"
-        and event.payload.get("metadata", {}).get("purpose")
+        and event_payload_json(event).get("metadata", {}).get("purpose")
         == "passed_verification_final_invariant_recovery"
         for event in events
     )
     assert any(
         event.event_type == "output_record_accepted"
-        and event.payload["record"].get("record_type") == "check_result"
-        and event.payload["record"].get("value", {}).get("status") == "passed"
+        and event_payload_json(event)["record"].get("record_type") == "check_result"
+        and event_payload_json(event)["record"].get("value", {}).get("status") == "passed"
         for event in events
     ), "expected final invariant check_result before completion"
 
@@ -956,7 +957,7 @@ async def test_dynamic_macro_created_graph_skips_failure_branch_on_pass(
     assert outcome.blocked_reason is not None
     assert "non-terminal node(s)" in outcome.blocked_reason
     accepted_patches = [
-        event.payload.get("patch_id")
+        event_payload_json(event).get("patch_id")
         for event in events
         if event.event_type == "graph_patch_accepted"
     ]
@@ -1013,12 +1014,14 @@ async def test_passed_verifier_with_failure_only_gap_terminalizes_to_final_check
     assert await _run_status(session_factory, run_id) == RunStatus.COMPLETED
     assert any(
         event.event_type == "edge_created"
-        and event.payload.get("metadata", {}).get("purpose")
+        and event_payload_json(event).get("metadata", {}).get("purpose")
         == "passed_verification_final_invariant_recovery"
         for event in events
     )
     retired_node_ids = {
-        event.payload.get("node_id") for event in events if event.event_type == "node_retired"
+        event_payload_json(event).get("node_id")
+        for event in events
+        if event.event_type == "node_retired"
     }
     assert {
         "planner-ds-gap",
@@ -1027,8 +1030,8 @@ async def test_passed_verifier_with_failure_only_gap_terminalizes_to_final_check
     }.issubset(retired_node_ids)
     assert any(
         event.event_type == "output_record_accepted"
-        and event.payload["record"].get("record_type") == "check_result"
-        and event.payload["record"].get("value", {}).get("status") == "passed"
+        and event_payload_json(event)["record"].get("record_type") == "check_result"
+        and event_payload_json(event)["record"].get("value", {}).get("status") == "passed"
         for event in events
     )
 
@@ -1075,7 +1078,7 @@ async def test_passed_verification_skips_gap_no_op_branch(
     assert project_run_state(build_graph_catalog(), events) == "completed"
 
     accepted_patch_ids = [
-        event.payload.get("patch_id")
+        event_payload_json(event).get("patch_id")
         for event in events
         if event.event_type == "graph_patch_accepted"
     ]
@@ -1142,7 +1145,7 @@ async def test_failed_corrective_verifier_continues_through_recovery_gap(
     assert verifier.seen_grades == ["C", "C", "A"]
 
     accepted_patch_ids = [
-        event.payload.get("patch_id")
+        event_payload_json(event).get("patch_id")
         for event in events
         if event.event_type == "graph_patch_accepted"
     ]
@@ -1151,10 +1154,10 @@ async def test_failed_corrective_verifier_continues_through_recovery_gap(
     assert str(accepted_patch_ids[2]).startswith("patch-planner-recover-verification-")
     assert str(accepted_patch_ids[2]).endswith("-retry-corrective")
     recovery_nodes = [
-        event.payload
+        event_payload_json(event)
         for event in events
         if event.event_type == "node_created"
-        and event.payload.get("recovery_reason") == "failed_verification"
+        and event_payload_json(event).get("recovery_reason") == "failed_verification"
     ]
     assert len(recovery_nodes) == 1
     assert recovery_nodes[0]["node_id"].startswith("planner-recover-verification-")
@@ -1206,14 +1209,14 @@ async def test_dynamic_run_does_not_complete_while_final_invariant_check_fails(
     events = await _events(session_factory, run_id)
     assert outcome.completed is False
     assert outcome.blocked_reason is not None
-    assert project_run_state(build_graph_catalog(), events) == "active"
-    assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
+    assert project_run_state(build_graph_catalog(), events) == "failed"
+    assert await _run_status(session_factory, run_id) == RunStatus.FAILED
     failed_check_results = [
         event.payload
         for event in events
         if event.event_type == "output_record_accepted"
-        and event.payload["record"].get("record_type") == "check_result"
-        and event.payload["record"].get("value", {}).get("status") == "failed"
+        and event_payload_json(event)["record"].get("record_type") == "check_result"
+        and event_payload_json(event)["record"].get("value", {}).get("status") == "failed"
     ]
     assert failed_check_results, "expected a failed deterministic check_result"
 
@@ -1263,7 +1266,7 @@ async def test_dynamic_root_planner_accepted_patch_then_no_submit_does_not_dupli
         event
         for event in events
         if event.event_type == "graph_patch_accepted"
-        and event.payload.get("patch_id") == "patch-ds-root-plan"
+        and event_payload_json(event).get("patch_id") == "patch-ds-root-plan"
     ]
     assert len(root_patches) == 1, "root planner must not produce a duplicate accepted patch"
     assert outcome.completed is True, outcome.blocked_reason

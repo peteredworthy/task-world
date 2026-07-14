@@ -620,6 +620,7 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
     # Run must stop without completion (T-02 check fails, region stays pending).
     assert outcome.completed is False, "expected blocked outcome"
     assert outcome.blocked_reason is not None
+    assert outcome.run_state == "failed", outcome
 
     # --- planner's invalid-patch probe was rejected even in blocked scenario --
     assert "rejected" in planner_agent.invalid_feedback

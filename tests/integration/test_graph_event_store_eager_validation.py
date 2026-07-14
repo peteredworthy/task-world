@@ -9,9 +9,20 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, build_graph_catalog
-from orchestrator.graph_runtime import GraphEventStore, InvalidGraphEventPayloadError
+from orchestrator.db import EventV2Model, create_engine, create_session_factory, init_db
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    StoredEventEnvelope,
+    build_graph_catalog,
+    event_payload_json,
+)
+from orchestrator.graph_runtime import (
+    EventPayloadCorruptionError,
+    GRAPH_PAYLOAD_SCHEMA_GENERATION,
+    GraphEventStore,
+)
 
 
 @pytest.fixture(scope="module")
@@ -28,16 +39,50 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=event_id,
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                payload=payload,
+            )
+        )
+    )
+
+
+def _invalid_event(
+    event_id: str, run_id: str, event_type: str, payload: dict[str, Any]
+) -> StoredEventEnvelope:
+    """Construct deliberate generation-2 corruption for store-boundary tests."""
+    return StoredEventEnvelope(
         event_id=event_id,
         run_id=run_id,
-        position=-1,
+        position=1,
         event_type=event_type,
-        schema_version=1,
+        payload_schema_generation=2,
         actor=Actor(kind=ActorKind.CONTROLLER),
-        causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
         payload=payload,
+    )
+
+
+def _insert_raw_event(session: AsyncSession, event: StoredEventEnvelope) -> None:
+    session.add(
+        EventV2Model(
+            aggregate_id=f"graph:{event.run_id}",
+            version=event.position,
+            event_type=event.event_type,
+            payload=event.model_dump_json(),
+            payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
+            timestamp=event.timestamp.isoformat(),
+        )
     )
 
 
@@ -61,7 +106,7 @@ async def test_invalid_output_record_accepted_seed_fails_at_append_with_clear_me
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "store-eager-invalid"
-    corrupt = _event(
+    corrupt = _invalid_event(
         "evt-corrupt",
         run_id,
         "output_record_accepted",
@@ -69,18 +114,18 @@ async def test_invalid_output_record_accepted_seed_fails_at_append_with_clear_me
     )
 
     async with session_factory() as session:
+        async with session.begin():
+            _insert_raw_event(session, corrupt)
+
+    async with session_factory() as session:
         store = GraphEventStore(session, build_graph_catalog())
-        with pytest.raises(InvalidGraphEventPayloadError) as error:
-            await store.append_events(run_id, 0, [corrupt])
+        with pytest.raises(EventPayloadCorruptionError) as error:
+            await store.read_run(run_id)
 
     message = str(error.value)
     assert "output_record_accepted" in message
     assert "position 1" in message
     assert "unexpected_field" in message
-
-    async with session_factory() as session:
-        store = GraphEventStore(session, build_graph_catalog())
-        assert await store.current_position(run_id) == 0
 
 
 @pytest.mark.asyncio
@@ -100,18 +145,18 @@ async def test_valid_output_record_accepted_seed_appends_and_reads_back(
             store = GraphEventStore(session, build_graph_catalog())
             stored = await store.append_events(run_id, 0, [valid])
 
-    assert stored[0].payload["record"]["record_id"] == "candidate-1"
+    assert event_payload_json(stored[0])["record"]["record_id"] == "candidate-1"
 
     async with session_factory() as session:
         store = GraphEventStore(session, build_graph_catalog())
         read_back = await store.read_run(run_id)
 
     assert [event.event_id for event in read_back] == ["evt-valid"]
-    assert read_back[0].payload["record"]["candidate_id"] == "candidate-1"
+    assert event_payload_json(read_back[0])["record"]["candidate_id"] == "candidate-1"
 
 
 @pytest.mark.asyncio
-async def test_allow_invalid_payloads_escape_admits_intentional_corruption(
+async def test_raw_corrupt_payload_does_not_bypass_strict_hydration(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     run_id = "store-eager-escape"
@@ -121,7 +166,9 @@ async def test_allow_invalid_payloads_escape_admits_intentional_corruption(
         "node_created",
         {"node_id": "worker-1", "kind": "worker"},
     )
-    corrupt = _event("evt-2", run_id, "node_created", {"node_id": 123})
+    corrupt = _invalid_event("evt-2", run_id, "node_created", {"node_id": 123}).model_copy(
+        update={"position": 2}
+    )
 
     async with session_factory() as session:
         async with session.begin():
@@ -129,21 +176,15 @@ async def test_allow_invalid_payloads_escape_admits_intentional_corruption(
             await store.append_events(run_id, 0, [valid])
 
     async with session_factory() as session:
-        store = GraphEventStore(session, build_graph_catalog())
-        with pytest.raises(InvalidGraphEventPayloadError):
-            await store.append_events(run_id, 1, [corrupt])
-
-    async with session_factory() as session:
         async with session.begin():
-            store = GraphEventStore(session, build_graph_catalog())
-            # Intentional-corruption tests bypass disposable read models so the
-            # corrupt row lands without being folded through strict hydration.
-            await store.delete_read_models(run_id)
-            await store.append_events(run_id, 1, [corrupt], allow_invalid_payloads=True)
+            _insert_raw_event(session, corrupt)
 
     async with session_factory() as session:
         store = GraphEventStore(session, build_graph_catalog())
-        read_back = await store.read_run(run_id)
+        with pytest.raises(EventPayloadCorruptionError) as error:
+            await store.read_run(run_id)
 
-    assert [event.event_id for event in read_back] == ["evt-1", "evt-2"]
-    assert read_back[1].payload.to_json() == {"node_id": 123}
+    message = str(error.value)
+    assert "node_created" in message
+    assert "position 2" in message
+    assert "node_id" in message

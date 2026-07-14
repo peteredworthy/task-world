@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
-
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
-from pydantic import ValidationError
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,13 +18,12 @@ from orchestrator.db import (
     GraphProjectionSnapshotModel,
 )
 from orchestrator.graph import (
-    EventEnvelope,
     GraphCatalog,
     GraphProjection,
     HydratedEvent,
+    InputBoundPayload,
     PROJECTION_SCHEMA_VERSION,
     StoredEventEnvelope,
-    StrictPayload,
     event_payload_json,
     initial_projection,
     merge_bound_record_ids,
@@ -48,7 +44,6 @@ from orchestrator.graph_runtime.errors import (
 )
 
 GRAPH_PAYLOAD_SCHEMA_GENERATION = 2
-GraphHistoryEvent = EventEnvelope | HydratedEvent
 
 GRAPH_AGGREGATE_PREFIX = "graph:"
 _CHECKPOINT_PROJECTION_KEY = "_projection_checkpoint"
@@ -67,11 +62,11 @@ def graph_aggregate_id(run_id: str) -> str:
 
 
 def _payload_with_durable_graph_position(
-    event: EventEnvelope,
+    event: HydratedEvent,
     position: int,
     run_id: str,
 ) -> dict[str, Any]:
-    payload = dict(event.payload)
+    payload = dict(event.payload.to_json())
     if event.event_type in {"output_record_accepted", "file_state_accepted"}:
         durable_record = payload
         if event.event_type == "output_record_accepted":
@@ -96,54 +91,37 @@ def _payload_with_durable_graph_position(
     return payload
 
 
-def stored_graph_event(event: GraphHistoryEvent, *, run_id: str, position: int) -> EventEnvelope:
-    """Return the durable stored form of one graph event at its final position."""
-    if isinstance(event, HydratedEvent):
-        event = EventEnvelope(
-            event_id=event.event_id,
-            run_id=event.run_id,
-            position=event.position,
-            event_type=event.event_type,
-            schema_version=event.schema_version,
-            actor=event.actor,
-            causation_id=event.causation_id,
-            correlation_id=event.correlation_id,
-            timestamp=event.timestamp,
-            payload=event.payload.to_json(),
-        )
-    return event.model_copy(
-        update={
-            "run_id": run_id,
-            "position": position,
-            "payload": _payload_with_durable_graph_position(event, position, run_id),
-        }
+def stored_graph_event(
+    catalog: GraphCatalog,
+    event: object,
+    *,
+    run_id: str,
+    position: int,
+) -> HydratedEvent:
+    """Assign durable metadata and rehydrate one catalog-owned event.
+
+    This is the sole command-to-storage boundary: production callers supply an
+    already hydrated generation-2 event and this helper serializes it only long
+    enough to add persistence-owned fields before catalog hydration.
+    """
+    if not isinstance(event, HydratedEvent):
+        raise TypeError("graph event append requires HydratedEvent instances")
+    if event.metadata.payload_schema_generation != GRAPH_PAYLOAD_SCHEMA_GENERATION:
+        raise ValueError("graph event append requires payload schema generation 2")
+    specification = catalog.resolve_event(event.metadata.event_type)
+    specification.serialize(event)
+    metadata = event.metadata.model_copy(update={"run_id": run_id, "position": position})
+    stored = StoredEventEnvelope(
+        **metadata.model_dump(),
+        payload=_payload_with_durable_graph_position(event, position, run_id),
     )
+    return catalog.hydrate_event(stored)
 
 
 def _stored_envelope_from_json(
     payload_json: str,
-    payload_schema_generation: int,
 ) -> StoredEventEnvelope:
-    try:
-        return StoredEventEnvelope.model_validate_json(payload_json)
-    except ValidationError as stored_error:
-        try:
-            legacy = EventEnvelope.model_validate_json(payload_json)
-        except ValidationError:
-            raise stored_error
-        return StoredEventEnvelope(
-            event_id=legacy.event_id,
-            run_id=legacy.run_id,
-            position=legacy.position,
-            event_type=legacy.event_type,
-            payload_schema_generation=payload_schema_generation,
-            source_schema_version=legacy.schema_version,
-            actor=legacy.actor,
-            causation_id=legacy.causation_id,
-            correlation_id=legacy.correlation_id,
-            timestamp=legacy.timestamp,
-            payload=legacy.model_dump(mode="json")["payload"],
-        )
+    return StoredEventEnvelope.model_validate_json(payload_json)
 
 
 def validate_stored_event_metadata(
@@ -163,25 +141,16 @@ def validate_stored_event_metadata(
         raise ValueError("stored envelope metadata does not match its database row")
 
 
-def validate_catalog_event_payload(catalog: GraphCatalog, event: EventEnvelope) -> None:
+def validate_catalog_event_payload(catalog: GraphCatalog, event: StoredEventEnvelope) -> None:
     """Validate a stored catalog-owned event payload with hydration parity.
 
-    Events not owned by the catalog pass through untouched. Validation uses the
-    same JSON-mode strict path as ``EventSpecification.hydrate`` so an event
-    that appends cleanly is guaranteed to hydrate cleanly later.
+    Validation uses the same catalog hydration path as storage readback, so a
+    serialized event that appends cleanly is guaranteed to hydrate cleanly later.
     """
-    specification = catalog.event_specs.get(event.event_type)
-    if specification is None:
-        return
-    if (
-        event.event_type in {"verification_passed", "verification_failed"}
-        and event.schema_version == 1
-    ):
-        return
-    payload_json = event.model_dump(mode="json")["payload"]
+    specification = catalog.resolve_event(event.event_type)
     try:
-        specification.payload_type.model_validate_json(json.dumps(payload_json))
-    except ValidationError as error:
+        specification.hydrate(event)
+    except ValueError as error:
         msg = (
             f"invalid graph event payload for event_type={event.event_type!r} "
             f"at position {event.position}: {error}"
@@ -206,7 +175,7 @@ _LEGACY_RECORD_METADATA_FIELDS = {"port", "record_kind", "schema"}
 
 
 def _add_durable_record_base_fields(
-    event: EventEnvelope,
+    event: HydratedEvent,
     payload: dict[str, Any],
     position: int,
     run_id: str,
@@ -354,16 +323,13 @@ class GraphEventStore:
         self,
         run_id: str,
         expected_position: int,
-        events: Sequence[GraphHistoryEvent],
-        *,
-        allow_invalid_payloads: bool = False,
-    ) -> list[EventEnvelope]:
+        events: Sequence[HydratedEvent],
+    ) -> list[HydratedEvent]:
         """Append events if the run stream is still at ``expected_position``.
 
-        Catalog-owned event payloads are validated eagerly against their strict
-        specification before any row is staged. ``allow_invalid_payloads`` is a
-        narrow escape for intentional-corruption tests only; production callers
-        must never set it.
+        Events must already be catalog-created generation-2 hydrated events.
+        Intentional storage corruption tests insert raw ``StoredEventEnvelope``
+        rows directly; production append has no raw-envelope escape hatch.
         """
         if not events:
             return []
@@ -376,28 +342,14 @@ class GraphEventStore:
             )
             raise StaleProjectionError(msg)
 
-        stored_events: list[EventEnvelope] = []
+        stored_events: list[HydratedEvent] = []
         hydrated_events: list[HydratedEvent] = []
         rows: list[EventV2Model] = []
         for offset, event in enumerate(events, start=1):
             position = expected_position + offset
-            stored = stored_graph_event(event, run_id=run_id, position=position)
-            if not allow_invalid_payloads:
-                validate_catalog_event_payload(self._catalog, stored)
+            stored = stored_graph_event(self._catalog, event, run_id=run_id, position=position)
             stored_events.append(stored)
-            envelope = StoredEventEnvelope(
-                event_id=stored.event_id,
-                run_id=stored.run_id,
-                position=stored.position,
-                event_type=stored.event_type,
-                payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
-                source_schema_version=stored.schema_version,
-                actor=stored.actor,
-                causation_id=stored.causation_id,
-                correlation_id=stored.correlation_id,
-                timestamp=stored.timestamp,
-                payload=stored.model_dump(mode="json")["payload"],
-            )
+            envelope = self._catalog.resolve_event(stored.event_type).serialize(stored)
             rows.append(
                 EventV2Model(
                     aggregate_id=graph_aggregate_id(run_id),
@@ -408,7 +360,7 @@ class GraphEventStore:
                     timestamp=stored.timestamp.isoformat(),
                 )
             )
-            hydrated_events.append(self._catalog.hydrate_event(envelope))
+            hydrated_events.append(stored)
 
         self._session.add_all(rows)
         try:
@@ -444,7 +396,7 @@ class GraphEventStore:
                     run_id, row.version, row.payload_schema_generation
                 )
             try:
-                stored = _stored_envelope_from_json(row.payload, row.payload_schema_generation)
+                stored = _stored_envelope_from_json(row.payload)
                 validate_stored_event_metadata(
                     stored,
                     run_id=run_id,
@@ -484,7 +436,7 @@ class GraphEventStore:
                     run_id, row.version, row.payload_schema_generation
                 )
             try:
-                stored = _stored_envelope_from_json(row.payload, row.payload_schema_generation)
+                stored = _stored_envelope_from_json(row.payload)
                 validate_stored_event_metadata(
                     stored,
                     run_id=run_id,
@@ -681,7 +633,7 @@ class GraphEventStore:
     async def append_event_summaries(
         self,
         run_id: str,
-        events: Sequence[GraphHistoryEvent],
+        events: Sequence[HydratedEvent],
     ) -> None:
         """Append compact summary rows for newly stored graph events."""
         if not events:
@@ -704,7 +656,7 @@ class GraphEventStore:
     async def append_node_detail_summaries(
         self,
         run_id: str,
-        events: Sequence[GraphHistoryEvent],
+        events: Sequence[HydratedEvent],
         *,
         expected_position: int,
     ) -> None:
@@ -725,7 +677,7 @@ class GraphEventStore:
         if _has_missing_preexisting_node_reference(events, existing_node_ids):
             await self.delete_node_detail_summaries(run_id)
             return
-        lease_update_ids = _lease_update_ids(events)
+        lease_update_ids: set[str] = set()
         lease_rows = await self._node_detail_rows_for_leases(run_id, lease_update_ids)
         rows = await self._node_detail_rows_for_events(
             run_id,
@@ -759,7 +711,7 @@ class GraphEventStore:
     async def advance_projection_snapshot(
         self,
         run_id: str,
-        events: Sequence[GraphHistoryEvent],
+        events: Sequence[HydratedEvent],
         *,
         expected_position: int,
     ) -> None:
@@ -904,17 +856,13 @@ class GraphEventStore:
     async def _node_detail_rows_for_events(
         self,
         run_id: str,
-        events: Sequence[GraphHistoryEvent],
+        events: Sequence[HydratedEvent],
         known_node_ids: set[str],
     ) -> dict[str, GraphNodeDetailSummaryModel]:
         node_ids: set[str] = set()
         for event in events:
             light_event = event
-            light_payload = (
-                light_event.payload.stored_json()
-                if isinstance(light_event.payload, StrictPayload)
-                else dict(light_event.payload)
-            )
+            light_payload = light_event.payload.stored_json()
             node_ids.update(_referenced_node_ids(light_payload, known_node_ids | node_ids))
         if not node_ids:
             return {}
@@ -953,7 +901,7 @@ class GraphEventStore:
     async def _edge_ports_for_input_bounds(
         self,
         run_id: str,
-        events: Sequence[GraphHistoryEvent],
+        events: Sequence[HydratedEvent],
     ) -> dict[str, str]:
         edge_ids = _input_bound_edge_ids_needing_ports(events)
         if not edge_ids:
@@ -996,7 +944,7 @@ class GraphEventStore:
         return int(result.scalar_one_or_none() or 0)
 
 
-def _complete_graph_event_summary(event: GraphHistoryEvent) -> GraphEventSummary:
+def _complete_graph_event_summary(event: HydratedEvent) -> GraphEventSummary:
     return GraphEventSummary(
         event_id=event.event_id,
         event_type=event.event_type,
@@ -1010,7 +958,7 @@ def _complete_graph_event_summary(event: GraphHistoryEvent) -> GraphEventSummary
 def _projection_snapshot_from_events(
     catalog: GraphCatalog,
     run_id: str,
-    events: Sequence[GraphHistoryEvent],
+    events: Sequence[HydratedEvent],
 ) -> GraphProjectionSnapshotModel:
     row = GraphProjectionSnapshotModel(run_id=run_id)
     _assign_projection_snapshot(
@@ -1031,7 +979,7 @@ def _assign_projection_snapshot(
     projection: GraphProjection,
     position: int,
     *,
-    events: Sequence[GraphHistoryEvent] | None = None,
+    events: Sequence[HydratedEvent] | None = None,
 ) -> None:
     row.run_id = run_id
     row.position = position
@@ -1053,7 +1001,7 @@ def _assign_projection_snapshot(
 
 def _projection_from_events(
     catalog: GraphCatalog,
-    events: Sequence[GraphHistoryEvent],
+    events: Sequence[HydratedEvent],
 ) -> GraphProjection:
     projection = initial_projection()
     for event in events:
@@ -1102,7 +1050,7 @@ def _decisions_with_projection_checkpoint(
     }
 
 
-def _events_position(events: Sequence[GraphHistoryEvent]) -> int:
+def _events_position(events: Sequence[HydratedEvent]) -> int:
     if not events:
         return 0
     return max(event.position for event in events)
@@ -1163,7 +1111,7 @@ def _add_node_detail_summaries(
 
 def _node_detail_summaries_from_events(
     run_id: str,
-    events: Sequence[GraphHistoryEvent],
+    events: Sequence[HydratedEvent],
     *,
     position: int,
 ) -> dict[str, GraphNodeDetailSummary]:
@@ -1179,7 +1127,7 @@ def _node_detail_summaries_from_events(
 
 def _apply_node_detail_events(
     run_id: str,
-    events: Sequence[GraphHistoryEvent],
+    events: Sequence[HydratedEvent],
     *,
     position: int,
     existing_node_ids: set[str],
@@ -1227,7 +1175,7 @@ def _apply_node_detail_events(
 
 
 def _node_detail_field_updates(
-    event: GraphHistoryEvent,
+    event: HydratedEvent,
     edge_ports: dict[str, str],
     summaries: dict[str, GraphNodeDetailSummary],
     position: int,
@@ -1337,7 +1285,6 @@ def _node_detail_field_updates(
                 ),
             )
     elif event.event_type in {
-        "lease_suspended",
         "lease_revoked",
         "lease_expired",
         "lease_released",
@@ -1468,7 +1415,7 @@ def _append_node_event(
     )
 
 
-def _is_callback_history_event(event: GraphHistoryEvent) -> bool:
+def _is_callback_history_event(event: HydratedEvent) -> bool:
     if event.event_type in {
         "callback_accepted",
         "callback_rejected_stale",
@@ -1479,30 +1426,22 @@ def _is_callback_history_event(event: GraphHistoryEvent) -> bool:
         return True
     if event.event_type != "node_state_changed":
         return False
-    if event.schema_version == 1:
-        return event.payload.get("trigger") == "runtime_start_acknowledged"
     return event_payload_json(event).get("trigger") == "runtime_start_acknowledged"
 
 
-def _node_event_response(event: GraphHistoryEvent) -> dict[str, Any]:
+def _node_event_response(event: HydratedEvent) -> dict[str, Any]:
     return {
         "event_id": event.event_id,
         "event_type": event.event_type,
         "run_id": event.run_id,
         "position": event.position,
         "timestamp": event.timestamp.isoformat(),
-        "payload": (
-            event.payload.stored_json()
-            if isinstance(event.payload, StrictPayload)
-            else dict(event.payload)
-        ),
+        "payload": event.payload.stored_json(),
     }
 
 
-def _history_payload(event: GraphHistoryEvent) -> dict[str, Any]:
-    if isinstance(event.payload, StrictPayload):
-        return cast(dict[str, Any], event.payload.to_json())
-    return dict(event.payload)
+def _history_payload(event: HydratedEvent) -> dict[str, Any]:
+    return cast(dict[str, Any], event.payload.to_json())
 
 
 def _referenced_node_ids(payload: dict[str, Any], known_node_ids: set[str]) -> set[str]:
@@ -1582,24 +1521,8 @@ def _selected_lease(leases: list[dict[str, Any]]) -> dict[str, Any] | None:
     return fallback
 
 
-def _lease_update_ids(events: Sequence[GraphHistoryEvent]) -> set[str]:
-    ids: set[str] = set()
-    for event in events:
-        if event.schema_version != 1 or event.event_type not in {
-            "lease_suspended",
-            "lease_revoked",
-            "lease_expired",
-            "lease_released",
-        }:
-            continue
-        lease_id = event.payload.get("lease_id")
-        if isinstance(lease_id, str):
-            ids.add(lease_id)
-    return ids
-
-
 def _has_missing_preexisting_node_reference(
-    events: Sequence[GraphHistoryEvent],
+    events: Sequence[HydratedEvent],
     existing_node_ids: set[str],
 ) -> bool:
     known_node_ids = set(existing_node_ids)
@@ -1620,16 +1543,16 @@ def _has_missing_preexisting_node_reference(
     return False
 
 
-def _input_bound_edge_ids_needing_ports(events: Sequence[GraphHistoryEvent]) -> set[str]:
+def _input_bound_edge_ids_needing_ports(events: Sequence[HydratedEvent]) -> set[str]:
     edge_ids: set[str] = set()
     for event in events:
-        if event.schema_version != 1 or event.event_type != "input_bound":
+        if event.event_type != "input_bound":
             continue
-        if isinstance(event.payload.get("to_port"), str):
+        if not isinstance(event.payload, InputBoundPayload):
+            raise TypeError("input_bound event has an unexpected payload type")
+        if event.payload.to_port:
             continue
-        edge_id = event.payload.get("edge_id")
-        if isinstance(edge_id, str):
-            edge_ids.add(edge_id)
+        edge_ids.add(event.payload.edge_id)
     return edge_ids
 
 

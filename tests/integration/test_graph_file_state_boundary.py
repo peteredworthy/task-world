@@ -17,6 +17,7 @@ from orchestrator.graph import (
     project_leases,
     project_node_states,
     project_residue_report,
+    event_payload_json,
 )
 from orchestrator.graph_runtime import (
     GraphController,
@@ -198,15 +199,16 @@ async def test_file_state_boundary_accepts_residue_and_snapshots_captured_tree(
     events = await _read_events(session_factory, run_id)
     accepted = next(event for event in events if event.event_type == "file_state_accepted")
     classifications = {
-        entry["path"]: entry["classification"] for entry in accepted.payload["classifications"]
+        entry["path"]: entry["classification"]
+        for entry in event_payload_json(accepted)["classifications"]
     }
     assert classifications["README.md"] == "tracked_change"
     assert classifications["residue.txt"] == "unknown_untracked"
     assert classifications["__pycache__/app.cpython-312.pyc"] == "tool_cache"
     assert classifications["ignored.log"] == "unknown_ignored"
-    assert accepted.payload["git"]["ref"].startswith("refs/orchestrator/snapshots/")
+    assert event_payload_json(accepted)["git"]["ref"].startswith("refs/orchestrator/snapshots/")
 
-    snapshot_id = str(accepted.payload["snapshot_id"])
+    snapshot_id = str(event_payload_json(accepted)["snapshot_id"])
     (repo / "README.md").unlink()
     (repo / "residue.txt").unlink()
     (repo / "__pycache__" / "app.cpython-312.pyc").unlink()
@@ -249,13 +251,15 @@ async def test_secret_file_state_rejection_releases_lease_and_retries_clean_atte
     events = await _read_events(session_factory, run_id)
     rejection = next(event for event in events if event.event_type == "file_state_rejected")
     rejected_paths = {
-        entry["path"]: entry["classification"] for entry in rejection.payload["rejected_paths"]
+        entry["path"]: entry["classification"]
+        for entry in event_payload_json(rejection)["rejected_paths"]
     }
     assert rejected_paths == {"fake_key.pem": "secret"}
     assert not any(event.event_type == "file_state_accepted" for event in events)
     assert "fake_key.pem" not in _all_snapshot_tree_paths(repo)
     assert not any(
-        event.event_type == "node_state_changed" and event.payload.get("new_state") == "completed"
+        event.event_type == "node_state_changed"
+        and event_payload_json(event).get("new_state") == "completed"
         for event in events
     )
     assert project_node_states(build_graph_catalog(), events)["worker-step-1-task-1"] == "ready"
@@ -276,7 +280,9 @@ async def test_secret_file_state_rejection_releases_lease_and_retries_clean_atte
         lease.get("state") == "active"
         for lease in project_leases(build_graph_catalog(), retried_events).values()
     )
-    assert "fake_key.pem" not in _tree_paths(repo, str(accepted.payload["git"]["commit_sha"]))
+    assert "fake_key.pem" not in _tree_paths(
+        repo, str(event_payload_json(accepted)["git"]["commit_sha"])
+    )
 
 
 @pytest.mark.asyncio
@@ -306,10 +312,12 @@ async def test_nested_secret_inside_ignored_directory_is_classified_and_not_snap
     events = await _read_events(session_factory, run_id)
     rejection = next(event for event in events if event.event_type == "file_state_rejected")
     classifications = {
-        entry["path"]: entry["classification"] for entry in rejection.payload["classifications"]
+        entry["path"]: entry["classification"]
+        for entry in event_payload_json(rejection)["classifications"]
     }
     rejected_paths = {
-        entry["path"]: entry["classification"] for entry in rejection.payload["rejected_paths"]
+        entry["path"]: entry["classification"]
+        for entry in event_payload_json(rejection)["rejected_paths"]
     }
     assert classifications["secrets/cache.txt"] == "unknown_ignored"
     assert classifications["secrets/key.pem"] == "secret"

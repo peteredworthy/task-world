@@ -4,9 +4,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from orchestrator.graph._commands import Clock
 from typing import Any
-from orchestrator.graph.models import (
-    EventEnvelope,
-)
 from orchestrator.graph.projections import (
     GraphProjection,
     final_invariant_blockers_for_events,
@@ -42,7 +39,6 @@ from orchestrator.graph.events.lifecycle import (
     HeartbeatRecordedPayload,
 )
 from orchestrator.graph.payloads import StrictPayload
-from orchestrator.graph.commands.future_effects import require_future_effect
 from orchestrator.graph.commands.event_creator import TypedEventCreator
 from orchestrator.graph.specifications import (
     CommandExecutionContext,
@@ -93,12 +89,9 @@ def _is_rate_limit_death(reason: str) -> bool:
 
 
 def _require_future_outcomes(
-    output: list[EventEnvelope | HydratedEvent],
-) -> list[EventEnvelope | HydratedEvent]:
-    return [
-        require_future_effect(event) if isinstance(event, EventEnvelope) else event
-        for event in output
-    ]
+    output: list[HydratedEvent],
+) -> list[HydratedEvent]:
+    return output
 
 
 def _is_non_retryable_runtime_death(reason: str) -> bool:
@@ -141,15 +134,13 @@ def _lifecycle_handler(command_type: str):
     def handler(
         command: EmptyLifecycleCommand | FailCommand,
         projection: GraphProjection,
-        events: tuple[EventEnvelope, ...],
+        events: tuple[HydratedEvent, ...],
         context: CommandExecutionContext,
-    ) -> list[EventEnvelope | HydratedEvent]:
+    ) -> list[HydratedEvent]:
         actor_role = context.actor.role
         if actor_role is None and context.actor.kind.value == "human":
             actor_role = "human"
-        make_event = event_factory(
-            context.run_id, command_type, context.clock, context.id_generator
-        )
+        make_event = event_factory(context, command_type)
         output = apply_lifecycle_effects(
             projection,
             list(events),
@@ -169,7 +160,7 @@ def _lifecycle_handler(command_type: str):
 def handle_record_heartbeat(
     command: RecordHeartbeatCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
     del events
@@ -265,16 +256,11 @@ RECORD_HEARTBEAT = CommandSpecification(
 def handle_agent_died_command(
     command: AgentDiedCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
-) -> list[EventEnvelope | HydratedEvent]:
+) -> list[HydratedEvent]:
     del events
-    make_event = event_factory(
-        context.run_id,
-        "agent_died",
-        context.clock,
-        context.id_generator,
-    )
+    make_event = event_factory(context, "agent_died")
     output = build_agent_died_effects(
         projection,
         command,
@@ -321,15 +307,15 @@ __all__ = [
 
 def apply_lifecycle_effects(
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     command_type: str,
     command: EmptyLifecycleCommand | FailCommand,
     actor_role: str | None,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     creator: TypedEventCreator,
     id_gen: IdGenerator,
     effects: FutureCommandEffects,
-) -> list[EventEnvelope | HydratedEvent]:
+) -> list[HydratedEvent]:
     _cancel_active_lease_events = effects.cancel_active_lease_events
     _lifecycle_completion_decision_event = effects.lifecycle_completion_decision_event
     current_state = projection["run_state"] or "draft"
@@ -369,7 +355,7 @@ def apply_lifecycle_effects(
     if command_type == "complete":
         blockers = final_invariant_blockers_for_events(events, projection)
         if blockers:
-            rejected: list[EventEnvelope | HydratedEvent] = [
+            rejected: list[HydratedEvent] = [
                 _command_rejected(
                     creator,
                     command_type,
@@ -379,7 +365,7 @@ def apply_lifecycle_effects(
             ]
             return rejected
     trigger = f"{command_type}_command_accepted"
-    output: list[EventEnvelope | HydratedEvent] = []
+    output: list[HydratedEvent] = []
     if command_type == "complete" and not projection["completion_decision_passed"]:
         output.append(_lifecycle_completion_decision_event({}, make_event, id_gen))
     output.append(
@@ -400,10 +386,10 @@ def build_agent_died_effects(
     projection: GraphProjection,
     command: AgentDiedCommand,
     clock: Clock,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     creator: TypedEventCreator,
     effects: FutureCommandEffects,
-) -> list[EventEnvelope | HydratedEvent]:
+) -> list[HydratedEvent]:
     _failure_record_payload = effects.failure_record_payload
     _recovery_plan_record_payload = effects.recovery_plan_record_payload
     _typed_lease_event_payload = effects.typed_lease_event_payload

@@ -31,6 +31,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     initial_projection,
     reduce_event,
+    event_payload_json,
 )
 from orchestrator.graph_runtime import (
     EventPayloadCorruptionError,
@@ -44,6 +45,7 @@ from orchestrator.graph_runtime import (
 from orchestrator.graph_runtime.store import graph_aggregate_id
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
 from tests.unit.graph_catalog_samples import EVENT_SAMPLES
+from orchestrator.graph import StoredEventEnvelope
 
 
 @pytest.fixture(scope="module")
@@ -75,19 +77,39 @@ class CountingGraphCatalog(GraphCatalog):
 
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=event_id,
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
+    )
+
+
+def _invalid_event(
+    event_id: str, run_id: str, event_type: str, payload: dict[str, Any]
+) -> EventEnvelope:
     return EventEnvelope(
         event_id=event_id,
         run_id=run_id,
         position=-1,
         event_type=event_type,
-        schema_version=1,
+        schema_version=2,
         actor=Actor(kind=ActorKind.CONTROLLER),
-        causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+        payload=payload,
     )
 
 
@@ -123,9 +145,7 @@ async def test_append_read_round_trip(
         _event("evt-1", run_id, "run_lifecycle_changed", {"to_state": "active"}).model_copy(
             update={"schema_version": 2}
         ),
-        _event(
-            "evt-2", run_id, "node_created", {"node_id": "worker-1", "kind": "worker"}
-        ).model_copy(update={"schema_version": 2}),
+        _event("evt-2", run_id, "node_created", {"node_id": "worker-1", "kind": "worker"}),
     ]
 
     async with session_factory() as session:
@@ -145,6 +165,26 @@ async def test_append_read_round_trip(
     assert [event.metadata.position for event in read_back] == [1, 2]
     assert all(isinstance(event, HydratedEvent) for event in read_back)
     assert isinstance(read_back[0].payload, RunLifecycleChangedPayload)
+
+
+@pytest.mark.asyncio
+async def test_append_events_rejects_raw_event_envelopes(
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
+) -> None:
+    raw = EventEnvelope(
+        event_id="evt-raw",
+        run_id="store-raw-rejection",
+        position=-1,
+        event_type="run_lifecycle_changed",
+        schema_version=2,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        payload={"to_state": "active"},
+    )
+
+    async with session_factory() as session:
+        with pytest.raises(TypeError, match="HydratedEvent"):
+            await GraphEventStore(session, catalog).append_events(raw.run_id, 0, [raw])
 
 
 @pytest.mark.asyncio
@@ -451,8 +491,11 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
     )
 
     assert [event.event_type for event in result.events] == ["graph_patch_rejected"]
-    assert result.events[0].payload["reason"] == "stale patch conflicts with invalidating events"
-    assert result.events[0].payload["read_set_diff"]["conflicting_event_ids"] == [
+    assert (
+        event_payload_json(result.events[0])["reason"]
+        == "stale patch conflicts with invalidating events"
+    )
+    assert event_payload_json(result.events[0])["read_set_diff"]["conflicting_event_ids"] == [
         "evt-worker-stale-cancelled"
     ]
 
@@ -574,7 +617,7 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
         "lease_released",
     ]
     assert [event.event_type for event in second.events] == ["callback_duplicate_returned"]
-    assert second.events[0].payload["prior_result"]["outcome"] == "callback_accepted"
+    assert event_payload_json(second.events[0])["prior_result"]["outcome"] == "callback_accepted"
 
 
 @pytest.mark.asyncio
@@ -691,7 +734,7 @@ async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
 
     assert snapshot is not None
     assert snapshot.scheduler["blocked"] == [
-        {"node_id": "worker-1", "reason": first_deferrals[0].payload["reason"]}
+        {"node_id": "worker-1", "reason": event_payload_json(first_deferrals[0])["reason"]}
     ]
 
 
@@ -775,7 +818,7 @@ async def test_append_events_stores_durable_input_binding_position(
         ).read_run(run_id)
 
     assert stored[1].position == 2
-    assert stored[1].payload["bound_at_position"] == 2
+    assert event_payload_json(stored[1])["bound_at_position"] == 2
     assert read_back[1].payload.bound_at_position == 2
 
 
@@ -1038,7 +1081,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
             catalog,
         ).read_run(run_id)
 
-    candidate = stored[0].payload["record"]
+    candidate = event_payload_json(stored[0])["record"]
     assert candidate["record_type"] == "candidate"
     assert candidate["schema_version"] == 1
     assert candidate["producer_port"] == "candidate"
@@ -1047,7 +1090,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert candidate["graph_position"] == 1
     assert candidate["payload"] == {"summary": "done"}
 
-    file_state = stored[1].payload
+    file_state = event_payload_json(stored[1])
     assert file_state["record_type"] == "file_state"
     assert file_state["schema_version"] == 1
     assert file_state["producer_port"] == "file_state"
@@ -1060,7 +1103,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "verdict": "captured",
     }
 
-    verification = stored[2].payload["record"]
+    verification = event_payload_json(stored[2])["record"]
     assert verification["record_type"] == "verification_report"
     assert verification["schema_version"] == 1
     assert verification["producer_port"] == "verification_report"
@@ -1072,7 +1115,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "grades": [{"requirement_id": "R-1", "grade": "A", "reason": "satisfied"}],
     }
 
-    check_result = stored[3].payload["record"]
+    check_result = event_payload_json(stored[3])["record"]
     assert check_result["record_type"] == "check_result"
     assert check_result["schema_version"] == 1
     assert check_result["producer_port"] == "check_result"
@@ -1097,7 +1140,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "environment_policy": {},
     }
 
-    decision_request = stored[4].payload["record"]
+    decision_request = event_payload_json(stored[4])["record"]
     assert decision_request["record_type"] == "decision_request"
     assert decision_request["schema_version"] == 1
     assert decision_request["producer_port"] == "decision_request"
@@ -1110,7 +1153,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "consequence_summary": "Approve planner expansion.",
     }
 
-    authority_request = stored[5].payload["record"]
+    authority_request = event_payload_json(stored[5])["record"]
     assert authority_request["record_type"] == "authority_request_record"
     assert authority_request["schema_version"] == 1
     assert authority_request["producer_port"] == "authority_request_record"
@@ -1122,7 +1165,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "reason": "Worker needs docs write access.",
     }
 
-    failure = stored[6].payload["record"]
+    failure = event_payload_json(stored[6])["record"]
     assert failure["record_type"] == "failure_record"
     assert failure["schema_version"] == 1
     assert failure["producer_port"] == "failure_record"
@@ -1135,7 +1178,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "retryable": False,
     }
 
-    recovery_plan = stored[7].payload["record"]
+    recovery_plan = event_payload_json(stored[7])["record"]
     assert recovery_plan["record_type"] == "recovery_plan"
     assert recovery_plan["schema_version"] == 1
     assert recovery_plan["producer_port"] == "recovery_plan"
@@ -1148,7 +1191,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "reason": "retry after transient worker failure",
     }
 
-    run_context = stored[8].payload["record"]
+    run_context = event_payload_json(stored[8])["record"]
     assert run_context["record_type"] == "run_context"
     assert run_context["schema_version"] == 1
     assert run_context["producer_port"] == "run_context"
@@ -1156,7 +1199,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
     assert run_context["graph_position"] == 9
     assert run_context["payload"] == {"routine_id": "routine-1", "routine_name": "Routine"}
 
-    routine_snapshot = stored[9].payload["record"]
+    routine_snapshot = event_payload_json(stored[9])["record"]
     assert routine_snapshot["record_type"] == "routine_snapshot"
     assert routine_snapshot["schema_version"] == 1
     assert routine_snapshot["producer_port"] == "snapshot"
@@ -1170,7 +1213,7 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "task_count": 1,
     }
 
-    artifact_reference = stored[10].payload["record"]
+    artifact_reference = event_payload_json(stored[10])["record"]
     assert artifact_reference["record_type"] == "artifact_reference"
     assert artifact_reference["schema_version"] == 1
     assert artifact_reference["producer_port"] == "artifact"
@@ -1181,7 +1224,9 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
         "artifact_type": "context_source",
         "uri": "docs/spec.md",
     }
-    assert [event.payload.to_json() for event in read_back] == [event.payload for event in stored]
+    assert [event.payload.to_json() for event in read_back] == [
+        event.payload.to_json() for event in stored
+    ]
 
 
 @pytest.mark.asyncio
@@ -1200,7 +1245,7 @@ async def test_append_events_rejects_malformed_accepted_record_atomically(
     }
     events = [
         _event("evt-node", run_id, "node_created", {"node_id": "worker-1", "kind": "worker"}),
-        _event(
+        _invalid_event(
             "evt-bad-record",
             run_id,
             "output_record_accepted",
@@ -1208,7 +1253,7 @@ async def test_append_events_rejects_malformed_accepted_record_atomically(
         ),
     ]
 
-    with pytest.raises(ValueError, match="missing durable record base field: producer_node_id"):
+    with pytest.raises(TypeError, match="HydratedEvent"):
         async with session_factory() as session:
             async with session.begin():
                 await GraphEventStore(
@@ -1253,7 +1298,7 @@ async def test_append_events_rejects_invalid_supplied_durable_base_fields(
         "candidate_id": "candidate-1",
     }
 
-    with pytest.raises(ValueError, match="invalid durable record schema_version"):
+    with pytest.raises(TypeError, match="HydratedEvent"):
         async with session_factory() as session:
             async with session.begin():
                 await GraphEventStore(
@@ -1263,7 +1308,7 @@ async def test_append_events_rejects_invalid_supplied_durable_base_fields(
                     run_id,
                     0,
                     [
-                        _event(
+                        _invalid_event(
                             "evt-bad-schema",
                             run_id,
                             "output_record_accepted",
@@ -1272,7 +1317,7 @@ async def test_append_events_rejects_invalid_supplied_durable_base_fields(
                     ],
                 )
 
-    with pytest.raises(ValueError, match="producer_port does not match port"):
+    with pytest.raises(TypeError, match="HydratedEvent"):
         async with session_factory() as session:
             async with session.begin():
                 await GraphEventStore(
@@ -1282,7 +1327,7 @@ async def test_append_events_rejects_invalid_supplied_durable_base_fields(
                     run_id,
                     0,
                     [
-                        _event(
+                        _invalid_event(
                             "evt-bad-port",
                             run_id,
                             "output_record_accepted",

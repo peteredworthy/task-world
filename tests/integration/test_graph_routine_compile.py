@@ -15,9 +15,11 @@ from orchestrator.graph import (
     FakeClock,
     GraphProjection,
     HydratedEvent,
+    LeaseGrantedPayload,
     NodeCreatedPayload,
     SequentialIdGenerator,
     compile_routine,
+    event_payload_json,
     initial_projection,
     reduce_event,
 )
@@ -134,12 +136,12 @@ async def test_seed_run_persists_demo_graph_and_rebuilds_matching_projection(
 
         assert result.projection_position == len(expected_events)
         assert [event.payload.to_json() for event in stored_events] == [
-            event.payload for event in result.events
+            event.payload.to_json() for event in result.events
         ]
         assert rebuild_projection(build_graph_catalog(), stored_events) == rebuild_projection(
             build_graph_catalog(), result.events
         )
-        snapshot = _node_event(stored_events, "routine-snapshot").payload["snapshot"]
+        snapshot = event_payload_json(_node_event(stored_events, "routine-snapshot"))["snapshot"]
         assert snapshot["source_path"] == "routines/demo-task.yaml"
         assert snapshot["source_ref"] == "test-ref"
         assert outbox_count == 0
@@ -234,12 +236,12 @@ async def test_seed_dynamic_graph_feature_persists_run_inputs(
                 build_graph_catalog(),
             ).read_run("seed-dynamic-feature")
 
-        planner = _node_event(stored_events, "planner-s-01").payload
+        planner = event_payload_json(_node_event(stored_events, "planner-s-01"))
         assert planner["dynamic_feature"] == run_config
         assert "docs/graph-approach/dynamic-smoke-feature-spec.md" in planner["task_context"]
         assert "validation-strengthened" not in planner["task_context"]
         assert "hidden_oracle_binding: dynamic_feature_hidden_oracle" in planner["task_context"]
-        snapshot = _node_event(stored_events, "routine-snapshot").payload["snapshot"]
+        snapshot = event_payload_json(_node_event(stored_events, "routine-snapshot"))["snapshot"]
         assert snapshot["dynamic_feature"] == run_config
     finally:
         await engine.dispose()
@@ -376,8 +378,8 @@ async def test_controller_upstream_failure_blocks_next_step(
         assert _leased_node_ids(blocked.events) == []
         assert any(
             event.event_type == "node_deferred"
-            and event.payload["node_id"] == "worker-s-02-t-02"
-            and event.payload["reason"] == "upstream_failed:worker-s-01-t-01"
+            and event_payload_json(event)["node_id"] == "worker-s-02-t-02"
+            and event_payload_json(event)["reason"] == "upstream_failed:worker-s-01-t-01"
             for event in blocked.events
         )
     finally:
@@ -576,25 +578,25 @@ async def _schedule_ack_and_complete_next(
         {"max_grants": 1, "lease_seconds": 60},
     )
     lease = next(event for event in scheduled.events if event.event_type == "lease_granted")
-    node_id = str(lease.payload["node_id"])
+    node_id = str(event_payload_json(lease)["node_id"])
     acknowledged = await controller.handle_command(
         run_id,
         scheduled.projection_position,
         "acknowledge_start",
         {
             "node_id": node_id,
-            "lease_id": lease.payload["lease_id"],
-            "lease_generation": lease.payload["generation"],
-            "execution_id": lease.payload["execution_id"],
+            "lease_id": event_payload_json(lease)["lease_id"],
+            "lease_generation": event_payload_json(lease)["generation"],
+            "execution_id": event_payload_json(lease)["execution_id"],
         },
     )
     callback_payload = {
         "run_id": run_id,
         "node_id": node_id,
-        "execution_id": lease.payload["execution_id"],
-        "lease_id": lease.payload["lease_id"],
-        "lease_generation": lease.payload["generation"],
-        "base_snapshot_id": lease.payload["base_snapshot_id"],
+        "execution_id": event_payload_json(lease)["execution_id"],
+        "lease_id": event_payload_json(lease)["lease_id"],
+        "lease_generation": event_payload_json(lease)["generation"],
+        "base_snapshot_id": event_payload_json(lease)["base_snapshot_id"],
         "observed_graph_position": acknowledged.projection_position,
         "idempotency_key": f"callback-{node_id}-{new_state}",
         "payload_hash": f"hash-{node_id}-{new_state}",
@@ -707,15 +709,15 @@ def _verification_record(node_id: str) -> dict[str, object]:
 
 def _leased_node_ids(events: list[EventEnvelope]) -> list[str]:
     return [
-        str(event.payload["node_id"]) for event in events if event.event_type == "lease_granted"
+        str(event_payload_json(event)["node_id"])
+        for event in events
+        if event.event_type == "lease_granted"
     ]
 
 
-def _lease_kind(lease_granted: EventEnvelope) -> str:
-    node_id = lease_granted.payload.get("node_id")
-    if isinstance(node_id, str):
-        return node_id.split("-", maxsplit=1)[0]
-    return "worker"
+def _lease_kind(lease_granted: HydratedEvent) -> str:
+    assert isinstance(lease_granted.payload, LeaseGrantedPayload)
+    return lease_granted.payload.node_id.split("-", maxsplit=1)[0]
 
 
 def _node_event(
@@ -725,7 +727,10 @@ def _node_event(
         if isinstance(event, HydratedEvent):
             if event.metadata.event_type == "node_created" and event.payload.node_id == node_id:
                 return event
-        elif event.event_type == "node_created" and event.payload.get("node_id") == node_id:
+        elif (
+            event.event_type == "node_created"
+            and event_payload_json(event).get("node_id") == node_id
+        ):
             return event
     raise AssertionError(f"missing node_created event for {node_id}")
 
@@ -734,7 +739,7 @@ def _accepted_record(events: list[EventEnvelope], record_id: str) -> EventEnvelo
     for event in events:
         if (
             event.event_type == "output_record_accepted"
-            and event.payload["record"]["record_id"] == record_id
+            and event_payload_json(event)["record"]["record_id"] == record_id
         ):
             return event
     raise AssertionError(f"missing output_record_accepted event for {record_id}")

@@ -17,16 +17,18 @@ from orchestrator.config.models import (
 )
 from orchestrator.config.enums import GateType
 from orchestrator.graph import (
-    EventEnvelope,
     FakeClock,
     HydratedEvent,
     SequentialIdGenerator,
     compile_routine,
     initial_projection,
     reduce_event,
+    event_payload_json,
 )
 from tests.graph_command_support import dispatch_graph_command
+from tests.graph_command_support import with_metadata_position
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 def test_routine_maps_to_root_and_routine_snapshot_record_node() -> None:
@@ -36,25 +38,34 @@ def test_routine_maps_to_root_and_routine_snapshot_record_node() -> None:
     assert projection["node_kinds"]["root"] == "root"
     assert projection["node_kinds"]["routine-snapshot"] == "artifact"
     root_record = _accepted_record(events, "run-context")
-    assert root_record.payload["record"]["record_type"] == "run_context"
-    assert root_record.payload["record"]["port"] == "run_context"
-    assert root_record.payload["record"]["schema"] == "RunContext"
-    assert root_record.payload["record"]["value"]["routine_id"] == "minimal"
+    assert event_payload_json(root_record)["record"]["record_type"] == "run_context"
+    assert event_payload_json(root_record)["record"]["port"] == "run_context"
+    assert event_payload_json(root_record)["record"]["schema"] == "RunContext"
+    assert event_payload_json(root_record)["record"]["value"]["routine_id"] == "minimal"
     snapshot_event = _node_event(events, "routine-snapshot")
-    assert snapshot_event.payload["role"] == "routine_snapshot"
-    assert snapshot_event.payload["snapshot"]["routine_id"] == "minimal"
-    assert len(snapshot_event.payload["snapshot"]["content_hash"]) == 64
+    assert event_payload_json(snapshot_event)["role"] == "routine_snapshot"
+    assert event_payload_json(snapshot_event)["snapshot"]["routine_id"] == "minimal"
+    assert len(event_payload_json(snapshot_event)["snapshot"]["content_hash"]) == 64
     snapshot_record = _accepted_record(events, "routine-snapshot-record")
-    assert snapshot_record.payload["record"]["record_type"] == "routine_snapshot"
-    assert snapshot_record.payload["record"]["producer_node_id"] == "routine-snapshot"
-    assert snapshot_record.payload["record"]["value"] == snapshot_event.payload["snapshot"]
+    assert event_payload_json(snapshot_record)["record"]["record_type"] == "routine_snapshot"
+    assert event_payload_json(snapshot_record)["record"]["producer_node_id"] == "routine-snapshot"
+    assert (
+        snapshot_record.payload.record.value.model_dump(mode="json")
+        == snapshot_event.payload.snapshot
+    )
 
 
 def test_routine_snapshot_content_hash_is_deterministic_and_changes_with_content() -> None:
-    first = _node_event(_compile(_minimal_routine()), "routine-snapshot").payload["snapshot"]
-    second = _node_event(_compile(_minimal_routine()), "routine-snapshot").payload["snapshot"]
+    first = event_payload_json(_node_event(_compile(_minimal_routine()), "routine-snapshot"))[
+        "snapshot"
+    ]
+    second = event_payload_json(_node_event(_compile(_minimal_routine()), "routine-snapshot"))[
+        "snapshot"
+    ]
     changed_routine = _routine_with_task(TaskConfig(id="T-01", title="Changed title"))
-    changed = _node_event(_compile(changed_routine), "routine-snapshot").payload["snapshot"]
+    changed = event_payload_json(_node_event(_compile(changed_routine), "routine-snapshot"))[
+        "snapshot"
+    ]
 
     assert first["content_hash"] == second["content_hash"]
     assert first["content_hash"] != changed["content_hash"]
@@ -119,7 +130,7 @@ def test_worker_write_claims_are_scoped_to_declared_artifacts() -> None:
     )
 
     events = _compile(routine)
-    worker = _node_event(events, "worker-s-01-t-01").payload
+    worker = event_payload_json(_node_event(events, "worker-s-01-t-01"))
 
     assert worker["resource_claims"] == [
         {"mode": "write", "scope": "repo", "paths": ["docs/out.md", "tests/out.md"]}
@@ -163,20 +174,17 @@ def test_same_step_artifact_scoped_workers_can_schedule_without_conflict() -> No
     )
 
     lease_grants = schedule_events_by_type(schedule_events, "lease_granted")
-    assert [event.payload["node_id"] for event in lease_grants] == [
+    assert [event.payload.node_id for event in lease_grants] == [
         "worker-s-01-docs",
         "worker-s-01-tests",
     ]
-    assert [event.payload["resource_claims"][0]["paths"] for event in lease_grants] == [
+    assert [event.payload.resource_claims[0].paths for event in lease_grants] == [
         ["docs/a.md"],
         ["tests/a.txt"],
     ]
     assert any(
-        event.payload
-        == {
-            "node_id": "worker-s-01-docs-overlap",
-            "reason": "resource_conflict:write:write",
-        }
+        event.payload.node_id == "worker-s-01-docs-overlap"
+        and event.payload.reason == "resource_conflict:write:write"
         for event in schedule_events_by_type(schedule_events, "node_deferred")
     )
 
@@ -198,8 +206,8 @@ def test_requirements_map_to_requirement_nodes_and_bound_edges_to_worker_and_ver
     assert projection["node_kinds"][requirement_id] == "requirement"
     assert projection["node_kinds"]["verifier-s-01-t-01"] == "verifier"
     requirement_event = _node_event(events, requirement_id)
-    assert requirement_event.payload["outputs"][0]["schema"] == "RequirementRecord"
-    assert requirement_event.payload["requirement"] == {
+    assert event_payload_json(requirement_event)["outputs"][0]["schema"] == "RequirementRecord"
+    assert event_payload_json(requirement_event)["requirement"] == {
         "id": "R-01",
         "text": "Must be done",
         "desc": "Must be done",
@@ -208,7 +216,7 @@ def test_requirements_map_to_requirement_nodes_and_bound_edges_to_worker_and_ver
         "version": "initial",
         "must": True,
     }
-    assert requirement_event.payload["requirement_record"] == {
+    assert event_payload_json(requirement_event)["requirement_record"] == {
         "record_id": requirement_id,
         "record_kind": "graph_record",
         "record_type": "requirement_record",
@@ -406,9 +414,9 @@ def test_context_dependency_maps_to_bound_input_edge() -> None:
     )
     assert "context_0" in projection["input_bindings"]["worker-s-01-t-01"]
     artifact_record = _accepted_record(events, "artifact-reference-s-01-t-01-0")
-    assert artifact_record.payload["record"]["record_type"] == "artifact_reference"
-    assert artifact_record.payload["record"]["producer_node_id"] == context_id
-    assert artifact_record.payload["record"]["value"]["uri"] == "docs/plan.md"
+    assert event_payload_json(artifact_record)["record"]["record_type"] == "artifact_reference"
+    assert event_payload_json(artifact_record)["record"]["producer_node_id"] == context_id
+    assert event_payload_json(artifact_record)["record"]["value"]["uri"] == "docs/plan.md"
     assert projection["input_bindings"]["worker-s-01-t-01"]["context_0"]["record_ids"] == [
         "artifact-reference-s-01-t-01-0"
     ]
@@ -432,11 +440,16 @@ def test_fan_out_maps_to_reader_template_and_distinct_synthesis_join_template() 
     projection = _project(events)
 
     assert projection["node_kinds"]["fanout-reader-s-01-t-01"] == "planner"
-    assert _node_event(events, "fanout-reader-s-01-t-01").payload["role"] == "fan_out_reader"
+    assert (
+        event_payload_json(_node_event(events, "fanout-reader-s-01-t-01"))["role"]
+        == "fan_out_reader"
+    )
     assert projection["node_kinds"]["fanout-join-s-01-t-01"] == "planner"
-    assert _node_event(events, "fanout-join-s-01-t-01").payload["role"] == "fan_out_join"
+    assert (
+        event_payload_json(_node_event(events, "fanout-join-s-01-t-01"))["role"] == "fan_out_join"
+    )
     assert projection["node_kinds"]["worker-s-01-t-01"] == "worker"
-    assert _node_event(events, "worker-s-01-t-01").payload["role"] == "builder"
+    assert event_payload_json(_node_event(events, "worker-s-01-t-01"))["role"] == "builder"
     assert any(
         edge["from_node_id"] == "fanout-reader-s-01-t-01"
         and edge["to_node_id"] == "fanout-join-s-01-t-01"
@@ -470,9 +483,9 @@ def test_minimal_single_task_graph_has_exact_minimum_executable_node_set_and_sch
     )
 
     assert "lease_granted" in [event.event_type for event in schedule_events]
-    assert schedule_events_by_type(schedule_events, "lease_granted")[0].payload["node_id"] == (
-        "worker-s-01-t-01"
-    )
+    assert event_payload_json(schedule_events_by_type(schedule_events, "lease_granted")[0])[
+        "node_id"
+    ] == ("worker-s-01-t-01")
 
 
 def test_compile_planner_step_seeds_chain_head() -> None:
@@ -488,8 +501,8 @@ def test_compile_planner_step_seeds_chain_head() -> None:
 
     assert projection["planner_generation_budget"] == 3
     assert projection["node_kinds"]["planner-plan"] == "planner"
-    assert _node_event(events, "planner-plan").payload["role"] == "planner"
-    assert _node_event(events, "planner-plan").payload["generation_index"] == 0
+    assert event_payload_json(_node_event(events, "planner-plan"))["role"] == "planner"
+    assert event_payload_json(_node_event(events, "planner-plan"))["generation_index"] == 0
     assert projection["input_bindings"]["planner-plan"]["routine_snapshot"]["record_ids"] == [
         "routine-snapshot-record"
     ]
@@ -530,7 +543,7 @@ def test_dynamic_graph_feature_run_inputs_seed_planner_context() -> None:
         )
     ]
 
-    planner = _node_event(events, "planner-s-01").payload
+    planner = event_payload_json(_node_event(events, "planner-s-01"))
     dynamic_feature = planner["dynamic_feature"]
     assert dynamic_feature == {
         "feature_spec_path": "docs/graph-approach/dynamic-smoke-feature-spec.md",
@@ -547,7 +560,7 @@ def test_dynamic_graph_feature_run_inputs_seed_planner_context() -> None:
     assert "uv run pytest tests/oracle -q" not in planner["task_context"]
     assert "hidden_oracle_binding: dynamic_feature_hidden_oracle" in planner["task_context"]
 
-    snapshot = _node_event(events, "routine-snapshot").payload["snapshot"]
+    snapshot = event_payload_json(_node_event(events, "routine-snapshot"))["snapshot"]
     assert snapshot["dynamic_feature"] == dynamic_feature
 
 
@@ -602,11 +615,11 @@ def test_compiled_projection_schedules_first_worker_and_blocks_downstream_step()
     )
 
     lease_grants = schedule_events_by_type(schedule_events, "lease_granted")
-    assert [event.payload["node_id"] for event in lease_grants] == ["worker-s-01-t-01"]
+    assert [event.payload.node_id for event in lease_grants] == ["worker-s-01-t-01"]
     deferred = schedule_events_by_type(schedule_events, "node_deferred")
     assert any(
-        event.payload["node_id"] == "worker-s-02-t-02"
-        and event.payload["reason"] == "upstream_pending:worker-s-01-t-01"
+        event.payload.node_id == "worker-s-02-t-02"
+        and event.payload.reason == "upstream_pending:worker-s-01-t-01"
         for event in deferred
     )
 
@@ -621,7 +634,7 @@ def test_two_step_routine_worker_completion_unblocks_next_step_worker() -> None:
         ),
     )
     first_lease = schedule_events_by_type(first_tick, "lease_granted")[0]
-    assert first_lease.payload["node_id"] == "worker-s-01-t-01"
+    assert event_payload_json(first_lease)["node_id"] == "worker-s-01-t-01"
     events = [*events, *first_tick]
     started = _append(
         events,
@@ -643,7 +656,7 @@ def test_two_step_routine_worker_completion_unblocks_next_step_worker() -> None:
         events, "schedule_tick", {"run_id": "run-1", "max_grants": 10, "lease_seconds": 300}
     )
     second_grants = schedule_events_by_type(second_tick, "lease_granted")
-    assert [event.payload["node_id"] for event in second_grants] == ["worker-s-02-t-02"]
+    assert [event.payload.node_id for event in second_grants] == ["worker-s-02-t-02"]
 
 
 def test_two_step_routine_worker_failure_blocks_next_step_worker() -> None:
@@ -673,8 +686,8 @@ def test_two_step_routine_worker_failure_blocks_next_step_worker() -> None:
 
     assert schedule_events_by_type(second_tick, "lease_granted") == []
     assert any(
-        event.payload["node_id"] == "worker-s-02-t-02"
-        and event.payload["reason"] == "upstream_failed:worker-s-01-t-01"
+        event.payload.node_id == "worker-s-02-t-02"
+        and event.payload.reason == "upstream_failed:worker-s-01-t-01"
         for event in schedule_events_by_type(second_tick, "node_deferred")
     )
 
@@ -710,7 +723,7 @@ def _routine_with_task(task: TaskConfig) -> RoutineConfig:
     )
 
 
-def _compile(routine: RoutineConfig) -> list[EventEnvelope]:
+def _compile(routine: RoutineConfig) -> list[HydratedEvent]:
     catalog = build_graph_catalog()
     hydrated = compile_routine(
         routine,
@@ -722,24 +735,28 @@ def _compile(routine: RoutineConfig) -> list[EventEnvelope]:
     return [_persisted_envelope(event) for event in hydrated]
 
 
-def _persisted_envelope(event: HydratedEvent) -> EventEnvelope:
+def _persisted_envelope(event: HydratedEvent) -> HydratedEvent:
     """Exercise legacy projection and command fixtures at their storage boundary."""
 
-    return EventEnvelope(
-        event_id=event.metadata.event_id,
-        run_id=event.metadata.run_id,
-        position=event.metadata.position,
-        event_type=event.metadata.event_type,
-        schema_version=event.metadata.payload_schema_generation,
-        actor=event.metadata.actor,
-        causation_id=event.metadata.causation_id,
-        correlation_id=event.metadata.correlation_id,
-        timestamp=event.metadata.timestamp,
-        payload=event.payload.model_dump(mode="json", by_alias=True, exclude_unset=True),
+    return (
+        build_graph_catalog()
+        .resolve_event(event.metadata.event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=event.metadata.event_id,
+                run_id=event.metadata.run_id,
+                position=event.metadata.position,
+                event_type=event.metadata.event_type,
+                payload_schema_generation=2,
+                actor=event.metadata.actor,
+                timestamp=event.metadata.timestamp,
+                payload=event.payload.model_dump(mode="json", by_alias=True),
+            )
+        )
     )
 
 
-def _project(events: list[EventEnvelope]) -> Any:
+def _project(events: list[HydratedEvent]) -> Any:
     projection = initial_projection()
     for event in events:
         projection = reduce_event(build_graph_catalog(), projection, event)
@@ -747,50 +764,48 @@ def _project(events: list[EventEnvelope]) -> Any:
 
 
 def _apply(
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     command_type: str,
     payload: dict[str, Any],
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     return dispatch_graph_command(events, command_type, payload)
 
 
-def _with_lifecycle_started(events: list[EventEnvelope]) -> list[EventEnvelope]:
+def _with_lifecycle_started(events: list[HydratedEvent]) -> list[HydratedEvent]:
     accepted = _apply(events, "accept_run", {"run_id": "run-1"})
     queued_events = [*events, *accepted]
     started = _apply(queued_events, "start", {"run_id": "run-1"})
     return [*queued_events, *started]
 
 
-def _with_positions(events: list[EventEnvelope]) -> list[EventEnvelope]:
-    return [
-        event.model_copy(update={"position": index}) for index, event in enumerate(events, start=1)
-    ]
+def _with_positions(events: list[HydratedEvent]) -> list[HydratedEvent]:
+    return [with_metadata_position(event, index) for index, event in enumerate(events, start=1)]
 
 
 def _append(
-    existing_events: list[EventEnvelope],
-    new_events: list[EventEnvelope],
-) -> list[EventEnvelope]:
+    existing_events: list[HydratedEvent],
+    new_events: list[HydratedEvent],
+) -> list[HydratedEvent]:
     position = max((event.position for event in existing_events), default=0)
     return [
-        event.model_copy(update={"position": position + offset})
+        with_metadata_position(event, position + offset)
         for offset, event in enumerate(new_events, start=1)
     ]
 
 
 def _callback_payload(
-    lease_granted: EventEnvelope,
+    lease_granted: HydratedEvent,
     *,
     new_state: str = "completed",
 ) -> dict[str, Any]:
-    node_id = str(lease_granted.payload["node_id"])
+    node_id = str(event_payload_json(lease_granted)["node_id"])
     payload: dict[str, Any] = {
         "run_id": "run-1",
         "node_id": node_id,
-        "execution_id": lease_granted.payload["execution_id"],
-        "lease_id": lease_granted.payload["lease_id"],
-        "lease_generation": lease_granted.payload["generation"],
-        "base_snapshot_id": lease_granted.payload["base_snapshot_id"],
+        "execution_id": event_payload_json(lease_granted)["execution_id"],
+        "lease_id": event_payload_json(lease_granted)["lease_id"],
+        "lease_generation": event_payload_json(lease_granted)["generation"],
+        "base_snapshot_id": event_payload_json(lease_granted)["base_snapshot_id"],
         "observed_graph_position": lease_granted.position,
         "idempotency_key": f"callback-{node_id}-{new_state}",
         "payload_hash": f"hash-{node_id}-{new_state}",
@@ -815,7 +830,7 @@ def _callback_payload(
                     "port": "file_state",
                     "schema": "FileStateRecord",
                     "snapshot_id": f"snapshot-{node_id}",
-                    "base_snapshot_id": lease_granted.payload["base_snapshot_id"],
+                    "base_snapshot_id": event_payload_json(lease_granted)["base_snapshot_id"],
                     "verdict": "captured",
                 },
             ],
@@ -823,26 +838,29 @@ def _callback_payload(
     return payload
 
 
-def _start_payload(lease_granted: EventEnvelope) -> dict[str, Any]:
+def _start_payload(lease_granted: HydratedEvent) -> dict[str, Any]:
     return {
         "run_id": "run-1",
-        "node_id": lease_granted.payload["node_id"],
-        "execution_id": lease_granted.payload["execution_id"],
-        "lease_id": lease_granted.payload["lease_id"],
-        "lease_generation": lease_granted.payload["generation"],
+        "node_id": event_payload_json(lease_granted)["node_id"],
+        "execution_id": event_payload_json(lease_granted)["execution_id"],
+        "lease_id": event_payload_json(lease_granted)["lease_id"],
+        "lease_generation": event_payload_json(lease_granted)["generation"],
     }
 
 
-def _node_event(events: list[EventEnvelope], node_id: str) -> EventEnvelope:
+def _node_event(events: list[HydratedEvent], node_id: str) -> HydratedEvent:
     for event in events:
-        if event.event_type == "node_created" and event.payload.get("node_id") == node_id:
+        if (
+            event.event_type == "node_created"
+            and event_payload_json(event).get("node_id") == node_id
+        ):
             return event
     raise AssertionError(f"missing node_created event for {node_id}")
 
 
-def _accepted_record(events: list[EventEnvelope], record_id: str) -> EventEnvelope:
+def _accepted_record(events: list[HydratedEvent], record_id: str) -> HydratedEvent:
     for event in events:
-        record = event.payload.get("record")
+        record = event_payload_json(event).get("record")
         if (
             event.event_type == "output_record_accepted"
             and isinstance(record, dict)
@@ -858,5 +876,5 @@ def _node_ids_by_kind(projection: Any, kind: str) -> list[str]:
     )
 
 
-def schedule_events_by_type(events: list[EventEnvelope], event_type: str) -> list[EventEnvelope]:
+def schedule_events_by_type(events: list[HydratedEvent], event_type: str) -> list[HydratedEvent]:
     return [event for event in events if event.event_type == event_type]

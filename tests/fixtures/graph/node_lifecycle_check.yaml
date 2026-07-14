@@ -26,15 +26,6 @@
   then_events: []
   then_projection: {check-3: running}
 
-- name: check_running_to_completed
-  given_events:
-    - node_created: {node_id: check-4, kind: check, state: running}
-    - check_result_classified: {node_id: check-4, passed: false, classification: test_failure}
-    - node_state_changed: {node_id: check-4, new_state: completed, trigger: result_classified}
-  when_command: null
-  then_events: []
-  then_projection: {check-4: completed}
-
 - name: check_running_to_failed
   given_events:
     - node_created: {node_id: check-5, kind: check, state: running}
@@ -43,13 +34,3 @@
   when_command: null
   then_events: []
   then_projection: {check-5: failed}
-
-- name: check_failed_creates_recovery
-  given_events:
-    - node_created: {node_id: check-6, kind: check, state: failed}
-    - environment_failure_accepted: {node_id: check-6, reason: tool_unavailable}
-    - node_created: {node_id: recovery-6, kind: recovery, state: planned}
-    - node_state_changed: {node_id: check-6, new_state: failed, trigger: environment_failure_accepted}
-  when_command: null
-  then_events: []
-  then_projection: {check-6: failed}

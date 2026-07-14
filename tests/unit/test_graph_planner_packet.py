@@ -3,11 +3,14 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from orchestrator.graph import (
     PLANNER_OPS,
     Actor,
     ActorKind,
     EventEnvelope,
+    EventMetadata,
     GraphProjection,
     initial_projection,
 )
@@ -20,6 +23,7 @@ from orchestrator.graph_runtime.dispatch import (
 )
 from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import GraphCatalog
+from orchestrator.graph import UnknownGraphEventError
 
 
 def _event(
@@ -28,20 +32,19 @@ def _event(
     position: int,
     run_id: str = "run-planner-packet",
 ) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"event-{position}",
-        run_id=run_id,
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.SCHEDULER),
-        causation_id="test",
-        correlation_id=None,
-        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    catalog = build_graph_catalog()
+    specification = catalog.resolve_event(event_type)
+    return specification.create(
+        EventMetadata(
+            event_id=f"event-{position}",
+            run_id=run_id,
+            position=position,
+            event_type=event_type,
+            payload_schema_generation=2,
+            actor=Actor(kind=ActorKind.SCHEDULER),
+            timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        ),
+        specification.validate_payload(payload),
     )
 
 
@@ -280,16 +283,6 @@ def _graph_events() -> list[EventEnvelope]:
             13,
         ),
         _event(
-            "environment_failure_accepted",
-            {
-                "node_id": "worker-1",
-                "task_region_id": "region-1",
-                "classification": "tool_error",
-                "reason": "API timeout",
-            },
-            14,
-        ),
-        _event(
             "graph_patch_accepted",
             {
                 "patch_id": "patch-beta",
@@ -370,15 +363,7 @@ def test_planner_packet_includes_generation_frontier_evidence_and_rejections(
         for record in packet["evidence"]["bound_records"].get("region_summary", [])
     )
     assert packet["evidence"]["session_carryover_record_id"] == "carryover-1"
-    assert packet["evidence"]["outstanding_failures"] == [
-        {
-            "position": 14,
-            "classification": "tool_error",
-            "reason": "API timeout",
-            "node_id": "worker-1",
-            "task_region_id": "region-1",
-        }
-    ]
+    assert packet["evidence"]["outstanding_failures"] == []
     assert packet["open_planner_proposals"] == []
     assert packet["accepted_planner_patches"] == [
         {
@@ -477,7 +462,7 @@ def test_planner_packet_includes_requirement_freshness_facts(*, catalog: GraphCa
     }
 
 
-def test_planner_packet_deterministic_ordering_and_unknown_event_tolerance(
+def test_planner_packet_deterministic_ordering_and_unknown_event_rejection(
     *, catalog: GraphCatalog
 ) -> None:
     base_events = _graph_events()
@@ -491,7 +476,6 @@ def test_planner_packet_deterministic_ordering_and_unknown_event_tolerance(
         base_events[4],
         base_events[1],
         base_events[11],
-        base_events[15],
         base_events[13],
         base_events[2],
         base_events[8],
@@ -514,12 +498,8 @@ def test_planner_packet_deterministic_ordering_and_unknown_event_tolerance(
         == shuffled_packet["frontier"]["blocked_or_deferred_nodes"]
     )
 
-    with_unknown = [
-        *shuffled_events,
-        _event("mystery_signal", {"text": "noise"}, -1),
-    ]
-    noisy_context = _planner_context(with_unknown)
-    assert _planner_packet(noisy_context, catalog=build_graph_catalog()) == shuffled_packet
+    with pytest.raises(UnknownGraphEventError, match="mystery_signal"):
+        _event("mystery_signal", {"text": "noise"}, -1)
 
 
 def test_prompt_routing_for_planner_worker_and_verifier(*, catalog: GraphCatalog) -> None:

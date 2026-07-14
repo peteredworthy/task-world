@@ -8,14 +8,9 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Protocol, TypeVar
 
-from pydantic import ValidationError
-
-from orchestrator.graph.models import EventEnvelope
-from orchestrator.graph.payloads import LegacyEventPayload
 from orchestrator.graph.specifications import (
     CommandSpecification,
     EventSpecification,
-    EventMetadata,
     HydratedEvent,
     StoredEventEnvelope,
 )
@@ -102,33 +97,8 @@ class GraphCatalog:
     def hydrate_event(self, stored: StoredEventEnvelope) -> HydratedEvent:
         """Hydrate one durable event through its owning specification."""
 
-        specification = self.event_specs.get(stored.event_type)
-        if specification is not None:
-            try:
-                return specification.hydrate(stored)
-            except ValidationError:
-                if stored.source_schema_version != 1:
-                    raise
-        if stored.source_schema_version == 1:
-            return HydratedEvent(
-                metadata=EventMetadata.model_validate(
-                    stored.model_dump(exclude={"payload", "source_schema_version"})
-                ),
-                payload=LegacyEventPayload(data=stored.payload),
-            )
-        raise UnknownGraphEventError(f"unknown graph event: {stored.event_type}")
-
-    def reduce_stored_event(self, state: Any, event: EventEnvelope) -> tuple[bool, Any]:
-        """Hydrate a catalog-owned event once; leave future-domain events to legacy projection."""
-
-        specification = self.event_specs.get(event.event_type)
-        if specification is None:
-            return False, state
-        stored = event.model_dump()
-        stored["payload"] = event.model_dump(mode="json")["payload"]
-        stored["payload_schema_generation"] = stored.pop("schema_version")
-        hydrated = specification.hydrate(StoredEventEnvelope.model_validate(stored))
-        return True, specification.reduce(state, hydrated)
+        specification = self.resolve_event(stored.event_type)
+        return specification.hydrate(stored)
 
 
 def build_graph_catalog() -> GraphCatalog:

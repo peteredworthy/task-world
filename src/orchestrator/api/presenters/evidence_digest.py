@@ -15,10 +15,15 @@ from orchestrator.api.schemas.runs import (
     RunEvidenceDigestScheduler,
 )
 from orchestrator.graph import (
-    EventEnvelope,
     GraphCatalog,
     GraphProjection,
+    HydratedEvent,
+    LeaseGrantedPayload,
+    NodeCreatedPayload,
+    NodeStateChangedPayload,
+    OutputRecordAcceptedPayload,
     SchedulerView,
+    StrictFileStateRecord,
     build_projection,
     project_decision_view,
     project_lease_view,
@@ -52,24 +57,21 @@ def _task_status_counts(run: Run) -> dict[str, int]:
     return counts
 
 
-def _graph_event_count(events: list[EventEnvelope]) -> int:
+def _graph_event_count(events: list[HydratedEvent]) -> int:
     if not events:
         return 0
     return max(event.position for event in events)
 
 
-def _node_creation_payloads(events: list[EventEnvelope]) -> dict[str, dict[str, Any]]:
-    payloads: dict[str, dict[str, Any]] = {}
+def _node_creation_payloads(events: list[HydratedEvent]) -> dict[str, NodeCreatedPayload]:
+    payloads: dict[str, NodeCreatedPayload] = {}
     for event in events:
-        if event.event_type != "node_created":
-            continue
-        node_id = event.payload.get("node_id")
-        if isinstance(node_id, str):
-            payloads[node_id] = dict(event.payload)
+        if event.event_type == "node_created" and isinstance(event.payload, NodeCreatedPayload):
+            payloads[event.payload.node_id] = event.payload
     return payloads
 
 
-def _node_evidence_summary(node_id: str, events: list[EventEnvelope], state: str | None) -> str:
+def _node_evidence_summary(node_id: str, events: list[HydratedEvent], state: str | None) -> str:
     output_records = 0
     file_state_records = 0
     state_changes = 0
@@ -77,26 +79,31 @@ def _node_evidence_summary(node_id: str, events: list[EventEnvelope], state: str
     lease_generation = None
 
     for event in events:
-        payload = event.payload
         if (
             event.event_type == "output_record_accepted"
-            and isinstance(payload.get("record"), dict)
-            and payload["record"].get("producer_node_id") == node_id
+            and isinstance(event.payload, OutputRecordAcceptedPayload)
+            and event.payload.record.producer_node_id == node_id
         ):
             output_records += 1
         elif (
-            event.event_type == "file_state_accepted" and payload.get("producer_node_id") == node_id
+            event.event_type == "file_state_accepted"
+            and isinstance(event.payload, StrictFileStateRecord)
+            and event.payload.producer_node_id == node_id
         ):
             file_state_records += 1
-        elif event.event_type == "node_state_changed" and payload.get("node_id") == node_id:
+        elif (
+            event.event_type == "node_state_changed"
+            and isinstance(event.payload, NodeStateChangedPayload)
+            and event.payload.node_id == node_id
+        ):
             state_changes += 1
-        elif event.event_type == "lease_granted" and payload.get("node_id") == node_id:
+        elif (
+            event.event_type == "lease_granted"
+            and isinstance(event.payload, LeaseGrantedPayload)
+            and event.payload.node_id == node_id
+        ):
             lease_state = "active"
-            generation = payload.get("generation")
-            if isinstance(generation, int):
-                lease_generation = generation
-        elif event.event_type == "lease_suspended" and payload.get("node_id") == node_id:
-            lease_state = "suspended"
+            lease_generation = event.payload.generation
 
     parts = [f"state={state or 'unknown'}"]
     if lease_state is not None:
@@ -131,7 +138,7 @@ def _node_blockers(
 
 
 def _representative_nodes(
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     *,
     projection: GraphProjection,
     scheduler_view: SchedulerView,
@@ -153,10 +160,12 @@ def _representative_nodes(
     entries: list[RepresentativeNodeEvidence] = []
     for node_id in sorted(node_states)[:max_nodes]:
         metadata = node_metadata.get(node_id, {})
-        payload = creation_payloads.get(node_id, {})
-        title = payload.get("title")
-        if not isinstance(title, str) or not title:
-            title = payload.get("task_id") if isinstance(payload.get("task_id"), str) else node_id
+        payload = creation_payloads.get(node_id)
+        title = payload.title if payload is not None else None
+        if not title:
+            title = (
+                payload.task_id if payload is not None and payload.task_id is not None else node_id
+            )
         state = node_states.get(node_id)
         blockers = _node_blockers(
             node_id,
@@ -168,7 +177,7 @@ def _representative_nodes(
                 node_id=node_id,
                 state=state,
                 role=metadata.get("role") if isinstance(metadata.get("role"), str) else None,
-                title=title if isinstance(title, str) else node_id,
+                title=title,
                 evidence_summary=(
                     _node_evidence_summary(node_id, events, state)
                     if include_node_evidence
@@ -183,7 +192,7 @@ def _representative_nodes(
 
 def build_run_evidence_digest_response(
     run: Run,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     *,
     pending_actions: list[dict[str, Any]] | None = None,
     max_nodes: int = 3,

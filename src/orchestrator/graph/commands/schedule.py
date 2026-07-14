@@ -10,12 +10,15 @@ from orchestrator.graph._commands import (
     Clock,
     GraphProjection,
     IdGenerator,
-    EventEnvelope,
     apply_reconcile,
     schedule_tick_effects,
 )
 from orchestrator.graph.payloads import StrictPayload
-from orchestrator.graph.specifications import CommandExecutionContext, CommandSpecification
+from orchestrator.graph.specifications import (
+    CommandExecutionContext,
+    CommandSpecification,
+    HydratedEvent,
+)
 from orchestrator.graph._commands import event_factory
 from orchestrator.graph.scheduler import InputEdgeInfo, NodeScheduleInfo, ResourceClaim
 
@@ -139,9 +142,9 @@ def _claim_from_projection(claim: Any) -> ResourceClaim:
 def _execute_schedule_tick(
     command: ScheduleTickCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     """Keep the strict command boundary in the scheduling domain."""
 
     return schedule_tick_effects(
@@ -150,14 +153,14 @@ def _execute_schedule_tick(
         command.to_json(),
         context.clock,
         context.id_generator,
-        event_factory(context.run_id, "schedule_tick", context.clock, context.id_generator),
+        event_factory(context, "schedule_tick"),
     )
 
 
 def _typed_schedule(
     command: ScheduleTickCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ):
     return _execute_schedule_tick(command, projection, events, context)
@@ -166,14 +169,14 @@ def _typed_schedule(
 def _typed_reconcile(
     command: ReconcileCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ):
     del command
     return apply_reconcile(
         projection,
         list(events),
-        event_factory(context.run_id, "reconcile", context.clock, context.id_generator),
+        event_factory(context, "reconcile"),
     )
 
 
@@ -184,26 +187,26 @@ COMMAND_SPECIFICATIONS = (SCHEDULE_TICK, RECONCILE)
 
 def handle_schedule_tick(
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     command_type: str,
     payload: ScheduleTickCommand,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     clock: Clock,
     id_gen: IdGenerator,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     del command_type
     return schedule_tick_effects(projection, events, payload.to_json(), clock, id_gen, make_event)
 
 
 def handle_reconcile(
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     command_type: str,
     payload: ReconcileCommand,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     clock: Clock,
     id_gen: IdGenerator,
-) -> list[EventEnvelope]:
+) -> list[HydratedEvent]:
     del command_type
     del payload
     del clock

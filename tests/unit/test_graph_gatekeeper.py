@@ -8,8 +8,11 @@ from pydantic import ValidationError
 from orchestrator.graph import (
     Actor,
     ActorKind,
+    CleanupRequestedPayload,
+    CommandRejectedPayload,
     EventEnvelope,
     FakeClock,
+    HydratedEvent,
     SequentialIdGenerator,
     apply_command as apply_typed_command,
     build_graph_command_dependencies,
@@ -20,48 +23,39 @@ from orchestrator.graph import (
     reduce_event,
 )
 from orchestrator.graph import build_graph_catalog
-from orchestrator.graph.specifications import CommandExecutionContext, HydratedEvent
+from orchestrator.graph.specifications import CommandExecutionContext
+from orchestrator.graph import StoredEventEnvelope
 
 
 def apply_command(projection, events, command_type, payload, clock, id_gen):
     payload = dict(payload)
     run_id = payload.pop("run_id", "run-1")
     catalog = build_graph_catalog()
+    context = CommandExecutionContext(
+        run_id=run_id,
+        current_position=len(events),
+        clock=clock,
+        id_generator=id_gen,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        events=tuple(events),
+        future_effects=build_graph_command_dependencies(
+            catalog=build_graph_catalog()
+        ).future_effects,
+        catalog=catalog,
+    )
     output = apply_typed_command(
+        catalog,
         projection,
         events,
         command_type,
         payload,
-        clock,
-        id_gen,
-        catalog=catalog,
-        context=CommandExecutionContext(
-            run_id=run_id,
-            current_position=len(events),
-            clock=clock,
-            id_generator=id_gen,
-            actor=Actor(kind=ActorKind.CONTROLLER),
-            events=(),
-            future_effects=build_graph_command_dependencies(
-                catalog=build_graph_catalog()
-            ).future_effects,
-        ),
+        context,
     )
     return [_stored_event(event) if isinstance(event, HydratedEvent) else event for event in output]
 
 
-def _stored_event(event: HydratedEvent) -> EventEnvelope:
-    metadata = event.metadata
-    return EventEnvelope(
-        event_id=metadata.event_id,
-        run_id=metadata.run_id,
-        position=metadata.position,
-        event_type=metadata.event_type,
-        schema_version=metadata.payload_schema_generation,
-        actor=metadata.actor,
-        timestamp=metadata.timestamp,
-        payload=event.payload.to_json(),
-    )
+def _stored_event(event: HydratedEvent) -> HydratedEvent:
+    return event
 
 
 def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
@@ -112,7 +106,8 @@ def test_record_gatekeeper_verdicts_rejects_unknown_record_id() -> None:
     )
 
     assert emitted[0].event_type == "command_rejected"
-    assert emitted[0].payload["reason"] == "unknown file_state record: missing"
+    assert isinstance(emitted[0].payload, CommandRejectedPayload)
+    assert emitted[0].payload.reason == "unknown file_state record: missing"
 
 
 def test_record_gatekeeper_verdicts_rejects_path_not_in_residue() -> None:
@@ -135,7 +130,8 @@ def test_record_gatekeeper_verdicts_rejects_path_not_in_residue() -> None:
     )
 
     assert emitted[0].event_type == "command_rejected"
-    assert emitted[0].payload["reason"] == "path is not unresolved residue: other.out"
+    assert isinstance(emitted[0].payload, CommandRejectedPayload)
+    assert emitted[0].payload.reason == "path is not unresolved residue: other.out"
 
 
 def test_record_gatekeeper_verdicts_rejects_invalid_taxonomy_value() -> None:
@@ -216,7 +212,8 @@ def test_record_gatekeeper_verdicts_rejects_duplicate_already_resolved_path() ->
     )
 
     assert emitted[0].event_type == "command_rejected"
-    assert emitted[0].payload["reason"] == "path is not unresolved residue: tmp.out"
+    assert isinstance(emitted[0].payload, CommandRejectedPayload)
+    assert emitted[0].payload.reason == "path is not unresolved residue: tmp.out"
 
 
 def test_project_pattern_library_derives_and_merges_globs() -> None:
@@ -283,7 +280,8 @@ def test_record_gatekeeper_verdicts_rejects_duplicate_path_in_same_payload() -> 
     )
 
     assert emitted[0].event_type == "command_rejected"
-    assert emitted[0].payload["reason"] == "duplicate verdict path: tmp.out"
+    assert isinstance(emitted[0].payload, CommandRejectedPayload)
+    assert emitted[0].payload.reason == "duplicate verdict path: tmp.out"
 
 
 def test_record_gatekeeper_verdicts_secret_requests_cleanup_and_marks_projection() -> None:
@@ -311,9 +309,10 @@ def test_record_gatekeeper_verdicts_secret_requests_cleanup_and_marks_projection
         "gatekeeper_cost_recorded",
     ]
     cleanup = emitted[1]
-    assert cleanup.payload["snapshot_id"] == "snapshot-file-state-1"
-    assert cleanup.payload["paths"] == ["residue.txt"]
-    assert cleanup.payload["authority"] == "gatekeeper"
+    assert isinstance(cleanup.payload, CleanupRequestedPayload)
+    assert cleanup.payload.snapshot_id == "snapshot-file-state-1"
+    assert cleanup.payload.paths == ("residue.txt",)
+    assert cleanup.payload.authority == "gatekeeper"
 
     projection = _project([*events, *emitted])
     record = projection["file_state_records"]["file-state-1"]
@@ -340,7 +339,8 @@ def test_record_cleanup_applied_rejects_unknown_cleanup() -> None:
     )
 
     assert emitted[0].event_type == "command_rejected"
-    assert emitted[0].payload["reason"] == "unknown cleanup_requested: missing-cleanup"
+    assert isinstance(emitted[0].payload, CommandRejectedPayload)
+    assert emitted[0].payload.reason == "unknown cleanup_requested: missing-cleanup"
 
 
 def test_record_cleanup_applied_rejects_duplicate_cleanup() -> None:
@@ -351,8 +351,10 @@ def test_record_cleanup_applied_rejects_duplicate_cleanup() -> None:
         "record_cleanup_applied",
         {
             "run_id": "run-1",
-            "cleanup_id": "cleanup-1",
-            "superseding_file_state_record": _superseding_record(cleanup_id="cleanup-1"),
+            "cleanup_id": "file-state-1:gatekeeper-secret",
+            "superseding_file_state_record": _superseding_record(
+                cleanup_id="file-state-1:gatekeeper-secret"
+            ),
             "deleted_snapshot_ref": True,
         },
         FakeClock(),
@@ -365,8 +367,10 @@ def test_record_cleanup_applied_rejects_duplicate_cleanup() -> None:
         "record_cleanup_applied",
         {
             "run_id": "run-1",
-            "cleanup_id": "cleanup-1",
-            "superseding_file_state_record": _superseding_record(cleanup_id="cleanup-1"),
+            "cleanup_id": "file-state-1:gatekeeper-secret",
+            "superseding_file_state_record": _superseding_record(
+                cleanup_id="file-state-1:gatekeeper-secret"
+            ),
             "deleted_snapshot_ref": False,
         },
         FakeClock(),
@@ -374,12 +378,12 @@ def test_record_cleanup_applied_rejects_duplicate_cleanup() -> None:
     )
 
     assert second[0].event_type == "command_rejected"
-    assert second[0].payload["reason"] == "cleanup already applied: cleanup-1"
+    assert second[0].payload.reason == "cleanup already applied: file-state-1:gatekeeper-secret"
 
 
 def test_record_cleanup_applied_rejects_same_snapshot_supersede() -> None:
     events = _cleanup_requested_events()
-    record = _superseding_record(cleanup_id="cleanup-1")
+    record = _superseding_record(cleanup_id="file-state-1:gatekeeper-secret")
     record["snapshot_id"] = "snapshot-file-state-1"
 
     emitted = apply_command(
@@ -388,7 +392,7 @@ def test_record_cleanup_applied_rejects_same_snapshot_supersede() -> None:
         "record_cleanup_applied",
         {
             "run_id": "run-1",
-            "cleanup_id": "cleanup-1",
+            "cleanup_id": "file-state-1:gatekeeper-secret",
             "superseding_file_state_record": record,
             "deleted_snapshot_ref": True,
         },
@@ -397,12 +401,13 @@ def test_record_cleanup_applied_rejects_same_snapshot_supersede() -> None:
     )
 
     assert emitted[0].event_type == "command_rejected"
-    assert emitted[0].payload["reason"] == "superseding record must use a different snapshot_id"
+    assert isinstance(emitted[0].payload, CommandRejectedPayload)
+    assert emitted[0].payload.reason == "superseding record must use a different snapshot_id"
 
 
 def test_record_cleanup_applied_rejects_superseding_record_with_secret_path() -> None:
     events = _cleanup_requested_events()
-    record = _superseding_record(cleanup_id="cleanup-1")
+    record = _superseding_record(cleanup_id="file-state-1:gatekeeper-secret")
     record["classifications"] = [
         {
             "path": "residue.txt",
@@ -417,7 +422,7 @@ def test_record_cleanup_applied_rejects_superseding_record_with_secret_path() ->
         "record_cleanup_applied",
         {
             "run_id": "run-1",
-            "cleanup_id": "cleanup-1",
+            "cleanup_id": "file-state-1:gatekeeper-secret",
             "superseding_file_state_record": record,
             "deleted_snapshot_ref": True,
         },
@@ -427,7 +432,7 @@ def test_record_cleanup_applied_rejects_superseding_record_with_secret_path() ->
 
     assert emitted[0].event_type == "command_rejected"
     assert (
-        emitted[0].payload["reason"]
+        emitted[0].payload.reason
         == "superseding record still contains cleanup secret path: residue.txt"
     )
 
@@ -579,7 +584,7 @@ def _cleanup_requested_events() -> list[EventEnvelope]:
         SequentialIdGenerator(),
     )
     cleanup = next(event for event in emitted if event.event_type == "cleanup_requested")
-    cleanup.payload["cleanup_id"] = "cleanup-1"
+    assert cleanup.payload.cleanup_id == "file-state-1:gatekeeper-secret"
     return [*events, cleanup]
 
 
@@ -602,14 +607,20 @@ def _superseding_record(*, cleanup_id: str = "missing-cleanup") -> dict[str, Any
     }
 
 
-def _event(event_type: str, payload: dict[str, Any], *, position: int) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+def _event(event_type: str, payload: dict[str, Any], *, position: int) -> HydratedEvent:
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{position}",
+                run_id="run-1",
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )

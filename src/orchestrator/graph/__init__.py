@@ -63,6 +63,7 @@ from orchestrator.graph.events.file_state import (
     CleanupAppliedPayload,
     CleanupRequestedPayload,
     GatekeeperVerdict,
+    GatekeeperVerdictRecordedPayload,
 )
 from orchestrator.graph.models import (
     Actor,
@@ -228,6 +229,7 @@ __all__ = [
     "CleanupAppliedPayload",
     "CleanupRequestedPayload",
     "GatekeeperVerdict",
+    "GatekeeperVerdictRecordedPayload",
     "RecordCleanupAppliedCommand",
     "RecordGatekeeperVerdictsCommand",
     "CleanupRequestedProjection",

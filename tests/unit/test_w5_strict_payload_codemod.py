@@ -18,6 +18,7 @@ from scripts.codemods.w5_strict_payload_cutover import (
     run_migration,
 )
 from scripts.codemods.w5_task12_event_payload_reads import (
+    transform_test_source as transform_task13_reads,
     transform_source as transform_task12_reads,
 )
 
@@ -48,7 +49,7 @@ def test_measurement_counts_actual_first_and_second_diffs_not_noop_visits() -> N
     assert result.second_run_changes == 0, result.output
 
 
-def test_task12_payload_read_codemod_preserves_exact_legacy_sites_and_is_idempotent() -> None:
+def test_task12_payload_read_codemod_transforms_all_raw_reads_and_is_idempotent() -> None:
     source = """\
 def current(event: EventEnvelope):
     return event.payload.get("node_id"), event.payload["generation"]
@@ -60,10 +61,110 @@ def _history_payload_value(event: EventEnvelope):
     first, changes = transform_task12_reads(source, "src/orchestrator/graph/callbacks.py")
     second, second_changes = transform_task12_reads(first, "src/orchestrator/graph/callbacks.py")
 
-    assert changes == 2
+    assert changes == 3
+    assert first.count('event_payload_json(event).get("node_id")') == 2
+    assert 'event_payload_json(event)["generation"]' in first
+    assert "event.payload.get(" not in first
+    assert "event.payload[" not in first
+    assert second == first
+    assert second_changes == 0
+
+
+def test_task13_test_payload_read_codemod_routes_hydrated_mapping_reads_to_json_once() -> None:
+    source = """\
+from orchestrator.graph import EventEnvelope
+
+def current(event):
+    return event.payload.get("node_id"), event.payload["generation"], event.payload.items(), events[-1].payload["node_id"], result.events[0].payload.get("reason")
+
+def nested(event):
+    return event.payload.record.record_id
+
+def corruption(envelope: EventEnvelope):
+    return envelope.payload.get("node_id"), envelope.payload["generation"], envelope.payload.items()
+"""
+
+    first, changes = transform_task13_reads(source, "tests/unit/test_example.py")
+    second, second_changes = transform_task13_reads(first, "tests/unit/test_example.py")
+
+    assert changes == 5
     assert 'event_payload_json(event).get("node_id")' in first
     assert 'event_payload_json(event)["generation"]' in first
-    assert 'event.payload.get("node_id")' in first
+    assert "event_payload_json(event).items()" in first
+    assert 'event_payload_json(events[-1])["node_id"]' in first
+    assert 'event_payload_json(result.events[0]).get("reason")' in first
+    assert "event.payload.record.record_id" in first
+    assert 'envelope.payload.get("node_id")' in first
+    assert 'envelope.payload["generation"]' in first
+    assert "envelope.payload.items()" in first
+    assert "from orchestrator.graph import EventEnvelope, event_payload_json" in first
+    assert (
+        first
+        == """\
+from orchestrator.graph import EventEnvelope, event_payload_json
+
+def current(event):
+    return event_payload_json(event).get("node_id"), event_payload_json(event)["generation"], event_payload_json(event).items(), event_payload_json(events[-1])["node_id"], event_payload_json(result.events[0]).get("reason")
+
+def nested(event):
+    return event.payload.record.record_id
+
+def corruption(envelope: EventEnvelope):
+    return envelope.payload.get("node_id"), envelope.payload["generation"], envelope.payload.items()
+"""
+    )
+    assert second == first
+    assert second_changes == 0
+
+
+def test_task13_test_payload_read_codemod_routes_hydrated_payload_aliases_to_json_once() -> None:
+    source = """\
+from orchestrator.graph import EventEnvelope
+
+def current(event):
+    payload = event.payload
+    return payload["node_id"], payload.get("generation"), payload.items()
+
+def corruption(envelope: EventEnvelope):
+    payload = envelope.payload
+    return payload["node_id"], payload.get("generation"), payload.items()
+"""
+
+    first, changes = transform_task13_reads(source, "tests/unit/test_example.py")
+    second, second_changes = transform_task13_reads(first, "tests/unit/test_example.py")
+
+    assert changes == 1
+    assert "payload = event_payload_json(event)" in first
+    assert "payload = envelope.payload" in first
+    assert 'return payload["node_id"], payload.get("generation"), payload.items()' in first
+    assert second == first
+    assert second_changes == 0
+
+
+def test_task13_test_payload_read_codemod_routes_hydrated_generator_aliases_to_json_once() -> None:
+    source = """\
+from orchestrator.graph import EventEnvelope
+
+def current(events):
+    payload = next(event.payload for event in events)
+    return payload["node_id"]
+
+def typed(events):
+    result = next(event.payload for event in events)
+    return result.node_id
+
+def corruption(envelope: EventEnvelope):
+    payload = next(envelope.payload for _ in range(1))
+    return payload["node_id"]
+"""
+
+    first, changes = transform_task13_reads(source, "tests/unit/test_example.py")
+    second, second_changes = transform_task13_reads(first, "tests/unit/test_example.py")
+
+    assert changes == 1
+    assert "payload = next(event_payload_json(event) for event in events)" in first
+    assert "result = next(event.payload for event in events)" in first
+    assert "payload = next(envelope.payload for _ in range(1))" in first
     assert second == first
     assert second_changes == 0
 
@@ -194,6 +295,42 @@ def _apply_schedule_tick(make_event, payload):
         source, "src/orchestrator/graph/_commands.py"
     )
     assert "make_strict_event(make_event, LEASE_GRANTED, payload)" in result.source
+
+
+def test_fixture_envelope_codemod_hydrates_generation_two_events_once() -> None:
+    source = """\
+from orchestrator.graph import EventEnvelope
+
+event = EventEnvelope(
+    event_id="event-1",
+    run_id="run-1",
+    position=1,
+    event_type="node_created",
+    schema_version=1,
+    actor=actor,
+    timestamp=clock.now(),
+    payload={"node_id": "node-1", "kind": "worker"},
+)
+"""
+
+    migration = DOMAIN_MIGRATIONS["fixture_envelopes"]
+    first = StrictPayloadCutoverCodemod(migration).transform_files(
+        {"tests/unit/test_example.py": source}
+    )
+
+    transformed = first.sources["tests/unit/test_example.py"]
+    assert "event = EventEnvelope(" not in transformed
+    assert "build_graph_catalog().resolve_event(" in transformed.replace(" ", "")
+    assert 'event_type = "node_created"' in transformed
+    assert ".hydrate(StoredEventEnvelope(" in transformed
+    assert "StoredEventEnvelope(" in transformed
+    assert "payload_schema_generation = 2" in transformed
+    assert "from orchestrator.graph import StoredEventEnvelope, build_graph_catalog" in transformed
+    second = StrictPayloadCutoverCodemod(migration).transform_files(
+        {"tests/unit/test_example.py": transformed}
+    )
+    assert second.sources["tests/unit/test_example.py"] == transformed
+    assert second.changes == 0
 
 
 def test_lease_fixture_codemod_completes_sparse_grants_and_schedule_commands() -> None:

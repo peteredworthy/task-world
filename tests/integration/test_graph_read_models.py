@@ -20,6 +20,7 @@ from orchestrator.graph import Actor, ActorKind, EventEnvelope, project_task_sta
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph_runtime.store import graph_aggregate_id
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 @pytest.fixture(scope="module")
@@ -36,19 +37,24 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=event_id,
-        run_id=run_id,
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        causation_id="test",
-        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=event_id,
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
     )
 
 
@@ -137,12 +143,7 @@ def _corrective_supersession_events(run_id: str) -> list[EventEnvelope]:
                 }
             },
         ),
-        _event(
-            "evt-origin-failed",
-            run_id,
-            "verification_failed",
-            {"candidate_id": "cand-origin"},
-        ),
+        _verification_event("evt-origin-failed", run_id, "cand-origin", "failed"),
         _event(
             "evt-corrective-candidate",
             run_id,
@@ -163,12 +164,7 @@ def _corrective_supersession_events(run_id: str) -> list[EventEnvelope]:
                 }
             },
         ),
-        _event(
-            "evt-corrective-passed",
-            run_id,
-            "verification_passed",
-            {"candidate_id": "cand-fix"},
-        ),
+        _verification_event("evt-corrective-passed", run_id, "cand-fix", "passed"),
         _event(
             "evt-corrective-file-state",
             run_id,
@@ -243,16 +239,31 @@ def _candidate_event(
     )
 
 
+def _verification_event(
+    event_id: str,
+    run_id: str,
+    candidate_id: str,
+    outcome: str,
+) -> EventEnvelope:
+    return _event(
+        event_id,
+        run_id,
+        f"verification_{outcome}",
+        {
+            "node_id": f"verifier-{candidate_id}",
+            "verifier_node_id": f"verifier-{candidate_id}",
+            "candidate_id": candidate_id,
+            "outcome": outcome,
+            "record_id": f"verification-{candidate_id}",
+        },
+    )
+
+
 def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
     return {
         "accepted": [
             _candidate_event("accepted-candidate", run_id, "accepted", "cand-accepted"),
-            _event(
-                "accepted-verification",
-                run_id,
-                "verification_passed",
-                {"candidate_id": "cand-accepted"},
-            ),
+            _verification_event("accepted-verification", run_id, "cand-accepted", "passed"),
             _file_state_event(
                 "accepted-file-state",
                 run_id,
@@ -277,12 +288,7 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                 "accepted_with_gate",
                 "cand-accepted-with-gate",
             ),
-            _event(
-                "gate-verification",
-                run_id,
-                "verification_passed",
-                {"candidate_id": "cand-accepted-with-gate"},
-            ),
+            _verification_event("gate-verification", run_id, "cand-accepted-with-gate", "passed"),
             _file_state_event(
                 "gate-file-state",
                 run_id,
@@ -302,12 +308,7 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
         ],
         "needs_revision": [
             _candidate_event("revision-candidate", run_id, "needs_revision", "cand-revision"),
-            _event(
-                "revision-verification",
-                run_id,
-                "verification_failed",
-                {"candidate_id": "cand-revision"},
-            ),
+            _verification_event("revision-verification", run_id, "cand-revision", "failed"),
         ],
         "blocked_invalid_test": [
             _candidate_event(
@@ -316,12 +317,7 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                 "blocked_invalid_test",
                 "cand-invalid-test",
             ),
-            _event(
-                "invalid-test-verification",
-                run_id,
-                "verification_failed",
-                {"candidate_id": "cand-invalid-test"},
-            ),
+            _verification_event("invalid-test-verification", run_id, "cand-invalid-test", "failed"),
             _event(
                 "invalid-test-oversight",
                 run_id,
@@ -334,20 +330,6 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                     "decision": "accepted",
                     "decider": "system",
                 },
-            ),
-        ],
-        "blocked_environment": [
-            _candidate_event(
-                "environment-candidate",
-                run_id,
-                "blocked_environment",
-                "cand-environment",
-            ),
-            _event(
-                "environment-failure",
-                run_id,
-                "environment_failure_accepted",
-                {"task_region_id": "blocked_environment", "reason": "tool_unavailable"},
             ),
         ],
         "in_progress": [

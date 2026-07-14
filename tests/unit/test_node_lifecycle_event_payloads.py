@@ -7,8 +7,9 @@ import pytest
 from orchestrator.graph import (
     Actor,
     ActorKind,
-    EventEnvelope,
+    CommandExecutionContext,
     FakeClock,
+    HydratedEvent,
     InputBoundPayload,
     NodeAuthorityChangedPayload,
     NodeDeferredPayload,
@@ -17,9 +18,11 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     apply_command,
     build_graph_catalog,
+    build_graph_command_dependencies,
     initial_projection,
     reduce_event,
 )
+from orchestrator.graph import StoredEventEnvelope
 
 
 @pytest.mark.parametrize(
@@ -150,13 +153,25 @@ def test_node_lifecycle_producers_emit_strict_payloads() -> None:
     events = [
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "ready"}, 1)
     ]
+    catalog = build_graph_catalog()
+    clock = FakeClock()
+    id_generator = SequentialIdGenerator()
     output = apply_command(
+        catalog,
         _project(events),
         events,
-        "schedule",
-        {"run_id": "run-1", "base_snapshot_id": "snapshot-1"},
-        FakeClock(),
-        SequentialIdGenerator(),
+        "schedule_tick",
+        {"base_snapshot_id": "snapshot-1", "lease_seconds": 30, "max_grants": 1},
+        CommandExecutionContext(
+            run_id="run-1",
+            current_position=max(event.metadata.position for event in events),
+            clock=clock,
+            id_generator=id_generator,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            events=tuple(events),
+            future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+            catalog=catalog,
+        ),
     )
 
     for event in output:
@@ -166,21 +181,27 @@ def test_node_lifecycle_producers_emit_strict_payloads() -> None:
             assert event.payload == {"node_id": "worker-1"}
 
 
-def _project(events: list[EventEnvelope]) -> Any:
+def _project(events: list[HydratedEvent]) -> Any:
     projection = initial_projection()
     for event in events:
         projection = reduce_event(build_graph_catalog(), projection, event)
     return projection
 
 
-def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+def _event(event_type: str, payload: dict[str, Any], position: int) -> HydratedEvent:
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{position}",
+                run_id="run-1",
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )

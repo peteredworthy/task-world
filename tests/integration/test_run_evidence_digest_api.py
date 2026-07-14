@@ -15,6 +15,7 @@ from orchestrator.state import Attempt, ModelTokenUsage
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import GraphCatalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 def _routine() -> RoutineConfig:
@@ -46,18 +47,24 @@ def _routine() -> RoutineConfig:
 
 
 def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{uuid4().hex}",
-        run_id="placeholder",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{uuid4().hex}",
+                run_id="placeholder",
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
     )
 
 

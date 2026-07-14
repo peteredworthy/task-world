@@ -10,9 +10,12 @@ from orchestrator.graph import (
     initial_projection,
     project_planner_session,
     reduce_event,
+    event_payload_json,
 )
 from tests.graph_command_support import dispatch_graph_command
+from tests.graph_command_support import with_metadata_position
 from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 def test_successor_inherits_session_id() -> None:
@@ -41,8 +44,8 @@ def test_successor_inherits_session_id() -> None:
 
     projection = _project(events)
     assert projection["planner_sessions"].values["planner-1"] == "session-1"
-    assert lease.payload["session_id"] == "session-1"
-    assert lease.payload["generation"] == 2
+    assert event_payload_json(lease)["session_id"] == "session-1"
+    assert event_payload_json(lease)["generation"] == 2
 
 
 def test_resume_emits_new_generation_same_session() -> None:
@@ -69,8 +72,8 @@ def test_resume_emits_new_generation_same_session() -> None:
     )
 
     lease = _only(scheduled, "lease_granted", "planner-0")
-    assert lease.payload["session_id"] == "session-1"
-    assert lease.payload["generation"] == 2
+    assert event_payload_json(lease)["session_id"] == "session-1"
+    assert event_payload_json(lease)["generation"] == 2
     assert (
         _project([*events, *_append(events, scheduled)])["leases"]["lease-planner-0"]["state"]
         == "released"
@@ -112,7 +115,7 @@ def test_carryover_binds_as_optional_input() -> None:
     created = _only(patch, "node_created", "planner-1")
     carryover_port = next(
         raw_port
-        for raw_port in created.payload["inputs"]
+        for raw_port in event_payload_json(created)["inputs"]
         if raw_port["port"] == "session_carryover"
     )
     assert carryover_port["required"] is False
@@ -134,7 +137,7 @@ def test_carryover_binds_as_optional_input() -> None:
             "lease_seconds": 300,
         },
     )
-    assert _only(scheduled, "lease_granted", "planner-2").payload["generation"] == 2
+    assert event_payload_json(_only(scheduled, "lease_granted", "planner-2"))["generation"] == 2
 
 
 def test_project_planner_session() -> None:
@@ -287,7 +290,7 @@ def _only(
     return next(
         event
         for event in events
-        if event.event_type == event_type and event.payload.get("node_id") == node_id
+        if event.event_type == event_type and event_payload_json(event).get("node_id") == node_id
     )
 
 
@@ -307,22 +310,26 @@ def _project(events: list[EventEnvelope]) -> Any:
 
 
 def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{payload.get('node_id', payload.get('patch_id', 'event'))}",
-        run_id="run-1",
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{payload.get('node_id', payload.get('patch_id', 'event'))}",
+                run_id="run-1",
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )
 
 
 def _with_positions(events: list[EventEnvelope]) -> list[EventEnvelope]:
-    return [
-        event.model_copy(update={"position": index}) for index, event in enumerate(events, start=1)
-    ]
+    return [with_metadata_position(event, index) for index, event in enumerate(events, start=1)]
 
 
 def _append(
@@ -331,6 +338,6 @@ def _append(
 ) -> list[EventEnvelope]:
     position = max((event.position for event in existing_events), default=0)
     return [
-        event.model_copy(update={"position": position + offset})
+        with_metadata_position(event, position + offset)
         for offset, event in enumerate(new_events, start=1)
     ]

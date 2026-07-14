@@ -1,17 +1,17 @@
 """Integration tests for graph compatibility projection endpoints."""
 
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 from typing import Any
 
 import pytest
-from fastapi import HTTPException
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from orchestrator.api import append_requeue_audit_event
 from orchestrator.config import RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import (
@@ -20,7 +20,11 @@ from orchestrator.db import (
     GraphOutboxModel,
     GraphProjectionSnapshotModel,
     RunModel,
+    commit_with_event_outbox,
+    create_wired_event_store_v2,
+    init_db,
 )
+from orchestrator.api import create_app
 from orchestrator.graph import (
     Actor,
     ActorKind,
@@ -33,6 +37,7 @@ from orchestrator.graph import (
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.db.access.mutations import save_run
+from orchestrator.workflow import OutboxRequeued
 from orchestrator.graph_runtime import (
     GraphController,
     GraphEventStore,
@@ -42,6 +47,7 @@ from orchestrator.graph_runtime import (
 )
 from orchestrator.graph import build_graph_command_dependencies
 from tests.integration.signal_helpers import DrainFn
+from orchestrator.graph import StoredEventEnvelope
 
 
 @pytest.fixture
@@ -80,18 +86,24 @@ def _routine() -> RoutineConfig:
 
 
 def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{uuid4().hex}",
-        run_id="placeholder",
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{uuid4().hex}",
+                run_id="placeholder",
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
     )
 
 
@@ -431,15 +443,18 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str, *, catalog: GraphCa
         ).read_run(run_id)
     position = max(event.position for event in events)
     worker_lease = next(event for event in events if event.event_type == "lease_granted")
-    worker_node = str(worker_lease.payload["node_id"])
+    worker_lease_payload = worker_lease.payload.to_json()
+    worker_node = str(worker_lease_payload["node_id"])
     worker_created = next(
         event
         for event in events
-        if event.event_type == "node_created" and event.payload.get("node_id") == worker_node
+        if event.event_type == "node_created"
+        and event.payload.to_json().get("node_id") == worker_node
     )
-    candidate_id = str(worker_created.payload["candidate_id"])
-    task_region_id = str(worker_created.payload["task_region_id"])
-    attempt_number = int(worker_created.payload["attempt_number"])
+    worker_created_payload = worker_created.payload.to_json()
+    candidate_id = str(worker_created_payload["candidate_id"])
+    task_region_id = str(worker_created_payload["task_region_id"])
+    attempt_number = int(worker_created_payload["attempt_number"])
 
     acknowledged = await controller.handle_command(
         run_id,
@@ -447,9 +462,9 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str, *, catalog: GraphCa
         "acknowledge_start",
         {
             "node_id": worker_node,
-            "lease_id": worker_lease.payload["lease_id"],
-            "lease_generation": worker_lease.payload["generation"],
-            "execution_id": worker_lease.payload["execution_id"],
+            "lease_id": worker_lease_payload["lease_id"],
+            "lease_generation": worker_lease_payload["generation"],
+            "execution_id": worker_lease_payload["execution_id"],
         },
     )
     completed_worker = await controller.handle_command(
@@ -458,10 +473,10 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str, *, catalog: GraphCa
         "submit_callback",
         {
             "node_id": worker_node,
-            "execution_id": worker_lease.payload["execution_id"],
-            "lease_id": worker_lease.payload["lease_id"],
-            "lease_generation": worker_lease.payload["generation"],
-            "base_snapshot_id": worker_lease.payload["base_snapshot_id"],
+            "execution_id": worker_lease_payload["execution_id"],
+            "lease_id": worker_lease_payload["lease_id"],
+            "lease_generation": worker_lease_payload["generation"],
+            "base_snapshot_id": worker_lease_payload["base_snapshot_id"],
             "observed_graph_position": acknowledged.projection_position,
             "idempotency_key": f"callback-{worker_node}",
             "payload": {
@@ -512,16 +527,21 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str, *, catalog: GraphCa
     verifier_lease = next(
         event for event in scheduled_verifier.events if event.event_type == "lease_granted"
     )
-    verifier_node = str(verifier_lease.payload["node_id"])
+    verifier_lease_payload = (
+        verifier_lease.payload
+        if isinstance(verifier_lease.payload, dict)
+        else verifier_lease.payload.to_json()
+    )
+    verifier_node = str(verifier_lease_payload["node_id"])
     acknowledged_verifier = await controller.handle_command(
         run_id,
         scheduled_verifier.projection_position,
         "acknowledge_start",
         {
             "node_id": verifier_node,
-            "lease_id": verifier_lease.payload["lease_id"],
-            "lease_generation": verifier_lease.payload["generation"],
-            "execution_id": verifier_lease.payload["execution_id"],
+            "lease_id": verifier_lease_payload["lease_id"],
+            "lease_generation": verifier_lease_payload["generation"],
+            "execution_id": verifier_lease_payload["execution_id"],
         },
     )
     await controller.handle_command(
@@ -530,10 +550,10 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str, *, catalog: GraphCa
         "submit_callback",
         {
             "node_id": verifier_node,
-            "execution_id": verifier_lease.payload["execution_id"],
-            "lease_id": verifier_lease.payload["lease_id"],
-            "lease_generation": verifier_lease.payload["generation"],
-            "base_snapshot_id": verifier_lease.payload["base_snapshot_id"],
+            "execution_id": verifier_lease_payload["execution_id"],
+            "lease_id": verifier_lease_payload["lease_id"],
+            "lease_generation": verifier_lease_payload["generation"],
+            "base_snapshot_id": verifier_lease_payload["base_snapshot_id"],
             "observed_graph_position": acknowledged_verifier.projection_position,
             "idempotency_key": f"callback-{verifier_node}",
             "payload": {
@@ -761,13 +781,16 @@ async def test_operator_requeues_failed_outbox_row_with_audit_event(
     assert row.next_attempt_at is None
     assert row.last_error is None
 
-    events_response = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
-    assert events_response.status_code == 200
-    audit_event = next(
-        event for event in events_response.json() if event["event_type"] == "outbox_requeued"
+    activity_response = await client.get(
+        f"/api/runs/{run_id}/activity?event_type=outbox_requeued&payload_mode=full"
     )
+    assert activity_response.status_code == 200
+    [audit_event] = activity_response.json()["events"]
+    assert audit_event["event_type"] == "outbox_requeued"
     assert audit_event["payload"] == {
+        "timestamp": audit_event["timestamp"],
         "run_id": run_id,
+        "event_type": "outbox_requeued",
         "outbox_id": row.outbox_id,
         "event_id": "requeue-outbox-event",
         "kind": "agent_dispatch",
@@ -775,8 +798,11 @@ async def test_operator_requeues_failed_outbox_row_with_audit_event(
         "previous_attempts": 3,
         "previous_last_error": "agent dispatch exploded",
         "operator": "human-operator",
-        "graph_position": audit_event["position"],
     }
+
+    events_response = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
+    assert events_response.status_code == 200
+    assert all(event["event_type"] != "outbox_requeued" for event in events_response.json())
 
     executor = _RecordingOutboxExecutor()
     completed = await OutboxDispatcher(session_factory, executor, FakeClock()).dispatch_pending(
@@ -792,6 +818,128 @@ async def test_operator_requeues_failed_outbox_row_with_audit_event(
         ).scalar_one()
     assert completed_row.status == "completed"
     assert completed_row.attempts == 1
+
+
+async def test_outbox_requeue_flushes_its_committed_audit_event_to_the_journal(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "outbox-requeue.db"
+    app = create_app(db_path=str(db_path))
+    await init_db(app.state.engine)
+    run_id = "graph-requeue-journal"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        session.add(
+            GraphOutboxModel(
+                event_id="journal-requeue-event",
+                run_id=run_id,
+                kind="agent_dispatch",
+                payload={"event_id": "journal-requeue-event"},
+                status="failed",
+                attempts=3,
+                created_at=now,
+                updated_at=now,
+                next_attempt_at=now,
+                last_error="agent dispatch exploded",
+            )
+        )
+        await session.commit()
+
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await client.post(
+            f"/api/runs/{run_id}/graph/outbox/requeue/journal-requeue-event"
+        )
+
+    assert response.status_code == 200
+    journal_path = tmp_path / ".orchestrator" / "state" / "history.jsonl"
+    records = [json.loads(line) for line in journal_path.read_text().splitlines()]
+    assert records[-1]["event_type"] == "outbox_requeued"
+    assert records[-1]["payload"]["event_id"] == "journal-requeue-event"
+    await app.state.engine.dispose()
+
+
+async def test_outbox_requeue_transaction_rolls_back_row_and_discards_journal_on_commit_failure(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "outbox-requeue-rollback.db"
+    app = create_app(db_path=str(db_path))
+    await init_db(app.state.engine)
+    run_id = "graph-requeue-rollback"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    async with session_factory() as session:
+        row = GraphOutboxModel(
+            event_id="rollback-requeue-event",
+            run_id=run_id,
+            kind="agent_dispatch",
+            payload={"event_id": "rollback-requeue-event"},
+            status="failed",
+            attempts=3,
+            created_at=now,
+            updated_at=now,
+            next_attempt_at=now,
+            last_error="agent dispatch exploded",
+        )
+        session.add(row)
+        await session.commit()
+
+    async with session_factory() as session:
+        row = (
+            await session.execute(
+                select(GraphOutboxModel).where(
+                    GraphOutboxModel.event_id == "rollback-requeue-event"
+                )
+            )
+        ).scalar_one()
+        row.status = "pending"
+        row.attempts = 0
+        row.next_attempt_at = None
+        row.last_error = None
+        await create_wired_event_store_v2(session).append(
+            OutboxRequeued(
+                timestamp=now,
+                run_id=run_id,
+                outbox_id=row.outbox_id,
+                event_id=row.event_id,
+                kind=row.kind,
+                previous_status="failed",
+                previous_attempts=3,
+                previous_last_error="agent dispatch exploded",
+                operator="human-operator",
+            )
+        )
+        session.add(
+            GraphOutboxModel(
+                event_id=None,
+                run_id=run_id,
+                kind="agent_dispatch",
+                payload={},
+                status="pending",
+                attempts=0,
+                created_at=now,
+                updated_at=now,
+                next_attempt_at=None,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            await commit_with_event_outbox(session)
+
+    async with session_factory() as session:
+        row = (
+            await session.execute(
+                select(GraphOutboxModel).where(
+                    GraphOutboxModel.event_id == "rollback-requeue-event"
+                )
+            )
+        ).scalar_one()
+    assert row.status == "failed"
+    assert row.attempts == 3
+    assert not (tmp_path / ".orchestrator" / "state" / "history.jsonl").exists()
+    await app.state.engine.dispose()
 
 
 async def test_operator_requeue_failed_outbox_row_rejects_invalid_requests(
@@ -838,54 +986,6 @@ async def test_operator_requeue_failed_outbox_row_rejects_invalid_requests(
     assert non_failed.json()["detail"] == "Outbox row is not failed"
     assert invalid_run.status_code == 422
     assert invalid_event.status_code == 422
-
-
-async def test_requeue_audit_append_translates_stale_position_to_conflict(
-    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any], *, catalog: GraphCatalog
-) -> None:
-    _client, _drain, _, _, app = _shared_app_fixture
-    run_id = f"graph-requeue-stale-{uuid4().hex[:8]}"
-    await _save_manual_graph_run(app, run_id)
-    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
-    async with session_factory() as session:
-        await GraphEventStore(
-            session,
-            catalog,
-        ).append_events(
-            run_id,
-            0,
-            [
-                _event("run_lifecycle_changed", {"to_state": "active"}),
-                _event("node_created", {"node_id": "worker-1", "kind": "worker"}),
-            ],
-        )
-        audit_event = EventEnvelope(
-            event_id=f"outbox-requeued-{uuid4().hex}",
-            run_id=run_id,
-            position=-1,
-            event_type="outbox_requeued",
-            schema_version=1,
-            actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
-            causation_id="stale-outbox-event",
-            timestamp=datetime(2026, 1, 1, tzinfo=timezone.utc),
-            payload={"event_id": "stale-outbox-event"},
-        )
-
-        try:
-            await append_requeue_audit_event(
-                GraphEventStore(
-                    session,
-                    catalog,
-                ),
-                run_id=run_id,
-                current_position=1,
-                audit_event=audit_event,
-            )
-        except HTTPException as exc:
-            assert exc.status_code == 409
-            assert "stale graph projection" in str(exc.detail)
-        else:
-            raise AssertionError("expected stale graph projection conflict")
 
 
 async def test_operator_graph_patch_endpoint_accepts_human_patch(

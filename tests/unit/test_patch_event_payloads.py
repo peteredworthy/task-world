@@ -7,8 +7,8 @@ from pydantic import ValidationError
 from orchestrator.graph import (
     Actor,
     ActorKind,
-    EventEnvelope,
     EventMetadata,
+    UnknownGraphEventError,
     build_graph_catalog,
     initial_projection,
     reduce_event,
@@ -19,7 +19,6 @@ from orchestrator.graph.events.patches import (
     GraphPatchAcceptedPayload,
     GraphPatchRejectedPayload,
 )
-from orchestrator.graph.projections import reduce_legacy_event
 
 
 def test_patch_payload_rejects_misspelled_or_unknown_fields() -> None:
@@ -53,19 +52,6 @@ def _metadata(event_type: str) -> EventMetadata:
         payload_schema_generation=2,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-    )
-
-
-def _legacy_event(event_type: str, payload: dict[str, object]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"legacy-{event_type}",
-        run_id="run-1",
-        position=1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
     )
 
 
@@ -113,18 +99,9 @@ def test_strict_rejected_patch_reducer_does_not_depend_on_legacy_reduction() -> 
     assert reduced["open_proposal_blockers"] == {}
 
 
-def test_legacy_patch_aliases_keep_their_legacy_replay_parity() -> None:
+def test_retired_patch_aliases_are_rejected_by_the_catalog() -> None:
     catalog = build_graph_catalog()
-    proposed = _legacy_event("graph_patch_proposed", {"patch_id": "patch-1"})
-    resolved = _legacy_event("proposal_accepted", {"proposal_id": "patch-1"})
-
-    catalog_state = reduce_event(
-        catalog, reduce_event(catalog, initial_projection(), proposed), resolved
-    )
-    legacy_state = reduce_legacy_event(
-        reduce_legacy_event(initial_projection(), proposed),
-        resolved,
-    )
-
-    assert catalog_state == legacy_state
-    assert catalog_state["open_proposal_blockers"] == {}
+    with pytest.raises(UnknownGraphEventError, match="unknown graph event: graph_patch_proposed"):
+        catalog.resolve_event("graph_patch_proposed")
+    with pytest.raises(UnknownGraphEventError, match="unknown graph event: proposal_accepted"):
+        catalog.resolve_event("proposal_accepted")

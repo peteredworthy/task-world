@@ -1,6 +1,6 @@
 """Fail-closed Task 3/4/6 event compatibility boundary."""
 
-from orchestrator.graph.models import EventEnvelope
+from orchestrator.graph.specifications import HydratedEvent
 
 FUTURE_EFFECT_EVENT_NAMES = frozenset(
     {
@@ -42,7 +42,7 @@ FUTURE_EFFECT_EVENT_NAMES = frozenset(
 )
 
 
-def require_future_effect(event: EventEnvelope) -> EventEnvelope:
+def require_future_effect(event: HydratedEvent) -> HydratedEvent:
     if event.event_type not in FUTURE_EFFECT_EVENT_NAMES:
         raise ValueError(f"legacy future-effect adapter rejected event type {event.event_type!r}")
     return event

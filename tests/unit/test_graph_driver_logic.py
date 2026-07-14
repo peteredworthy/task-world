@@ -27,6 +27,7 @@ from orchestrator.graph import (
     CommandExecutionContext,
     EnvironmentFailureProjection,
     EventEnvelope,
+    EventMetadata,
     HydratedEvent,
     FakeClock,
     SequentialIdGenerator,
@@ -37,44 +38,29 @@ from orchestrator.graph import (
     reduce_event,
 )
 from orchestrator.graph import GraphCatalog
+from orchestrator.graph import UnknownGraphEventError
 
 
 def _event(event_type: str, payload: dict[str, object], position: int = -1) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    catalog = build_graph_catalog()
+    specification = catalog.resolve_event(event_type)
+    return specification.create(
+        EventMetadata(
+            event_id=f"{event_type}-{position}",
+            run_id="run-1",
+            position=position,
+            event_type=event_type,
+            payload_schema_generation=2,
+            actor=Actor(kind=ActorKind.CONTROLLER),
+            timestamp=FakeClock().now(),
+        ),
+        specification.validate_payload(payload),
     )
 
 
-def test_snapshot_from_events_preserves_typed_environment_failures(
-    *, catalog: GraphCatalog
-) -> None:
-    snapshot = _snapshot_from_events(
-        [
-            _event(
-                "environment_failure_accepted",
-                {
-                    "task_region_id": "step/task",
-                    "classification": "tool_unavailable",
-                    "reason": "missing tool",
-                },
-                position=12,
-            )
-        ],
-        catalog=build_graph_catalog(),
-    )
-
-    failure = snapshot.environment_failures["step/task"]
-
-    assert isinstance(failure, EnvironmentFailureProjection)
-    assert failure.position == 12
-    assert failure.reason == "missing tool"
+def test_retired_environment_failure_event_is_rejected(*, catalog: GraphCatalog) -> None:
+    with pytest.raises(UnknownGraphEventError, match="environment_failure_accepted"):
+        catalog.resolve_event("environment_failure_accepted")
 
 
 class RecordingController:
@@ -563,9 +549,9 @@ def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loo
                 "node_id": "worker-1",
                 "generation": 1,
                 "execution_id": "exec-1",
-                "expires_at": (clock.now() - timedelta(seconds=1)).isoformat(),
+                "expires_at": clock.now() - timedelta(seconds=1),
                 "base_snapshot_id": "S0",
-                "resource_claims": [],
+                "resource_claims": (),
             },
             2,
         ),
@@ -584,17 +570,16 @@ def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loo
         future_effects=build_graph_command_dependencies(
             catalog=build_graph_catalog()
         ).future_effects,
+        catalog=catalog,
     )
 
     output = apply_command(
+        build_graph_catalog(),
         projection,
         events,
         "record_heartbeat",
         {"lease_id": "lease-1", "node_id": "worker-1", "lease_generation": 1},
-        clock,
-        context.id_generator,
-        catalog=build_graph_catalog(),
-        context=context,
+        context,
     )
     renewal = next(
         event
@@ -604,16 +589,7 @@ def test_temporary_renewal_advances_expiry_and_avoids_zero_timeout_heartbeat_loo
     renewed_snapshot = _snapshot_from_events(
         [
             *events,
-            EventEnvelope(
-                event_id=renewal.metadata.event_id,
-                run_id=renewal.metadata.run_id,
-                position=renewal.metadata.position,
-                event_type=renewal.metadata.event_type,
-                schema_version=renewal.metadata.payload_schema_generation,
-                actor=renewal.metadata.actor,
-                timestamp=renewal.metadata.timestamp,
-                payload=renewal.payload.model_dump(mode="json"),
-            ),
+            renewal,
         ],
         catalog=build_graph_catalog(),
     )
@@ -1190,28 +1166,23 @@ def test_node_max_attempts_matches_dispatch_first_node_created_lookup() -> None:
         [
             _event(
                 "node_created",
-                {"node_id": "worker-1", "max_attempts": 2},
+                {"node_id": "worker-1", "kind": "worker", "max_attempts": 2},
                 position=1,
             ),
             _event(
                 "node_created",
-                {"node_id": "worker-1", "max_attempts": 7},
+                {"node_id": "worker-1", "kind": "worker", "max_attempts": 7},
                 position=2,
             ),
             _event(
                 "node_created",
-                {"node_id": "worker-2", "max_attempts": True},
+                {"node_id": "worker-3", "kind": "worker"},
                 position=3,
             ),
             _event(
                 "node_created",
-                {"node_id": "worker-3"},
+                {"node_id": "worker-3", "kind": "worker", "max_attempts": 4},
                 position=4,
-            ),
-            _event(
-                "node_created",
-                {"node_id": "worker-3", "max_attempts": 4},
-                position=5,
             ),
         ]
     )

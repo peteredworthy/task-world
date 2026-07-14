@@ -29,7 +29,7 @@
 - name: verifier_running_to_completed_pass
   given_events:
     - node_created: {node_id: verify-4, kind: verifier, state: running}
-    - verification_passed: {node_id: verify-4, candidate_id: candidate-1}
+    - verification_passed: {node_id: verify-4, verifier_node_id: verify-4, candidate_id: candidate-1, outcome: passed, record_id: verification-4}
     - node_state_changed: {node_id: verify-4, new_state: completed, trigger: valid_verification_result}
   when_command: null
   then_events: []
@@ -38,7 +38,7 @@
 - name: verifier_running_to_completed_failure
   given_events:
     - node_created: {node_id: verify-5, kind: verifier, state: running}
-    - verification_failed: {node_id: verify-5, candidate_id: candidate-1, valid_result: true}
+    - verification_failed: {node_id: verify-5, verifier_node_id: verify-5, candidate_id: candidate-1, outcome: failed, record_id: verification-5}
     - node_state_changed: {node_id: verify-5, new_state: completed, trigger: valid_verification_result}
   when_command: null
   then_events: []

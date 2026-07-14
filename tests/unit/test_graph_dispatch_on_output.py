@@ -17,12 +17,17 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     GraphProjection,
+    HydratedEvent,
     OutputRecordAcceptedPayload,
     initial_projection,
     reduce_event,
 )
 from orchestrator.git import snapshot
-from orchestrator.graph_runtime import GraphDispatchContext, GraphDispatchExecutor
+from orchestrator.graph_runtime import (
+    GraphCommandResult,
+    GraphDispatchContext,
+    GraphDispatchExecutor,
+)
 from orchestrator.graph_runtime.dispatch import (
     DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS,
     _callback_conflict_reason,
@@ -45,6 +50,7 @@ from orchestrator.runners.types import (
 )
 from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import GraphCatalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 def _context(
@@ -84,20 +90,42 @@ def _context(
     )
 
 
-def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> HydratedEvent:
+    stored_payload = (
+        {"record": payload}
+        if event_type == "output_record_accepted" and "record" not in payload
+        else payload
     )
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{position}",
+                run_id="run-1",
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=stored_payload,
+            )
+        )
+    )
+
+
+def _callback_payload_for_rejection(
+    reason: str, *, prior_result: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "node_id": "worker-1",
+        "idempotency_key": "key-1",
+        "payload": {},
+        "reason": reason,
+    }
+    if prior_result is not None:
+        payload["prior_result"] = prior_result
+    return payload
 
 
 def _project(events: list[EventEnvelope]) -> GraphProjection:
@@ -474,7 +502,7 @@ def test_callback_conflict_reason_reports_submit_rejection() -> None:
     events = [
         _event(
             "callback_rejected_conflict",
-            {"reason": "verification record at index 0 missing grades"},
+            _callback_payload_for_rejection("verification record at index 0 missing grades"),
             1,
         )
     ]
@@ -484,7 +512,7 @@ def test_callback_conflict_reason_reports_submit_rejection() -> None:
 
 def test_callback_conflict_reason_reports_stale_rejection() -> None:
     events = [
-        _event("callback_rejected_stale", {"reason": "lease revoked"}, 1),
+        _event("callback_rejected_stale", _callback_payload_for_rejection("lease revoked"), 1),
     ]
 
     assert _callback_conflict_reason(events) == "lease revoked"
@@ -494,13 +522,13 @@ def test_callback_conflict_reason_raises_on_duplicate_of_conflict_rejection() ->
     events = [
         _event(
             "callback_duplicate_returned",
-            {
-                "reason": "duplicate idempotency key",
-                "prior_result": {
+            _callback_payload_for_rejection(
+                "duplicate idempotency key",
+                prior_result={
                     "outcome": "callback_rejected_conflict",
                     "payload": {"reason": "node not running: completed"},
                 },
-            },
+            ),
             1,
         )
     ]
@@ -512,13 +540,13 @@ def test_callback_conflict_reason_raises_on_duplicate_of_stale_rejection() -> No
     events = [
         _event(
             "callback_duplicate_returned",
-            {
-                "reason": "duplicate idempotency key",
-                "prior_result": {
+            _callback_payload_for_rejection(
+                "duplicate idempotency key",
+                prior_result={
                     "outcome": "callback_rejected_stale",
                     "payload": {"reason": "lease revoked"},
                 },
-            },
+            ),
             1,
         )
     ]
@@ -530,13 +558,13 @@ def test_callback_conflict_reason_ignores_duplicate_of_accepted_callback() -> No
     events = [
         _event(
             "callback_duplicate_returned",
-            {
-                "reason": "duplicate idempotency key",
-                "prior_result": {
+            _callback_payload_for_rejection(
+                "duplicate idempotency key",
+                prior_result={
                     "outcome": "callback_accepted",
                     "payload": {"node_id": "worker-1"},
                 },
-            },
+            ),
             1,
         )
     ]
@@ -703,6 +731,30 @@ class RecordingExecutor(GraphDispatchExecutor):
 
     async def _agent_died(self, context: GraphDispatchContext, reason: str) -> None:
         self.failures.append(reason)
+
+
+class GraphPatchResultExecutor(GraphDispatchExecutor):
+    def __init__(self, events: list[HydratedEvent]) -> None:
+        super().__init__(
+            cast(async_sessionmaker[AsyncSession], object()),
+            cast(Any, object()),
+            cast(Any, object()),
+            catalog=build_graph_catalog(),
+            worktree_path="/tmp/worktree",
+        )
+        self._result = GraphCommandResult(events=events, outbox_items=[], projection_position=2)
+
+    async def _current_position(self, run_id: str) -> int:
+        return 1
+
+    async def _handle_command_retry_stale(
+        self,
+        run_id: str,
+        expected_position: int,
+        command_type: str,
+        payload: dict[str, object],
+    ) -> GraphCommandResult:
+        return self._result
 
 
 class RecordingOutputSink:
@@ -891,6 +943,60 @@ async def test_gap_planner_no_op_graph_patch_callback_allows_submit() -> None:
     assert executor.failures == []
     assert context.node_payload["_accepted_gap_planner_patch_had_ops"] is False
     assert "_accepted_graph_patch_had_ops" not in context.node_payload
+
+
+@pytest.mark.asyncio
+async def test_graph_patch_callback_returns_feedback_for_hydrated_accepted_result() -> None:
+    executor = GraphPatchResultExecutor(
+        [
+            _event(
+                "graph_patch_accepted",
+                {
+                    "patch_id": "patch-accepted",
+                    "base_graph_position": 1,
+                    "actor_role": "planner",
+                    "proposed_by_node_id": "planner-1",
+                    "successor_planner_node_ids": ["planner-next"],
+                },
+                2,
+            )
+        ]
+    )
+
+    feedback = await executor._submit_graph_patch_callback(
+        _context(node_id="planner-1", node_kind="planner", node_role="planner"),
+        {"patch_id": "patch-accepted", "base_graph_position": 1, "ops": []},
+    )
+
+    assert feedback == (
+        'graph patch patch-accepted accepted; successor planner nodes: ["planner-next"]'
+    )
+
+
+@pytest.mark.asyncio
+async def test_graph_patch_callback_returns_feedback_for_hydrated_rejected_result() -> None:
+    executor = GraphPatchResultExecutor(
+        [
+            _event(
+                "graph_patch_rejected",
+                {
+                    "patch_id": "patch-rejected",
+                    "base_graph_position": 1,
+                    "actor_role": "planner",
+                    "proposed_by_node_id": "planner-1",
+                    "reason": "stale read set",
+                },
+                2,
+            )
+        ]
+    )
+
+    feedback = await executor._submit_graph_patch_callback(
+        _context(node_id="planner-1", node_kind="planner", node_role="planner"),
+        {"patch_id": "patch-rejected", "base_graph_position": 1, "ops": []},
+    )
+
+    assert feedback == "graph patch patch-rejected rejected: stale read set"
 
 
 @pytest.mark.asyncio

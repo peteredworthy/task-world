@@ -764,6 +764,7 @@ class _MechanicalTransformer(cst.CSTTransformer):
             and isinstance(original_node.value.func, cst.Name)
             and original_node.value.func.value == "next"
             and 'event.payload["record"]' not in cst.Module([]).code_for_node(original_node.value)
+            and "event.payload.record" not in cst.Module([]).code_for_node(original_node.value)
         ):
             transformed = updated_node.value.visit(_EventPayloadToRecord())
             if not transformed.deep_equals(updated_node.value):
@@ -1024,6 +1025,64 @@ class _MechanicalTransformer(cst.CSTTransformer):
     ) -> cst.Call | None:
         if not isinstance(original_node.func, (cst.Name, cst.Attribute)):
             return None
+        if (
+            self.migration.domain == "fixture_envelopes"
+            and self.path.startswith("tests/")
+            and isinstance(original_node.func, cst.Name)
+            and original_node.func.value == "EventEnvelope"
+        ):
+            arguments = {
+                argument.keyword.value: argument.value
+                for argument in updated_node.args
+                if argument.keyword is not None
+            }
+            required = (
+                "event_id",
+                "run_id",
+                "position",
+                "event_type",
+                "actor",
+                "timestamp",
+                "payload",
+            )
+            if not all(name in arguments for name in required):
+                return None
+            schema_version = arguments.get("schema_version")
+            if not isinstance(schema_version, cst.Integer) or schema_version.value != "1":
+                return None
+            self.changes += 1
+            return cst.Call(
+                func=cst.Attribute(
+                    cst.Call(
+                        func=cst.Attribute(
+                            cst.Call(func=cst.Name("build_graph_catalog"), args=()),
+                            cst.Name("resolve_event"),
+                        ),
+                        args=(cst.Arg(arguments["event_type"]),),
+                    ),
+                    cst.Name("hydrate"),
+                ),
+                args=(
+                    cst.Arg(
+                        cst.Call(
+                            func=cst.Name("StoredEventEnvelope"),
+                            args=tuple(
+                                cst.Arg(value, keyword=cst.Name(name))
+                                for name, value in (
+                                    ("event_id", arguments["event_id"]),
+                                    ("run_id", arguments["run_id"]),
+                                    ("position", arguments["position"]),
+                                    ("event_type", arguments["event_type"]),
+                                    ("payload_schema_generation", cst.Integer("2")),
+                                    ("actor", arguments["actor"]),
+                                    ("timestamp", arguments["timestamp"]),
+                                    ("payload", arguments["payload"]),
+                                )
+                            ),
+                        )
+                    ),
+                ),
+            )
         if (
             self.path.startswith("tests/")
             and isinstance(original_node.func, cst.Name)
@@ -1904,44 +1963,6 @@ class _MechanicalTransformer(cst.CSTTransformer):
                             for arg in updated_node.args
                         )
                     )
-                if (
-                    event_type is not None
-                    and payload is not None
-                    and isinstance(event_type.value, cst.Name)
-                    and isinstance(payload.value, cst.Name)
-                    and payload.value.value == "payload"
-                ):
-                    self.changes += 1
-                    nested = cst.parse_expression(
-                        '{"record": payload} if event_type == "output_record_accepted" and not (isinstance(payload, dict) and "record" in payload) else payload'
-                    )
-                    return updated_node.with_changes(
-                        args=tuple(
-                            arg.with_changes(value=nested)
-                            if arg.keyword is not None and arg.keyword.value == "payload"
-                            else arg
-                            for arg in updated_node.args
-                        )
-                    )
-                if (
-                    event_type is not None
-                    and payload is not None
-                    and isinstance(event_type.value, cst.Name)
-                    and isinstance(payload.value, cst.IfExp)
-                    and isinstance(payload.value.test, cst.Comparison)
-                ):
-                    self.changes += 1
-                    nested = cst.parse_expression(
-                        '{"record": payload} if event_type == "output_record_accepted" and not (isinstance(payload, dict) and "record" in payload) else payload'
-                    )
-                    return updated_node.with_changes(
-                        args=tuple(
-                            arg.with_changes(value=nested)
-                            if arg.keyword is not None and arg.keyword.value == "payload"
-                            else arg
-                            for arg in updated_node.args
-                        )
-                    )
         if (
             self.migration.domain == "complete_reads"
             and isinstance(original_node.func, cst.Name)
@@ -2709,10 +2730,22 @@ class StrictPayloadCutoverCodemod:
                 if "GraphController(" in working[path]
                 else ()
             )
+            fixture_imports = (
+                (
+                    RequiredImport(
+                        path,
+                        "orchestrator.graph",
+                        ("StoredEventEnvelope", "build_graph_catalog"),
+                    ),
+                )
+                if self.migration.domain == "fixture_envelopes" and result.changes
+                else ()
+            )
             transformed, import_changes = _ensure_required_imports(
                 result.source,
                 tuple(item for item in self.migration.required_imports if item.path == path)
-                + dynamic_imports,
+                + dynamic_imports
+                + fixture_imports,
             )
             working[path] = transformed
             diagnostics.extend(result.diagnostics)
@@ -3119,6 +3152,10 @@ DOMAIN_MIGRATIONS: dict[str, DomainMigration] = {
 
 DOMAIN_MIGRATIONS.update(
     {
+        "fixture_envelopes": DomainMigration(
+            domain="fixture_envelopes",
+            paths=(),
+        ),
         "catalog_injection": DomainMigration(
             domain="catalog_injection",
             paths=(
@@ -3939,6 +3976,15 @@ def _diff(path: str, before: str, after: str) -> str:
 
 
 def run_migration(migration: DomainMigration, root: Path, mode: str) -> MigrationRunResult:
+    if migration.domain == "fixture_envelopes":
+        migration = replace(
+            migration,
+            paths=tuple(
+                str(path.relative_to(root))
+                for path in (root / "tests").rglob("*.py")
+                if "EventEnvelope(" in path.read_text()
+            ),
+        )
     if migration.domain == "catalog_injection":
         target_names = tuple(route.callable_name for route in migration.catalog_injections)
         production_paths = tuple(

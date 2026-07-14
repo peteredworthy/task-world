@@ -16,14 +16,15 @@ from orchestrator.graph import (
     initial_projection,
     reduce_event,
 )
+from orchestrator.graph import StoredEventEnvelope
 
 
 def dispatch_graph_command(
     events: list[EventEnvelope | HydratedEvent],
     command_type: str,
     payload: dict[str, Any] | None = None,
-) -> list[EventEnvelope]:
-    """Dispatch through the real catalog and return store-compatible envelopes."""
+) -> list[HydratedEvent]:
+    """Explicit test adapter for catalog dispatch over hydrated fixture history."""
     raw_payload = dict(payload or {})
     first_run_id = (
         events[0].metadata.run_id
@@ -38,16 +39,15 @@ def dispatch_graph_command(
         raw_payload.pop("actor_role", None)
     clock = FakeClock()
     id_generator = SequentialIdGenerator()
+    catalog = build_graph_catalog()
+    hydrated_events = [_hydrate_fixture_event(event) for event in events]
     projection = initial_projection()
-    for event in events:
-        projection = reduce_event(build_graph_catalog(), projection, event)
+    for event in hydrated_events:
+        projection = reduce_event(catalog, projection, event)
     context = CommandExecutionContext(
         run_id=run_id,
         current_position=max(
-            (
-                event.metadata.position if isinstance(event, HydratedEvent) else event.position
-                for event in events
-            ),
+            (event.position for event in hydrated_events),
             default=-1,
         ),
         clock=clock,
@@ -56,39 +56,49 @@ def dispatch_graph_command(
             kind=ActorKind.CONTROLLER,
             role=actor_role if isinstance(actor_role, str) else None,
         ),
-        events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
+        events=tuple(hydrated_events),
+        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+        catalog=catalog,
     )
-    return [
-        _legacy_envelope(event)
-        for event in apply_command(
-            projection,
-            events,
-            command_type,
-            raw_payload,
-            clock,
-            id_generator,
-            catalog=build_graph_catalog(),
-            context=context,
-        )
-    ]
+    return apply_command(
+        catalog,
+        projection,
+        hydrated_events,
+        command_type,
+        raw_payload,
+        context,
+    )
 
 
-def _legacy_envelope(event: EventEnvelope | HydratedEvent) -> EventEnvelope:
-    if isinstance(event, EventEnvelope):
+def with_metadata_position(event: HydratedEvent, position: int) -> HydratedEvent:
+    """Return a typed fixture event at a new persisted stream position."""
+    return event.model_copy(
+        update={"metadata": event.metadata.model_copy(update={"position": position})}
+    )
+
+
+def _hydrate_fixture_event(event: EventEnvelope | HydratedEvent) -> HydratedEvent:
+    if isinstance(event, HydratedEvent):
         return event
-    return EventEnvelope(
-        event_id=event.metadata.event_id,
-        run_id=event.metadata.run_id,
-        position=event.metadata.position,
-        event_type=event.metadata.event_type,
-        schema_version=event.metadata.payload_schema_generation,
-        actor=event.metadata.actor,
-        timestamp=event.metadata.timestamp,
-        payload=event.payload.model_dump(mode="json"),
+    return (
+        build_graph_catalog()
+        .resolve_event(event.event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=event.event_id,
+                run_id=event.run_id,
+                position=event.position,
+                event_type=event.event_type,
+                # Command fixtures are hydrated through the strict catalog;
+                # the legacy envelope's default schema_version is not a
+                # persisted payload-generation value.
+                payload_schema_generation=2,
+                actor=event.actor,
+                timestamp=event.timestamp,
+                payload=event.payload,
+            )
+        )
     )
 
 
-__all__ = ["dispatch_graph_command"]
+__all__ = ["dispatch_graph_command", "with_metadata_position"]

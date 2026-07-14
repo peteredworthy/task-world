@@ -8,12 +8,15 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
 from pydantic import BaseModel, ConfigDict, SerializeAsAny
 
 from orchestrator.graph.models import Actor, EventEnvelope
 from orchestrator.graph.payloads import JsonValue, StrictPayload
+
+if TYPE_CHECKING:
+    from orchestrator.graph.catalog import GraphCatalog
 
 
 PayloadT = TypeVar("PayloadT", bound=StrictPayload)
@@ -55,7 +58,6 @@ class StoredEventEnvelope(BaseModel):
     position: int
     event_type: str
     payload_schema_generation: int
-    source_schema_version: int | None = None
     actor: Actor
     causation_id: str | None = None
     correlation_id: str | None = None
@@ -109,7 +111,7 @@ class HydratedEvent(BaseModel):
 
 
 def event_payload_json(event: EventEnvelope | HydratedEvent) -> dict[str, JsonValue]:
-    """Serialize a typed current event or expose a stored legacy payload once."""
+    """Serialize a typed current event at the graph storage boundary."""
 
     if isinstance(event, HydratedEvent):
         return event.payload.to_json()
@@ -122,12 +124,9 @@ class ProjectionParticipation(str, Enum):
 
 
 EventReducer = Callable[[Any, PayloadT, EventMetadata], Any]
-# Task 9 deletes this temporary mixed-result bridge after the remaining event
-# domains have strict specifications.  Projection and history are explicit
-# execution inputs; they are deliberately not command payload fields.
-CommandResult = HydratedEvent | EventEnvelope
+CommandResult = HydratedEvent
 CommandHandler = Callable[
-    [CommandT, Any, tuple[EventEnvelope, ...], "CommandExecutionContext"],
+    [CommandT, Any, tuple[HydratedEvent, ...], "CommandExecutionContext"],
     Sequence[CommandResult],
 ]
 
@@ -144,7 +143,17 @@ class FutureCommandEffects(Protocol):
     output_record_provenance_conflict: Callable[..., Any]
     planner_session_state_event: Callable[..., Any]
     required_output_record_conflict: Callable[..., Any]
-    source_repair_events: Callable[..., Any]
+
+    def source_repair_events(
+        self,
+        projection: Any,
+        events: list[HydratedEvent],
+        source_events: list[HydratedEvent],
+        make_event: Callable[[str, dict[str, Any]], HydratedEvent],
+        catalog: GraphCatalog,
+        creator: Any,
+    ) -> list[HydratedEvent]: ...
+
     typed_lease_event_payload: Callable[..., Any]
     verification_record_conflict: Callable[..., Any]
     cancel_active_lease_events: Callable[..., Any]
@@ -164,6 +173,7 @@ class CommandExecutionContext:
     actor: Actor
     events: tuple[HydratedEvent, ...]
     future_effects: FutureCommandEffects
+    catalog: GraphCatalog
 
     def event_metadata(self, event_type: str) -> EventMetadata:
         return EventMetadata(
@@ -198,12 +208,13 @@ class EventSpecification(Generic[PayloadT]):
         if stored.event_type != self.name:
             msg = f"stored event type {stored.event_type!r} does not match {self.name!r}"
             raise ValueError(msg)
+        if stored.payload_schema_generation != 2:
+            msg = "stored graph events require payload schema generation 2"
+            raise ValueError(msg)
         # Stored payloads are JSON-safe. Validating from JSON preserves strict
         # scalar rules while allowing JSON encodings of native types such as datetime.
         payload = self.payload_type.model_validate_json(json.dumps(stored.payload))
-        metadata = EventMetadata.model_validate(
-            stored.model_dump(exclude={"payload", "source_schema_version"})
-        )
+        metadata = EventMetadata.model_validate(stored.model_dump(exclude={"payload"}))
         return self.create(metadata, payload)
 
     def serialize(self, event: HydratedEvent) -> StoredEventEnvelope:
@@ -240,13 +251,16 @@ class CommandSpecification(Generic[CommandT]):
         self,
         command: BaseModel,
         projection: Any,
-        events: tuple[EventEnvelope, ...],
+        events: tuple[HydratedEvent, ...],
         context: CommandExecutionContext,
     ) -> list[CommandResult]:
         if type(command) is not self.payload_type:
             msg = f"{self.name} requires exact command class {self.payload_type.__name__}"
             raise TypeError(msg)
-        return list(self.handler(cast(CommandT, command), projection, events, context))
+        result = list(self.handler(cast(CommandT, command), projection, events, context))
+        if any(type(event) is not HydratedEvent for event in result):
+            raise TypeError(f"{self.name} command handler must return HydratedEvent instances")
+        return result
 
 
 def projection_neutral(

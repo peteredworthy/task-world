@@ -13,8 +13,7 @@
     - lease_granted: {node_id: writer-active, lease_id: lease-writer-active, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}], generation: 0, execution_id: exec-writer-active, base_snapshot_id: S0, expires_at: 2026-01-01T00:05:00+00:00}
     - node_created: {node_id: writer-conflict, kind: worker, state: ready, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
   when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
-  then_events:
-    - command_recorded: {command_type: schedule_tick}
+  then_events: []
   then_projection: {writer-conflict: ready, lease-writer-active: active}
 
 - name: invariant_no_callback_without_valid_lease
@@ -34,7 +33,6 @@
     - edge_created: {edge_id: edge-invariant-4, from_node_id: producer-invariant-4, from_port: candidate, to_node_id: successor-invariant-4, to_port: candidate, required: true}
   when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
   then_events:
-    - command_recorded: {command_type: schedule_tick}
     - node_deferred: {node_id: successor-invariant-4, reason: missing_required_input:candidate}
   then_projection: {successor-invariant-4: blocked}
 
@@ -81,7 +79,7 @@
   given_events:
     - node_state_changed: {node_id: builder-invariant-7, new_state: completed}
     - output_record_accepted: {record: {record_id: candidate-invariant-7, record_kind: output, record_type: candidate, producer_node_id: builder-invariant-7, port: candidate, schema: ImplementationCandidate, candidate_id: candidate-invariant-7, task_region_id: task-invariant-7, attempt_number: 1, value: {summary: test candidate}}}
-    - verification_failed: {node_id: verifier-invariant-7, candidate_id: candidate-invariant-7}
+    - verification_failed: {node_id: verifier-invariant-7, verifier_node_id: verifier-invariant-7, candidate_id: candidate-invariant-7, outcome: failed, record_id: verification-invariant-7}
     - node_state_changed: {node_id: verifier-invariant-7, new_state: running}
   when_command:
     submit_patch:
@@ -115,7 +113,6 @@
     - input_bound: {edge_id: edge-invariant-9, to_node_id: successor-invariant-9, to_port: approval, record_ids: [], bound_at_position: 4}
   when_command: {schedule_tick: {run_id: run-1, base_snapshot_id: S0, lease_seconds: 300, max_grants: 10}}
   then_events:
-    - command_recorded: {command_type: schedule_tick}
     - node_deferred: {node_id: successor-invariant-9, reason: gate_not_approved:gate-invariant-9}
   then_projection: {gate-invariant-9: completed, successor-invariant-9: blocked}
 

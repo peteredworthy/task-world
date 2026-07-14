@@ -25,6 +25,7 @@ from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph_runtime.store import GraphNodeDetailSummary, graph_aggregate_id
 from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import GraphCatalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 @pytest.fixture(scope="module")
@@ -46,8 +47,38 @@ def _event(
     event_type: str,
     payload: dict[str, Any],
     *,
-    schema_version: int = 1,
+    schema_version: int = 2,
 ) -> EventEnvelope:
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=event_id,
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
+    )
+
+
+def _unsafe_event(
+    event_id: str,
+    run_id: str,
+    event_type: str,
+    payload: dict[str, Any],
+    *,
+    schema_version: int,
+) -> EventEnvelope:
+    """Construct intentionally malformed persisted input for rejection coverage."""
     return EventEnvelope(
         event_id=event_id,
         run_id=run_id,
@@ -55,46 +86,35 @@ def _event(
         event_type=event_type,
         schema_version=schema_version,
         actor=Actor(kind=ActorKind.CONTROLLER),
-        causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+        payload=payload,
     )
 
 
-def test_node_detail_replays_unknown_generation_one_output_record(*, catalog: GraphCatalog) -> None:
+def test_node_detail_rejects_unknown_generation_one_output_record(*, catalog: GraphCatalog) -> None:
     run_id = "legacy-output-record"
-    response = build_node_detail_response(
-        run_id,
-        "worker-1",
-        [
-            _event(
-                "evt-legacy-output",
-                run_id,
-                "output_record_accepted",
-                {
-                    "record": {
-                        "record_type": "totally_unknown",
-                        "record_id": "legacy-1",
-                        "record_kind": "output",
-                        "producer_node_id": "worker-1",
-                    }
-                },
-            )
-        ],
-        catalog=build_graph_catalog(),
-    )
-
-    assert response.output_records == [
-        {
-            "record_type": "totally_unknown",
-            "record_id": "legacy-1",
-            "record_kind": "output",
-            "producer_node_id": "worker-1",
-        }
-    ]
+    with pytest.raises(TypeError, match="graph reduction requires HydratedEvent"):
+        build_node_detail_response(
+            run_id,
+            "worker-1",
+            [
+                _unsafe_event(
+                    "evt-legacy-output",
+                    run_id,
+                    "output_record_accepted",
+                    {
+                        "record": {
+                            "record_type": "totally_unknown",
+                            "record_id": "legacy-1",
+                            "record_kind": "output",
+                            "producer_node_id": "worker-1",
+                        }
+                    },
+                    schema_version=1,
+                )
+            ],
+            catalog=build_graph_catalog(),
+        )
 
 
 def test_node_detail_rejects_unknown_generation_two_output_record() -> None:
@@ -116,11 +136,11 @@ def test_node_detail_rejects_unknown_generation_two_output_record() -> None:
         events=[],
     )
 
-    with pytest.raises(ValueError, match="totally_unknown"):
+    with pytest.raises(TypeError, match="node detail events require HydratedEvent"):
         build_node_detail_response_from_summary(
             summary,
             full_events=[
-                _event(
+                _unsafe_event(
                     "evt-strict-output",
                     run_id,
                     "output_record_accepted",
@@ -274,7 +294,7 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
                 "lease_id": "lease-1",
                 "lease_generation": 1,
                 "idempotency_key": "node-detail-callback-1",
-                "payload": None,
+                "payload": {},
                 "reason": "accepted",
             },
         ),
@@ -293,6 +313,7 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
                 "to_node_id": "verifier-1",
                 "to_port": "candidate_under_test",
                 "record_ids": ["candidate-1"],
+                "bound_at_position": 9,
             },
         ),
         _event(
@@ -483,6 +504,7 @@ async def test_node_detail_summary_accumulates_bind_all_input_ports(
                 "to_port": "source_records",
                 "record_ids": ["candidate-1"],
                 "binding_policy": "bind_all",
+                "bound_at_position": 4,
             },
         ),
         _event(
@@ -495,6 +517,7 @@ async def test_node_detail_summary_accumulates_bind_all_input_ports(
                 "to_port": "source_records",
                 "record_ids": ["candidate-2"],
                 "binding_policy": "bind_all",
+                "bound_at_position": 5,
             },
         ),
     ]

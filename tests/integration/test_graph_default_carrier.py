@@ -14,7 +14,12 @@ from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType, GlobalConfig, PathsConfig, RoutineConfig
 from orchestrator.config.enums import RunStatus
 from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
-from orchestrator.graph import build_graph_catalog, project_run_state, project_task_states
+from orchestrator.graph import (
+    build_graph_catalog,
+    project_run_state,
+    project_task_states,
+    event_payload_json,
+)
 from orchestrator.graph_runtime import GraphController, GraphDispatchContext, GraphDispatchExecutor
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner, OutputBatcher
@@ -463,7 +468,7 @@ async def test_common_routine_shapes_seed_and_complete_as_graph(
         if routine.id == "auto-verify":
             assert any(
                 event.event_type == "output_record_accepted"
-                and event.payload["record"].get("record_type") == "check_result"
+                and event_payload_json(event)["record"].get("record_type") == "check_result"
                 for event in events
             )
         assert "verifier" in dispatch_order

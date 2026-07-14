@@ -6,16 +6,24 @@ from typing import Any, cast
 
 from orchestrator.graph.command_bindings import is_known_check_command_binding
 from orchestrator.graph.contracts import validate_edge_payload, validate_node_payload
-from orchestrator.graph.models import EventEnvelope, PatchEnvelope, normalize_record_selector
+from orchestrator.graph.models import PatchEnvelope, normalize_record_selector
+from orchestrator.graph.events.lifecycle import RunLifecycleChangedPayload
+from orchestrator.graph.events.patches import GraphPatchAcceptedPayload
+from orchestrator.graph.events.requirements import RequirementRevisionPayload
+from orchestrator.graph.events.topology import (
+    NodeAuthorityChangedPayload,
+    NodeStateChangedPayload,
+    PlanRegionMarkedSuspectPayload,
+)
 from orchestrator.graph.projections import GraphProjection
-from orchestrator.graph.specifications import HydratedEvent, event_payload_json
+from orchestrator.graph.specifications import HydratedEvent
 
 
 @dataclass(frozen=True)
 class PatchValidationResult:
     accepted: bool
     rejection_reason: str | None = None
-    conflicting_events: list[EventEnvelope] = field(default_factory=lambda: [])
+    conflicting_events: list[HydratedEvent] = field(default_factory=lambda: [])
     read_set_diff: dict[str, Any] | None = None
 
 
@@ -62,23 +70,13 @@ PLANNER_SUCCESSOR_PORTS = {
 }
 
 
-def classify_event(event: EventEnvelope | HydratedEvent) -> str:
+def classify_event(event: HydratedEvent) -> str:
     """Classify whether an event can invalidate a stale patch read-set."""
-    if event.event_type == "node_state_changed":
-        new_state = (
-            event_payload_json(event).get("new_state")
-            if isinstance(event.payload, dict)
-            else getattr(event.payload, "new_state", None)
-        )
-        if isinstance(new_state, str) and new_state in INVALIDATING_NODE_STATES:
+    if isinstance(event.payload, NodeStateChangedPayload):
+        if event.payload.new_state in INVALIDATING_NODE_STATES:
             return "invalidating"
-    if event.event_type == "run_lifecycle_changed":
-        to_state = (
-            event_payload_json(event).get("to_state")
-            if isinstance(event.payload, dict)
-            else getattr(event.payload, "to_state", None)
-        )
-        if isinstance(to_state, str) and to_state in INVALIDATING_RUN_STATES:
+    if isinstance(event.payload, RunLifecycleChangedPayload):
+        if event.payload.to_state in INVALIDATING_RUN_STATES:
             return "invalidating"
     if event.event_type in INVALIDATING_EVENT_TYPES:
         return "invalidating"
@@ -110,7 +108,7 @@ def op_read_set(op: dict[str, Any]) -> set[str]:
 def validate_patch(
     patch: PatchEnvelope,
     current_position: int,
-    events_since_base: list[EventEnvelope],
+    events_since_base: list[HydratedEvent],
     projection: GraphProjection,
     actor_role: str,
 ) -> PatchValidationResult:
@@ -694,7 +692,7 @@ def _port_dicts(raw_ports: Any) -> list[dict[str, Any]]:
 def _validate_staleness(
     patch: PatchEnvelope,
     current_position: int,
-    events_since_base: list[EventEnvelope],
+    events_since_base: list[HydratedEvent],
     ops: list[dict[str, Any]],
 ) -> PatchValidationResult | None:
     if patch.base_graph_position >= current_position:
@@ -721,28 +719,19 @@ def _validate_staleness(
     )
 
 
-def _event_touches_read_set(event: EventEnvelope | HydratedEvent, read_set: set[str]) -> bool:
+def _event_touches_read_set(event: HydratedEvent, read_set: set[str]) -> bool:
     payload = event.payload
-    node_id = (
-        payload.get("node_id") if isinstance(payload, dict) else getattr(payload, "node_id", None)
-    )
-    if isinstance(node_id, str) and node_id in read_set:
-        return True
-
-    record_id = (
-        payload.get("record_id")
-        if isinstance(payload, dict)
-        else getattr(payload, "record_id", None)
-    )
-    if isinstance(record_id, str) and record_id in read_set:
-        return True
-
-    region_node_ids = (
-        payload.get("region_node_ids")
-        if isinstance(payload, dict)
-        else getattr(payload, "region_node_ids", None)
-    )
-    return bool(_string_values_from_iterable(region_node_ids) & read_set)
+    if isinstance(payload, NodeStateChangedPayload):
+        return payload.node_id in read_set
+    if isinstance(payload, NodeAuthorityChangedPayload):
+        return payload.node_id in read_set
+    if isinstance(payload, RequirementRevisionPayload):
+        return payload.record_id in read_set if payload.record_id is not None else False
+    if isinstance(payload, PlanRegionMarkedSuspectPayload):
+        return bool(set(payload.region_node_ids) & read_set)
+    if isinstance(payload, GraphPatchAcceptedPayload):
+        return False
+    return False
 
 
 def _op_resource_claim_dicts(op: dict[str, Any]) -> list[dict[str, Any]]:

@@ -1,5 +1,6 @@
 """Executable coverage checks for graph scenario fixtures."""
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -9,8 +10,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.db import EventV2Model, create_engine, create_session_factory, init_db
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
-from orchestrator.graph.models import EventEnvelope
+from orchestrator.graph import (
+    HydratedEvent,
+    StoredEventEnvelope,
+    build_graph_catalog,
+    build_graph_command_dependencies,
+)
 from orchestrator.graph.projections import build_projection, projection_to_checkpoint
 from orchestrator.graph.scenario import run_scenario
 from orchestrator.graph.store import InMemoryEventStore
@@ -128,18 +133,35 @@ async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
         assert result.passed, f"{path.name}::{scenario['name']}: {result.failures}"
 
         run_id = f"fixture-corpus-{index}"
-        stored_events = _stored_events(run_id, result.events_produced)
-        session.add_all(
+        rebased_events = _stored_events(run_id, result.events_produced)
+        envelopes = [_stored_envelope(event) for event in rebased_events]
+        assert [(envelope.run_id, envelope.position) for envelope in envelopes] == [
+            (run_id, event.metadata.position) for event in rebased_events
+        ]
+        catalog = build_graph_catalog()
+        stored_events = [catalog.hydrate_event(envelope) for envelope in envelopes]
+        rows = [
             EventV2Model(
                 aggregate_id=graph_aggregate_id(run_id),
-                version=event.position,
-                event_type=event.event_type,
-                payload=event.model_dump_json(),
+                version=envelope.position,
+                event_type=envelope.event_type,
+                payload=envelope.model_dump_json(),
                 payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
-                timestamp=event.timestamp.isoformat(),
+                timestamp=envelope.timestamp.isoformat(),
             )
-            for event in stored_events
-        )
+            for envelope in envelopes
+        ]
+        for row in rows:
+            envelope = StoredEventEnvelope.model_validate_json(row.payload)
+            assert (envelope.run_id, envelope.position, envelope.event_type) == (
+                run_id,
+                row.version,
+                row.event_type,
+            )
+            payload = json.loads(row.payload)
+            assert "schema_version" not in payload
+            assert "metadata" not in payload
+        session.add_all(rows)
         await session.flush()
 
         full_projection_checkpoint = projection_to_checkpoint(
@@ -174,8 +196,29 @@ async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
         )
 
 
-def _stored_events(run_id: str, events: list[EventEnvelope]) -> list[EventEnvelope]:
+def _stored_events(run_id: str, events: list[HydratedEvent]) -> list[HydratedEvent]:
     return [
-        event.model_copy(update={"run_id": run_id, "position": position})
+        event.model_copy(
+            update={
+                "metadata": event.metadata.model_copy(
+                    update={"run_id": run_id, "position": position}
+                )
+            }
+        )
         for position, event in enumerate(events, start=1)
     ]
+
+
+def _stored_envelope(event: HydratedEvent) -> StoredEventEnvelope:
+    return StoredEventEnvelope(
+        event_id=event.event_id,
+        run_id=event.metadata.run_id,
+        position=event.metadata.position,
+        event_type=event.event_type,
+        payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
+        actor=event.actor,
+        causation_id=event.causation_id,
+        correlation_id=event.correlation_id,
+        timestamp=event.timestamp,
+        payload=event.model_dump(mode="json")["payload"],
+    )

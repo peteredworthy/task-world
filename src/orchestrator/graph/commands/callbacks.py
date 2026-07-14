@@ -8,9 +8,7 @@ from orchestrator.graph.callbacks import (
     CallbackRequest,
     validate_callback,
 )
-from orchestrator.graph.models import (
-    EventEnvelope,
-)
+from orchestrator.graph.catalog import GraphCatalog
 from orchestrator.graph.projections import (
     GraphProjection,
 )
@@ -25,7 +23,6 @@ from orchestrator.graph.events.lifecycle import (
     CallbackRejectedPayload,
     CommandRejectedPayload,
 )
-from orchestrator.graph.commands.future_effects import require_future_effect
 from orchestrator.graph.commands.event_creator import TypedEventCreator
 from collections.abc import Callable
 
@@ -188,23 +185,18 @@ class AcknowledgeStartCommand(StrictPayload):
 
 
 def _require_future_outcomes(
-    output: list[EventEnvelope | HydratedEvent],
-) -> list[EventEnvelope | HydratedEvent]:
-    return [
-        require_future_effect(event) if isinstance(event, EventEnvelope) else event
-        for event in output
-    ]
+    output: list[HydratedEvent],
+) -> list[HydratedEvent]:
+    return output
 
 
 def handle_submit_callback_command(
     command: SubmitCallbackCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
-) -> list[EventEnvelope | HydratedEvent]:
-    make_event = event_factory(
-        context.run_id, SUBMIT_CALLBACK.name, context.clock, context.id_generator
-    )
+) -> list[HydratedEvent]:
+    make_event = event_factory(context, SUBMIT_CALLBACK.name)
     output = apply_callback_effects(
         projection,
         list(events),
@@ -213,6 +205,7 @@ def handle_submit_callback_command(
         make_event,
         TypedEventCreator(context, assign_position=False),
         context.future_effects,
+        context.catalog,
     )
     return _require_future_outcomes(output)
 
@@ -220,13 +213,11 @@ def handle_submit_callback_command(
 def handle_acknowledge_start_command(
     command: AcknowledgeStartCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
-) -> list[EventEnvelope | HydratedEvent]:
+) -> list[HydratedEvent]:
     del events
-    make_event = event_factory(
-        context.run_id, ACKNOWLEDGE_START.name, context.clock, context.id_generator
-    )
+    make_event = event_factory(context, ACKNOWLEDGE_START.name)
     return _require_future_outcomes(
         apply_acknowledge_start_effects(
             projection,
@@ -250,7 +241,7 @@ CALLBACK_COMMAND_SPECIFICATIONS = (ACKNOWLEDGE_START, SUBMIT_CALLBACK)
 def handle_raise_appeal(
     command: RaiseAppealCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
     del events
@@ -292,7 +283,7 @@ def handle_raise_appeal(
 def handle_record_decision(
     command: RecordDecisionCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
     del events
@@ -355,9 +346,7 @@ def handle_record_decision(
                 OUTPUT_RECORD_ACCEPTED.validate_payload({"record": record}),
             )
         )
-        make_event = event_factory(
-            context.run_id, "record_decision", context.clock, context.id_generator
-        )
+        make_event = event_factory(context, "record_decision")
         for event in input_bound_events_for_record(
             projection,
             decision_command.node_id,
@@ -367,7 +356,9 @@ def handle_record_decision(
             make_event,
             record_selector_aliases(record),
         ):
-            output.append(creator.create(INPUT_BOUND, INPUT_BOUND.validate_payload(event.payload)))
+            output.append(
+                creator.create(INPUT_BOUND, INPUT_BOUND.validate_payload(event.payload.to_json()))
+            )
     output.append(
         creator.create(
             NODE_STATE_CHANGED,
@@ -378,12 +369,10 @@ def handle_record_decision(
             ),
         )
     )
-    make_event = event_factory(
-        context.run_id, "record_decision", context.clock, context.id_generator
-    )
+    make_event = event_factory(context, "record_decision")
     for event in release_active_node_leases(projection, decision_command.node_id, make_event):
         output.append(
-            creator.create(LEASE_RELEASED, LEASE_RELEASED.validate_payload(event.payload))
+            creator.create(LEASE_RELEASED, LEASE_RELEASED.validate_payload(event.payload.to_json()))
         )
     return output
 
@@ -391,7 +380,7 @@ def handle_record_decision(
 def handle_record_requirement_revision(
     command: RecordRequirementRevisionCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
     del projection
@@ -408,7 +397,7 @@ def handle_record_requirement_revision(
 def handle_record_support_evidence(
     command: RecordSupportEvidenceCommand,
     projection: GraphProjection,
-    events: tuple[EventEnvelope, ...],
+    events: tuple[HydratedEvent, ...],
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
     del events
@@ -477,13 +466,14 @@ __all__ = [
 
 def apply_callback_effects(
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     command: SubmitCallbackCommand,
     run_id: str,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     creator: TypedEventCreator,
     effects: FutureCommandEffects,
-) -> list[EventEnvelope | HydratedEvent]:
+    catalog: GraphCatalog,
+) -> list[HydratedEvent]:
     _accepted_output_record_events = effects.accepted_output_record_events
     _file_state_authority_conflict = effects.file_state_authority_conflict
     _file_state_rejected_conflict = effects.file_state_rejected_conflict
@@ -638,7 +628,7 @@ def apply_callback_effects(
             reason=result.reason,
         ),
     )
-    output: list[EventEnvelope | HydratedEvent] = [accepted]
+    output: list[HydratedEvent] = [accepted]
     output.extend(_file_state_rejected_events(request, make_event))
     output.extend(
         _accepted_output_record_events(
@@ -683,18 +673,20 @@ def apply_callback_effects(
         )
         if session_event is not None:
             output.append(session_event)
-    future_output = [event for event in output if isinstance(event, EventEnvelope)]
-    output.extend(_source_repair_events(projection, events, future_output, make_event))
+    future_output = list(output)
+    output.extend(
+        _source_repair_events(projection, events, future_output, make_event, catalog, creator)
+    )
     return output
 
 
 def apply_acknowledge_start_effects(
     projection: GraphProjection,
     command: AcknowledgeStartCommand,
-    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     creator: TypedEventCreator,
     effects: FutureCommandEffects,
-) -> list[EventEnvelope | HydratedEvent]:
+) -> list[HydratedEvent]:
     del effects
     node_id = command.node_id
     lease_id = command.lease_id

@@ -12,12 +12,13 @@ from orchestrator.config.enums import AgentRunnerType, RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db.access.mutations import save_run
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, event_payload_json
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import SignalConsumer, WorkflowService
 from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import GraphCatalog
+from orchestrator.graph import StoredEventEnvelope
 
 
 def _routine_payload() -> dict[str, Any]:
@@ -186,15 +187,15 @@ async def test_graph_cancel_route_appends_graph_cancel_before_signal_drain(
         "node_state_changed",
         "run_lifecycle_changed",
     ]
-    assert events[-4].payload["to_state"] == "cancelling"
-    assert events[-3].payload["lease_id"] == "lease-worker-1"
+    assert event_payload_json(events[-4])["to_state"] == "cancelling"
+    assert event_payload_json(events[-3])["lease_id"] == "lease-worker-1"
     assert events[-2].payload.to_json() == {
         "node_id": "worker-1",
         "new_state": "cancelled",
         "trigger": "run_cancelled",
         "reason": "run_cancelled",
     }
-    assert events[-1].payload["to_state"] == "cancelled"
+    assert event_payload_json(events[-1])["to_state"] == "cancelled"
 
     await drain(run_id)
     data = (await client.get(f"/api/runs/{run_id}")).json()
@@ -231,13 +232,19 @@ async def _create_run(
 
 
 def _graph_event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{len(str(payload))}",
-        run_id="placeholder",
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{len(str(payload))}",
+                run_id="placeholder",
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )

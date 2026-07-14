@@ -16,7 +16,7 @@ from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType, RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import init_db
-from orchestrator.graph import build_graph_catalog
+from orchestrator.graph import build_graph_catalog, event_payload_json
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -434,10 +434,10 @@ async def test_fr16_stale_callback_rejection_is_readable(
 
     events = await _read_events(session_factory, run_id)
     lease = next(
-        event.payload
+        event_payload_json(event)
         for event in events
         if event.event_type == "lease_granted"
-        and event.payload.get("node_id") == "worker-step-1-task-1"
+        and event_payload_json(event).get("node_id") == "worker-step-1-task-1"
     )
     controller = GraphController(
         session_factory,
@@ -547,9 +547,9 @@ async def test_fr16_terminal_exhausted_failure_record_callback_readbacks(
     failure_records = [
         record for record in node["output_records"] if record["record_type"] == "failure_record"
     ]
-    assert run["status"] == RunStatus.PAUSED.value
-    assert run["pause_reason"] == "graph_blocked"
-    assert graph["run_state"] == "paused"
+    assert run["status"] == RunStatus.FAILED.value
+    assert run["pause_reason"] is None
+    assert graph["run_state"] == "failed"
     assert graph["node_states"]["worker-step-1-task-1"] == "failed"
     assert event_types.count("agent_died") == 2
     assert "runtime_retry_scheduled" in event_types

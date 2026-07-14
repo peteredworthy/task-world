@@ -26,6 +26,7 @@ from orchestrator.graph_runtime.store import (
 from orchestrator.graph import build_graph_catalog
 from orchestrator.graph.events.topology import SEED_COMPILED_EVENTS, SeedCompiledEventsCommand
 from orchestrator.graph.specifications import EventMetadata
+from orchestrator.graph import StoredEventEnvelope
 
 
 def test_node_created_payload_accepts_complete_named_producer_shape() -> None:
@@ -460,7 +461,7 @@ async def test_hidden_oracle_command_survives_all_sqlite_compact_readers() -> No
                     aggregate_id=graph_aggregate_id("run-1"),
                     version=1,
                     event_type=event.event_type,
-                    payload=event.model_dump_json(),
+                    payload=_stored_event_json(event),
                     payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
                     timestamp=event.timestamp.isoformat(),
                 )
@@ -477,7 +478,7 @@ async def test_hidden_oracle_command_survives_all_sqlite_compact_readers() -> No
                 store.read_run_node_detail,
             ):
                 compact_events = await reader("run-1")
-                assert compact_events[0].payload["hidden_oracle_command"] == hidden_oracle_command
+                assert compact_events[0].payload.hidden_oracle_command == hidden_oracle_command
                 assert (
                     projection_to_checkpoint(
                         build_projection(build_graph_catalog(), compact_events)
@@ -492,30 +493,28 @@ async def test_hidden_oracle_command_survives_all_sqlite_compact_readers() -> No
 async def test_node_created_compact_replay_matches_full_replay() -> None:
     events = [
         _event(
-            NodeCreatedPayload.model_validate(
-                {
-                    "node_id": "planner-1",
-                    "kind": "planner",
-                    "role": "planner",
-                    "state": "planned",
-                    "task_region_id": "task-1",
-                    "attempt_number": 2,
-                    "candidate_id": "candidate-2",
-                    "failed_candidate_id": "candidate-1",
-                    "resource_claims": [{"mode": "read", "scope": "repo"}],
-                    "allowed_actions": ["submit_patch"],
-                    "preconditions": ["inputs_bound"],
-                    "planner_generation_budget": 5,
-                    "generation_index": 1,
-                    "region_label": "repair",
-                    "session_id": "session-1",
-                    "recovery_reason": "failed_verification",
-                    "recovery_of_record_id": "verification-1",
-                    "command_definition": {"argv": ["uv", "run", "pytest"]},
-                    "inputs": [{"port": "in", "required": True}],
-                    "outputs": [{"port": "out", "required": False}],
-                }
-            ).model_dump(mode="json"),
+            {
+                "node_id": "planner-1",
+                "kind": "planner",
+                "role": "planner",
+                "state": "planned",
+                "task_region_id": "task-1",
+                "attempt_number": 2,
+                "candidate_id": "candidate-2",
+                "failed_candidate_id": "candidate-1",
+                "resource_claims": [{"mode": "read", "scope": "repo"}],
+                "allowed_actions": ["submit_patch"],
+                "preconditions": ["inputs_bound"],
+                "planner_generation_budget": 5,
+                "generation_index": 1,
+                "region_label": "repair",
+                "session_id": "session-1",
+                "recovery_reason": "failed_verification",
+                "recovery_of_record_id": "verification-1",
+                "command_definition": {"argv": ["uv", "run", "pytest"]},
+                "inputs": [{"port": "in", "required": True}],
+                "outputs": [{"port": "out", "required": False}],
+            },
             position=1,
         )
     ]
@@ -531,7 +530,7 @@ async def test_node_created_compact_replay_matches_full_replay() -> None:
                     aggregate_id=graph_aggregate_id("run-1"),
                     version=1,
                     event_type=event.event_type,
-                    payload=event.model_dump_json(),
+                    payload=_stored_event_json(event),
                     payload_schema_generation=GRAPH_PAYLOAD_SCHEMA_GENERATION,
                     timestamp=event.timestamp.isoformat(),
                 )
@@ -559,13 +558,35 @@ async def test_node_created_compact_replay_matches_full_replay() -> None:
 
 
 def _event(payload: dict[str, Any], *, position: int) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"node-created-{position}",
-        run_id="run-1",
-        position=position,
-        event_type="node_created",
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event("node_created")
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"node-created-{position}",
+                run_id="run-1",
+                position=position,
+                event_type="node_created",
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )
+
+
+def _stored_event_json(event: EventEnvelope) -> str:
+    metadata = event.metadata
+    return StoredEventEnvelope(
+        event_id=metadata.event_id,
+        run_id=metadata.run_id,
+        position=metadata.position,
+        event_type=metadata.event_type,
+        payload_schema_generation=metadata.payload_schema_generation,
+        actor=metadata.actor,
+        causation_id=metadata.causation_id,
+        correlation_id=metadata.correlation_id,
+        timestamp=metadata.timestamp,
+        payload=event.payload.to_json(),
+    ).model_dump_json()

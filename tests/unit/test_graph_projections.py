@@ -17,7 +17,6 @@ from orchestrator.graph import (
     CandidateProjection,
     CheckResultProjection,
     CleanupRequestedProjection,
-    EnvironmentFailureProjection,
     EdgeProjection,
     EventEnvelope,
     FakeClock,
@@ -27,6 +26,7 @@ from orchestrator.graph import (
     GraphRecordSummary,
     GraphTopologyBinding,
     GraphTopologyEdge,
+    HydratedEvent,
     GraphPatchAttempt,
     GatekeeperCostRow,
     GatekeeperPatternLibrarySizeRow,
@@ -74,7 +74,10 @@ from orchestrator.graph import (
     reduce_event,
     support_evidence_freshness_from_projection,
 )
+from orchestrator.graph.catalog import UnknownGraphEventError
 from tests.graph_command_support import dispatch_graph_command
+from tests.graph_command_support import with_metadata_position
+from orchestrator.graph import StoredEventEnvelope
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "graph"
 
@@ -191,51 +194,63 @@ def test_remaining_projection_value_models_are_strict_and_frozen() -> None:
 
 
 def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-event",
-        run_id="run-1",
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-event",
+                run_id="run-1",
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
     )
 
 
 def _file_state_event(task_region_id: str, candidate_id: str, position: int) -> EventEnvelope:
-    return _event(
-        "file_state_accepted",
-        {
-            "record_id": f"file-state-{candidate_id}",
-            "record_kind": "file_state",
-            "producer_node_id": f"worker-{candidate_id}",
-            "port": "file_state",
-            "schema": "FileStateRecord",
-            "snapshot_id": f"snapshot-{candidate_id}",
-            "base_snapshot_id": "S0",
-            "task_region_id": task_region_id,
-            "candidate_id": candidate_id,
-            "verdict": "captured",
-        },
-    ).model_copy(update={"position": position})
+    return with_metadata_position(
+        _event(
+            "file_state_accepted",
+            {
+                "record_id": f"file-state-{candidate_id}",
+                "record_kind": "file_state",
+                "producer_node_id": f"worker-{candidate_id}",
+                "port": "file_state",
+                "schema": "FileStateRecord",
+                "snapshot_id": f"snapshot-{candidate_id}",
+                "base_snapshot_id": "S0",
+                "task_region_id": task_region_id,
+                "candidate_id": candidate_id,
+                "verdict": "captured",
+            },
+        ),
+        position,
+    )
 
 
 def test_graph_patch_attempt_projection_uses_strict_rejection_reason() -> None:
     events = [
-        _event(
-            "graph_patch_rejected",
-            {
-                "patch_id": "patch-1",
-                "proposed_by_node_id": "planner-1",
-                "base_graph_position": 2,
-                "actor_role": "planner",
-                "reason": "test_rejection",
-            },
-        ).model_copy(update={"position": 2})
+        with_metadata_position(
+            _event(
+                "graph_patch_rejected",
+                {
+                    "patch_id": "patch-1",
+                    "proposed_by_node_id": "planner-1",
+                    "base_graph_position": 2,
+                    "actor_role": "planner",
+                    "reason": "test_rejection",
+                },
+            ),
+            2,
+        )
     ]
 
     view = project_graph_patch_attempts(events, run_id="run-1", current_graph_position=3)
@@ -519,12 +534,12 @@ def test_authority_decision_projection_uses_typed_payload() -> None:
 
 
 def test_decision_projection_rejects_legacy_outcome_and_boolean_payloads() -> None:
-    for event in (
-        _event("approval_decision_recorded", {"node_id": "gate-1", "outcome": "approved"}),
-        _event("authority_decision_recorded", {"node_id": "authority-1", "approved": False}),
+    for event_type, payload in (
+        ("approval_decision_recorded", {"node_id": "gate-1", "outcome": "approved"}),
+        ("authority_decision_recorded", {"node_id": "authority-1", "approved": False}),
     ):
         with pytest.raises(ValidationError):
-            reduce_event(build_graph_catalog(), initial_projection(), event)
+            _event(event_type, payload)
 
 
 def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
@@ -567,17 +582,18 @@ def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
 
 
 def test_malformed_decision_payloads_are_rejected() -> None:
-    for event in (
-        _event(
-            "approval_decision_recorded", {"node_id": "gate-1", "decision": "not-a-real-decision"}
+    for event_type, payload in (
+        (
+            "approval_decision_recorded",
+            {"node_id": "gate-1", "decision": "not-a-real-decision"},
         ),
-        _event(
+        (
             "oversight_decision_recorded",
             {"node_id": "oversight-1", "decision": "not-a-real-oversight-decision"},
         ),
     ):
         with pytest.raises(ValidationError):
-            reduce_event(build_graph_catalog(), initial_projection(), event)
+            _event(event_type, payload)
 
     restored = projection_from_checkpoint(
         {
@@ -737,108 +753,13 @@ def test_malformed_decision_request_details_checkpoint_entry_is_dropped() -> Non
     assert restored["decision_request_details"] == {}
 
 
-def test_environment_failure_projection_uses_typed_payload() -> None:
-    projection = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
-        _event(
-            "environment_failure_accepted",
-            {
-                "task_region_id": "task-1",
-                "node_id": "check-1",
-                "record_id": "failure-record-1",
-                "classification": "tool_unavailable",
-                "reason": "tool missing",
-                "command_text": "uv run pytest",
-                "stderr": "uv: command not found",
-                "exit_code": 127,
-            },
-        ).model_copy(update={"position": 17}),
-    )
-
-    projected = projection["environment_failures"]["task-1"]
-
-    assert isinstance(projected, EnvironmentFailureProjection)
-    assert projected.position == 17
-    assert projected.node_id == "check-1"
-    assert projected.record_id == "failure-record-1"
-    assert projected.classification == "tool_unavailable"
-    assert projected.reason == "tool missing"
-    assert projected.command_text == "uv run pytest"
-    assert projected.stderr == "uv: command not found"
-    assert projected.exit_code == 127
-
-
-def test_environment_failure_projection_checkpoint_round_trips_typed_payload() -> None:
-    projection = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
-        _event(
-            "environment_failure_accepted",
-            {
-                "task_region_id": "task-1",
-                "node_id": "check-1",
-                "classification": "environment_error",
-                "value": {
-                    "command_text": "uv run pytest",
-                    "stderr": "missing dependency",
-                    "exit_code": 1,
-                },
-            },
-        ).model_copy(update={"position": 18}),
-    )
-
-    restored = projection_from_checkpoint(projection_to_checkpoint(projection))
-    projected = restored["environment_failures"]["task-1"]
-
-    assert isinstance(projected, EnvironmentFailureProjection)
-    assert projected.position == 18
-    assert projected.node_id == "check-1"
-    assert projected.classification == "environment_error"
-    assert projected.reason == "check environment setup failed while running: uv run pytest"
-    assert projected.command_text == "uv run pytest"
-    assert projected.stderr == "missing dependency"
-    assert projected.exit_code == 1
-
-
-def test_environment_failure_projection_preserves_missing_reason_as_typed_none() -> None:
-    events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
-                    "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ),
-        _event(
-            "environment_failure_accepted",
-            {
-                "task_region_id": "task-1",
-                "classification": "tool_error",
-            },
-        ),
-    ]
-    projection = reduce_event(
-        build_graph_catalog(),
-        reduce_event(build_graph_catalog(), initial_projection(), events[0]),
-        events[1],
-    )
-
-    projected = projection["environment_failures"]["task-1"]
-
-    assert isinstance(projected, EnvironmentFailureProjection)
-    assert projected.reason is None
-    assert project_task_states(build_graph_catalog(), events)["task-1"] == "blocked_environment"
+@pytest.mark.parametrize(
+    "event_type",
+    ["environment_failure_accepted", "check_result_classified"],
+)
+def test_retired_event_is_rejected_by_the_strict_catalog(event_type: str) -> None:
+    with pytest.raises(UnknownGraphEventError, match=f"unknown graph event: {event_type}"):
+        reduce_event(build_graph_catalog(), initial_projection(), _event(event_type, {}))
 
 
 def test_file_state_projection_uses_typed_payload() -> None:
@@ -865,19 +786,22 @@ def test_file_state_projection_checkpoint_round_trips_typed_payload() -> None:
     projection = reduce_event(
         build_graph_catalog(),
         projection,
-        _event(
-            "cleanup_requested",
-            {
-                "cleanup_id": "cleanup-1",
-                "file_state_record_id": "file-state-cand-1",
-                "snapshot_id": "snapshot-cand-1",
-                "reason": "secret found",
-                "paths": ["secrets.env"],
-                "authority": "gatekeeper",
-                "execution_id": "exec-1",
-                "producer_node_id": "worker-1",
-            },
-        ).model_copy(update={"position": 22}),
+        with_metadata_position(
+            _event(
+                "cleanup_requested",
+                {
+                    "cleanup_id": "cleanup-1",
+                    "file_state_record_id": "file-state-cand-1",
+                    "snapshot_id": "snapshot-cand-1",
+                    "reason": "secret found",
+                    "paths": ["secrets.env"],
+                    "authority": "gatekeeper",
+                    "execution_id": "exec-1",
+                    "producer_node_id": "worker-1",
+                },
+            ),
+            22,
+        ),
     )
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
@@ -895,27 +819,30 @@ def test_residue_report_reads_typed_file_state_entries() -> None:
     report = project_residue_report(
         build_graph_catalog(),
         [
-            _event(
-                "file_state_accepted",
-                {
-                    "record_id": "file-state-cand-1",
-                    "record_kind": "file_state",
-                    "producer_node_id": "worker-1",
-                    "port": "file_state",
-                    "schema": "FileStateRecord",
-                    "snapshot_id": "snapshot-cand-1",
-                    "base_snapshot_id": "S0",
-                    "candidate_id": "cand-1",
-                    "verdict": "captured",
-                    "residue": [
-                        {
-                            "path": "secrets.env",
-                            "classification": "secret",
-                            "source": "untracked",
-                        }
-                    ],
-                },
-            ).model_copy(update={"position": 22})
+            with_metadata_position(
+                _event(
+                    "file_state_accepted",
+                    {
+                        "record_id": "file-state-cand-1",
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "snapshot_id": "snapshot-cand-1",
+                        "base_snapshot_id": "S0",
+                        "candidate_id": "cand-1",
+                        "verdict": "captured",
+                        "residue": [
+                            {
+                                "path": "secrets.env",
+                                "classification": "secret",
+                                "source": "untracked",
+                            }
+                        ],
+                    },
+                ),
+                22,
+            )
         ],
     )
 
@@ -928,28 +855,31 @@ def test_task_candidate_projection_uses_typed_payload() -> None:
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "candidate-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-1",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {
-                        "summary": "test candidate",
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {
+                            "summary": "test candidate",
+                            "file_state_record_ids": ["file-state-1"],
+                        },
+                        "task_region_id": "task-1",
+                        "candidate_id": "candidate-1",
+                        "attempt_number": 2,
                         "file_state_record_ids": ["file-state-1"],
-                    },
-                    "task_region_id": "task-1",
-                    "candidate_id": "candidate-1",
-                    "attempt_number": 2,
-                    "file_state_record_ids": ["file-state-1"],
-                    "supersedes_task_region_ids": ["task-old"],
-                }
-            },
-        ).model_copy(update={"position": 31}),
+                        "supersedes_task_region_ids": ["task-old"],
+                    }
+                },
+            ),
+            31,
+        ),
     )
 
     projected = projection["task_candidates"]["task-1"][0]
@@ -966,23 +896,26 @@ def test_task_candidate_projection_checkpoint_round_trips_typed_payload() -> Non
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "candidate-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-1",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "candidate_id": "candidate-1",
-                    "task_region_id": "task-1",
-                    "attempt_number": 1,
-                    "value": {"summary": "test candidate"},
-                }
-            },
-        ).model_copy(update={"position": 32}),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-1",
+                        "task_region_id": "task-1",
+                        "attempt_number": 1,
+                        "value": {"summary": "test candidate"},
+                    }
+                },
+            ),
+            32,
+        ),
     )
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
@@ -1018,10 +951,19 @@ def test_verifier_verdict_projection_uses_typed_payload() -> None:
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "verification_passed",
-            {"candidate_id": "candidate-1"},
-        ).model_copy(update={"position": 34}),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "candidate-1",
+                    "outcome": "passed",
+                    "record_id": "verification-1",
+                },
+            ),
+            34,
+        ),
     )
 
     projected = projection["verifier_verdicts"]["candidate-1"]
@@ -1036,10 +978,19 @@ def test_verifier_verdict_projection_checkpoint_round_trips_typed_payload() -> N
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "verification_failed",
-            {"candidate_id": "candidate-1"},
-        ).model_copy(update={"position": 35}),
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "candidate-1",
+                    "outcome": "failed",
+                    "record_id": "verification-1",
+                },
+            ),
+            35,
+        ),
     )
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
@@ -1071,18 +1022,21 @@ def test_requirement_revision_projection_uses_typed_payload() -> None:
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "requirement_revision_recorded",
-            {
-                "requirement_id": "R-1",
-                "version_id": "R-1.v2",
-                "previous_version_id": "R-1.v1",
-                "revision_index": 2,
-                "classification": "semantic_change",
-                "authority_required_reason": "behavior change needs approval",
-                "active": True,
-            },
-        ).model_copy(update={"position": 37}),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {
+                    "requirement_id": "R-1",
+                    "version_id": "R-1.v2",
+                    "previous_version_id": "R-1.v1",
+                    "revision_index": 2,
+                    "classification": "semantic_change",
+                    "authority_required_reason": "behavior change needs approval",
+                    "active": True,
+                },
+            ),
+            37,
+        ),
     )
 
     projected = projection["requirement_revisions"]["R-1.v2"]
@@ -1110,20 +1064,26 @@ def test_requirement_revision_projection_uses_typed_payload() -> None:
 def test_support_evidence_projection_checkpoint_round_trips_typed_payload() -> None:
     projection = initial_projection()
     for event in [
-        _event(
-            "requirement_revision_recorded",
-            {"requirement_id": "R-1", "version_id": "R-1.v1"},
-        ).model_copy(update={"position": 38}),
-        _event(
-            "support_evidence_recorded",
-            {
-                "support_id": "S-1",
-                "evidence_id": "E-1",
-                "requirement_id": "R-1",
-                "requirement_version_id": "R-1.v1",
-                "confidence": "high",
-            },
-        ).model_copy(update={"position": 39}),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {"requirement_id": "R-1", "version_id": "R-1.v1"},
+            ),
+            38,
+        ),
+        with_metadata_position(
+            _event(
+                "support_evidence_recorded",
+                {
+                    "support_id": "S-1",
+                    "evidence_id": "E-1",
+                    "requirement_id": "R-1",
+                    "requirement_version_id": "R-1.v1",
+                    "confidence": "high",
+                },
+            ),
+            39,
+        ),
     ]:
         projection = reduce_event(build_graph_catalog(), projection, event)
 
@@ -1187,20 +1147,23 @@ def test_oversight_decision_projection_checkpoint_round_trips_typed_payload() ->
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "oversight_decision_recorded",
-            {
-                "node_id": "oversight-1",
-                "appeal_node_id": "appeal-1",
-                "appealed_node_id": "verifier-1",
-                "task_region_id": "task-1",
-                "candidate_id": "candidate-1",
-                "decision": "invalid_test_accepted",
-                "appeal_type": "invalid_test",
-                "reason": "test assertion was wrong",
-                "decider": "system",
-            },
-        ).model_copy(update={"position": 40}),
+        with_metadata_position(
+            _event(
+                "oversight_decision_recorded",
+                {
+                    "node_id": "oversight-1",
+                    "appeal_node_id": "appeal-1",
+                    "appealed_node_id": "verifier-1",
+                    "task_region_id": "task-1",
+                    "candidate_id": "candidate-1",
+                    "decision": "invalid_test_accepted",
+                    "appeal_type": "invalid_test",
+                    "reason": "test assertion was wrong",
+                    "decider": "system",
+                },
+            ),
+            40,
+        ),
     )
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
@@ -1245,150 +1208,186 @@ def test_oversight_decision_checkpoint_restore_rebuilds_appeal_alias() -> None:
 
 def test_oversight_decision_blocks_invalid_test() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "cand-1",
+                    "outcome": "failed",
+                    "record_id": "verification-1",
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "oversight_decision_recorded",
+                {
+                    "appealed_node_id": "verifier-1",
                     "task_region_id": "task-1",
                     "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
-            update={"position": 1}
+                    "appeal_type": "invalid_test",
+                    "node_id": "oversight-1",
+                    "decision": "accepted",
+                    "decider": "system",
+                },
+            ),
+            2,
         ),
-        _event(
-            "oversight_decision_recorded",
-            {
-                "appealed_node_id": "verifier-1",
-                "task_region_id": "task-1",
-                "candidate_id": "cand-1",
-                "appeal_type": "invalid_test",
-                "node_id": "oversight-1",
-                "decision": "accepted",
-                "decider": "system",
-            },
-        ).model_copy(update={"position": 2}),
     ]
 
     assert project_task_states(build_graph_catalog(), events) == {"task-1": "blocked_invalid_test"}
 
 
-def test_malformed_file_state_payload_is_tolerated_without_raw_projection_entry() -> None:
-    projection = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
-        _event(
-            "file_state_accepted",
-            {
-                "record_id": ["file-state-bad-1"],
-                "record_kind": "file_state",
-                "producer_node_id": "worker-1",
-                "port": "file_state",
-                "schema": "FileStateRecord",
-                "verdict": "captured",
-            },
-        ).model_copy(update={"position": 23}),
-    )
-
-    assert projection["file_state_records"] == {}
+def test_malformed_file_state_payload_is_rejected() -> None:
+    with pytest.raises(ValidationError):
+        reduce_event(
+            build_graph_catalog(),
+            initial_projection(),
+            with_metadata_position(
+                _event(
+                    "file_state_accepted",
+                    {
+                        "record_id": ["file-state-bad-1"],
+                        "record_kind": "file_state",
+                        "producer_node_id": "worker-1",
+                        "port": "file_state",
+                        "schema": "FileStateRecord",
+                        "verdict": "captured",
+                    },
+                ),
+                23,
+            ),
+        )
 
 
 def test_task_projection_accepts_file_state_via_producer_node_task_region_fallback() -> None:
     events = [
-        _event(
-            "node_created",
-            {"node_id": "worker-1", "kind": "worker", "task_region_id": "task-1"},
-        ).model_copy(update={"position": 0}),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
-                    "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 1}),
-        _event("verification_passed", {"candidate_id": "cand-1"}).model_copy(
-            update={"position": 2}
+        with_metadata_position(
+            _event(
+                "node_created",
+                {"node_id": "worker-1", "kind": "worker", "task_region_id": "task-1"},
+            ),
+            0,
         ),
-        _event(
-            "file_state_accepted",
-            {
-                "record_id": "file-state-cand-1",
-                "record_kind": "file_state",
-                "producer_node_id": "worker-1",
-                "port": "file_state",
-                "schema": "FileStateRecord",
-                "snapshot_id": "snapshot-cand-1",
-                "base_snapshot_id": "S0",
-                "candidate_id": "cand-1",
-                "verdict": "captured",
-            },
-        ).model_copy(update={"position": 3}),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "cand-1",
+                    "outcome": "passed",
+                    "record_id": "verification-1",
+                },
+            ),
+            2,
+        ),
+        with_metadata_position(
+            _event(
+                "file_state_accepted",
+                {
+                    "record_id": "file-state-cand-1",
+                    "record_kind": "file_state",
+                    "producer_node_id": "worker-1",
+                    "port": "file_state",
+                    "schema": "FileStateRecord",
+                    "snapshot_id": "snapshot-cand-1",
+                    "base_snapshot_id": "S0",
+                    "candidate_id": "cand-1",
+                    "verdict": "captured",
+                },
+            ),
+            3,
+        ),
     ]
 
     assert project_task_states(build_graph_catalog(), events) == {"task-1": "accepted"}
 
 
-def test_file_state_projection_normalizes_legacy_membership_candidate_id() -> None:
-    projection = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
-        _event(
-            "file_state_accepted",
-            {
-                "record_id": "file-state-cand-1",
-                "record_kind": "file_state",
-                "producer_node_id": "worker-1",
-                "port": "file_state",
-                "membership": {"task_region_id": "task-1", "candidate_id": "cand-1"},
-            },
-        ),
-    )
-
-    projected = projection["file_state_records"]["file-state-cand-1"]
-
-    assert projected.task_region_id == "task-1"
-    assert projected.candidate_id == "cand-1"
+def test_file_state_projection_rejects_legacy_membership_shape() -> None:
+    with pytest.raises(ValidationError):
+        reduce_event(
+            build_graph_catalog(),
+            initial_projection(),
+            _event(
+                "file_state_accepted",
+                {
+                    "record_id": "file-state-cand-1",
+                    "record_kind": "file_state",
+                    "producer_node_id": "worker-1",
+                    "port": "file_state",
+                    "membership": {"task_region_id": "task-1", "candidate_id": "cand-1"},
+                },
+            ),
+        )
 
 
 def test_node_creation_projection_uses_typed_payload() -> None:
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "node_created",
-            {
-                "node_id": "worker-1",
-                "kind": "worker",
-                "role": "builder",
-                "state": "planned",
-                "task_region_id": "step/task",
-                "attempt_number": 2,
-                "candidate_id": "candidate-1",
-                "failed_candidate_id": "candidate-0",
-                "resource_claims": [{"path": "src/app.py", "mode": "write"}],
-                "allowed_actions": ["submit_callback"],
-                "preconditions": ["inputs_bound"],
-            },
-        ).model_copy(update={"position": 23}),
+        with_metadata_position(
+            _event(
+                "node_created",
+                {
+                    "node_id": "worker-1",
+                    "kind": "worker",
+                    "role": "builder",
+                    "state": "planned",
+                    "task_region_id": "step/task",
+                    "attempt_number": 2,
+                    "candidate_id": "candidate-1",
+                    "failed_candidate_id": "candidate-0",
+                    "resource_claims": [{"path": "src/app.py", "mode": "write"}],
+                    "allowed_actions": ["submit_callback"],
+                    "preconditions": ["inputs_bound"],
+                },
+            ),
+            23,
+        ),
     )
 
     projected = projection["node_creation_payloads"]["worker-1"]
@@ -1418,18 +1417,21 @@ def test_node_creation_projection_checkpoint_round_trips_typed_payload() -> None
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "node_created",
-            {
-                "node_id": "gate-1",
-                "kind": "gate",
-                "role": "human_gate",
-                "state": "blocked",
-                "task_region_id": "step/task",
-                "gate_type": "approval",
-                "prompt": "Approve the change?",
-            },
-        ).model_copy(update={"position": 24}),
+        with_metadata_position(
+            _event(
+                "node_created",
+                {
+                    "node_id": "gate-1",
+                    "kind": "gate",
+                    "role": "human_gate",
+                    "state": "blocked",
+                    "task_region_id": "step/task",
+                    "gate_type": "approval",
+                    "prompt": "Approve the change?",
+                },
+            ),
+            24,
+        ),
     )
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
@@ -1455,23 +1457,6 @@ def test_malformed_node_created_payload_is_tolerated_without_raw_projection_entr
                 },
             ),
         )
-
-
-def test_malformed_environment_failure_payload_is_tolerated_without_raw_projection_entry() -> None:
-    projection = reduce_event(
-        build_graph_catalog(),
-        initial_projection(),
-        _event(
-            "environment_failure_accepted",
-            {
-                "task_region_id": "task-1",
-                "classification": "tool_error",
-                "reason": ["legacy", "bad", "shape"],
-            },
-        ),
-    )
-
-    assert projection["environment_failures"] == {}
 
 
 def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
@@ -2273,7 +2258,7 @@ def test_output_record_payloads_are_typed_at_fold() -> None:
     assert accepted["payload"].schema_ == "AnalysisSummary"
 
 
-def test_legacy_malformed_output_record_payload_is_ignored_during_replay() -> None:
+def test_legacy_malformed_output_record_payload_is_rejected() -> None:
     malformed_record = {
         "record_id": "legacy-malformed-1",
         "record_kind": "output",
@@ -2283,14 +2268,8 @@ def test_legacy_malformed_output_record_payload_is_ignored_during_replay() -> No
         "schema": "OpaqueSummary",
         "value": "legacy-non-dict-value",
     }
-    event = _event(
-        "output_record_accepted",
-        {"record": malformed_record},
-    )
-
-    projection = reduce_event(build_graph_catalog(), initial_projection(), event)
-
-    assert "legacy-malformed-1" not in projection["output_record_payloads"]
+    with pytest.raises(ValidationError):
+        _event("output_record_accepted", {"record": malformed_record})
 
 
 def test_current_malformed_output_record_payload_is_not_replayed_as_legacy() -> None:
@@ -2304,13 +2283,69 @@ def test_current_malformed_output_record_payload_is_not_replayed_as_legacy() -> 
         "candidate_id": "candidate-1",
         "value": {"summary": 7},
     }
-    event = _event(
-        "output_record_accepted",
-        {"record": malformed_record},
-    ).model_copy(update={"schema_version": 2})
+    with pytest.raises(ValidationError):
+        _event("output_record_accepted", {"record": malformed_record})
 
-    with pytest.raises(ValueError):
-        reduce_event(build_graph_catalog(), initial_projection(), event)
+
+def test_checkpoint_drops_output_record_missing_current_record_type() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "output_record_payloads": {
+                "proposal-1": {
+                    "record_id": "proposal-1",
+                    "record_kind": "output",
+                    "producer_node_id": "planner-1",
+                    "port": "graph_patch",
+                    "schema": "GraphPatch",
+                    "value": {
+                        "patch_id": "patch-1",
+                        "proposed_by_node_id": "planner-1",
+                        "base_graph_position": 3,
+                        "ops": [
+                            {
+                                "op": "create_node",
+                                "node": {"node_id": "worker-1", "kind": "worker"},
+                            }
+                        ],
+                        "expected_downstream_effects": [],
+                    },
+                }
+            }
+        }
+    )
+
+    assert restored["output_record_payloads"] == {}
+
+
+def test_checkpoint_drops_graph_patch_port_alias() -> None:
+    restored = projection_from_checkpoint(
+        {
+            "output_record_payloads": {
+                "proposal-1": {
+                    "record_id": "proposal-1",
+                    "record_kind": "output",
+                    "record_type": "graph_patch_proposal",
+                    "producer_node_id": "planner-1",
+                    "port": "graph_patch",
+                    "schema": "GraphPatch",
+                    "value": {
+                        "patch_id": "patch-1",
+                        "proposed_by_node_id": "planner-1",
+                        "base_graph_position": 3,
+                        "ops": [
+                            {
+                                "op": "create_node",
+                                "node": {"node_id": "worker-1", "kind": "worker"},
+                            }
+                        ],
+                        "expected_downstream_effects": [],
+                    },
+                }
+            }
+        }
+    )
+
+    assert restored["output_record_payloads"] == {}
 
 
 def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
@@ -2365,9 +2400,11 @@ def test_verification_result_projections_are_typed_at_fold() -> None:
         _event(
             "verification_passed",
             {
+                "node_id": "verifier-1",
                 "record_id": "verification-pass-1",
                 "verifier_node_id": "verifier-1",
                 "candidate_id": "candidate-1",
+                "outcome": "passed",
                 "task_region_id": "task-1",
             },
         ),
@@ -2376,7 +2413,9 @@ def test_verification_result_projections_are_typed_at_fold() -> None:
             {
                 "record_id": "verification-fail-1",
                 "node_id": "verifier-2",
+                "verifier_node_id": "verifier-2",
                 "candidate_id": "candidate-2",
+                "outcome": "failed",
             },
         ),
     ]:
@@ -2395,16 +2434,13 @@ def test_verification_result_projections_are_typed_at_fold() -> None:
     assert failed.task_region_id is None
 
 
-def test_malformed_verification_result_payload_is_tolerated_without_projection_entry() -> None:
-    projection = initial_projection()
-    for event in [
-        _event("verification_passed", {"record_id": "missing-node"}),
-        _event("verification_failed", {"node_id": "missing-record"}),
+def test_malformed_verification_result_payload_is_rejected() -> None:
+    for event_type, payload in [
+        ("verification_passed", {"record_id": "missing-node"}),
+        ("verification_failed", {"node_id": "missing-record"}),
     ]:
-        projection = reduce_event(build_graph_catalog(), projection, event)
-
-    assert projection["passed_verification_results_by_record_id"] == {}
-    assert projection["failed_verification_results_by_record_id"] == {}
+        with pytest.raises(ValidationError):
+            _event(event_type, payload)
 
 
 def test_verification_result_checkpoint_round_trip_preserves_typed_payloads() -> None:
@@ -2415,9 +2451,11 @@ def test_verification_result_checkpoint_round_trip_preserves_typed_payloads() ->
         _event(
             "verification_passed",
             {
+                "node_id": "verifier-1",
                 "record_id": "verification-pass-1",
                 "verifier_node_id": "verifier-1",
                 "candidate_id": "candidate-1",
+                "outcome": "passed",
                 "task_region_id": "task-1",
             },
         ),
@@ -2437,43 +2475,46 @@ def test_check_result_projection_summary_is_typed_at_fold() -> None:
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "check-result-1",
-                    "record_kind": "output",
-                    "record_type": "check_result",
-                    "producer_node_id": "check-1",
-                    "port": "check_result",
-                    "schema": "CheckResult",
-                    "candidate_id": "candidate-1",
-                    "task_region_id": "task-1",
-                    "attempt_number": 1,
-                    "candidate_record_ids": ["candidate-1"],
-                    "file_state_record_ids": ["file-state-candidate-1"],
-                    "evaluated_record_ids": ["candidate-1", "file-state-candidate-1"],
-                    "value": {
-                        "status": "failed",
-                        "classification": "tool_error",
-                        "command_id": "check-1",
-                        "command_text": "pytest",
-                        "command": {},
-                        "worktree_path": "/repo",
-                        "base_snapshot_id": "S0",
-                        "execution_id": "exec-1",
-                        "duration_ms": 1,
-                        "stdout": "",
-                        "stderr": "failed",
-                        "exit_code": 1,
-                        "stdout_truncated": False,
-                        "stderr_truncated": False,
-                        "timeout_seconds": 60,
-                        "environment_policy": {},
-                    },
-                }
-            },
-        ).model_copy(update={"position": 12}),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "check-result-1",
+                        "record_kind": "output",
+                        "record_type": "check_result",
+                        "producer_node_id": "check-1",
+                        "port": "check_result",
+                        "schema": "CheckResult",
+                        "candidate_id": "candidate-1",
+                        "task_region_id": "task-1",
+                        "attempt_number": 1,
+                        "candidate_record_ids": ["candidate-1"],
+                        "file_state_record_ids": ["file-state-candidate-1"],
+                        "evaluated_record_ids": ["candidate-1", "file-state-candidate-1"],
+                        "value": {
+                            "status": "failed",
+                            "classification": "tool_error",
+                            "command_id": "check-1",
+                            "command_text": "pytest",
+                            "command": {},
+                            "worktree_path": "/repo",
+                            "base_snapshot_id": "S0",
+                            "execution_id": "exec-1",
+                            "duration_ms": 1,
+                            "stdout": "",
+                            "stderr": "failed",
+                            "exit_code": 1,
+                            "stdout_truncated": False,
+                            "stderr_truncated": False,
+                            "timeout_seconds": 60,
+                            "environment_policy": {},
+                        },
+                    }
+                },
+            ),
+            12,
+        ),
     )
 
     check_result = projection["check_results"]["check-1"]
@@ -2488,59 +2529,56 @@ def test_check_result_projection_summary_is_typed_at_fold() -> None:
     assert check_result.evaluated_record_ids == ["candidate-1", "file-state-candidate-1"]
 
 
-def test_legacy_malformed_check_result_payload_is_ignored_during_replay() -> None:
+def test_legacy_malformed_check_result_payload_is_rejected() -> None:
     malformed_record = {
         "record_id": "check-result-legacy",
         "record_kind": "check_result",
         "producer_node_id": "check-legacy",
     }
-    event = _event(
-        "output_record_accepted",
-        {"record": malformed_record},
-    )
-
-    projection = reduce_event(build_graph_catalog(), initial_projection(), event)
-
-    assert "check-result-legacy" not in projection["output_record_payloads"]
+    with pytest.raises(ValidationError):
+        _event("output_record_accepted", {"record": malformed_record})
 
 
 def test_check_result_checkpoint_round_trip_preserves_typed_summary() -> None:
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "check-result-1",
-                    "record_kind": "output",
-                    "record_type": "check_result",
-                    "producer_node_id": "check-1",
-                    "port": "check_result",
-                    "schema": "CheckResult",
-                    "candidate_id": "candidate-1",
-                    "task_region_id": "task-1",
-                    "attempt_number": 1,
-                    "value": {
-                        "status": "passed",
-                        "classification": "passed",
-                        "command_id": "check-1",
-                        "command_text": "pytest",
-                        "command": {},
-                        "worktree_path": "/repo",
-                        "base_snapshot_id": "S0",
-                        "execution_id": "exec-1",
-                        "duration_ms": 1,
-                        "stdout": "passed",
-                        "stderr": "",
-                        "stdout_truncated": False,
-                        "stderr_truncated": False,
-                        "timeout_seconds": 60,
-                        "environment_policy": {},
-                    },
-                }
-            },
-        ).model_copy(update={"position": 12}),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "check-result-1",
+                        "record_kind": "output",
+                        "record_type": "check_result",
+                        "producer_node_id": "check-1",
+                        "port": "check_result",
+                        "schema": "CheckResult",
+                        "candidate_id": "candidate-1",
+                        "task_region_id": "task-1",
+                        "attempt_number": 1,
+                        "value": {
+                            "status": "passed",
+                            "classification": "passed",
+                            "command_id": "check-1",
+                            "command_text": "pytest",
+                            "command": {},
+                            "worktree_path": "/repo",
+                            "base_snapshot_id": "S0",
+                            "execution_id": "exec-1",
+                            "duration_ms": 1,
+                            "stdout": "passed",
+                            "stderr": "",
+                            "stdout_truncated": False,
+                            "stderr_truncated": False,
+                            "timeout_seconds": 60,
+                            "environment_policy": {},
+                        },
+                    }
+                },
+            ),
+            12,
+        ),
     )
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
@@ -2584,8 +2622,9 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
         passed_candidates: set[str] = set()
         recovery_by_record_id: dict[str, list[dict[str, str]]] = {}
         for graph_event in stream:
+            payload = graph_event.payload.model_dump(mode="json")
             if graph_event.event_type == "output_record_accepted":
-                record = graph_event.payload.get("record")
+                record = payload.get("record")
                 if not isinstance(record, dict):
                     continue
                 node_id = record.get("producer_node_id") or record.get("node_id")
@@ -2601,7 +2640,7 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
                         }
                     )
             elif graph_event.event_type in {"verification_passed", "verification_failed"}:
-                candidate_id = graph_event.payload.get("candidate_id")
+                candidate_id = payload.get("candidate_id")
                 if (
                     isinstance(candidate_id, str)
                     and graph_event.event_type == "verification_passed"
@@ -2609,23 +2648,21 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
                     passed_candidates.add(candidate_id)
                 if graph_event.event_type != "verification_failed":
                     continue
-                node_id = graph_event.payload.get("verifier_node_id") or graph_event.payload.get(
-                    "node_id"
-                )
-                record_id = graph_event.payload.get("record_id")
+                node_id = payload.get("verifier_node_id") or payload.get("node_id")
+                record_id = payload.get("record_id")
                 if not isinstance(node_id, str) or not isinstance(record_id, str):
                     continue
                 failed = {"node_id": node_id, "record_id": record_id}
                 if isinstance(candidate_id, str) and candidate_id:
                     failed["candidate_id"] = candidate_id
-                task_region_id = graph_event.payload.get("task_region_id")
+                task_region_id = payload.get("task_region_id")
                 if isinstance(task_region_id, str) and task_region_id:
                     failed["task_region_id"] = task_region_id
                 failed_by_record_id[record_id] = failed
             elif graph_event.event_type == "node_created":
-                node_id = graph_event.payload.get("node_id")
-                recovery_reason = graph_event.payload.get("recovery_reason")
-                record_id = graph_event.payload.get("recovery_of_record_id")
+                node_id = payload.get("node_id")
+                recovery_reason = payload.get("recovery_reason")
+                record_id = payload.get("recovery_of_record_id")
                 if not all(
                     isinstance(value, str) and value
                     for value in (node_id, recovery_reason, record_id)
@@ -2646,15 +2683,15 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
         }
         return accepted_by_port, current_failed, recovery_by_record_id
 
-    store = InMemoryEventStore()
+    events: list[HydratedEvent] = []
 
     def append_event(event_type: str, payload: dict[str, Any]) -> None:
-        store.append(_event(event_type, payload))
+        events.append(with_metadata_position(_event(event_type, payload), len(events)))
 
     def append_command(command_type: str, payload: dict[str, Any]) -> None:
-        events_before = store.read_from("run-1")
+        events_before = list(events)
         for graph_event in dispatch_graph_command(events_before, command_type, payload):
-            store.append(graph_event)
+            events.append(with_metadata_position(graph_event, len(events)))
 
     append_event("run_lifecycle_changed", {"to_state": "active"})
     append_event(
@@ -2677,9 +2714,15 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
             "value": {
                 "routine_id": "routine-1",
                 "name": "Routine",
+                "description": None,
                 "content_hash": "0" * 64,
+                "source_path": None,
+                "source_ref": None,
                 "step_count": 1,
                 "task_count": 1,
+                "builder_agent": None,
+                "verifier_agent": None,
+                "dynamic_feature": None,
             },
         },
     )
@@ -2735,7 +2778,7 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
             "lease_id": "lease-worker",
             "lease_generation": 1,
             "base_snapshot_id": "S0",
-            "observed_graph_position": store.snapshot_position("run-1"),
+            "observed_graph_position": len(events) - 1,
             "idempotency_key": "worker-submit",
             "payload_hash": "hash-worker",
             "payload": {
@@ -2783,7 +2826,7 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
             "lease_id": "lease-verifier",
             "lease_generation": 1,
             "base_snapshot_id": "S0",
-            "observed_graph_position": store.snapshot_position("run-1"),
+            "observed_graph_position": len(events) - 1,
             "idempotency_key": "verifier-submit",
             "payload_hash": "hash-verifier",
             "payload": {
@@ -2817,7 +2860,6 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
         },
     )
 
-    events = store.read_from("run-1")
     projection = initial_projection()
     for event in events:
         projection = reduce_event(build_graph_catalog(), projection, event)
@@ -2839,93 +2881,118 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
 
 def test_residual_command_projection_fields_fold_incrementally() -> None:
     events = [
-        _event(
-            "node_created", {"node_id": "worker-1", "kind": "worker", "state": "planned"}
-        ).model_copy(update={"position": 3}),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "decision-1",
-                    "record_kind": "output",
-                    "record_type": "completion_decision",
-                    "producer_node_id": "gate-final",
-                    "port": "completion_decision",
-                    "schema": "CompletionDecision",
-                    "value": {"status": "passed"},
-                }
-            },
-        ).model_copy(update={"position": 4}),
-        _event(
-            "verification_passed",
-            {
-                "record_id": "verification-1",
-                "verifier_node_id": "verifier-1",
-                "candidate_id": "candidate-1",
-                "task_region_id": "task-1",
-            },
-        ).model_copy(update={"position": 5}),
-        _event(
-            "verification_failed",
-            {
-                "record_id": "verification-2",
-                "verifier_node_id": "verifier-2",
-                "candidate_id": "candidate-2",
-            },
-        ).model_copy(update={"position": 6}),
-        _event(
-            "runtime_retry_scheduled",
-            {
-                "node_id": "worker-1",
-                "lease_id": "lease-1",
-                "generation": 1,
-                "policy": "retry",
-                "reason": "agent_died",
-                "retry_not_before": "2025-01-01T00:01:00+00:00",
-            },
-        ).model_copy(update={"position": 7}),
-        _event(
-            "cleanup_requested",
-            {
-                "cleanup_id": "cleanup-1",
-                "file_state_record_id": "file-state-1",
-                "snapshot_id": None,
-                "paths": [],
-                "authority": "gatekeeper",
-                "reason": None,
-                "execution_id": "exec-1",
-                "producer_node_id": None,
-            },
-        ).model_copy(update={"position": 8}),
-        _event(
-            "cleanup_requested",
-            {
-                "cleanup_id": "cleanup-1",
-                "file_state_record_id": "file-state-2",
-                "snapshot_id": None,
-                "paths": [],
-                "authority": "gatekeeper",
-                "reason": None,
-                "execution_id": "exec-1",
-                "producer_node_id": None,
-            },
-        ).model_copy(update={"position": 9}),
-        _event(
-            "cleanup_applied",
-            {
-                "cleanup_id": "cleanup-1",
-                "file_state_record_id": "file-state-1",
-                "superseding_record_id": "file-state-2",
-                "old_snapshot_id": None,
-                "new_snapshot_id": None,
-                "paths": [],
-                "authority": "gatekeeper",
-                "reason": None,
-                "execution_id": "exec-1",
-                "deleted_snapshot_ref": False,
-                "resolved_count": 0,
-            },
-        ).model_copy(update={"position": 10}),
+        with_metadata_position(
+            _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "planned"}), 3
+        ),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "decision-1",
+                        "record_kind": "output",
+                        "record_type": "completion_decision",
+                        "producer_node_id": "gate-final",
+                        "port": "completion_decision",
+                        "schema": "CompletionDecision",
+                        "value": {"status": "passed"},
+                    }
+                },
+            ),
+            4,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-1",
+                    "record_id": "verification-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "candidate-1",
+                    "outcome": "passed",
+                    "task_region_id": "task-1",
+                },
+            ),
+            5,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-2",
+                    "record_id": "verification-2",
+                    "verifier_node_id": "verifier-2",
+                    "candidate_id": "candidate-2",
+                    "outcome": "failed",
+                },
+            ),
+            6,
+        ),
+        with_metadata_position(
+            _event(
+                "runtime_retry_scheduled",
+                {
+                    "node_id": "worker-1",
+                    "lease_id": "lease-1",
+                    "generation": 1,
+                    "policy": "retry",
+                    "reason": "agent_died",
+                    "retry_not_before": "2025-01-01T00:01:00+00:00",
+                },
+            ),
+            7,
+        ),
+        with_metadata_position(
+            _event(
+                "cleanup_requested",
+                {
+                    "cleanup_id": "cleanup-1",
+                    "file_state_record_id": "file-state-1",
+                    "snapshot_id": None,
+                    "paths": [],
+                    "authority": "gatekeeper",
+                    "reason": None,
+                    "execution_id": "exec-1",
+                    "producer_node_id": None,
+                },
+            ),
+            8,
+        ),
+        with_metadata_position(
+            _event(
+                "cleanup_requested",
+                {
+                    "cleanup_id": "cleanup-1",
+                    "file_state_record_id": "file-state-2",
+                    "snapshot_id": None,
+                    "paths": [],
+                    "authority": "gatekeeper",
+                    "reason": None,
+                    "execution_id": "exec-1",
+                    "producer_node_id": None,
+                },
+            ),
+            9,
+        ),
+        with_metadata_position(
+            _event(
+                "cleanup_applied",
+                {
+                    "cleanup_id": "cleanup-1",
+                    "file_state_record_id": "file-state-1",
+                    "superseding_record_id": "file-state-2",
+                    "old_snapshot_id": None,
+                    "new_snapshot_id": None,
+                    "paths": [],
+                    "authority": "gatekeeper",
+                    "reason": None,
+                    "execution_id": "exec-1",
+                    "deleted_snapshot_ref": False,
+                    "resolved_count": 0,
+                },
+            ),
+            10,
+        ),
     ]
 
     projection = initial_projection()
@@ -2957,32 +3024,38 @@ def test_residual_command_projection_fields_fold_incrementally() -> None:
 def test_cleanup_requested_events_checkpoint_round_trips_typed_envelopes() -> None:
     projection = initial_projection()
     for event in [
-        _event(
-            "cleanup_requested",
-            {
-                "cleanup_id": "cleanup-1",
-                "file_state_record_id": "file-state-1",
-                "paths": ["secrets.env"],
-                "snapshot_id": None,
-                "authority": "gatekeeper",
-                "reason": None,
-                "execution_id": "exec-1",
-                "producer_node_id": None,
-            },
-        ).model_copy(update={"position": 8}),
-        _event(
-            "cleanup_requested",
-            {
-                "cleanup_id": "cleanup-1",
-                "file_state_record_id": "file-state-2",
-                "paths": ["ignored.env"],
-                "snapshot_id": None,
-                "authority": "gatekeeper",
-                "reason": None,
-                "execution_id": "exec-1",
-                "producer_node_id": None,
-            },
-        ).model_copy(update={"position": 9}),
+        with_metadata_position(
+            _event(
+                "cleanup_requested",
+                {
+                    "cleanup_id": "cleanup-1",
+                    "file_state_record_id": "file-state-1",
+                    "paths": ["secrets.env"],
+                    "snapshot_id": None,
+                    "authority": "gatekeeper",
+                    "reason": None,
+                    "execution_id": "exec-1",
+                    "producer_node_id": None,
+                },
+            ),
+            8,
+        ),
+        with_metadata_position(
+            _event(
+                "cleanup_requested",
+                {
+                    "cleanup_id": "cleanup-1",
+                    "file_state_record_id": "file-state-2",
+                    "paths": ["ignored.env"],
+                    "snapshot_id": None,
+                    "authority": "gatekeeper",
+                    "reason": None,
+                    "execution_id": "exec-1",
+                    "producer_node_id": None,
+                },
+            ),
+            9,
+        ),
     ]:
         projection = reduce_event(build_graph_catalog(), projection, event)
 
@@ -3024,25 +3097,31 @@ def test_malformed_cleanup_requested_checkpoint_entry_is_dropped() -> None:
 
 def test_requirement_revisions_replay_active_versions() -> None:
     events = [
-        _event(
-            "requirement_revision_recorded",
-            {
-                "requirement_id": "R-1",
-                "version_id": "R-1.v1",
-                "revision_index": 1,
-                "classification": "initial",
-            },
-        ).model_copy(update={"position": 1}),
-        _event(
-            "requirement_revision_recorded",
-            {
-                "requirement_id": "R-1",
-                "version_id": "R-1.v2",
-                "previous_version_id": "R-1.v1",
-                "revision_index": 2,
-                "classification": "validation_strengthening",
-            },
-        ).model_copy(update={"position": 2}),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {
+                    "requirement_id": "R-1",
+                    "version_id": "R-1.v1",
+                    "revision_index": 1,
+                    "classification": "initial",
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {
+                    "requirement_id": "R-1",
+                    "version_id": "R-1.v2",
+                    "previous_version_id": "R-1.v1",
+                    "revision_index": 2,
+                    "classification": "validation_strengthening",
+                },
+            ),
+            2,
+        ),
     ]
 
     revisions = project_requirement_revisions(build_graph_catalog(), events)
@@ -3075,19 +3154,25 @@ def test_requirement_revisions_replay_active_versions() -> None:
 def test_support_evidence_freshness_can_be_queried_from_projection() -> None:
     state = initial_projection()
     events = [
-        _event(
-            "requirement_revision_recorded",
-            {"requirement_id": "R-1", "version_id": "R-1.v1"},
-        ).model_copy(update={"position": 1}),
-        _event(
-            "support_evidence_recorded",
-            {
-                "support_id": "S-1",
-                "evidence_id": "E-1",
-                "requirement_id": "R-1",
-                "requirement_version_id": "R-1.v1",
-            },
-        ).model_copy(update={"position": 2}),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {"requirement_id": "R-1", "version_id": "R-1.v1"},
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "support_evidence_recorded",
+                {
+                    "support_id": "S-1",
+                    "evidence_id": "E-1",
+                    "requirement_id": "R-1",
+                    "requirement_version_id": "R-1.v1",
+                },
+            ),
+            2,
+        ),
     ]
     for event in events:
         state = reduce_event(build_graph_catalog(), state, event)
@@ -3107,37 +3192,49 @@ def test_support_evidence_freshness_can_be_queried_from_projection() -> None:
 
 def test_validation_strengthening_revision_invalidates_older_support_evidence() -> None:
     events = [
-        _event(
-            "requirement_revision_recorded",
-            {"requirement_id": "R-1", "version_id": "R-1.v1"},
-        ).model_copy(update={"position": 1}),
-        _event(
-            "support_evidence_recorded",
-            {
-                "support_id": "S-old",
-                "evidence_id": "E-old",
-                "requirement_id": "R-1",
-                "requirement_version_id": "R-1.v1",
-            },
-        ).model_copy(update={"position": 2}),
-        _event(
-            "requirement_revision_recorded",
-            {
-                "requirement_id": "R-1",
-                "version_id": "R-1.v2",
-                "previous_version_id": "R-1.v1",
-                "classification": "validation_strengthening",
-            },
-        ).model_copy(update={"position": 3}),
-        _event(
-            "support_evidence_recorded",
-            {
-                "support_id": "S-new",
-                "evidence_id": "E-new",
-                "requirement_id": "R-1",
-                "requirement_version_id": "R-1.v2",
-            },
-        ).model_copy(update={"position": 4}),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {"requirement_id": "R-1", "version_id": "R-1.v1"},
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "support_evidence_recorded",
+                {
+                    "support_id": "S-old",
+                    "evidence_id": "E-old",
+                    "requirement_id": "R-1",
+                    "requirement_version_id": "R-1.v1",
+                },
+            ),
+            2,
+        ),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {
+                    "requirement_id": "R-1",
+                    "version_id": "R-1.v2",
+                    "previous_version_id": "R-1.v1",
+                    "classification": "validation_strengthening",
+                },
+            ),
+            3,
+        ),
+        with_metadata_position(
+            _event(
+                "support_evidence_recorded",
+                {
+                    "support_id": "S-new",
+                    "evidence_id": "E-new",
+                    "requirement_id": "R-1",
+                    "requirement_version_id": "R-1.v2",
+                },
+            ),
+            4,
+        ),
     ]
 
     assert project_support_evidence_freshness(build_graph_catalog(), events) == {
@@ -3167,22 +3264,28 @@ def test_validation_strengthening_revision_invalidates_older_support_evidence() 
 
 def test_semantic_and_new_behavior_revisions_require_explicit_authority() -> None:
     events = [
-        _event(
-            "requirement_revision_recorded",
-            {
-                "requirement_id": "R-1",
-                "version_id": "R-1.v1",
-                "classification": "semantic",
-            },
-        ).model_copy(update={"position": 1}),
-        _event(
-            "requirement_revision_recorded",
-            {
-                "requirement_id": "R-2",
-                "version_id": "R-2.v1",
-                "new_behavior": True,
-            },
-        ).model_copy(update={"position": 2}),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {
+                    "requirement_id": "R-1",
+                    "version_id": "R-1.v1",
+                    "classification": "semantic",
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {
+                    "requirement_id": "R-2",
+                    "version_id": "R-2.v1",
+                    "new_behavior": True,
+                },
+            ),
+            2,
+        ),
     ]
 
     facts = project_requirement_freshness_facts(build_graph_catalog(), events)
@@ -3213,27 +3316,36 @@ def test_semantic_and_new_behavior_revisions_require_explicit_authority() -> Non
 
 def test_planner_freshness_packet_is_compact_gap_planner_input() -> None:
     events = [
-        _event(
-            "requirement_revision_recorded",
-            {"requirement_id": "R-1", "version_id": "R-1.v1"},
-        ).model_copy(update={"position": 1}),
-        _event(
-            "support_evidence_recorded",
-            {
-                "support_id": "S-1",
-                "evidence_id": "E-1",
-                "requirement_id": "R-1",
-                "requirement_version_id": "R-1.v1",
-            },
-        ).model_copy(update={"position": 2}),
-        _event(
-            "requirement_revision_recorded",
-            {
-                "requirement_id": "R-2",
-                "version_id": "R-2.v1",
-                "classification": "semantic",
-            },
-        ).model_copy(update={"position": 3}),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {"requirement_id": "R-1", "version_id": "R-1.v1"},
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "support_evidence_recorded",
+                {
+                    "support_id": "S-1",
+                    "evidence_id": "E-1",
+                    "requirement_id": "R-1",
+                    "requirement_version_id": "R-1.v1",
+                },
+            ),
+            2,
+        ),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {
+                    "requirement_id": "R-2",
+                    "version_id": "R-2.v1",
+                    "classification": "semantic",
+                },
+            ),
+            3,
+        ),
     ]
 
     assert project_planner_freshness_packet(build_graph_catalog(), events) == {
@@ -4002,7 +4114,10 @@ def test_pending_check_blocks_projected_completion_after_task_acceptance() -> No
             "verification_passed",
             {
                 "node_id": "verifier-1",
+                "verifier_node_id": "verifier-1",
                 "candidate_id": "candidate-1",
+                "outcome": "passed",
+                "record_id": "verification-pending-check-1",
                 "task_region_id": "task-1",
             },
         ),
@@ -4062,7 +4177,10 @@ def test_failed_check_result_blocks_projected_completion_after_task_acceptance()
             "verification_passed",
             {
                 "node_id": "verifier-1",
+                "verifier_node_id": "verifier-1",
                 "candidate_id": "candidate-1",
+                "outcome": "passed",
+                "record_id": "verification-failed-check-1",
                 "task_region_id": "task-1",
             },
         ),
@@ -4180,7 +4298,10 @@ def test_failed_check_result_recovery_lineage_unblocks_original_task() -> None:
             "verification_passed",
             {
                 "node_id": "verifier-1",
+                "verifier_node_id": "verifier-1",
                 "candidate_id": "candidate-1",
+                "outcome": "passed",
+                "record_id": "verification-check-recovery-1",
                 "task_region_id": "task-1",
             },
         ),
@@ -4301,7 +4422,9 @@ def test_failed_check_result_recovery_lineage_unblocks_original_task() -> None:
             "verification_passed",
             {
                 "node_id": "verifier-repair",
+                "verifier_node_id": "verifier-repair",
                 "candidate_id": "candidate-repair",
+                "outcome": "passed",
                 "task_region_id": "corrective_work_region",
                 "record_id": "verification-repair",
             },
@@ -4340,7 +4463,9 @@ def test_failed_verification_recovery_lineage_unblocks_original_task() -> None:
             "verification_failed",
             {
                 "node_id": "verifier-1",
+                "verifier_node_id": "verifier-1",
                 "candidate_id": "candidate-1",
+                "outcome": "failed",
                 "task_region_id": "task-1",
                 "record_id": "verification-1",
             },
@@ -4418,7 +4543,9 @@ def test_failed_verification_recovery_lineage_unblocks_original_task() -> None:
             "verification_passed",
             {
                 "node_id": "verifier-repair",
+                "verifier_node_id": "verifier-repair",
                 "candidate_id": "candidate-repair",
+                "outcome": "passed",
                 "task_region_id": "corrective_work_region",
                 "record_id": "verification-repair",
             },
@@ -4452,7 +4579,9 @@ def test_task_state_projection_matches_full_projection_for_recovery_supersession
             "verification_failed",
             {
                 "node_id": "verifier-1",
+                "verifier_node_id": "verifier-1",
                 "candidate_id": "candidate-1",
+                "outcome": "failed",
                 "task_region_id": "task-1",
                 "record_id": "verification-1",
             },
@@ -4493,7 +4622,9 @@ def test_task_state_projection_matches_full_projection_for_recovery_supersession
             "verification_passed",
             {
                 "node_id": "verifier-repair",
+                "verifier_node_id": "verifier-repair",
                 "candidate_id": "candidate-repair",
+                "outcome": "passed",
                 "task_region_id": "corrective_work_region",
                 "record_id": "verification-repair",
             },
@@ -4535,7 +4666,9 @@ def test_failed_verification_recovery_without_corrective_file_state_does_not_acc
             "verification_failed",
             {
                 "node_id": "verifier-1",
+                "verifier_node_id": "verifier-1",
                 "candidate_id": "candidate-1",
+                "outcome": "failed",
                 "task_region_id": "task-1",
                 "record_id": "verification-1",
             },
@@ -4576,7 +4709,9 @@ def test_failed_verification_recovery_without_corrective_file_state_does_not_acc
             "verification_passed",
             {
                 "node_id": "verifier-repair",
+                "verifier_node_id": "verifier-repair",
                 "candidate_id": "candidate-repair",
+                "outcome": "passed",
                 "task_region_id": "corrective_work_region",
                 "record_id": "verification-repair",
             },
@@ -4598,30 +4733,39 @@ def test_check_result_candidate_id_does_not_replace_latest_task_candidate() -> N
                 "task_region_id": "task-1",
             },
         ),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "candidate-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-1",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "candidate_id": "candidate-1",
+                        "task_region_id": "task-1",
+                    }
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
                     "candidate_id": "candidate-1",
+                    "outcome": "passed",
+                    "record_id": "verification-check-candidate-1",
                     "task_region_id": "task-1",
-                }
-            },
-        ).model_copy(update={"position": 1}),
-        _event(
-            "verification_passed",
-            {
-                "node_id": "verifier-1",
-                "candidate_id": "candidate-1",
-                "task_region_id": "task-1",
-            },
-        ).model_copy(update={"position": 2}),
+                },
+            ),
+            2,
+        ),
         _file_state_event("task-1", "candidate-1", 3),
         _event(
             "node_created",
@@ -4632,44 +4776,47 @@ def test_check_result_candidate_id_does_not_replace_latest_task_candidate() -> N
                 "task_region_id": "task-1",
             },
         ),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "check-result-1",
-                    "record_kind": "output",
-                    "record_type": "check_result",
-                    "producer_node_id": "check-final-1",
-                    "port": "check_result",
-                    "schema": "CheckResult",
-                    "candidate_id": "candidate-check-final-1",
-                    "task_region_id": "task-1",
-                    "candidate_record_ids": ["candidate-1"],
-                    "evaluated_record_ids": ["candidate-1"],
-                    "value": {
-                        "status": "passed",
-                        "exit_code": 0,
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "check-result-1",
+                        "record_kind": "output",
+                        "record_type": "check_result",
+                        "producer_node_id": "check-final-1",
+                        "port": "check_result",
+                        "schema": "CheckResult",
+                        "candidate_id": "candidate-check-final-1",
+                        "task_region_id": "task-1",
                         "candidate_record_ids": ["candidate-1"],
                         "evaluated_record_ids": ["candidate-1"],
-                        "classification": "passed",
-                        "command_id": "check-test",
-                        "command_text": "test",
-                        "command": {},
-                        "worktree_path": "/repo",
-                        "base_snapshot_id": "S0",
-                        "execution_id": "exec-test",
-                        "duration_ms": 0,
-                        "stdout": "",
-                        "stderr": "",
-                        "stdout_truncated": False,
-                        "stderr_truncated": False,
-                        "timeout_seconds": 60,
-                        "environment_policy": {},
-                    },
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 4}),
+                        "value": {
+                            "status": "passed",
+                            "exit_code": 0,
+                            "candidate_record_ids": ["candidate-1"],
+                            "evaluated_record_ids": ["candidate-1"],
+                            "classification": "passed",
+                            "command_id": "check-test",
+                            "command_text": "test",
+                            "command": {},
+                            "worktree_path": "/repo",
+                            "base_snapshot_id": "S0",
+                            "execution_id": "exec-test",
+                            "duration_ms": 0,
+                            "stdout": "",
+                            "stderr": "",
+                            "stdout_truncated": False,
+                            "stderr_truncated": False,
+                            "timeout_seconds": 60,
+                            "environment_policy": {},
+                        },
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            4,
+        ),
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
@@ -4701,34 +4848,43 @@ def test_uncited_check_result_does_not_accept_task_region() -> None:
                 "task_region_id": "task-1",
             },
         ),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "candidate-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-1",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "candidate_id": "candidate-1",
-                    "task_region_id": "task-1",
-                    "file_state_record_ids": ["file-state-candidate-1"],
-                    "value": {
-                        "summary": "test candidate",
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-1",
+                        "task_region_id": "task-1",
                         "file_state_record_ids": ["file-state-candidate-1"],
-                    },
-                }
-            },
-        ).model_copy(update={"position": 1}),
-        _event(
-            "verification_passed",
-            {
-                "node_id": "verifier-1",
-                "candidate_id": "candidate-1",
-                "task_region_id": "task-1",
-            },
-        ).model_copy(update={"position": 2}),
+                        "value": {
+                            "summary": "test candidate",
+                            "file_state_record_ids": ["file-state-candidate-1"],
+                        },
+                    }
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "candidate-1",
+                    "outcome": "passed",
+                    "record_id": "verification-uncited-check-1",
+                    "task_region_id": "task-1",
+                },
+            ),
+            2,
+        ),
         _file_state_event("task-1", "candidate-1", 3),
         _event(
             "node_created",
@@ -4739,40 +4895,43 @@ def test_uncited_check_result_does_not_accept_task_region() -> None:
                 "task_region_id": "task-1",
             },
         ),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "check-result-1",
-                    "record_kind": "output",
-                    "record_type": "check_result",
-                    "producer_node_id": "check-final-1",
-                    "port": "check_result",
-                    "schema": "CheckResult",
-                    "candidate_id": "candidate-check-final-1",
-                    "task_region_id": "task-1",
-                    "value": {
-                        "status": "passed",
-                        "exit_code": 0,
-                        "classification": "passed",
-                        "command_id": "check-test",
-                        "command_text": "test",
-                        "command": {},
-                        "worktree_path": "/repo",
-                        "base_snapshot_id": "S0",
-                        "execution_id": "exec-test",
-                        "duration_ms": 0,
-                        "stdout": "",
-                        "stderr": "",
-                        "stdout_truncated": False,
-                        "stderr_truncated": False,
-                        "timeout_seconds": 60,
-                        "environment_policy": {},
-                    },
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 4}),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "check-result-1",
+                        "record_kind": "output",
+                        "record_type": "check_result",
+                        "producer_node_id": "check-final-1",
+                        "port": "check_result",
+                        "schema": "CheckResult",
+                        "candidate_id": "candidate-check-final-1",
+                        "task_region_id": "task-1",
+                        "value": {
+                            "status": "passed",
+                            "exit_code": 0,
+                            "classification": "passed",
+                            "command_id": "check-test",
+                            "command_text": "test",
+                            "command": {},
+                            "worktree_path": "/repo",
+                            "base_snapshot_id": "S0",
+                            "execution_id": "exec-test",
+                            "duration_ms": 0,
+                            "stdout": "",
+                            "stderr": "",
+                            "stdout_truncated": False,
+                            "stderr_truncated": False,
+                            "timeout_seconds": 60,
+                            "environment_policy": {},
+                        },
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            4,
+        ),
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
@@ -4800,56 +4959,68 @@ def test_check_result_must_cite_latest_candidate_file_state() -> None:
                 "task_region_id": "task-1",
             },
         ),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "candidate-old",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-1",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "candidate_id": "candidate-old",
-                    "task_region_id": "task-1",
-                    "attempt_number": 1,
-                    "file_state_record_ids": ["file-state-old"],
-                    "value": {
-                        "summary": "test candidate",
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "candidate-old",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-old",
+                        "task_region_id": "task-1",
+                        "attempt_number": 1,
                         "file_state_record_ids": ["file-state-old"],
-                    },
-                }
-            },
-        ).model_copy(update={"position": 1}),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "candidate-new",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-1",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "candidate_id": "candidate-new",
-                    "task_region_id": "task-1",
-                    "attempt_number": 2,
-                    "file_state_record_ids": ["file-state-candidate-new"],
-                    "value": {
-                        "summary": "test candidate",
+                        "value": {
+                            "summary": "test candidate",
+                            "file_state_record_ids": ["file-state-old"],
+                        },
+                    }
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "candidate-new",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-new",
+                        "task_region_id": "task-1",
+                        "attempt_number": 2,
                         "file_state_record_ids": ["file-state-candidate-new"],
-                    },
-                }
-            },
-        ).model_copy(update={"position": 2}),
-        _event(
-            "verification_passed",
-            {
-                "node_id": "verifier-1",
-                "candidate_id": "candidate-new",
-                "task_region_id": "task-1",
-            },
-        ).model_copy(update={"position": 3}),
+                        "value": {
+                            "summary": "test candidate",
+                            "file_state_record_ids": ["file-state-candidate-new"],
+                        },
+                    }
+                },
+            ),
+            2,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "candidate-new",
+                    "outcome": "passed",
+                    "record_id": "verification-latest-candidate-1",
+                    "task_region_id": "task-1",
+                },
+            ),
+            3,
+        ),
         _file_state_event("task-1", "candidate-new", 4),
         _event(
             "node_created",
@@ -4860,42 +5031,45 @@ def test_check_result_must_cite_latest_candidate_file_state() -> None:
                 "task_region_id": "task-1",
             },
         ),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "check-result-1",
-                    "record_kind": "output",
-                    "record_type": "check_result",
-                    "producer_node_id": "check-final-1",
-                    "port": "check_result",
-                    "schema": "CheckResult",
-                    "task_region_id": "task-1",
-                    "candidate_record_ids": ["candidate-old"],
-                    "file_state_record_ids": ["file-state-old"],
-                    "value": {
-                        "status": "passed",
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "check-result-1",
+                        "record_kind": "output",
+                        "record_type": "check_result",
+                        "producer_node_id": "check-final-1",
+                        "port": "check_result",
+                        "schema": "CheckResult",
+                        "task_region_id": "task-1",
                         "candidate_record_ids": ["candidate-old"],
                         "file_state_record_ids": ["file-state-old"],
-                        "classification": "passed",
-                        "command_id": "check-test",
-                        "command_text": "test",
-                        "command": {},
-                        "worktree_path": "/repo",
-                        "base_snapshot_id": "S0",
-                        "execution_id": "exec-test",
-                        "duration_ms": 0,
-                        "stdout": "",
-                        "stderr": "",
-                        "stdout_truncated": False,
-                        "stderr_truncated": False,
-                        "timeout_seconds": 60,
-                        "environment_policy": {},
-                    },
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 5}),
+                        "value": {
+                            "status": "passed",
+                            "candidate_record_ids": ["candidate-old"],
+                            "file_state_record_ids": ["file-state-old"],
+                            "classification": "passed",
+                            "command_id": "check-test",
+                            "command_text": "test",
+                            "command": {},
+                            "worktree_path": "/repo",
+                            "base_snapshot_id": "S0",
+                            "execution_id": "exec-test",
+                            "duration_ms": 0,
+                            "stdout": "",
+                            "stderr": "",
+                            "stdout_truncated": False,
+                            "stderr_truncated": False,
+                            "timeout_seconds": 60,
+                            "environment_policy": {},
+                        },
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            5,
+        ),
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
@@ -4903,84 +5077,56 @@ def test_check_result_must_cite_latest_candidate_file_state() -> None:
     assert project_run_state(build_graph_catalog(), events) == "active"
 
 
-def test_open_proposal_blocks_projected_completion_until_resolved() -> None:
-    events = [
-        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
-        _event("proposal_opened", {"proposal_id": "proposal-1"}),
-        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
-    ]
-
-    assert project_final_invariant_blockers(build_graph_catalog(), events) == [
-        {
-            "kind": "open_planner_proposal",
-            "reason": "planner proposal has not been accepted or rejected",
-            "proposal_id": "proposal-1",
-        }
-    ]
-    assert project_run_state(build_graph_catalog(), events) == "active"
-
-    resolved = [
-        *events[:2],
-        _event("proposal_accepted", {"proposal_id": "proposal-1"}),
-        events[2],
-    ]
-    assert project_final_invariant_blockers(build_graph_catalog(), resolved) == []
-    assert project_run_state(build_graph_catalog(), resolved) == "completed"
-
-
-def test_accepted_graph_patch_does_not_leave_open_proposal_blocker() -> None:
-    events = [
-        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
-        _event("graph_patch_proposed", {"patch_id": "patch-1"}),
-        _event(
-            "graph_patch_accepted",
-            {
-                "patch_id": "patch-1",
-                "base_graph_position": -1,
-                "actor_role": "planner",
-                "proposed_by_node_id": "planner-test",
-                "successor_planner_node_ids": [],
-            },
-        ),
-        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
-    ]
-
-    assert project_final_invariant_blockers(build_graph_catalog(), events) == []
-    assert project_run_state(build_graph_catalog(), events) == "completed"
+@pytest.mark.parametrize("event_type", ["proposal_opened", "graph_patch_proposed"])
+def test_retired_proposal_event_is_rejected_by_the_strict_catalog(event_type: str) -> None:
+    with pytest.raises(UnknownGraphEventError, match=f"unknown graph event: {event_type}"):
+        reduce_event(build_graph_catalog(), initial_projection(), _event(event_type, {}))
 
 
 def test_freshness_and_authority_facts_block_projected_completion() -> None:
     events = [
         _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
-        _event(
-            "requirement_revision_recorded",
-            {"requirement_id": "R-01", "version_id": "R-01.v1"},
-        ).model_copy(update={"position": 1}),
-        _event(
-            "support_evidence_recorded",
-            {
-                "support_id": "S-old",
-                "evidence_id": "E-old",
-                "requirement_id": "R-01",
-                "requirement_version_id": "R-01.v1",
-            },
-        ).model_copy(update={"position": 2}),
-        _event(
-            "requirement_revision_recorded",
-            {
-                "requirement_id": "R-01",
-                "version_id": "R-01.v2",
-                "classification": "validation_strengthening",
-            },
-        ).model_copy(update={"position": 3}),
-        _event(
-            "requirement_revision_recorded",
-            {
-                "requirement_id": "R-02",
-                "version_id": "R-02.v1",
-                "classification": "semantic",
-            },
-        ).model_copy(update={"position": 4}),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {"requirement_id": "R-01", "version_id": "R-01.v1"},
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "support_evidence_recorded",
+                {
+                    "support_id": "S-old",
+                    "evidence_id": "E-old",
+                    "requirement_id": "R-01",
+                    "requirement_version_id": "R-01.v1",
+                },
+            ),
+            2,
+        ),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {
+                    "requirement_id": "R-01",
+                    "version_id": "R-01.v2",
+                    "classification": "validation_strengthening",
+                },
+            ),
+            3,
+        ),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {
+                    "requirement_id": "R-02",
+                    "version_id": "R-02.v1",
+                    "classification": "semantic",
+                },
+            ),
+            4,
+        ),
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
@@ -5016,36 +5162,48 @@ def test_freshness_and_authority_facts_block_projected_completion() -> None:
 def test_later_fresh_support_clears_requirement_freshness_blocker() -> None:
     events = [
         _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
-        _event(
-            "requirement_revision_recorded",
-            {"requirement_id": "R-01", "version_id": "R-01.v1"},
-        ).model_copy(update={"position": 1}),
-        _event(
-            "support_evidence_recorded",
-            {
-                "support_id": "S-old",
-                "evidence_id": "E-old",
-                "requirement_id": "R-01",
-                "requirement_version_id": "R-01.v1",
-            },
-        ).model_copy(update={"position": 2}),
-        _event(
-            "requirement_revision_recorded",
-            {
-                "requirement_id": "R-01",
-                "version_id": "R-01.v2",
-                "classification": "validation_strengthening",
-            },
-        ).model_copy(update={"position": 3}),
-        _event(
-            "support_evidence_recorded",
-            {
-                "support_id": "S-fresh",
-                "evidence_id": "E-fresh",
-                "requirement_id": "R-01",
-                "requirement_version_id": "R-01.v2",
-            },
-        ).model_copy(update={"position": 4}),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {"requirement_id": "R-01", "version_id": "R-01.v1"},
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "support_evidence_recorded",
+                {
+                    "support_id": "S-old",
+                    "evidence_id": "E-old",
+                    "requirement_id": "R-01",
+                    "requirement_version_id": "R-01.v1",
+                },
+            ),
+            2,
+        ),
+        with_metadata_position(
+            _event(
+                "requirement_revision_recorded",
+                {
+                    "requirement_id": "R-01",
+                    "version_id": "R-01.v2",
+                    "classification": "validation_strengthening",
+                },
+            ),
+            3,
+        ),
+        with_metadata_position(
+            _event(
+                "support_evidence_recorded",
+                {
+                    "support_id": "S-fresh",
+                    "evidence_id": "E-fresh",
+                    "requirement_id": "R-01",
+                    "requirement_version_id": "R-01.v2",
+                },
+            ),
+            4,
+        ),
         _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
     ]
 
@@ -5091,14 +5249,13 @@ def test_suspect_and_blocked_requirement_facts_block_projected_completion() -> N
     assert project_run_state(build_graph_catalog(), events) == "active"
 
 
-def test_run_unknown_event_ignored() -> None:
-    initial = initial_projection()
-    next_state = reduce_event(
-        build_graph_catalog(), initial, _event("unknown_event", {"to_state": "failed"})
-    )
-
-    assert next_state == initial
-    assert next_state is not initial
+def test_run_unknown_event_is_rejected() -> None:
+    with pytest.raises(UnknownGraphEventError, match="unknown graph event: unknown_event"):
+        reduce_event(
+            build_graph_catalog(),
+            initial_projection(),
+            _event("unknown_event", {"to_state": "failed"}),
+        )
 
 
 def test_node_created_sets_planned() -> None:
@@ -5183,37 +5340,53 @@ def test_lease_lifecycle() -> None:
 
 def test_task_projection_accepted() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
                     "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event("verification_passed", {"candidate_id": "cand-1"}).model_copy(
-            update={"position": 1}
+                    "outcome": "passed",
+                    "record_id": "verification-1",
+                },
+            ),
+            1,
         ),
         _file_state_event("task-1", "cand-1", 2),
-        _event(
-            "approval_decision_recorded",
-            {
-                "node_id": "gate-1",
-                "task_region_id": "task-1",
-                "gate_id": "gate-1",
-                "decision": "approved",
-                "decider": "system",
-            },
-        ).model_copy(update={"position": 3}),
+        with_metadata_position(
+            _event(
+                "approval_decision_recorded",
+                {
+                    "node_id": "gate-1",
+                    "task_region_id": "task-1",
+                    "gate_id": "gate-1",
+                    "decision": "approved",
+                    "decider": "system",
+                },
+            ),
+            3,
+        ),
     ]
 
     assert project_task_states(build_graph_catalog(), events) == {"task-1": "accepted"}
@@ -5221,26 +5394,32 @@ def test_task_projection_accepted() -> None:
 
 def test_task_projection_accepts_no_verifier_region_after_file_state() -> None:
     events = [
-        _event(
-            "node_created",
-            {"node_id": "worker-1", "kind": "worker", "task_region_id": "task-1"},
-        ).model_copy(update={"position": 0}),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "candidate-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-1",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "candidate_id": "candidate-1",
-                    "task_region_id": "task-1",
-                    "value": {"summary": "test candidate"},
-                }
-            },
-        ).model_copy(update={"position": 1}),
+        with_metadata_position(
+            _event(
+                "node_created",
+                {"node_id": "worker-1", "kind": "worker", "task_region_id": "task-1"},
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-1",
+                        "task_region_id": "task-1",
+                        "value": {"summary": "test candidate"},
+                    }
+                },
+            ),
+            1,
+        ),
         _file_state_event("task-1", "candidate-1", 2),
     ]
 
@@ -5249,33 +5428,49 @@ def test_task_projection_accepts_no_verifier_region_after_file_state() -> None:
 
 def test_task_projection_configured_gate_requires_decision() -> None:
     events = [
-        _event(
-            "node_created",
-            {
-                "node_id": "gate-1",
-                "kind": "gate",
-                "task_region_id": "task-1",
-            },
-        ).model_copy(update={"position": 0}),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
+        with_metadata_position(
+            _event(
+                "node_created",
+                {
+                    "node_id": "gate-1",
+                    "kind": "gate",
                     "task_region_id": "task-1",
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
                     "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 1}),
-        _event("verification_passed", {"candidate_id": "cand-1"}).model_copy(
-            update={"position": 2}
+                    "outcome": "passed",
+                    "record_id": "verification-1",
+                },
+            ),
+            2,
         ),
         _file_state_event("task-1", "cand-1", 3),
     ]
@@ -5284,44 +5479,63 @@ def test_task_projection_configured_gate_requires_decision() -> None:
 
     approved_events = [
         *events,
-        _event(
-            "approval_decision_recorded",
-            {"node_id": "gate-1", "decision": "approved", "decider": "system"},
-        ).model_copy(update={"position": 3}),
+        with_metadata_position(
+            _event(
+                "approval_decision_recorded",
+                {"node_id": "gate-1", "decision": "approved", "decider": "system"},
+            ),
+            3,
+        ),
     ]
     assert project_task_states(build_graph_catalog(), approved_events) == {"task-1": "accepted"}
 
     rejected_events = [
         *events,
-        _event(
-            "approval_decision_recorded",
-            {"node_id": "gate-1", "decision": "rejected", "decider": "system"},
-        ).model_copy(update={"position": 3}),
+        with_metadata_position(
+            _event(
+                "approval_decision_recorded",
+                {"node_id": "gate-1", "decision": "rejected", "decider": "system"},
+            ),
+            3,
+        ),
     ]
     assert project_task_states(build_graph_catalog(), rejected_events) == {"task-1": "pending"}
 
 
 def test_task_projection_needs_revision() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
                     "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
-            update={"position": 1}
+                    "outcome": "failed",
+                    "record_id": "verification-1",
+                },
+            ),
+            1,
         ),
     ]
 
@@ -5330,46 +5544,72 @@ def test_task_projection_needs_revision() -> None:
 
 def test_corrective_region_pass_supersedes_origin_needs_revision() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-origin",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "origin",
-                    "candidate_id": "cand-origin",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event("verification_failed", {"candidate_id": "cand-origin"}).model_copy(
-            update={"position": 1}
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-origin",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "origin",
+                        "candidate_id": "cand-origin",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
         ),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-fix",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "corrective",
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-origin",
+                    "verifier_node_id": "verifier-origin",
+                    "candidate_id": "cand-origin",
+                    "outcome": "failed",
+                    "record_id": "verification-origin",
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-fix",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "corrective",
+                        "candidate_id": "cand-fix",
+                        "attempt_number": 1,
+                        "supersedes_task_region_ids": ["origin"],
+                    }
+                },
+            ),
+            2,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-fix",
+                    "verifier_node_id": "verifier-fix",
                     "candidate_id": "cand-fix",
-                    "attempt_number": 1,
-                    "supersedes_task_region_ids": ["origin"],
-                }
-            },
-        ).model_copy(update={"position": 2}),
-        _event("verification_passed", {"candidate_id": "cand-fix"}).model_copy(
-            update={"position": 3}
+                    "outcome": "passed",
+                    "record_id": "verification-fix",
+                },
+            ),
+            3,
         ),
         _file_state_event("corrective", "cand-fix", 4),
     ]
@@ -5382,41 +5622,57 @@ def test_corrective_region_pass_supersedes_origin_needs_revision() -> None:
 
 def test_verification_output_record_is_not_projected_as_candidate() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "candidate-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "candidate-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "verification-1",
+                        "record_kind": "verification",
+                        "record_type": "verification_report",
+                        "producer_node_id": "verifier-test",
+                        "port": "verification_report",
+                        "schema": "VerificationReport",
+                        "candidate_id": "candidate-2",
+                        "outcome": "passed",
+                        "value": {"outcome": "passed", "grades": []},
+                    }
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
                     "candidate_id": "candidate-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "verification-1",
-                    "record_kind": "verification",
-                    "record_type": "verification_report",
-                    "producer_node_id": "verifier-test",
-                    "port": "verification_report",
-                    "schema": "VerificationReport",
-                    "candidate_id": "candidate-2",
                     "outcome": "passed",
-                    "value": {"outcome": "passed", "grades": []},
-                }
-            },
-        ).model_copy(update={"position": 1}),
-        _event("verification_passed", {"candidate_id": "candidate-1"}).model_copy(
-            update={"position": 2}
+                    "record_id": "verification-1",
+                },
+            ),
+            2,
         ),
         _file_state_event("task-1", "candidate-1", 3),
     ]
@@ -5426,37 +5682,53 @@ def test_verification_output_record_is_not_projected_as_candidate() -> None:
 
 def test_task_projection_blocked_invalid_test() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "cand-1",
+                    "outcome": "failed",
+                    "record_id": "verification-1",
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "oversight_decision_recorded",
+                {
+                    "node_id": "oversight-1",
                     "task_region_id": "task-1",
                     "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
-            update={"position": 1}
+                    "appeal_type": "invalid_test",
+                    "decision": "accepted",
+                    "decider": "system",
+                },
+            ),
+            2,
         ),
-        _event(
-            "oversight_decision_recorded",
-            {
-                "node_id": "oversight-1",
-                "task_region_id": "task-1",
-                "candidate_id": "cand-1",
-                "appeal_type": "invalid_test",
-                "decision": "accepted",
-                "decider": "system",
-            },
-        ).model_copy(update={"position": 2}),
     ]
 
     assert project_task_states(build_graph_catalog(), events) == {"task-1": "blocked_invalid_test"}
@@ -5466,37 +5738,53 @@ def test_invalid_test_block_projection_uses_typed_payload_and_preserves_task_sta
     None
 ):
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "cand-1",
+                    "outcome": "failed",
+                    "record_id": "verification-1",
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "oversight_decision_recorded",
+                {
+                    "node_id": "oversight-1",
                     "task_region_id": "task-1",
                     "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
-            update={"position": 1}
+                    "appeal_type": "invalid_test",
+                    "decision": "accepted",
+                    "decider": "system",
+                },
+            ),
+            2,
         ),
-        _event(
-            "oversight_decision_recorded",
-            {
-                "node_id": "oversight-1",
-                "task_region_id": "task-1",
-                "candidate_id": "cand-1",
-                "appeal_type": "invalid_test",
-                "decision": "accepted",
-                "decider": "system",
-            },
-        ).model_copy(update={"position": 2}),
     ]
 
     projection = initial_projection()
@@ -5516,17 +5804,20 @@ def test_invalid_test_block_checkpoint_round_trips_typed_payload_and_drops_malfo
     projection = reduce_event(
         build_graph_catalog(),
         initial_projection(),
-        _event(
-            "oversight_decision_recorded",
-            {
-                "node_id": "oversight-1",
-                "task_region_id": "task-1",
-                "candidate_id": "cand-1",
-                "appeal_type": "invalid_test",
-                "decision": "accepted",
-                "decider": "system",
-            },
-        ).model_copy(update={"position": 2}),
+        with_metadata_position(
+            _event(
+                "oversight_decision_recorded",
+                {
+                    "node_id": "oversight-1",
+                    "task_region_id": "task-1",
+                    "candidate_id": "cand-1",
+                    "appeal_type": "invalid_test",
+                    "decision": "accepted",
+                    "decider": "system",
+                },
+            ),
+            2,
+        ),
     )
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
@@ -5552,34 +5843,6 @@ def test_invalid_test_block_checkpoint_round_trips_typed_payload_and_drops_malfo
         "candidate_id": "cand-2",
         "position": 4,
     }
-
-
-def test_task_projection_blocked_environment() -> None:
-    events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
-                    "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event(
-            "environment_failure_accepted",
-            {"task_region_id": "task-1", "reason": "tool_unavailable"},
-        ).model_copy(update={"position": 1}),
-    ]
-
-    assert project_task_states(build_graph_catalog(), events) == {"task-1": "blocked_environment"}
 
 
 def test_task_projection_in_progress() -> None:
@@ -5616,62 +5879,91 @@ def test_task_projection_pending() -> None:
 
 def test_task_projection_latest_candidate_by_attempt_then_position() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-old",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
-                    "candidate_id": "cand-old",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-new-pos",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
-                    "candidate_id": "cand-new-pos",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 2}),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-new-attempt",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
-                    "candidate_id": "cand-new-attempt",
-                    "attempt_number": 2,
-                }
-            },
-        ).model_copy(update={"position": 1}),
-        _event("verification_passed", {"candidate_id": "cand-new-pos"}).model_copy(
-            update={"position": 3}
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-old",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-old",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
         ),
-        _event("verification_failed", {"candidate_id": "cand-new-attempt"}).model_copy(
-            update={"position": 4}
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-new-pos",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-new-pos",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            2,
+        ),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-new-attempt",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-new-attempt",
+                        "attempt_number": 2,
+                    }
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-new-pos",
+                    "verifier_node_id": "verifier-new-pos",
+                    "candidate_id": "cand-new-pos",
+                    "outcome": "passed",
+                    "record_id": "verification-new-pos",
+                },
+            ),
+            3,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-new-attempt",
+                    "verifier_node_id": "verifier-new-attempt",
+                    "candidate_id": "cand-new-attempt",
+                    "outcome": "failed",
+                    "record_id": "verification-new-attempt",
+                },
+            ),
+            4,
         ),
     ]
 
@@ -5680,46 +5972,72 @@ def test_task_projection_latest_candidate_by_attempt_then_position() -> None:
 
 def test_task_projection_latest_candidate_position_tiebreak() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-old",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
-                    "candidate_id": "cand-old",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-later",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-old",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-old",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-later",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-later",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-later",
+                    "verifier_node_id": "verifier-later",
                     "candidate_id": "cand-later",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 1}),
-        _event("verification_passed", {"candidate_id": "cand-later"}).model_copy(
-            update={"position": 2}
+                    "outcome": "passed",
+                    "record_id": "verification-later",
+                },
+            ),
+            2,
         ),
         _file_state_event("task-1", "cand-later", 3),
-        _event("verification_failed", {"candidate_id": "cand-old"}).model_copy(
-            update={"position": 4}
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-old",
+                    "verifier_node_id": "verifier-old",
+                    "candidate_id": "cand-old",
+                    "outcome": "failed",
+                    "record_id": "verification-old",
+                },
+            ),
+            4,
         ),
     ]
 
@@ -5728,25 +6046,38 @@ def test_task_projection_latest_candidate_position_tiebreak() -> None:
 
 def test_task_projection_ignores_mismatched_verdict_candidate() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
-                    "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event("verification_passed", {"candidate_id": "other-candidate"}).model_copy(
-            update={"position": 1}
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-other",
+                    "verifier_node_id": "verifier-other",
+                    "candidate_id": "other-candidate",
+                    "outcome": "passed",
+                    "record_id": "verification-other",
+                },
+            ),
+            1,
         ),
     ]
 
@@ -5755,36 +6086,52 @@ def test_task_projection_ignores_mismatched_verdict_candidate() -> None:
 
 def test_task_projection_active_appeal_overrides_latest_failure() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "cand-1",
+                    "outcome": "failed",
+                    "record_id": "verification-1",
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "appeal_opened",
+                {
+                    "node_id": "appeal-1",
+                    "appealed_node_id": "verifier-1",
                     "task_region_id": "task-1",
                     "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
-            update={"position": 1}
+                    "appeal_type": "invalid_test",
+                },
+            ),
+            2,
         ),
-        _event(
-            "appeal_opened",
-            {
-                "node_id": "appeal-1",
-                "appealed_node_id": "verifier-1",
-                "task_region_id": "task-1",
-                "candidate_id": "cand-1",
-                "appeal_type": "invalid_test",
-            },
-        ).model_copy(update={"position": 2}),
     ]
 
     assert project_task_states(build_graph_catalog(), events) == {"task-1": "pending"}
@@ -5792,56 +6139,85 @@ def test_task_projection_active_appeal_overrides_latest_failure() -> None:
 
 def test_task_projection_invalid_test_block_exits_after_replacement_pass() -> None:
     events = [
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-1",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-1",
+                        "attempt_number": 1,
+                    }
+                },
+            ),
+            0,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_failed",
+                {
+                    "node_id": "verifier-1",
+                    "verifier_node_id": "verifier-1",
+                    "candidate_id": "cand-1",
+                    "outcome": "failed",
+                    "record_id": "verification-1",
+                },
+            ),
+            1,
+        ),
+        with_metadata_position(
+            _event(
+                "oversight_decision_recorded",
+                {
+                    "node_id": "oversight-1",
                     "task_region_id": "task-1",
                     "candidate_id": "cand-1",
-                    "attempt_number": 1,
-                }
-            },
-        ).model_copy(update={"position": 0}),
-        _event("verification_failed", {"candidate_id": "cand-1"}).model_copy(
-            update={"position": 1}
+                    "appeal_type": "invalid_test",
+                    "decision": "accepted",
+                    "decider": "system",
+                },
+            ),
+            2,
         ),
-        _event(
-            "oversight_decision_recorded",
-            {
-                "node_id": "oversight-1",
-                "task_region_id": "task-1",
-                "candidate_id": "cand-1",
-                "appeal_type": "invalid_test",
-                "decision": "accepted",
-                "decider": "system",
-            },
-        ).model_copy(update={"position": 2}),
-        _event(
-            "output_record_accepted",
-            {
-                "record": {
-                    "record_id": "cand-2",
-                    "record_kind": "output",
-                    "record_type": "candidate",
-                    "producer_node_id": "worker-test",
-                    "port": "candidate",
-                    "schema": "ImplementationCandidate",
-                    "value": {"summary": "test candidate"},
-                    "task_region_id": "task-1",
+        with_metadata_position(
+            _event(
+                "output_record_accepted",
+                {
+                    "record": {
+                        "record_id": "cand-2",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-test",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "value": {"summary": "test candidate"},
+                        "task_region_id": "task-1",
+                        "candidate_id": "cand-2",
+                        "attempt_number": 2,
+                    }
+                },
+            ),
+            3,
+        ),
+        with_metadata_position(
+            _event(
+                "verification_passed",
+                {
+                    "node_id": "verifier-2",
+                    "verifier_node_id": "verifier-2",
                     "candidate_id": "cand-2",
-                    "attempt_number": 2,
-                }
-            },
-        ).model_copy(update={"position": 3}),
-        _event("verification_passed", {"candidate_id": "cand-2"}).model_copy(
-            update={"position": 4}
+                    "outcome": "passed",
+                    "record_id": "verification-2",
+                },
+            ),
+            4,
         ),
         _file_state_event("task-1", "cand-2", 5),
     ]

@@ -15,6 +15,7 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     build_graph_catalog,
+    event_payload_json,
     project_leases,
     project_residue_report,
     project_task_states,
@@ -205,9 +206,10 @@ class ReattachedSubmitProcess:
         node_id = str(self._dispatch_payload["node_id"])
         events = await _read_events(session_factory, run_id)
         node_payload = next(
-            event.payload
+            event_payload_json(event)
             for event in events
-            if event.event_type == "node_created" and event.payload.get("node_id") == node_id
+            if event.event_type == "node_created"
+            and event_payload_json(event).get("node_id") == node_id
         )
         candidate_id = str(node_payload["candidate_id"])
         task_region_id = str(node_payload["task_region_id"])
@@ -499,7 +501,7 @@ async def test_parallel_worker_start_acknowledgements_retry_stale_positions(
 
     events = await _read_events(session_factory, run_id)
     lease_grants = [event for event in events if event.event_type == "lease_granted"]
-    assert [event.payload["node_id"] for event in lease_grants] == [
+    assert [event_payload_json(event)["node_id"] for event in lease_grants] == [
         "worker-step-1-docs",
         "worker-step-1-tests",
     ]
@@ -823,7 +825,9 @@ async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
     events_after_failure = await _read_events(session_factory, run_id)
     assert any(event.event_type == "agent_died" for event in events_after_failure)
     dead_lease = next(
-        event.payload for event in events_after_failure if event.event_type == "agent_died"
+        event_payload_json(event)
+        for event in events_after_failure
+        if event.event_type == "agent_died"
     )
     leases_after_failure = project_leases(build_graph_catalog(), events_after_failure)
     assert not any(
@@ -832,8 +836,8 @@ async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
     )
     assert any(
         event.event_type == "node_state_changed"
-        and event.payload.get("node_id") == dead_lease["node_id"]
-        and event.payload.get("new_state") == "ready"
+        and event_payload_json(event).get("node_id") == dead_lease["node_id"]
+        and event_payload_json(event).get("new_state") == "ready"
         for event in events_after_failure
     )
 
@@ -887,7 +891,7 @@ async def test_graph_runner_rejects_stale_generation_callback_through_stack(
     await dispatcher.dispatch_pending()
     await asyncio.wait_for(builder.started.wait(), timeout=2)
 
-    dispatch_payload = scheduled.outbox_items[0].payload
+    dispatch_payload = event_payload_json(scheduled.outbox_items[0])
     stale = await controller.handle_command(
         run_id,
         await controller.current_position(run_id),
@@ -963,7 +967,7 @@ async def test_graph_dispatch_requires_base_snapshot_id_without_inventing_identi
         event.event_type in {"callback_accepted", "callback_rejected_stale", "agent_died"}
         for event in events
     )
-    assert not executor.is_running(str(failed.payload["execution_id"]))
+    assert not executor.is_running(str(event_payload_json(failed)["execution_id"]))
 
 
 @pytest.mark.asyncio
@@ -1000,14 +1004,16 @@ async def test_graph_dispatch_carries_projection_base_snapshot_id_to_callback(
     await dispatcher.dispatch_pending()
     await executor.wait_for_all()
 
-    dispatch_payload = scheduled.outbox_items[0].payload
+    dispatch_payload = event_payload_json(scheduled.outbox_items[0])
     events = await _read_events(session_factory, run_id)
     lease_granted = next(event for event in events if event.event_type == "lease_granted")
-    assert lease_granted.payload["base_snapshot_id"] == "routine-snapshot-record"
+    assert event_payload_json(lease_granted)["base_snapshot_id"] == "routine-snapshot-record"
     assert dispatch_payload["base_snapshot_id"] == "routine-snapshot-record"
     heartbeat_recorded = next(event for event in events if event.event_type == "heartbeat_recorded")
-    assert heartbeat_recorded.payload["lease_id"] == dispatch_payload["lease_id"]
-    assert heartbeat_recorded.payload["node_id"] == dispatch_payload["node_id"]
-    assert heartbeat_recorded.payload["lease_generation"] == dispatch_payload["generation"]
+    assert event_payload_json(heartbeat_recorded)["lease_id"] == dispatch_payload["lease_id"]
+    assert event_payload_json(heartbeat_recorded)["node_id"] == dispatch_payload["node_id"]
+    assert (
+        event_payload_json(heartbeat_recorded)["lease_generation"] == dispatch_payload["generation"]
+    )
     assert any(event.event_type == "callback_accepted" for event in events)
     assert not any(event.event_type == "callback_rejected_stale" for event in events)

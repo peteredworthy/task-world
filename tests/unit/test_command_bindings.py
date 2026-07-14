@@ -6,35 +6,42 @@ from typing import Any
 
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph.command_bindings import resolve_check_command_definition
+from orchestrator.graph import StoredEventEnvelope, build_graph_catalog
 
 
 def _dynamic_feature_event(dynamic_feature: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id="event-run-context",
-        run_id="run-1",
-        position=1,
-        event_type="output_record_accepted",
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload={
-            "record": {
-                "record_id": "routine-snapshot",
-                "record_kind": "graph_record",
-                "record_type": "routine_snapshot",
-                "producer_node_id": "root",
-                "port": "routine_snapshot",
-                "schema": "RoutineSnapshot",
-                "value": {
-                    "routine_id": "routine-1",
-                    "name": "Routine",
-                    "content_hash": "sha256:test",
-                    "step_count": 1,
-                    "task_count": 1,
-                    "dynamic_feature": dynamic_feature,
+    return (
+        build_graph_catalog()
+        .resolve_event("output_record_accepted")
+        .hydrate(
+            StoredEventEnvelope(
+                event_id="event-run-context",
+                run_id="run-1",
+                position=1,
+                event_type="output_record_accepted",
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload={
+                    "record": {
+                        "record_id": "routine-snapshot",
+                        "record_kind": "graph_record",
+                        "record_type": "routine_snapshot",
+                        "producer_node_id": "root",
+                        "port": "routine_snapshot",
+                        "schema": "RoutineSnapshot",
+                        "value": {
+                            "routine_id": "routine-1",
+                            "name": "Routine",
+                            "content_hash": "sha256:test",
+                            "step_count": 1,
+                            "task_count": 1,
+                            "dynamic_feature": dynamic_feature,
+                        },
+                    }
                 },
-            }
-        },
+            )
+        )
     )
 
 

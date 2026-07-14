@@ -13,8 +13,10 @@ from orchestrator.graph import (
     build_graph_catalog,
     initial_projection,
     reduce_event,
+    event_payload_json,
 )
 from tests.graph_command_support import dispatch_graph_command
+from orchestrator.graph import StoredEventEnvelope
 
 
 @pytest.mark.parametrize(
@@ -76,7 +78,8 @@ def test_session_state_changed_producers_emit_strict_payloads() -> None:
     suspended_event = next(
         event
         for event in callback
-        if event.event_type == "session_state_changed" and event.payload.get("state") == "suspended"
+        if event.event_type == "session_state_changed"
+        and event_payload_json(event).get("state") == "suspended"
     )
     payload = PlannerSessionStateChangedPayload.model_validate(suspended_event.payload)
     assert (
@@ -112,9 +115,10 @@ def test_session_state_changed_producer_emits_explicit_null_to_clear_stale_carry
     suspended_event = next(
         event
         for event in callback
-        if event.event_type == "session_state_changed" and event.payload.get("state") == "suspended"
+        if event.event_type == "session_state_changed"
+        and event_payload_json(event).get("state") == "suspended"
     )
-    assert suspended_event.payload["carryover_record_id"] is None
+    assert event_payload_json(suspended_event)["carryover_record_id"] is None
     assert reduce_event(build_graph_catalog(), projection, suspended_event)[
         "planner_session_carryovers"
     ].values == {"session-1": None}
@@ -187,13 +191,19 @@ def _callback_payload(
 
 
 def _event(event_type: str, payload: dict[str, Any], position: int = 1) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{position}",
+                run_id="run-1",
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )

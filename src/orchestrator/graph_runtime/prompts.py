@@ -7,9 +7,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from orchestrator.graph import (
     DEFAULT_NODE_CONTRACTS,
-    EventEnvelope,
+    GraphPatchAcceptedPayload,
+    GraphPatchRejectedPayload,
     GraphProjection,
+    HydratedEvent,
     OutputRecordAcceptedPayload,
+    StrictFileStateRecord,
     event_payload_json,
 )
 from orchestrator.graph.command_bindings import resolve_check_command_definition
@@ -546,7 +549,7 @@ def _planner_visible_dynamic_feature(dynamic_feature: dict[str, Any]) -> dict[st
 
 def _planner_frontier(
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     context: GraphDispatchContext,
 ) -> dict[str, list[dict[str, Any]] | list[str]]:
     ready_nodes = sorted(projection["ready_nodes"])
@@ -582,7 +585,7 @@ def _planner_frontier(
     }
 
 
-def _planner_deferred_reasons(events: list[EventEnvelope]) -> dict[str, str]:
+def _planner_deferred_reasons(events: list[HydratedEvent]) -> dict[str, str]:
     reasons: dict[str, str] = {}
     for event in events:
         if event.event_type != "node_deferred":
@@ -597,7 +600,7 @@ def _planner_deferred_reasons(events: list[EventEnvelope]) -> dict[str, str]:
 def _gap_analysis_obligations(
     context: GraphDispatchContext,
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
 ) -> list[dict[str, Any]]:
     obligations: list[dict[str, Any]] = []
     terminal_states = {"completed", "failed", "cancelled", "retired"}
@@ -656,7 +659,7 @@ def _gap_analysis_obligations(
 def _planner_evidence(
     context: GraphDispatchContext,
     projection: GraphProjection,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
 ) -> dict[str, Any]:
     bindings = projection["input_bindings"].get(context.node_id, {})
     output_records: dict[str, dict[str, Any]] = {}
@@ -904,7 +907,7 @@ def _planner_session_carryover_record(
 
 def _planner_proposals(
     context: GraphDispatchContext,
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
 ) -> dict[str, list[dict[str, Any]]]:
     open_proposals: list[dict[str, Any]] = []
     accepted_patches: list[dict[str, Any]] = []
@@ -912,25 +915,15 @@ def _planner_proposals(
 
     for event in events:
         payload = event.payload
-        if event.event_type in {"graph_patch_proposed", "planner_proposal_opened"}:
-            if payload.get("proposed_by_node_id") != context.node_id:
-                continue
-            open_proposals.append(
-                {
-                    "patch_id": payload.get("patch_id"),
-                    "base_graph_position": payload.get("base_graph_position"),
-                    "position": event.position,
-                }
-            )
-            continue
-
         if event.event_type == "graph_patch_accepted":
-            if payload.get("proposed_by_node_id") != context.node_id:
+            if not isinstance(payload, GraphPatchAcceptedPayload):
+                raise TypeError("graph_patch_accepted event has an unexpected payload type")
+            if payload.proposed_by_node_id != context.node_id:
                 continue
             accepted_patches.append(
                 {
-                    "patch_id": payload.get("patch_id"),
-                    "base_graph_position": payload.get("base_graph_position"),
+                    "patch_id": payload.patch_id,
+                    "base_graph_position": payload.base_graph_position,
                     "position": event.position,
                 }
             )
@@ -938,12 +931,14 @@ def _planner_proposals(
 
         if event.event_type != "graph_patch_rejected":
             continue
-        if payload.get("proposed_by_node_id") != context.node_id:
+        if not isinstance(payload, GraphPatchRejectedPayload):
+            raise TypeError("graph_patch_rejected event has an unexpected payload type")
+        if payload.proposed_by_node_id != context.node_id:
             continue
         patch_rejections.append(
             {
-                "patch_id": payload.get("patch_id"),
-                "reason": payload.get("reason"),
+                "patch_id": payload.patch_id,
+                "reason": payload.reason,
                 "position": event.position,
             }
         )
@@ -1281,7 +1276,7 @@ def _evaluated_record_citations(context: GraphDispatchContext) -> dict[str, list
 
 
 def _record_payloads_for_ids(
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
     record_ids: list[str],
 ) -> list[dict[str, Any]]:
     wanted = set(record_ids)
@@ -1289,17 +1284,16 @@ def _record_payloads_for_ids(
     for event in events:
         if event.event_type not in {"output_record_accepted", "file_state_accepted"}:
             continue
-        payload = (
-            OutputRecordAcceptedPayload.model_validate(event.payload).record.model_dump(
-                mode="json",
-                by_alias=True,
-            )
-            if event.event_type == "output_record_accepted"
-            else event.payload
-        )
-        record_id = payload.get("record_id")
-        if isinstance(record_id, str) and record_id in wanted:
-            records.append(dict(payload))
+        if event.event_type == "output_record_accepted":
+            if not isinstance(event.payload, OutputRecordAcceptedPayload):
+                raise TypeError("output_record_accepted event has an unexpected payload type")
+            record = event.payload.record
+        else:
+            if not isinstance(event.payload, StrictFileStateRecord):
+                raise TypeError("file_state_accepted event has an unexpected payload type")
+            record = event.payload
+        if record.record_id in wanted:
+            records.append(record.model_dump(mode="json", by_alias=True))
     return records
 
 

@@ -11,11 +11,13 @@ from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     EventEnvelope,
+    HydratedEvent,
     compile_routine,
     project_decision_view,
     project_planner_chain,
     project_planner_session,
     project_run_state,
+    event_payload_json,
 )
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
@@ -99,7 +101,9 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
             == "summary-one"
         )
         assert {event.run_id for event in events} == {run_id}
-        assert not any(_contains_legacy_child_artifact(event.payload) for event in events)
+        assert not any(
+            _contains_legacy_child_artifact(event_payload_json(event)) for event in events
+        )
 
         replayed = await _read_events(session_factory, run_id)
         assert project_run_state(build_graph_catalog(), replayed) == project_run_state(
@@ -162,7 +166,9 @@ async def test_child_oversight_maps_to_in_chain_appeal(tmp_path: Path) -> None:
             {"node_id": "appeal-child-one", "state": "planned", "outcome": None}
         ]
         assert {event.run_id for event in events} == {run_id}
-        assert not any(_contains_legacy_child_artifact(event.payload) for event in events)
+        assert not any(
+            _contains_legacy_child_artifact(event_payload_json(event)) for event in events
+        )
     finally:
         await engine.dispose()
 
@@ -223,7 +229,7 @@ async def _complete_node(
     lease = next(
         event
         for event in events
-        if event.event_type == "lease_granted" and event.payload["node_id"] == node_id
+        if event.event_type == "lease_granted" and event_payload_json(event)["node_id"] == node_id
     )
     await _command(session_factory, controller, run_id, "acknowledge_start", _start_payload(lease))
     return await _command(
@@ -254,7 +260,7 @@ async def _drive_region(
     worker_lease = next(
         event
         for event in events
-        if event.event_type == "lease_granted" and event.payload["node_id"] == worker_id
+        if event.event_type == "lease_granted" and event_payload_json(event)["node_id"] == worker_id
     )
     await _command(
         session_factory,
@@ -305,7 +311,8 @@ async def _drive_region(
     verifier_lease = next(
         event
         for event in events
-        if event.event_type == "lease_granted" and event.payload["node_id"] == verifier_id
+        if event.event_type == "lease_granted"
+        and event_payload_json(event)["node_id"] == verifier_id
     )
     await _command(
         session_factory,
@@ -493,26 +500,26 @@ def _selector_edge(
     }
 
 
-def _start_payload(lease: EventEnvelope) -> dict[str, Any]:
+def _start_payload(lease: HydratedEvent) -> dict[str, Any]:
     return {
-        "node_id": lease.payload["node_id"],
-        "execution_id": lease.payload["execution_id"],
-        "lease_id": lease.payload["lease_id"],
-        "lease_generation": lease.payload["generation"],
+        "node_id": event_payload_json(lease)["node_id"],
+        "execution_id": event_payload_json(lease)["execution_id"],
+        "lease_id": event_payload_json(lease)["lease_id"],
+        "lease_generation": event_payload_json(lease)["generation"],
     }
 
 
 def _callback_payload(
     node_id: str,
-    lease: EventEnvelope,
+    lease: HydratedEvent,
     output_records: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
         "node_id": node_id,
-        "execution_id": lease.payload["execution_id"],
-        "lease_id": lease.payload["lease_id"],
-        "lease_generation": lease.payload["generation"],
-        "base_snapshot_id": lease.payload["base_snapshot_id"],
+        "execution_id": event_payload_json(lease)["execution_id"],
+        "lease_id": event_payload_json(lease)["lease_id"],
+        "lease_generation": event_payload_json(lease)["generation"],
+        "base_snapshot_id": event_payload_json(lease)["base_snapshot_id"],
         "observed_graph_position": lease.position,
         "idempotency_key": f"callback-{node_id}-{lease.position}",
         "payload": {

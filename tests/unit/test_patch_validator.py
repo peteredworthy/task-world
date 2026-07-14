@@ -3,6 +3,8 @@
 from datetime import UTC, datetime
 from typing import Any, cast
 
+import pytest
+
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -10,8 +12,16 @@ from orchestrator.graph.models import (
     PatchEnvelope,
     PatchOp,
 )
+from orchestrator.graph import (
+    GraphPatchAcceptedPayload,
+    NodeAuthorityChangedPayload,
+    NodeStateChangedPayload,
+    PlanRegionMarkedSuspectPayload,
+    RequirementRevisionPayload,
+)
 from orchestrator.graph.patch_validator import PatchValidationResult, validate_patch
 from orchestrator.graph.projections import GraphProjection, initial_projection
+from orchestrator.graph import StoredEventEnvelope, build_graph_catalog
 
 
 def _patch(
@@ -35,15 +45,21 @@ def _event(
     event_id: str = "event-1",
     position: int = 11,
 ) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=event_id,
-        run_id="run-1",
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=event_id,
+                run_id="run-1",
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+                payload=payload,
+            )
+        )
     )
 
 
@@ -178,8 +194,16 @@ def test_patch_stale_neutral_events_only_accepted() -> None:
                 "resource_claims": [],
             },
         ),
-        _event("cost_recorded", {"node_id": "worker-1", "tokens": 100}, event_id="event-2"),
-        _event("heartbeat_recorded", {"node_id": "worker-1"}, event_id="event-3"),
+        _event(
+            "heartbeat_recorded",
+            {
+                "node_id": "worker-1",
+                "lease_id": "lease-1",
+                "lease_generation": 0,
+                "observed_at": "2026-01-01T00:01:00+00:00",
+            },
+            event_id="event-2",
+        ),
     ]
 
     result = _validate(
@@ -229,6 +253,77 @@ def test_patch_stale_invalidating_event_not_in_read_set_accepted() -> None:
     )
 
     assert result.accepted
+
+
+@pytest.mark.parametrize(
+    ("event_type", "payload", "patch_op"),
+    [
+        (
+            "node_state_changed",
+            NodeStateChangedPayload(node_id="worker-1", new_state="retired"),
+            {"op": "retire_node", "node_id": "worker-1"},
+        ),
+        (
+            "node_authority_changed",
+            NodeAuthorityChangedPayload(node_id="worker-1"),
+            {"op": "retire_node", "node_id": "worker-1"},
+        ),
+        (
+            "requirement_revision_recorded",
+            RequirementRevisionPayload(
+                requirement_id="requirement-1",
+                version_id="requirement-1.v2",
+                record_id="candidate-1",
+            ),
+            {
+                "op": "create_revision_attempt",
+                "task_region_id": "task-1",
+                "failed_candidate_id": "candidate-1",
+            },
+        ),
+        (
+            "plan_region_marked_suspect",
+            PlanRegionMarkedSuspectPayload(region_node_ids=["worker-1"], reason="stale"),
+            {"op": "retire_node", "node_id": "worker-1"},
+        ),
+    ],
+)
+def test_patch_staleness_reads_exact_invalidating_payload_fields(
+    event_type: str,
+    payload: Any,
+    patch_op: dict[str, Any],
+) -> None:
+    conflict = _event(event_type, payload.to_json())
+
+    result = _validate(
+        _patch([patch_op], base_graph_position=10),
+        current_position=11,
+        events_since_base=[conflict],
+    )
+
+    assert result.accepted is False
+    assert result.conflicting_events == [conflict]
+
+
+def test_graph_patch_accepted_is_invalidating_but_does_not_touch_patch_read_set() -> None:
+    accepted = _event(
+        "graph_patch_accepted",
+        GraphPatchAcceptedPayload(
+            patch_id="patch-other",
+            base_graph_position=10,
+            actor_role="planner",
+            proposed_by_node_id="planner-1",
+            successor_planner_node_ids=["planner-2"],
+        ).to_json(),
+    )
+
+    result = _validate(
+        _patch([{"op": "retire_node", "node_id": "worker-1"}], base_graph_position=10),
+        current_position=11,
+        events_since_base=[accepted],
+    )
+
+    assert result.accepted is True
 
 
 def test_planner_can_create_node() -> None:

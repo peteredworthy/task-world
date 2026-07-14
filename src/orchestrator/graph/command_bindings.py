@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any, cast
 
 from orchestrator.graph.events.records import OutputRecordAcceptedPayload
 from orchestrator.graph.models import (
-    EventEnvelope,
     RoutineSnapshotRecord,
     StrictRoutineSnapshotRecord,
 )
+from orchestrator.graph.specifications import HydratedEvent
 
 KNOWN_CHECK_COMMAND_BINDINGS = frozenset({"dynamic_feature_hidden_oracle"})
 
@@ -49,7 +50,7 @@ def check_command_reference(node_payload: dict[str, Any]) -> Any | None:
 
 def canonicalize_check_command_definition(
     node_payload: dict[str, Any],
-    events: list[EventEnvelope],
+    events: list[HydratedEvent],
 ) -> bool:
     """Resolve an executable check command into the node payload when possible."""
 
@@ -64,7 +65,7 @@ def canonicalize_check_command_definition(
 
 def resolve_check_command_definition(
     node_payload: dict[str, Any],
-    events: list[EventEnvelope],
+    events: Sequence[HydratedEvent],
 ) -> dict[str, Any] | None:
     """Resolve a check node's concrete executable command definition."""
 
@@ -94,7 +95,7 @@ def resolve_check_command_definition(
 
 def check_command_uses_acceptance_fallback(
     node_payload: dict[str, Any],
-    events: list[EventEnvelope],
+    events: Sequence[HydratedEvent],
 ) -> bool:
     """Return True when dynamic oracle binding resolves to acceptance_command."""
 
@@ -121,7 +122,9 @@ def _shell_command_definition(
     }
 
 
-def _dynamic_feature_hidden_oracle_command(events: list[EventEnvelope]) -> str | None:
+def _dynamic_feature_hidden_oracle_command(
+    events: Sequence[HydratedEvent],
+) -> str | None:
     for event in reversed(events):
         command = _hidden_oracle_from_dynamic_feature(_dynamic_feature_from_routine_snapshot(event))
         if command is not None:
@@ -129,7 +132,9 @@ def _dynamic_feature_hidden_oracle_command(events: list[EventEnvelope]) -> str |
     return None
 
 
-def _dynamic_feature_from_routine_snapshot(event: EventEnvelope) -> dict[str, Any] | None:
+def _dynamic_feature_from_routine_snapshot(
+    event: HydratedEvent,
+) -> dict[str, Any] | None:
     if event.event_type != "output_record_accepted":
         return None
     accepted = OutputRecordAcceptedPayload.model_validate(event.payload)

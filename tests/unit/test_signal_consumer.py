@@ -15,7 +15,14 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from orchestrator.db import Base
 from orchestrator.db import EventV2Model
 from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, build_graph_catalog
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FakeClock,
+    build_graph_catalog,
+    event_payload_json,
+)
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.workflow import (
     RunWorkflow,
@@ -23,6 +30,7 @@ from orchestrator.workflow import (
     WorkflowSignal,
 )
 from orchestrator.state.errors import RunNotFoundError
+from orchestrator.graph import StoredEventEnvelope
 
 
 @dataclass
@@ -230,15 +238,21 @@ def _graph_event(
     payload: dict[str, Any],
     position: int = -1,
 ) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{position}",
-        run_id=run_id,
-        position=position,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload=payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{position}",
+                run_id=run_id,
+                position=position,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload=payload,
+            )
+        )
     )
 
 
@@ -520,7 +534,7 @@ async def test_cancel_graph_run_appends_graph_cancel_before_run_row_failure(
         "node_state_changed",
         "run_lifecycle_changed",
     ]
-    assert events[-4].payload["to_state"] == "cancelling"
+    assert event_payload_json(events[-4])["to_state"] == "cancelling"
     assert events[-3].payload.to_json() == {
         "node_id": "worker-1",
         "lease_id": "lease-1",
@@ -535,7 +549,7 @@ async def test_cancel_graph_run_appends_graph_cancel_before_run_row_failure(
         "trigger": "run_cancelled",
         "reason": "run_cancelled",
     }
-    assert events[-1].payload["to_state"] == "cancelled"
+    assert event_payload_json(events[-1])["to_state"] == "cancelled"
     processed = await _get_processed_positions(session_factory, run_id)
     assert pos in processed
 

@@ -95,6 +95,7 @@ def test_added_payload_field_spreads_through_every_generic_event_and_command_pat
             actor=Actor(kind=ActorKind.SYSTEM),
             events=(),
             future_effects=cast(Any, object()),
+            catalog=GraphCatalog.compose((), ()),
         ),
     )
     assert set(command_spec.payload_type.model_json_schema()["properties"]) == {
@@ -169,6 +170,7 @@ def test_new_owner_tuple_specs_compose_and_dispatch_without_central_edits() -> N
             actor=Actor(kind=ActorKind.SYSTEM),
             events=(),
             future_effects=cast(Any, object()),
+            catalog=catalog,
         ),
     )
     assert handled == [9]

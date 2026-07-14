@@ -12,9 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.api import create_app
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, event_payload_json
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import StoredEventEnvelope
 
 
 @pytest.fixture
@@ -96,8 +97,8 @@ async def test_fr06_edges_bind_fanout_join_optional_bind_all_and_supersede(
     )
     assert any(
         event.event_type == "input_bound"
-        and event.payload["to_node_id"] == "planner-1"
-        and event.payload["record_ids"] == ["file-state-2"]
+        and event_payload_json(event)["to_node_id"] == "planner-1"
+        and event_payload_json(event)["record_ids"] == ["file-state-2"]
         for event in second_callback.events
     )
 
@@ -108,7 +109,7 @@ async def test_fr06_edges_bind_fanout_join_optional_bind_all_and_supersede(
         {"node_id": "join-1", "record_id": "join-result-fr06"},
     )
     assert joined.events[0].event_type == "output_record_accepted"
-    assert joined.events[0].payload["record"]["value"] == {
+    assert event_payload_json(joined.events[0])["record"]["value"] == {
         "status": "ready",
         "source_record_ids": ["candidate-1"],
     }
@@ -169,7 +170,8 @@ async def test_fr06_edges_bind_fanout_join_optional_bind_all_and_supersede(
         {"max_grants": 0, "base_snapshot_id": "S0", "lease_seconds": 300},
     )
     assert any(
-        event.event_type == "node_ready" and event.payload["node_id"] == "optional-worker"
+        event.event_type == "node_ready"
+        and event_payload_json(event)["node_id"] == "optional-worker"
         for event in scheduled.events
     )
 
@@ -519,16 +521,22 @@ async def _get_json(client: AsyncClient, path: str) -> Any:
 
 
 def _event(run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    return EventEnvelope(
-        event_id=f"{event_type}-{uuid4().hex}",
-        run_id=run_id,
-        position=-1,
-        event_type=event_type,
-        schema_version=1,
-        actor=Actor(kind=ActorKind.CONTROLLER),
-        timestamp=FakeClock().now(),
-        payload={"record": payload}
-        if event_type == "output_record_accepted"
-        and not (isinstance(payload, dict) and "record" in payload)
-        else payload,
+    return (
+        build_graph_catalog()
+        .resolve_event(event_type)
+        .hydrate(
+            StoredEventEnvelope(
+                event_id=f"{event_type}-{uuid4().hex}",
+                run_id=run_id,
+                position=-1,
+                event_type=event_type,
+                payload_schema_generation=2,
+                actor=Actor(kind=ActorKind.CONTROLLER),
+                timestamp=FakeClock().now(),
+                payload={"record": payload}
+                if event_type == "output_record_accepted"
+                and not (isinstance(payload, dict) and "record" in payload)
+                else payload,
+            )
+        )
     )

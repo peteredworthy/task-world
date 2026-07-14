@@ -1,9 +1,9 @@
 """Workflow event types for observability."""
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, RunStatus, TaskStatus
 
@@ -35,6 +35,21 @@ class RunStatusChanged(WorkflowEvent):
     new_status: RunStatus | str = RunStatus.DRAFT
     pause_reason: str | None = None
     last_error: str | None = None  # Human-readable error detail when paused due to error
+
+
+class OutboxRequeued(WorkflowEvent):
+    """Emitted when an operator retries a failed graph outbox row."""
+
+    model_config = ConfigDict(strict=True, extra="forbid", frozen=True)
+
+    event_type: str = Field(default="outbox_requeued", pattern=r"^outbox_requeued$")
+    outbox_id: int
+    event_id: str
+    kind: str
+    previous_status: Literal["failed"]
+    previous_attempts: int
+    previous_last_error: str | None
+    operator: str
 
 
 class ChecklistGateEvaluated(WorkflowEvent):

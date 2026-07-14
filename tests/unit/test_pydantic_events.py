@@ -8,6 +8,7 @@ datetime fields produce ISO 8601 strings in model_dump(mode="json").
 from datetime import datetime, timezone
 
 import pytest
+from pydantic import ValidationError
 
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus, RunStatus, TaskStatus
 from orchestrator.workflow import (
@@ -41,6 +42,7 @@ from orchestrator.workflow import (
     GradesEvaluated,
     HealthCheckEvent,
     ParentOversightFactsUpdated,
+    OutboxRequeued,
     PruneApplied,
     RunCreated,
     RunDeleted,
@@ -69,6 +71,7 @@ from orchestrator.workflow import (
     TestRunCompleted,
     TestRunStarted,
     WorkflowEvent,
+    deserialize_event,
 )
 
 NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
@@ -169,6 +172,63 @@ def test_run_status_changed_enum_serialization() -> None:
     assert d["old_status"] == "draft"
     assert d["new_status"] == "active"
     _assert_no_datetime_objects(d)
+
+
+def test_outbox_requeued_round_trips_through_public_deserializer() -> None:
+    event = OutboxRequeued(
+        timestamp=NOW,
+        run_id="run-1",
+        outbox_id=17,
+        event_id="dispatch-1",
+        kind="agent_dispatch",
+        previous_status="failed",
+        previous_attempts=3,
+        previous_last_error="agent dispatch exploded",
+        operator="human-operator",
+    )
+
+    round_tripped = deserialize_event(event.event_type, event.model_dump_json())
+
+    assert round_tripped == event
+    assert isinstance(round_tripped, OutboxRequeued)
+
+
+def test_outbox_requeued_is_strict_and_forbids_extra_fields() -> None:
+    payload = {
+        "timestamp": NOW,
+        "run_id": "run-1",
+        "event_type": "outbox_requeued",
+        "outbox_id": "17",
+        "event_id": "dispatch-1",
+        "kind": "agent_dispatch",
+        "previous_status": "failed",
+        "previous_attempts": 3,
+        "previous_last_error": None,
+        "operator": "human-operator",
+        "graph_position": 2,
+    }
+
+    with pytest.raises(ValidationError) as exc_info:
+        OutboxRequeued.model_validate(payload)
+
+    errors = exc_info.value.errors()
+    assert {error["type"] for error in errors} == {"extra_forbidden", "int_type"}
+
+
+def test_outbox_requeued_rejects_a_different_event_type() -> None:
+    with pytest.raises(ValidationError, match="String should match pattern"):
+        OutboxRequeued(
+            timestamp=NOW,
+            run_id="run-1",
+            event_type="different_event",
+            outbox_id=17,
+            event_id="dispatch-1",
+            kind="agent_dispatch",
+            previous_status="failed",
+            previous_attempts=3,
+            previous_last_error=None,
+            operator="human-operator",
+        )
 
 
 # ---------------------------------------------------------------------------

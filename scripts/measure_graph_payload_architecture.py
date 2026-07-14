@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import sys
 from collections import Counter
@@ -55,7 +56,50 @@ EXPECTED_METRICS = {
     "eligible_ast_cst_migration_sites_remaining": 0,
     "codemod_second_run_changes": 0,
     "unclassified_dynamic_event_or_command_sites": 0,
+    "retired_payload_compatibility_adapters": 0,
 }
+
+_RETIRED_COMPATIBILITY_PATTERNS = (
+    "_graph_patch_payload_for_event",
+    "_open_proposal_blockers",
+    "_checkpoint_output_record_payload",
+    "_parse_output_record_payload",
+    "_generic_output_record_payload",
+    "_legacy_output_record_payload",
+    "_verification_payload_outcome",
+    "_check_result_payload_status",
+    "_gap_classification_payload_classification",
+    "_authority_revision_blockers",
+    "_requires_authority_resolution",
+    "_output_record_model_for_payload",
+    "_normalized_output_record_payload",
+    "fallback = _",
+    'port in {"graph_patch_proposal", "graph_patch"}',
+    "LegacyEventPayload",
+    "source_schema_version",
+    "_D3_LEGACY_RECORD_EVENT_TYPES",
+)
+
+_D_SERIES_MAPPING_METHODS = frozenset({"__getitem__", "get", "items"})
+
+
+def _retired_payload_compatibility_count(paths: list[Path]) -> int:
+    """Count retired names and mapping shims without false-positive dict methods."""
+    source = "\n".join(path.read_text() for path in paths)
+    count = sum(source.count(pattern) for pattern in _RETIRED_COMPATIBILITY_PATTERNS)
+    for path in paths:
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ClassDef) and node.name in {
+                "StrictPayload",
+                "LegacyEventPayload",
+            }:
+                count += sum(
+                    isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and member.name in _D_SERIES_MAPPING_METHODS
+                    for member in node.body
+                )
+    return count
 
 
 def measure(
@@ -84,6 +128,12 @@ def measure(
     )
     eligible_sites = sum(result.eligible_sites for result in migration_results)
     second_run_changes = sum(result.second_run_changes for result in migration_results)
+    graph_paths = [
+        path
+        for root_path in (root / path for path in CANONICAL_ROOTS[:2])
+        if root_path.exists()
+        for path in root_path.rglob("*.py")
+    ]
     metrics = {
         "registered_event_specs": len(registered_events),
         "registered_command_specs": len(report.command_names),
@@ -91,6 +141,7 @@ def measure(
         "eligible_ast_cst_migration_sites_remaining": eligible_sites,
         "codemod_second_run_changes": second_run_changes,
         "unclassified_dynamic_event_or_command_sites": unclassified,
+        "retired_payload_compatibility_adapters": _retired_payload_compatibility_count(graph_paths),
     }
     deferred_sites = [
         f"{fact.path}:{fact.line}:{fact.column}: {fact.rule}: {fact.expression}"

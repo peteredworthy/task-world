@@ -12,12 +12,10 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     CommandExecutionContext,
-    EventEnvelope,
     FutureCommandEffects,
     GraphCatalog,
     GraphProjection,
     HydratedEvent,
-    event_payload_json,
     apply_command,
     initial_projection,
     reduce_event,
@@ -30,12 +28,13 @@ from orchestrator.graph.events.lifecycle import (
     AGENT_DISPATCH_REQUESTED,
     AgentDispatchRequestedPayload,
 )
+from orchestrator.graph.events.leases import LeaseGrantedPayload
 from orchestrator.graph.specifications import EventMetadata
 
 
 @dataclass(frozen=True)
 class GraphCommandResult:
-    events: list[EventEnvelope]
+    events: list[HydratedEvent]
     outbox_items: list[OutboxItem]
     projection_position: int
 
@@ -123,7 +122,6 @@ class GraphController:
             if key != "run_id" and (command_type == "submit_patch" or key != "actor_role")
         }
         actor_role = command_payload.get("actor_role")
-        legacy_command_events = [_to_legacy_envelope(event) for event in command_events]
         context = CommandExecutionContext(
             run_id=run_id,
             current_position=current_position,
@@ -133,13 +131,14 @@ class GraphController:
                 kind=ActorKind.CONTROLLER,
                 role=actor_role if isinstance(actor_role, str) else None,
             ),
-            events=(),
+            events=tuple(command_events),
             future_effects=self._future_effects,
+            catalog=self._catalog,
         )
         planned_events = apply_command(
             self._catalog,
             projection,
-            legacy_command_events,
+            command_events,
             command_type,
             typed_payload,
             context,
@@ -169,7 +168,7 @@ class GraphController:
                 stored_events = await store.append_events(
                     run_id,
                     expected_position,
-                    [_to_legacy_envelope(event) for event in planned_events],
+                    planned_events,
                 )
                 outbox_items = await append_outbox_rows(session, stored_events, self._clock)
                 await session.commit()
@@ -199,24 +198,22 @@ class GraphController:
 
     def _add_dispatch_intent_events(
         self,
-        events: Sequence[EventEnvelope | HydratedEvent],
+        events: Sequence[HydratedEvent],
         command_type: str,
         run_id: str,
-    ) -> list[EventEnvelope | HydratedEvent]:
+    ) -> list[HydratedEvent]:
         """Normalize lease grants into explicit side-effect-intent events.
 
         The current pure kernel grants leases during ``schedule_tick``. This
         runtime layer adds the PRD §12.3 ``agent_dispatch_requested`` event next
         to each grant, then the outbox mapping keys dispatch by that event id.
         """
-        expanded: list[EventEnvelope | HydratedEvent] = []
+        expanded: list[HydratedEvent] = []
         for event in events:
             expanded.append(event)
-            if isinstance(event, HydratedEvent):
+            if not isinstance(event.payload, LeaseGrantedPayload):
                 continue
-            if event.event_type != "lease_granted":
-                continue
-            node_id = event_payload_json(event).get("node_id")
+            grant = event.payload
             expanded.append(
                 AGENT_DISPATCH_REQUESTED.create(
                     EventMetadata(
@@ -226,19 +223,21 @@ class GraphController:
                         event_type="agent_dispatch_requested",
                         actor=Actor(kind=ActorKind.CONTROLLER),
                         causation_id=command_type,
-                        correlation_id=str(node_id) if isinstance(node_id, str) else None,
+                        correlation_id=grant.node_id,
                         timestamp=self._clock.now(),
-                        payload_schema_generation=1,
+                        payload_schema_generation=2,
                     ),
                     AgentDispatchRequestedPayload.model_validate(
                         {
                             "lease_granted_event_id": event.event_id,
-                            "lease_id": event_payload_json(event).get("lease_id"),
-                            "node_id": node_id,
-                            "generation": event_payload_json(event).get("generation"),
-                            "execution_id": event_payload_json(event).get("execution_id"),
-                            "base_snapshot_id": event_payload_json(event).get("base_snapshot_id"),
-                            "resource_claims": event_payload_json(event).get("resource_claims", []),
+                            "lease_id": grant.lease_id,
+                            "node_id": grant.node_id,
+                            "generation": grant.generation,
+                            "execution_id": grant.execution_id,
+                            "base_snapshot_id": grant.base_snapshot_id,
+                            "resource_claims": [
+                                claim.model_dump(mode="json") for claim in grant.resource_claims
+                            ],
                         }
                     ),
                 )
@@ -246,27 +245,9 @@ class GraphController:
         return expanded
 
 
-def _to_legacy_envelope(event: EventEnvelope | HydratedEvent) -> EventEnvelope:
-    if isinstance(event, EventEnvelope):
-        return event
-    metadata = event.metadata
-    return EventEnvelope(
-        event_id=metadata.event_id,
-        run_id=metadata.run_id,
-        position=metadata.position,
-        event_type=metadata.event_type,
-        schema_version=metadata.payload_schema_generation,
-        actor=metadata.actor,
-        causation_id=metadata.causation_id,
-        correlation_id=metadata.correlation_id,
-        timestamp=metadata.timestamp,
-        payload=event.payload.to_json(),
-    )
-
-
 def rebuild_projection(
     catalog: GraphCatalog,
-    events: Sequence[EventEnvelope | HydratedEvent],
+    events: Sequence[HydratedEvent],
 ) -> GraphProjection:
     projection = initial_projection()
     for event in events:

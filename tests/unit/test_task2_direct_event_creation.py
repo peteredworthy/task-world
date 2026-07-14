@@ -42,6 +42,7 @@ def test_task2_command_modules_have_no_raw_event_round_trip() -> None:
 def test_typed_event_creator_returns_hydrated_events_with_ordered_unique_metadata() -> None:
     from orchestrator.graph.commands.event_creator import TypedEventCreator
 
+    catalog = build_graph_catalog()
     context = CommandExecutionContext(
         run_id="run-1",
         current_position=7,
@@ -49,9 +50,8 @@ def test_typed_event_creator_returns_hydrated_events_with_ordered_unique_metadat
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
+        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
+        catalog=catalog,
     )
     creator = TypedEventCreator(context)
 

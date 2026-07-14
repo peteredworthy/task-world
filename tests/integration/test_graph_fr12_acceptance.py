@@ -26,7 +26,11 @@ from orchestrator.graph_runtime import (
 from orchestrator.runners import AgentRunner
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import (
+    build_graph_catalog,
+    build_graph_command_dependencies,
+    event_payload_json,
+)
 from orchestrator.graph import GraphCatalog
 
 
@@ -268,7 +272,7 @@ async def test_fr12_recovery_reentry_skips_stale_report_and_rebuilds_readbacks(
     assert event_types.count("runtime_retry_scheduled") == 1
     assert any(
         event.event_type == "output_record_accepted"
-        and event.payload["record"].get("record_type") == "recovery_plan"
+        and event_payload_json(event)["record"].get("record_type") == "recovery_plan"
         for event in events
     )
     assert not any(event.event_type == "command_rejected" for event in events)
