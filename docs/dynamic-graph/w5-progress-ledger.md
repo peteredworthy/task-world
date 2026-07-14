@@ -893,8 +893,8 @@ preserving them above as contemporaneous `e63fb41ec` evidence.
 
 ## Strict-cutover Task 14: documentation, metrics, and W5 closure
 
-Status: implementation and builder documentation complete; pending fresh
-independent verifier. No Task 14 commit exists, so no closure SHA is recorded.
+Status: complete. Committed as `1b03d5a05` after independent verifier PASS.
+This bookkeeping update is uncommitted; no bookkeeping commit SHA is recorded.
 
 Task 14 reconciles rather than rewrites the historical entries above. The
 compatibility-first field inventories and semantic regression tests remain
@@ -937,14 +937,15 @@ with 60,304,850-60,309,546-byte median allocated peaks, and 131,308,839 bytes
 for 1,000 rows with 397,651,584-397,744,576-byte peaks. Payload parity was true.
 
 Task 13's independent acceptance evidence remains preserved above. Final source
-repairs `b63146d9b` and `0289de70c` are the implementation baseline: 1,083
-broad graph tests and 5,101 passed / 5 skipped / 3 warnings in the full suite,
-with 44/23 and all metrics zero. Task 14's fresh builder documentation matrix is
-recorded in
-`docs/dynamic-graph/w5-task14-closeout-report.md`; an independent rerun/verdict is still
-required for documentation closure. Following verifier feedback and
-explicit user permission, Task 14 corrected the staged continuation prompt's
-stale future-work queue into a completed historical handoff.
+repairs `b63146d9b` and `0289de70c` are the implementation baseline. Task 14's
+independent PASS at `1b03d5a05` verified 1,083 broad graph tests and 5,101
+passed / 5 skipped / 3 warnings in the full suite, with catalog 44/23, all
+strict/current, migration, retired, deferred, remaining-eligible, second-run,
+and unclassified metrics 0, and complexity counts 412 / 102. The final matrix
+is recorded in `docs/dynamic-graph/w5-task14-closeout-report.md`. Following
+verifier feedback and explicit user permission, Task 14 corrected the staged
+continuation prompt's stale future-work queue into a completed historical
+handoff.
 
 Fresh Task 14 documentation matrix: metrics 44/23 with every emitted
 architecture, migration, retired, and deferred count 0; architecture checker
@@ -952,18 +953,19 @@ clean; D1-D6 grep status 1/no output; Ruff clean; format check 725 files;
 Pyright 0 errors; and `git diff --check` clean. Tests were not rerun for the
 documentation-only reconciliation; the independently verified final
 source-repair evidence is 1,083 graph and 5,101 full-suite tests (5 skipped, 3
-warnings). This remains pending independent verifier.
+warnings). The independent verifier returned PASS.
 
 Verifier-finding correction: operative plan text now consistently says Task 9
 retained D1-D6 and Task 13 deleted them after Branch B fresh initialization;
 the continuation prompt records that completed history; and the deferred column
 promotion precondition accepts either fresh initialization or verified reset
 onto the current strict schema generation. Documentation-only checks were
-rerun; status remains pending independent verifier.
+rerun and independently verified PASS.
 
 Latest reconciliation also removes the final operative Task 9 bridge-deletion
 instruction, renames Task 9 as the non-destructive catalog/dispatch cutover,
 documents both Task 13 database branches, fixes closed-spec links, and records
 `b63146d9b` / `0289de70c` plus the 1,083/5,101 final counts. It also records
 that production consumers are typed directly without a payload JSON
-compatibility adapter. No Task14 commit SHA exists or is predicted.
+compatibility adapter. Task 14 is committed as `1b03d5a05`; this later
+bookkeeping update remains uncommitted and asserts no bookkeeping commit SHA.

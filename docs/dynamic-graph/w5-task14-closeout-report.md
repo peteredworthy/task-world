@@ -1,8 +1,8 @@
 # W5 Task 14 Closeout Report
 
-Status: **builder documentation complete; pending fresh independent verifier**.
-No Task14 commit was created and no future commit SHA is asserted. Final source
-commits: `b63146d9b` and `0289de70c`.
+Status: **complete; independently verified PASS**. Task 14 was committed as
+`1b03d5a05`. Final source commits: `b63146d9b` and `0289de70c`. This bookkeeping
+update is uncommitted; no bookkeeping commit SHA is asserted.
 
 ## Scope
 
@@ -68,8 +68,8 @@ Final post-edit builder evidence:
   `complete/`; no source or database change. The staged strict-cutover
   continuation prompt was minimally corrected with explicit user permission.
 
-A fresh independent verifier must rerun the matrix and review every final
-acceptance row before documentation closure.
+The independent verifier reran the final matrix, reviewed the acceptance rows,
+and returned PASS at `1b03d5a05`.
 
 ## Verifier-Finding Corrections
 
@@ -90,5 +90,8 @@ acceptance row before documentation closure.
 - Removed any current architecture claim that production uses a payload JSON
   compatibility adapter; affected Task12 evidence is explicitly historical.
 
-Documentation/tooling verification was rerun after these corrections. Status
-remains pending fresh independent verifier; no commit or future SHA exists.
+Documentation/tooling verification was rerun after these corrections. The
+independent verifier returned PASS with final counts of 1,083 graph tests and
+5,101 passed / 5 skipped / 3 warnings in the full suite; metrics were 44/23
+with all measured counts 0, and complexity counts were 412 / 102. Task 14 is
+committed as `1b03d5a05`; this bookkeeping update remains uncommitted.
