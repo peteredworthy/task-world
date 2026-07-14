@@ -78,6 +78,8 @@ _RETIRED_COMPATIBILITY_PATTERNS = (
     "LegacyEventPayload",
     "source_schema_version",
     "_D3_LEGACY_RECORD_EVENT_TYPES",
+    "LegacyFutureCommandEffects",
+    "Task 9 deletion seam",
 )
 
 _D_SERIES_MAPPING_METHODS = frozenset({"__getitem__", "get", "items"})
@@ -90,6 +92,13 @@ def _retired_payload_compatibility_count(paths: list[Path]) -> int:
     for path in paths:
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.ClassDef)
+                and node.name.startswith("Legacy")
+                and node.name.endswith(("Adapter", "Effects", "Compatibility", "Shim", "Wrapper"))
+                and node.name != "LegacyFutureCommandEffects"
+            ):
+                count += 1
             if isinstance(node, ast.ClassDef) and node.name in {
                 "StrictPayload",
                 "LegacyEventPayload",

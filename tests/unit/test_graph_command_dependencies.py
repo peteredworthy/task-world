@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import inspect
 from pathlib import Path
 
 import orchestrator.graph as graph
@@ -28,6 +29,20 @@ def test_production_modules_do_not_call_legacy_future_effect_factory() -> None:
         ):
             offenders.append(str(path))
     assert offenders == []
+
+
+def test_production_composition_builds_concrete_future_effects() -> None:
+    dependencies = graph.build_graph_command_dependencies(graph.build_graph_catalog())
+
+    assert type(dependencies.future_effects) is graph.FutureCommandEffects
+
+
+def test_future_effect_contracts_do_not_use_untyped_wildcard_callables() -> None:
+    annotations = inspect.get_annotations(graph.FutureCommandEffects)
+
+    assert not {
+        name for name, annotation in annotations.items() if "Callable[...," in str(annotation)
+    }
 
 
 def test_legacy_agent_death_applier_name_is_absent() -> None:

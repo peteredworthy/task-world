@@ -166,6 +166,34 @@ def test_architecture_metrics_emit_stable_markdown() -> None:
     assert "## Deferred D1-D6 Compatibility" in rendered
 
 
+def test_retired_compatibility_metric_counts_legacy_adapters_and_seam_comments(
+    tmp_path: Path,
+) -> None:
+    from scripts.measure_graph_payload_architecture import (
+        _retired_payload_compatibility_count,
+    )
+
+    source = tmp_path / "adapter.py"
+    source.write_text("# Task 9 deletion seam\nclass LegacyTemporaryAdapter:\n    pass\n")
+
+    assert _retired_payload_compatibility_count([source]) == 2
+
+
+def test_architecture_checker_rejects_legacy_adapters_and_seam_comments(
+    tmp_path: Path,
+) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    source = tmp_path / "src/orchestrator/graph/adapter.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("# Task 9 deletion seam\nclass LegacyTemporaryAdapter:\n    pass\n")
+
+    assert {item.category for item in check_paths([source])} == {
+        "retired graph compatibility adapter",
+        "retired graph compatibility seam",
+    }
+
+
 SAMPLE_EVENT_AND_COMMAND_SOURCE = """\
 from typing import Any
 

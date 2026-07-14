@@ -1,7 +1,7 @@
 """Pure command applier for execution graph fixtures."""
 
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime, timedelta
 import posixpath
 from typing import Any, Protocol, Sequence, cast
@@ -3977,6 +3977,24 @@ def _recovery_plan_record_payload(
     return record.model_dump(mode="json")
 
 
+accepted_output_record_events = _accepted_output_record_events
+cancel_active_lease_events = _cancel_active_lease_events
+failure_record_payload = _failure_record_payload
+file_state_authority_conflict = _file_state_authority_conflict
+file_state_rejected_conflict = _file_state_rejected_conflict
+file_state_rejected_events = _file_state_rejected_events
+lease_node_id = _lease_node_id
+lifecycle_completion_decision_event = _lifecycle_completion_decision_event
+output_record_contract_conflict = _output_record_contract_conflict
+output_record_provenance_conflict = _output_record_provenance_conflict
+planner_session_state_event = _planner_session_state_event
+recovery_plan_record_payload = _recovery_plan_record_payload
+required_output_record_conflict = _required_output_record_conflict
+source_repair_events = _source_repair_events
+typed_lease_event_payload = _typed_lease_event_payload
+verification_record_conflict = _verification_record_conflict
+
+
 def _non_gap_planner_has_accepted_patch(projection: GraphProjection, node_id: str) -> bool:
     return (
         projection["node_kinds"].get(node_id) == "planner"
@@ -4050,28 +4068,6 @@ def _callback_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
         if isinstance(raw_payload, dict)
         else {"payload": raw_payload}
     )
-
-
-@dataclass
-class LegacyFutureCommandEffects:
-    """Injected Task 3/4/6 compatibility capabilities; Task 9 deletes this."""
-
-    accepted_output_record_events: Callable[..., Any] = _accepted_output_record_events
-    file_state_authority_conflict: Callable[..., Any] = _file_state_authority_conflict
-    file_state_rejected_conflict: Callable[..., Any] = _file_state_rejected_conflict
-    file_state_rejected_events: Callable[..., Any] = _file_state_rejected_events
-    lease_node_id: Callable[..., Any] = _lease_node_id
-    output_record_contract_conflict: Callable[..., Any] = _output_record_contract_conflict
-    output_record_provenance_conflict: Callable[..., Any] = _output_record_provenance_conflict
-    planner_session_state_event: Callable[..., Any] = _planner_session_state_event
-    required_output_record_conflict: Callable[..., Any] = _required_output_record_conflict
-    source_repair_events: Callable[..., Any] = _source_repair_events
-    typed_lease_event_payload: Callable[..., Any] = _typed_lease_event_payload
-    verification_record_conflict: Callable[..., Any] = _verification_record_conflict
-    cancel_active_lease_events: Callable[..., Any] = _cancel_active_lease_events
-    lifecycle_completion_decision_event: Callable[..., Any] = _lifecycle_completion_decision_event
-    failure_record_payload: Callable[..., Any] = _failure_record_payload
-    recovery_plan_record_payload: Callable[..., Any] = _recovery_plan_record_payload
 
 
 command_rejected = _command_rejected

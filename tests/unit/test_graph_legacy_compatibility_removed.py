@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 
@@ -29,6 +30,8 @@ def test_graph_sources_do_not_retain_retired_compatibility_names() -> None:
         "LegacyEventPayload",
         "source_schema_version",
         "_D3_LEGACY_RECORD_EVENT_TYPES",
+        "LegacyFutureCommandEffects",
+        "Task 9 deletion seam",
     }
     source = "\n".join(
         path.read_text()
@@ -37,6 +40,23 @@ def test_graph_sources_do_not_retain_retired_compatibility_names() -> None:
     )
 
     assert not {name for name in retired_names if name in source}
+
+
+def test_graph_sources_do_not_define_legacy_adapter_classes() -> None:
+    root = Path(__file__).parents[2] / "src" / "orchestrator"
+    offenders: list[str] = []
+    for package in ("graph", "graph_runtime"):
+        for path in (root / package).rglob("*.py"):
+            tree = ast.parse(path.read_text())
+            offenders.extend(
+                node.name
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ClassDef)
+                and node.name.startswith("Legacy")
+                and node.name.endswith(("Adapter", "Effects", "Compatibility", "Shim", "Wrapper"))
+            )
+
+    assert offenders == []
 
 
 def test_strict_payload_does_not_offer_d_series_mapping_methods() -> None:

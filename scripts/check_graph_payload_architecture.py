@@ -102,6 +102,7 @@ _RETIRED_GRAPH_PAYLOAD_NAMES = frozenset(
         "LegacyEventPayload",
         "_D3_LEGACY_RECORD_EVENT_TYPES",
         "source_schema_version",
+        "LegacyFutureCommandEffects",
     }
 )
 _RETIRED_D_SERIES_MAPPING_METHODS = frozenset({"__getitem__", "get", "items"})
@@ -290,8 +291,20 @@ def _scan_file(path: Path, domain: str) -> list[ArchitectureDiagnostic]:
 
 def _strict_cutover_diagnostics(path: Path) -> list[ArchitectureDiagnostic]:
     """Reject retired generation-1 carriers and mapping compatibility seams."""
-    tree = ast.parse(path.read_text(), filename=str(path))
+    source = path.read_text()
+    tree = ast.parse(source, filename=str(path))
     diagnostics: list[ArchitectureDiagnostic] = []
+    for line_number, line in enumerate(source.splitlines(), start=1):
+        if "Task 9 deletion seam" in line:
+            diagnostics.append(
+                ArchitectureDiagnostic(
+                    str(path),
+                    line_number,
+                    line.index("Task 9 deletion seam"),
+                    "retired graph compatibility seam",
+                    line.strip(),
+                )
+            )
     functions = {
         node.name: node
         for node in ast.walk(tree)
@@ -564,6 +577,12 @@ def _strict_cutover_diagnostics(path: Path) -> list[ArchitectureDiagnostic]:
             diagnostics.append(_diagnostic(path, node, "retired graph payload compatibility"))
         if isinstance(node, ast.ClassDef) and node.name == "LegacyEventPayload":
             diagnostics.append(_diagnostic(path, node, "retired graph payload compatibility"))
+        if (
+            isinstance(node, ast.ClassDef)
+            and node.name.startswith("Legacy")
+            and node.name.endswith(("Adapter", "Effects", "Compatibility", "Shim", "Wrapper"))
+        ):
+            diagnostics.append(_diagnostic(path, node, "retired graph compatibility adapter"))
         if isinstance(node, ast.ClassDef) and node.name in {"StrictPayload", "LegacyEventPayload"}:
             for member in node.body:
                 if (
