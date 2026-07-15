@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import MappingProxyType
 from typing import Any, Iterable, Literal, TypedDict, cast
 
 from pydantic import ConfigDict, field_validator
@@ -1554,10 +1555,11 @@ def _node_creation_from_event(event: EventEnvelope) -> NodeCreationProjection | 
     projection_payload = event_payload.model_dump(mode="json")
     authority = event_payload.authority
     if authority is not None:
-        for key in ("resource_claims", "allowed_actions", "preconditions"):
-            value = authority.get(key)
-            if value is not None:
-                projection_payload[key] = value
+        projection_payload["resource_claims"] = [
+            claim.model_dump(mode="json") for claim in authority.resource_claims
+        ]
+        projection_payload["allowed_actions"] = authority.allowed_actions
+        projection_payload["preconditions"] = authority.preconditions
     return _node_creation_from_payload(
         {
             **projection_payload,
@@ -4125,12 +4127,7 @@ def _gate_prompt(payload: NodeCreationProjection | None) -> str | None:
 def _decision_outcome(payload: OversightDecisionProjection | None) -> str | None:
     if payload is None:
         return None
-    for value in (payload.outcome, payload.decision, payload.verdict):
-        if isinstance(value, str) and value:
-            return value
-    if payload.approved is not None:
-        return "approved" if payload.approved else "rejected"
-    return None
+    return payload.decision
 
 
 def _review_blocker(
@@ -4468,25 +4465,23 @@ def _parse_output_record_payload(payload: dict[str, Any]) -> OutputRecordPayload
         return None
 
 
-def _output_record_model_for_payload(payload: dict[str, Any]) -> type[GraphBaseModel] | None:
-    record_type = payload.get("record_type")
-    if not isinstance(record_type, str) or not record_type:
-        return None
-    return {
+_OUTPUT_RECORD_MODELS = MappingProxyType(
+    {
         "analysis_summary": AnalysisSummaryRecord,
         "artifact_reference": ArtifactReferenceRecord,
         "authority_decision": AuthorityDecisionRecord,
         "authority_request_record": AuthorityRequestRecord,
         "candidate": CandidateRecord,
         "check_result": CheckResultRecord,
+        "classified_gap": GapClassificationRecord,
         "completion_decision": CompletionDecisionRecord,
         "decision_record": DecisionRecord,
         "decision_request": DecisionRequestRecord,
         "failure_record": FailureRecord,
+        "fan_out_inputs": OutputRecord,
         "file_state": FileStateRecord,
-        "gap_plan": GapClassificationRecord,
         "gap_classification": GapClassificationRecord,
-        "classified_gap": GapClassificationRecord,
+        "gap_plan": GapClassificationRecord,
         "graph_patch_proposal": GraphPatchProposalRecord,
         "join_result": JoinResultRecord,
         "recovery_plan": RecoveryPlanRecord,
@@ -4494,7 +4489,15 @@ def _output_record_model_for_payload(payload: dict[str, Any]) -> type[GraphBaseM
         "routine_snapshot": RoutineSnapshotRecord,
         "run_context": RunContextRecord,
         "verification_report": VerificationReportRecord,
-    }.get(record_type, OutputRecord)
+    }
+)
+
+
+def _output_record_model_for_payload(payload: dict[str, Any]) -> type[GraphBaseModel] | None:
+    record_type = payload.get("record_type")
+    if not isinstance(record_type, str) or not record_type:
+        return None
+    return _OUTPUT_RECORD_MODELS.get(record_type)
 
 
 def _record_node_output_port(state: GraphProjection, event: EventEnvelope) -> None:
@@ -4686,8 +4689,7 @@ def _record_gate_decision(state: GraphProjection, payload: ApprovalDecisionRecor
     task_region_id = payload.task_region_id
     node_id = payload.node_id
     decision = payload.decision
-    approved = payload.approved
-    passed = approved is True or decision in {"approved", "passed", "accepted"}
+    passed = decision == "approved"
     if isinstance(node_id, str):
         state["node_gate_decisions"][node_id] = passed
     if task_region_id is None and isinstance(node_id, str):
@@ -4707,7 +4709,7 @@ def _record_authority_decision(
 ) -> None:
     node_id = payload.node_id
     decision = payload.decision
-    passed = decision in {"granted", "approved", "passed", "accepted"}
+    passed = decision == "granted"
     if isinstance(node_id, str):
         state["node_gate_decisions"][node_id] = passed
 
@@ -4715,7 +4717,7 @@ def _record_authority_decision(
 def _clear_authority_revision_blocker(
     state: GraphProjection, payload: AuthorityDecisionRecordedPayload
 ) -> None:
-    if payload.decision not in {"granted", "approved", "passed", "accepted"}:
+    if payload.decision != "granted":
         return
     revision_id = _authority_decision_revision_id(payload)
     if revision_id is not None:
@@ -5140,23 +5142,25 @@ def _record_authority_change(state: GraphProjection, payload: NodeAuthorityChang
     if not isinstance(node_id, str):
         return
 
-    authority = payload.authority or {}
+    authority = payload.authority
     resource_claims = payload.resource_claims
-    if not resource_claims:
-        raw_claims = authority.get("resource_claims", [])
-        if isinstance(raw_claims, list):
-            resource_claims = [
-                ResourceClaimProjection.model_validate(claim)
-                for claim in cast(list[Any], raw_claims)
-            ]
+    if not resource_claims and authority is not None:
+        resource_claims = [
+            ResourceClaimProjection.model_validate(claim.model_dump(mode="json"))
+            for claim in authority.resource_claims
+        ]
     if resource_claims:
         state["node_resource_claims"][node_id] = resource_claims
 
-    allowed_actions = payload.allowed_actions or authority.get("allowed_actions", [])
+    allowed_actions = payload.allowed_actions or (
+        authority.allowed_actions if authority is not None else []
+    )
     if allowed_actions:
         state["node_allowed_actions"][node_id] = allowed_actions
 
-    preconditions = payload.preconditions or authority.get("preconditions", [])
+    preconditions = payload.preconditions or (
+        authority.preconditions if authority is not None else []
+    )
     if preconditions:
         state["node_preconditions"][node_id] = preconditions
 

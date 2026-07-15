@@ -1,7 +1,17 @@
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.graph import NodeCreatedPayload, build_projection
+from orchestrator.config import RoutineConfig, StepConfig, TaskConfig
+from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.graph import (
+    FakeClock,
+    NodeCreatedPayload,
+    SequentialIdGenerator,
+    build_projection,
+    compile_routine,
+    projection_to_checkpoint,
+)
+from orchestrator.graph_runtime import GraphEventStore
 from tests.unit.graph_test_utils import event
 
 
@@ -50,3 +60,63 @@ def test_node_created_reducer_reads_direct_membership_fields() -> None:
     )
     assert projection["node_task_regions"]["worker-1"] == "task-1"
     assert projection["node_attempts"]["worker-1"] == 2
+
+
+def test_compiler_node_created_producer_matches_typed_payload_json() -> None:
+    routine = RoutineConfig(
+        id="typed-nodes",
+        name="Typed nodes",
+        steps=[StepConfig(id="S-1", title="Step", tasks=[TaskConfig(id="T-1", title="Task")])],
+    )
+    emitted = compile_routine(
+        routine,
+        FakeClock(),
+        SequentialIdGenerator(),
+        run_id="run-1",
+    )
+
+    for node_event in (item for item in emitted if item.event_type == "node_created"):
+        assert node_event.payload == NodeCreatedPayload.model_validate(
+            node_event.payload
+        ).model_dump(mode="json")
+
+
+@pytest.mark.asyncio
+async def test_hidden_oracle_and_node_created_parity_survive_compact_sqlite_replay() -> None:
+    node = event(
+        "node_created",
+        {
+            "node_id": "check-hidden-1",
+            "kind": "check",
+            "state": "planned",
+            "task_region_id": "task-1",
+            "attempt_number": 1,
+            "hidden_oracle_command": "uv run pytest tests/oracle -q",
+            "command_definition": {"id": "hidden-oracle", "cmd": "true"},
+            "inputs": [{"port": "candidate_under_test", "direction": "input", "required": True}],
+            "outputs": [{"port": "check_result", "direction": "output", "required": False}],
+        },
+        position=1,
+    )
+    full_checkpoint = projection_to_checkpoint(build_projection([node]))
+    engine = create_engine(":memory:")
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+    try:
+        async with session_factory() as session:
+            async with session.begin():
+                await GraphEventStore(session).append_events("run-1", 0, [node])
+            store = GraphEventStore(session)
+            for reader in (
+                store.read_run_projection,
+                store.read_run_light,
+                store.read_run_summary_rebuild,
+                store.read_run_node_detail,
+            ):
+                compact_events = await reader("run-1")
+                assert compact_events[0].payload["hidden_oracle_command"] == (
+                    "uv run pytest tests/oracle -q"
+                )
+                assert projection_to_checkpoint(build_projection(compact_events)) == full_checkpoint
+    finally:
+        await engine.dispose()

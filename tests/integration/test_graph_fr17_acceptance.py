@@ -384,7 +384,7 @@ def _less_used_events(run_id: str) -> list[EventEnvelope]:
                 "candidate_id": "candidate-fr17",
                 "task_region_id": "task-fr17",
                 "appeal_type": "invalid_test",
-                "outcome": "rejected",
+                "decision": "rejected",
             },
         ),
         _event(

@@ -2128,22 +2128,25 @@ def _apply_patch_command(
         patch = PatchEnvelope(
             patch_id=str(payload["patch_id"]),
             proposed_by_node_id=str(payload.get("proposed_by_node_id", "controller")),
-            base_graph_position=int(payload.get("base_graph_position", -1)),
+            base_graph_position=payload.get("base_graph_position", -1),
             ops=[PatchOp(**op) for op in cast(list[dict[str, Any]], payload.get("ops", []))],
             rationale_record_id=cast(str | None, payload.get("rationale_record_id")),
         )
     except (KeyError, TypeError, ValueError) as exc:
+        rejected_payload = {
+            "command_type": "submit_patch",
+            "reason": f"malformed patch: {exc}",
+            "patch_id": payload.get("patch_id"),
+            "actor_role": actor_role,
+            "proposed_by_node_id": payload.get("proposed_by_node_id"),
+        }
+        base_graph_position = payload.get("base_graph_position")
+        if isinstance(base_graph_position, int) and not isinstance(base_graph_position, bool):
+            rejected_payload["base_graph_position"] = base_graph_position
         return [
             make_event(
                 "command_rejected",
-                {
-                    "command_type": "submit_patch",
-                    "reason": f"malformed patch: {exc}",
-                    "patch_id": payload.get("patch_id"),
-                    "base_graph_position": payload.get("base_graph_position"),
-                    "actor_role": actor_role,
-                    "proposed_by_node_id": payload.get("proposed_by_node_id"),
-                },
+                rejected_payload,
             )
         ]
 
@@ -5323,24 +5326,11 @@ def _decision_value(decision_type: Any, payload: dict[str, Any]) -> str | None:
     if decision_type == "approval":
         if decision in {"approved", "rejected", "deferred"}:
             return cast(str, decision)
-        if decision == "defer":
-            return "deferred"
-        approved = payload.get("approved")
-        if approved is True:
-            return "approved"
-        if approved is False:
-            return "rejected"
         return None
 
     if decision_type == "authority":
         if decision in {"granted", "denied", "deferred"}:
             return cast(str, decision)
-        if decision == "grant":
-            return "granted"
-        if decision == "deny":
-            return "denied"
-        if decision == "defer":
-            return "deferred"
         return None
 
     if decision in {"accepted", "rejected", "invalid_test_accepted"}:

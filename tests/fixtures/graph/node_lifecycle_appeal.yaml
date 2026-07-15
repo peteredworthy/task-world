@@ -22,8 +22,8 @@
 - name: appeal_ready_to_failed
   given_events:
     - node_created: {node_id: appeal-3, kind: appeal, state: ready}
-    - oversight_decision_recorded: {node_id: appeal-3, decision: malformed}
-    - node_state_changed: {node_id: appeal-3, new_state: failed, trigger: appeal_malformed}
+    - oversight_decision_recorded: {node_id: appeal-3, decision: rejected}
+    - node_state_changed: {node_id: appeal-3, new_state: failed, trigger: appeal_rejected}
   when_command: null
   then_events: []
   then_projection: {appeal-3: failed}

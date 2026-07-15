@@ -114,7 +114,7 @@ async def _seed_decision_graph_run(app: Any, run_id: str) -> None:
         ),
         _event(
             "oversight_decision_recorded",
-            {"appeal_node_id": "appeal-1", "node_id": "oversight-1", "outcome": "rejected"},
+            {"appeal_node_id": "appeal-1", "node_id": "oversight-1", "decision": "rejected"},
         ),
         _event(
             "node_created",
@@ -249,7 +249,7 @@ async def test_record_authority_decision_updates_decision_readback(
         json={
             "decision_type": "authority",
             "node_id": "authority-1",
-            "decision": "grant",
+            "decision": "granted",
             "decider": {"kind": "human", "id": "alice"},
             "scope": {"tools": ["graph_write"]},
             "expires_at": "2026-06-13T12:30:00+00:00",

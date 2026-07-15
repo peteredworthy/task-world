@@ -527,7 +527,7 @@ def _candidate_record(node_id: str) -> dict[str, object]:
         "producer_node_id": node_id,
         "port": "candidate",
         "schema": "ImplementationCandidate",
-        "value": {"node_id": node_id, "summary": f"completed {node_id}"},
+        "value": {"summary": f"completed {node_id}"},
     }
 
 
@@ -591,10 +591,10 @@ def _verification_record(node_id: str) -> dict[str, object]:
         "port": "verification_report",
         "schema": "VerificationReport",
         "candidate_id": candidate_id,
+        "outcome": "passed",
         "verdict": "passed",
         "value": {
-            "candidate_id": candidate_id,
-            "verdict": "passed",
+            "outcome": "passed",
             "grades": [{"requirement_id": "rubric", "grade": "pass"}],
         },
     }

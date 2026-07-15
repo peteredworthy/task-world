@@ -4477,7 +4477,7 @@ def test_malformed_patch_rejection_preserves_submitter_evidence() -> None:
     assert output[0].payload["patch_id"] == "patch-bad"
     assert output[0].payload["proposed_by_node_id"] == "planner-1"
     assert output[0].payload["actor_role"] == "planner"
-    assert output[0].payload["base_graph_position"] == "not-an-int"
+    assert "base_graph_position" not in output[0].payload
 
 
 def test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_run() -> None:
@@ -6953,8 +6953,10 @@ def test_output_record_binds_to_producer_class_edge() -> None:
                         "schema": "VerificationReport",
                         "candidate_id": "candidate-1",
                         "outcome": "passed",
-                        "grades": [{"requirement_id": "R1", "grade": "pass"}],
-                        "value": {"verdict": "passed"},
+                        "value": {
+                            "outcome": "passed",
+                            "grades": [{"requirement_id": "R1", "grade": "pass"}],
+                        },
                     }
                 ],
             },
@@ -8149,7 +8151,7 @@ def test_record_decision_accepts_authority_request_with_typed_record() -> None:
             "run_id": "run-1",
             "decision_type": "authority",
             "node_id": "authority-1",
-            "decision": "grant",
+            "decision": "granted",
             "scope": {"tools": ["graph_write"]},
             "expires_at": "2026-01-02T00:00:00+00:00",
             "decider": {"kind": "human", "id": "alice"},
@@ -8274,7 +8276,7 @@ def test_record_decision_rejects_authority_for_non_authority_target() -> None:
             "run_id": "run-1",
             "decision_type": "authority",
             "node_id": "gate-1",
-            "decision": "grant",
+            "decision": "granted",
             "decider": {"kind": "human", "id": "alice"},
         },
     )
@@ -8329,7 +8331,7 @@ def test_record_decision_rejects_malformed_typed_authority_record_atomically() -
             "run_id": "run-1",
             "decision_type": "authority",
             "node_id": "authority-1",
-            "decision": "grant",
+            "decision": "granted",
             "scope": "graph_write",
             "decider": {"kind": "human", "id": "alice"},
         },

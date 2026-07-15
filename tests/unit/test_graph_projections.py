@@ -289,7 +289,7 @@ def test_authority_decision_projection_uses_typed_payload() -> None:
     assert projected.scope == {"tools": ["graph_write"]}
 
 
-def test_decision_projection_accepts_legacy_outcome_and_boolean_payloads() -> None:
+def test_decision_projection_accepts_canonical_decision_payloads() -> None:
     projection = reduce_event(
         reduce_event(
             initial_projection(),
@@ -297,7 +297,7 @@ def test_decision_projection_accepts_legacy_outcome_and_boolean_payloads() -> No
                 "approval_decision_recorded",
                 {
                     "node_id": "gate-1",
-                    "outcome": "approved",
+                    "decision": "approved",
                 },
             ),
         ),
@@ -305,7 +305,7 @@ def test_decision_projection_accepts_legacy_outcome_and_boolean_payloads() -> No
             "authority_decision_recorded",
             {
                 "node_id": "authority-1",
-                "approved": False,
+                "decision": "denied",
             },
         ),
     )
@@ -349,27 +349,23 @@ def test_decision_projection_checkpoint_round_trips_typed_payloads() -> None:
     assert authority.scope == {"tools": ["graph_write"]}
 
 
-def test_malformed_decision_payloads_are_tolerated_without_raw_projection_entries() -> None:
-    folded = reduce_event(
-        initial_projection(),
-        _event(
-            "approval_decision_recorded",
-            {
-                "node_id": "gate-1",
-                "decision": "not-a-real-decision",
-            },
-        ),
-    )
-    folded_oversight = reduce_event(
-        initial_projection(),
-        _event(
-            "oversight_decision_recorded",
-            {
-                "node_id": "oversight-1",
-                "decision": "not-a-real-oversight-decision",
-            },
-        ),
-    )
+def test_malformed_decision_events_are_rejected_and_checkpoint_rows_are_filtered() -> None:
+    with pytest.raises(ValueError):
+        reduce_event(
+            initial_projection(),
+            _event(
+                "approval_decision_recorded",
+                {"node_id": "gate-1", "decision": "not-a-real-decision"},
+            ),
+        )
+    with pytest.raises(ValueError):
+        reduce_event(
+            initial_projection(),
+            _event(
+                "oversight_decision_recorded",
+                {"node_id": "oversight-1", "decision": "not-a-real-oversight-decision"},
+            ),
+        )
 
     restored = projection_from_checkpoint(
         {
@@ -395,8 +391,6 @@ def test_malformed_decision_payloads_are_tolerated_without_raw_projection_entrie
         }
     )
 
-    assert folded["approval_decisions"] == {}
-    assert folded_oversight["oversight_decisions"] == {}
     assert restored["approval_decisions"] == {}
     assert restored["authority_decisions"] == {}
     assert restored["oversight_decisions"] == {}
@@ -980,7 +974,7 @@ def test_oversight_decision_checkpoint_restore_rebuilds_appeal_alias() -> None:
     assert restored["oversight_decisions"]["appeal-1"] is projected
 
 
-def test_oversight_decision_approved_boolean_blocks_invalid_test() -> None:
+def test_oversight_decision_canonical_acceptance_blocks_invalid_test() -> None:
     events = [
         _event(
             "output_record_accepted",
@@ -995,7 +989,7 @@ def test_oversight_decision_approved_boolean_blocks_invalid_test() -> None:
                 "task_region_id": "task-1",
                 "candidate_id": "cand-1",
                 "appeal_type": "invalid_test",
-                "approved": True,
+                "decision": "accepted",
             },
         ).model_copy(update={"position": 2}),
     ]
@@ -1091,7 +1085,7 @@ def test_node_creation_projection_uses_typed_payload() -> None:
                 "attempt_number": 2,
                 "candidate_id": "candidate-1",
                 "failed_candidate_id": "candidate-0",
-                "resource_claims": [{"path": "src/app.py", "mode": "write"}],
+                "resource_claims": [{"paths": ["src/app.py"], "mode": "write", "scope": "repo"}],
                 "allowed_actions": ["submit_callback"],
                 "preconditions": ["inputs_bound"],
             },
@@ -1891,10 +1885,10 @@ def test_output_record_payloads_are_typed_at_fold() -> None:
         {
             "record_id": "summary-1",
             "record_kind": "output",
-            "record_type": "opaque_summary",
-            "producer_node_id": "worker-1",
-            "port": "summary",
-            "schema": "OpaqueSummary",
+            "record_type": "fan_out_inputs",
+            "producer_node_id": "fanout-reader-1",
+            "port": "reader_output",
+            "schema": "FanOutInputs",
             "value": {"summary": "done"},
         },
     )
@@ -1904,16 +1898,18 @@ def test_output_record_payloads_are_typed_at_fold() -> None:
     payload = projection["output_record_payloads"]["summary-1"]
     assert isinstance(payload, OutputRecord)
     assert payload.record_id == "summary-1"
-    assert payload.producer_node_id == "worker-1"
-    assert payload.port == "summary"
+    assert payload.producer_node_id == "fanout-reader-1"
+    assert payload.port == "reader_output"
 
-    by_port = projection["output_records_by_node_port"]["worker-1"]["summary"][0]
+    by_port = projection["output_records_by_node_port"]["fanout-reader-1"]["reader_output"][0]
     assert isinstance(by_port, OutputRecord)
     assert by_port.value == {"summary": "done"}
 
-    accepted = projection["accepted_output_records_by_node_port"]["worker-1"]["summary"][0]
+    accepted = projection["accepted_output_records_by_node_port"]["fanout-reader-1"][
+        "reader_output"
+    ][0]
     assert isinstance(accepted["payload"], OutputRecord)
-    assert accepted["payload"].schema_ == "OpaqueSummary"
+    assert accepted["payload"].schema_ == "FanOutInputs"
 
 
 def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
@@ -1923,10 +1919,10 @@ def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
             {
                 "record_id": "summary-1",
                 "record_kind": "output",
-                "record_type": "opaque_summary",
-                "producer_node_id": "worker-1",
-                "port": "summary",
-                "schema": "OpaqueSummary",
+                "record_type": "fan_out_inputs",
+                "producer_node_id": "fanout-reader-1",
+                "port": "reader_output",
+                "schema": "FanOutInputs",
                 "value": {"summary": "done"},
             },
         ),
@@ -1942,11 +1938,13 @@ def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
     assert isinstance(summary_payload, OutputRecord)
     assert summary_payload.value == {"summary": "done"}
     assert isinstance(
-        restored["output_records_by_node_port"]["worker-1"]["summary"][0],
+        restored["output_records_by_node_port"]["fanout-reader-1"]["reader_output"][0],
         OutputRecord,
     )
     assert isinstance(
-        restored["accepted_output_records_by_node_port"]["worker-1"]["summary"][0]["payload"],
+        restored["accepted_output_records_by_node_port"]["fanout-reader-1"]["reader_output"][0][
+            "payload"
+        ],
         OutputRecord,
     )
 
@@ -4435,7 +4433,7 @@ def test_task_projection_accepted() -> None:
         _file_state_event("task-1", "cand-1", 2),
         _event(
             "approval_decision_recorded",
-            {"task_region_id": "task-1", "gate_id": "gate-1", "approved": True},
+            {"task_region_id": "task-1", "gate_id": "gate-1", "decision": "approved"},
         ).model_copy(update={"position": 3}),
     ]
 

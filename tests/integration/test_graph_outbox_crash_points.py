@@ -18,7 +18,7 @@ from orchestrator.db import (
     create_session_factory,
     init_db,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FileStateRecord
 from orchestrator.graph_runtime import (
     CompromisedFileStateError,
     GraphDispatchContext,
@@ -1048,6 +1048,10 @@ async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
     first_new_ref = (
         f"refs/orchestrator/snapshots/{first_cleanup.superseding_file_state_record['snapshot_id']}"
     )
+    assert first_cleanup.superseding_file_state_record["cleanup_excluded_paths"] == ["residue.txt"]
+    assert FileStateRecord.model_validate(
+        first_cleanup.superseding_file_state_record
+    ).cleanup_excluded_paths == ["residue.txt"]
     assert first_cleanup.deleted_snapshot_ref is True
     assert _ref_exists(repo, old_ref) is False
     assert _ref_exists(repo, first_new_ref) is True

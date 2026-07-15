@@ -242,7 +242,6 @@ async def _complete_worker(
                             {
                                 "path": "docs/fr11.md",
                                 "status": "modified",
-                                "hash": "sha256-fr11",
                             }
                         ],
                     },

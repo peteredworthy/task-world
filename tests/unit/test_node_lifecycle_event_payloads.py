@@ -2,8 +2,11 @@ import pytest
 from pydantic import ValidationError
 
 from orchestrator.graph import (
+    FakeClock,
     NodeAuthorityChangedPayload,
     NodeStateChangedPayload,
+    SequentialIdGenerator,
+    apply_command,
     build_projection,
 )
 from tests.unit.graph_test_utils import event
@@ -52,3 +55,37 @@ def test_authority_reducer_reads_direct_fields() -> None:
     assert projection["node_allowed_actions"]["worker-1"] == ["submit_output"]
     assert projection["node_preconditions"]["worker-1"] == ["inputs_bound"]
     assert NodeAuthorityChangedPayload.model_validate({"node_id": "worker-1"}).node_id == "worker-1"
+
+
+def test_schedule_producer_matches_typed_node_state_payload_json() -> None:
+    events = [
+        event("run_lifecycle_changed", {"to_state": "active"}, position=1),
+        event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "state": "ready"},
+            position=2,
+        ),
+        event(
+            "input_bound",
+            {
+                "to_node_id": "worker-1",
+                "to_port": "routine_snapshot",
+                "record_ids": ["routine-snapshot-record"],
+                "bound_at_position": 2,
+            },
+            position=3,
+        ),
+    ]
+    emitted = apply_command(
+        build_projection(events),
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "max_grants": 1},
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+    payload = next(item.payload for item in emitted if item.event_type == "node_state_changed")
+
+    assert payload == NodeStateChangedPayload.model_validate(payload).model_dump(
+        mode="json", exclude_unset=True
+    )

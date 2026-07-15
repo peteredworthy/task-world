@@ -382,7 +382,7 @@ async def test_fr08_authority_denial_and_rejection_readbacks(
         json={
             "decision_type": "authority",
             "node_id": "authority-1",
-            "decision": "deny",
+            "decision": "denied",
             "decider": {"kind": "human", "id": "alice"},
             "reason": "Rejected for FR-08 denial proof.",
         },
@@ -451,7 +451,7 @@ async def test_fr08_authority_denial_and_rejection_readbacks(
         json={
             "decision_type": "authority",
             "node_id": "worker-docs",
-            "decision": "grant",
+            "decision": "granted",
             "decider": {"kind": "human", "id": "alice"},
         },
     )

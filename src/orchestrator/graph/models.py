@@ -19,6 +19,12 @@ class GraphBaseModel(BaseModel):
         return super().model_dump(*args, **kwargs)
 
 
+class StrictNestedModel(GraphBaseModel):
+    """Nested W5 values reject unknown fields without global graph strictness."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
 CommandDefinitionProjection: TypeAlias = dict[str, Any]
 
 
@@ -110,28 +116,11 @@ class NodeState(str, Enum):
     CANCELLED = "cancelled"
 
 
-class ResourceClaimProjection(GraphBaseModel):
+class ResourceClaimProjection(StrictNestedModel):
     mode: str
     scope: str
     paths: list[str] | None = None
     external_resource_key: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_shape(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        payload = dict(cast(dict[str, Any], value))
-        payload.setdefault("mode", "read")
-        payload.setdefault("scope", "repo")
-        path = payload.pop("path", None)
-        if isinstance(path, str):
-            paths = payload.get("paths")
-            if not isinstance(paths, list):
-                payload["paths"] = [path]
-            elif path not in paths:
-                payload["paths"] = [*paths, path]
-        return payload
 
 
 class ResourceClaim(ResourceClaimProjection):
@@ -147,12 +136,13 @@ def _empty_resource_claims() -> list[ResourceClaim]:
     return []
 
 
-class Authority(GraphBaseModel):
+class Authority(StrictNestedModel):
     allowed_actions: list[str] = Field(default_factory=list)
     resource_claims: list[ResourceClaim] = Field(default_factory=_empty_resource_claims)
+    preconditions: list[str] = Field(default_factory=list)
 
 
-class PortModel(GraphBaseModel):
+class PortModel(StrictNestedModel):
     node_id: str | None = None
     port: str
     direction: Literal["input", "output"] | None = None
@@ -165,7 +155,7 @@ def _empty_ports() -> list[PortModel]:
     return []
 
 
-class NodeMembership(GraphBaseModel):
+class NodeMembership(StrictNestedModel):
     task_region_id: str
     attempt_number: int
     candidate_id: str
@@ -621,7 +611,7 @@ class OutputRecord(TypedRecordBase):
     file_state_record_ids: list[str] = Field(default_factory=list)
 
 
-class RunContextValue(GraphBaseModel):
+class RunContextValue(StrictNestedModel):
     routine_id: str
     routine_name: str
     planner_generation_budget: int | None = None
@@ -643,7 +633,7 @@ class RunContextRecord(TypedRecordBase):
         return self
 
 
-class RoutineSnapshotValue(GraphBaseModel):
+class RoutineSnapshotValue(StrictNestedModel):
     routine_id: str
     name: str
     description: str | None = None
@@ -673,12 +663,17 @@ class RoutineSnapshotRecord(TypedRecordBase):
         return self
 
 
-class ArtifactReferenceValue(GraphBaseModel):
+class ArtifactReferenceValue(StrictNestedModel):
     artifact_id: str
     artifact_type: str
     uri: str
     summary: str | None = None
     source_record_ids: list[str] = Field(default_factory=list)
+    required: bool | None = None
+    section: str | None = None
+    max_tokens: int | None = None
+    summarize: bool | None = None
+    summarize_model: str | None = None
 
 
 class ArtifactReferenceRecord(TypedRecordBase):
@@ -697,7 +692,13 @@ class ArtifactReferenceRecord(TypedRecordBase):
         return self
 
 
-def _empty_verification_grades() -> list[dict[str, Any]]:
+class GradeRow(StrictNestedModel):
+    requirement_id: str
+    grade: str
+    reason: str | None = None
+
+
+def _empty_verification_grades() -> list[GradeRow]:
     return []
 
 
@@ -705,9 +706,9 @@ def _empty_verification_record_ids() -> list[str]:
     return []
 
 
-class VerificationReportValue(GraphBaseModel):
+class VerificationReportValue(StrictNestedModel):
     outcome: Literal["passed", "failed"]
-    grades: list[dict[str, Any]] = Field(default_factory=_empty_verification_grades)
+    grades: list[GradeRow] = Field(default_factory=_empty_verification_grades)
     reason: str | None = None
 
 
@@ -881,7 +882,7 @@ class CommandRejectedPayload(StrictEventPayload):
     reason: str | None = None
     blockers: list[dict[str, Any]] | None = None
     patch_id: str | None = None
-    base_graph_position: int | str | None = None
+    base_graph_position: StrictInt | None = None
     actor_role: str | None = None
     proposed_by_node_id: str | None = None
     rejection_reason: str | None = None
@@ -1041,10 +1042,6 @@ class DecisionRecordedPayloadBase(GraphEventPayloadBase):
     run_id: str | None = None
     decision_type: str | None = None
     node_id: str | None = None
-    decision: str | None = None
-    outcome: str | None = None
-    verdict: str | None = None
-    approved: StrictBool | None = None
     task_region_id: str | None = None
     gate_id: str | None = None
     appeal_node_id: str | None = None
@@ -1060,50 +1057,15 @@ class DecisionRecordedPayloadBase(GraphEventPayloadBase):
 
 
 class ApprovalDecisionRecordedPayload(DecisionRecordedPayloadBase):
-    @model_validator(mode="after")
-    def normalize_decision_aliases(self) -> "ApprovalDecisionRecordedPayload":
-        decision = _normalize_approval_decision(self.decision) or _normalize_approval_decision(
-            self.outcome
-        )
-        if decision is None and isinstance(self.approved, bool):
-            decision = "approved" if self.approved else "rejected"
-        if decision is not None:
-            self.decision = decision
-        return self
+    decision: Literal["approved", "rejected", "deferred"]
 
 
 class AuthorityDecisionRecordedPayload(DecisionRecordedPayloadBase):
-    @model_validator(mode="after")
-    def normalize_decision_aliases(self) -> "AuthorityDecisionRecordedPayload":
-        decision = _normalize_authority_decision(self.decision) or _normalize_authority_decision(
-            self.outcome
-        )
-        if decision is None and isinstance(self.approved, bool):
-            decision = "granted" if self.approved else "denied"
-        if decision is not None:
-            self.decision = decision
-        return self
+    decision: Literal["granted", "denied", "deferred"]
 
 
 class OversightDecisionRecordedPayload(DecisionRecordedPayloadBase):
-    @model_validator(mode="after")
-    def normalize_decision_aliases(self) -> "OversightDecisionRecordedPayload":
-        decision: str | None = None
-        for alias in (self.decision, self.outcome, self.verdict):
-            if alias in {"accepted", "rejected", "invalid_test_accepted"}:
-                decision = alias
-                break
-            if alias == "approved":
-                decision = "accepted"
-                break
-            if alias == "denied":
-                decision = "rejected"
-                break
-        if decision is None and isinstance(self.approved, bool):
-            decision = "accepted" if self.approved else "rejected"
-        if decision is not None:
-            self.decision = decision
-        return self
+    decision: Literal["accepted", "rejected", "invalid_test_accepted"]
 
 
 class PlannerSessionStateChangedPayload(GraphEventPayloadBase):
@@ -1126,7 +1088,7 @@ class GraphPatchAcceptedPayload(GraphEventPayloadBase):
 
 class GraphPatchRejectedPayload(GraphEventPayloadBase):
     patch_id: str
-    base_graph_position: int | str | None = None
+    base_graph_position: StrictInt | None = None
     actor_role: str | None = None
     proposed_by_node_id: str | None = None
     reason: str | None = None
@@ -1200,8 +1162,8 @@ class CleanupAppliedPayload(CleanupEventPayloadBase):
     deleted_snapshot_ref: StrictBool | None = None
 
 
-class PlannerChainRegionPayload(GraphBaseModel):
-    generation_index: int | None = None
+class PlannerChainRegionPayload(StrictNestedModel):
+    generation_index: StrictInt | None = None
     region_label: str | None = None
     child_routine: str | None = None
 
@@ -1210,7 +1172,7 @@ def _empty_planner_chain_regions() -> list[PlannerChainRegionPayload]:
     return []
 
 
-class PlannerChainPayload(GraphBaseModel):
+class PlannerChainPayload(StrictNestedModel):
     source: str | None = None
     regions: list[PlannerChainRegionPayload] = Field(default_factory=_empty_planner_chain_regions)
 
@@ -1238,7 +1200,7 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     predecessor_node_ids: list[str] = Field(default_factory=list)
     appealed_node_id: str | None = None
     membership: dict[str, Any] | None = None
-    authority: dict[str, Any] | None = None
+    authority: Authority | None = None
     resource_claims: list[ResourceClaimProjection] = Field(
         default_factory=_empty_node_created_resource_claims,
     )
@@ -1357,7 +1319,7 @@ class NodeDeferredPayload(GraphEventPayloadBase):
 
 class NodeAuthorityChangedPayload(GraphEventPayloadBase):
     node_id: str | None = None
-    authority: dict[str, Any] | None = None
+    authority: Authority | None = None
     resource_claims: list[ResourceClaimProjection] = Field(
         default_factory=_empty_node_created_resource_claims
     )
@@ -1414,9 +1376,6 @@ class OversightDecisionProjection(GraphBaseModel):
     node_id: str
     decision: Literal["accepted", "rejected", "invalid_test_accepted"]
     position: int
-    outcome: str | None = None
-    verdict: str | None = None
-    approved: bool | None = None
     task_region_id: str | None = None
     candidate_id: str | None = None
     gate_id: str | None = None
@@ -1427,29 +1386,6 @@ class OversightDecisionProjection(GraphBaseModel):
     scope: dict[str, Any] | None = None
     expires_at: str | None = None
     reason: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_decision_payload(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        payload = dict(cast(dict[str, Any], value))
-        decision = payload.get("decision")
-        if decision is None:
-            decision = payload.get("outcome")
-        if decision is None:
-            decision = payload.get("verdict")
-        if decision is None:
-            approved = payload.get("approved")
-            if isinstance(approved, bool):
-                decision = "accepted" if approved else "rejected"
-        if decision == "approved":
-            decision = "accepted"
-        if decision == "denied":
-            decision = "rejected"
-        if decision is not None:
-            payload["decision"] = decision
-        return payload
 
 
 def _normalize_verification_outcome(value: Any) -> Literal["passed", "failed"] | None:
@@ -1464,7 +1400,7 @@ def _empty_completion_blockers() -> list[dict[str, Any]]:
     return []
 
 
-class CompletionDecisionValue(GraphBaseModel):
+class CompletionDecisionValue(StrictNestedModel):
     status: Literal["passed", "blocked"]
     blockers: list[dict[str, Any]] = Field(default_factory=_empty_completion_blockers)
 
@@ -1499,7 +1435,7 @@ def _empty_missing_optional_inputs() -> list[str]:
     return []
 
 
-class JoinResultValue(GraphBaseModel):
+class JoinResultValue(StrictNestedModel):
     status: Literal["ready", "blocked"]
     source_record_ids: list[str] = Field(default_factory=_empty_join_source_record_ids)
     missing_optional_inputs: list[str] = Field(default_factory=_empty_missing_optional_inputs)
@@ -1527,7 +1463,7 @@ class JoinResultRecord(TypedRecordBase):
         return self
 
 
-class CheckResultValue(GraphBaseModel):
+class CheckResultValue(StrictNestedModel):
     status: Literal["passed", "failed", "timeout"]
     classification: Literal[
         "passed",
@@ -1542,7 +1478,11 @@ class CheckResultValue(GraphBaseModel):
     command_text: str
     command: dict[str, Any]
     worktree_path: str
+    source_worktree_path: str | None = None
+    execution_worktree_path: str | None = None
     base_snapshot_id: str
+    execution_snapshot_id: str | None = None
+    execution_snapshot_ref: str | None = None
     execution_id: str
     exit_code: int | None = None
     duration_ms: int = Field(ge=0)
@@ -1552,6 +1492,14 @@ class CheckResultValue(GraphBaseModel):
     stderr_truncated: bool
     timeout_seconds: int = Field(gt=0)
     environment_policy: dict[str, Any]
+    source: str | None = None
+    cited_record_id: str | None = None
+    citation_mode: str | None = None
+    reused_verification_record_id: str | None = None
+    candidate_record_ids: list[str] = Field(default_factory=list)
+    file_state_record_ids: list[str] = Field(default_factory=list)
+    verification_report_record_ids: list[str] = Field(default_factory=list)
+    evaluated_record_ids: list[str] = Field(default_factory=list)
 
 
 class CheckResultRecord(TypedRecordBase):
@@ -1670,7 +1618,7 @@ def _empty_candidate_file_state_ids() -> list[str]:
     return []
 
 
-class CandidateValue(GraphBaseModel):
+class CandidateValue(StrictNestedModel):
     summary: str
     changed_paths: list[str] = Field(default_factory=_empty_candidate_changed_paths)
     requirements_addressed: list[str] = Field(default_factory=_empty_candidate_requirements)
@@ -1705,7 +1653,7 @@ class CandidateRecord(TypedRecordBase):
         return self
 
 
-class GapClassificationValue(GraphBaseModel):
+class GapClassificationValue(StrictNestedModel):
     milestone_kind: str
     classification: Literal[
         "corrective_work_required",
@@ -1743,29 +1691,9 @@ class GapClassificationRecord(TypedRecordBase):
         return self
 
 
-class DecisionActor(GraphBaseModel):
+class DecisionActor(StrictNestedModel):
     kind: str
     id: str | None = None
-
-
-def _normalize_approval_decision(value: Any) -> Literal["approved", "rejected", "deferred"] | None:
-    if value in {"approve", "approved", "accept", "accepted", "pass", "passed"}:
-        return "approved"
-    if value in {"reject", "rejected", "deny", "denied"}:
-        return "rejected"
-    if value in {"defer", "deferred"}:
-        return "deferred"
-    return None
-
-
-def _normalize_authority_decision(value: Any) -> Literal["granted", "denied", "deferred"] | None:
-    if value in {"grant", "granted", "approve", "approved", "accept", "accepted", "pass", "passed"}:
-        return "granted"
-    if value in {"deny", "denied", "reject", "rejected"}:
-        return "denied"
-    if value in {"defer", "deferred"}:
-        return "deferred"
-    return None
 
 
 class ApprovalDecisionProjection(GraphBaseModel):
@@ -1779,26 +1707,8 @@ class ApprovalDecisionProjection(GraphBaseModel):
     expires_at: str | None = None
     reason: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_decision_payload(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        payload = dict(cast(dict[str, Any], value))
-        decision = _normalize_approval_decision(payload.get("decision"))
-        if decision is None:
-            decision = _normalize_approval_decision(payload.get("outcome"))
-        if decision is None:
-            approved = payload.get("approved")
-            if isinstance(approved, bool):
-                decision = "approved" if approved else "rejected"
-        if decision is None:
-            return payload
-        payload["decision"] = decision
-        return payload
 
-
-class DecisionRecordValue(GraphBaseModel):
+class DecisionRecordValue(StrictNestedModel):
     decision: Literal["approved", "rejected", "deferred"]
     decision_type: Literal["approval"]
     decider: DecisionActor | str
@@ -1830,7 +1740,7 @@ class DecisionRecord(TypedRecordBase):
         return self
 
 
-class AuthorityDecisionValue(GraphBaseModel):
+class AuthorityDecisionValue(StrictNestedModel):
     decision: Literal["granted", "denied", "deferred"]
     decision_type: Literal["authority"]
     decider: DecisionActor | str
@@ -1872,26 +1782,8 @@ class AuthorityDecisionProjection(GraphBaseModel):
     expires_at: str | None = None
     reason: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_decision_payload(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        payload = dict(cast(dict[str, Any], value))
-        decision = _normalize_authority_decision(payload.get("decision"))
-        if decision is None:
-            decision = _normalize_authority_decision(payload.get("outcome"))
-        if decision is None:
-            approved = payload.get("approved")
-            if isinstance(approved, bool):
-                decision = "granted" if approved else "denied"
-        if decision is None:
-            return payload
-        payload["decision"] = decision
-        return payload
 
-
-class AnalysisSummaryValue(GraphBaseModel):
+class AnalysisSummaryValue(StrictNestedModel):
     summary: str
     source_record_ids: list[str]
     lossy: bool
@@ -1926,10 +1818,10 @@ def _empty_expected_downstream_effects() -> list[str]:
     return []
 
 
-class GraphPatchProposalValue(GraphBaseModel):
+class GraphPatchProposalValue(StrictNestedModel):
     patch_id: str
     proposed_by_node_id: str
-    base_graph_position: int = Field(ge=0)
+    base_graph_position: StrictInt = Field(ge=0)
     ops: list[dict[str, Any]] = Field(default_factory=_empty_graph_patch_ops)
     macro_invocations: list[dict[str, Any]] = Field(
         default_factory=_empty_graph_patch_macro_invocations
@@ -1975,8 +1867,8 @@ def _empty_created_edge_ids() -> list[str]:
 class GraphPatchResultRecord(GraphBaseModel):
     patch_id: str
     proposed_by_node_id: str | None = None
-    base_graph_position: int | None = Field(default=None, ge=0)
-    current_graph_position: int = Field(ge=0)
+    base_graph_position: StrictInt | None = Field(default=None, ge=0)
+    current_graph_position: StrictInt = Field(ge=0)
     status: Literal["accepted", "rejected"]
     rejection_reason: str | None = None
     diagnostics: dict[str, Any] | None = None
@@ -2007,7 +1899,7 @@ def _empty_acceptance_criteria() -> list[str]:
     return []
 
 
-class RequirementRecordValue(GraphBaseModel):
+class RequirementRecordValue(StrictNestedModel):
     id: str
     text: str
     desc: str | None = None
@@ -2035,7 +1927,7 @@ class RequirementRecord(TypedRecordBase):
         return self
 
 
-class DecisionRequestValue(GraphBaseModel):
+class DecisionRequestValue(StrictNestedModel):
     decision_type: str
     options: list[str]
     default_option: str | None = None
@@ -2068,7 +1960,7 @@ class DecisionRequestRecord(TypedRecordBase):
         return self
 
 
-class AuthorityRequestValue(GraphBaseModel):
+class AuthorityRequestValue(StrictNestedModel):
     requested_authority: list[str]
     target_node_id: str | None = None
     target_region_id: str | None = None
@@ -2099,14 +1991,18 @@ class AuthorityRequestRecord(TypedRecordBase):
         return self
 
 
-class FailureRecordValue(GraphBaseModel):
+class FailureRecordValue(StrictNestedModel):
     failed_node_id: str
     phase: str
     error_class: str
     retryable: bool
     lease_id: str | None = None
+    lease_generation: int | None = None
     execution_id: str | None = None
     reason: str | None = None
+    expires_at: str | None = None
+    attempt_number: int | None = None
+    max_attempts: int | None = None
 
 
 class FailureRecord(TypedRecordBase):
@@ -2126,11 +2022,13 @@ class FailureRecord(TypedRecordBase):
         return self
 
 
-class RecoveryPlanValue(GraphBaseModel):
+class RecoveryPlanValue(StrictNestedModel):
     action: Literal["retry", "supersede", "cancel", "cleanup"]
     responsible_actor: str
     graph_changes: list[dict[str, Any]]
     reason: str | None = None
+    retry_after_seconds: int | None = None
+    retry_not_before: str | None = None
 
 
 class RecoveryPlanRecord(TypedRecordBase):
@@ -2171,15 +2069,17 @@ OutputRecordPayload = (
 )
 
 
-class GitRef(GraphBaseModel):
+class GitRef(StrictNestedModel):
     commit_sha: str | None = None
     tree_sha: str | None = None
     no_commit_reason: str | None = None
     ref: str | None = None
+    diff_summary: dict[str, Any] | None = None
 
 
-class FileEntry(GraphBaseModel):
+class FileEntry(StrictNestedModel):
     path: str
+    source: str | None = None
     status: str | None = None
     classification: str | None = None
     policy: str | None = None
@@ -2187,9 +2087,14 @@ class FileEntry(GraphBaseModel):
     needs_gatekeeper: bool | None = None
     rejected: bool | None = None
     reason: str | None = None
+    size_bytes: int | None = None
+    entropy: float | None = None
+    gatekeeper_confidence: float | None = None
+    gatekeeper_rationale: str | None = None
+    manifest: "ExternalArtifactManifest | None" = None
 
 
-class ExternalArtifactManifest(GraphBaseModel):
+class ExternalArtifactManifest(StrictNestedModel):
     path: str
     hash: str
     origin: str
@@ -2197,7 +2102,12 @@ class ExternalArtifactManifest(GraphBaseModel):
 
 
 class ExternalFileEntry(FileEntry):
-    manifest: ExternalArtifactManifest
+    @model_validator(mode="after")
+    def external_entry_requires_manifest(self) -> "ExternalFileEntry":
+        if self.manifest is None:
+            msg = "external file entries require manifest"
+            raise ValueError(msg)
+        return self
 
 
 def _empty_file_entries() -> list[FileEntry]:
@@ -2239,6 +2149,7 @@ class FileStateRecord(TypedRecordBase):
     supersedes_record_id: str | None = None
     superseded_by_record_id: str | None = None
     cleanup_id: str | None = None
+    cleanup_excluded_paths: list[str] = Field(default_factory=list)
     cleanup_reason: str | None = None
     cleanup_applied_event_id: str | None = None
     compromised_snapshot_deleted: bool | None = None
@@ -2357,7 +2268,7 @@ class PatchOp(GraphBaseModel):
 class PatchEnvelope(GraphBaseModel):
     patch_id: str
     proposed_by_node_id: str
-    base_graph_position: int
+    base_graph_position: StrictInt
     ops: list[PatchOp]
     rationale_record_id: str | None = None
 

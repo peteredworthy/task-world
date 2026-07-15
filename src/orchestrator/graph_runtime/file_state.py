@@ -248,6 +248,7 @@ def _cleanup_superseding_record(
     }
     record["supersedes_record_id"] = old_record_id
     record["cleanup_id"] = cleanup_id
+    record["cleanup_excluded_paths"] = list(excluded_paths)
     record["compromised"] = False
     record["superseded_pending"] = False
     for key in (

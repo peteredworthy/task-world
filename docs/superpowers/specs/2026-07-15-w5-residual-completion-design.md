@@ -273,3 +273,24 @@ W5 is complete only when:
 - The ledger and projection inventory are current.
 - Required and diagnostic metric counts are reported reproducibly.
 - The W5 specification is closed and moved into `complete/`.
+
+## Task 3 Review Closure Addendum
+
+The approved Task 3 review closure uses targeted W5 strictness rather than
+changing `GraphBaseModel` globally. An immutable output-record discriminator
+map explicitly owns every supported `record_type`, including named generic
+types mapped to `OutputRecord`; missing and unknown discriminators are invalid.
+Nested models reachable from W5 event payloads and typed records inherit a
+small extra-forbid base, while named dynamic dictionaries and `Any` fields
+remain intentionally open.
+
+Decision events accept only canonical literal values emitted by current
+producers. Cleanup superseding records retain `cleanup_excluded_paths` as typed
+metadata. Current producers are exercised directly in all nine payload-family
+suites, and compact-read tests retain runtime retry timing, hidden-oracle
+commands, and full/compact node-created parity. Projection models remain
+attribute-only. Current graph patch producers emit integer positions, so W5
+event fields use strict integers rather than integer/string unions.
+
+Acceptance runs the exact Task 3 aggregate, directly affected producer and
+compact-read tests, Ruff, Pyright, and one full suite before the fix commit.

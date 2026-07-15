@@ -1,7 +1,14 @@
 import pytest
 from pydantic import ValidationError
 
-from orchestrator.graph import LeaseGrantedPayload, LeaseRenewedPayload, build_projection
+from orchestrator.graph import (
+    FakeClock,
+    LeaseGrantedPayload,
+    LeaseRenewedPayload,
+    SequentialIdGenerator,
+    apply_command,
+    build_projection,
+)
 from tests.unit.graph_test_utils import event
 
 
@@ -50,3 +57,43 @@ def test_lease_reducer_projects_canonical_fields() -> None:
     assert projection["leases"]["lease-1"].task_region_id == "task-1"
     assert projection["leases"]["lease-1"].kind == "worker"
     assert LeaseRenewedPayload.model_validate({"lease_id": "lease-1"}).lease_id == "lease-1"
+
+
+def test_lease_producer_matches_typed_payload_json() -> None:
+    events = [
+        event("run_lifecycle_changed", {"to_state": "active"}, position=1),
+        event(
+            "node_created",
+            {
+                "node_id": "worker-1",
+                "kind": "worker",
+                "state": "ready",
+                "task_region_id": "task-1",
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["."]}],
+            },
+            position=2,
+        ),
+        event(
+            "input_bound",
+            {
+                "to_node_id": "worker-1",
+                "to_port": "routine_snapshot",
+                "record_ids": ["routine-snapshot-record"],
+                "bound_at_position": 2,
+            },
+            position=3,
+        ),
+    ]
+    emitted = apply_command(
+        build_projection(events),
+        events,
+        "schedule_tick",
+        {"run_id": "run-1", "max_grants": 1, "lease_seconds": 300},
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+    payload = next(item.payload for item in emitted if item.event_type == "lease_granted")
+
+    assert payload == LeaseGrantedPayload.model_validate(payload).model_dump(
+        mode="json", exclude_unset=True
+    )
