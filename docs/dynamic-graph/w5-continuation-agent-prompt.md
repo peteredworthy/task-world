@@ -2,6 +2,8 @@
 
 > Historical compatibility-first prompt. Its execution queue is superseded and
 > complete; use `w5-strict-cutover-continuation-prompt.md` for the final handoff.
+> Final closure docs are `1b03d5a05` / `938b87ff7`; final source repair is
+> `185f31abc`. The body below remains historical evidence, not current guidance.
 
 You are the orchestrator for completing W5 (typed payloads) in the task-world dynamic graph kernel. You coordinate; sub-agents do the reading and editing. Your job is to keep your own context small, spend tokens only where they buy correctness, and land the work in verifiable slices.
 

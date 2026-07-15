@@ -879,22 +879,32 @@ ledgers, creates no backup or sidecar, and is not committed.
 
 ### Final source repair follow-up
 
-Status: complete at `b63146d9b` and `0289de70c`.
+Status: complete at `b63146d9b`, `0289de70c`, and `185f31abc`.
 
 The legacy graph effects adapter was removed by `b63146d9b`; `0289de70c` then
 enforced direct typed graph payload consumers and removed production adapter
-use, without changing the Branch B database record. Latest independent source
-evidence is exactly 44 event specifications / 23 command specifications, all
-strict/current, retired-compatibility, deferred-compatibility,
-remaining-eligible, second-run, and unclassified metrics at 0, 1,083 graph
-tests passed, and 5,101 passed / 5 skipped / 3 warnings in the full suite. This
-follow-up supersedes the Task 13 test counts for final-source closure while
-preserving them above as contemporaneous `e63fb41ec` evidence.
+use, without changing the Branch B database record. `185f31abc` completed typed
+command ownership across schedule, patch, callback, lifecycle, and source
+repair, retired `_commands.py`, introduced the strict discriminated `PatchOp`
+union, and converted store projectors, node-reference extraction, and forward
+event batches to typed payloads. It also made fresh Branch B workflow bootstrap
+exclude generation-specific graph journal records while preserving the journal
+and tolerating malformed records.
+
+Latest independent source evidence is exactly 44 event specifications / 23
+command specifications, all expanded strict/current, retired-compatibility,
+deferred-compatibility, remaining-eligible, second-run, and unclassified
+metrics at 0, 1,063 graph tests passed, and 5,151 passed / 5 skipped / 3 warnings
+in the full suite. This follow-up supersedes the Task 13 test counts for
+final-source closure while preserving them above as contemporaneous
+`e63fb41ec` evidence.
 
 ## Strict-cutover Task 14: documentation, metrics, and W5 closure
 
-Status: complete. Committed as `1b03d5a05` after independent verifier PASS.
-This bookkeeping update is uncommitted; no bookkeeping commit SHA is recorded.
+Status: complete. Closure and final review bookkeeping were committed as
+`1b03d5a05` and `938b87ff7` after independent verifier PASS. Final source repair
+is `185f31abc`. This later bookkeeping update is uncommitted; no bookkeeping
+commit SHA is recorded.
 
 Task 14 reconciles rather than rewrites the historical entries above. The
 compatibility-first field inventories and semantic regression tests remain
@@ -919,9 +929,11 @@ Generated final catalog/architecture metrics:
 | Raw payload reads / raw boundary dictionaries / direct dictionary events | 0 / 0 / 0 |
 | Field allowlists / before normalizers / top-level payload extras | 0 / 0 / 0 |
 | Central command tables / central reducer branches | 0 / 0 |
+| Raw future effects / command dumps / raw event creators | 0 / 0 / 0 |
+| Internal JSON adapters / raw read-model dispatch | 0 / 0 |
 | Remaining eligible sites / second-run changes / unclassified dynamic sites | 0 / 0 / 0 |
 | Retired compatibility adapters / deferred D1-D6 sites | 0 / 0 |
-| `_commands.py` + `projections.py` `isinstance` | 412; baseline 603, delta -191 |
+| `_commands.py` + `projections.py` `isinstance` | 260; baseline 603, delta -343 |
 | `projections.py` `dict[str, Any]` | 102; baseline 174, delta -72 |
 
 The closeout measurement reran all 14 registered codemod domains. For every
@@ -937,22 +949,22 @@ with 60,304,850-60,309,546-byte median allocated peaks, and 131,308,839 bytes
 for 1,000 rows with 397,651,584-397,744,576-byte peaks. Payload parity was true.
 
 Task 13's independent acceptance evidence remains preserved above. Final source
-repairs `b63146d9b` and `0289de70c` are the implementation baseline. Task 14's
-independent PASS at `1b03d5a05` verified 1,083 broad graph tests and 5,101
+repairs `b63146d9b`, `0289de70c`, and `185f31abc` are the implementation
+baseline. Latest independent evidence is 1,063 broad graph tests and 5,151
 passed / 5 skipped / 3 warnings in the full suite, with catalog 44/23, all
-strict/current, migration, retired, deferred, remaining-eligible, second-run,
-and unclassified metrics 0, and complexity counts 412 / 102. The final matrix
-is recorded in `docs/dynamic-graph/w5-task14-closeout-report.md`. Following
-verifier feedback and explicit user permission, Task 14 corrected the staged
-continuation prompt's stale future-work queue into a completed historical
-handoff.
+expanded strict/current, migration, retired, deferred, remaining-eligible,
+second-run, and unclassified metrics 0, and complexity counts 260 / 102. The
+final matrix is recorded in `docs/dynamic-graph/w5-task14-closeout-report.md`.
+Following verifier feedback and explicit user permission, Task 14 corrected the
+staged continuation prompt's stale future-work queue into a completed
+historical handoff.
 
 Fresh Task 14 documentation matrix: metrics 44/23 with every emitted
 architecture, migration, retired, and deferred count 0; architecture checker
-clean; D1-D6 grep status 1/no output; Ruff clean; format check 725 files;
+clean; D1-D6 grep status 1/no output; Ruff clean; format check 727 files;
 Pyright 0 errors; and `git diff --check` clean. Tests were not rerun for the
 documentation-only reconciliation; the independently verified final
-source-repair evidence is 1,083 graph and 5,101 full-suite tests (5 skipped, 3
+source-repair evidence is 1,063 graph and 5,151 full-suite tests (5 skipped, 3
 warnings). The independent verifier returned PASS.
 
 Verifier-finding correction: operative plan text now consistently says Task 9
@@ -965,7 +977,8 @@ rerun and independently verified PASS.
 Latest reconciliation also removes the final operative Task 9 bridge-deletion
 instruction, renames Task 9 as the non-destructive catalog/dispatch cutover,
 documents both Task 13 database branches, fixes closed-spec links, and records
-`b63146d9b` / `0289de70c` plus the 1,083/5,101 final counts. It also records
-that production consumers are typed directly without a payload JSON
-compatibility adapter. Task 14 is committed as `1b03d5a05`; this later
-bookkeeping update remains uncommitted and asserts no bookkeeping commit SHA.
+`b63146d9b` / `0289de70c` / `185f31abc` plus the 1,063/5,151 final counts. It
+also records that production consumers are typed directly without a payload
+JSON compatibility adapter. Task 14 documentation is committed as `1b03d5a05`
+and `938b87ff7`; this later bookkeeping update remains uncommitted and asserts
+no bookkeeping commit SHA.

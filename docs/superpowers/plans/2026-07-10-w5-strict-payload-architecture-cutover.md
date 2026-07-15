@@ -1,6 +1,8 @@
-# W5 Strict Payload Architecture Cutover Implementation Plan
+# W5 Strict Payload Architecture Cutover Completed Implementation Record
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **Status:** Completed historical plan and execution record. Tasks 0-14 were
+> executed and independently verified; checked steps record that completed
+> work. Post-W5 relational-column promotion remains explicitly deferred.
 
 **Goal:** Replace every live graph event and command payload path with one strict, model-driven, injected catalog architecture and close W5 without historical payload compatibility.
 
@@ -79,11 +81,12 @@ Rules:
 | D6 | `reduce_legacy_event`, callers/delegates, generation-1 paths, and hidden compatibility adapters | Tasks 1–8 (structural) | Task 13 (`e63fb41ec`), deleted |
 
 Final source reconciliation: `b63146d9b` removed the remaining legacy graph
-effects adapter after Task 13, and `0289de70c` enforced typed graph payload
-consumers without a production payload adapter. The catalog is 44/23, every
-measured strict/current, retired, and deferred compatibility metric is zero,
-and the latest independently verified suites are 1,083 graph tests and 5,101
-passed / 5 skipped / 3 warnings in the full suite.
+effects adapter after Task 13, `0289de70c` enforced typed graph payload
+consumers without a production payload adapter, and `185f31abc` completed typed
+command and read-model ownership. The catalog is 44/23, every expanded
+strict/current, retired, and deferred compatibility metric is zero, and the
+latest independently verified suites are 1,063 graph tests and 5,151 passed / 5
+skipped / 3 warnings in the full suite.
 
 Task 13 grep gate (run after the Branch B absence record; docs and Alembic migrations exempt):
 
@@ -260,13 +263,13 @@ There is no line-count percentage target because domain handlers and strict sche
 - CLI: `w5_strict_payload_cutover.py --domain DOMAIN (--dry-run|--apply|--assert-clean)`.
 - Consumed by every later migration task; neither tool defines payload fields or runtime schemas.
 
-- [ ] **Step 1: Add LibCST as a direct development dependency**
+- [x] **Step 1: Add LibCST as a direct development dependency**
 
 Run: `uv add --group dev "libcst>=1.5"`
 
 Expected: `pyproject.toml` lists LibCST in `[dependency-groups].dev`, and `uv.lock` remains consistent with the already-resolved 1.5+ package.
 
-- [ ] **Step 2: Write failing AST inventory tests**
+- [x] **Step 2: Write failing AST inventory tests**
 
 ```python
 def test_inventory_finds_literal_dynamic_and_registry_sites(tmp_path: Path) -> None:
@@ -283,17 +286,17 @@ Run: `uv run pytest tests/unit/test_w5_payload_ast_inventory.py -q`
 
 Expected: collection fails because the inventory module does not exist.
 
-- [ ] **Step 3: Implement the AST inventory with source locations and stable output**
+- [x] **Step 3: Implement the AST inventory with source locations and stable output**
 
 Use `ast.parse`, parent/call-graph indexing, and dataclasses/Pydantic report records. Sort every path/name/site tuple before rendering. Dynamic sites must include `path`, `line`, `column`, and `ast.unparse(expression)`; never silently discard a nonliteral event or command name.
 
-- [ ] **Step 4: Verify the real baseline structurally**
+- [x] **Step 4: Verify the real baseline structurally**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --check-baseline --format json --output /tmp/w5-payload-baseline.json`
 
 Expected: exit 0 with 44 produced event names and 23 command names; every dynamic factory site is listed and either resolved to finite outcomes or explicitly classified as the generic factory definition.
 
-- [ ] **Step 5: Write failing LibCST golden/idempotency tests**
+- [x] **Step 5: Write failing LibCST golden/idempotency tests**
 
 ```python
 def test_domain_codemod_preserves_comments_and_is_idempotent() -> None:
@@ -308,11 +311,11 @@ Run: `uv run pytest tests/unit/test_w5_strict_payload_codemod.py -q`
 
 Expected: collection fails because the codemod module does not exist.
 
-- [ ] **Step 6: Implement dry-run/apply/assert-clean modes**
+- [x] **Step 6: Implement dry-run/apply/assert-clean modes**
 
 Use LibCST metadata providers (`PositionProvider`, `QualifiedNameProvider`, and `ScopeProvider`) so replacements depend on syntax and resolved symbol shape, not text coincidence. `--dry-run` returns a unified diff, `--apply` writes through `apply_patch`-compatible normal file updates, and `--assert-clean` exits nonzero with every remaining eligible site.
 
-- [ ] **Step 7: Run harness verification**
+- [x] **Step 7: Run harness verification**
 
 Run: `uv run pytest tests/unit/test_w5_payload_ast_inventory.py tests/unit/test_w5_strict_payload_codemod.py -q`
 
@@ -320,7 +323,7 @@ Run: `uv run ruff check scripts/w5_payload_ast_inventory.py scripts/codemods/w5_
 
 Expected: pass; applying every golden transform twice produces no second diff.
 
-- [ ] **Step 8: Commit the automation harness**
+- [x] **Step 8: Commit the automation harness**
 
 ```bash
 git add pyproject.toml uv.lock scripts/w5_payload_ast_inventory.py scripts/codemods/w5_strict_payload_cutover.py tests/unit/test_w5_payload_ast_inventory.py tests/unit/test_w5_strict_payload_codemod.py
@@ -345,13 +348,13 @@ git commit -m "tooling: add AST-driven W5 payload migration"
 - Produces: `StrictPayload`, `JsonValue`, `StoredEventEnvelope`, `HydratedEvent`, `EventMetadata`, `EventSpecification[PayloadT]`, `CommandExecutionContext`, `CommandSpecification[CommandT]`, `ProjectionParticipation`, `GraphCatalog`, and `build_graph_catalog()`.
 - Proves end to end: `RecordHeartbeatCommand -> HEARTBEAT_RECORDED -> projection-neutral typed dispatch`.
 
-- [ ] **Automation checkpoint A: Preview representative relocation/emission edits**
+- [x] **Automation checkpoint A: Preview representative relocation/emission edits**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain vertical_slice --dry-run`
 
 Expected: the preview covers relocation of the heartbeat payload class, import/export repair, heartbeat emission replacement, and the `record_heartbeat` registry/specification substitution; new framework files remain manual because they have no source analogue.
 
-- [ ] **Step 1: Write failing strictness and catalog tests**
+- [x] **Step 1: Write failing strictness and catalog tests**
 
 ```python
 class ExamplePayload(StrictPayload):
@@ -372,13 +375,13 @@ def test_catalog_rejects_duplicate_names() -> None:
         )
 ```
 
-- [ ] **Step 2: Run the focused test and confirm RED**
+- [x] **Step 2: Run the focused test and confirm RED**
 
 Run: `uv run pytest tests/unit/test_graph_payload_framework.py -q`
 
 Expected: collection fails because `orchestrator.graph.payloads`, specifications, and catalog do not exist.
 
-- [ ] **Automation checkpoint B: Apply representative mechanics before framework wiring**
+- [x] **Automation checkpoint B: Apply representative mechanics before framework wiring**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain vertical_slice --apply`
 
@@ -386,7 +389,7 @@ After Steps 3–5, run: `uv run python scripts/codemods/w5_strict_payload_cutove
 
 Expected: exit 0 and a second codemod pass produces no changes.
 
-- [ ] **Step 3: Implement the strict base and envelope/specification interfaces**
+- [x] **Step 3: Implement the strict base and envelope/specification interfaces**
 
 ```python
 JsonValue: TypeAlias = None | bool | int | float | str | list["JsonValue"] | dict[str, "JsonValue"]
@@ -418,7 +421,7 @@ class HydratedEvent(BaseModel):
 
 Implement `EventSpecification.create()` to require the exact payload class, `hydrate()` to validate stored JSON once, `serialize()` to call `to_json()`, and `reduce()` to invoke its typed handler. Implement `CommandSpecification.validate()` and `handle()` with the same exact-class guarantee. Wrap internal generic casts inside these two specifications so domain handlers contain no casts.
 
-- [ ] **Step 4: Implement an immutable duplicate-checking catalog**
+- [x] **Step 4: Implement an immutable duplicate-checking catalog**
 
 ```python
 @dataclass(frozen=True)
@@ -444,7 +447,7 @@ class GraphCatalog:
 
 Resolution raises `UnknownGraphEventError` or `UnknownGraphCommandError`; duplicate composition raises `DuplicateGraphSpecificationError` during construction.
 
-- [ ] **Step 5: Convert the representative heartbeat event and command**
+- [x] **Step 5: Convert the representative heartbeat event and command**
 
 ```python
 class HeartbeatRecordedPayload(StrictPayload):
@@ -473,13 +476,13 @@ RECORD_HEARTBEAT = CommandSpecification(
 
 The typed handler receives `RecordHeartbeatCommand`, uses the injected clock from `CommandExecutionContext`, and emits `HEARTBEAT_RECORDED.create(...)`. During migration, a temporary explicit compatibility bridge for unconverted specifications was marked by the architecture test as `_UNCONVERTED_W5_BRIDGE`. The completed cutover removed it in `b63146d9b`; `0289de70c` finalized typed consumers without a production payload adapter. All compatibility metrics are zero.
 
-- [ ] **Step 6: Run focused and existing heartbeat tests**
+- [x] **Step 6: Run focused and existing heartbeat tests**
 
 Run: `uv run pytest tests/unit/test_graph_payload_framework.py tests/unit/test_lifecycle_event_payloads.py tests/unit/test_graph_commands.py -q`
 
 Expected: all selected tests pass; the framework tests prove strict failure, exact-class creation, JSON round-trip, duplicate rejection, unknown-name errors, and projection-neutral dispatch.
 
-- [ ] **Step 7: Commit the vertical slice**
+- [x] **Step 7: Commit the vertical slice**
 
 ```bash
 git add src/orchestrator/graph tests/unit/test_graph_payload_framework.py
@@ -507,7 +510,7 @@ git commit -m "feat: add strict graph payload specifications"
 - Produces eleven command specs: seven lifecycle commands plus `record_heartbeat`, `agent_died`, `acknowledge_start`, and `submit_callback`.
 - Consumes framework types from Task 1.
 
-- [ ] **Automation checkpoint A: Inventory and preview lifecycle/callback mechanics**
+- [x] **Automation checkpoint A: Inventory and preview lifecycle/callback mechanics**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --format json --output /tmp/w5-lifecycle-before.json`
 
@@ -515,7 +518,7 @@ Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain lifec
 
 Expected: the inventory identifies every lifecycle/callback producer, model, registry entry, import/export, and raw handler boundary; the dry-run changes no files and shows only structural edits.
 
-- [ ] **Step 1: Replace compatibility assertions with strict RED tests**
+- [x] **Step 1: Replace compatibility assertions with strict RED tests**
 
 Parameterize all ten payload classes and assert a valid sample passes while an added `unknown_field` and a mistyped required scalar fail. Add behavior tests proving audit events use `ProjectionParticipation.NEUTRAL` and callback/lifecycle reducers receive concrete payload classes.
 
@@ -523,7 +526,7 @@ Run: `uv run pytest tests/unit/test_lifecycle_event_payloads.py tests/unit/test_
 
 Expected: failures show current models still accept/move legacy fields and callback helpers still read dictionaries.
 
-- [ ] **Automation checkpoint B: Apply structural edits before manual semantics**
+- [x] **Automation checkpoint B: Apply structural edits before manual semantics**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain lifecycle --apply`
 
@@ -535,7 +538,7 @@ Run: `uv run python scripts/w5_payload_ast_inventory.py --check-domain lifecycle
 
 Expected: both checks exit 0; no eligible lifecycle/callback site was left for a manual bulk edit.
 
-- [ ] **Step 2: Define exact strict event models and specifications**
+- [x] **Step 2: Define exact strict event models and specifications**
 
 Use the current producer-written fields from the ledger/inventory, but make required producer invariants required. Explicitly model nullable callback business data as `payload: JsonValue` and `prior_result: JsonValue | None`; do not use these named fields to accept unknown top-level keys. Mark `command_rejected`, rejected/duplicate callbacks, heartbeat, agent death, and dispatch intent projection-neutral.
 
@@ -554,7 +557,7 @@ LIFECYCLE_EVENT_SPECS = (
 )
 ```
 
-- [ ] **Step 3: Define the eleven strict command models/specifications**
+- [x] **Step 3: Define the eleven strict command models/specifications**
 
 Use separate empty strict models where commands have no data. Put universal `run_id`, current position, clock, ID generation, actor, and historical hydrated events on `CommandExecutionContext`, not in command payloads. Remove `_current_graph_position` and controller-injected `run_id` from payload dictionaries.
 
@@ -568,17 +571,17 @@ LIFECYCLE_COMMAND_SPECS = (
 )
 ```
 
-- [ ] **Step 4: Move handler logic out of `_commands.py`**
+- [x] **Step 4: Move handler logic out of `_commands.py`**
 
 Move lifecycle and callback domain functions into `commands/lifecycle.py` and `commands/callbacks.py`. Replace raw factory calls with named event specifications. Update callback idempotency and outbox routing to narrow `HydratedEvent.payload` with specification dispatch, never `event.payload.get(...)`.
 
-- [ ] **Step 5: Run the lifecycle/callback slice**
+- [x] **Step 5: Run the lifecycle/callback slice**
 
 Run: `uv run pytest tests/unit/test_graph_payload_framework.py tests/unit/test_lifecycle_event_payloads.py tests/unit/test_callbacks.py tests/unit/test_graph_commands.py tests/unit/test_outbox_retry.py -q`
 
 Expected: pass; strict samples reject extra/mistyped fields and all eleven command specs execute typed handlers.
 
-- [ ] **Step 6: Commit the domain slice**
+- [x] **Step 6: Commit the domain slice**
 
 ```bash
 git add src/orchestrator/graph src/orchestrator/graph_runtime/controller.py src/orchestrator/graph_runtime/outbox.py tests/unit
@@ -608,7 +611,7 @@ git commit -m "refactor: type lifecycle and callback graph domains"
 - Produces `SeedCompiledEventsCommand` and `SEED_COMPILED_EVENTS`.
 - Changes `compile_routine(..., catalog: GraphCatalog)` to return `list[HydratedEvent]`.
 
-- [ ] **Automation checkpoint A: Inventory and preview topology mechanics**
+- [x] **Automation checkpoint A: Inventory and preview topology mechanics**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --format json --output /tmp/w5-topology-before.json`
 
@@ -616,7 +619,7 @@ Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain topol
 
 Expected: all compiler/factory construction sites, topology payload classes, reducer branches, imports, and exports are classified before production edits.
 
-- [ ] **Step 1: Write strict producer and typed reducer RED tests**
+- [x] **Step 1: Write strict producer and typed reducer RED tests**
 
 Add parameterized samples for all twelve names. Assert `node_created` accepts the complete current compiler/patch producer shape, rejects every historical alias and unknown key, and preserves explicitly typed opaque fields (`command_definition`, policy metadata, and record values) only under their named fields.
 
@@ -624,7 +627,7 @@ Run: `uv run pytest tests/unit/test_node_created_event_payloads.py tests/unit/te
 
 Expected: legacy normalizers accept cases the strict tests reject, and compiler events still contain raw dictionaries.
 
-- [ ] **Automation checkpoint B: Apply and prove topology codemod idempotency**
+- [x] **Automation checkpoint B: Apply and prove topology codemod idempotency**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain topology --apply`
 
@@ -634,7 +637,7 @@ Run: `uv run python scripts/w5_payload_ast_inventory.py --check-domain topology`
 
 Expected: exit 0 with zero eligible topology sites remaining.
 
-- [ ] **Step 2: Move payloads and reducer handlers into `events/topology.py`**
+- [x] **Step 2: Move payloads and reducer handlers into `events/topology.py`**
 
 Define `EdgeCreatedPayload`, `InputBoundPayload`, and the strict node/session/revision payloads. Remove `NodeSuspectPayload` aliases for unproduced cleared/resolved names. Move each matching `reduce_event` branch and its private payload parser into a typed handler such as:
 
@@ -647,7 +650,7 @@ def reduce_node_deferred(state: GraphProjection, payload: NodeDeferredPayload, m
 
 Handlers may call projection-state utilities, but may not validate or inspect raw dictionaries.
 
-- [ ] **Step 3: Convert compiler construction and seed command**
+- [x] **Step 3: Convert compiler construction and seed command**
 
 Inject the catalog or a typed `EventBuilder` into `compile_routine`; replace `_Compiler._event(event_type, payload)` with named specifications. Define:
 
@@ -658,17 +661,17 @@ class SeedCompiledEventsCommand(StrictPayload):
 
 Validate every nested event is already hydrated and registered before returning it from the seed handler.
 
-- [ ] **Step 4: Convert topology consumers outside the reducer**
+- [x] **Step 4: Convert topology consumers outside the reducer**
 
 Update command bindings, patch invalidation checks, compiler helpers, scenario fixtures, and projection view helpers to use concrete payload classes or typed projection records. Remove replay-only suspect, legacy input-binding, and sparse-node fallback branches.
 
-- [ ] **Step 5: Run topology and corpus parity tests**
+- [x] **Step 5: Run topology and corpus parity tests**
 
 Run: `uv run pytest tests/unit/test_node_created_event_payloads.py tests/unit/test_node_lifecycle_event_payloads.py tests/unit/test_planner_session_event_payloads.py tests/unit/test_graph_compiler.py tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py -q`
 
 Expected: pass with no duplicate recovery-node index entry and identical full/checkpoint/compact projections.
 
-- [ ] **Step 6: Commit the domain slice**
+- [x] **Step 6: Commit the domain slice**
 
 ```bash
 git add src/orchestrator/graph tests/unit/test_node_created_event_payloads.py tests/unit/test_node_lifecycle_event_payloads.py tests/unit/test_planner_session_event_payloads.py tests/unit/test_graph_compiler.py tests/unit/test_graph_projections.py tests/unit/test_fixture_corpus.py
@@ -695,7 +698,7 @@ git commit -m "refactor: type topology and node graph domains"
 - Produces `ScheduleTickCommand`, `ReconcileCommand`, `SCHEDULE_TICK`, and `RECONCILE`.
 - Deletes unproduced `lease_suspended` compatibility support.
 
-- [ ] **Automation checkpoint A: Inventory and preview lease mechanics**
+- [x] **Automation checkpoint A: Inventory and preview lease mechanics**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --format json --output /tmp/w5-leases-before.json`
 
@@ -703,7 +706,7 @@ Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain lease
 
 Expected: all five live lease names and two scheduling commands are classified; `lease_suspended` is reported as compatibility-only.
 
-- [ ] **Step 1: Write strict lease/command RED tests**
+- [x] **Step 1: Write strict lease/command RED tests**
 
 Assert required IDs/generation/timestamps/resource claims reject missing or coerced values; assert grant/release/revoke/expire handlers receive the exact model; assert the empty reconcile command rejects any field.
 
@@ -711,7 +714,7 @@ Run: `uv run pytest tests/unit/test_lease_event_payloads.py tests/unit/test_sche
 
 Expected: current compatibility models accept sparse and extra input.
 
-- [ ] **Automation checkpoint B: Apply and prove lease codemod idempotency**
+- [x] **Automation checkpoint B: Apply and prove lease codemod idempotency**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain leases --apply`
 
@@ -721,21 +724,21 @@ Run: `uv run python scripts/w5_payload_ast_inventory.py --check-domain leases`
 
 Expected: exit 0 with no raw lease producer/handler/model relocation left.
 
-- [ ] **Step 2: Implement lease payloads/specifications and typed reducers**
+- [x] **Step 2: Implement lease payloads/specifications and typed reducers**
 
 Use `tuple[ResourceClaimProjection, ...]` for resource claims and exact nullable fields for optional session identity. Do not derive legacy `task_region_id` or `kind` from an `extra` map; the current producer must emit every reducer-required fact or the typed handler derives it only from already typed projection state.
 
-- [ ] **Step 3: Implement scheduling command specifications**
+- [x] **Step 3: Implement scheduling command specifications**
 
 `ScheduleTickCommand` explicitly declares lease duration, grant limit, and base snapshot identity. `ReconcileCommand` is empty. Move the scheduling/reconciliation logic from `_commands.py` into `commands/schedule.py` and emit only named specs.
 
-- [ ] **Step 4: Run lease/scheduler regression tests**
+- [x] **Step 4: Run lease/scheduler regression tests**
 
 Run: `uv run pytest tests/unit/test_lease_event_payloads.py tests/unit/test_scheduler.py tests/unit/test_graph_commands.py tests/unit/test_callbacks.py tests/unit/test_fixture_corpus.py -q`
 
 Expected: pass; there is no `lease_suspended` event specification in the catalog and no strict-path support for it. (Historical amendment 2026-07-12: the `lease_suspended` branches inside `reduce_legacy_event` and `_planner_generation_state`, and the `GraphRecordKind.LEASE_SUSPENDED` enum member were retained through Task 9 for durable replay, then deleted by Task 13 after Branch B fresh initialization. Register entry D1 is closed.)
 
-- [ ] **Step 5: Commit the domain slice**
+- [x] **Step 5: Commit the domain slice**
 
 ```bash
 git add src/orchestrator/graph tests/unit/test_lease_event_payloads.py tests/unit/test_scheduler.py tests/unit/test_graph_commands.py tests/unit/test_callbacks.py tests/unit/test_fixture_corpus.py
@@ -762,7 +765,7 @@ git commit -m "refactor: type lease and scheduling graph domains"
 - Produces strict `EvaluateJoinCommand`, `EvaluateFinalGateCommand`, `EVALUATE_JOIN`, and `EVALUATE_FINAL_GATE`.
 - Produces strict `GradeRow`; `VerificationReportValue.grades: list[GradeRow]`.
 
-- [ ] **Automation checkpoint A: Inventory and preview record mechanics**
+- [x] **Automation checkpoint A: Inventory and preview record mechanics**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --format json --output /tmp/w5-records-before.json`
 
@@ -770,7 +773,7 @@ Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain recor
 
 Expected: output/verification event emissions, record model relocations, command registry entries, and reducer parse sites are classified without interpreting record semantics.
 
-- [ ] **Step 1: Write strict record envelope and grade RED tests**
+- [x] **Step 1: Write strict record envelope and grade RED tests**
 
 ```python
 def test_grade_row_rejects_unknown_fields() -> None:
@@ -784,13 +787,13 @@ def test_output_record_event_rejects_unknown_record_shape() -> None:
 
 Use the existing discriminated typed record union as the `record` field; do not duplicate every record's fields at the event top level.
 
-- [ ] **Step 2: Run the focused tests and confirm RED**
+- [x] **Step 2: Run the focused tests and confirm RED**
 
 Run: `uv run pytest tests/unit/test_graph_models.py tests/unit/test_graph_commands.py -q`
 
 Expected: `grades` is still `list[dict[str, Any]]`, and output event parsing still depends on raw payload discriminators.
 
-- [ ] **Automation checkpoint B: Apply and prove record codemod idempotency**
+- [x] **Automation checkpoint B: Apply and prove record codemod idempotency**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain records --apply`
 
@@ -800,21 +803,21 @@ Run: `uv run python scripts/w5_payload_ast_inventory.py --check-domain records`
 
 Expected: exit 0; record union/grade semantics are the only manual portion.
 
-- [ ] **Step 3: Implement strict record/verification event specifications**
+- [x] **Step 3: Implement strict record/verification event specifications**
 
 Use a discriminated `OutputRecordPayload` union and explicit verification fields. Move record acceptance and verification reducers into `events/records.py`; delete legacy output-record parsing, sparse verification fallbacks, and repeated `value.get(...)` logic **from the strict specification path only**. (Historical amendment 2026-07-12: legacy parsing reachable only through `reduce_legacy_event` or full-history scans was retained through Task 9 so durable history could replay. Task 13 deleted those D3 sites after Branch B fresh initialization; D3 is closed.)
 
-- [ ] **Step 4: Implement join/final-gate command specifications**
+- [x] **Step 4: Implement join/final-gate command specifications**
 
 Declare candidate, node, task-region, evaluated-record, and decision fields explicitly. Move handlers from `_commands.py`; accept typed record/projection inputs and emit `OUTPUT_RECORD_ACCEPTED`, `VERIFICATION_PASSED`, or `VERIFICATION_FAILED` specifications.
 
-- [ ] **Step 5: Run record, projection, and final-gate tests**
+- [x] **Step 5: Run record, projection, and final-gate tests**
 
 Run: `uv run pytest tests/unit/test_graph_models.py tests/unit/test_graph_commands.py tests/unit/test_graph_projections.py tests/integration/test_graph_fr14_final_gate_acceptance.py -q`
 
 Expected: pass with strict grade rows and identical final-gate behavior.
 
-- [ ] **Step 6: Commit the domain slice**
+- [x] **Step 6: Commit the domain slice**
 
 ```bash
 git add src/orchestrator/graph tests/unit/test_graph_models.py tests/unit/test_graph_commands.py tests/unit/test_graph_projections.py tests/integration/test_graph_fr14_final_gate_acceptance.py
@@ -841,7 +844,7 @@ git commit -m "refactor: type graph record and verification domains"
 - Produces `SubmitPatchCommand` and `SUBMIT_PATCH`.
 - Intentionally keeps `ops`, `macro_invocations`, diagnostics, and read-set diff as explicit named `JsonValue`/typed patch fields, never unknown top-level keys.
 
-- [ ] **Automation checkpoint A: Inventory and preview patch mechanics**
+- [x] **Automation checkpoint A: Inventory and preview patch mechanics**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --format json --output /tmp/w5-patches-before.json`
 
@@ -849,7 +852,7 @@ Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain patch
 
 Expected: the report separates the two live patch events from compatibility-only aliases and classifies every producer/parser/import site.
 
-- [ ] **Step 1: Write strict patch RED tests**
+- [x] **Step 1: Write strict patch RED tests**
 
 Assert only `graph_patch_accepted` and `graph_patch_rejected` are registered; proposal/status replay aliases are absent. Assert misspelled `base_graph_position`, scalar/list mismatches, and unknown top-level diagnostics fail.
 
@@ -857,7 +860,7 @@ Run: `uv run pytest tests/unit/test_patch_event_payloads.py tests/unit/test_patc
 
 Expected: proposal aliases remain accepted and unknown fields move under `extra`.
 
-- [ ] **Automation checkpoint B: Apply and prove patch codemod idempotency**
+- [x] **Automation checkpoint B: Apply and prove patch codemod idempotency**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain patches --apply`
 
@@ -867,21 +870,21 @@ Run: `uv run python scripts/w5_payload_ast_inventory.py --check-domain patches`
 
 Expected: exit 0; opaque named patch values remain manual semantic choices, not codemod-generated schema.
 
-- [ ] **Step 2: Implement patch models/specifications and typed reducers**
+- [x] **Step 2: Implement patch models/specifications and typed reducers**
 
 Move accepted/rejected attempt updates into `events/patches.py`. Keep `PatchEnvelope`/`PatchOp` as the typed business value for operations. Remove open-proposal replay bookkeeping from the strict specification path. (Historical amendment 2026-07-12: the `graph_patch_proposed`/proposal-status bookkeeping inside `reduce_legacy_event` and the blocker/attempt scan helpers was retained through Task 9. Task 13 deleted those D2 sites after Branch B fresh initialization; D2 is closed.)
 
-- [ ] **Step 3: Implement the strict submit command and move its handler**
+- [x] **Step 3: Implement the strict submit command and move its handler**
 
 `SubmitPatchCommand` declares patch ID, base position, actor role, proposer, operations, session/carryover identity, and named diagnostic values. The controller reads `payload.base_graph_position` from the validated model rather than `_patch_base_graph_position(dict)`.
 
-- [ ] **Step 4: Run patch and planner prompt tests**
+- [x] **Step 4: Run patch and planner prompt tests**
 
 Run: `uv run pytest tests/unit/test_patch_event_payloads.py tests/unit/test_patch_validator.py tests/unit/test_graph_commands.py tests/unit/test_prompt_generation.py tests/unit/test_graph_planner.py -q`
 
 Expected: pass with two patch event specs and one command spec.
 
-- [ ] **Step 5: Commit the domain slice**
+- [x] **Step 5: Commit the domain slice**
 
 ```bash
 git add src/orchestrator/graph src/orchestrator/graph_runtime/prompts.py tests/unit/test_patch_event_payloads.py tests/unit/test_patch_validator.py tests/unit/test_graph_commands.py tests/unit/test_prompt_generation.py tests/unit/test_graph_planner.py
@@ -907,7 +910,7 @@ git commit -m "refactor: type graph patch domain"
 - Produces four command specs: raise appeal, record decision, record requirement revision, record support evidence.
 - Keeps `scope`, `decider`, provenance, and evidence as explicitly named JSON/business values.
 
-- [ ] **Automation checkpoint A: Inventory and preview both policy domains**
+- [x] **Automation checkpoint A: Inventory and preview both policy domains**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --format json --output /tmp/w5-policy-before.json`
 
@@ -917,7 +920,7 @@ Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain requi
 
 Expected: live names, compatibility-only aliases, shared wrapper sites, and all model/registry/reducer locations are classified before edits.
 
-- [ ] **Step 1: Write strict decision/requirement RED tests**
+- [x] **Step 1: Write strict decision/requirement RED tests**
 
 Remove assertions for `decision`/`outcome`/`verdict` aliases, boolean decision fallback, nested legacy membership, requirement/support aliases, and sparse history. Add exact valid producer samples and extra/mistyped/missing-field rejection for all six event and four command models.
 
@@ -925,7 +928,7 @@ Run: `uv run pytest tests/unit/test_decision_event_payloads.py tests/unit/test_r
 
 Expected: compatibility validators still accept at least one rejected sample.
 
-- [ ] **Automation checkpoint B: Apply and prove both codemods idempotent**
+- [x] **Automation checkpoint B: Apply and prove both codemods idempotent**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain decisions --apply`
 
@@ -943,21 +946,21 @@ Run: `uv run python scripts/w5_payload_ast_inventory.py --check-domain requireme
 
 Expected: all four checks exit 0; no shared wrapper was hand-rewritten around the codemod.
 
-- [ ] **Step 2: Implement decision and requirement event modules**
+- [x] **Step 2: Implement decision and requirement event modules**
 
 Define separate payload models when semantics differ; do not use one permissive decision base with many optional aliases. Move latest-decision, appeal resolution, authority requirement, revision, and evidence reducers into their owning modules. (Historical amendment 2026-07-12: the `requirement_revision_proposed` and `authority_resolution_recorded` branches, `_requires_authority_resolution(dict)`, and authority blocker/full-history scans were retained as D4 through Task 9. Task 13 deleted them after Branch B fresh initialization; D4 is closed.)
 
-- [ ] **Step 3: Implement four strict command specifications**
+- [x] **Step 3: Implement four strict command specifications**
 
 Move the matching command logic into `commands/callbacks.py` or split it into `commands/decisions.py` and `commands/requirements.py` if either file would exceed a cohesive review unit. Each handler accepts its concrete command model and emits named specs only.
 
-- [ ] **Step 4: Run domain and API tests**
+- [x] **Step 4: Run domain and API tests**
 
 Run: `uv run pytest tests/unit/test_decision_event_payloads.py tests/unit/test_requirement_evidence_event_payloads.py tests/unit/test_graph_commands.py tests/unit/test_graph_projections.py tests/integration/test_graph_decisions_api.py -q`
 
 Expected: pass; invalid constrained API values return 422 from Pydantic and accepted commands preserve decision/revision semantics.
 
-- [ ] **Step 5: Commit the domain slice**
+- [x] **Step 5: Commit the domain slice**
 
 ```bash
 git add src/orchestrator/graph tests/unit/test_decision_event_payloads.py tests/unit/test_requirement_evidence_event_payloads.py tests/unit/test_graph_commands.py tests/unit/test_graph_projections.py tests/integration/test_graph_decisions_api.py
@@ -986,7 +989,7 @@ git commit -m "refactor: type graph decision and requirement domains"
 - Produces `RecordGatekeeperVerdictsCommand`, `RecordCleanupAppliedCommand`, and their specs.
 - Uses existing typed `FileStateRecord` and concrete gatekeeper verdict/cost models.
 
-- [ ] **Automation checkpoint A: Inventory and preview file-state mechanics**
+- [x] **Automation checkpoint A: Inventory and preview file-state mechanics**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --format json --output /tmp/w5-file-state-before.json`
 
@@ -994,7 +997,7 @@ Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain file_
 
 Expected: all six event producers, two command entries, runtime consumers, payload classes, and compatibility-only environment aliases are classified.
 
-- [ ] **Step 1: Write strict file-state/gatekeeper/cleanup RED tests**
+- [x] **Step 1: Write strict file-state/gatekeeper/cleanup RED tests**
 
 Assert complete current producer shapes round-trip, malformed nested verdict/file entries fail, `resolved_count` and cost fields remain explicit, and audit `file_state_rejected` is registered as projection-neutral. Remove legacy environment/check-result alias tests because neither event is produced. (Historical amendment 2026-07-12: the `environment_failure_accepted`/`check_result_classified` reducer branches and classification scan were retained as D5 through Task 9. Task 13 deleted them after Branch B fresh initialization; D5 is closed.)
 
@@ -1002,7 +1005,7 @@ Run: `uv run pytest tests/unit/test_cleanup_event_payloads.py tests/unit/test_gr
 
 Expected: cleanup still preserves unknown keys and gatekeeper consumers still parse dictionaries.
 
-- [ ] **Automation checkpoint B: Apply and prove file-state codemod idempotency**
+- [x] **Automation checkpoint B: Apply and prove file-state codemod idempotency**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain file_state --apply`
 
@@ -1012,21 +1015,21 @@ Run: `uv run python scripts/w5_payload_ast_inventory.py --check-domain file_stat
 
 Expected: exit 0; nested file/verdict/cost semantics are reviewed manually after structural conversion.
 
-- [ ] **Step 2: Implement the six event specifications and typed handlers**
+- [x] **Step 2: Implement the six event specifications and typed handlers**
 
 Use `FileStateRecord` as the accepted payload business record, explicit rejection evidence, `tuple[GatekeeperVerdict, ...]`, a concrete cost model, and exact cleanup fields. Move projection and cost-summary handlers into `events/file_state.py` or typed view helpers; no handler accepts `dict[str, Any]`.
 
-- [ ] **Step 3: Implement the two strict command specifications**
+- [x] **Step 3: Implement the two strict command specifications**
 
 Move gatekeeper/cleanup command logic from `_commands.py`; update runtime dispatch to construct the models once before controller dispatch and consume typed result events.
 
-- [ ] **Step 4: Run domain and integration tests**
+- [x] **Step 4: Run domain and integration tests**
 
 Run: `uv run pytest tests/unit/test_cleanup_event_payloads.py tests/unit/test_graph_gatekeeper.py tests/unit/test_graph_projections.py tests/integration/test_graph_file_state_boundary.py tests/integration/test_graph_gatekeeper_flow.py -q`
 
 Expected: pass with all cost fields retained and cleanup lineage unchanged.
 
-- [ ] **Step 5: Commit the domain slice**
+- [x] **Step 5: Commit the domain slice**
 
 ```bash
 git add src/orchestrator/graph src/orchestrator/graph_runtime tests/unit/test_cleanup_event_payloads.py tests/unit/test_graph_gatekeeper.py tests/unit/test_graph_projections.py tests/integration/test_graph_file_state_boundary.py tests/integration/test_graph_gatekeeper_flow.py
@@ -1053,7 +1056,7 @@ git commit -m "refactor: type file-state and gatekeeper graph domains"
 - `apply_command(catalog, projection, events, command_name, payload, context)` validates once and dispatches typed.
 - `reduce_event(catalog, projection, hydrated_event)` dispatches typed with no event-name branch.
 
-- [ ] **Automation checkpoint A: Inventory the remaining cross-domain cutover**
+- [x] **Automation checkpoint A: Inventory the remaining cross-domain cutover**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --format json --output /tmp/w5-catalog-cutover-before.json`
 
@@ -1061,7 +1064,7 @@ Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain catal
 
 Expected: the preview covers tuple composition, registry removal, central reducer branch removal, compatibility symbol deletion, imports, and exports; any branch whose semantics cannot be moved automatically is reported with its owning specification.
 
-- [ ] **Step 1: Write catalog-wide RED contracts**
+- [x] **Step 1: Write catalog-wide RED contracts**
 
 ```python
 @pytest.mark.parametrize("spec", build_graph_catalog().events, ids=lambda spec: spec.name)
@@ -1082,7 +1085,7 @@ def test_catalog_has_complete_live_surface() -> None:
 
 Also parameterize missing/mistyped required-field cases, projection-neutral declarations, command strictness, JSON schema generation, and unique names.
 
-- [ ] **Automation checkpoint B: Apply catalog cutover mechanics before semantic cleanup**
+- [x] **Automation checkpoint B: Apply catalog cutover mechanics before semantic cleanup**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain catalog_cutover --apply`
 
@@ -1092,7 +1095,7 @@ Run: `uv run python scripts/w5_payload_ast_inventory.py --check-domain catalog_c
 
 Expected: exit 0; no registry/central-dispatch/compatibility site eligible for mechanical conversion remains.
 
-- [ ] **Step 2: Compose the production catalog from domain tuples**
+- [x] **Step 2: Compose the production catalog from domain tuples**
 
 ```python
 def build_graph_catalog() -> GraphCatalog:
@@ -1107,23 +1110,23 @@ def build_graph_catalog() -> GraphCatalog:
 
 The tuple names are public domain APIs; adding a normal event/command to an existing domain edits only its domain tuple, not `catalog.py`.
 
-- [ ] **Step 3: Cut current command and reducer dispatch to catalog-only paths**
+- [x] **Step 3: Cut current command and reducer dispatch to catalog-only paths**
 
 Delete `COMMAND_HANDLERS`, current-path per-event parse wrappers, `_typed_*` helpers, and `_UNCONVERTED_W5_BRIDGE` only where they are proven unreachable from durable replay. Current typed dispatch resolves catalog specifications and never falls through to legacy handling; unknown current names raise typed catalog errors, while a deliberately invalid known command may still produce `command_rejected` after its typed handler evaluates domain rules. Task 9 retained `reduce_legacy_event`, all D1–D6 callers, and typed-spec reducers required for durable replay. Task 13 deleted them after Branch B fresh initialization established the current strict schema.
 
-- [ ] **Step 4: Delete compatibility models, validators, aliases, and `_commands.py`**
+- [x] **Step 4: Delete compatibility models, validators, aliases, and `_commands.py`**
 
 Remove only obsolete strict-path W5 payload classes, exports, validators, and `_commands.py` content proven non-replay-critical. Keep D1–D6 compatibility helpers, aliases, models, and validators isolated to legacy replay. Delete `_commands.py` in this task only if every replay-critical caller has first been retained in an explicit legacy module without changing replay; otherwise defer file deletion to Task 13.
 
 **Task 9 did not sweep the Deferred Compatibility Cleanup Register.** D1–D6 remained through Task 9 and were deleted in Task 13 after Branch B fresh initialization; no backup/reset was necessary.
 
-- [ ] **Step 5: Run catalog and full unit graph tests**
+- [x] **Step 5: Run catalog and full unit graph tests**
 
 Run: `uv run pytest tests/unit/test_graph_catalog_contracts.py tests/unit/test_graph_payload_framework.py tests/unit -k 'graph or payload or callback or scheduler' -q`
 
 Expected: pass; catalog counts are exactly 44/23 and no test constructs a live raw payload envelope.
 
-- [ ] **Step 6: Commit the catalog cutover**
+- [x] **Step 6: Commit the catalog cutover**
 
 ```bash
 git add src/orchestrator/graph tests/unit
@@ -1158,7 +1161,7 @@ git commit -m "refactor: cut graph kernel to strict catalog dispatch"
 - Stored graph rows use `GRAPH_PAYLOAD_SCHEMA_GENERATION = 2` and hydrate before returning from any store read.
 - Produces `EventPayloadCorruptionError(run_id, position, event_type, detail)` and `IncompatibleGraphPayloadGenerationError`.
 
-- [ ] **Automation checkpoint A: Inventory constructor/call-site injection**
+- [x] **Automation checkpoint A: Inventory constructor/call-site injection**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --format json --output /tmp/w5-injection-before.json`
 
@@ -1166,7 +1169,7 @@ Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain catal
 
 Expected: every `GraphEventStore`, `GraphController`, compiler, runtime, workflow, and API construction site is resolved by qualified name and included in the preview; ambiguous test factories are reported rather than guessed.
 
-- [ ] **Step 1: Write injection, generation, and corruption RED tests**
+- [x] **Step 1: Write injection, generation, and corruption RED tests**
 
 Assert constructors fail type checking/call sites without a catalog, duplicate catalog construction fails before app startup, a stored row with generation 1 fails clearly, and invalid JSON payload details include run ID, position, and event name.
 
@@ -1174,7 +1177,7 @@ Run: `uv run pytest tests/integration/test_graph_event_store.py tests/integratio
 
 Expected: current store hydrates `EventEnvelope` with raw dictionaries and has no generation check.
 
-- [ ] **Automation checkpoint B: Apply repeated injection edits before storage semantics**
+- [x] **Automation checkpoint B: Apply repeated injection edits before storage semantics**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain catalog_injection --apply`
 
@@ -1184,7 +1187,7 @@ Run: `uv run python scripts/w5_payload_ast_inventory.py --check-domain catalog_i
 
 Expected: exit 0; manual work is limited to choosing ownership/lifetime of the injected catalog and implementing persistence errors/generation rules.
 
-- [ ] **Step 2: Add the envelope generation column and migration**
+- [x] **Step 2: Add the envelope generation column and migration**
 
 ```python
 payload_schema_generation: Mapped[int | None] = mapped_column(Integer, nullable=True)
@@ -1192,25 +1195,25 @@ payload_schema_generation: Mapped[int | None] = mapped_column(Integer, nullable=
 
 The Alembic upgrade adds a nullable column because `events_v2` also stores non-graph workflow events. `GraphEventStore.append_events()` always writes generation 2; graph reads require exactly 2. No data migration or old graph payload conversion is added.
 
-- [ ] **Step 3: Serialize typed events and hydrate exactly once**
+- [x] **Step 3: Serialize typed events and hydrate exactly once**
 
 `append_events()` converts `HydratedEvent` to `StoredEventEnvelope`, adds durable run/position metadata, and writes JSON. `read_run()` validates the stored envelope then calls `catalog.hydrate_event()` once. Translate stored-envelope/Pydantic failures to `EventPayloadCorruptionError` with structured context.
 
-- [ ] **Step 4: Thread the catalog through every construction site**
+- [x] **Step 4: Thread the catalog through every construction site**
 
 Build one immutable catalog in `create_app()` and pass it through API dependencies/service factories. Add `GraphCatalog` constructor parameters to `GraphDriver`/workflow services and graph runtime builders. Tests construct a real catalog via `build_graph_catalog()` or a small real test catalog; no default global is introduced.
 
-- [ ] **Step 5: Make FastAPI command endpoints use the same models**
+- [x] **Step 5: Make FastAPI command endpoints use the same models**
 
 Alias or directly use `SubmitPatchCommand` and `RecordDecisionCommand` as request schemas, adding only HTTP-owned fields in thin API models when response/documentation concerns require them. Controller resolution validates generic/internal callers. Remove duplicate request-field definitions and dictionary coercion.
 
-- [ ] **Step 6: Run persistence, controller, API, and migration tests**
+- [x] **Step 6: Run persistence, controller, API, and migration tests**
 
 Run: `uv run pytest tests/integration/test_graph_event_store.py tests/integration/test_graph_controller_transactions.py tests/integration/test_graph_api.py tests/integration/test_graph_decisions_api.py tests/integration/test_migrations.py -q`
 
 Expected: pass; malformed persisted JSON and generation mismatch raise the new domain errors before reducer execution.
 
-- [ ] **Step 7: Commit persistence and injection**
+- [x] **Step 7: Commit persistence and injection**
 
 ```bash
 git add src/orchestrator/api src/orchestrator/graph_runtime src/orchestrator/workflow src/orchestrator/db tests/integration
@@ -1237,7 +1240,7 @@ git commit -m "refactor: inject strict graph catalog through persistence"
 - `read_run_light`, `read_run_summary_rebuild`, `read_run_projection`, and `read_run_node_detail` all return fully hydrated events with complete payloads.
 - Checkpoint and summary rows serialize complete strict payloads; API summary mode transforms only after hydration.
 
-- [ ] **Automation checkpoint A: Inventory partial-read definitions and consumers**
+- [x] **Automation checkpoint A: Inventory partial-read definitions and consumers**
 
 Run: `uv run python scripts/w5_payload_ast_inventory.py --format json --output /tmp/w5-read-paths-before.json`
 
@@ -1245,7 +1248,7 @@ Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain compl
 
 Expected: all four constants, `_read_run_extracting_fields`, nested extraction fallbacks, light-event reconstruction, imports, and test references appear in the structural preview.
 
-- [ ] **Step 1: Write complete-payload parity RED tests**
+- [x] **Step 1: Write complete-payload parity RED tests**
 
 For every catalog sample event, append it once and assert each read method returns the same `payload.to_json()` as `read_run()`. Assert checkpoint replay, summary rebuild, node detail, and full replay yield equal projections and event payloads.
 
@@ -1253,7 +1256,7 @@ Run: `uv run pytest tests/unit/test_fixture_corpus.py tests/integration/test_gra
 
 Expected: extracted read paths omit fields for at least one complete sample.
 
-- [ ] **Automation checkpoint B: Apply allowlist/read-path mechanics before projection semantics**
+- [x] **Automation checkpoint B: Apply allowlist/read-path mechanics before projection semantics**
 
 Run: `uv run python scripts/codemods/w5_strict_payload_cutover.py --domain complete_reads --apply`
 
@@ -1263,29 +1266,29 @@ Run: `uv run python scripts/w5_payload_ast_inventory.py --check-domain complete_
 
 Expected: exit 0 with no partial-event extraction site or allowlist reference remaining.
 
-- [ ] **Step 2: Delete all four allowlists and JSON extraction reconstruction**
+- [x] **Step 2: Delete all four allowlists and JSON extraction reconstruction**
 
 Remove `GRAPH_PROJECTION_PAYLOAD_FIELDS`, `LIGHT_GRAPH_PAYLOAD_FIELDS`, `SUMMARY_REBUILD_PAYLOAD_FIELDS`, `NODE_DETAIL_PAYLOAD_FIELDS`, `_read_run_extracting_fields`, nested value fallback extraction, `_node_detail_light_event`, and `_json_extract_payload_value`. Implement the four public methods as named semantic entry points over the complete stored-envelope query/hydration path so callers remain readable without partial events.
 
-- [ ] **Step 3: Store complete payloads in disposable summaries/checkpoints**
+- [x] **Step 3: Store complete payloads in disposable summaries/checkpoints**
 
 Stop compacting payloads before `GraphEventSummaryModel` and node-detail/checkpoint reconstruction. Keep explicit summary presentation logic in `activity_summaries.py` and the API after hydration; it returns a response summary, never a substitute event envelope.
 
-- [ ] **Step 4: Replace remaining payload-shaped projection maps**
+- [x] **Step 4: Replace remaining payload-shaped projection maps**
 
 Convert W5-owned raw shapes to concrete Pydantic models: topology edge/binding contract records, graph patch attempts, gatekeeper report/cost rows, planner generation/session rows, and accepted record summaries. Leave deliberately opaque named business values typed as `JsonValue`; do not convert unrelated response dictionaries solely to reach a count.
 
-- [ ] **Step 5: Run read-path parity and graph integration tests**
+- [x] **Step 5: Run read-path parity and graph integration tests**
 
 Run: `uv run pytest tests/unit/test_fixture_corpus.py tests/unit/test_graph_projections.py tests/integration/test_graph_event_store.py tests/integration/test_graph_read_models.py tests/integration/test_graph_node_detail_read_models.py -q`
 
 Expected: pass; all read modes return complete payloads and all projection variants agree.
 
-- [ ] **Step 6: Record complete-read measurements**
+- [x] **Step 6: Record complete-read measurements**
 
 Run before/after comparisons with `scripts/profile_graph_readback.py` on the fixture corpus and a representative generated run. Record wall time, rows, serialized payload bytes, and peak memory in the ledger. Do not restore field allowlists. If complete reads show a repeatable production-blocking regression, pause for an explicit design amendment backed by measurements; any accepted optimization must be generated from catalog models.
 
-- [ ] **Step 7: Commit complete read paths**
+- [x] **Step 7: Commit complete read paths**
 
 ```bash
 git add src/orchestrator/graph src/orchestrator/graph_runtime src/orchestrator/api/routers/graph.py src/orchestrator/db/access/activity_summaries.py tests
@@ -1309,7 +1312,7 @@ git commit -m "refactor: carry complete strict graph payloads"
 - Metrics script emits stable JSON and Markdown containing catalog and forbidden-pattern counts.
 - `check_graph_payload_architecture.py` imports and evaluates the shared AST facts from `w5_payload_ast_inventory.py`; it does not implement a second scanner.
 
-- [ ] **Step 1: Write failing guard self-tests**
+- [x] **Step 1: Write failing guard self-tests**
 
 Create temporary source fixtures containing each banned pattern and assert the checker reports it: raw `event.payload.get`/indexing, boundary `payload: dict[str, Any]`, direct event construction with dictionary payload, the four allowlist names, W5 `mode="before"` payload normalization, top-level payload `extra`, `COMMAND_HANDLERS`, and event-name branching in `reduce_event`.
 
@@ -1317,15 +1320,15 @@ Run: `uv run pytest tests/unit/test_graph_payload_architecture.py -q`
 
 Expected: fails because the checker does not exist.
 
-- [ ] **Step 2: Implement the AST/static checker**
+- [x] **Step 2: Implement the AST/static checker**
 
 Build rules on `scan_graph_payload_architecture()` from Task 0. Scope checks to `src/orchestrator/graph`, graph-facing runtime/controller/store code, and command/event boundaries. Permit raw JSON only in named storage/API adapter functions. Diagnostics must name the rule and exact location; do not use broad text matches that flag typed projection serialization.
 
-- [ ] **Step 3: Add measurable generic change-spread exercises**
+- [x] **Step 3: Add measurable generic change-spread exercises**
 
 In `test_graph_change_spread.py`, define a test-local event and command domain with strict payloads. Prove that adding a second model field automatically changes JSON schema, serialization, hydration, API-ready dump, round-trip contract coverage, and typed dispatch without editing storage/catalog framework code. Prove a new spec joins a domain tuple and is composed without central dispatch edits.
 
-- [ ] **Step 4: Implement and run the metrics gate**
+- [x] **Step 4: Implement and run the metrics gate**
 
 The metrics output must meet all targets:
 
@@ -1347,7 +1350,7 @@ unclassified_dynamic_event_or_command_sites = 0
 
 Record the current before values in the ledger: 627 `isinstance(` calls across `_commands.py` + `projections.py`, 174 `dict[str, Any]` occurrences in `projections.py`, 86 `event.payload.get(` calls, 6 `event.payload[` calls, 42 relevant before validators in the surveyed W5 files, and 5 top-level payload `extra` declarations.
 
-- [ ] **Step 5: Add the checker to pre-commit and run gates**
+- [x] **Step 5: Add the checker to pre-commit and run gates**
 
 Run: `uv run python scripts/check_graph_payload_architecture.py`
 
@@ -1359,7 +1362,7 @@ Run: `uv run pyright scripts/check_graph_payload_architecture.py scripts/measure
 
 Expected: checker exits 0, tests pass, and every target count is satisfied.
 
-- [ ] **Step 6: Commit enforcement**
+- [x] **Step 6: Commit enforcement**
 
 ```bash
 git add scripts/check_graph_payload_architecture.py scripts/measure_graph_payload_architecture.py tests/unit/test_graph_payload_architecture.py tests/unit/test_graph_change_spread.py tests/unit/test_graph_catalog_contracts.py .pre-commit-config.yaml
@@ -1379,8 +1382,8 @@ git commit -m "test: enforce strict graph payload architecture"
   perform normal fresh initialization onto the strict schema.
 
 Both branches require successful fresh initialization before compatibility
-deletion. Task 13 used Branch B. Final source repairs are `b63146d9b` and
-`0289de70c`.
+deletion. Task 13 used Branch B. Final source repairs are `b63146d9b`,
+`0289de70c`, and `185f31abc`.
 
 **Files:**
 - Modify only if a verification failure exposes a real defect in the owning slice.
@@ -1391,7 +1394,7 @@ deletion. Task 13 used Branch B. Final source repairs are `b63146d9b` and
 - Fresh database must seed factory data and complete a representative typed graph run.
 - No old graph database is converted.
 
-- [ ] **Step 1: Run focused architecture and graph gates**
+- [x] **Step 1: Run focused architecture and graph gates**
 
 Run: `uv run python scripts/check_graph_payload_architecture.py`
 
@@ -1401,7 +1404,7 @@ Run: `uv run pytest tests/ -k graph -q`
 
 Expected: all pass.
 
-- [ ] **Step 2: Run complete repository gates**
+- [x] **Step 2: Run complete repository gates**
 
 Run: `uv run pytest tests/ -q`
 
@@ -1415,7 +1418,7 @@ Run: `git diff --check`
 
 Expected: all commands exit 0; do not classify any failure as unrelated.
 
-- [ ] **Step 3: Stop the server and select Branch A or Branch B**
+- [x] **Step 3: Stop the server and select Branch A or Branch B**
 
 Confirm no Orchestrator server process is using the database. For Branch A,
 run a timestamped copy before removal:
@@ -1428,14 +1431,14 @@ For Branch A, verify the backup exists and has the same byte size as the source.
 For Branch B, record exactly that the worktree database is absent and no
 backup/reset is necessary.
 
-- [ ] **Step 4: Remove only the disposable working database and initialize fresh schema**
+- [x] **Step 4: Remove only the disposable working database and initialize fresh schema**
 
 For Branch A, after backup verification, remove `orchestrator.db`. For Branch B,
 there is nothing to remove. Start the application through the normal project
 command and let Alembic/create-on-empty establish the current strict schema.
 Never remove a backup or journal and never add automatic reset code.
 
-- [ ] **Step 5: Delete the deferred compatibility register after fresh initialization**
+- [x] **Step 5: Delete the deferred compatibility register after fresh initialization**
 
 Only after Branch A backup/reset plus fresh initialization or Branch B absence
 record plus fresh initialization, delete every D1-D6 site, including
@@ -1454,11 +1457,11 @@ and `0289de70c` removed the final legacy effects adapter and enforced typed
 consumers without a production payload adapter; final metrics are 44/23 with
 all strict/current, retired, and deferred compatibility counts zero.
 
-- [ ] **Step 6: Run fresh-schema typed smoke tests through public interfaces**
+- [x] **Step 6: Run fresh-schema typed smoke tests through public interfaces**
 
 Seed factory data, create a representative routine/run, execute lifecycle start, scheduling, callback/verification, checkpoint, compact read, node detail, summary, and graph completion. Assert every persisted graph row has generation 2 and can hydrate through the catalog.
 
-- [ ] **Step 7: Re-run integration and architecture gates after the smoke test**
+- [x] **Step 7: Re-run integration and architecture gates after the smoke test**
 
 Run: `uv run pytest tests/integration/test_graph_dynamic_e2e.py tests/integration/test_graph_read_models.py tests/integration/test_graph_node_detail_read_models.py tests/integration/test_graph_startup_recovery.py -q`
 
@@ -1486,7 +1489,7 @@ Expected: pass against the fresh schema.
   absence/fresh-initialization evidence, and before/after metrics.
 - Architecture docs identify domain module ownership and injected catalog composition.
 
-- [ ] **Step 1: Generate final metrics and catalog inventory**
+- [x] **Step 1: Generate final metrics and catalog inventory**
 
 Run: `uv run python scripts/measure_graph_payload_architecture.py --format markdown`
 
@@ -1494,19 +1497,19 @@ Capture the 44/23 catalog inventory, zero forbidden-pattern counts, final `isins
 
 Also capture the automation ledger for every slice: discovered mechanical sites, sites transformed by LibCST, unsafe semantic sites, zero remaining eligible sites, zero second-run changes, and zero unclassified dynamic event/command sites.
 
-- [ ] **Step 2: Reconcile the ledger explicitly**
+- [x] **Step 2: Reconcile the ledger explicitly**
 
 Add a strict-cutover section that marks prior payload field inventories/semantic tests as retained and compatibility validators/aliases/allowlist work as replaced. Close the old queue items as follows: records, file-state, commands, and grades are completed by Tasks 5–8; allowlist generation is superseded by deletion in Task 11; legacy preservation is superseded by the approved explicit Branch A/B cutover.
 
-- [ ] **Step 3: Refresh architecture and projection documentation**
+- [x] **Step 3: Refresh architecture and projection documentation**
 
 Document the event/command flow, catalog construction/injection points, corruption errors, payload generation, complete read paths, projection typed records, and the post-W5 relational-promotion deferral. Ensure no documentation suggests adding an event to a central conditional or mirroring fields into storage lists.
 
-- [ ] **Step 4: Close W5 documents**
+- [x] **Step 4: Close W5 documents**
 
 Set the approved design status to implemented, set the W5 typed-payload spec to closed, move the latter to `docs/dynamic-graph/complete/`, and leave `post-w5-event-column-promotion.md` deferred with measured W5 baselines.
 
-- [ ] **Step 5: Verify documentation and final repository state**
+- [x] **Step 5: Verify documentation and final repository state**
 
 Run: `rg -n 'GRAPH_PROJECTION_PAYLOAD_FIELDS|LIGHT_GRAPH_PAYLOAD_FIELDS|SUMMARY_REBUILD_PAYLOAD_FIELDS|NODE_DETAIL_PAYLOAD_FIELDS|COMMAND_HANDLERS' src tests docs/ARCHITECTURE.md docs/dynamic-graph`
 
@@ -1516,7 +1519,7 @@ Run: `uv run pytest tests/ -q && uv run ruff check . && uv run pyright && git di
 
 Expected: all exit 0.
 
-- [ ] **Step 6: Commit W5 closure**
+- [x] **Step 6: Commit W5 closure**
 
 ```bash
 git add docs AGENTS.md
@@ -1525,24 +1528,27 @@ git commit -m "docs: close W5 strict payload architecture"
 
 ## Final Acceptance Checklist
 
-Builder reconciliation: complete against Tasks 5-13 evidence and Task 14
-generated metrics. Fresh independent Task 14 verification remains pending; no
-closure commit SHA exists. Final source commits: `b63146d9b` and `0289de70c`;
-latest independent evidence is 1,083 graph tests and 5,101 passed / 5 skipped /
-3 warnings in the full suite, with 44/23 and zero metrics.
+Builder reconciliation and independent verification are complete. Task 14
+documentation was committed by `1b03d5a05` and its final review bookkeeping by
+`938b87ff7`. Final source commits are `b63146d9b`, `0289de70c`, and
+`185f31abc`; latest independent evidence is 1,063 graph tests and 5,151 passed /
+5 skipped / 3 warnings in the full suite, with 44/23 and every expanded metric
+at zero. This later bookkeeping reconciliation remains pending a final docs
+commit; no future commit SHA is asserted.
 
 - [x] Exactly 44 live event specifications and 23 command specifications are cataloged; new raw emissions/dispatches are structurally impossible.
 - [x] Every payload is strict/frozen/extra-forbid; no W5 compatibility normalizer or catch-all top-level field remains.
-- [x] Every producer emits via an event specification; every reducer and command handler receives a concrete model.
+- [x] Every producer emits via an event specification; every reducer and command handler receives a concrete model. Schedule, patch, callback, lifecycle, and source-repair logic have typed domain ownership; `_commands.py` is retired.
 - [x] Audit-only and projection-neutral events use the same create/store/hydrate/catalog path and are explicitly marked neutral.
 - [x] The catalog is immutable, duplicate-checked, deterministic, and injected through compiler, controller, store, runtime, workflow, and API composition.
 - [x] Stored payload generation mismatch and corrupted JSON fail with contextual domain errors.
 - [x] The four allowlists and partial-event reconstruction code are deleted; all read modes preserve complete strict payloads.
-- [x] Payload-shaped W5 projection records are concrete models.
-- [x] Static architecture targets are all zero and pre-commit enforces them.
+- [x] Payload-shaped W5 projection records are concrete models; store projectors, node-reference extraction, and forward event batches consume typed payloads.
+- [x] Patch operations form a strict discriminated `PatchOp` union rather than one sparse permissive model.
+- [x] Static architecture targets are all zero and pre-commit enforces them, including command-dump/raw-helper, internal-adapter, raw-effects, and raw read-model dispatch gates.
 - [x] AST inventory classifies the entire migration surface; every mechanically eligible edit was performed by the LibCST codemod, every domain reports zero eligible sites remaining, and every second codemod run is empty.
 - [x] The model-field, new-event, and new-command maintenance exercises demonstrate no storage or central-dispatch changes.
 - [x] Every Deferred Compatibility Cleanup Register row (D1–D6) is deleted and the register grep gate returns no matches.
-- [x] Corpus replay, graph-focused tests, full backend tests, Ruff, formatting, Pyright, and diff checks pass in Task 13 evidence; Task 14 rerun is pending below.
-- [x] Branch B recorded that no database existed and no backup/reset was necessary; normal startup initialized the fresh schema and representative typed graph smoke tests passed.
+- [x] Corpus replay, 1,063 graph tests, 5,151 full-suite tests (5 skipped, 3 warnings), Ruff, formatting, Pyright, and diff checks pass in final source-repair evidence.
+- [x] Branch B recorded that no database existed and no backup/reset was necessary; normal startup initialized the fresh schema, excludes generation-specific graph journal records while preserving the journal, tolerates malformed records, and restores valid workflow history.
 - [x] Documentation records before/after metrics, retained/replaced work, complete-read measurements, and W5 closure.

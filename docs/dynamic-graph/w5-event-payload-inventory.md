@@ -1,6 +1,6 @@
 # W5 Final Event Payload Inventory
 
-**Status:** Final catalog inventory; Task 14 documentation pending independent verification
+**Status:** Final catalog inventory; Task 14 independently verified
 
 This inventory supersedes the pre-cutover survey of `_commands.py`, raw
 `make_event(...)` calls, legacy aliases, and four payload-field allowlists. The

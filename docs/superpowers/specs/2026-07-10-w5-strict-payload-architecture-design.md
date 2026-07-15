@@ -1,6 +1,6 @@
 # W5 Strict Payload Architecture Cutover
 
-**Status:** Implemented; Task 14 documentation pending independent verification
+**Status:** Implemented, documented, and independently verified
 
 **Date:** 2026-07-10
 
@@ -24,19 +24,30 @@ checker, deterministic metrics, change-spread contracts, codemod idempotency
 tests, and pre-commit hook enforce the result.
 
 Final source repairs are `b63146d9b`, which removed the legacy graph effects
-adapter, and `0289de70c`, which enforced typed graph payload consumers and
-removed production adapter use. Latest independent evidence is 1,083 graph
-tests and 5,101 full-suite tests passing (5 skipped, 3 warnings), with the 44/23
-catalog and every measured architecture, retired-compatibility, and
-deferred-compatibility count at zero.
+adapter; `0289de70c`, which enforced typed graph payload consumers and removed
+production adapter use; and `185f31abc`, which completed typed graph command and
+read-model ownership. Schedule, patch, callback, lifecycle, and source-repair
+logic now live in their owning command modules, and `_commands.py` is a retired
+five-line marker with no handlers. Patch operations are a strict discriminated
+`PatchOp` union. Store projectors consume concrete payloads, node references are
+declared by payload type, and forward references within atomic event batches
+are preserved.
 
-Task 14 generated the final baseline: every strict/current architecture,
-retired-compatibility, deferred-compatibility, remaining-eligible,
-second-run-change, and unclassified-dynamic-site metric is zero. The historical
-two-file `isinstance` count fell from 603 to 412 (-191), and
+Latest independent evidence is 1,063 graph tests and 5,151 full-suite tests
+passing (5 skipped, 3 warnings), with the 44/23 catalog and every expanded
+architecture, retired-compatibility, and deferred-compatibility count at zero.
+The zero gates include raw future command-effects contracts, command-model
+dumps to raw helpers, raw event creators, internal JSON payload adapters, and
+raw read-model event dispatch.
+
+Task 14 and the final source repair generated the final baseline: every
+strict/current architecture, retired-compatibility, deferred-compatibility,
+remaining-eligible, second-run-change, and unclassified-dynamic-site metric is
+zero. The historical two-file `isinstance` count fell from 603 to 260 (-343), and
 `projections.py` `dict[str, Any]` occurrences fell from 174 to 102 (-72).
-No Task 14 commit SHA is recorded because no commit has been created; fresh
-independent documentation verification remains pending.
+Task 14 documentation commits are `1b03d5a05` and `938b87ff7`; final source
+repair is `185f31abc`. This later bookkeeping reconciliation is pending a final
+documentation commit and does not assert a future SHA.
 
 **Supersedes:** The compatibility-first migration strategy in
 `2026-07-09-w5-typed-payloads-completion-design.md` and the remaining queue in
@@ -225,6 +236,11 @@ Task 13 took the absence branch. Its exact contemporaneous record is:
 necessary.` Normal startup then initialized the current strict schema, after
 which Task 13 deleted D1-D6 compatibility. No old database was converted or
 destroyed.
+
+Fresh-database journal bootstrap deliberately excludes `graph:` aggregates
+because their strict generation-2 envelopes cannot be reconstructed by generic
+workflow restore. It leaves those records in the journal, skips malformed
+records, and continues restoring valid workflow history.
 
 No migration converts old graph events or snapshots. A payload schema
 generation on stored envelopes makes accidental use of an incompatible

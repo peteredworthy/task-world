@@ -416,6 +416,19 @@ serialize typed projection records. API presentation summaries happen after
 hydration. The former four payload-field allowlists and partial reconstruction
 paths are deleted.
 
+Typed command implementations are owned by `graph/commands/schedule.py`,
+`patches.py`, `callbacks.py`, `lifecycle.py`, and `source_repair.py`.
+`graph/_commands.py` is retired and exports no handlers or event helpers. Patch
+operations use a strict discriminated `PatchOp` union. Store projection helpers
+validate concrete catalog payloads before projecting summaries, enumerate node
+references by payload type rather than recursively scanning JSON, and preserve
+forward node references within an atomic event batch.
+
+On fresh-database JSONL bootstrap, generic workflow restore skips `graph:`
+aggregates because strict graph history is generation-specific. Graph records
+remain untouched in the journal; malformed records are tolerated, and valid
+workflow records continue to restore.
+
 **Maintenance rule:** add or change a field, event, or command in its owning
 domain model/specification and behavior tests. Never add a central event-name or
 command-name conditional, and never mirror payload fields into storage/read
@@ -425,12 +438,14 @@ columns remains deferred to
 `docs/dynamic-graph/post-w5-event-column-promotion.md`.
 
 W5's final source commits are `b63146d9b` (legacy graph effects adapter
-removal) and `0289de70c` (typed payload-consumer enforcement). Production
-consumers receive concrete models directly; there is no production
-payload JSON compatibility adapter. Latest independent evidence is 1,083 graph tests
-and 5,101 passed / 5 skipped / 3 warnings in the full suite, with a 44-event /
-23-command catalog and every measured architecture and compatibility metric at
-zero.
+removal), `0289de70c` (typed payload-consumer enforcement), and `185f31abc`
+(typed command/read-model ownership). Production consumers receive concrete
+models directly; there is no production payload JSON compatibility adapter.
+Latest independent evidence is 1,063 graph tests and 5,151 passed / 5 skipped /
+3 warnings in the full suite, with a 44-event / 23-command catalog and every
+expanded architecture and compatibility metric at zero, including command
+dumps to raw helpers, internal adapters, raw command effects, and raw read-model
+dispatch.
 
 ---
 

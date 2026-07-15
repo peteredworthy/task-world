@@ -25,15 +25,16 @@ Tasks 5 and 7-14 are complete:
 | 10 | Catalog injection and generation-2 persistence | `87ecaefad` |
 | 11 | Complete payload reads and typed projection records | `cd795d576` |
 | 12 | Architecture enforcement and change-spread gates | `d5f11382a` |
-| 13 | Branch B fresh initialization, D1-D6 deletion, and strict source cutover | `e63fb41ec`; source repairs `b63146d9b`, `0289de70c` |
-| 14 | Documentation, ledger, and metrics reconciliation | Complete in working tree; no Task14 commit SHA exists |
+| 13 | Branch B fresh initialization, D1-D6 deletion, and strict source cutover | `e63fb41ec`; source repairs `b63146d9b`, `0289de70c`, `185f31abc` |
+| 14 | Documentation, ledger, and metrics reconciliation | `1b03d5a05`; final review bookkeeping `938b87ff7` |
 
-Final source evidence after `b63146d9b` and `0289de70c`: exactly 44 event
+Final source evidence after `b63146d9b`, `0289de70c`, and `185f31abc`: exactly 44 event
 specifications and 23 command specifications; every strict/current,
 retired-compatibility, deferred-compatibility, remaining-eligible, second-run,
-and unclassified metric is zero; 1,083 graph tests and 5,101 full-suite tests
-pass (5 skipped, 3 warnings). Task14 remains pending independent documentation
-verification and intentionally has no future commit SHA.
+unclassified, command-dump, internal-adapter, raw-effects, and raw read-model
+dispatch metric is zero; 1,063 graph tests and 5,151 full-suite tests pass (5
+skipped, 3 warnings). Task 14 is independently verified. This later bookkeeping
+remains pending a final docs commit and intentionally asserts no future SHA.
 
 ## Queue
 
@@ -52,6 +53,11 @@ Empty. There are no remaining W5 implementation tasks or register rows.
 - Task 11 deleted all four payload allowlists rather than generating them.
 - Source repair `b63146d9b` removed the legacy graph effects adapter;
   `0289de70c` enforced typed consumers and removed production adapter use.
+- Source repair `185f31abc` retired `_commands.py`, completed typed ownership
+  for schedule/patch/callback/lifecycle/source-repair commands, made `PatchOp` a
+  strict discriminated union, typed store projectors/node references/forward
+  batches, and made fresh Branch B restore skip graph journal records while
+  preserving malformed-tolerant workflow recovery.
 
 ## Historical Engineering Ground Rules
 

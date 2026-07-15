@@ -13,9 +13,10 @@ W5 closed with exactly 44 event specifications and 23 command specifications.
 All measured raw-boundary, direct-dictionary construction, legacy normalizer,
 top-level payload-extra, central-dispatch, allowlist, remaining migration,
 second-run, unclassified dynamic-site, retired-compatibility, and deferred
-D1-D6 counts are zero. The historical two-kernel-file `isinstance` count fell
-from 603 to 412 (-191); `projections.py` `dict[str, Any]` occurrences fell from
-174 to 102 (-72). Remaining dictionaries include dynamic indexes and named
+D1-D6 counts are zero. This includes command-dump/raw-helper, internal-adapter,
+raw-effects, and raw read-model dispatch metrics. The historical two-kernel-file
+`isinstance` count fell from 603 to 260 (-343); `projections.py`
+`dict[str, Any]` occurrences fell from 174 to 102 (-72). Remaining dictionaries include dynamic indexes and named
 opaque/public JSON, not a license to promote fields without measurements.
 
 Task 11 complete-read baselines provide the starting cost data:

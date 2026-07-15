@@ -2,6 +2,8 @@
 
 > Historical compatibility-first prompt. Its future-work instructions are
 > superseded by the completed strict-cutover handoff and closed spec.
+> Final closure docs are `1b03d5a05` / `938b87ff7`; final source repair is
+> `185f31abc`. The queue and metrics below are preserved historical instructions.
 
 You are the orchestrator for finishing W5 (typed payloads) in the task-world dynamic graph kernel. You coordinate; sub-agents read and edit. Keep your own context small: you never open `_commands.py`, `projections.py`, `store.py`, or `models.py` yourself — sub-agents do, and return summaries. Your durable state is the progress ledger, not your conversation.
 
