@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 from datetime import datetime, timedelta
-from orchestrator.graph._commands import Clock
-from typing import Any
+from typing import Any, Protocol
 from orchestrator.graph.projections import (
     GraphProjection,
     final_invariant_blockers_for_events,
@@ -18,22 +17,14 @@ from orchestrator.graph.events.lifecycle import (
     RunLifecycleChangedPayload,
     RuntimeRetryScheduledPayload,
 )
-from orchestrator.graph.events.leases import LEASE_RENEWED, LeaseRenewedPayload
-from orchestrator.graph._commands import (
-    IdGenerator,
-    NONTERMINAL_RUN_STATES,
-    REOPEN_ACTOR_ROLES,
-    RUN_LIFECYCLE_TRANSITIONS,
-    TERMINAL_RUN_STATES,
+from orchestrator.graph.events.leases import (
+    LEASE_RENEWED,
+    LEASE_REVOKED,
+    LeaseRenewedPayload,
+    LeaseRevokedPayload,
 )
-
-from collections.abc import Callable
-
 from pydantic import Field
 
-from orchestrator.graph._commands import (
-    event_factory,
-)
 from orchestrator.graph.events.lifecycle import (
     HEARTBEAT_RECORDED,
     HeartbeatRecordedPayload,
@@ -44,12 +35,47 @@ from orchestrator.graph.specifications import (
     CommandExecutionContext,
     CommandSpecification,
     HydratedEvent,
-    FutureCommandEffects,
 )
-from orchestrator.graph._commands import typed_topology_event
-from orchestrator.graph.events.leases import LEASE_REVOKED
-from orchestrator.graph._commands import make_strict_event
 from orchestrator.graph.events.records import OUTPUT_RECORD_ACCEPTED
+from orchestrator.graph.events.records import OutputRecordAcceptedPayload
+from orchestrator.graph.events.topology import NODE_STATE_CHANGED, NodeStateChangedPayload
+from orchestrator.graph.models import (
+    StrictCompletionDecisionRecord,
+    StrictCompletionDecisionValue,
+    StrictFailureRecord,
+    StrictFailureRecordValue,
+    StrictRecoveryPlanRecord,
+    StrictRecoveryPlanValue,
+)
+
+
+class Clock(Protocol):
+    def now(self) -> datetime: ...
+
+
+class IdGenerator(Protocol):
+    def next_id(self, prefix: str = "") -> str: ...
+
+
+RUN_LIFECYCLE_TRANSITIONS: dict[str, dict[str, str]] = {
+    "accept_run": {"draft": "queued"},
+    "start": {"queued": "active"},
+    "pause": {"active": "pausing", "pausing": "paused"},
+    "resume": {"paused": "resuming", "resuming": "active", "failed": "resuming"},
+    "cancel": {"active": "cancelling", "paused": "cancelling", "cancelling": "cancelled"},
+    "complete": {"active": "completed"},
+}
+REOPEN_ACTOR_ROLES = {"human", "operator"}
+TERMINAL_RUN_STATES = {"cancelled", "completed", "failed"}
+NONTERMINAL_RUN_STATES = {
+    "draft",
+    "queued",
+    "active",
+    "pausing",
+    "paused",
+    "resuming",
+    "cancelling",
+}
 
 
 def _command_rejected(
@@ -130,6 +156,150 @@ class AgentDiedCommand(StrictPayload):
     retry_backoff_seconds: int = Field(default=0, ge=0)
 
 
+class FailureRecordInput(StrictPayload):
+    node_id: str
+    error_class: str
+    lease_id: str
+    execution_id: str
+    generation: int = Field(ge=0)
+    reason: str
+    attempt_number: int | None = Field(default=None, ge=0)
+    max_attempts: int | None = Field(default=None, ge=0)
+
+
+class RecoveryPlanRecordInput(StrictPayload):
+    node_id: str
+    retry: RuntimeRetryScheduledPayload
+    retry_backoff_seconds: int = Field(ge=0)
+
+
+def _completion_decision_event(creator: TypedEventCreator, id_gen: IdGenerator) -> HydratedEvent:
+    record = StrictCompletionDecisionRecord(
+        record_id=id_gen.next_id("completion-decision"),
+        record_kind="output",
+        record_type="completion_decision",
+        producer_node_id="run_lifecycle",
+        port="completion_decision",
+        schema="CompletionDecision",
+        value=StrictCompletionDecisionValue(status="passed", blockers=[]),
+        provenance={"source": "lifecycle_complete"},
+    )
+    return creator.create(OUTPUT_RECORD_ACCEPTED, OutputRecordAcceptedPayload(record=record))
+
+
+def _cancel_active_lease_events(
+    projection: GraphProjection, creator: TypedEventCreator, trigger: str
+) -> list[HydratedEvent]:
+    output: list[HydratedEvent] = []
+    for lease_id, lease in sorted(projection["leases"].items()):
+        if lease.get("state") not in {"active", "suspended"}:
+            continue
+        node_id = lease.get("node_id")
+        generation = lease.get("generation")
+        execution_id = lease.get("execution_id")
+        if not (
+            isinstance(node_id, str)
+            and isinstance(generation, int)
+            and not isinstance(generation, bool)
+            and isinstance(execution_id, str)
+        ):
+            continue
+        output.append(
+            creator.create(
+                LEASE_REVOKED,
+                LeaseRevokedPayload(
+                    lease_id=lease_id,
+                    node_id=node_id,
+                    generation=generation,
+                    execution_id=execution_id,
+                    trigger=trigger,
+                    reason="run_cancelled",
+                ),
+            )
+        )
+        if projection["node_states"].get(node_id) not in {
+            "completed",
+            "failed",
+            "cancelled",
+            "retired",
+        }:
+            output.append(
+                creator.create(
+                    NODE_STATE_CHANGED,
+                    NodeStateChangedPayload(
+                        node_id=node_id,
+                        new_state="cancelled",
+                        trigger="run_cancelled",
+                        reason="run_cancelled",
+                    ),
+                )
+            )
+    return output
+
+
+def _lease_revoked_event(creator: TypedEventCreator, died: AgentDiedPayload) -> HydratedEvent:
+    if died.execution_id is None:
+        raise ValueError("active lease agent death requires an execution_id")
+    return creator.create(
+        LEASE_REVOKED,
+        LeaseRevokedPayload(
+            lease_id=died.lease_id,
+            node_id=died.node_id,
+            generation=died.generation,
+            execution_id=died.execution_id,
+            trigger="agent_died",
+            reason=died.reason,
+        ),
+    )
+
+
+def _failure_record_event(creator: TypedEventCreator, request: FailureRecordInput) -> HydratedEvent:
+    record = StrictFailureRecord(
+        record_id=f"failure-{request.node_id}-{request.lease_id}",
+        record_kind="graph_record",
+        record_type="failure_record",
+        producer_node_id=request.node_id,
+        port="failure_record",
+        schema="FailureRecord",
+        value=StrictFailureRecordValue(
+            failed_node_id=request.node_id,
+            phase="runtime",
+            error_class=request.error_class,
+            retryable=False,
+            lease_id=request.lease_id,
+            execution_id=request.execution_id,
+            lease_generation=request.generation,
+            reason=request.reason,
+            attempt_number=request.attempt_number,
+            max_attempts=request.max_attempts,
+        ),
+    )
+    return creator.create(OUTPUT_RECORD_ACCEPTED, OutputRecordAcceptedPayload(record=record))
+
+
+def _recovery_plan_record_event(
+    creator: TypedEventCreator, request: RecoveryPlanRecordInput
+) -> HydratedEvent:
+    state = "ready" if request.retry_backoff_seconds <= 0 else "blocked"
+    record = StrictRecoveryPlanRecord(
+        record_id=f"recovery-plan-{request.node_id}-{request.retry.lease_id}",
+        record_kind="output",
+        record_type="recovery_plan",
+        producer_node_id=request.node_id,
+        port="recovery_plan",
+        schema="RecoveryPlan",
+        value=StrictRecoveryPlanValue(
+            action="retry",
+            responsible_actor="controller",
+            graph_changes=[{"op": "set_node_state", "node_id": request.node_id, "state": state}],
+            reason=request.retry.reason,
+            retry_after_seconds=request.retry.retry_after_seconds,
+            retry_not_before=request.retry.retry_not_before,
+        ),
+    )
+    return creator.create(OUTPUT_RECORD_ACCEPTED, OutputRecordAcceptedPayload(record=record))
+
+
 def _lifecycle_handler(command_type: str):
     def handler(
         command: EmptyLifecycleCommand | FailCommand,
@@ -140,17 +310,15 @@ def _lifecycle_handler(command_type: str):
         actor_role = context.actor.role
         if actor_role is None and context.actor.kind.value == "human":
             actor_role = "human"
-        make_event = event_factory(context, command_type)
+        creator = TypedEventCreator(context, assign_position=False, causation_id=command_type)
         output = apply_lifecycle_effects(
             projection,
             list(events),
             command_type,
             command,
             actor_role,
-            make_event,
-            TypedEventCreator(context, assign_position=False),
+            creator,
             context.id_generator,
-            context.future_effects,
         )
         return _require_future_outcomes(output)
 
@@ -260,14 +428,12 @@ def handle_agent_died_command(
     context: CommandExecutionContext,
 ) -> list[HydratedEvent]:
     del events
-    make_event = event_factory(context, "agent_died")
+    creator = TypedEventCreator(context, assign_position=False, causation_id="agent_died")
     output = build_agent_died_effects(
         projection,
         command,
         context.clock,
-        make_event,
-        TypedEventCreator(context, assign_position=False),
-        context.future_effects,
+        creator,
     )
     return _require_future_outcomes(output)
 
@@ -311,13 +477,9 @@ def apply_lifecycle_effects(
     command_type: str,
     command: EmptyLifecycleCommand | FailCommand,
     actor_role: str | None,
-    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     creator: TypedEventCreator,
     id_gen: IdGenerator,
-    effects: FutureCommandEffects,
 ) -> list[HydratedEvent]:
-    _cancel_active_lease_events = effects.cancel_active_lease_events
-    _lifecycle_completion_decision_event = effects.lifecycle_completion_decision_event
     current_state = projection["run_state"] or "draft"
     if command_type == "fail":
         if current_state in NONTERMINAL_RUN_STATES:
@@ -367,7 +529,7 @@ def apply_lifecycle_effects(
     trigger = f"{command_type}_command_accepted"
     output: list[HydratedEvent] = []
     if command_type == "complete" and not projection["completion_decision_passed"]:
-        output.append(_lifecycle_completion_decision_event({}, make_event, id_gen))
+        output.append(_completion_decision_event(creator, id_gen))
     output.append(
         _lifecycle_event(
             creator,
@@ -378,7 +540,7 @@ def apply_lifecycle_effects(
         )
     )
     if command_type == "cancel":
-        output.extend(_cancel_active_lease_events(projection, make_event, trigger))
+        output.extend(_cancel_active_lease_events(projection, creator, trigger))
     return output
 
 
@@ -386,13 +548,8 @@ def build_agent_died_effects(
     projection: GraphProjection,
     command: AgentDiedCommand,
     clock: Clock,
-    make_event: Callable[[str, dict[str, Any]], HydratedEvent],
     creator: TypedEventCreator,
-    effects: FutureCommandEffects,
 ) -> list[HydratedEvent]:
-    _failure_record_payload = effects.failure_record_payload
-    _recovery_plan_record_payload = effects.recovery_plan_record_payload
-    _typed_lease_event_payload = effects.typed_lease_event_payload
     lease_id = command.lease_id
 
     lease = projection["leases"].get(lease_id)
@@ -422,125 +579,69 @@ def build_agent_died_effects(
         execution_id=lease_execution_id if isinstance(lease_execution_id, str) else execution_id,
         reason=reason,
     )
+    if agent_died_payload.execution_id is None:
+        return [_command_rejected(creator, "agent_died", "missing execution_id")]
 
     if _non_gap_planner_has_accepted_patch(projection, node_id):
         return [
             creator.create(AGENT_DIED, agent_died_payload),
-            make_strict_event(
-                make_event,
-                LEASE_REVOKED,
-                _typed_lease_event_payload(
-                    "lease_revoked",
-                    {
-                        "lease_id": lease_id,
-                        "node_id": node_id,
-                        "generation": generation,
-                        "execution_id": agent_died_payload.execution_id,
-                        "trigger": "agent_died",
-                        "reason": reason,
-                    },
+            _lease_revoked_event(creator, agent_died_payload),
+            creator.create(
+                NODE_STATE_CHANGED,
+                NodeStateChangedPayload(
+                    node_id=node_id,
+                    new_state="completed",
+                    trigger="accepted_graph_patch_before_agent_death",
                 ),
-            ),
-            typed_topology_event(
-                make_event,
-                "node_state_changed",
-                {
-                    "node_id": node_id,
-                    "new_state": "completed",
-                    "trigger": "accepted_graph_patch_before_agent_death",
-                },
             ),
         ]
 
     if _is_rate_limit_death(reason):
         return [
             creator.create(AGENT_DIED, agent_died_payload),
-            make_strict_event(
-                make_event,
-                LEASE_REVOKED,
-                _typed_lease_event_payload(
-                    "lease_revoked",
-                    {
-                        "lease_id": lease_id,
-                        "node_id": node_id,
-                        "generation": generation,
-                        "execution_id": agent_died_payload.execution_id,
-                        "trigger": "agent_died",
-                        "reason": reason,
-                    },
+            _lease_revoked_event(creator, agent_died_payload),
+            _failure_record_event(
+                creator,
+                FailureRecordInput(
+                    node_id=node_id,
+                    error_class="agent_rate_limited",
+                    lease_id=lease_id,
+                    execution_id=agent_died_payload.execution_id,
+                    generation=generation,
+                    reason=reason,
                 ),
             ),
-            make_strict_event(
-                make_event,
-                OUTPUT_RECORD_ACCEPTED,
-                {
-                    "record": _failure_record_payload(
-                        node_id=node_id,
-                        phase="runtime",
-                        error_class="agent_rate_limited",
-                        retryable=False,
-                        lease_id=lease_id,
-                        execution_id=agent_died_payload.execution_id,
-                        generation=generation,
-                        reason=reason,
-                    )
-                },
-            ),
-            typed_topology_event(
-                make_event,
-                "node_state_changed",
-                {
-                    "node_id": node_id,
-                    "new_state": "failed",
-                    "trigger": "agent_rate_limited",
-                    "reason": reason,
-                },
+            creator.create(
+                NODE_STATE_CHANGED,
+                NodeStateChangedPayload(
+                    node_id=node_id, new_state="failed", trigger="agent_rate_limited", reason=reason
+                ),
             ),
         ]
 
     if _is_non_retryable_runtime_death(reason):
         return [
             creator.create(AGENT_DIED, agent_died_payload),
-            make_strict_event(
-                make_event,
-                LEASE_REVOKED,
-                _typed_lease_event_payload(
-                    "lease_revoked",
-                    {
-                        "lease_id": lease_id,
-                        "node_id": node_id,
-                        "generation": generation,
-                        "execution_id": agent_died_payload.execution_id,
-                        "trigger": "agent_died",
-                        "reason": reason,
-                    },
+            _lease_revoked_event(creator, agent_died_payload),
+            _failure_record_event(
+                creator,
+                FailureRecordInput(
+                    node_id=node_id,
+                    error_class="runtime_configuration_error",
+                    lease_id=lease_id,
+                    execution_id=agent_died_payload.execution_id,
+                    generation=generation,
+                    reason=reason,
                 ),
             ),
-            make_strict_event(
-                make_event,
-                OUTPUT_RECORD_ACCEPTED,
-                {
-                    "record": _failure_record_payload(
-                        node_id=node_id,
-                        phase="runtime",
-                        error_class="runtime_configuration_error",
-                        retryable=False,
-                        lease_id=lease_id,
-                        execution_id=agent_died_payload.execution_id,
-                        generation=generation,
-                        reason=reason,
-                    )
-                },
-            ),
-            typed_topology_event(
-                make_event,
-                "node_state_changed",
-                {
-                    "node_id": node_id,
-                    "new_state": "failed",
-                    "trigger": "non_retryable_runtime_error",
-                    "reason": reason,
-                },
+            creator.create(
+                NODE_STATE_CHANGED,
+                NodeStateChangedPayload(
+                    node_id=node_id,
+                    new_state="failed",
+                    trigger="non_retryable_runtime_error",
+                    reason=reason,
+                ),
             ),
         ]
 
@@ -549,49 +650,30 @@ def build_agent_died_effects(
     if max_attempts > 0 and attempt_number >= max_attempts:
         return [
             creator.create(AGENT_DIED, agent_died_payload),
-            make_strict_event(
-                make_event,
-                LEASE_REVOKED,
-                _typed_lease_event_payload(
-                    "lease_revoked",
-                    {
-                        "lease_id": lease_id,
-                        "node_id": node_id,
-                        "generation": generation,
-                        "execution_id": agent_died_payload.execution_id,
-                        "trigger": "agent_died",
-                        "reason": reason,
-                    },
+            _lease_revoked_event(creator, agent_died_payload),
+            _failure_record_event(
+                creator,
+                FailureRecordInput(
+                    node_id=node_id,
+                    error_class="max_attempts_exhausted",
+                    lease_id=lease_id,
+                    execution_id=agent_died_payload.execution_id,
+                    generation=generation,
+                    reason=reason,
+                    attempt_number=attempt_number,
+                    max_attempts=max_attempts,
                 ),
             ),
-            make_strict_event(
-                make_event,
-                OUTPUT_RECORD_ACCEPTED,
-                {
-                    "record": _failure_record_payload(
-                        node_id=node_id,
-                        phase="runtime",
-                        error_class="max_attempts_exhausted",
-                        retryable=False,
-                        lease_id=lease_id,
-                        execution_id=agent_died_payload.execution_id,
-                        generation=generation,
-                        reason=reason,
-                        metadata={"attempt_number": attempt_number, "max_attempts": max_attempts},
-                    )
-                },
-            ),
-            typed_topology_event(
-                make_event,
-                "node_state_changed",
-                {
-                    "node_id": node_id,
-                    "new_state": "failed",
-                    "trigger": "max_attempts_exhausted",
-                    "reason": "max_attempts_exhausted",
-                    "attempt_number": attempt_number,
-                    "max_attempts": max_attempts,
-                },
+            creator.create(
+                NODE_STATE_CHANGED,
+                NodeStateChangedPayload(
+                    node_id=node_id,
+                    new_state="failed",
+                    trigger="max_attempts_exhausted",
+                    reason="max_attempts_exhausted",
+                    attempt_number=attempt_number,
+                    max_attempts=max_attempts,
+                ),
             ),
         ]
 
@@ -599,66 +681,44 @@ def build_agent_died_effects(
     # same executable node. No new retry node is created until output/file-state
     # acceptance semantics exist in the graph runtime slice.
     retry_backoff_seconds = command.retry_backoff_seconds
-    retry_payload: dict[str, Any] = {
-        "node_id": node_id,
-        "lease_id": lease_id,
-        "generation": generation,
-        "policy": "v1_requeue_same_node_after_agent_death",
-        "reason": reason,
-    }
+    retry_payload = RuntimeRetryScheduledPayload(
+        node_id=node_id,
+        lease_id=lease_id,
+        generation=generation,
+        policy="v1_requeue_same_node_after_agent_death",
+        reason=reason,
+    )
     next_attempt_number = attempt_number + 1
-    node_state_payload = {
-        "node_id": node_id,
-        "new_state": "ready",
-        "trigger": "agent_died_retry_scheduled",
-        "attempt_number": next_attempt_number,
-    }
+    node_state_payload = NodeStateChangedPayload(
+        node_id=node_id,
+        new_state="ready",
+        trigger="agent_died_retry_scheduled",
+        attempt_number=next_attempt_number,
+    )
     if retry_backoff_seconds > 0:
         retry_not_before = (clock.now() + timedelta(seconds=retry_backoff_seconds)).isoformat()
-        retry_payload["retry_after_seconds"] = retry_backoff_seconds
-        retry_payload["retry_not_before"] = retry_not_before
-        node_state_payload = {
-            "node_id": node_id,
-            "new_state": "blocked",
-            "trigger": "agent_died_retry_backoff_scheduled",
-            "retry_not_before": retry_not_before,
-            "attempt_number": next_attempt_number,
-        }
+        retry_payload = retry_payload.model_copy(
+            update={
+                "retry_after_seconds": retry_backoff_seconds,
+                "retry_not_before": retry_not_before,
+            }
+        )
+        node_state_payload = NodeStateChangedPayload(
+            node_id=node_id,
+            new_state="blocked",
+            trigger="agent_died_retry_backoff_scheduled",
+            retry_not_before=retry_not_before,
+            attempt_number=next_attempt_number,
+        )
     return [
         creator.create(AGENT_DIED, agent_died_payload),
-        make_strict_event(
-            make_event,
-            LEASE_REVOKED,
-            _typed_lease_event_payload(
-                "lease_revoked",
-                {
-                    "lease_id": lease_id,
-                    "node_id": node_id,
-                    "generation": generation,
-                    "execution_id": agent_died_payload.execution_id,
-                    "trigger": "agent_died",
-                    "reason": reason,
-                },
+        _lease_revoked_event(creator, agent_died_payload),
+        creator.create(RUNTIME_RETRY_SCHEDULED, retry_payload),
+        _recovery_plan_record_event(
+            creator,
+            RecoveryPlanRecordInput(
+                node_id=node_id, retry=retry_payload, retry_backoff_seconds=retry_backoff_seconds
             ),
         ),
-        creator.create(
-            RUNTIME_RETRY_SCHEDULED,
-            RuntimeRetryScheduledPayload(**retry_payload),
-        ),
-        make_strict_event(
-            make_event,
-            OUTPUT_RECORD_ACCEPTED,
-            {
-                "record": _recovery_plan_record_payload(
-                    node_id=node_id,
-                    retry_payload=retry_payload,
-                    retry_backoff_seconds=retry_backoff_seconds,
-                )
-            },
-        ),
-        typed_topology_event(
-            make_event,
-            "node_state_changed",
-            node_state_payload,
-        ),
+        creator.create(NODE_STATE_CHANGED, node_state_payload),
     ]

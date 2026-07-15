@@ -18,7 +18,6 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     apply_command,
     build_graph_catalog,
-    build_graph_command_dependencies,
     initial_projection,
     reduce_event,
 )
@@ -169,7 +168,6 @@ def test_node_lifecycle_producers_emit_strict_payloads() -> None:
             id_generator=id_generator,
             actor=Actor(kind=ActorKind.CONTROLLER),
             events=tuple(events),
-            future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
             catalog=catalog,
         ),
     )

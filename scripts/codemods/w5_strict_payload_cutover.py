@@ -22,6 +22,13 @@ from libcst import metadata
 from libcst.helpers import get_full_name_for_node
 from libcst.metadata.scope_provider import GlobalScope
 
+try:
+    from scripts.codemods.remove_graph_command_effects import (
+        transform as remove_graph_command_effects,
+    )
+except ModuleNotFoundError:  # Direct script execution starts in scripts/codemods.
+    from remove_graph_command_effects import transform as remove_graph_command_effects
+
 
 @dataclass(frozen=True)
 class SymbolRelocation:
@@ -2265,6 +2272,9 @@ class StrictPayloadCutoverCodemod:
         self.migration = migration
 
     def transform_source(self, source: str, path: str = "<memory>") -> TransformResult:
+        retired_effect_changes = 0
+        if self.migration.domain == "catalog_injection":
+            source, retired_effect_changes = remove_graph_command_effects(source)
         module = cst.parse_module(source)
         tree = ast.parse(source, filename=path)
         ast_parents: dict[ast.AST, ast.AST] = {}
@@ -2425,7 +2435,7 @@ class StrictPayloadCutoverCodemod:
         return TransformResult(
             source=transformed.code,
             diagnostics=tuple(sorted(transformer.diagnostics)),
-            changes=transformer.changes,
+            changes=retired_effect_changes + transformer.changes,
         )
 
     def transform_files(self, sources: Mapping[str, str]) -> FileTransformResult:
@@ -2964,7 +2974,6 @@ VERTICAL_SLICE_MIGRATION = DomainMigration(
                 "orchestrator.graph_runtime.GraphController",
                 "orchestrator.graph_runtime.controller.GraphController",
             ),
-            additional_arguments=("future_effects",),
             factory_arguments=True,
         ),
     ),
@@ -3194,7 +3203,6 @@ DOMAIN_MIGRATIONS.update(
                         "orchestrator.graph_runtime.GraphController",
                         "orchestrator.graph_runtime.controller.GraphController",
                     ),
-                    additional_arguments=("future_effects",),
                 ),
                 CatalogInjection(
                     "compile_routine",

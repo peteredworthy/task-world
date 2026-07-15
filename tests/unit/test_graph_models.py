@@ -40,7 +40,7 @@ from orchestrator.graph.models import (
     NodeState,
     OutputRecord,
     PatchEnvelope,
-    PatchOp,
+    parse_patch_op,
     PortModel,
     RecordSelector,
     RequirementRecord,
@@ -518,7 +518,7 @@ def test_legacy_verification_selector_normalizes_verdict_to_outcome() -> None:
         }
     )
 
-    assert selector.model_dump(mode="json") == {
+    assert selector.to_json() == {
         "record_type": "verification_report",
         "schema": "VerificationReport",
         "outcome": "failed",
@@ -1478,6 +1478,7 @@ def test_patch_envelope_round_trips() -> None:
                 },
                 {
                     "op": "create_edge",
+                    "edge_id": "edge-read-tests-to-synthesis",
                     "from_node_id": "read-tests",
                     "from_port": "findings",
                     "to_node_id": "synthesis",
@@ -1606,7 +1607,7 @@ def test_all_models_import_and_enums_cover_prd_values() -> None:
         "released",
     }
     assert Actor.model_validate({"kind": ActorKind.CONTROLLER}) == Actor(kind="controller")
-    assert PatchOp.model_validate({"op": "retire_node", "node_id": "build-A-1"}).op
+    assert parse_patch_op({"op": "retire_node", "node_id": "build-A-1"}).op
     assert ResourceClaim.model_validate({"mode": "read", "scope": "repo"}).mode == "read"
     assert Authority.model_validate({"allowed_actions": []}).allowed_actions == []
     selector = RecordSelector.model_validate({"record_kinds": ["output"]})
@@ -1619,3 +1620,114 @@ def test_all_models_import_and_enums_cover_prd_values() -> None:
 def test_external_resource_claim_requires_key() -> None:
     with pytest.raises(ValueError, match="external_resource_key"):
         ResourceClaim.model_validate({"mode": "external", "scope": "external"})
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "unknown", "node_id": "node-1"},
+        {"op": "retire_node", "node_id": "node-1", "unexpected": True},
+        {"op": "retire_node"},
+        {"op": "retire_node", "node_id": 1},
+        {
+            "op": "create_node",
+            "node": {"node_id": "node-1", "kind": "worker", "unexpected": True},
+        },
+    ],
+)
+def test_patch_envelope_rejects_invalid_patch_operations_at_the_boundary(
+    op: dict[str, Any],
+) -> None:
+    with pytest.raises(ValidationError):
+        PatchEnvelope.model_validate(
+            {
+                "patch_id": "patch-1",
+                "proposed_by_node_id": "planner-1",
+                "base_graph_position": 0,
+                "ops": [op],
+            }
+        )
+
+
+def test_patch_envelope_json_schema_exposes_strict_discriminated_operations() -> None:
+    schema = PatchEnvelope.model_json_schema()
+    assert schema["properties"]["ops"]["items"] == {"$ref": "#/$defs/PatchOp"}
+    ops_schema = schema["$defs"]["PatchOp"]
+
+    assert ops_schema["discriminator"]["propertyName"] == "op"
+    assert set(ops_schema["discriminator"]["mapping"]) == {
+        "create_node",
+        "create_edge",
+        "retire_node",
+        "create_revision_attempt",
+        "create_appeal",
+        "create_gate",
+        "set_resource_claims",
+        "set_allowed_actions",
+        "mark_plan_region_suspect",
+    }
+
+
+def test_create_appeal_patch_kind_is_exact_and_defaults_to_appeal() -> None:
+    required_fields = {
+        "op": "create_appeal",
+        "node_id": "appeal-1",
+        "appealed_node_id": "verifier-1",
+        "appeal_type": "invalid_test",
+    }
+
+    assert parse_patch_op({**required_fields, "kind": "appeal"}).model_dump()["kind"] == "appeal"
+    assert parse_patch_op(required_fields).model_dump()["kind"] == "appeal"
+    with pytest.raises(ValidationError):
+        parse_patch_op({**required_fields, "kind": "review"})
+
+
+@pytest.mark.parametrize(
+    "op",
+    [
+        {"op": "create_node", "node": {"node_id": "node-1", "kind": "worker"}},
+        {
+            "op": "create_edge",
+            "edge_id": "edge-1",
+            "from_node_id": "node-1",
+            "from_port": "candidate",
+            "to_node_id": "node-2",
+            "to_port": "candidate_under_test",
+        },
+        {"op": "retire_node", "node_id": "node-1"},
+        {
+            "op": "create_revision_attempt",
+            "task_region_id": "region-1",
+            "failed_candidate_id": "candidate-1",
+        },
+        {
+            "op": "create_appeal",
+            "node_id": "appeal-1",
+            "appealed_node_id": "node-1",
+            "appeal_type": "invalid_test",
+        },
+        {"op": "create_gate", "node_id": "gate-1", "predecessor_node_ids": ["node-1"]},
+        {
+            "op": "set_resource_claims",
+            "node_id": "node-1",
+            "resource_claims": [{"mode": "read", "scope": "repo"}],
+        },
+        {"op": "set_allowed_actions", "node_id": "node-1", "allowed_actions": ["submit_records"]},
+        {
+            "op": "mark_plan_region_suspect",
+            "region_node_ids": ["node-1"],
+            "reason": "requirements_changed",
+        },
+    ],
+)
+def test_patch_envelope_accepts_each_declared_patch_operation(op: dict[str, Any]) -> None:
+    patch = PatchEnvelope.model_validate(
+        {
+            "patch_id": "patch-1",
+            "proposed_by_node_id": "planner-1",
+            "base_graph_position": 0,
+            "ops": [op],
+        }
+    )
+
+    assert patch.ops[0].op == op["op"]

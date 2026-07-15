@@ -15,7 +15,6 @@ from orchestrator.graph import (
     HydratedEvent,
     SequentialIdGenerator,
     apply_command as apply_typed_command,
-    build_graph_command_dependencies,
     initial_projection,
     project_gatekeeper_report,
     project_pattern_library,
@@ -40,9 +39,6 @@ def apply_command(projection, events, command_type, payload, clock, id_gen):
         id_generator=id_gen,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=tuple(events),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
         catalog=catalog,
     )
     output = apply_typed_command(

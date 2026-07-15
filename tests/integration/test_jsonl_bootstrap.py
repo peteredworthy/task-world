@@ -377,6 +377,106 @@ async def test_bootstrap_supports_legacy_history_jsonl(
     assert task_id == _TASK_ID
 
 
+async def test_bootstrap_skips_malformed_and_legacy_graph_records_in_fresh_database(
+    tmp_path: Path,
+) -> None:
+    """A fresh database restores valid workflow history without changing the journal."""
+    db_path = tmp_path / "orchestrator.db"
+    journal_path = tmp_path / "history.jsonl"
+    _write_fixture_jsonl(journal_path)
+    malformed_records: list[object] = [
+        None,
+        [],
+        "not an envelope",
+        3,
+        {
+            "position": True,
+            "aggregate_id": _RUN_ID,
+            "event_type": "run_created",
+            "timestamp": "2025-01-15T10:30:06+00:00",
+            "payload": {},
+        },
+        {
+            "position": 8,
+            "version": False,
+            "aggregate_id": _RUN_ID,
+            "event_type": "run_created",
+            "timestamp": "2025-01-15T10:30:06+00:00",
+            "payload": {},
+        },
+        {
+            "position": 9,
+            "aggregate_id": 12,
+            "event_type": "run_created",
+            "timestamp": "2025-01-15T10:30:06+00:00",
+            "payload": {},
+        },
+        {
+            "position": 10,
+            "aggregate_id": _RUN_ID,
+            "event_type": ["run_created"],
+            "timestamp": "2025-01-15T10:30:06+00:00",
+            "payload": {},
+        },
+        {
+            "position": 11,
+            "aggregate_id": _RUN_ID,
+            "event_type": "run_created",
+            "timestamp": 1736937006,
+            "payload": {},
+        },
+        {
+            "position": 12,
+            "aggregate_id": _RUN_ID,
+            "event_type": "run_created",
+            "timestamp": "2025-01-15T10:30:06+00:00",
+            "payload": [],
+        },
+    ]
+    legacy_graph_record = {
+        "position": 7,
+        "aggregate_id": f"graph:{_RUN_ID}",
+        "event_type": "node_created",
+        "timestamp": "2025-01-15T10:30:06+00:00",
+        "payload": {"node_id": "legacy-node", "kind": "worker"},
+    }
+    with open(journal_path, "a") as journal:
+        for malformed_record in malformed_records:
+            journal.write(json.dumps(malformed_record) + "\n")
+        journal.write(json.dumps(legacy_graph_record) + "\n")
+    original_journal = journal_path.read_text()
+
+    engine = create_engine(db_path)
+    try:
+        await init_db(engine)
+        factory = create_session_factory(engine)
+        async with factory() as session:
+            registry = ProjectionRegistry()
+            registry.register(RunStateProjector())
+            registry.register(TaskStateProjector())
+
+            await bootstrap_from_jsonl(session, journal_path, registry)
+            await session.commit()
+
+            restored = (
+                await session.execute(
+                    text(
+                        "SELECT aggregate_id, payload_schema_generation FROM events_v2 "
+                        "ORDER BY position"
+                    )
+                )
+            ).fetchall()
+            assert [aggregate_id for aggregate_id, _ in restored] == [_RUN_ID] * 6
+            assert all(generation is None for _, generation in restored)
+            assert (await session.execute(text("SELECT status FROM runs"))).scalar_one() == "active"
+    finally:
+        await engine.dispose()
+
+    assert journal_path.read_text() == original_journal
+    retained_records = [json.loads(line) for line in original_journal.splitlines()]
+    assert legacy_graph_record in retained_records
+
+
 async def test_restore_script_restores_legacy_jsonl_to_file_db(tmp_path: Path) -> None:
     """The restore script entrypoint uses events_v2 bootstrap against a real DB file."""
     restore_module = import_module("scripts.restore_from_journal")

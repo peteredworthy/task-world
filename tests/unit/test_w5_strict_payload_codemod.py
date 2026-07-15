@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -1997,6 +1999,50 @@ def make_store(session, catalog):
     assert first.changes == 1
     assert second.source == first.source
     assert second.changes == 0
+
+
+def test_catalog_injection_removes_retired_future_effects_argument() -> None:
+    source = """\
+from orchestrator.graph_runtime import GraphController
+
+controller = GraphController(store=store, future_effects=effects)
+"""
+
+    result = StrictPayloadCutoverCodemod(DOMAIN_MIGRATIONS["catalog_injection"]).transform_source(
+        source, "src/orchestrator/workflow/service.py"
+    )
+
+    assert "future_effects" not in result.source
+    assert "GraphController(store=store, catalog=catalog)" in result.source
+
+
+def test_catalog_injection_never_declares_retired_future_effects_requirement() -> None:
+    migration = DOMAIN_MIGRATIONS["catalog_injection"]
+
+    assert all(
+        "future_effects" not in route.additional_arguments for route in migration.catalog_injections
+    )
+
+
+@pytest.mark.timeout(120)
+def test_catalog_injection_cli_runs_with_command_effects_deletion_migration() -> None:
+    root = Path(__file__).parents[2]
+
+    result = subprocess.run(
+        (
+            sys.executable,
+            "scripts/codemods/w5_strict_payload_cutover.py",
+            "--domain",
+            "catalog_injection",
+            "--assert-clean",
+        ),
+        cwd=root,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def test_task10_catalog_injection_adds_catalog_to_qualified_constructor_only() -> None:

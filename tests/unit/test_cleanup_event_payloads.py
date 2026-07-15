@@ -17,7 +17,6 @@ from orchestrator.graph import (
     FakeClock,
     SequentialIdGenerator,
     apply_command as apply_typed_command,
-    build_graph_command_dependencies,
     initial_projection,
     reduce_event,
 )
@@ -57,7 +56,6 @@ def apply_command(projection, events, command_type, payload, clock, id_gen):
             id_generator=id_gen,
             actor=Actor(kind=ActorKind.CONTROLLER),
             events=hydrated_events,
-            future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
             catalog=catalog,
         ),
     )

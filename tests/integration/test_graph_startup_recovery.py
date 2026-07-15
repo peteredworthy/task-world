@@ -38,7 +38,6 @@ from tests.integration.test_graph_run_driver import (
 )
 from orchestrator.workflow.graph_driver import GraphRunDriver
 from orchestrator.graph_runtime.store import GraphEventStore
-from orchestrator.graph import build_graph_command_dependencies
 from orchestrator.graph import GraphCatalog
 
 
@@ -69,9 +68,6 @@ def _build_driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies(
-                catalog=build_graph_catalog()
-            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             sf,
@@ -103,9 +99,6 @@ async def _seed_active_worker_lease(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     await seed_run(
         session_factory,

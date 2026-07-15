@@ -4,7 +4,7 @@ from collections.abc import Mapping, Sequence
 from itertools import chain
 from typing import cast
 
-from orchestrator.graph._commands import (
+from orchestrator.graph.commands.lifecycle import (
     Clock,
     GraphProjection,
     IdGenerator,

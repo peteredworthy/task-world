@@ -94,7 +94,6 @@ def test_added_payload_field_spreads_through_every_generic_event_and_command_pat
             id_generator=cast(Any, object()),
             actor=Actor(kind=ActorKind.SYSTEM),
             events=(),
-            future_effects=cast(Any, object()),
             catalog=GraphCatalog.compose((), ()),
         ),
     )
@@ -169,7 +168,6 @@ def test_new_owner_tuple_specs_compose_and_dispatch_without_central_edits() -> N
             id_generator=cast(Any, object()),
             actor=Actor(kind=ActorKind.SYSTEM),
             events=(),
-            future_effects=cast(Any, object()),
             catalog=catalog,
         ),
     )

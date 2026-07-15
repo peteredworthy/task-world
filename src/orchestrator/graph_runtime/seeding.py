@@ -11,7 +11,6 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.graph import HydratedEvent, compile_routine
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime.controller import GraphController
-from orchestrator.graph import build_graph_command_dependencies
 from orchestrator.graph import GraphCatalog
 
 
@@ -57,7 +56,6 @@ async def seed_run(
         id_gen,
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(catalog).future_effects,
     ).handle_command(
         run_id,
         expected_position,

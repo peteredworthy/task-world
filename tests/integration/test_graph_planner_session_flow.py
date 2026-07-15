@@ -19,7 +19,7 @@ from orchestrator.graph import (
     event_payload_json,
 )
 from orchestrator.graph_runtime import GraphController, GraphEventStore
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import build_graph_catalog
 
 
 class FixedClock:
@@ -46,9 +46,6 @@ async def test_two_horizon_chain_retains_one_session(tmp_path: Path) -> None:
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     run_id = "planner-session-flow"
     try:
@@ -145,9 +142,6 @@ async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> 
         SequentialIds(),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     run_id = "planner-session-auth"
     try:

@@ -14,7 +14,7 @@ from typing import Any
 import pytest
 
 from orchestrator.graph import node_contract_summary
-from orchestrator.graph.models import PatchEnvelope, PatchOp
+from orchestrator.graph.models import PatchEnvelope, parse_patch_op
 from orchestrator.graph.patch_validator import validate_patch
 from orchestrator.graph.projections import GraphProjection, initial_projection
 
@@ -24,7 +24,7 @@ def _patch(ops: list[dict[str, Any]], *, proposed_by: str = "planner-1") -> Patc
         patch_id="patch-under-test",
         proposed_by_node_id=proposed_by,
         base_graph_position=0,
-        ops=[PatchOp(**op) for op in ops],
+        ops=[parse_patch_op(op) for op in ops],
         rationale_record_id=None,
     )
 
@@ -296,12 +296,11 @@ CONTRACT_CASES: list[tuple[str, list[dict[str, Any]], str, bool, str | None]] = 
     # generic op authority
     (
         "planner_cannot_create_gate",
-        [{"op": "create_gate", "predecessor_node_ids": ["n1"]}],
+        [{"op": "create_gate", "node_id": "gate-1", "predecessor_node_ids": ["n1"]}],
         "planner",
         False,
         "cannot perform create_gate",
     ),
-    ("unknown_op_rejected", [{"op": "frobnicate"}], "planner", False, "unknown op"),
 ]
 
 

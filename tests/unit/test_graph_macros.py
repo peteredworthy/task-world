@@ -5,7 +5,7 @@ from typing import Any
 from orchestrator.graph import (
     EventEnvelope,
     PatchEnvelope,
-    PatchOp,
+    parse_patch_op,
     expand_patch_macros,
     initial_projection,
     reduce_event,
@@ -20,7 +20,7 @@ def _patch(payload: dict[str, Any]) -> PatchEnvelope:
         patch_id=str(expanded["patch_id"]),
         proposed_by_node_id=str(expanded.get("proposed_by_node_id", "planner-1")),
         base_graph_position=int(expanded["base_graph_position"]),
-        ops=[PatchOp(**op) for op in expanded["ops"]],
+        ops=[parse_patch_op(op) for op in expanded["ops"]],
     )
 
 
@@ -55,7 +55,8 @@ def test_create_work_region_macro_expands_to_valid_patch() -> None:
     assert [op.op for op in patch.ops] == ["create_node", "create_node", "create_edge"]
     worker = patch.ops[0].node
     assert worker is not None
-    assert worker["authority"]["resource_claims"] == [
+    assert worker.authority is not None
+    assert [claim.model_dump(exclude_none=True) for claim in worker.authority.resource_claims] == [
         {"mode": "write", "scope": "repo", "paths": ["."]}
     ]
     verifier = patch.ops[1].node
@@ -163,13 +164,12 @@ def test_request_gate_macro_expands_human_gate_with_decision_request() -> None:
     assert [op.op for op in patch.ops] == ["create_node"]
     gate = patch.ops[0].node
     assert gate is not None
-    assert gate["kind"] == "human_gate"
-    assert gate["decision_request"] == {
-        "decision_type": "approval",
-        "options": ["approve", "reject", "defer"],
-        "consequence_summary": "Review widened tool access.",
-        "default_option": "defer",
-    }
+    assert gate.kind == "human_gate"
+    assert gate.decision_request is not None
+    assert gate.decision_request.decision_type == "approval"
+    assert gate.decision_request.options == ["approve", "reject", "defer"]
+    assert gate.decision_request.consequence_summary == "Review widened tool access."
+    assert gate.decision_request.default_option == "defer"
 
 
 def test_request_gate_macro_expands_authority_request() -> None:
@@ -194,12 +194,11 @@ def test_request_gate_macro_expands_authority_request() -> None:
 
     gate = patch.ops[0].node
     assert gate is not None
-    assert gate["kind"] == "authority_request"
-    assert gate["authority_request_record"] == {
-        "requested_authority": ["repo:docs/**:write"],
-        "reason": "Worker needs docs write access.",
-        "target_node_id": "worker-docs",
-    }
+    assert gate.kind == "authority_request"
+    assert gate.authority_request_record is not None
+    assert gate.authority_request_record.requested_authority == ["repo:docs/**:write"]
+    assert gate.authority_request_record.reason == "Worker needs docs write access."
+    assert gate.authority_request_record.target_node_id == "worker-docs"
 
 
 def test_submit_patch_command_accepts_macro_invocations() -> None:

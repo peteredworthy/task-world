@@ -45,7 +45,6 @@ from orchestrator.graph_runtime import (
     OutboxItem,
     seed_run,
 )
-from orchestrator.graph import build_graph_command_dependencies
 from tests.integration.signal_helpers import DrainFn
 from orchestrator.graph import StoredEventEnvelope
 
@@ -176,9 +175,6 @@ async def _seed_graph_run(app: Any, run_id: str, *, catalog: GraphCatalog) -> No
         id_gen,
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     accepted = await controller.handle_command(run_id, seed.projection_position, "accept_run")
     started = await controller.handle_command(run_id, accepted.projection_position, "start")
@@ -360,9 +356,6 @@ async def _seed_callback_lifecycle_graph_run(
         _RunSeedIdGenerator(run_id),
         catalog=catalog,
         auto_dispatch=False,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     heartbeat = await controller.handle_command(
         run_id,
@@ -386,9 +379,6 @@ async def _seed_rejected_patch_graph_run(app: Any, run_id: str, *, catalog: Grap
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     await controller.handle_command(
         run_id,
@@ -432,9 +422,6 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str, *, catalog: GraphCa
         id_gen,
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     async with session_factory() as session:
         events = await GraphEventStore(
@@ -1661,6 +1648,22 @@ async def test_patch_openapi_reuses_strict_submit_patch_fields(
 
     assert request_schema["properties"]["ops"]["items"]["$ref"].endswith("/PatchOp")
     assert command_schema["properties"]["ops"]["items"]["$ref"].endswith("/PatchOp")
+    assert schemas["PatchOp"]["discriminator"]["propertyName"] == "op"
+    assert set(schemas["PatchOp"]["discriminator"]["mapping"]) == {
+        "create_node",
+        "create_edge",
+        "retire_node",
+        "create_revision_attempt",
+        "create_appeal",
+        "create_gate",
+        "set_resource_claims",
+        "set_allowed_actions",
+        "mark_plan_region_suspect",
+    }
+    assert command_schema["$defs"]["PatchOp"]["discriminator"]["propertyName"] == "op"
+    assert set(command_schema["$defs"]["PatchOp"]["discriminator"]["mapping"]) == set(
+        schemas["PatchOp"]["discriminator"]["mapping"]
+    )
     assert (
         request_schema["properties"]["rationale_record_id"]["anyOf"]
         == command_schema["properties"]["rationale_record_id"]["anyOf"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from math import inf, nan
 import inspect
+from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
@@ -53,6 +54,20 @@ def test_submit_patch_command_requires_nonempty_ops_and_rationale() -> None:
                 "rationale_record_id": "",
             }
         )
+
+
+def test_submit_patch_has_no_raw_command_bridge() -> None:
+    """The catalog handler owns patch derivation from its typed command."""
+
+    patch_source = Path("src/orchestrator/graph/commands/patches.py").read_text()
+    commands_source = Path("src/orchestrator/graph/_commands.py").read_text()
+
+    assert "apply_patch_command" not in patch_source
+    assert "handle_submit_patch" not in patch_source
+    assert "event_factory" not in patch_source
+    assert ".model_dump(" not in patch_source
+    assert "def _apply_patch_command" not in commands_source
+    assert "apply_patch_command =" not in commands_source
 
 
 def test_graph_command_dependencies_require_catalog() -> None:
@@ -175,7 +190,6 @@ def test_command_specification_validates_once_and_requires_exact_class_at_dispat
         id_generator=FixedIds(),
         actor=ACTOR,
         events=(),
-        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
         catalog=catalog,
     )
 
@@ -255,9 +269,6 @@ def test_heartbeat_command_emits_projection_neutral_typed_event() -> None:
         id_generator=FixedIds(),
         actor=ACTOR,
         events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
         catalog=catalog,
     )
 
@@ -298,9 +309,6 @@ def test_public_apply_command_dispatches_heartbeat_through_injected_catalog_cont
         id_generator=FixedIds(),
         actor=ACTOR,
         events=(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
         catalog=catalog,
     )
 

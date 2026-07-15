@@ -28,7 +28,6 @@ from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import WorkflowService
 from orchestrator.graph import (
     build_graph_catalog,
-    build_graph_command_dependencies,
     event_payload_json,
 )
 from orchestrator.graph import GraphCatalog
@@ -204,9 +203,6 @@ async def test_fr12_recovery_reentry_skips_stale_report_and_rebuilds_readbacks(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     await seed_run(
         session_factory,

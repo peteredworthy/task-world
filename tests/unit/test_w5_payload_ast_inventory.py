@@ -135,6 +135,11 @@ EXPECTED_ARCHITECTURE_METRICS = {
     "w5_top_level_payload_extra_fields": 0,
     "central_command_handler_tables": 0,
     "central_reduce_event_name_branches": 0,
+    "raw_future_command_effects_contracts": 0,
+    "command_model_dump_to_raw_helpers": 0,
+    "raw_event_type_payload_creators": 0,
+    "internal_json_payload_adapters": 0,
+    "raw_read_model_event_dispatches": 0,
     "eligible_ast_cst_migration_sites_remaining": 0,
     "codemod_second_run_changes": 0,
     "unclassified_dynamic_event_or_command_sites": 0,
@@ -378,6 +383,7 @@ def consume(event: object):
     assert check_paths([source]) == ()
 
 
+@pytest.mark.timeout(60)
 def test_architecture_metrics_emit_stable_json_and_separate_deferred_sites() -> None:
     from scripts.measure_graph_payload_architecture import measure
 
@@ -567,13 +573,56 @@ def test_inventory_recognizes_typed_lifecycle_specs_and_dispatch_sites() -> None
         "submit_callback",
     } <= set(report.command_names)
 
-    classifications = {
-        (Path(site.path).as_posix(), site.expression): site.classification
-        for site in report.dynamic_event_sites
+    retired_tree = ast.parse(Path("src/orchestrator/graph/_commands.py").read_text())
+    assert all(
+        isinstance(node, ast.Expr)
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+        for node in retired_tree.body
+    )
+
+    lifecycle_tree = ast.parse(Path("src/orchestrator/graph/events/lifecycle.py").read_text())
+    lifecycle_specifications = {
+        call.args[0].value
+        for call in ast.walk(lifecycle_tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "EventSpecification"
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[0].value, str)
     }
-    assert (
-        classifications[("src/orchestrator/graph/_commands.py", "specification.name")]
-        == "typed_specification_dispatch"
+    assert {
+        "agent_died",
+        "agent_dispatch_requested",
+        "callback_accepted",
+        "callback_duplicate_returned",
+        "callback_rejected_conflict",
+        "callback_rejected_stale",
+        "command_rejected",
+        "heartbeat_recorded",
+        "run_lifecycle_changed",
+        "runtime_retry_scheduled",
+    } <= lifecycle_specifications
+
+    creator_tree = ast.parse(Path("src/orchestrator/graph/commands/event_creator.py").read_text())
+    assert any(
+        isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and isinstance(call.func.value, ast.Name)
+        and call.func.value.id == "specification"
+        and call.func.attr == "create"
+        for call in ast.walk(creator_tree)
+    )
+    assert any(
+        keyword.arg == "event_type"
+        and isinstance(keyword.value, ast.Attribute)
+        and isinstance(keyword.value.value, ast.Name)
+        and keyword.value.value.id == "specification"
+        and keyword.value.attr == "name"
+        for call in ast.walk(creator_tree)
+        if isinstance(call, ast.Call)
+        for keyword in call.keywords
     )
 
 
@@ -1290,6 +1339,86 @@ def serialize_for_storage(event: HydratedEvent):
     )
 
     assert check_paths([path]) == ()
+
+
+@pytest.mark.parametrize(
+    ("source_text", "rule"),
+    [
+        (
+            "from collections.abc import Callable\n"
+            "class FutureCommandEffects:\n"
+            "    emit: Callable[[str, dict[str, object]], HydratedEvent]\n",
+            "W5RAW_FUTURE_COMMAND_EFFECTS_CONTRACT",
+        ),
+        (
+            "def handle(command: StartCommand):\n    return raw_helper(command.model_dump())\n",
+            "W5COMMAND_MODEL_DUMP_TO_RAW_HELPER",
+        ),
+        (
+            "def create(event_type: str, payload: dict[str, object]):\n"
+            "    return event_type, payload\n",
+            "W5RAW_EVENT_TYPE_PAYLOAD_CREATOR",
+        ),
+        (
+            "def _history_payload(event: HydratedEvent):\n"
+            "    return event.payload.stored_json()\n"
+            "def project(event: HydratedEvent):\n"
+            "    return _history_payload(event).get('node_id')\n",
+            "W5INTERNAL_JSON_PAYLOAD_ADAPTER",
+        ),
+        (
+            "def project(event: HydratedEvent):\n"
+            "    if event.event_type == 'node_created':\n"
+            "        return event.payload.stored_json().get('node_id')\n",
+            "W5RAW_READ_MODEL_EVENT_DISPATCH",
+        ),
+    ],
+)
+def test_architecture_checker_rejects_final_review_raw_bridge_patterns(
+    tmp_path: Path, source_text: str, rule: str
+) -> None:
+    from scripts.check_graph_payload_architecture import check_paths
+
+    source = tmp_path / "src/orchestrator/graph_runtime/fixture.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(source_text)
+
+    assert rule in {diagnostic.rule for diagnostic in check_paths([source])}
+
+
+def test_architecture_checker_tracks_model_dump_dataflow_to_arbitrary_helper(
+    tmp_path: Path,
+) -> None:
+    """A renamed helper must not conceal a typed command's raw dict escape."""
+
+    source = tmp_path / "src/orchestrator/graph/commands/schedule.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        """\
+def relay(value):
+    return value
+
+def handle(command: ScheduleTickCommand):
+    serialized = command.model_dump(mode="python")
+    return relay(serialized)
+"""
+    )
+
+    assert "W5COMMAND_MODEL_DUMP_TO_RAW_HELPER" in {
+        diagnostic.rule for diagnostic in check_paths([source])
+    }
+
+
+def test_architecture_metrics_include_final_review_raw_bridge_rules() -> None:
+    from scripts.measure_graph_payload_architecture import _RULE_METRICS
+
+    assert {
+        "W5RAW_FUTURE_COMMAND_EFFECTS_CONTRACT",
+        "W5COMMAND_MODEL_DUMP_TO_RAW_HELPER",
+        "W5RAW_EVENT_TYPE_PAYLOAD_CREATOR",
+        "W5INTERNAL_JSON_PAYLOAD_ADAPTER",
+        "W5RAW_READ_MODEL_EVENT_DISPATCH",
+    } <= set(_RULE_METRICS)
 
 
 def test_architecture_metrics_measure_codemod_passes_independently(tmp_path: Path) -> None:

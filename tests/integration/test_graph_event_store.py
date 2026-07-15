@@ -43,7 +43,7 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from orchestrator.graph_runtime.store import graph_aggregate_id
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import build_graph_catalog
 from tests.unit.graph_catalog_samples import EVENT_SAMPLES
 from orchestrator.graph import StoredEventEnvelope
 
@@ -349,9 +349,6 @@ async def test_projection_snapshot_tail_matches_full_rebuild(
         ids,
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
 
     seed = await seed_run(
@@ -398,9 +395,6 @@ async def test_handle_command_uses_valid_snapshot_without_parsing_old_events(
         ids,
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
 
     seed = await seed_run(
@@ -447,9 +441,6 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
         SequentialIdGenerator(),
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -513,9 +504,6 @@ async def test_schedule_tick_uses_valid_snapshot_without_parsing_old_events(
         ids,
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
 
     seed = await seed_run(
@@ -559,9 +547,6 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
         SequentialIdGenerator(),
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -633,9 +618,6 @@ async def test_projection_snapshot_schema_mismatch_is_rebuilt(
         ids,
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
 
     seed = await seed_run(
@@ -688,9 +670,6 @@ async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
         SequentialIdGenerator(),
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     setup_events = [
         _event("evt-run-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
@@ -781,6 +760,28 @@ async def test_projection_checkpoint_records_terminal_flag(
     assert active_checkpoint is not None
     assert terminal_checkpoint.terminal is True
     assert active_checkpoint.terminal is False
+
+
+@pytest.mark.asyncio
+async def test_append_events_rejects_a_direct_caller_with_a_lower_expected_position(
+    session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
+) -> None:
+    """The store preflight rejects a caller behind an empty stream as stale."""
+    run_id = "store-lower-stale-direct-caller"
+    event = _event(
+        "evt-lower-stale",
+        run_id,
+        "run_lifecycle_changed",
+        {"to_state": "active"},
+    )
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session, catalog)
+            with pytest.raises(StaleProjectionError, match="expected -1, found 0"):
+                await store.append_events(run_id, -1, [event])
+
+    async with session_factory() as session:
+        assert await GraphEventStore(session, catalog).current_position(run_id) == 0
 
 
 @pytest.mark.asyncio

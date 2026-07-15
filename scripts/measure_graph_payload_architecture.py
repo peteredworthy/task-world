@@ -20,6 +20,7 @@ from scripts.codemods.w5_strict_payload_cutover import (
     DomainMigration,
     run_migration,
 )
+from scripts.check_graph_payload_architecture import check_inventory_report
 from scripts.w5_payload_ast_inventory import scan_graph_payload_architecture
 
 
@@ -42,6 +43,11 @@ _RULE_METRICS = {
     "W5TOP_LEVEL_PAYLOAD_EXTRA": "w5_top_level_payload_extra_fields",
     "W5CENTRAL_COMMAND_HANDLERS": "central_command_handler_tables",
     "W5CENTRAL_REDUCE_EVENT_BRANCH": "central_reduce_event_name_branches",
+    "W5RAW_FUTURE_COMMAND_EFFECTS_CONTRACT": "raw_future_command_effects_contracts",
+    "W5COMMAND_MODEL_DUMP_TO_RAW_HELPER": "command_model_dump_to_raw_helpers",
+    "W5RAW_EVENT_TYPE_PAYLOAD_CREATOR": "raw_event_type_payload_creators",
+    "W5INTERNAL_JSON_PAYLOAD_ADAPTER": "internal_json_payload_adapters",
+    "W5RAW_READ_MODEL_EVENT_DISPATCH": "raw_read_model_event_dispatches",
 }
 
 EXPECTED_METRICS = {
@@ -57,6 +63,11 @@ EXPECTED_METRICS = {
     "w5_top_level_payload_extra_fields": 0,
     "central_command_handler_tables": 0,
     "central_reduce_event_name_branches": 0,
+    "raw_future_command_effects_contracts": 0,
+    "command_model_dump_to_raw_helpers": 0,
+    "raw_event_type_payload_creators": 0,
+    "internal_json_payload_adapters": 0,
+    "raw_read_model_event_dispatches": 0,
     "eligible_ast_cst_migration_sites_remaining": 0,
     "codemod_second_run_changes": 0,
     "unclassified_dynamic_event_or_command_sites": 0,
@@ -124,6 +135,10 @@ def measure(
         [candidate for path in CANONICAL_ROOTS if (candidate := root / path).exists()]
     )
     rule_counts = Counter(fact.rule for fact in report.architecture_facts)
+    canonical_paths = [candidate for path in CANONICAL_ROOTS if (candidate := root / path).exists()]
+    rule_counts.update(
+        diagnostic.rule for diagnostic in check_inventory_report(report, canonical_paths)
+    )
     unclassified = sum(
         site.classification == "unresolved"
         for site in (*report.dynamic_event_sites, *report.dynamic_command_sites)

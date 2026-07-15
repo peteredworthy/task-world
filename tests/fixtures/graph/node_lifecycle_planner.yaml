@@ -60,7 +60,7 @@
       actor_role: planner
       base_graph_position: 0
       ops:
-        - {op: create_gate, node_id: gate-planner-6}
+        - {op: create_gate, node_id: gate-planner-6, predecessor_node_ids: []}
   then_events:
     - graph_patch_rejected: {patch_id: patch-planner-6}
   then_projection: {planner-6: completed}

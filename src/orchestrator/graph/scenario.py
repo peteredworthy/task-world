@@ -13,7 +13,6 @@ from orchestrator.graph.store import InMemoryEventStore
 from orchestrator.graph.specifications import (
     CommandExecutionContext,
     EventMetadata,
-    FutureCommandEffects,
     HydratedEvent,
 )
 
@@ -34,7 +33,6 @@ def run_scenario(
     id_gen: SequentialIdGenerator,
     *,
     catalog: GraphCatalog,
-    future_effects: FutureCommandEffects,
 ) -> ScenarioResult:
     run_id = str(scenario.get("run_id", "run-1"))
     scenario_name = str(scenario.get("name", "unnamed"))
@@ -67,7 +65,6 @@ def run_scenario(
                 else None,
             ),
             events=(),
-            future_effects=future_effects,
             catalog=catalog,
         )
         for event in apply_command(

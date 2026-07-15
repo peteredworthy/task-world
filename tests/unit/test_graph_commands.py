@@ -35,7 +35,6 @@ from orchestrator.graph import (
     UnknownGraphEventError,
     apply_command,
     build_graph_catalog,
-    build_graph_command_dependencies,
     initial_projection,
     project_requirement_freshness_facts,
     project_task_states,
@@ -48,7 +47,7 @@ from orchestrator.graph.commands.future_effects import (
     FUTURE_EFFECT_EVENT_NAMES,
     require_future_effect,
 )
-from orchestrator.graph._commands import _dedupe_repair_events
+from orchestrator.graph.commands.source_repair import dedupe_repair_events
 from tests.unit.graph_catalog_samples import EVENT_SAMPLES
 
 
@@ -93,7 +92,7 @@ def test_repair_event_deduplication_uses_concrete_frozen_payload_equality() -> N
         NodeStateChangedPayload(node_id="worker-1", new_state="retired"),
     )
 
-    assert _dedupe_repair_events([first, duplicate, different_payload]) == [
+    assert dedupe_repair_events([first, duplicate, different_payload]) == [
         first,
         different_payload,
     ]
@@ -204,9 +203,6 @@ def _apply(
                 else None,
             ),
             events=(),
-            future_effects=build_graph_command_dependencies(
-                catalog=build_graph_catalog()
-            ).future_effects,
             catalog=catalog,
         )
         output = apply_command(
@@ -267,7 +263,6 @@ def _apply_from_checkpoint(
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
         catalog=catalog,
     )
     output = apply_command(
@@ -678,7 +673,6 @@ def test_record_heartbeat_public_path_emits_strict_audit_and_temporary_lease_ren
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
         catalog=catalog,
     )
 
@@ -818,7 +812,6 @@ def test_record_heartbeat_temporary_renewal_preserves_domain_rejections(
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
         catalog=catalog,
     )
 
@@ -848,7 +841,6 @@ def test_record_heartbeat_public_path_rejects_legacy_shape() -> None:
         id_generator=ids,
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
         catalog=catalog,
     )
 
@@ -889,7 +881,6 @@ def test_typed_acknowledge_start_uses_projection_and_emits_start_effect() -> Non
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
         catalog=catalog,
     )
 
@@ -923,7 +914,6 @@ def test_typed_submit_callback_emits_strict_outcome_and_unconverted_effects() ->
         id_generator=SequentialIdGenerator(),
         actor=Actor(kind=ActorKind.CONTROLLER),
         events=(),
-        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
         catalog=catalog,
     )
 
@@ -4813,13 +4803,9 @@ def test_patch_accepts_authority_request_typed_record_envelope() -> None:
                         "kind": "authority_request",
                         "state": "planned",
                         "authority_request_record": {
-                            "record_type": "authority_request_record",
-                            "schema": "AuthorityRequest",
-                            "value": {
-                                "requested_authority": ["repo:docs/**:write"],
-                                "target_node_id": "worker-docs",
-                                "reason": "Worker needs docs write access.",
-                            },
+                            "requested_authority": ["repo:docs/**:write"],
+                            "target_node_id": "worker-docs",
+                            "reason": "Worker needs docs write access.",
                         },
                     },
                 }
@@ -4983,6 +4969,33 @@ def test_gap_planner_corrective_work_patch_accepts_through_submit_patch() -> Non
     assert event_payload_json(output[1])["task_region_id"] == "corrective_work_region"
 
 
+def test_patch_operation_dispatch_is_owned_by_typed_patch_commands() -> None:
+    """Patch operations create declared topology payloads without raw event bridges."""
+
+    patches_source = Path("src/orchestrator/graph/commands/patches.py").read_text()
+    commands_source = Path("src/orchestrator/graph/_commands.py").read_text()
+
+    assert "def patch_op_events" in patches_source
+    assert "def patch_op_events" not in commands_source
+    for forbidden in (
+        "typed_topology_event",
+        "create_named",
+        ".model_validate(",
+    ):
+        assert forbidden not in patches_source
+    for payload_model in (
+        "NodeCreatedPayload(",
+        "EdgeCreatedPayload(",
+        "NodeRetiredPayload(",
+        "NodeStateChangedPayload(",
+        "RevisionCreatedPayload(",
+        "NodeAuthorityChangedPayload(",
+        "PlanRegionMarkedSuspectPayload(",
+        "InputBoundPayload(",
+    ):
+        assert payload_model in patches_source
+
+
 def test_patch_accept_emits_events_for_all_v1_ops() -> None:
     events = [
         _event(
@@ -5068,6 +5081,107 @@ def test_patch_accept_emits_events_for_all_v1_ops() -> None:
     assert event_payload_json(output[7])["allowed_actions"] == ["submit_records"]
 
 
+def test_patch_accepts_minimal_revision_attempt_without_creating_a_node() -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "minimal-revision",
+            "proposed_by_node_id": "oversight-1",
+            "actor_role": "oversight",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "task-1",
+                    "failed_candidate_id": "candidate-1",
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "graph_patch_accepted",
+        "revision_created",
+    ]
+    revision = event_payload_json(output[1])
+    assert revision["revision_id"].startswith("revision-")
+    assert revision["task_region_id"] == "task-1"
+    assert revision["failed_candidate_id"] == "candidate-1"
+    assert _project(output)["node_kinds"] == {}
+
+
+def test_repeated_minimal_revision_attempts_get_unique_ids_without_node_collisions() -> None:
+    minimal_op = {
+        "op": "create_revision_attempt",
+        "task_region_id": "task-1",
+        "failed_candidate_id": "candidate-1",
+    }
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": "repeated-minimal-revisions",
+            "proposed_by_node_id": "oversight-1",
+            "actor_role": "oversight",
+            "base_graph_position": -1,
+            "ops": [minimal_op, minimal_op],
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "graph_patch_accepted",
+        "revision_created",
+        "revision_created",
+    ]
+    revision_ids = [event_payload_json(event)["revision_id"] for event in output[1:]]
+    assert len(set(revision_ids)) == 2
+    assert all(revision_id.startswith("revision-") for revision_id in revision_ids)
+    assert _project(output)["node_kinds"] == {}
+
+
+@pytest.mark.parametrize(
+    ("node_key", "node_id", "expected_kind"),
+    [
+        ("worker_node", "revision-worker", "worker"),
+        ("verifier_node", "revision-verifier", "verifier"),
+    ],
+)
+def test_revision_attempt_preserves_supplied_executable_node_path(
+    node_key: str, node_id: str, expected_kind: str
+) -> None:
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "run_id": "run-1",
+            "patch_id": f"revision-with-{expected_kind}",
+            "proposed_by_node_id": "oversight-1",
+            "actor_role": "oversight",
+            "base_graph_position": -1,
+            "ops": [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "task-1",
+                    "failed_candidate_id": "candidate-1",
+                    node_key: {"node_id": node_id},
+                }
+            ],
+        },
+    )
+
+    assert [event.event_type for event in output] == [
+        "graph_patch_accepted",
+        "revision_created",
+        "node_created",
+    ]
+    assert event_payload_json(output[2])["node_id"] == node_id
+    assert event_payload_json(output[2])["kind"] == expected_kind
+    assert _project(output)["node_kinds"] == {node_id: expected_kind}
+
+
 def test_patch_reject_emits_rejection() -> None:
     output = _apply(
         [],
@@ -5078,7 +5192,9 @@ def test_patch_reject_emits_rejection() -> None:
             "proposed_by_node_id": "planner-1",
             "actor_role": "planner",
             "base_graph_position": -1,
-            "ops": [{"op": "create_gate", "predecessor_node_ids": ["worker-1"]}],
+            "ops": [
+                {"op": "create_gate", "node_id": "gate-1", "predecessor_node_ids": ["worker-1"]}
+            ],
         },
     )
 

@@ -11,7 +11,7 @@ from orchestrator.db.access.mutations import save_run
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import StoredEventEnvelope
 
 
@@ -212,9 +212,6 @@ async def _seed_path_scoped_write_graph_run(app: Any, run_id: str) -> None:
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     await controller.handle_command(
         run_id,

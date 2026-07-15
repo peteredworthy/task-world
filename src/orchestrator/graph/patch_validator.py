@@ -876,7 +876,7 @@ def _resource_claim_dicts(raw_claims: Any) -> list[dict[str, Any]]:
 def _op_to_dict(op: Any) -> dict[str, Any]:
     if isinstance(op, dict):
         return cast(dict[str, Any], op)
-    dumped = op.model_dump()
+    dumped = op.model_dump(exclude_none=True)
     return cast(dict[str, Any], dumped)
 
 

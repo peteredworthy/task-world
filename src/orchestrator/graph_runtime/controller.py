@@ -12,7 +12,6 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     CommandExecutionContext,
-    FutureCommandEffects,
     GraphCatalog,
     GraphProjection,
     HydratedEvent,
@@ -49,7 +48,6 @@ class GraphController:
         id_gen: IdGenerator,
         *,
         catalog: GraphCatalog,
-        future_effects: FutureCommandEffects,
         dispatcher: OutboxDispatcher | None = None,
         auto_dispatch: bool = True,
     ) -> None:
@@ -57,7 +55,6 @@ class GraphController:
         self._clock = clock
         self._id_gen = id_gen
         self._catalog = catalog
-        self._future_effects = future_effects
         self._dispatcher = dispatcher
         self._auto_dispatch = auto_dispatch
 
@@ -132,7 +129,6 @@ class GraphController:
                 role=actor_role if isinstance(actor_role, str) else None,
             ),
             events=tuple(command_events),
-            future_effects=self._future_effects,
             catalog=self._catalog,
         )
         planned_events = apply_command(

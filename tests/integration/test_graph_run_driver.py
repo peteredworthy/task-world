@@ -48,7 +48,6 @@ from orchestrator.workflow.graph_driver import (
     GraphRunDriver,
     _snapshot_from_events,
 )
-from orchestrator.graph import build_graph_command_dependencies
 from orchestrator.graph import GraphCatalog
 from orchestrator.graph import StoredEventEnvelope
 
@@ -312,9 +311,6 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies(
-                catalog=build_graph_catalog()
-            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
@@ -585,9 +581,6 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     dispatch_order: list[str] = []
     executor = GraphDispatchExecutor(
@@ -814,9 +807,6 @@ async def _seed_and_force_failed_graph(
         ids,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     for command in ("accept_run", "start"):
         position = await controller.current_position(run_id)
@@ -860,9 +850,6 @@ def _shared_driver(
             id_gen_arg,
             auto_dispatch=False,
             catalog=build_graph_catalog(),
-            future_effects=build_graph_command_dependencies(
-                catalog=build_graph_catalog()
-            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,

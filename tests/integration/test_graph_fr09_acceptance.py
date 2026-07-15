@@ -20,7 +20,7 @@ from orchestrator.graph_runtime import (
 )
 from orchestrator.runners import AgentRunner
 from orchestrator.runners.types import ExecutionContext
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import GraphCatalog
 from orchestrator.graph import StoredEventEnvelope
 
@@ -61,9 +61,6 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     accepted = await controller.handle_command(
         run_id,
@@ -120,9 +117,6 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         _RunSeedIdGenerator(gap_run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     accepted_gap = await gap_controller.handle_command(
         gap_run_id,

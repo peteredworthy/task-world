@@ -25,7 +25,11 @@ def test_planner_lifecycle_states() -> None:
     accepted = _append(events, _submit_patch(events, "patch-1", _region_ops("successor-1")))
     rejected = _append(
         [*events, *accepted],
-        _submit_patch([*events, *accepted], "patch-2", [{"op": "create_gate"}]),
+        _submit_patch(
+            [*events, *accepted],
+            "patch-2",
+            [{"op": "create_gate", "node_id": "gate-2", "predecessor_node_ids": []}],
+        ),
     )
 
     assert accepted[0].event_type == "graph_patch_accepted"
@@ -497,7 +501,11 @@ def test_project_planner_chain() -> None:
 def test_patch_acceptance_separate_from_planner_completion() -> None:
     events = _planner_events()
 
-    rejected = _submit_patch(events, "patch-rejected", [{"op": "create_gate"}])
+    rejected = _submit_patch(
+        events,
+        "patch-rejected",
+        [{"op": "create_gate", "node_id": "gate-rejected", "predecessor_node_ids": []}],
+    )
     projection = _project([*events, *_append(events, rejected)])
 
     assert rejected[0].event_type == "graph_patch_rejected"

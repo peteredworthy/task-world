@@ -40,7 +40,6 @@ from orchestrator.runners.types import (
     LogLineCallback,
     SubmitCallback,
 )
-from orchestrator.graph import build_graph_command_dependencies
 from orchestrator.graph import GraphCatalog
 
 
@@ -380,9 +379,6 @@ async def _seed_active_run(
         ids,
         catalog=build_graph_catalog(),
         auto_dispatch=False,
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     position = await controller.current_position(run_id)
     accepted = await controller.handle_command(run_id, position, "accept_run")

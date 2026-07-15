@@ -9,6 +9,7 @@ from typing import Any, cast
 from sqlalchemy import delete, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from pydantic import BaseModel
 
 from orchestrator.db import (
     EventV2Model,
@@ -18,13 +19,53 @@ from orchestrator.db import (
     GraphProjectionSnapshotModel,
 )
 from orchestrator.graph import (
+    AgentDiedPayload,
+    AgentDispatchRequestedPayload,
+    AppealOpenedPayload,
+    ApprovalDecisionRecordedPayload,
+    AuthorityDecisionRecordedPayload,
+    CallbackAcceptedPayload,
+    CallbackDuplicateReturnedPayload,
+    CallbackRejectedPayload,
+    CleanupAppliedPayload,
+    CleanupRequestedPayload,
+    CommandRejectedPayload,
+    DeadInputDetectedPayload,
     GraphCatalog,
+    GraphPatchAcceptedPayload,
+    GraphPatchRejectedPayload,
     GraphProjection,
+    HeartbeatRecordedPayload,
     HydratedEvent,
     InputBoundPayload,
+    EdgeCreatedPayload,
+    FileStateRejectedPayload,
+    GatekeeperCostRecordedPayload,
+    GatekeeperVerdictRecordedPayload,
+    LeaseExpiredPayload,
+    LeaseGrantedPayload,
+    LeaseReleasedPayload,
+    LeaseRenewedPayload,
+    LeaseRevokedPayload,
+    NodeCreatedPayload,
+    NodeAuthorityChangedPayload,
+    NodeDeferredPayload,
+    NodeReadyPayload,
+    NodeRetiredPayload,
     NodeStateChangedPayload,
+    OutputRecordAcceptedPayload,
+    OversightDecisionRecordedPayload,
+    PlanRegionMarkedSuspectPayload,
+    PlannerSessionStateChangedPayload,
+    RequirementRevisionPayload,
+    RevisionCreatedPayload,
+    RunLifecycleChangedPayload,
+    RuntimeRetryScheduledPayload,
     PROJECTION_SCHEMA_VERSION,
+    StrictFileStateRecord,
     StoredEventEnvelope,
+    SupportEvidencePayload,
+    VerificationOutcomePayload,
     initial_projection,
     merge_bound_record_ids,
     project_decision_view,
@@ -65,30 +106,58 @@ def _payload_with_durable_graph_position(
     event: HydratedEvent,
     position: int,
     run_id: str,
-) -> dict[str, Any]:
-    payload = dict(event.payload.to_json())
-    if event.event_type in {"output_record_accepted", "file_state_accepted"}:
-        durable_record = payload
-        if event.event_type == "output_record_accepted":
-            nested_record = payload.get("record")
-            if not isinstance(nested_record, dict):
-                msg = "output_record_accepted requires a record object"
-                raise ValueError(msg)
-            durable_record = dict(cast(dict[str, Any], nested_record))
-            payload["record"] = durable_record
-        _add_durable_record_base_fields(event, durable_record, position, run_id)
-        _validate_durable_record_base_fields(event.event_type, durable_record)
-    if event.event_type != "input_bound":
-        return payload
-    bound_at_position = payload.get("bound_at_position")
-    if (
-        isinstance(bound_at_position, int)
-        and not isinstance(bound_at_position, bool)
-        and bound_at_position > 0
-    ):
-        return payload
-    payload["bound_at_position"] = position
-    return payload
+) -> HydratedEvent:
+    """Enrich persistence-owned fields without using a JSON decision view."""
+    payload = event.payload
+    if event.event_type == "output_record_accepted":
+        if not isinstance(payload, OutputRecordAcceptedPayload):
+            raise TypeError("output_record_accepted event has an unexpected payload type")
+        record_value = getattr(payload.record, "value", None)
+        durable_payload = payload.record.payload
+        if durable_payload is None and isinstance(record_value, BaseModel):
+            durable_payload = record_value.model_dump(mode="json")
+        record = payload.record.model_copy(
+            update={
+                "run_id": run_id,
+                "created_at": event.timestamp.isoformat(),
+                "graph_position": position,
+                "schema_version": payload.record.schema_version or 1,
+                "producer_port": payload.record.producer_port or payload.record.port,
+                "payload": durable_payload,
+            }
+        )
+        return event.model_copy(update={"payload": payload.model_copy(update={"record": record})})
+    if event.event_type == "file_state_accepted":
+        if not isinstance(payload, StrictFileStateRecord):
+            raise TypeError("file_state_accepted event has an unexpected payload type")
+        return event.model_copy(
+            update={
+                "payload": payload.model_copy(
+                    update={
+                        "run_id": run_id,
+                        "created_at": event.timestamp.isoformat(),
+                        "graph_position": position,
+                        "schema_version": payload.schema_version or 1,
+                        "producer_port": payload.producer_port or payload.port,
+                        "record_type": payload.record_type,
+                        "payload": payload.payload
+                        or {
+                            "snapshot_id": payload.snapshot_id,
+                            "base_snapshot_id": payload.base_snapshot_id,
+                            "verdict": payload.verdict,
+                        },
+                    }
+                )
+            }
+        )
+    if event.event_type == "input_bound":
+        if not isinstance(payload, InputBoundPayload):
+            raise TypeError("input_bound event has an unexpected payload type")
+        if payload.bound_at_position <= 0:
+            return event.model_copy(
+                update={"payload": payload.model_copy(update={"bound_at_position": position})}
+            )
+    return event
 
 
 def stored_graph_event(
@@ -111,10 +180,8 @@ def stored_graph_event(
     specification = catalog.resolve_event(event.metadata.event_type)
     specification.serialize(event)
     metadata = event.metadata.model_copy(update={"run_id": run_id, "position": position})
-    stored = StoredEventEnvelope(
-        **metadata.model_dump(),
-        payload=_payload_with_durable_graph_position(event, position, run_id),
-    )
+    enriched = _payload_with_durable_graph_position(event, position, run_id)
+    stored = specification.serialize(enriched.model_copy(update={"metadata": metadata}))
     return catalog.hydrate_event(stored)
 
 
@@ -156,112 +223,6 @@ def validate_catalog_event_payload(catalog: GraphCatalog, event: StoredEventEnve
             f"at position {event.position}: {error}"
         )
         raise InvalidGraphEventPayloadError(msg) from error
-
-
-_RECORD_PAYLOAD_BASE_FIELDS = {
-    "created_at",
-    "graph_position",
-    "payload",
-    "producer_node_id",
-    "producer_port",
-    "provenance",
-    "record_id",
-    "record_type",
-    "run_id",
-    "schema_version",
-}
-
-_LEGACY_RECORD_METADATA_FIELDS = {"port", "record_kind", "schema"}
-
-
-def _add_durable_record_base_fields(
-    event: HydratedEvent,
-    payload: dict[str, Any],
-    position: int,
-    run_id: str,
-) -> None:
-    port = payload.get("port")
-    if event.event_type == "file_state_accepted" and not isinstance(port, str):
-        port = "file_state"
-        payload["port"] = port
-    if isinstance(port, str) and port:
-        payload.setdefault("producer_port", port)
-        payload.setdefault("record_type", _record_type_for_port(port, payload))
-    payload.setdefault("schema_version", 1)
-    payload["run_id"] = run_id
-    payload["created_at"] = event.timestamp.isoformat()
-    payload["graph_position"] = position
-    payload.setdefault("payload", _typed_record_payload(payload))
-
-
-def _validate_durable_record_base_fields(event_type: str, payload: dict[str, Any]) -> None:
-    for field in (
-        "record_id",
-        "record_type",
-        "producer_node_id",
-        "producer_port",
-        "created_at",
-        "graph_position",
-        "run_id",
-        "payload",
-    ):
-        value = payload.get(field)
-        if value is None or value == "":
-            msg = f"{event_type} missing durable record base field: {field}"
-            raise ValueError(msg)
-    schema_version = payload.get("schema_version")
-    if (
-        not isinstance(schema_version, int)
-        or isinstance(schema_version, bool)
-        or schema_version <= 0
-    ):
-        msg = f"{event_type} has invalid durable record schema_version"
-        raise ValueError(msg)
-    port = payload.get("port")
-    producer_port = payload.get("producer_port")
-    if isinstance(port, str) and producer_port != port:
-        msg = f"{event_type} producer_port does not match port"
-        raise ValueError(msg)
-    if not isinstance(payload.get("payload"), dict):
-        msg = f"{event_type} payload base field must be an object"
-        raise ValueError(msg)
-
-
-def _record_type_for_port(port: str, payload: dict[str, Any]) -> str:
-    if payload.get("record_kind") == "verification":
-        return "verification_report"
-    if payload.get("record_kind") == "file_state":
-        return "file_state"
-    if port in {"file_state", "accepted_file_state"}:
-        return "file_state"
-    if port == "verification_result":
-        return "verification_report"
-    return port
-
-
-def _typed_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    value = payload.get("value")
-    if isinstance(value, dict):
-        typed_value = dict(cast(dict[str, Any], value))
-        if _is_verification_report_payload(payload):
-            outcome = payload.get("outcome")
-            if isinstance(outcome, str):
-                typed_value.setdefault("outcome", outcome)
-        return typed_value
-    return {
-        key: value
-        for key, value in payload.items()
-        if key not in _RECORD_PAYLOAD_BASE_FIELDS and key not in _LEGACY_RECORD_METADATA_FIELDS
-    }
-
-
-def _is_verification_report_payload(payload: dict[str, Any]) -> bool:
-    return (
-        payload.get("record_type") == "verification_report"
-        or payload.get("record_kind") == "verification"
-        or payload.get("port") in {"verification_report", "verification_result"}
-        or payload.get("schema") == "VerificationReport"
-    )
 
 
 @dataclass(frozen=True)
@@ -335,7 +296,7 @@ class GraphEventStore:
             return []
 
         current_position = await self.current_position(run_id)
-        if current_position < expected_position:
+        if current_position != expected_position:
             msg = (
                 f"stale graph projection for run {run_id}: "
                 f"expected {expected_position}, found {current_position}"
@@ -648,7 +609,9 @@ class GraphEventStore:
                     timestamp=summary.timestamp,
                     payload=summary.payload,
                 )
-                for summary in (_complete_graph_event_summary(event) for event in events)
+                for summary in (
+                    _complete_graph_event_summary(self._catalog, event) for event in events
+                )
             ]
         )
         await self._session.flush()
@@ -674,7 +637,7 @@ class GraphEventStore:
             return
 
         existing_node_ids = await self._node_detail_node_ids(run_id)
-        if _has_missing_preexisting_node_reference(events, existing_node_ids):
+        if _has_missing_preexisting_node_reference(self._catalog, events, existing_node_ids):
             await self.delete_node_detail_summaries(run_id)
             return
         lease_update_ids: set[str] = set()
@@ -688,6 +651,7 @@ class GraphEventStore:
         summaries = {node_id: _node_detail_summary_from_row(row) for node_id, row in rows.items()}
         edge_ports = await self._edge_ports_for_input_bounds(run_id, events)
         updated = _apply_node_detail_events(
+            self._catalog,
             run_id,
             events,
             position=current_position,
@@ -805,7 +769,9 @@ class GraphEventStore:
                     timestamp=summary.timestamp,
                     payload=summary.payload,
                 )
-                for summary in (_complete_graph_event_summary(event) for event in events)
+                for summary in (
+                    _complete_graph_event_summary(self._catalog, event) for event in events
+                )
             ]
         )
         snapshot = _projection_snapshot_from_events(self._catalog, run_id, events)
@@ -813,6 +779,7 @@ class GraphEventStore:
         _add_node_detail_summaries(
             self._session,
             _node_detail_summaries_from_events(
+                self._catalog,
                 run_id,
                 events,
                 position=snapshot.position,
@@ -837,6 +804,7 @@ class GraphEventStore:
         _add_node_detail_summaries(
             self._session,
             _node_detail_summaries_from_events(
+                self._catalog,
                 run_id,
                 events,
                 position=position,
@@ -861,9 +829,7 @@ class GraphEventStore:
     ) -> dict[str, GraphNodeDetailSummaryModel]:
         node_ids: set[str] = set()
         for event in events:
-            light_event = event
-            light_payload = light_event.payload.stored_json()
-            node_ids.update(_referenced_node_ids(light_payload, known_node_ids | node_ids))
+            node_ids.update(_referenced_node_ids(event, known_node_ids | node_ids))
         if not node_ids:
             return {}
         result = await self._session.execute(
@@ -931,7 +897,7 @@ class GraphEventStore:
     ) -> list[GraphEventSummary]:
         """Legacy replay summary path retained for parity tests and fallback analysis."""
         return [
-            _complete_graph_event_summary(event)
+            _complete_graph_event_summary(self._catalog, event)
             for event in await self.read_run(run_id, from_position)
         ]
 
@@ -944,15 +910,27 @@ class GraphEventStore:
         return int(result.scalar_one_or_none() or 0)
 
 
-def _complete_graph_event_summary(event: HydratedEvent) -> GraphEventSummary:
+def _complete_graph_event_summary(catalog: GraphCatalog, event: HydratedEvent) -> GraphEventSummary:
     return GraphEventSummary(
         event_id=event.event_id,
         event_type=event.event_type,
         run_id=event.run_id,
         position=event.position,
         timestamp=event.timestamp.isoformat(),
-        payload=_history_payload(event),
+        payload=_serialized_event_payload(catalog, event),
     )
+
+
+def _require_catalog_payload(catalog: GraphCatalog, event: HydratedEvent) -> None:
+    specification = catalog.resolve_event(event.event_type)
+    if type(event.payload) is not specification.payload_type:
+        raise TypeError(f"{event.event_type} event has an unexpected payload type")
+
+
+def _serialized_event_payload(catalog: GraphCatalog, event: HydratedEvent) -> dict[str, Any]:
+    """Serialize only after catalog validation at a read-model presentation boundary."""
+    _require_catalog_payload(catalog, event)
+    return catalog.resolve_event(event.event_type).serialize(event).payload
 
 
 def _projection_snapshot_from_events(
@@ -1110,12 +1088,14 @@ def _add_node_detail_summaries(
 
 
 def _node_detail_summaries_from_events(
+    catalog: GraphCatalog,
     run_id: str,
     events: Sequence[HydratedEvent],
     *,
     position: int,
 ) -> dict[str, GraphNodeDetailSummary]:
     return _apply_node_detail_events(
+        catalog,
         run_id,
         events,
         position=position,
@@ -1126,6 +1106,7 @@ def _node_detail_summaries_from_events(
 
 
 def _apply_node_detail_events(
+    catalog: GraphCatalog,
     run_id: str,
     events: Sequence[HydratedEvent],
     *,
@@ -1139,19 +1120,19 @@ def _apply_node_detail_events(
     edge_ports = dict(edge_ports)
 
     for event in events:
-        payload = _history_payload(event)
+        _require_catalog_payload(catalog, event)
         if event.event_type == "edge_created":
-            edge_id = payload.get("edge_id")
-            to_port = payload.get("to_port")
-            if isinstance(edge_id, str) and isinstance(to_port, str):
-                edge_ports[edge_id] = to_port
+            if not isinstance(event.payload, EdgeCreatedPayload):
+                raise TypeError("edge_created event has an unexpected payload type")
+            edge_ports[event.payload.edge_id] = event.payload.to_port
 
-        direct_node_id = payload.get("node_id")
-        if event.event_type == "node_created" and isinstance(direct_node_id, str):
-            known_node_ids.add(direct_node_id)
+        if event.event_type == "node_created":
+            if not isinstance(event.payload, NodeCreatedPayload):
+                raise TypeError("node_created event has an unexpected payload type")
+            known_node_ids.add(event.payload.node_id)
 
-        referenced_node_ids = _referenced_node_ids(payload, known_node_ids)
-        event_response = _node_event_response(event)
+        referenced_node_ids = _referenced_node_ids(event, known_node_ids)
+        event_response = _present_node_event(event)
         for node_id in sorted(referenced_node_ids):
             summary = summaries.get(node_id)
             if summary is None:
@@ -1180,93 +1161,70 @@ def _node_detail_field_updates(
     summaries: dict[str, GraphNodeDetailSummary],
     position: int,
 ) -> dict[str, GraphNodeDetailSummary]:
-    payload = _history_payload(event)
     updates: dict[str, GraphNodeDetailSummary] = {}
     if event.event_type == "node_created":
-        node_id = payload.get("node_id")
-        if not isinstance(node_id, str):
-            return updates
+        if not isinstance(event.payload, NodeCreatedPayload):
+            raise TypeError("node_created event has an unexpected payload type")
+        payload = event.payload
+        node_id = payload.node_id
         summary = summaries.get(node_id) or _empty_node_detail_summary(
             event.run_id,
             node_id,
             position,
         )
-        kind = payload.get("kind")
-        role = payload.get("role")
-        state = payload.get("state")
         updates[node_id] = _replace_summary(
             summary,
             position=position,
-            kind=kind if isinstance(kind, str) else summary.kind,
-            role=role if isinstance(role, str) else summary.role,
-            state=state if isinstance(state, str) else summary.state,
-            task_region_id=(
-                payload.get("task_region_id")
-                if isinstance(payload.get("task_region_id"), str)
-                else summary.task_region_id
-            ),
+            kind=payload.kind,
+            role=payload.role or summary.role,
+            state=payload.state or summary.state,
+            task_region_id=payload.task_region_id or summary.task_region_id,
         )
     elif event.event_type == "node_state_changed":
-        node_id = payload.get("node_id")
-        new_state = payload.get("new_state")
-        if isinstance(node_id, str) and isinstance(new_state, str):
-            summary = summaries.get(node_id) or _empty_node_detail_summary(
-                event.run_id,
-                node_id,
-                position,
-            )
-            prompt_summary = payload.get("prompt_summary")
-            update_fields: dict[str, Any] = {"position": position, "state": new_state}
-            if isinstance(prompt_summary, dict):
-                update_fields["prompt_summary"] = dict(cast(dict[str, Any], prompt_summary))
-            updates[node_id] = _replace_summary(summary, **update_fields)
+        if not isinstance(event.payload, NodeStateChangedPayload):
+            raise TypeError("node_state_changed event has an unexpected payload type")
+        payload = event.payload
+        summary = summaries.get(payload.node_id) or _empty_node_detail_summary(
+            event.run_id, payload.node_id, position
+        )
+        update_fields: dict[str, Any] = {"position": position, "state": payload.new_state}
+        if payload.prompt_summary is not None:
+            update_fields["prompt_summary"] = dict(payload.prompt_summary)
+        updates[payload.node_id] = _replace_summary(summary, **update_fields)
     elif event.event_type == "node_retired":
-        node_id = payload.get("node_id")
-        if isinstance(node_id, str):
-            summary = summaries.get(node_id) or _empty_node_detail_summary(
-                event.run_id,
-                node_id,
-                position,
-            )
-            updates[node_id] = _replace_summary(summary, position=position, state="retired")
+        if not isinstance(event.payload, NodeRetiredPayload):
+            raise TypeError("node_retired event has an unexpected payload type")
+        payload = event.payload
+        summary = summaries.get(payload.node_id) or _empty_node_detail_summary(
+            event.run_id, payload.node_id, position
+        )
+        updates[payload.node_id] = _replace_summary(summary, position=position, state="retired")
     elif event.event_type == "input_bound":
-        node_id = payload.get("to_node_id")
-        if not isinstance(node_id, str):
+        if not isinstance(event.payload, InputBoundPayload):
+            raise TypeError("input_bound event has an unexpected payload type")
+        payload = event.payload
+        port = payload.to_port or edge_ports.get(payload.edge_id)
+        if not port:
             return updates
-        port = payload.get("to_port")
-        if not isinstance(port, str):
-            edge_id = payload.get("edge_id")
-            if isinstance(edge_id, str):
-                port = edge_ports.get(edge_id)
-        if not isinstance(port, str):
-            legacy_input = payload.get("input")
-            if isinstance(legacy_input, str):
-                port = legacy_input
-        if not isinstance(port, str):
-            return updates
-        record_ids = payload.get("record_ids")
-        if not isinstance(record_ids, list):
-            bound_ids: list[str] = []
-        else:
-            bound_ids = [
-                record_id for record_id in cast(list[Any], record_ids) if isinstance(record_id, str)
-            ]
-        summary = summaries.get(node_id) or _empty_node_detail_summary(
-            event.run_id,
-            node_id,
-            position,
+        summary = summaries.get(payload.to_node_id) or _empty_node_detail_summary(
+            event.run_id, payload.to_node_id, position
         )
         input_ports = {key: list(value) for key, value in summary.input_ports.items()}
         input_ports[port] = merge_bound_record_ids(
-            str(payload.get("binding_policy", "bind_first")),
+            payload.binding_policy or "bind_first",
             input_ports.get(port, []),
-            bound_ids,
-            supersedes_record_id=payload.get("supersedes_record_id"),
+            payload.record_ids,
+            supersedes_record_id=payload.supersedes_record_id,
         )
-        updates[node_id] = _replace_summary(summary, position=position, input_ports=input_ports)
+        updates[payload.to_node_id] = _replace_summary(
+            summary, position=position, input_ports=input_ports
+        )
     elif event.event_type == "lease_granted":
-        node_id = payload.get("node_id")
-        if isinstance(node_id, str):
+        if not isinstance(event.payload, LeaseGrantedPayload):
+            raise TypeError("lease_granted event has an unexpected payload type")
+        payload = event.payload
+        node_id = payload.node_id
+        if node_id:
             summary = summaries.get(node_id) or _empty_node_detail_summary(
                 event.run_id,
                 node_id,
@@ -1289,11 +1247,13 @@ def _node_detail_field_updates(
         "lease_expired",
         "lease_released",
     }:
-        lease_id = payload.get("lease_id")
-        if not isinstance(lease_id, str):
-            return updates
-        node_id = payload.get("node_id")
-        target_ids = [node_id] if isinstance(node_id, str) else list(summaries)
+        if not isinstance(
+            event.payload, (LeaseRevokedPayload, LeaseExpiredPayload, LeaseReleasedPayload)
+        ):
+            raise TypeError(f"{event.event_type} event has an unexpected payload type")
+        payload = event.payload
+        lease_id = payload.lease_id
+        target_ids = [payload.node_id]
         for target_id in target_ids:
             summary = summaries.get(target_id)
             if summary is None:
@@ -1324,39 +1284,36 @@ def _node_detail_field_updates(
                 active_lease=_selected_lease(leases),
             )
     elif event.event_type == "output_record_accepted":
-        record_payload = payload.get("record")
-        if not isinstance(record_payload, dict):
-            return updates
-        typed_record_payload = cast(dict[str, Any], record_payload)
-        node_id = typed_record_payload.get("producer_node_id")
-        record_kind = typed_record_payload.get("record_kind")
-        if (
-            isinstance(node_id, str)
-            and isinstance(record_kind, str)
-            and record_kind != "file_state"
-        ):
+        if not isinstance(event.payload, OutputRecordAcceptedPayload):
+            raise TypeError("output_record_accepted event has an unexpected payload type")
+        record = event.payload.record
+        if record.record_kind != "file_state":
+            node_id = record.producer_node_id
             summary = summaries.get(node_id) or _empty_node_detail_summary(
                 event.run_id,
                 node_id,
                 position,
             )
             records = [dict(record) for record in summary.output_records]
-            records.append(dict(typed_record_payload))
+            records.append(record.model_dump(mode="json", by_alias=True, exclude_none=True))
             updates[node_id] = _replace_summary(
                 summary,
                 position=position,
                 output_records=records,
             )
     elif event.event_type == "file_state_accepted":
-        node_id = payload.get("producer_node_id")
-        if isinstance(node_id, str):
+        if not isinstance(event.payload, StrictFileStateRecord):
+            raise TypeError("file_state_accepted event has an unexpected payload type")
+        record = event.payload
+        node_id = record.producer_node_id
+        if node_id:
             summary = summaries.get(node_id) or _empty_node_detail_summary(
                 event.run_id,
                 node_id,
                 position,
             )
             records = [dict(record) for record in summary.file_state_records]
-            records.append(dict(payload))
+            records.append(record.model_dump(mode="json", by_alias=True, exclude_none=True))
             updates[node_id] = _replace_summary(
                 summary,
                 position=position,
@@ -1431,76 +1388,176 @@ def _is_callback_history_event(event: HydratedEvent) -> bool:
     return event.payload.trigger == "runtime_start_acknowledged"
 
 
-def _node_event_response(event: HydratedEvent) -> dict[str, Any]:
+def _present_node_event(event: HydratedEvent) -> dict[str, Any]:
     return {
         "event_id": event.event_id,
         "event_type": event.event_type,
         "run_id": event.run_id,
         "position": event.position,
         "timestamp": event.timestamp.isoformat(),
-        "payload": event.payload.stored_json(),
+        "payload": event.payload.model_dump(mode="json", by_alias=True, exclude_none=True),
     }
 
 
-def _history_payload(event: HydratedEvent) -> dict[str, Any]:
-    return cast(dict[str, Any], event.payload.to_json())
+_NODE_DETAIL_EVENT_PAYLOAD_TYPES: dict[str, type[BaseModel]] = {
+    "agent_died": AgentDiedPayload,
+    "agent_dispatch_requested": AgentDispatchRequestedPayload,
+    "appeal_opened": AppealOpenedPayload,
+    "approval_decision_recorded": ApprovalDecisionRecordedPayload,
+    "authority_decision_recorded": AuthorityDecisionRecordedPayload,
+    "callback_accepted": CallbackAcceptedPayload,
+    "callback_duplicate_returned": CallbackDuplicateReturnedPayload,
+    "callback_rejected_conflict": CallbackRejectedPayload,
+    "callback_rejected_stale": CallbackRejectedPayload,
+    "cleanup_applied": CleanupAppliedPayload,
+    "cleanup_requested": CleanupRequestedPayload,
+    "command_rejected": CommandRejectedPayload,
+    "dead_input_detected": DeadInputDetectedPayload,
+    "edge_created": EdgeCreatedPayload,
+    "file_state_accepted": StrictFileStateRecord,
+    "file_state_rejected": FileStateRejectedPayload,
+    "gatekeeper_cost_recorded": GatekeeperCostRecordedPayload,
+    "gatekeeper_verdict_recorded": GatekeeperVerdictRecordedPayload,
+    "graph_patch_accepted": GraphPatchAcceptedPayload,
+    "graph_patch_rejected": GraphPatchRejectedPayload,
+    "heartbeat_recorded": HeartbeatRecordedPayload,
+    "input_bound": InputBoundPayload,
+    "lease_expired": LeaseExpiredPayload,
+    "lease_granted": LeaseGrantedPayload,
+    "lease_released": LeaseReleasedPayload,
+    "lease_renewed": LeaseRenewedPayload,
+    "lease_revoked": LeaseRevokedPayload,
+    "node_authority_changed": NodeAuthorityChangedPayload,
+    "node_created": NodeCreatedPayload,
+    "node_deferred": NodeDeferredPayload,
+    "node_ready": NodeReadyPayload,
+    "node_retired": NodeRetiredPayload,
+    "node_state_changed": NodeStateChangedPayload,
+    "output_record_accepted": OutputRecordAcceptedPayload,
+    "oversight_decision_recorded": OversightDecisionRecordedPayload,
+    "plan_region_marked_suspect": PlanRegionMarkedSuspectPayload,
+    "requirement_revision_recorded": RequirementRevisionPayload,
+    "revision_created": RevisionCreatedPayload,
+    "run_lifecycle_changed": RunLifecycleChangedPayload,
+    "runtime_retry_scheduled": RuntimeRetryScheduledPayload,
+    "session_state_changed": PlannerSessionStateChangedPayload,
+    "support_evidence_recorded": SupportEvidencePayload,
+    "verification_failed": VerificationOutcomePayload,
+    "verification_passed": VerificationOutcomePayload,
+}
 
 
-def _referenced_node_ids(payload: dict[str, Any], known_node_ids: set[str]) -> set[str]:
-    node_ids: set[str] = set()
-    _collect_node_references(payload, known_node_ids, node_ids, key=None)
-    return node_ids
+def _referenced_node_ids(event: HydratedEvent, known_node_ids: set[str]) -> set[str]:
+    """Project only the node references declared by the event's typed payload class."""
+    del known_node_ids
+    expected_payload_type = _NODE_DETAIL_EVENT_PAYLOAD_TYPES.get(event.event_type)
+    if expected_payload_type is None or type(event.payload) is not expected_payload_type:
+        raise TypeError(f"{event.event_type} event has an unexpected payload type")
+    return _declared_node_references(event.payload)
 
 
-def _collect_node_references(
-    value: Any,
-    known_node_ids: set[str],
-    node_ids: set[str],
-    *,
-    key: str | None,
-) -> None:
-    if isinstance(value, dict):
-        for child_key, child_value in cast(dict[str, Any], value).items():
-            _collect_node_references(child_value, known_node_ids, node_ids, key=child_key)
-    elif isinstance(value, list):
-        for item in cast(list[Any], value):
-            _collect_node_references(item, known_node_ids, node_ids, key=key)
-    elif isinstance(value, str):
-        if value in known_node_ids or (key is not None and _looks_like_node_key(key)):
-            node_ids.add(value)
+def _declared_node_references(payload: BaseModel) -> set[str]:
+    """Enumerate every node-reference field declared in graph event payload models."""
+    if isinstance(payload, NodeCreatedPayload):
+        return _node_ids(
+            payload.node_id,
+            payload.recovery_of_node_id,
+            payload.guarded_planner_node_id,
+            payload.appealed_node_id,
+            *(payload.predecessor_node_ids or []),
+        )
+    if isinstance(payload, EdgeCreatedPayload):
+        return _node_ids(payload.from_node_id, payload.to_node_id)
+    if isinstance(payload, DeadInputDetectedPayload):
+        return _node_ids(
+            payload.node_id,
+            payload.from_node_id,
+            payload.to_node_id,
+            payload.source_node_id,
+        )
+    if isinstance(payload, PlanRegionMarkedSuspectPayload):
+        return _node_ids(*payload.region_node_ids)
+    if isinstance(payload, GraphPatchAcceptedPayload):
+        return _node_ids(payload.proposed_by_node_id, *payload.successor_planner_node_ids)
+    if isinstance(payload, GraphPatchRejectedPayload):
+        return _node_ids(payload.proposed_by_node_id)
+    if isinstance(payload, (AppealOpenedPayload, OversightDecisionRecordedPayload)):
+        return _node_ids(payload.node_id, payload.appealed_node_id)
+    if isinstance(payload, (ApprovalDecisionRecordedPayload, AuthorityDecisionRecordedPayload)):
+        return _node_ids(payload.node_id, payload.appeal_node_id)
+    if isinstance(payload, VerificationOutcomePayload):
+        return _node_ids(payload.node_id, payload.verifier_node_id)
+    if isinstance(payload, OutputRecordAcceptedPayload):
+        return _node_ids(payload.record.producer_node_id)
+    if isinstance(
+        payload,
+        (
+            StrictFileStateRecord,
+            GatekeeperVerdictRecordedPayload,
+            CleanupRequestedPayload,
+        ),
+    ):
+        return _node_ids(payload.producer_node_id)
+    if isinstance(payload, RunLifecycleChangedPayload):
+        return _node_ids(payload.node_id, payload.recovery_of_node_id)
+    if isinstance(payload, CommandRejectedPayload):
+        return _node_ids(payload.proposed_by_node_id)
+    if isinstance(
+        payload,
+        (
+            InputBoundPayload,
+            PlannerSessionStateChangedPayload,
+            LeaseGrantedPayload,
+            LeaseRenewedPayload,
+            LeaseReleasedPayload,
+            LeaseRevokedPayload,
+            LeaseExpiredPayload,
+            NodeAuthorityChangedPayload,
+            NodeDeferredPayload,
+            NodeReadyPayload,
+            NodeRetiredPayload,
+            NodeStateChangedPayload,
+            CallbackAcceptedPayload,
+            CallbackDuplicateReturnedPayload,
+            CallbackRejectedPayload,
+            RuntimeRetryScheduledPayload,
+            HeartbeatRecordedPayload,
+            AgentDiedPayload,
+            AgentDispatchRequestedPayload,
+            FileStateRejectedPayload,
+        ),
+    ):
+        return _node_ids(
+            payload.node_id if not isinstance(payload, InputBoundPayload) else payload.to_node_id
+        )
+    return set()
 
 
-def _looks_like_node_key(key: str) -> bool:
-    return key == "node_id" or key.endswith("_node_id") or key.endswith("_node_ids")
+def _node_ids(*values: str | None) -> set[str]:
+    return {value for value in values if value is not None}
 
 
 def _lease_from_grant(
-    payload: dict[str, Any],
+    payload: LeaseGrantedPayload,
     known_kind: str | None,
     known_task_region_id: str | None = None,
 ) -> dict[str, Any]:
     lease: dict[str, Any] = {
-        "lease_id": payload["lease_id"],
-        "node_id": payload["node_id"],
+        "lease_id": payload.lease_id,
+        "node_id": payload.node_id,
         "state": "active",
+        "generation": payload.generation,
+        "execution_id": payload.execution_id,
+        "base_snapshot_id": payload.base_snapshot_id,
+        "expires_at": payload.expires_at.isoformat(),
+        "resource_claims": [claim.model_dump(mode="json") for claim in payload.resource_claims],
     }
-    generation = payload.get("generation")
-    if isinstance(generation, int):
-        lease["generation"] = generation
-    for key in ("session_id", "expires_at", "execution_id", "base_snapshot_id", "task_region_id"):
-        value = payload.get(key)
-        if isinstance(value, str):
-            lease[key] = value
+    if payload.session_id is not None:
+        lease["session_id"] = payload.session_id
     if "task_region_id" not in lease and known_task_region_id is not None:
         lease["task_region_id"] = known_task_region_id
-    kind = payload.get("kind")
-    if isinstance(kind, str):
-        lease["kind"] = kind
-    elif known_kind is not None:
+    if known_kind is not None:
         lease["kind"] = known_kind
-    resource_claims = payload.get("resource_claims")
-    if isinstance(resource_claims, list):
-        lease["resource_claims"] = resource_claims
     return lease
 
 
@@ -1524,19 +1581,22 @@ def _selected_lease(leases: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _has_missing_preexisting_node_reference(
+    catalog: GraphCatalog,
     events: Sequence[HydratedEvent],
     existing_node_ids: set[str],
 ) -> bool:
-    known_node_ids = set(existing_node_ids)
     created_node_ids: set[str] = set()
     for event in events:
-        payload = _history_payload(event)
-        node_id = payload.get("node_id")
-        if event.event_type == "node_created" and isinstance(node_id, str):
-            created_node_ids.add(node_id)
-            known_node_ids.add(node_id)
+        _require_catalog_payload(catalog, event)
+        if event.event_type == "node_created":
+            if type(event.payload) is not NodeCreatedPayload:
+                raise TypeError("node_created event has an unexpected payload type")
+            created_node_ids.add(event.payload.node_id)
+
+    for event in events:
+        if event.event_type == "node_created":
             continue
-        referenced_node_ids = _referenced_node_ids(payload, known_node_ids)
+        referenced_node_ids = _referenced_node_ids(event, existing_node_ids | created_node_ids)
         if any(
             node_id not in existing_node_ids and node_id not in created_node_ids
             for node_id in referenced_node_ids

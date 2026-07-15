@@ -70,7 +70,7 @@
       actor_role: planner
       base_graph_position: -1
       ops:
-        - {op: create_gate, predecessor_node_ids: [worker-1]}
+        - {op: create_gate, node_id: gate-invariant-1, predecessor_node_ids: [worker-1]}
   then_events:
     - graph_patch_rejected: {patch_id: patch-planner-scope}
   then_projection: {worker-1: planned}

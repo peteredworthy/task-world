@@ -16,9 +16,7 @@ from orchestrator.graph.models import Actor
 from orchestrator.graph.payloads import JsonValue, StrictPayload
 
 if TYPE_CHECKING:
-    from orchestrator.graph.callbacks import CallbackRequest
     from orchestrator.graph.catalog import GraphCatalog
-    from orchestrator.graph.projections import GraphProjection
 
 
 PayloadT = TypeVar("PayloadT", bound=StrictPayload)
@@ -131,89 +129,6 @@ CommandHandler = Callable[
 ]
 
 
-class _FailureRecordPayloadEffect(Protocol):
-    def __call__(
-        self,
-        *,
-        node_id: str,
-        phase: str,
-        error_class: str,
-        retryable: bool,
-        lease_id: str | None = None,
-        execution_id: object = None,
-        generation: object = None,
-        reason: str | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> dict[str, Any]: ...
-
-
-class _RecoveryPlanRecordPayloadEffect(Protocol):
-    def __call__(
-        self,
-        *,
-        node_id: str,
-        retry_payload: dict[str, Any],
-        retry_backoff_seconds: int,
-    ) -> dict[str, Any]: ...
-
-
-class _RequiredOutputRecordConflictEffect(Protocol):
-    def __call__(
-        self,
-        projection: GraphProjection,
-        request: CallbackRequest,
-        expected_producer_node_id: str,
-        *,
-        successful_completion: bool,
-    ) -> str | None: ...
-
-
-@dataclass(frozen=True)
-class FutureCommandEffects:
-    """Typed effect functions injected into graph command handlers."""
-
-    accepted_output_record_events: Callable[
-        [GraphProjection, CallbackRequest, str, Callable[[str, dict[str, Any]], HydratedEvent]],
-        list[HydratedEvent],
-    ]
-    file_state_authority_conflict: Callable[[GraphProjection, CallbackRequest], str | None]
-    file_state_rejected_conflict: Callable[[CallbackRequest, str], str | None]
-    file_state_rejected_events: Callable[
-        [CallbackRequest, Callable[[str, dict[str, Any]], HydratedEvent]], list[HydratedEvent]
-    ]
-    lease_node_id: Callable[[GraphProjection, str], str | None]
-    output_record_contract_conflict: Callable[[GraphProjection, CallbackRequest, str], str | None]
-    output_record_provenance_conflict: Callable[[CallbackRequest, str], str | None]
-    planner_session_state_event: Callable[
-        [GraphProjection, str, str, int, Callable[[str, dict[str, Any]], HydratedEvent]],
-        HydratedEvent | None,
-    ]
-    required_output_record_conflict: _RequiredOutputRecordConflictEffect
-    source_repair_events: Callable[
-        [
-            GraphProjection,
-            list[HydratedEvent],
-            list[HydratedEvent],
-            Callable[[str, dict[str, Any]], HydratedEvent],
-            GraphCatalog,
-            object,
-        ],
-        list[HydratedEvent],
-    ]
-    typed_lease_event_payload: Callable[[str, dict[str, Any]], dict[str, Any]]
-    verification_record_conflict: Callable[[GraphProjection, CallbackRequest, str], str | None]
-    cancel_active_lease_events: Callable[
-        [GraphProjection, Callable[[str, dict[str, Any]], HydratedEvent], object],
-        list[HydratedEvent],
-    ]
-    lifecycle_completion_decision_event: Callable[
-        [dict[str, Any], Callable[[str, dict[str, Any]], HydratedEvent], IdGenerator],
-        HydratedEvent,
-    ]
-    failure_record_payload: _FailureRecordPayloadEffect
-    recovery_plan_record_payload: _RecoveryPlanRecordPayloadEffect
-
-
 @dataclass(frozen=True)
 class CommandExecutionContext:
     """Injected capabilities and universal metadata for command execution."""
@@ -224,7 +139,6 @@ class CommandExecutionContext:
     id_generator: IdGenerator
     actor: Actor
     events: tuple[HydratedEvent, ...]
-    future_effects: FutureCommandEffects
     catalog: GraphCatalog
 
     def event_metadata(self, event_type: str) -> EventMetadata:
@@ -332,7 +246,6 @@ __all__ = [
     "EventMetadata",
     "EventSpecification",
     "event_payload_json",
-    "FutureCommandEffects",
     "HydratedEvent",
     "ProjectionParticipation",
     "StoredEventEnvelope",

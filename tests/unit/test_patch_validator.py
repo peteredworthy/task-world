@@ -10,7 +10,7 @@ from orchestrator.graph.models import (
     ActorKind,
     EventEnvelope,
     PatchEnvelope,
-    PatchOp,
+    parse_patch_op,
 )
 from orchestrator.graph import (
     GraphPatchAcceptedPayload,
@@ -33,7 +33,7 @@ def _patch(
         patch_id="patch-1",
         proposed_by_node_id="planner-1",
         base_graph_position=base_graph_position,
-        ops=[PatchOp(**op) for op in ops],
+        ops=[parse_patch_op(op) for op in ops],
         rationale_record_id=None,
     )
 
@@ -602,6 +602,23 @@ def test_create_edge_accepts_revision_attempt_embedded_worker_in_same_patch() ->
     assert result.accepted is True
 
 
+def test_minimal_revision_attempt_is_valid_without_executable_nodes() -> None:
+    result = _validate(
+        _patch(
+            [
+                {
+                    "op": "create_revision_attempt",
+                    "task_region_id": "task-1",
+                    "failed_candidate_id": "candidate-1",
+                }
+            ]
+        ),
+        actor_role="oversight",
+    )
+
+    assert result.accepted is True
+
+
 def test_create_edge_accepts_revision_attempt_embedded_worker_with_default_kind() -> None:
     result = _validate(
         _patch(
@@ -960,7 +977,9 @@ def test_create_edge_rejects_selector_incompatible_with_source_port() -> None:
 
 
 def test_planner_cannot_create_gate() -> None:
-    result = _validate(_patch([{"op": "create_gate", "predecessor_node_ids": ["worker-1"]}]))
+    result = _validate(
+        _patch([{"op": "create_gate", "node_id": "gate-1", "predecessor_node_ids": ["worker-1"]}])
+    )
 
     assert not result.accepted
     assert result.rejection_reason is not None
@@ -969,7 +988,7 @@ def test_planner_cannot_create_gate() -> None:
 
 def test_oversight_can_create_gate() -> None:
     result = _validate(
-        _patch([{"op": "create_gate", "predecessor_node_ids": ["worker-1"]}]),
+        _patch([{"op": "create_gate", "node_id": "gate-1", "predecessor_node_ids": ["worker-1"]}]),
         actor_role="oversight",
     )
 
@@ -1100,12 +1119,9 @@ def test_gap_planner_executable_work_must_be_corrective() -> None:
     )
 
 
-def test_unknown_op_rejected() -> None:
-    result = _validate(_patch([{"op": "teleport_node", "node_id": "worker-1"}]))
-
-    assert not result.accepted
-    assert result.rejection_reason is not None
-    assert "unknown op" in result.rejection_reason
+def test_unknown_op_rejected_at_patch_boundary() -> None:
+    with pytest.raises(ValueError, match="does not match any of the expected tags"):
+        _patch([{"op": "teleport_node", "node_id": "worker-1"}])
 
 
 def test_set_resource_claims_escalation_rejected() -> None:
@@ -1152,22 +1168,17 @@ def test_set_resource_claims_narrowing_accepted() -> None:
     assert result.accepted
 
 
-def test_set_resource_claims_unknown_mode_rejected() -> None:
-    patch = _patch(
-        [
-            {
-                "op": "set_resource_claims",
-                "node_id": "worker-1",
-                "resource_claims": [{"mode": "delete", "scope": "repo"}],
-            }
-        ]
-    )
-
-    result = _validate(patch)
-
-    assert not result.accepted
-    assert result.rejection_reason is not None
-    assert "resource_claims mode must be one of" in result.rejection_reason
+def test_set_resource_claims_unknown_mode_rejected_at_patch_boundary() -> None:
+    with pytest.raises(ValueError, match="Input should be 'read'"):
+        _patch(
+            [
+                {
+                    "op": "set_resource_claims",
+                    "node_id": "worker-1",
+                    "resource_claims": [{"mode": "delete", "scope": "repo"}],
+                }
+            ]
+        )
 
 
 def test_set_resource_claims_absolute_path_in_scope_rejected() -> None:
@@ -1207,32 +1218,23 @@ def test_set_resource_claims_dotdot_escaping_path_in_scope_rejected() -> None:
 
 
 def test_create_node_authority_non_string_paths_entry_rejected() -> None:
-    # `node` is untyped (dict[str, Any]) on PatchOp, unlike the top-level
-    # `set_resource_claims.resource_claims` field, which pydantic already type-checks
-    # to list[str] before validate_patch ever runs. Malformed paths embedded in a
-    # node's authority therefore need their own shape check here.
-    patch = _patch(
-        [
-            {
-                "op": "create_node",
-                "node": {
-                    "node_id": "worker-1",
-                    "kind": "worker",
-                    "role": "builder",
-                    "state": "planned",
-                    "authority": {
-                        "resource_claims": [{"mode": "write", "scope": "repo", "paths": [1, 2]}],
+    with pytest.raises(ValueError, match="Input should be a valid string"):
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "authority": {
+                            "resource_claims": [{"mode": "write", "scope": "repo", "paths": [1, 2]}]
+                        },
                     },
-                },
-            }
-        ]
-    )
-
-    result = _validate(patch)
-
-    assert not result.accepted
-    assert result.rejection_reason is not None
-    assert "resource_claims paths must be a list of strings" in result.rejection_reason
+                }
+            ]
+        )
 
 
 def test_set_resource_claims_empty_string_path_entry_rejected() -> None:
@@ -1315,28 +1317,21 @@ def test_set_resource_claims_external_and_graph_write_scope_untouched() -> None:
 
 
 def test_create_node_authority_resource_claims_shape_validated() -> None:
-    patch = _patch(
-        [
-            {
-                "op": "create_node",
-                "node": {
-                    "node_id": "worker-1",
-                    "kind": "worker",
-                    "role": "builder",
-                    "state": "planned",
-                    "authority": {
-                        "resource_claims": [{"mode": "bogus", "scope": "repo"}],
+    with pytest.raises(ValueError, match="Input should be 'read'"):
+        _patch(
+            [
+                {
+                    "op": "create_node",
+                    "node": {
+                        "node_id": "worker-1",
+                        "kind": "worker",
+                        "role": "builder",
+                        "state": "planned",
+                        "authority": {"resource_claims": [{"mode": "bogus", "scope": "repo"}]},
                     },
-                },
-            }
-        ]
-    )
-
-    result = _validate(patch)
-
-    assert not result.accepted
-    assert result.rejection_reason is not None
-    assert "resource_claims mode must be one of" in result.rejection_reason
+                }
+            ]
+        )
 
 
 def test_retire_running_node_rejected() -> None:

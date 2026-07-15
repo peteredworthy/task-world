@@ -106,6 +106,14 @@ _RETIRED_GRAPH_PAYLOAD_NAMES = frozenset(
     }
 )
 _RETIRED_D_SERIES_MAPPING_METHODS = frozenset({"__getitem__", "get", "items"})
+_RETIRED_LIFECYCLE_EFFECT_FIELDS = frozenset(
+    {
+        "cancel_active_lease_events",
+        "lifecycle_completion_decision_event",
+        "failure_record_payload",
+        "recovery_plan_record_payload",
+    }
+)
 
 
 @dataclass(frozen=True, order=True)
@@ -294,6 +302,60 @@ def _strict_cutover_diagnostics(path: Path) -> list[ArchitectureDiagnostic]:
     source = path.read_text()
     tree = ast.parse(source, filename=str(path))
     diagnostics: list[ArchitectureDiagnostic] = []
+    # Source repair is a typed command-domain boundary.  Raw creators here can
+    # silently bypass the catalog payload model; test corruption fixtures are
+    # deliberately outside this production-module rule.
+    if (path.name == "source_repair.py" or "commands" in path.parts) and "tests" not in path.parts:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "orchestrator.graph._commands":
+                category = (
+                    "source repair legacy command import"
+                    if path.name == "source_repair.py"
+                    else "converted command legacy command import"
+                )
+                diagnostics.append(_diagnostic(path, node, category))
+            if (
+                path.name == "source_repair.py"
+                and isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "create_named"
+            ):
+                diagnostics.append(_diagnostic(path, node, "source repair raw creator"))
+    for class_node in (node for node in ast.walk(tree) if isinstance(node, ast.ClassDef)):
+        callable_fields = [
+            member
+            for member in class_node.body
+            if isinstance(member, ast.AnnAssign)
+            and member.annotation is not None
+            and "Callable[" in ast.unparse(member.annotation)
+        ]
+        if class_node.name == "GraphCommandEffects" or (
+            "Effect" in class_node.name and callable_fields
+        ):
+            diagnostics.append(_diagnostic(path, class_node, "callable-field effect bundle"))
+        for member in class_node.body:
+            if (
+                isinstance(member, ast.AnnAssign)
+                and isinstance(member.target, ast.Name)
+                and member.target.id in _RETIRED_LIFECYCLE_EFFECT_FIELDS
+            ):
+                diagnostics.append(_diagnostic(path, member, "retired lifecycle command effect"))
+    for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):
+        arguments = {argument.arg: argument for argument in function.args.args}
+        event_type = arguments.get("event_type")
+        payload = arguments.get("payload")
+        if (
+            function.name.endswith("lease_event_payload")
+            and event_type is not None
+            and payload is not None
+            and event_type.annotation is not None
+            and payload.annotation is not None
+            and ast.unparse(event_type.annotation) == "str"
+            and "dict[" in ast.unparse(payload.annotation)
+            and function.returns is not None
+            and "dict[" in ast.unparse(function.returns)
+        ):
+            diagnostics.append(_diagnostic(path, function, "raw event creator bridge"))
     for line_number, line in enumerate(source.splitlines(), start=1):
         if "Task 9 deletion seam" in line:
             diagnostics.append(
@@ -384,7 +446,9 @@ def _strict_cutover_diagnostics(path: Path) -> list[ArchitectureDiagnostic]:
 
     def is_strict_model_name(node: ast.expr) -> bool:
         name = _call_name(node)
-        return name is not None and (name.endswith("Payload") or name.startswith("Strict"))
+        return name is not None and (
+            name.endswith(("Payload", "Command")) or name.startswith("Strict")
+        )
 
     for function in (
         node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -398,6 +462,12 @@ def _strict_cutover_diagnostics(path: Path) -> list[ArchitectureDiagnostic]:
             argument.arg
             for argument in arguments
             if argument.annotation is not None and is_strict_model_name(argument.annotation)
+        }
+        command_parameter_aliases = {
+            argument.arg
+            for argument in arguments
+            if argument.annotation is not None
+            and (_call_name(argument.annotation) or "").endswith("Command")
         }
         aliases = set(parameter_aliases)
         strict_event_names = {
@@ -571,6 +641,109 @@ def _strict_cutover_diagnostics(path: Path) -> list[ArchitectureDiagnostic]:
                 diagnostics.append(_diagnostic(path, node, "W5RAW_PAYLOAD_READ"))
 
     for node in ast.walk(tree):
+        if isinstance(node, ast.ClassDef) and node.name == "FutureCommandEffects":
+            diagnostics.append(_diagnostic(path, node, "W5RAW_FUTURE_COMMAND_EFFECTS_CONTRACT"))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            parameter_names = {argument.arg for argument in node.args.args}
+            has_event_type_payload_parameters = {"event_type", "payload"} <= parameter_names
+            returns_event_type_payload = any(
+                isinstance(child, ast.Return)
+                and isinstance(child.value, ast.Tuple)
+                and len(child.value.elts) == 2
+                and all(
+                    isinstance(value, ast.Name) and value.id in {"event_type", "payload"}
+                    for value in child.value.elts
+                )
+                for child in ast.walk(node)
+            )
+            if has_event_type_payload_parameters and returns_event_type_payload:
+                diagnostics.append(_diagnostic(path, node, "W5RAW_EVENT_TYPE_PAYLOAD_CREATOR"))
+            if node.name.startswith("_history_payload") and any(
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr in {"stored_json", "to_json"}
+                for child in ast.walk(node)
+            ):
+                diagnostics.append(_diagnostic(path, node, "W5INTERNAL_JSON_PAYLOAD_ADAPTER"))
+            for call in (child for child in ast.walk(node) if isinstance(child, ast.Call)):
+                command_dump_names: set[str] = set()
+                changed = True
+                while changed:
+                    changed = False
+                    for assignment in (
+                        child
+                        for child in ast.walk(node)
+                        if isinstance(child, (ast.Assign, ast.AnnAssign))
+                        and child.value is not None
+                    ):
+                        targets = (
+                            assignment.targets
+                            if isinstance(assignment, ast.Assign)
+                            else [assignment.target]
+                        )
+                        value_is_command_dump = (
+                            isinstance(assignment.value, ast.Call)
+                            and isinstance(assignment.value.func, ast.Attribute)
+                            and assignment.value.func.attr == "model_dump"
+                            and isinstance(assignment.value.func.value, ast.Name)
+                            and assignment.value.func.value.id in command_parameter_aliases
+                        )
+                        value_is_known_dump = (
+                            isinstance(assignment.value, ast.Name)
+                            and assignment.value.id in command_dump_names
+                        )
+                        if value_is_command_dump or value_is_known_dump:
+                            before = len(command_dump_names)
+                            command_dump_names.update(assigned_names(assignment))
+                            changed = changed or len(command_dump_names) != before
+                dump_arguments = (
+                    argument
+                    for argument in call.args
+                    if (isinstance(argument, ast.Name) and argument.id in command_dump_names)
+                    or (
+                        isinstance(argument, ast.Call)
+                        and isinstance(argument.func, ast.Attribute)
+                        and argument.func.attr == "model_dump"
+                        and isinstance(argument.func.value, ast.Name)
+                        and argument.func.value.id in command_parameter_aliases
+                    )
+                )
+                if any(dump_arguments) and _call_name(call.func) != "model_dump":
+                    diagnostics.append(
+                        _diagnostic(path, call, "W5COMMAND_MODEL_DUMP_TO_RAW_HELPER")
+                    )
+                if (
+                    isinstance(call.func, ast.Name)
+                    and call.func.id.startswith(("raw_", "_raw_", "_legacy_"))
+                    and any(
+                        isinstance(argument, ast.Call)
+                        and isinstance(argument.func, ast.Attribute)
+                        and argument.func.attr == "model_dump"
+                        for argument in call.args
+                    )
+                ):
+                    diagnostics.append(
+                        _diagnostic(path, call, "W5COMMAND_MODEL_DUMP_TO_RAW_HELPER")
+                    )
+            has_event_type_branch = any(
+                isinstance(child, ast.Compare)
+                and any(
+                    isinstance(value, ast.Attribute) and value.attr == "event_type"
+                    for value in (child.left, *child.comparators)
+                )
+                for child in ast.walk(node)
+            )
+            has_json_payload_read = any(
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr in {"get", "__getitem__"}
+                and isinstance(child.func.value, ast.Call)
+                and isinstance(child.func.value.func, ast.Attribute)
+                and child.func.value.func.attr in {"stored_json", "to_json"}
+                for child in ast.walk(node)
+            )
+            if has_event_type_branch and has_json_payload_read:
+                diagnostics.append(_diagnostic(path, node, "W5RAW_READ_MODEL_EVENT_DISPATCH"))
         if isinstance(node, ast.Call) and _call_name(node.func) == "EventEnvelope":
             diagnostics.append(_diagnostic(path, node, "W5RAW_EVENT_ENVELOPE_CONSTRUCTION"))
         if isinstance(node, ast.Name) and node.id in _RETIRED_GRAPH_PAYLOAD_NAMES:
@@ -600,29 +773,7 @@ def check_paths(
         from scripts.w5_payload_ast_inventory import scan_graph_payload_architecture
 
         report = scan_graph_payload_architecture(paths)
-        diagnostics = [
-            ArchitectureDiagnostic(fact.path, fact.line, fact.column, fact.rule, fact.expression)
-            for fact in report.architecture_facts
-        ]
-        diagnostics.extend(
-            ArchitectureDiagnostic(
-                site.path,
-                site.line,
-                site.column,
-                "W5UNCLASSIFIED_DYNAMIC_SITE",
-                site.expression,
-            )
-            for site in (*report.dynamic_event_sites, *report.dynamic_command_sites)
-            if site.classification == "unresolved"
-        )
-        expanded = [
-            candidate
-            for path in paths
-            for candidate in (path.rglob("*.py") if path.is_dir() else [path])
-        ]
-        for path in expanded:
-            diagnostics.extend(_strict_cutover_diagnostics(path))
-        return tuple(sorted(set(diagnostics)))
+        return check_inventory_report(report, paths)
     expanded: list[Path] = []
     for path in paths:
         expanded.extend(path.rglob("*.py") if path.is_dir() else [path])
@@ -631,6 +782,38 @@ def check_paths(
         for path in sorted(set(expanded), key=str)
         for diagnostic in _scan_file(path, domain)
     ]
+    return tuple(sorted(set(diagnostics)))
+
+
+def check_inventory_report(
+    report: object, paths: Sequence[Path]
+) -> tuple[ArchitectureDiagnostic, ...]:
+    """Return catalog-wide diagnostics from an already-scanned inventory report."""
+    diagnostics = [
+        ArchitectureDiagnostic(fact.path, fact.line, fact.column, fact.rule, fact.expression)
+        for fact in getattr(report, "architecture_facts")
+    ]
+    diagnostics.extend(
+        ArchitectureDiagnostic(
+            site.path,
+            site.line,
+            site.column,
+            "W5UNCLASSIFIED_DYNAMIC_SITE",
+            site.expression,
+        )
+        for site in (
+            *getattr(report, "dynamic_event_sites"),
+            *getattr(report, "dynamic_command_sites"),
+        )
+        if site.classification == "unresolved"
+    )
+    expanded = [
+        candidate
+        for path in paths
+        for candidate in (path.rglob("*.py") if path.is_dir() else [path])
+    ]
+    for path in expanded:
+        diagnostics.extend(_strict_cutover_diagnostics(path))
     return tuple(sorted(set(diagnostics)))
 
 

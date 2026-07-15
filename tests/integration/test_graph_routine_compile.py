@@ -30,7 +30,7 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from orchestrator.graph_runtime.controller import rebuild_projection
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import build_graph_catalog
 from orchestrator.graph.events.records import OutputRecordAcceptedPayload
 from orchestrator.graph import GraphCatalog
 
@@ -278,9 +278,6 @@ async def test_controller_two_step_callback_completion_unblocks_next_step(
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
 
     try:
@@ -344,9 +341,6 @@ async def test_controller_upstream_failure_blocks_next_step(
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
 
     try:
@@ -402,9 +396,6 @@ async def test_demo_task_traverses_all_workers_in_step_order(
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
 
     try:
@@ -460,9 +451,6 @@ async def test_compile_seed_and_first_schedule_tick_overhead_is_bounded(
         id_gen,
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
 
     started_at = perf_counter()

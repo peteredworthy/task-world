@@ -14,7 +14,6 @@ from orchestrator.graph import (
     HydratedEvent,
     StoredEventEnvelope,
     build_graph_catalog,
-    build_graph_command_dependencies,
 )
 from orchestrator.graph.projections import build_projection, projection_to_checkpoint
 from orchestrator.graph.scenario import run_scenario
@@ -63,9 +62,6 @@ def test_all_fixtures_run_through_harness() -> None:
             FakeClock(),
             SequentialIdGenerator(),
             catalog=build_graph_catalog(),
-            future_effects=build_graph_command_dependencies(
-                catalog=build_graph_catalog()
-            ).future_effects,
         )
         assert result.scenario_name == scenario["name"], path.name
         assert result.passed, f"{path.name}::{scenario['name']}: {result.failures}"
@@ -126,9 +122,6 @@ async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
             FakeClock(),
             SequentialIdGenerator(),
             catalog=build_graph_catalog(),
-            future_effects=build_graph_command_dependencies(
-                catalog=build_graph_catalog()
-            ).future_effects,
         )
         assert result.passed, f"{path.name}::{scenario['name']}: {result.failures}"
 

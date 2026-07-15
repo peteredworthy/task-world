@@ -67,7 +67,6 @@ from orchestrator.graph_runtime import (
 )
 from orchestrator.state import RunNotFoundError
 from orchestrator.workflow import OutboxRequeued
-from orchestrator.graph import build_graph_command_dependencies
 from orchestrator.graph import GraphCatalog
 
 router = APIRouter(prefix="/api/runs", tags=["graph"])
@@ -1722,7 +1721,6 @@ async def submit_operator_graph_patch(
         _ApiGraphIdGenerator(),
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(catalog).future_effects,
     )
     try:
         result = await controller.handle_command(
@@ -1914,7 +1912,6 @@ async def record_graph_decision(
         _ApiGraphIdGenerator(),
         auto_dispatch=False,
         catalog=catalog,
-        future_effects=build_graph_command_dependencies(catalog).future_effects,
     )
     try:
         result = await controller.handle_command(

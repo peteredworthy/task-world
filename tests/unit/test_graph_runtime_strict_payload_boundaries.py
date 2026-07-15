@@ -12,12 +12,17 @@ from orchestrator.graph import (
     FakeClock,
     HydratedEvent,
     NodeCreatedPayload,
+    NodeStateChangedPayload,
     StoredEventEnvelope,
     build_graph_catalog,
 )
 from orchestrator.graph_runtime.dispatch import _callback_conflict_reason
 from orchestrator.graph_runtime.prompts import _planner_deferred_reasons
-from orchestrator.graph_runtime.store import _is_callback_history_event
+from orchestrator.graph_runtime.store import (
+    _complete_graph_event_summary,
+    _is_callback_history_event,
+    _node_detail_field_updates,
+)
 
 
 def _event(event_type: str, payload: dict[str, object]) -> HydratedEvent:
@@ -91,3 +96,23 @@ def test_store_callback_history_decision_fails_closed_for_wrong_payload_class() 
 
     with pytest.raises(TypeError, match="node_state_changed event has an unexpected payload type"):
         _is_callback_history_event(mismatched)
+
+
+def test_store_summary_presenter_fails_closed_for_wrong_payload_class() -> None:
+    event = _event("node_state_changed", {"node_id": "node-1", "new_state": "running"})
+    mismatched = event.model_copy(
+        update={"payload": NodeCreatedPayload(node_id="node-1", kind="worker")}
+    )
+
+    with pytest.raises(TypeError, match="node_state_changed event has an unexpected payload type"):
+        _complete_graph_event_summary(build_graph_catalog(), mismatched)
+
+
+def test_store_node_detail_projector_fails_closed_for_wrong_payload_class() -> None:
+    event = _event("node_created", {"node_id": "node-1", "kind": "worker"})
+    mismatched = event.model_copy(
+        update={"payload": NodeStateChangedPayload(node_id="node-1", new_state="running")}
+    )
+
+    with pytest.raises(TypeError, match="node_created event has an unexpected payload type"):
+        _node_detail_field_updates(mismatched, {}, {}, 1)

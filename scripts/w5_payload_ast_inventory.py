@@ -502,6 +502,7 @@ class _ParsedFile:
     functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef]
     calls: dict[str, list[ast.Call]]
     imports: dict[str, str]
+    classes: dict[str, ast.ClassDef]
 
 
 def _parse(path: Path) -> _ParsedFile:
@@ -510,11 +511,14 @@ def _parse(path: Path) -> _ParsedFile:
     functions: dict[str, ast.FunctionDef | ast.AsyncFunctionDef] = {}
     calls: dict[str, list[ast.Call]] = {}
     imports: dict[str, str] = {}
+    classes: dict[str, ast.ClassDef] = {}
     for parent in ast.walk(tree):
         for child in ast.iter_child_nodes(parent):
             parents[child] = parent
         if isinstance(parent, (ast.FunctionDef, ast.AsyncFunctionDef)):
             functions[parent.name] = parent
+        if isinstance(parent, ast.ClassDef):
+            classes[parent.name] = parent
         if isinstance(parent, ast.ImportFrom) and parent.module is not None:
             for alias in parent.names:
                 imports[alias.asname or alias.name] = f"{parent.module}.{alias.name}"
@@ -529,7 +533,7 @@ def _parse(path: Path) -> _ParsedFile:
             key = _scoped_call_key(node, parents)
             if key is not None:
                 calls.setdefault(key, []).append(node)
-    return _ParsedFile(path, tree, parents, functions, calls, imports)
+    return _ParsedFile(path, tree, parents, functions, calls, imports, classes)
 
 
 def _enclosing_classes(node: ast.AST, parents: dict[ast.AST, ast.AST]) -> tuple[str, ...]:
@@ -1048,17 +1052,13 @@ def _has_current_boundary_role(function: ast.FunctionDef | ast.AsyncFunctionDef)
 
 
 def _inherits_strict_payload(node: ast.ClassDef, parsed: _ParsedFile) -> bool:
-    classes = {
-        child.name: child for child in ast.walk(parsed.tree) if isinstance(child, ast.ClassDef)
-    }
-
     def inherits(candidate: ast.ClassDef, seen: frozenset[str]) -> bool:
         for base in candidate.bases:
             name = _call_name(base)
             if name == "StrictPayload":
                 return True
-            if name is not None and name not in seen and name in classes:
-                if inherits(classes[name], seen | {name}):
+            if name is not None and name not in seen and name in parsed.classes:
+                if inherits(parsed.classes[name], seen | {name}):
                     return True
         return False
 
@@ -1128,21 +1128,36 @@ def _architecture_facts(
                 return current
         return None
 
-    def scope_nodes(scope: Scope) -> Iterable[ast.AST]:
+    scope_nodes_by_scope: dict[int, tuple[ast.AST, ...]] = {}
+
+    def scope_nodes(scope: Scope) -> tuple[ast.AST, ...]:
         """Yield nodes owned by one lexical scope, excluding nested scopes."""
 
-        def visit(node: ast.AST) -> Iterable[ast.AST]:
+        key = id(scope)
+        if key in scope_nodes_by_scope:
+            return scope_nodes_by_scope[key]
+
+        def visit(node: ast.AST) -> tuple[ast.AST, ...]:
+            nodes: list[ast.AST] = []
             for child in ast.iter_child_nodes(node):
                 if isinstance(
                     child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)
                 ):
                     continue
-                yield child
-                yield from visit(child)
+                nodes.append(child)
+                nodes.extend(visit(child))
+            return tuple(nodes)
 
-        yield from visit(scope)
+        nodes = visit(scope)
+        scope_nodes_by_scope[key] = nodes
+        return nodes
+
+    bindings_by_scope: dict[int, set[str]] = {}
 
     def scope_bindings(scope: Scope) -> set[str]:
+        key = id(scope)
+        if key in bindings_by_scope:
+            return bindings_by_scope[key]
         bindings = {
             name
             for node in scope_nodes(scope)
@@ -1171,9 +1186,15 @@ def _architecture_facts(
                 argument.arg
                 for argument in (*scope.args.posonlyargs, *scope.args.args, *scope.args.kwonlyargs)
             )
+        bindings_by_scope[key] = bindings
         return bindings
 
+    local_imports_by_scope: dict[int, dict[str, str]] = {}
+
     def local_imports(scope: Scope) -> dict[str, str]:
+        key = id(scope)
+        if key in local_imports_by_scope:
+            return local_imports_by_scope[key]
         imports: dict[str, str] = {}
         for node in scope_nodes(scope):
             if isinstance(node, ast.ImportFrom) and node.module is not None:
@@ -1187,6 +1208,7 @@ def _architecture_facts(
                 imports.update(
                     {alias.asname or alias.name.split(".")[0]: alias.name for alias in node.names}
                 )
+        local_imports_by_scope[key] = imports
         return imports
 
     imports_by_scope: dict[int, dict[str, str]] = {}

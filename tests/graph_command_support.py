@@ -12,7 +12,6 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     apply_command,
     build_graph_catalog,
-    build_graph_command_dependencies,
     initial_projection,
     reduce_event,
 )
@@ -57,7 +56,6 @@ def dispatch_graph_command(
             role=actor_role if isinstance(actor_role, str) else None,
         ),
         events=tuple(hydrated_events),
-        future_effects=build_graph_command_dependencies(catalog=catalog).future_effects,
         catalog=catalog,
     )
     return apply_command(

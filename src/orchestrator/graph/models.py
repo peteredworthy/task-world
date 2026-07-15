@@ -15,8 +15,9 @@ from pydantic import (
     ValidationError,
     model_validator,
 )
+from typing_extensions import TypeAliasType
 
-from orchestrator.graph.payloads import StrictPayload
+from orchestrator.graph.payloads import JsonValue, StrictPayload
 
 
 class GraphBaseModel(BaseModel):
@@ -431,6 +432,10 @@ class RecordSelector(RootModel[AcceptedRecordSelector]):
         kwargs.setdefault("by_alias", True)
         kwargs.setdefault("exclude_none", True)
         return self.root.model_dump(*args, **kwargs)
+
+    def to_json(self) -> dict[str, JsonValue]:
+        """Return the exact normalized selector at the strict JSON boundary."""
+        return cast(dict[str, JsonValue], self.model_dump(mode="json"))
 
     @property
     def record_type(self) -> str:
@@ -2767,29 +2772,259 @@ class CallbackIdempotencyEvent(GraphBaseModel):
     payload: dict[str, Any] | None
 
 
-class PatchOp(GraphBaseModel):
-    op: str
-    edge_id: str | None = None
-    node: dict[str, Any] | None = None
-    from_node_id: str | None = None
-    from_node_kind: str | None = None
-    from_node_role: str | None = None
-    from_port: str | None = None
-    to_node_id: str | None = None
-    to_port: str | None = None
-    required: bool | None = None
-    dependency_type: Literal["input_binding", "state_dependency"] | None = None
+class PatchResourceClaim(StrictPayload):
+    mode: Literal["read", "write", "external", "graph_write", "review_write"]
+    scope: str
+    paths: list[str] | None = None
+    external_resource_key: str | None = None
+
+    @model_validator(mode="after")
+    def external_claims_require_keys(self) -> "PatchResourceClaim":
+        if self.mode == "external" and self.external_resource_key is None:
+            raise ValueError("external claims require external_resource_key")
+        return self
+
+
+def _empty_patch_resource_claims() -> list[PatchResourceClaim]:
+    return []
+
+
+class PatchAuthority(StrictPayload):
+    allowed_actions: list[str] = Field(default_factory=list)
+    resource_claims: list[PatchResourceClaim] = Field(default_factory=_empty_patch_resource_claims)
+    preconditions: list[str] = Field(default_factory=list)
+
+
+class PatchDecisionRequest(StrictPayload):
+    decision_type: str | None = None
+    options: list[str] | None = None
+    default_option: str | None = None
+    consequence_summary: str | None = None
+    expires_at: str | None = None
+    target_node_id: str | None = None
+    target_region_id: str | None = None
+    prompt: str | None = None
+
+
+class PatchAuthorityRequest(StrictPayload):
+    requested_authority: list[str] | None = None
+    target_node_id: str | None = None
+    target_region_id: str | None = None
+    reason: str | None = None
+    expires_at: str | None = None
+
+
+class PatchNode(StrictPayload):
+    """Closed node shape accepted by a ``create_node`` patch operation."""
+
+    node_id: str
+    kind: str
+    run_id: str | None = None
+    role: str | None = None
+    state: str | None = None
+    task_region_id: str | None = None
+    attempt_number: int | None = None
+    candidate_id: str | None = None
+    failed_candidate_id: str | None = None
+    authority: PatchAuthority | None = None
+    resource_claims: list[PatchResourceClaim] | None = None
+    allowed_actions: list[str] | None = None
+    preconditions: list[str] | None = None
+    planner_generation_budget: int | None = None
+    generation_index: int | None = None
+    region_label: str | None = None
+    session_id: str | None = None
+    carryover_record_id: str | None = None
+    session_intent: str | None = None
+    planner_chain: PlannerChainPayload | None = None
+    gate_type: str | None = None
+    approval_type: str | None = None
+    reason: str | None = None
+    prompt: str | None = None
+    approval_prompt: str | None = None
+    human_prompt: str | None = None
+    message: str | None = None
+    blocker: str | None = None
+    blocker_reason: str | None = None
+    decision_request: PatchDecisionRequest | None = None
+    authority_request_record: PatchAuthorityRequest | None = None
+    authority_request: PatchAuthorityRequest | None = None
+    decision_request_record_id: str | None = None
+    authority_request_record_id: str | None = None
+    command_definition: CommandDefinitionProjection | None = None
+    command_definition_id: str | None = None
+    hidden_oracle_command: str | None = None
+    command_binding: str | None = None
+    command: str | None = None
+    command_text: str | None = None
+    recovery_reason: str | None = None
+    recovery_of_node_id: str | None = None
+    recovery_of_record_id: str | None = None
+    guarded_planner_node_id: str | None = None
+    rejected_patch_id: str | None = None
+    predecessor_node_ids: list[str] | None = None
+    appealed_node_id: str | None = None
+    requirement_id: str | None = None
+    id: str | None = None
+    priority: str | None = None
+    requirement: dict[str, JsonValue] | None = None
+    inputs: list[PortModel] = Field(default_factory=_empty_ports)
+    outputs: list[PortModel] = Field(default_factory=_empty_ports)
+    artifact_reference_record: dict[str, JsonValue] | None = None
+    artifacts: list[JsonValue] | None = None
+    available_tools: list[JsonValue] | None = None
+    builder_agent: str | None = None
+    candidate_record: dict[str, JsonValue] | None = None
+    check_index: int | None = None
+    complexity: str | None = None
+    context_source: dict[str, JsonValue] | None = None
+    dynamic_feature: dict[str, JsonValue] | None = None
+    execution_id: str | None = None
+    fan_out: dict[str, JsonValue] | None = None
+    gate: dict[str, JsonValue] | None = None
+    max_attempts: int | None = None
+    mcp_servers: list[JsonValue] | None = None
+    profile: str | None = None
+    requirement_record: dict[str, JsonValue] | None = None
+    routine: dict[str, JsonValue] | None = None
+    routine_snapshot_record: dict[str, JsonValue] | None = None
+    rubric: list[JsonValue] | None = None
+    run_context_record: dict[str, JsonValue] | None = None
+    snapshot: dict[str, JsonValue] | None = None
+    step_id: str | None = None
+    step_index: int | None = None
+    step_context: str | None = None
+    submission_template: dict[str, JsonValue] | None = None
+    task_context: str | None = None
+    task_id: str | None = None
+    task_index: int | None = None
+    title: str | None = None
+    verifier_agent: str | None = None
+    work_mode: str | None = None
+
+
+class CreateNodePatchOp(StrictPayload):
+    op: Literal["create_node"]
+    node: PatchNode
+
+
+class RevisionWorkerNode(PatchNode):
+    kind: str = "worker"
+
+
+class RevisionVerifierNode(PatchNode):
+    kind: str = "verifier"
+
+
+class CreateEdgePatchOp(StrictPayload):
+    op: Literal["create_edge"]
+    edge_id: str
+    from_node_id: str
+    from_port: str
+    to_node_id: str
+    to_port: str
+    required: bool = True
+    dependency_type: Literal["input_binding", "state_dependency"] = "input_binding"
     accepted_record_selector: RecordSelector | None = None
     binding_policy: str | None = None
     prompt_hydration_policy: str | None = None
     freshness_policy: str | None = None
     purpose: str | None = None
     description: str | None = None
-    selection: dict[str, Any] | None = None
-    metadata: dict[str, Any] | None = None
-    node_id: str | None = None
-    resource_claims: list[ResourceClaim] | None = None
-    allowed_actions: list[str] | None = None
+    selection: str | None = None
+    metadata: dict[str, JsonValue] | None = None
+    from_node_kind: str | None = None
+    from_node_role: str | None = None
+
+
+class RetireNodePatchOp(StrictPayload):
+    op: Literal["retire_node"]
+    node_id: str
+    reason: str | None = None
+
+
+class CreateRevisionAttemptPatchOp(StrictPayload):
+    op: Literal["create_revision_attempt"]
+    task_region_id: str
+    failed_candidate_id: str
+    revision_id: str | None = None
+    attempt_number: int | None = None
+    candidate_id: str | None = None
+    reason: str | None = None
+    worker_node: RevisionWorkerNode | None = None
+    verifier_node: RevisionVerifierNode | None = None
+
+
+class CreateAppealPatchOp(StrictPayload):
+    op: Literal["create_appeal"]
+    kind: Literal["appeal"] = "appeal"
+    node_id: str
+    appealed_node_id: str
+    appeal_type: Literal["invalid_test"]
+    task_region_id: str | None = None
+    candidate_id: str | None = None
+    lease_id: str | None = None
+    node: PatchNode | None = None
+    state: str | None = None
+
+
+class CreateGatePatchOp(StrictPayload):
+    op: Literal["create_gate"]
+    node_id: str
+    predecessor_node_ids: list[str]
+    task_region_id: str | None = None
+    node: PatchNode | None = None
+    state: str | None = None
+    reason: str | None = None
+
+
+class SetResourceClaimsPatchOp(StrictPayload):
+    op: Literal["set_resource_claims"]
+    node_id: str
+    resource_claims: list[PatchResourceClaim]
+
+
+class SetAllowedActionsPatchOp(StrictPayload):
+    op: Literal["set_allowed_actions"]
+    node_id: str
+    allowed_actions: list[str]
+
+
+class MarkPlanRegionSuspectPatchOp(StrictPayload):
+    op: Literal["mark_plan_region_suspect"]
+    region_node_ids: list[str]
+    reason: str
+    region_id: str | None = None
+
+
+PatchOp = TypeAliasType(
+    "PatchOp",
+    Annotated[
+        CreateNodePatchOp
+        | CreateEdgePatchOp
+        | RetireNodePatchOp
+        | CreateRevisionAttemptPatchOp
+        | CreateAppealPatchOp
+        | CreateGatePatchOp
+        | SetResourceClaimsPatchOp
+        | SetAllowedActionsPatchOp
+        | MarkPlanRegionSuspectPatchOp,
+        Field(discriminator="op"),
+    ],
+)
+
+_PATCH_OP_ADAPTER: TypeAdapter[PatchOp] = TypeAdapter(PatchOp)
+_PATCH_OPS_ADAPTER: TypeAdapter[list[PatchOp]] = TypeAdapter(list[PatchOp])
+
+
+def parse_patch_op(value: object) -> PatchOp:
+    """Validate one operation for callers that construct patches programmatically."""
+    return _PATCH_OP_ADAPTER.validate_python(value)
+
+
+def parse_patch_ops(value: object) -> list[PatchOp]:
+    """Validate a sequence of operation objects at an explicit ingress boundary."""
+    return _PATCH_OPS_ADAPTER.validate_python(value)
 
 
 class PatchEnvelope(GraphBaseModel):

@@ -30,7 +30,8 @@ from orchestrator.graph.specifications import (
     ProjectionParticipation,
     StoredEventEnvelope,
 )
-from orchestrator.graph._commands import _project_with_events, _source_repair_events
+from orchestrator.graph.commands.source_repair import project_with_events
+from orchestrator.graph.commands.callbacks import source_repair_events
 from orchestrator.graph.events.topology import NodeReadyPayload
 from tests.unit.graph_catalog_samples import COMMAND_SAMPLES, EVENT_SAMPLES
 
@@ -96,7 +97,6 @@ def test_catalog_dispatch_validates_a_known_command_once_before_its_handler() ->
         id_generator=cast(Any, _FixedIdGenerator()),
         actor=Actor(kind=ActorKind.SYSTEM),
         events=(),
-        future_effects=cast(Any, object()),
         catalog=catalog,
     )
 
@@ -140,7 +140,6 @@ def test_command_specification_rejects_raw_event_results() -> None:
         id_generator=cast(Any, _FixedIdGenerator()),
         actor=Actor(kind=ActorKind.SYSTEM),
         events=(),
-        future_effects=cast(Any, object()),
         catalog=catalog,
     )
 
@@ -183,7 +182,7 @@ def test_source_repair_projection_matches_catalog_reduction_for_current_event() 
 
     expected = specification.reduce(initial_projection(), event)
 
-    assert _project_with_events(initial_projection(), [event], catalog) == expected
+    assert project_with_events(initial_projection(), [event], catalog) == expected
 
 
 def test_source_repair_rejects_a_generation_one_current_envelope() -> None:
@@ -203,7 +202,7 @@ def test_source_repair_rejects_a_generation_one_current_envelope() -> None:
     )
 
     with pytest.raises(ValueError, match="generation 2"):
-        _project_with_events(initial_projection(), [event], catalog)
+        project_with_events(initial_projection(), [event], catalog)
 
 
 def test_source_repair_fails_closed_for_corrupt_accepted_record_event() -> None:
@@ -223,11 +222,10 @@ def test_source_repair_fails_closed_for_corrupt_accepted_record_event() -> None:
     with pytest.raises(
         TypeError, match="output_record_accepted event has an unexpected payload type"
     ):
-        _source_repair_events(
+        source_repair_events(
             initial_projection(),
             [corrupt],
             [corrupt],
-            lambda _event_type, _payload: corrupt,
             build_graph_catalog(),
             object(),
         )
@@ -259,7 +257,6 @@ def test_command_context_requires_an_explicit_catalog() -> None:
             id_generator=cast(Any, _FixedIdGenerator()),
             actor=Actor(kind=ActorKind.SYSTEM),
             events=(),
-            future_effects=cast(Any, object()),
         )
 
 

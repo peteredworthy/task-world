@@ -677,6 +677,193 @@ async def test_node_detail_rebuild_is_idempotent(
 
 
 @pytest.mark.asyncio
+async def test_node_detail_materializes_declared_appeal_and_recovery_node_references_on_append_and_rebuild(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """Declared relation fields attach an event to every referenced node only."""
+    run_id = "node-detail-declared-references"
+    relation_event_ids = {
+        "appeal-node": "evt-appeal-opened",
+        "appealed-node": "evt-appeal-opened",
+        "recovery-node": "evt-recovery-created",
+        "guarded-planner-node": "evt-recovery-created",
+        "predecessor-one": "evt-recovery-created",
+        "predecessor-two": "evt-recovery-created",
+    }
+    node_ids = [*relation_event_ids, "unrelated-node"]
+    seed_events = [
+        _event(
+            f"evt-{node_id}",
+            run_id,
+            "node_created",
+            {"node_id": node_id, "kind": "worker", "state": "planned"},
+        )
+        for node_id in node_ids
+    ]
+    relation_events = [
+        _event(
+            "evt-recovery-created",
+            run_id,
+            "node_created",
+            {
+                "node_id": "recovery-node",
+                "kind": "worker",
+                "state": "planned",
+                "recovery_of_node_id": "appeal-node",
+                "guarded_planner_node_id": "guarded-planner-node",
+                "predecessor_node_ids": ["predecessor-one", "predecessor-two"],
+            },
+        ),
+        _event(
+            "evt-appeal-opened",
+            run_id,
+            "appeal_opened",
+            {
+                "node_id": "appeal-node",
+                "appealed_node_id": "appealed-node",
+                "appeal_type": "invalid_test",
+            },
+        ),
+    ]
+
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session, build_graph_catalog())
+            await store.append_events(run_id, 0, seed_events)
+            await store.append_events(run_id, len(seed_events), relation_events)
+
+    async with session_factory() as session:
+        incremental_events = {
+            node_id: [
+                event["event_id"]
+                for event in (await _materialized_response(session, run_id, node_id))["events"]
+            ]
+            for node_id in node_ids
+        }
+        await session.execute(
+            delete(GraphNodeDetailSummaryModel).where(GraphNodeDetailSummaryModel.run_id == run_id)
+        )
+        await GraphEventStore(session, build_graph_catalog()).rebuild_node_detail_summaries(run_id)
+        rebuilt_events = {
+            node_id: [
+                event["event_id"]
+                for event in (await _materialized_response(session, run_id, node_id))["events"]
+            ]
+            for node_id in node_ids
+        }
+
+    assert rebuilt_events == incremental_events
+    for node_id, relation_event_id in relation_event_ids.items():
+        assert relation_event_id in incremental_events[node_id]
+    assert "evt-recovery-created" not in incremental_events["unrelated-node"]
+    assert "evt-appeal-opened" not in incremental_events["unrelated-node"]
+
+
+@pytest.mark.asyncio
+async def test_node_detail_incrementally_materializes_forward_patch_successor_reference(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    """A patch may name its successor before the atomic batch creates it."""
+    run_id = "node-detail-forward-patch-successor"
+    seed_events = [
+        _event(
+            "evt-planner",
+            run_id,
+            "node_created",
+            {"node_id": "planner-1", "kind": "planner", "state": "planned"},
+        )
+    ]
+    patch_events = [
+        _event(
+            "evt-patch-accepted",
+            run_id,
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-successor",
+                "base_graph_position": 1,
+                "actor_role": "planner",
+                "proposed_by_node_id": "planner-1",
+                "successor_planner_node_ids": ["successor-planner-1"],
+            },
+        ),
+        _event(
+            "evt-successor-planner",
+            run_id,
+            "node_created",
+            {
+                "node_id": "successor-planner-1",
+                "kind": "planner",
+                "state": "planned",
+            },
+        ),
+    ]
+
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session, build_graph_catalog())
+            await store.append_events(run_id, 0, seed_events)
+            await store.append_events(run_id, len(seed_events), patch_events)
+
+    async with session_factory() as session:
+        checkpoint = await session.get(GraphNodeDetailSummaryCheckpointModel, run_id)
+        incremental_rows = await _stored_rows(session, run_id)
+        successor = await _materialized_response(session, run_id, "successor-planner-1")
+        await GraphEventStore(session, build_graph_catalog()).rebuild_node_detail_summaries(run_id)
+        rebuilt_rows = await _stored_rows(session, run_id)
+
+    assert checkpoint is not None
+    assert checkpoint.position == len(seed_events) + len(patch_events)
+    assert len(incremental_rows) == 2
+    assert [event["event_id"] for event in successor["events"]] == [
+        "evt-patch-accepted",
+        "evt-successor-planner",
+    ]
+    assert incremental_rows == rebuilt_rows
+
+
+@pytest.mark.asyncio
+async def test_node_detail_invalidates_incremental_rows_for_absent_patch_successor_reference(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "node-detail-absent-patch-successor"
+    seed_events = [
+        _event(
+            "evt-planner",
+            run_id,
+            "node_created",
+            {"node_id": "planner-1", "kind": "planner", "state": "planned"},
+        )
+    ]
+    absent_successor_patch = [
+        _event(
+            "evt-patch-accepted",
+            run_id,
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-absent-successor",
+                "base_graph_position": 1,
+                "actor_role": "planner",
+                "proposed_by_node_id": "planner-1",
+                "successor_planner_node_ids": ["absent-successor-planner"],
+            },
+        )
+    ]
+
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session, build_graph_catalog())
+            await store.append_events(run_id, 0, seed_events)
+            await store.append_events(run_id, len(seed_events), absent_successor_patch)
+
+    async with session_factory() as session:
+        checkpoint = await session.get(GraphNodeDetailSummaryCheckpointModel, run_id)
+        row_count = await _count_model(session, GraphNodeDetailSummaryModel, run_id)
+
+    assert checkpoint is None
+    assert row_count == 0
+
+
+@pytest.mark.asyncio
 async def test_node_detail_summary_matches_existing_light_builder(
     session_factory: async_sessionmaker[AsyncSession], *, catalog: GraphCatalog
 ) -> None:

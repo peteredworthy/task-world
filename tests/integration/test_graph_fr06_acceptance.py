@@ -14,7 +14,7 @@ from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel, init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, event_payload_json
 from orchestrator.graph_runtime import GraphController, GraphEventStore
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import StoredEventEnvelope
 
 
@@ -52,9 +52,6 @@ async def test_fr06_edges_bind_fanout_join_optional_bind_all_and_supersede(
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
 
     first_callback = await controller.handle_command(

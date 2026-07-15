@@ -37,7 +37,6 @@ from orchestrator.runners.types import (
 )
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.workflow import GraphRunDriver, WorkflowService
-from orchestrator.graph import build_graph_command_dependencies
 from orchestrator.graph import GraphCatalog
 
 
@@ -281,9 +280,6 @@ def _driver(
             id_gen_arg,
             catalog=build_graph_catalog(),
             auto_dispatch=False,
-            future_effects=build_graph_command_dependencies(
-                catalog=build_graph_catalog()
-            ).future_effects,
         )
         executor = GraphDispatchExecutor(
             session_factory_arg,
@@ -445,9 +441,6 @@ async def test_fr16_stale_callback_rejection_is_readable(
         SequentialIds(f"{run_id}-stale"),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
     position = await controller.current_position(run_id)
     await controller.handle_command(

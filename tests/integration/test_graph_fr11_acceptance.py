@@ -11,7 +11,7 @@ from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphController, GraphEventStore
-from orchestrator.graph import build_graph_catalog, build_graph_command_dependencies
+from orchestrator.graph import build_graph_catalog
 from orchestrator.graph import StoredEventEnvelope
 
 
@@ -156,9 +156,6 @@ async def _seed_fr11_ready_frontier(app: Any, run_id: str) -> GraphController:
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
         catalog=build_graph_catalog(),
-        future_effects=build_graph_command_dependencies(
-            catalog=build_graph_catalog()
-        ).future_effects,
     )
 
 
