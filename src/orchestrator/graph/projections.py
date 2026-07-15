@@ -10,6 +10,7 @@ from orchestrator.graph.command_bindings import check_command_reference
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
     PortContract,
+    binding_policy,
     binding_policy_for_edge,
     input_port_contract,
     merge_bound_record_ids,
@@ -55,7 +56,6 @@ from orchestrator.graph.models import (
     GraphPatchResultRecord,
     InvalidTestBlockProjection,
     InputBindingProjection,
-    LegacyOutputRecord,
     LeaseExpiredPayload,
     LeaseGrantedPayload,
     LeaseProjection,
@@ -84,6 +84,7 @@ from orchestrator.graph.models import (
     RequirementRecord,
     RequirementRevisionPayload,
     RequirementRevisionProjection,
+    RunContextRecord,
     RunLifecycleChangedPayload,
     RuntimeRetryScheduledPayload,
     ResourceClaimProjection,
@@ -1550,11 +1551,13 @@ def _node_creation_from_event(event: EventEnvelope) -> NodeCreationProjection | 
     event_payload = _node_created_payload_from_event(event)
     if event_payload is None:
         return None
-    normalized = event_payload.model_dump(mode="json")
-    raw_extra = normalized.pop("extra", {})
-    extra = cast(dict[str, Any], raw_extra) if isinstance(raw_extra, dict) else {}
-    projection_payload: dict[str, Any] = dict(extra)
-    projection_payload.update(normalized)
+    projection_payload = event_payload.model_dump(mode="json")
+    authority = event_payload.authority
+    if authority is not None:
+        for key in ("resource_claims", "allowed_actions", "preconditions"):
+            value = authority.get(key)
+            if value is not None:
+                projection_payload[key] = value
     return _node_creation_from_payload(
         {
             **projection_payload,
@@ -2096,13 +2099,13 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             if session_id is not None:
                 lease_payload["session_id"] = session_id
                 next_state["planner_sessions"][node_id] = session_id
-            task_region_id = _task_region_id(granted_payload.extra) or next_state[
-                "node_task_regions"
-            ].get(node_id)
+            task_region_id = granted_payload.task_region_id or next_state["node_task_regions"].get(
+                node_id
+            )
             if task_region_id is not None:
                 lease_payload["task_region_id"] = task_region_id
-            kind = granted_payload.extra.get("kind")
-            if isinstance(kind, str):
+            kind = granted_payload.kind
+            if kind is not None:
                 lease_payload["kind"] = kind
             elif node_id in next_state["node_kinds"]:
                 lease_payload["kind"] = next_state["node_kinds"][node_id]
@@ -2128,7 +2131,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 next_state["planner_session_carryovers"][session_id] = payload.carryover_record_id
             elif (
                 "carryover_record_id" in event.payload
-                and "carryover_record_id" not in payload.extra
+                and "carryover_record_id" in payload.model_fields_set
             ):
                 next_state["planner_session_carryovers"][session_id] = None
     elif event.event_type in {
@@ -2413,28 +2416,26 @@ def _impossible_input_blockers(projection: GraphProjection) -> list[FinalInvaria
     blockers: list[FinalInvariantBlocker] = []
     terminal_states = {"completed", "failed", "cancelled", "retired"}
     for edge_id, edge in sorted(projection["edges"].items()):
-        if edge.get("required") is False:
+        if not edge.required:
             continue
-        if edge.get("dependency_type", "input_binding") != "input_binding":
+        if edge.dependency_type != "input_binding":
             continue
-        from_node_id = edge.get("from_node_id")
-        to_node_id = edge.get("to_node_id")
-        to_port = edge.get("to_port")
-        if not all(isinstance(value, str) for value in (from_node_id, to_node_id, to_port)):
+        from_node_id = edge.from_node_id
+        to_node_id = edge.to_node_id
+        to_port = edge.to_port
+        if projection["node_states"].get(to_node_id) in terminal_states:
             continue
-        if projection["node_states"].get(str(to_node_id)) in terminal_states:
-            continue
-        if str(from_node_id) in projection["node_states"]:
+        if from_node_id in projection["node_states"]:
             continue
         blocker: FinalInvariantBlocker = {
             "kind": "impossible_input",
             "reason": "required input edge has no producer node",
-            "node_id": str(to_node_id),
+            "node_id": to_node_id,
             "edge_id": str(edge_id),
-            "to_port": str(to_port),
-            "state": projection["node_states"].get(str(to_node_id), "unknown"),
+            "to_port": to_port,
+            "state": projection["node_states"].get(to_node_id, "unknown"),
         }
-        task_region_id = projection["node_task_regions"].get(str(to_node_id))
+        task_region_id = projection["node_task_regions"].get(to_node_id)
         if task_region_id is not None:
             blocker["task_region_id"] = task_region_id
         blockers.append(blocker)
@@ -2446,29 +2447,27 @@ def _dead_required_input_blockers(projection: GraphProjection) -> list[FinalInva
     dead_source_states = {"failed", "cancelled", "retired"}
     target_terminal_states = {"completed", "failed", "cancelled", "retired"}
     for edge_id, edge in sorted(projection["edges"].items()):
-        if edge.get("required") is False:
+        if not edge.required:
             continue
-        if edge.get("dependency_type", "input_binding") != "input_binding":
+        if edge.dependency_type != "input_binding":
             continue
-        from_node_id = edge.get("from_node_id")
-        to_node_id = edge.get("to_node_id")
-        to_port = edge.get("to_port")
-        if not all(isinstance(value, str) for value in (from_node_id, to_node_id, to_port)):
-            continue
-        source_state = projection["node_states"].get(str(from_node_id))
+        from_node_id = edge.from_node_id
+        to_node_id = edge.to_node_id
+        to_port = edge.to_port
+        source_state = projection["node_states"].get(from_node_id)
         if source_state not in dead_source_states:
             continue
-        target_state = projection["node_states"].get(str(to_node_id), "unknown")
+        target_state = projection["node_states"].get(to_node_id, "unknown")
         if target_state in target_terminal_states:
             continue
-        binding = projection["input_bindings"].get(str(to_node_id), {}).get(str(to_port), {})
-        record_ids = binding.get("record_ids")
+        binding = projection["input_bindings"].get(to_node_id, {}).get(to_port)
+        record_ids = binding.record_ids if binding is not None else None
         if isinstance(record_ids, list) and record_ids:
             continue
         blocker: FinalInvariantBlocker = {
             "kind": "dead_required_input",
             "reason": "required input source is terminal before producing a bound record",
-            "node_id": str(to_node_id),
+            "node_id": to_node_id,
             "edge_id": str(edge_id),
             "from_node_id": str(from_node_id),
             "to_port": str(to_port),
@@ -3568,42 +3567,39 @@ def project_residue_report(events: list[EventEnvelope]) -> dict[str, list[dict[s
     return {path: report[path] for path in sorted(report)}
 
 
-def _bound_record_ids(binding: dict[str, Any]) -> list[str]:
-    record_ids = binding.get("record_ids")
-    if not isinstance(record_ids, list):
-        return []
-    return [record_id for record_id in cast(list[Any], record_ids) if isinstance(record_id, str)]
+def _bound_record_ids(binding: InputBindingProjection) -> list[str]:
+    return list(binding.record_ids)
 
 
 def _topology_edge(
-    edge: dict[str, Any],
+    edge: EdgeProjection,
     projection: GraphProjection,
     record_summaries: dict[str, GraphRecordSummary],
 ) -> GraphTopologyEdge:
     source_contract, target_contract = _edge_port_contracts(edge, projection)
     metadata = {
-        key: edge[key] for key in _EDGE_METADATA_KEYS if key in edge and edge[key] is not None
+        key: value for key in _EDGE_METADATA_KEYS if (value := getattr(edge, key)) is not None
     }
     topology_edge: GraphTopologyEdge = {
-        "edge_id": str(edge["edge_id"]),
-        "from_node_id": str(edge["from_node_id"]),
-        "from_port": str(edge["from_port"]),
-        "to_node_id": str(edge["to_node_id"]),
-        "to_port": str(edge["to_port"]),
-        "required": _edge_required(edge.get("required")),
-        "dependency_type": str(edge.get("dependency_type", "input_binding")),
+        "edge_id": edge.edge_id,
+        "from_node_id": edge.from_node_id,
+        "from_port": edge.from_port,
+        "to_node_id": edge.to_node_id,
+        "to_port": edge.to_port,
+        "required": edge.required,
+        "dependency_type": edge.dependency_type,
         "metadata": dict(metadata),
         "record_types": _compatible_edge_record_types(source_contract, target_contract),
         "binding": None,
         "bound_records": [],
     }
-    from_node_kind = edge.get("from_node_kind")
+    from_node_kind = edge.from_node_kind
     if isinstance(from_node_kind, str):
         topology_edge["from_node_kind"] = from_node_kind
-    from_node_role = edge.get("from_node_role")
+    from_node_role = edge.from_node_role
     if isinstance(from_node_role, str):
         topology_edge["from_node_role"] = from_node_role
-    selector = edge.get("accepted_record_selector")
+    selector = edge.accepted_record_selector
     if isinstance(selector, dict):
         topology_edge["accepted_record_selector"] = normalize_record_selector(selector)
     if source_contract is not None:
@@ -3624,26 +3620,23 @@ def _topology_edge(
 
 
 def _edge_port_contracts(
-    edge: dict[str, Any],
+    edge: EdgeProjection,
     projection: GraphProjection,
 ) -> tuple[PortContract | None, PortContract | None]:
-    from_node_id = edge.get("from_node_id")
-    to_node_id = edge.get("to_node_id")
-    from_port = edge.get("from_port")
-    to_port = edge.get("to_port")
-    if not all(isinstance(value, str) for value in (from_node_id, to_node_id, from_port, to_port)):
-        return None, None
-
-    source_kind = projection["node_kinds"].get(cast(str, from_node_id))
+    from_node_id = edge.from_node_id
+    to_node_id = edge.to_node_id
+    from_port = edge.from_port
+    to_port = edge.to_port
+    source_kind = projection["node_kinds"].get(from_node_id)
     if source_kind is None and from_node_id == "*":
-        raw_source_kind = edge.get("from_node_kind")
+        raw_source_kind = edge.from_node_kind
         source_kind = raw_source_kind if isinstance(raw_source_kind, str) else None
-    source_role = projection["node_roles"].get(cast(str, from_node_id))
+    source_role = projection["node_roles"].get(from_node_id)
     if source_role is None and from_node_id == "*":
-        raw_source_role = edge.get("from_node_role")
+        raw_source_role = edge.from_node_role
         source_role = raw_source_role if isinstance(raw_source_role, str) else None
-    target_kind = projection["node_kinds"].get(cast(str, to_node_id))
-    target_role = projection["node_roles"].get(cast(str, to_node_id))
+    target_kind = projection["node_kinds"].get(to_node_id)
+    target_role = projection["node_roles"].get(to_node_id)
     source_contract = (
         DEFAULT_NODE_CONTRACTS.contract_for(source_kind, source_role)
         if source_kind is not None
@@ -3655,14 +3648,10 @@ def _edge_port_contracts(
         else None
     )
     source_port_contract = (
-        output_port_contract(source_contract, cast(str, from_port))
-        if source_contract is not None
-        else None
+        output_port_contract(source_contract, from_port) if source_contract is not None else None
     )
     target_port_contract = (
-        input_port_contract(target_contract, cast(str, to_port))
-        if target_contract is not None
-        else None
+        input_port_contract(target_contract, to_port) if target_contract is not None else None
     )
     return source_port_contract, target_port_contract
 
@@ -3678,38 +3667,32 @@ def _compatible_edge_record_types(
 
 def _binding_for_edge(
     projection: GraphProjection,
-    edge: dict[str, Any],
-) -> dict[str, Any] | None:
-    edge_id = edge.get("edge_id")
-    to_node_id = edge.get("to_node_id")
-    to_port = edge.get("to_port")
-    if isinstance(to_node_id, str) and isinstance(to_port, str):
-        binding = projection["input_bindings"].get(to_node_id, {}).get(to_port)
-        if binding is not None and (
-            not isinstance(edge_id, str) or binding.get("edge_id") in {None, edge_id}
-        ):
-            return binding
-    if not isinstance(edge_id, str):
-        return None
+    edge: EdgeProjection,
+) -> InputBindingProjection | None:
+    edge_id = edge.edge_id
+    to_node_id = edge.to_node_id
+    to_port = edge.to_port
+    binding = projection["input_bindings"].get(to_node_id, {}).get(to_port)
+    if binding is not None and binding.edge_id in {None, edge_id}:
+        return binding
     for ports in projection["input_bindings"].values():
         for binding in ports.values():
-            if binding.get("edge_id") == edge_id:
+            if binding.edge_id == edge_id:
                 return binding
     return None
 
 
-def _topology_binding(binding: dict[str, Any]) -> GraphTopologyBinding:
+def _topology_binding(binding: InputBindingProjection) -> GraphTopologyBinding:
     summary: GraphTopologyBinding = {
         "record_ids": _bound_record_ids(binding),
     }
     for key in ("edge_id", "to_node_id", "to_port", "binding_policy", "trigger"):
-        value = binding.get(key)
+        value = getattr(binding, key)
         if isinstance(value, str):
             summary[key] = value
-    bound_at_position = binding.get("bound_at_position")
-    if isinstance(bound_at_position, int) and not isinstance(bound_at_position, bool):
-        summary["bound_at_position"] = bound_at_position
-    record_bound_positions = binding.get("record_bound_positions")
+    bound_at_position = binding.bound_at_position
+    summary["bound_at_position"] = bound_at_position
+    record_bound_positions = binding.record_bound_positions
     if isinstance(record_bound_positions, dict):
         summary["record_bound_positions"] = {
             record_id: position
@@ -4020,7 +4003,11 @@ def _callback_idempotency_event_from_envelope(
     event: EventEnvelope,
 ) -> CallbackIdempotencyEvent | None:
     payload = CallbackAcceptedPayload.model_validate(event.payload)
-    if payload.node_id is None or payload.idempotency_key is None or "payload" in payload.extra:
+    if (
+        payload.node_id is None
+        or payload.idempotency_key is None
+        or "payload" not in payload.model_fields_set
+    ):
         return None
     callback_payload = payload.model_dump(mode="json")
     callback_payload["event_type"] = event.event_type
@@ -4475,121 +4462,39 @@ def _parse_output_record_payload(payload: dict[str, Any]) -> OutputRecordPayload
     model = _output_record_model_for_payload(payload)
     if model is None:
         return None
-    normalized = _normalized_output_record_payload(payload, model)
     try:
-        return cast(OutputRecordPayload, model.model_validate(normalized))
+        return cast(OutputRecordPayload, model.model_validate(payload))
     except ValueError:
-        if model is OutputRecord:
-            fallback = _legacy_output_record_payload(payload)
-        else:
-            fallback = _generic_output_record_payload(payload)
-            if fallback is None:
-                fallback = _legacy_output_record_payload(payload)
-        if fallback is None:
-            return None
-        try:
-            return LegacyOutputRecord.model_validate(fallback)
-        except ValueError:
-            return None
+        return None
 
 
 def _output_record_model_for_payload(payload: dict[str, Any]) -> type[GraphBaseModel] | None:
-    record_kind = payload.get("record_kind")
     record_type = payload.get("record_type")
-    schema = payload.get("schema")
-    port = payload.get("port")
-
-    if record_kind == "verification" or record_type in {"verification", "verification_report"}:
-        return VerificationReportRecord
-    if schema == "VerificationReport" or port in {"verification_report", "verification_result"}:
-        return VerificationReportRecord
-    if record_type == "completion_decision" or port == "completion_decision":
-        return CompletionDecisionRecord
-    if record_type == "join_result" or port == "join_result":
-        return JoinResultRecord
-    if record_type == "check_result" or port == "check_result" or schema == "CheckResult":
-        return CheckResultRecord
-    if record_type == "candidate" or port == "candidate" or schema == "ImplementationCandidate":
-        return CandidateRecord
-    if record_type in {"gap_plan", "gap_classification", "classified_gap"}:
-        return GapClassificationRecord
-    if port in {"gap_plan", "gap_classification", "classified_gap"}:
-        return GapClassificationRecord
-    if record_type == "decision_record" or port == "decision_record":
-        return DecisionRecord
-    if record_type == "authority_decision" or port == "authority_decision":
-        return AuthorityDecisionRecord
-    if record_type == "analysis_summary" or port in {
-        "analysis_summary",
-        "planning_summary",
-        "region_summary",
-    }:
-        return AnalysisSummaryRecord
-    if record_type == "graph_patch_proposal" or port in {"graph_patch_proposal", "graph_patch"}:
-        return GraphPatchProposalRecord
-    if record_type == "routine_snapshot" or schema == "RoutineSnapshot":
-        return RoutineSnapshotRecord
-    if record_type == "artifact_reference" or port in {"artifact_reference", "artifact"}:
-        return ArtifactReferenceRecord
-    if record_type == "requirement_record" or port == "requirement":
-        return RequirementRecord
-    if record_type == "decision_request" or port == "decision_request":
-        return DecisionRequestRecord
-    if record_type == "authority_request_record" or port == "authority_request_record":
-        return AuthorityRequestRecord
-    if record_type == "failure_record" or port == "failure_record":
-        return FailureRecord
-    if record_type == "recovery_plan" or port == "recovery_plan":
-        return RecoveryPlanRecord
-    if record_kind in {None, "output"}:
-        return OutputRecord
-    return None
-
-
-def _normalized_output_record_payload(
-    payload: dict[str, Any],
-    model: type[GraphBaseModel],
-) -> dict[str, Any]:
-    if model is OutputRecord:
-        generic = _generic_output_record_payload(payload)
-        return generic if generic is not None else dict(payload)
-    normalized = dict(payload)
-    if model is VerificationReportRecord and normalized.get("record_type") == "verification":
-        normalized["record_type"] = "verification_report"
-    return normalized
-
-
-def _generic_output_record_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    value = payload.get("value")
-    if not isinstance(value, dict):
+    if not isinstance(record_type, str) or not record_type:
         return None
-    normalized = dict(payload)
-    normalized.setdefault("record_kind", "output")
-    schema = normalized.get("schema")
-    if not isinstance(schema, str) or not schema:
-        record_type = normalized.get("record_type")
-        port = normalized.get("port")
-        if isinstance(record_type, str) and record_type:
-            normalized["schema"] = record_type
-        elif isinstance(port, str) and port:
-            normalized["schema"] = port
-        else:
-            normalized["schema"] = "OutputRecord"
-    return normalized
-
-
-def _legacy_output_record_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    record_id = payload.get("record_id")
-    node_id = payload.get("producer_node_id") or payload.get("node_id")
-    port = payload.get("port")
-    if not all(isinstance(value, str) and value for value in (record_id, node_id, port)):
-        return None
-    normalized = dict(payload)
-    normalized["record_id"] = cast(str, record_id)
-    normalized["producer_node_id"] = cast(str, node_id)
-    normalized["port"] = cast(str, port)
-    normalized.setdefault("record_kind", "output")
-    return normalized
+    return {
+        "analysis_summary": AnalysisSummaryRecord,
+        "artifact_reference": ArtifactReferenceRecord,
+        "authority_decision": AuthorityDecisionRecord,
+        "authority_request_record": AuthorityRequestRecord,
+        "candidate": CandidateRecord,
+        "check_result": CheckResultRecord,
+        "completion_decision": CompletionDecisionRecord,
+        "decision_record": DecisionRecord,
+        "decision_request": DecisionRequestRecord,
+        "failure_record": FailureRecord,
+        "file_state": FileStateRecord,
+        "gap_plan": GapClassificationRecord,
+        "gap_classification": GapClassificationRecord,
+        "classified_gap": GapClassificationRecord,
+        "graph_patch_proposal": GraphPatchProposalRecord,
+        "join_result": JoinResultRecord,
+        "recovery_plan": RecoveryPlanRecord,
+        "requirement_record": RequirementRecord,
+        "routine_snapshot": RoutineSnapshotRecord,
+        "run_context": RunContextRecord,
+        "verification_report": VerificationReportRecord,
+    }.get(record_type, OutputRecord)
 
 
 def _record_node_output_port(state: GraphProjection, event: EventEnvelope) -> None:
@@ -5086,9 +4991,7 @@ def _record_input_binding(state: GraphProjection, event: EventEnvelope) -> None:
     if not isinstance(to_port, str) and isinstance(edge_id, str):
         edge = state["edges"].get(edge_id)
         if edge is not None:
-            edge_to_port = edge.get("to_port")
-            if isinstance(edge_to_port, str):
-                to_port = edge_to_port
+            to_port = edge.to_port
     if not isinstance(to_port, str):
         legacy_input = event.payload.get("input")
         if isinstance(legacy_input, str):
@@ -5130,13 +5033,13 @@ def _record_input_binding(state: GraphProjection, event: EventEnvelope) -> None:
     binding["binding_policy"] = policy
     if "edge_id" not in binding:
         edge = _edge_for_input_binding(state, binding, to_node_id, to_port)
-        edge_id_from_projection = edge.get("edge_id") if edge is not None else None
+        edge_id_from_projection = edge.edge_id if edge is not None else None
         if isinstance(edge_id_from_projection, str):
             binding["edge_id"] = edge_id_from_projection
     merged_ids = merge_bound_record_ids(
         policy,
-        _bound_record_ids(existing_binding or {}),
-        _bound_record_ids(binding),
+        _bound_record_ids(existing_binding) if existing_binding is not None else [],
+        _bound_record_ids_from_payload(binding),
         supersedes_record_id=binding.get("supersedes_record_id"),
     )
     if existing_binding is not None and merged_ids == _bound_record_ids(existing_binding):
@@ -5159,7 +5062,7 @@ def _binding_policy_for_input_event(
     edge = _edge_for_input_binding(state, binding, to_node_id, to_port)
     target_port = _target_port_for_binding(state, edge, to_node_id, to_port)
     if edge is not None:
-        return binding_policy_for_edge(edge, target_port)
+        return binding_policy(edge.binding_policy, target_port)
     return binding_policy_for_edge(binding, target_port)
 
 
@@ -5168,21 +5071,21 @@ def _edge_for_input_binding(
     binding: dict[str, Any],
     to_node_id: str,
     to_port: str,
-) -> dict[str, Any] | None:
+) -> EdgeProjection | None:
     edge_id = binding.get("edge_id")
     if isinstance(edge_id, str):
         edge = state["edges"].get(edge_id)
         if edge is not None:
             return edge
     for edge in state["edges"].values():
-        if edge.get("to_node_id") == to_node_id and edge.get("to_port") == to_port:
+        if edge.to_node_id == to_node_id and edge.to_port == to_port:
             return edge
     return None
 
 
 def _target_port_for_binding(
     state: GraphProjection,
-    edge: dict[str, Any] | None,
+    edge: EdgeProjection | None,
     to_node_id: str,
     to_port: str,
 ) -> PortContract | None:
@@ -5201,29 +5104,35 @@ def _target_port_for_binding(
 
 
 def _merged_record_bound_positions(
-    existing_binding: dict[str, Any] | None,
+    existing_binding: InputBindingProjection | None,
     incoming_binding: dict[str, Any],
     merged_ids: list[str],
 ) -> dict[str, int]:
     positions: dict[str, int] = {}
     if existing_binding is not None:
-        raw_existing_positions = existing_binding.get("record_bound_positions")
+        raw_existing_positions = existing_binding.record_bound_positions
         if isinstance(raw_existing_positions, dict):
             for record_id, position in cast(dict[Any, Any], raw_existing_positions).items():
                 if isinstance(record_id, str) and isinstance(position, int):
                     positions[record_id] = position
         else:
-            bound_at_position = existing_binding.get("bound_at_position")
-            if isinstance(bound_at_position, int) and not isinstance(bound_at_position, bool):
-                for record_id in _bound_record_ids(existing_binding):
-                    positions.setdefault(record_id, bound_at_position)
+            bound_at_position = existing_binding.bound_at_position
+            for record_id in _bound_record_ids(existing_binding):
+                positions.setdefault(record_id, bound_at_position)
 
     incoming_position = incoming_binding.get("bound_at_position")
     if not isinstance(incoming_position, int) or isinstance(incoming_position, bool):
         incoming_position = 0
-    for record_id in _bound_record_ids(incoming_binding):
+    for record_id in _bound_record_ids_from_payload(incoming_binding):
         positions.setdefault(record_id, incoming_position)
     return {record_id: positions[record_id] for record_id in merged_ids if record_id in positions}
+
+
+def _bound_record_ids_from_payload(binding: dict[str, Any]) -> list[str]:
+    record_ids = binding.get("record_ids")
+    if not isinstance(record_ids, list):
+        return []
+    return [record_id for record_id in cast(list[Any], record_ids) if isinstance(record_id, str)]
 
 
 def _record_authority_change(state: GraphProjection, payload: NodeAuthorityChangedPayload) -> None:
@@ -5231,15 +5140,23 @@ def _record_authority_change(state: GraphProjection, payload: NodeAuthorityChang
     if not isinstance(node_id, str):
         return
 
+    authority = payload.authority or {}
     resource_claims = payload.resource_claims
+    if not resource_claims:
+        raw_claims = authority.get("resource_claims", [])
+        if isinstance(raw_claims, list):
+            resource_claims = [
+                ResourceClaimProjection.model_validate(claim)
+                for claim in cast(list[Any], raw_claims)
+            ]
     if resource_claims:
         state["node_resource_claims"][node_id] = resource_claims
 
-    allowed_actions = payload.allowed_actions
+    allowed_actions = payload.allowed_actions or authority.get("allowed_actions", [])
     if allowed_actions:
         state["node_allowed_actions"][node_id] = allowed_actions
 
-    preconditions = payload.preconditions
+    preconditions = payload.preconditions or authority.get("preconditions", [])
     if preconditions:
         state["node_preconditions"][node_id] = preconditions
 
@@ -5952,10 +5869,9 @@ def _recovery_lineage_passed(state: GraphProjection, recovery_node_id: str) -> b
 def _downstream_node_ids(state: GraphProjection, start_node_id: str) -> set[str]:
     adjacency: dict[str, set[str]] = {}
     for edge in state["edges"].values():
-        source = edge.get("from_node_id")
-        target = edge.get("to_node_id")
-        if isinstance(source, str) and isinstance(target, str):
-            adjacency.setdefault(source, set()).add(target)
+        source = edge.from_node_id
+        target = edge.to_node_id
+        adjacency.setdefault(source, set()).add(target)
     seen: set[str] = set()
     frontier = [start_node_id]
     while frontier:

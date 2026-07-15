@@ -351,10 +351,8 @@ def test_successor_readiness_via_milestone_records() -> None:
     events = _drive_region_to_accepted(events)
 
     projection = _project(events)
-    assert projection["input_bindings"]["planner-1"]["region_summary"]["record_ids"] == [
-        "summary-1"
-    ]
-    assert projection["input_bindings"]["planner-1"]["accepted_file_state"]["record_ids"] == [
+    assert projection["input_bindings"]["planner-1"]["region_summary"].record_ids == ["summary-1"]
+    assert projection["input_bindings"]["planner-1"]["accepted_file_state"].record_ids == [
         "file-state-1"
     ]
 

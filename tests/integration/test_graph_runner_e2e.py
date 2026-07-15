@@ -671,15 +671,13 @@ async def test_reconcile_runtime_skips_lease_already_recovered_by_another_driver
         {"lease_seconds": 60, "max_grants": 1},
     )
     projection = await controller.read_projection(run_id)
-    active_lease = next(
-        lease for lease in projection["leases"].values() if lease.get("state") == "active"
-    )
+    active_lease = next(lease for lease in projection["leases"].values() if lease.state == "active")
     stale_lease = {
         "run_id": run_id,
-        "lease_id": str(active_lease["lease_id"]),
-        "node_id": str(active_lease["node_id"]),
-        "generation": int(active_lease["generation"]),
-        "execution_id": str(active_lease["execution_id"]),
+        "lease_id": active_lease.lease_id,
+        "node_id": active_lease.node_id,
+        "generation": active_lease.generation,
+        "execution_id": active_lease.execution_id,
         "classification": "awaiting_start_ack",
     }
 

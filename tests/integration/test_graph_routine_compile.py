@@ -157,7 +157,7 @@ def test_dynamic_graph_feature_compiles_to_single_initial_planner_head() -> None
     assert planner.payload["state"] == "planned"
 
     planner_input_binding = projection["input_bindings"][planner_ids[0]]["routine_snapshot"]
-    assert planner_input_binding["record_ids"] == ["routine-snapshot-record"]
+    assert planner_input_binding.record_ids == ["routine-snapshot-record"]
     snapshot_record = _accepted_record(events, "routine-snapshot-record")
     assert snapshot_record.payload["record_type"] == "routine_snapshot"
     assert snapshot_record.payload["producer_node_id"] == "routine-snapshot"

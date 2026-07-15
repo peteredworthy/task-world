@@ -85,7 +85,6 @@ def test_build_node_detail_filters_by_node_id() -> None:
             {
                 "node_id": "node-a",
                 "new_state": "ready",
-                "old_state": "planned",
             },
         ),
         _event(
@@ -93,7 +92,6 @@ def test_build_node_detail_filters_by_node_id() -> None:
             {
                 "node_id": "node-b",
                 "new_state": "running",
-                "old_state": "planned",
             },
         ),
         _event(

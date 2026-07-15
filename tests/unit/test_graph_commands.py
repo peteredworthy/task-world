@@ -115,9 +115,11 @@ def _callback_payload(**overrides: Any) -> dict[str, Any]:
                 {
                     "record_id": "candidate-1",
                     "record_kind": "output",
+                    "record_type": "candidate",
                     "producer_node_id": "worker-1",
                     "port": "candidate",
                     "schema": "ImplementationCandidate",
+                    "candidate_id": "candidate-1",
                     "value": {"summary": "done"},
                 },
                 {
@@ -326,7 +328,7 @@ def test_cancel_revokes_active_lease_and_cancels_running_node() -> None:
     }
 
     projected = _project([*events, *output])
-    assert projected["leases"]["lease-1"]["state"] == "revoked"
+    assert projected["leases"]["lease-1"].state == "revoked"
     assert projected["node_states"]["worker-1"] == "cancelled"
 
 
@@ -342,7 +344,7 @@ def test_cancel_revokes_suspended_lease_without_reopening_terminal_node() -> Non
 
     assert [event.event_type for event in output] == ["run_lifecycle_changed", "lease_revoked"]
     projected = _project([*events, *output])
-    assert projected["leases"]["lease-1"]["state"] == "revoked"
+    assert projected["leases"]["lease-1"].state == "revoked"
     assert projected["node_states"]["worker-1"] == "failed"
 
 
@@ -381,8 +383,8 @@ def test_record_heartbeat_renews_active_lease() -> None:
     assert output[1].payload == output[0].payload
 
     projected = _project([*events, *output])
-    assert projected["leases"]["lease-1"]["state"] == "active"
-    assert projected["leases"]["lease-1"]["expires_at"] == "2026-01-01T00:02:00+00:00"
+    assert projected["leases"]["lease-1"].state == "active"
+    assert projected["leases"]["lease-1"].expires_at == "2026-01-01T00:02:00+00:00"
 
 
 def test_record_heartbeat_rejects_non_active_lease() -> None:
@@ -813,9 +815,11 @@ def test_callback_accepts_analysis_summary_record() -> None:
                     {
                         "record_id": "candidate-1",
                         "record_kind": "output",
+                        "record_type": "candidate",
                         "producer_node_id": "worker-1",
                         "port": "candidate",
                         "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-1",
                         "value": {"summary": "done"},
                     },
                     {
@@ -871,9 +875,11 @@ def test_callback_rejects_malformed_analysis_summary_record_atomically() -> None
                     {
                         "record_id": "candidate-1",
                         "record_kind": "output",
+                        "record_type": "candidate",
                         "producer_node_id": "worker-1",
                         "port": "candidate",
                         "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-1",
                         "value": {"summary": "done"},
                     },
                     {
@@ -1001,7 +1007,7 @@ def test_callback_before_acknowledge_start_rejected_and_leaves_lease_intact() ->
 
     projected = _project([*events, *output])
     assert projected["node_states"]["worker-1"] == "leased"
-    assert projected["leases"]["lease-1"]["state"] == "active"
+    assert projected["leases"]["lease-1"].state == "active"
 
 
 def test_callback_claiming_non_mutating_cannot_complete_leased_node() -> None:
@@ -1019,7 +1025,7 @@ def test_callback_claiming_non_mutating_cannot_complete_leased_node() -> None:
 
     projected = _project([*events, *output])
     assert projected["node_states"]["worker-1"] == "leased"
-    assert projected["leases"]["lease-1"]["state"] == "active"
+    assert projected["leases"]["lease-1"].state == "active"
 
 
 def test_schedule_tick_defers_node_without_base_snapshot() -> None:
@@ -1124,7 +1130,7 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
     )
 
     projected = _project([*events, *output])
-    assert projected["leases"]["lease-1"]["state"] == "expired"
+    assert projected["leases"]["lease-1"].state == "expired"
     assert projected["node_states"]["verifier-1"] == "failed"
 
 
@@ -1421,8 +1427,8 @@ def test_callback_binds_first_record_only_for_one_cardinality_input() -> None:
     assert "input_bound" not in [event.event_type for event in second_output]
     projected = _project([*events, *first_output, *second_output])
     binding = projected["input_bindings"]["verifier-1"]["candidate_under_test"]
-    assert binding["binding_policy"] == "bind_first"
-    assert binding["record_ids"] == ["candidate-1"]
+    assert binding.binding_policy == "bind_first"
+    assert binding.record_ids == ["candidate-1"]
 
 
 def test_callback_accumulates_records_for_many_cardinality_input() -> None:
@@ -1481,8 +1487,8 @@ def test_callback_accumulates_records_for_many_cardinality_input() -> None:
     assert [event.event_type for event in output].count("input_bound") == 2
     projected = _project([*events, *output])
     binding = projected["input_bindings"]["summarizer-1"]["source_records"]
-    assert binding["binding_policy"] == "bind_all"
-    assert binding["record_ids"] == ["candidate-1", "candidate-2"]
+    assert binding.binding_policy == "bind_all"
+    assert binding.record_ids == ["candidate-1", "candidate-2"]
 
 
 def test_callback_rebinds_superseding_record_when_policy_allows() -> None:
@@ -1560,8 +1566,8 @@ def test_callback_rebinds_superseding_record_when_policy_allows() -> None:
 
     projected = _project([*events, *first_output, *second_output])
     binding = projected["input_bindings"]["planner-1"]["accepted_file_state"]
-    assert binding["binding_policy"] == "rebind_on_superseding"
-    assert binding["record_ids"] == ["file-state-2"]
+    assert binding.binding_policy == "rebind_on_superseding"
+    assert binding.record_ids == ["file-state-2"]
 
 
 def test_callback_accepts_gap_analysis_output_and_binds_classified_gap() -> None:
@@ -1791,10 +1797,14 @@ def test_patch_create_edge_backfills_existing_verification_record() -> None:
             {
                 "record_id": "verification-1",
                 "record_kind": "verification",
+                "record_type": "verification_report",
                 "producer_node_id": "verifier-1",
                 "port": "verification_report",
+                "schema": "VerificationReport",
                 "candidate_id": "candidate-1",
+                "outcome": "passed",
                 "verdict": "passed",
+                "value": {"outcome": "passed", "grades": []},
             },
             4,
         ),
@@ -2972,7 +2982,7 @@ def test_worker_smuggled_verification_record_rejected_atomically() -> None:
 
     projected = _project([*events, *output])
     assert projected["node_states"]["worker-1"] == "running"
-    assert projected["leases"]["lease-1"]["state"] == "active"
+    assert projected["leases"]["lease-1"].state == "active"
     assert project_task_states([*events, *output]).get("task-1") != "accepted"
 
 
@@ -3855,7 +3865,6 @@ def test_seed_compiled_events_rejects_invalid_verification_report_record() -> No
                         "schema": "VerificationReport",
                         "candidate_id": "candidate-1",
                         "outcome": "failed",
-                        "status": "failed",
                         "value": {
                             "outcome": "failed",
                             "grades": [{"requirement_id": "R-1", "grade": "F"}],
@@ -3869,7 +3878,7 @@ def test_seed_compiled_events_rejects_invalid_verification_report_record() -> No
 
     assert [event.event_type for event in output] == ["command_rejected"]
     assert output[0].payload["command_type"] == "seed_compiled_events"
-    assert "uses outcome, not status" in output[0].payload["reason"]
+    assert "require record_type=verification_report" in output[0].payload["reason"]
 
 
 def test_seed_compiled_events_rejects_mixed_invalid_legacy_selector_kind() -> None:
@@ -4096,7 +4105,7 @@ def test_patch_accept_emits_human_gate_request_record_and_binding() -> None:
         "binding_policy": "bind_latest",
     }
     projected = _project(output)
-    assert projected["input_bindings"]["gate-review"]["decision_request"]["record_ids"] == [
+    assert projected["input_bindings"]["gate-review"]["decision_request"].record_ids == [
         "decision-request-gate-review"
     ]
 
@@ -4631,12 +4640,18 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
             "output_record_accepted",
             {
                 "record_id": "routine-snapshot-record",
-                "record_kind": "routine_snapshot",
+                "record_kind": "graph_record",
                 "record_type": "routine_snapshot",
                 "producer_node_id": "routine-snapshot",
                 "port": "snapshot",
                 "schema": "RoutineSnapshot",
-                "value": {"routine_id": "routine-1"},
+                "value": {
+                    "routine_id": "routine-1",
+                    "name": "Routine 1",
+                    "content_hash": "hash-routine-1",
+                    "step_count": 1,
+                    "task_count": 1,
+                },
             },
             2,
         ),
@@ -4661,8 +4676,26 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
                 "port": "check_result",
                 "schema": "CheckResult",
                 "task_region_id": "region-r1-final",
-                "status": "failed",
-                "value": {"status": "failed", "exit_code": 127},
+                "candidate_id": "candidate-r1",
+                "attempt_number": 1,
+                "value": {
+                    "status": "failed",
+                    "classification": "tool_unavailable",
+                    "command_id": "final-invariant",
+                    "command_text": "check",
+                    "command": {"cmd": "check"},
+                    "worktree_path": ".",
+                    "base_snapshot_id": "S0",
+                    "execution_id": "exec-check-r1",
+                    "exit_code": 127,
+                    "duration_ms": 1,
+                    "stdout": "",
+                    "stderr": "not found",
+                    "stdout_truncated": False,
+                    "stderr_truncated": False,
+                    "timeout_seconds": 60,
+                    "environment_policy": {},
+                },
             },
             4,
         ),
@@ -4716,11 +4749,18 @@ def test_reconcile_recovers_runtime_failed_check_without_check_result() -> None:
             "output_record_accepted",
             {
                 "record_id": "routine-snapshot-record",
-                "record_kind": "routine_snapshot",
+                "record_kind": "graph_record",
                 "record_type": "routine_snapshot",
                 "producer_node_id": "routine-snapshot",
                 "port": "snapshot",
                 "schema": "RoutineSnapshot",
+                "value": {
+                    "routine_id": "routine-1",
+                    "name": "Routine 1",
+                    "content_hash": "hash-routine-1",
+                    "step_count": 1,
+                    "task_count": 1,
+                },
             },
             2,
         ),
@@ -4740,7 +4780,7 @@ def test_reconcile_recovers_runtime_failed_check_without_check_result() -> None:
             {
                 "record_id": "failure-check-runtime-failed",
                 "record_type": "failure_record",
-                "record_kind": "failure_record",
+                "record_kind": "graph_record",
                 "schema": "FailureRecord",
                 "producer_node_id": "check-runtime-failed",
                 "port": "failure_record",
@@ -4839,11 +4879,18 @@ def test_schedule_tick_does_not_repair_failed_required_check() -> None:
             "output_record_accepted",
             {
                 "record_id": "routine-snapshot-record",
-                "record_kind": "routine_snapshot",
+                "record_kind": "graph_record",
                 "record_type": "routine_snapshot",
                 "producer_node_id": "routine-snapshot",
                 "port": "snapshot",
                 "schema": "RoutineSnapshot",
+                "value": {
+                    "routine_id": "routine-1",
+                    "name": "Routine 1",
+                    "content_hash": "hash-routine-1",
+                    "step_count": 1,
+                    "task_count": 1,
+                },
             },
             2,
         ),
@@ -4896,11 +4943,18 @@ def test_reconcile_is_idempotent_and_rejects_terminal_runs() -> None:
             "output_record_accepted",
             {
                 "record_id": "routine-snapshot-record",
-                "record_kind": "routine_snapshot",
+                "record_kind": "graph_record",
                 "record_type": "routine_snapshot",
                 "producer_node_id": "routine-snapshot",
                 "port": "snapshot",
                 "schema": "RoutineSnapshot",
+                "value": {
+                    "routine_id": "routine-1",
+                    "name": "Routine 1",
+                    "content_hash": "hash-routine-1",
+                    "step_count": 1,
+                    "task_count": 1,
+                },
             },
             2,
         ),
@@ -5805,11 +5859,18 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
             "output_record_accepted",
             {
                 "record_id": "routine-snapshot-record",
-                "record_kind": "routine_snapshot",
+                "record_kind": "graph_record",
                 "record_type": "routine_snapshot",
                 "producer_node_id": "routine-snapshot",
                 "port": "snapshot",
                 "schema": "RoutineSnapshot",
+                "value": {
+                    "routine_id": "routine-1",
+                    "name": "Routine 1",
+                    "content_hash": "hash-routine-1",
+                    "step_count": 1,
+                    "task_count": 1,
+                },
             },
             2,
         ),
@@ -5831,13 +5892,14 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
             {
                 "record_id": "candidate-fix",
                 "record_kind": "output",
+                "record_type": "candidate",
                 "producer_node_id": "worker-corrective",
                 "port": "candidate",
                 "schema": "ImplementationCandidate",
                 "candidate_id": "candidate-fix",
                 "task_region_id": "corrective_work_region",
                 "attempt_number": 2,
-                "value": {},
+                "value": {"summary": "corrective candidate"},
             },
             4,
         ),
@@ -5858,12 +5920,17 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
             {
                 "record_id": "verification-passed-old",
                 "record_kind": "verification",
+                "record_type": "verification_report",
                 "producer_node_id": "verifier-corrective",
                 "port": "verification_report",
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-old",
+                "outcome": "passed",
                 "verdict": "passed",
-                "value": {"grades": [{"requirement_id": "R-1", "grade": "A"}]},
+                "value": {
+                    "outcome": "passed",
+                    "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                },
             },
             6,
         ),
@@ -5872,12 +5939,17 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
             {
                 "record_id": "verification-fix-failed",
                 "record_kind": "verification",
+                "record_type": "verification_report",
                 "producer_node_id": "verifier-corrective",
                 "port": "verification_report",
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-fix",
+                "outcome": "failed",
                 "verdict": "failed",
-                "value": {"grades": [{"requirement_id": "R-1", "grade": "C"}]},
+                "value": {
+                    "outcome": "failed",
+                    "grades": [{"requirement_id": "R-1", "grade": "C"}],
+                },
             },
             7,
         ),
@@ -6559,8 +6631,7 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
     )
     valid_projection = _project([*events[:-1], *valid_output])
     assert any(
-        edge.get("from_node_id") == "verifier-implementation"
-        and edge.get("to_node_id") == "check-final"
+        edge.from_node_id == "verifier-implementation" and edge.to_node_id == "check-final"
         for edge in valid_projection["edges"].values()
     )
 
@@ -7459,7 +7530,7 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         "trigger": "agent_died_retry_scheduled",
         "attempt_number": 1,
     }
-    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["leases"]["lease-1"].state == "revoked"
     assert projection["node_states"]["worker-1"] == "ready"
 
 
@@ -7514,7 +7585,7 @@ def test_agent_died_check_missing_command_fails_without_retry() -> None:
         "trigger": "non_retryable_runtime_error",
         "reason": "check node missing command_definition",
     }
-    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["leases"]["lease-1"].state == "revoked"
     assert projection["node_states"]["check-1"] == "failed"
 
 
@@ -7681,7 +7752,7 @@ def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
         "attempt_number": 2,
         "max_attempts": 2,
     }
-    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["leases"]["lease-1"].state == "revoked"
     assert projection["node_states"]["worker-1"] == "failed"
 
 
@@ -7737,7 +7808,7 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
         "trigger": "agent_rate_limited",
         "reason": reason,
     }
-    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["leases"]["lease-1"].state == "revoked"
     assert projection["node_states"]["planner-1"] == "failed"
 
 
@@ -7785,7 +7856,7 @@ def test_agent_died_usage_limit_revokes_lease_and_fails_without_retry() -> None:
     assert output[2].payload["value"]["error_class"] == "agent_rate_limited"
     assert output[2].payload["value"]["retryable"] is False
     assert output[3].payload["trigger"] == "agent_rate_limited"
-    assert projection["leases"]["lease-1"]["state"] == "revoked"
+    assert projection["leases"]["lease-1"].state == "revoked"
     assert projection["node_states"]["verifier-1"] == "failed"
 
 

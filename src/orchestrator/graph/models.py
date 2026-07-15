@@ -2,9 +2,9 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeAlias, cast
+from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
+from pydantic import BaseModel, ConfigDict, Field, RootModel, StrictBool, StrictInt, model_validator
 
 
 class GraphBaseModel(BaseModel):
@@ -23,6 +23,8 @@ CommandDefinitionProjection: TypeAlias = dict[str, Any]
 
 
 class TypedRecordBase(GraphBaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
     record_type: str | None = None
     schema_version: int | None = None
     producer_port: str | None = None
@@ -569,113 +571,40 @@ class InputBinding(GraphBaseModel):
     bound_at_position: int
 
 
-if TYPE_CHECKING:
+class _AttributeProjection(GraphBaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
-    class EdgeProjection(dict[str, Any]):
-        edge_id: str
-        from_node_id: str
-        from_port: str
-        to_node_id: str
-        to_port: str
-        required: bool = True
-        dependency_type: Literal["input_binding", "state_dependency"] = "input_binding"
-        from_node_kind: str | None
-        from_node_role: str | None
-        accepted_record_selector: dict[str, Any] | None
-        purpose: Any | None
-        description: Any | None
-        selection: Any | None
-        binding_policy: Any | None
-        freshness_policy: Any | None
-        prompt_hydration_policy: Any | None
-        metadata: Any | None
 
-        @classmethod
-        def model_validate(cls, obj: Any) -> "EdgeProjection": ...
+class EdgeProjection(_AttributeProjection):
+    edge_id: str
+    from_node_id: str
+    from_port: str
+    to_node_id: str
+    to_port: str
+    required: bool = True
+    dependency_type: Literal["input_binding", "state_dependency"] = "input_binding"
+    from_node_kind: str | None = None
+    from_node_role: str | None = None
+    accepted_record_selector: dict[str, Any] | None = None
+    purpose: Any | None = None
+    description: Any | None = None
+    selection: Any | None = None
+    binding_policy: Any | None = None
+    freshness_policy: Any | None = None
+    prompt_hydration_policy: Any | None = None
+    metadata: Any | None = None
 
-        def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]: ...
 
-        def model_copy(self, *args: Any, **kwargs: Any) -> "EdgeProjection": ...
-
-    class InputBindingProjection(dict[str, Any]):
-        edge_id: str | None
-        to_node_id: str
-        to_port: str
-        record_ids: list[str]
-        bound_at_position: int
-        record_bound_positions: dict[str, int] | None
-        binding_policy: str | None
-        trigger: str | None
-        supersedes_record_id: str | None
-
-        @classmethod
-        def model_validate(cls, obj: Any) -> "InputBindingProjection": ...
-
-        def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]: ...
-
-        def model_copy(self, *args: Any, **kwargs: Any) -> "InputBindingProjection": ...
-
-else:
-
-    class _DictCompatibleProjection(GraphBaseModel):
-        model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-        def _as_mapping(self) -> dict[str, Any]:
-            return self.model_dump(mode="json")
-
-        def get(self, key: str, default: Any = None) -> Any:
-            return self._as_mapping().get(key, default)
-
-        def __getitem__(self, key: str) -> Any:
-            return self._as_mapping()[key]
-
-        def __contains__(self, key: object) -> bool:
-            return key in self._as_mapping()
-
-        def __iter__(self) -> Any:
-            return iter(self._as_mapping())
-
-        def __len__(self) -> int:
-            return len(self._as_mapping())
-
-        def keys(self) -> Any:
-            return self._as_mapping().keys()
-
-        def items(self) -> Any:
-            return self._as_mapping().items()
-
-        def values(self) -> Any:
-            return self._as_mapping().values()
-
-    class EdgeProjection(_DictCompatibleProjection):
-        edge_id: str
-        from_node_id: str
-        from_port: str
-        to_node_id: str
-        to_port: str
-        required: bool = True
-        dependency_type: Literal["input_binding", "state_dependency"] = "input_binding"
-        from_node_kind: str | None = None
-        from_node_role: str | None = None
-        accepted_record_selector: dict[str, Any] | None = None
-        purpose: Any | None = None
-        description: Any | None = None
-        selection: Any | None = None
-        binding_policy: Any | None = None
-        freshness_policy: Any | None = None
-        prompt_hydration_policy: Any | None = None
-        metadata: Any | None = None
-
-    class InputBindingProjection(_DictCompatibleProjection):
-        edge_id: str | None = None
-        to_node_id: str
-        to_port: str
-        record_ids: list[str]
-        bound_at_position: int
-        record_bound_positions: dict[str, int] | None = None
-        binding_policy: str | None = None
-        trigger: str | None = None
-        supersedes_record_id: str | None = None
+class InputBindingProjection(_AttributeProjection):
+    edge_id: str | None = None
+    to_node_id: str
+    to_port: str
+    record_ids: list[str]
+    bound_at_position: int
+    record_bound_positions: dict[str, int] | None = None
+    binding_policy: str | None = None
+    trigger: str | None = None
+    supersedes_record_id: str | None = None
 
 
 class OutputRecord(TypedRecordBase):
@@ -685,17 +614,11 @@ class OutputRecord(TypedRecordBase):
     port: str
     schema_: str = Field(alias="schema")
     value: dict[str, Any]
-
-
-class LegacyOutputRecord(TypedRecordBase):
-    """Typed projection wrapper for historical output records with partial shape."""
-
-    record_id: str
-    record_kind: str = "output"
-    producer_node_id: str
-    port: str
-    schema_: str | None = Field(default=None, alias="schema")
-    value: Any | None = None
+    candidate_id: str | None = None
+    task_region_id: str | None = None
+    attempt_number: int | None = Field(default=None, ge=0)
+    file_state_record_id: str | None = None
+    file_state_record_ids: list[str] = Field(default_factory=list)
 
 
 class RunContextValue(GraphBaseModel):
@@ -778,6 +701,10 @@ def _empty_verification_grades() -> list[dict[str, Any]]:
     return []
 
 
+def _empty_verification_record_ids() -> list[str]:
+    return []
+
+
 class VerificationReportValue(GraphBaseModel):
     outcome: Literal["passed", "failed"]
     grades: list[dict[str, Any]] = Field(default_factory=_empty_verification_grades)
@@ -791,10 +718,15 @@ class VerificationReportRecord(TypedRecordBase):
     port: Literal["verification_report", "verification_result"] = "verification_report"
     schema_: Literal["VerificationReport"] = Field(default="VerificationReport", alias="schema")
     candidate_id: str
+    task_region_id: str | None = None
     outcome: Literal["passed", "failed"] | None = None
     verdict: Literal["passed", "failed", "pass", "fail"] | None = None
     value: VerificationReportValue
     evidence: Any | None = None
+    candidate_record_id: str | None = None
+    candidate_record_ids: list[str] = Field(default_factory=_empty_verification_record_ids)
+    file_state_record_ids: list[str] = Field(default_factory=_empty_verification_record_ids)
+    evaluated_record_ids: list[str] = Field(default_factory=_empty_verification_record_ids)
 
     @model_validator(mode="before")
     @classmethod
@@ -869,64 +801,18 @@ def _empty_lease_resource_claims() -> list[ResourceClaimProjection]:
 LeaseProjectionState: TypeAlias = Literal["active", "suspended", "revoked", "expired", "released"]
 
 
-def _empty_lease_extra() -> dict[str, Any]:
-    return {}
+class StrictEventPayload(BaseModel):
+    """Canonical event payloads reject unknown envelope fields."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
-class LeaseEventPayloadBase(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    extra: dict[str, Any] = Field(default_factory=_empty_lease_extra)
-
-    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        kwargs.setdefault("exclude_none", True)
-        data = super().model_dump(*args, **kwargs)
-        if not data.get("extra"):
-            data.pop("extra", None)
-        return data
-
-
-def _normalize_lease_resource_claims(value: Any) -> list[ResourceClaimProjection]:
-    if not isinstance(value, list):
-        return []
-    claims: list[ResourceClaimProjection] = []
-    for raw_claim in cast(list[Any], value):
-        if not isinstance(raw_claim, dict):
-            continue
-        try:
-            claims.append(ResourceClaimProjection.model_validate(raw_claim))
-        except ValueError:
-            continue
-    return claims
-
-
-def _normalize_lease_event_payload(value: Any, known_keys: set[str]) -> Any:
-    if not isinstance(value, dict):
-        return value
-
-    payload = dict(cast(dict[str, Any], value))
-    normalized_extra = payload.get("extra")
-    extra = (
-        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
-    )
-
-    if "resource_claims" in known_keys and "resource_claims" in payload:
-        payload["resource_claims"] = _normalize_lease_resource_claims(
-            payload.get("resource_claims")
-        )
-
-    for key in list(payload):
-        if key not in known_keys:
-            extra.setdefault(key, payload.pop(key))
-
-    payload["extra"] = extra
-    return payload
-
-
-class LeaseGrantedPayload(LeaseEventPayloadBase):
+class LeaseGrantedPayload(StrictEventPayload):
     lease_id: str
     node_id: str
-    generation: int | None = None
+    task_region_id: str | None = None
+    kind: str | None = None
+    generation: StrictInt | None = None
     execution_id: str | None = None
     base_snapshot_id: str | None = None
     expires_at: str | None = None
@@ -935,183 +821,49 @@ class LeaseGrantedPayload(LeaseEventPayloadBase):
     )
     session_id: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lease_event_payload(
-            value,
-            {
-                "lease_id",
-                "node_id",
-                "generation",
-                "execution_id",
-                "base_snapshot_id",
-                "expires_at",
-                "resource_claims",
-                "session_id",
-                "extra",
-            },
-        )
 
-
-class LeaseRenewedPayload(LeaseEventPayloadBase):
+class LeaseRenewedPayload(StrictEventPayload):
     lease_id: str
     node_id: str | None = None
     observed_at: str | None = None
     expires_at: str | None = None
-    generation: int | None = None
+    generation: StrictInt | None = None
     execution_id: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lease_event_payload(
-            value,
-            {
-                "lease_id",
-                "node_id",
-                "observed_at",
-                "expires_at",
-                "generation",
-                "execution_id",
-                "extra",
-            },
-        )
 
-
-class LeaseReleasedPayload(LeaseEventPayloadBase):
+class LeaseReleasedPayload(StrictEventPayload):
     node_id: str | None = None
     lease_id: str
-    generation: int | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lease_event_payload(
-            value,
-            {"node_id", "lease_id", "generation", "extra"},
-        )
+    generation: StrictInt | None = None
 
 
-class LeaseRevokedPayload(LeaseEventPayloadBase):
+class LeaseRevokedPayload(StrictEventPayload):
     lease_id: str
     node_id: str | None = None
-    generation: int | None = None
+    generation: StrictInt | None = None
     execution_id: str | None = None
     trigger: str | None = None
     reason: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lease_event_payload(
-            value,
-            {
-                "lease_id",
-                "node_id",
-                "generation",
-                "execution_id",
-                "trigger",
-                "reason",
-                "extra",
-            },
-        )
 
-
-class LeaseExpiredPayload(LeaseEventPayloadBase):
+class LeaseExpiredPayload(StrictEventPayload):
     lease_id: str
     node_id: str | None = None
-    generation: int | None = None
+    generation: StrictInt | None = None
     execution_id: str | None = None
     expires_at: str | None = None
     reason: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lease_event_payload(
-            value,
-            {
-                "lease_id",
-                "node_id",
-                "generation",
-                "execution_id",
-                "expires_at",
-                "reason",
-                "extra",
-            },
-        )
 
-
-class LeaseSuspendedPayload(LeaseEventPayloadBase):
+class LeaseSuspendedPayload(StrictEventPayload):
     lease_id: str
     node_id: str | None = None
-    generation: int | None = None
+    generation: StrictInt | None = None
     execution_id: str | None = None
     reason: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lease_event_payload(
-            value,
-            {"lease_id", "node_id", "generation", "execution_id", "reason", "extra"},
-        )
 
-
-def _empty_lifecycle_event_extra() -> dict[str, Any]:
-    return {}
-
-
-class LifecycleEventPayloadBase(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    extra: dict[str, Any] = Field(default_factory=_empty_lifecycle_event_extra)
-
-    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        kwargs.setdefault("exclude_none", True)
-        data = super().model_dump(*args, **kwargs)
-        if not data.get("extra"):
-            data.pop("extra", None)
-        return data
-
-
-def _normalize_lifecycle_event_payload(
-    value: Any,
-    field_types: dict[str, type[Any] | tuple[type[Any], ...]],
-) -> Any:
-    if not isinstance(value, dict):
-        return value
-
-    payload = dict(cast(dict[str, Any], value))
-    normalized_extra = payload.get("extra")
-    extra = (
-        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
-    )
-    for key in list(payload):
-        if key == "extra":
-            continue
-        expected = field_types.get(key)
-        if expected is None:
-            extra.setdefault(key, payload.pop(key))
-            continue
-        field_value = payload[key]
-        if field_value is None:
-            continue
-        expects_integer = expected is int or (isinstance(expected, tuple) and int in expected)
-        if expects_integer and isinstance(field_value, bool):
-            valid = False
-        elif expected is int:
-            valid = isinstance(field_value, int) and not isinstance(field_value, bool)
-        else:
-            valid = isinstance(field_value, expected)
-        if not valid:
-            extra.setdefault(key, payload.pop(key))
-    payload["extra"] = extra
-    return payload
-
-
-class RunLifecycleChangedPayload(LifecycleEventPayloadBase):
+class RunLifecycleChangedPayload(StrictEventPayload):
     command_type: str | None = None
     from_state: str | None = None
     to_state: str | None = None
@@ -1123,27 +875,8 @@ class RunLifecycleChangedPayload(LifecycleEventPayloadBase):
     recovery_reason: str | None = None
     reason: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "command_type": str,
-                "from_state": str,
-                "to_state": str,
-                "trigger": str,
-                "node_id": str,
-                "patch_id": str,
-                "recovery_of_node_id": str,
-                "recovery_of_record_id": str,
-                "recovery_reason": str,
-                "reason": str,
-            },
-        )
 
-
-class CommandRejectedPayload(LifecycleEventPayloadBase):
+class CommandRejectedPayload(StrictEventPayload):
     command_type: str | None = None
     reason: str | None = None
     blockers: list[dict[str, Any]] | None = None
@@ -1154,167 +887,66 @@ class CommandRejectedPayload(LifecycleEventPayloadBase):
     rejection_reason: str | None = None
     diagnostics: dict[str, Any] | list[Any] | None = None
     read_set_diff: dict[str, Any] | None = None
-    budget: int | None = None
-    count: int | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            payload = dict(cast(dict[str, Any], value))
-            blockers = payload.get("blockers")
-            if isinstance(blockers, list) and any(
-                not isinstance(blocker, dict) for blocker in cast(list[Any], blockers)
-            ):
-                raw_extra = payload.get("extra")
-                extra = dict(cast(dict[str, Any], raw_extra)) if isinstance(raw_extra, dict) else {}
-                extra.setdefault("blockers", payload.pop("blockers"))
-                payload["extra"] = extra
-                value = payload
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "command_type": str,
-                "reason": str,
-                "blockers": list,
-                "patch_id": str,
-                "base_graph_position": (int, str),
-                "actor_role": str,
-                "proposed_by_node_id": str,
-                "rejection_reason": str,
-                "diagnostics": (dict, list),
-                "read_set_diff": dict,
-                "budget": int,
-                "count": int,
-            },
-        )
+    budget: StrictInt | None = None
+    count: StrictInt | None = None
 
 
-class CallbackPayloadBase(LifecycleEventPayloadBase):
+class CallbackPayloadBase(StrictEventPayload):
     node_id: str | None = None
     lease_id: str | None = None
-    lease_generation: int | None = None
+    lease_generation: StrictInt | None = None
+    execution_id: str | None = None
     idempotency_key: str | None = None
     payload: dict[str, Any] | None = None
     reason: str | None = None
 
-    @classmethod
-    def _field_types(cls) -> dict[str, type[Any] | tuple[type[Any], ...]]:
-        return {
-            "node_id": str,
-            "lease_id": str,
-            "lease_generation": int,
-            "idempotency_key": str,
-            "payload": dict,
-            "reason": str,
-        }
-
     def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         data = super().model_dump(*args, **kwargs)
-        if "payload" in self.model_fields_set and "payload" not in self.extra:
+        if "payload" in self.model_fields_set:
             data["payload"] = self.payload
         return data
 
 
 class CallbackAcceptedPayload(CallbackPayloadBase):
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(value, cls._field_types())
+    pass
 
 
 class CallbackRejectedPayload(CallbackPayloadBase):
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(value, cls._field_types())
+    pass
 
 
 class CallbackDuplicateReturnedPayload(CallbackPayloadBase):
     prior_result: dict[str, Any] | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {**cls._field_types(), "prior_result": dict},
-        )
 
-
-class RuntimeRetryScheduledPayload(LifecycleEventPayloadBase):
+class RuntimeRetryScheduledPayload(StrictEventPayload):
     node_id: str | None = None
     lease_id: str | None = None
-    generation: int | None = None
+    generation: StrictInt | None = None
     policy: str | None = None
     reason: str | None = None
-    retry_after_seconds: int | None = None
+    retry_after_seconds: StrictInt | None = None
     retry_not_before: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "node_id": str,
-                "lease_id": str,
-                "generation": int,
-                "policy": str,
-                "reason": str,
-                "retry_after_seconds": int,
-                "retry_not_before": str,
-            },
-        )
 
-
-class HeartbeatRecordedPayload(LifecycleEventPayloadBase):
+class HeartbeatRecordedPayload(StrictEventPayload):
     lease_id: str | None = None
     node_id: str | None = None
-    generation: int | None = None
+    generation: StrictInt | None = None
     execution_id: str | None = None
     observed_at: str | None = None
     expires_at: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "lease_id": str,
-                "node_id": str,
-                "generation": int,
-                "execution_id": str,
-                "observed_at": str,
-                "expires_at": str,
-            },
-        )
 
-
-class AgentDiedPayload(LifecycleEventPayloadBase):
+class AgentDiedPayload(StrictEventPayload):
     lease_id: str | None = None
     node_id: str | None = None
-    generation: int | None = None
+    generation: StrictInt | None = None
     execution_id: str | None = None
     reason: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "lease_id": str,
-                "node_id": str,
-                "generation": int,
-                "execution_id": str,
-                "reason": str,
-            },
-        )
 
-
-class DeadInputDetectedPayload(LifecycleEventPayloadBase):
+class DeadInputDetectedPayload(StrictEventPayload):
     node_id: str | None = None
     edge_id: str | None = None
     from_node_id: str | None = None
@@ -1324,68 +956,21 @@ class DeadInputDetectedPayload(LifecycleEventPayloadBase):
     source_node_id: str | None = None
     reason: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_lifecycle_event_payload(
-            value,
-            {
-                "node_id": str,
-                "edge_id": str,
-                "from_node_id": str,
-                "from_port": str,
-                "to_node_id": str,
-                "to_port": str,
-                "source_node_id": str,
-                "reason": str,
-            },
-        )
 
-
-if TYPE_CHECKING:
-
-    class LeaseProjection(dict[str, Any]):
-        lease_id: str
-        state: LeaseProjectionState
-        node_id: str | None
-        generation: int | None
-        execution_id: str | None
-        expires_at: str | None
-        session_id: str | None
-        base_snapshot_id: str | None
-        task_region_id: str | None
-        kind: str | None
-        resource_claims: list[ResourceClaimProjection]
-
-        @classmethod
-        def model_validate(cls, obj: Any) -> "LeaseProjection": ...
-
-        def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]: ...
-
-        def model_copy(self, *args: Any, **kwargs: Any) -> "LeaseProjection": ...
-
-else:
-
-    class LeaseProjection(GraphBaseModel):
-        lease_id: str
-        state: LeaseProjectionState
-        node_id: str | None = None
-        generation: int | None = None
-        execution_id: str | None = None
-        expires_at: str | None = None
-        session_id: str | None = None
-        base_snapshot_id: str | None = None
-        task_region_id: str | None = None
-        kind: str | None = None
-        resource_claims: list[ResourceClaimProjection] = Field(
-            default_factory=_empty_lease_resource_claims,
-        )
-
-        def get(self, key: str, default: Any = None) -> Any:
-            return getattr(self, key, default)
-
-        def __getitem__(self, key: str) -> Any:
-            return getattr(self, key)
+class LeaseProjection(_AttributeProjection):
+    lease_id: str
+    state: LeaseProjectionState
+    node_id: str | None = None
+    generation: int | None = None
+    execution_id: str | None = None
+    expires_at: str | None = None
+    session_id: str | None = None
+    base_snapshot_id: str | None = None
+    task_region_id: str | None = None
+    kind: str | None = None
+    resource_claims: list[ResourceClaimProjection] = Field(
+        default_factory=_empty_lease_resource_claims,
+    )
 
 
 class InvalidTestBlockProjection(GraphBaseModel):
@@ -1427,84 +1012,16 @@ class PendingGateDecisionProjection(GraphBaseModel):
         return self
 
 
-def _empty_cleanup_extra() -> dict[str, Any]:
-    return {}
-
-
 def _empty_cleanup_paths() -> list[str]:
     return []
 
 
-def _empty_event_payload_extra() -> dict[str, Any]:
-    return {}
-
-
-class GraphEventPayloadBase(BaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
-
-    extra: dict[str, Any] = Field(default_factory=_empty_event_payload_extra)
-
-    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
-        kwargs.setdefault("exclude_none", True)
-        data = super().model_dump(*args, **kwargs)
-        if not data.get("extra"):
-            data.pop("extra", None)
-        return data
+class GraphEventPayloadBase(StrictEventPayload):
+    pass
 
 
 class CleanupEventPayloadBase(GraphEventPayloadBase):
     pass
-
-
-def _normalize_decision_event_payload(value: Any, known_keys: set[str]) -> Any:
-    if not isinstance(value, dict):
-        return value
-    payload = dict(cast(dict[str, Any], value))
-    normalized_extra = payload.get("extra")
-    extra = (
-        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
-    )
-    string_keys = {
-        "run_id",
-        "decision_type",
-        "node_id",
-        "decision",
-        "outcome",
-        "verdict",
-        "task_region_id",
-        "gate_id",
-        "appeal_node_id",
-        "appealed_node_id",
-        "candidate_id",
-        "appeal_type",
-        "expires_at",
-        "reason",
-        "record_id",
-        "lease_id",
-    }
-    for key in string_keys & known_keys:
-        if payload.get(key) is not None and not isinstance(payload[key], str):
-            extra.setdefault(key, payload.pop(key))
-    if (
-        "approved" in known_keys
-        and payload.get("approved") is not None
-        and not isinstance(payload["approved"], bool)
-    ):
-        extra.setdefault("approved", payload.pop("approved"))
-    membership = payload.get("membership")
-    if membership is not None and not isinstance(membership, dict):
-        extra.setdefault("membership", payload.pop("membership"))
-        membership = None
-    if isinstance(membership, dict):
-        typed_membership = cast(dict[str, Any], membership)
-        for key in ("task_region_id", "candidate_id"):
-            if payload.get(key) is None and isinstance(typed_membership.get(key), str):
-                payload[key] = typed_membership[key]
-    for key in list(payload):
-        if key not in known_keys:
-            extra.setdefault(key, payload.pop(key))
-    payload["extra"] = extra
-    return payload
 
 
 class AppealOpenedPayload(GraphEventPayloadBase):
@@ -1516,24 +1033,8 @@ class AppealOpenedPayload(GraphEventPayloadBase):
     appeal_type: str | None = None
     lease_id: str | None = None
     membership: dict[str, Any] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_decision_event_payload(
-            value,
-            {
-                "run_id",
-                "node_id",
-                "appealed_node_id",
-                "candidate_id",
-                "task_region_id",
-                "appeal_type",
-                "lease_id",
-                "membership",
-                "extra",
-            },
-        )
+    kind: str | None = None
+    state: str | None = None
 
 
 class DecisionRecordedPayloadBase(GraphEventPayloadBase):
@@ -1543,7 +1044,7 @@ class DecisionRecordedPayloadBase(GraphEventPayloadBase):
     decision: str | None = None
     outcome: str | None = None
     verdict: str | None = None
-    approved: bool | None = None
+    approved: StrictBool | None = None
     task_region_id: str | None = None
     gate_id: str | None = None
     appeal_node_id: str | None = None
@@ -1556,35 +1057,6 @@ class DecisionRecordedPayloadBase(GraphEventPayloadBase):
     membership: dict[str, Any] | None = None
     decider: Any | None = None
     scope: Any | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_decision_event_payload(
-            value,
-            {
-                "run_id",
-                "decision_type",
-                "node_id",
-                "decision",
-                "outcome",
-                "verdict",
-                "approved",
-                "task_region_id",
-                "gate_id",
-                "appeal_node_id",
-                "appealed_node_id",
-                "candidate_id",
-                "appeal_type",
-                "expires_at",
-                "reason",
-                "record_id",
-                "membership",
-                "decider",
-                "scope",
-                "extra",
-            },
-        )
 
 
 class ApprovalDecisionRecordedPayload(DecisionRecordedPayloadBase):
@@ -1634,152 +1106,22 @@ class OversightDecisionRecordedPayload(DecisionRecordedPayloadBase):
         return self
 
 
-def _normalize_cleanup_event_payload(value: Any, known_keys: set[str]) -> Any:
-    if not isinstance(value, dict):
-        return value
-
-    payload = dict(cast(dict[str, Any], value))
-    normalized_extra = payload.get("extra")
-    extra = (
-        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
-    )
-
-    authority = payload.get("authority")
-    if authority is not None and not isinstance(authority, str):
-        extra["authority"] = authority
-        payload.pop("authority", None)
-
-    paths = payload.get("paths")
-    if isinstance(paths, list):
-        payload["paths"] = [path for path in cast(list[Any], paths) if isinstance(path, str)]
-
-    for key in list(payload):
-        if key not in known_keys:
-            extra.setdefault(key, payload.pop(key))
-
-    payload["extra"] = extra
-    return payload
-
-
-def _normalize_planner_session_state_changed_payload(value: Any) -> Any:
-    if not isinstance(value, dict):
-        return value
-
-    payload = dict(cast(dict[str, Any], value))
-    normalized_extra = payload.get("extra")
-    extra = (
-        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
-    )
-    known_keys = {
-        "session_id",
-        "state",
-        "node_id",
-        "lease_generation",
-        "carryover_record_id",
-        "extra",
-    }
-    string_keys = {"session_id", "state", "node_id", "carryover_record_id"}
-
-    for key in string_keys:
-        field_value = payload.get(key)
-        if field_value is not None and not isinstance(field_value, str):
-            extra.setdefault(key, payload.pop(key))
-
-    lease_generation = payload.get("lease_generation")
-    if lease_generation is not None and type(lease_generation) is not int:
-        extra.setdefault("lease_generation", payload.pop("lease_generation"))
-
-    for key in list(payload):
-        if key not in known_keys:
-            extra.setdefault(key, payload.pop(key))
-
-    payload["extra"] = extra
-    return payload
-
-
 class PlannerSessionStateChangedPayload(GraphEventPayloadBase):
     session_id: str | None = None
     state: str | None = None
     node_id: str | None = None
-    lease_generation: int | None = None
+    lease_generation: StrictInt | None = None
     carryover_record_id: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_planner_session_state_changed_payload(value)
-
-
-def _normalize_string_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in cast(list[Any], value) if isinstance(item, str)]
-
-
-def _normalize_patch_event_payload(value: Any, known_keys: set[str]) -> Any:
-    if not isinstance(value, dict):
-        return value
-
-    payload = dict(cast(dict[str, Any], value))
-    normalized_extra = payload.get("extra")
-    extra = (
-        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
-    )
-    string_keys = {
-        "patch_id",
-        "proposal_id",
-        "actor_role",
-        "proposed_by_node_id",
-        "node_id",
-        "session_id",
-        "carryover_record_id",
-        "reason",
-        "rejection_reason",
-        "status",
-    }
-    for key in string_keys & known_keys:
-        field_value = payload.get(key)
-        if field_value is not None and not isinstance(field_value, str):
-            extra.setdefault(key, payload.pop(key))
-
-    if "successor_planner_node_ids" in known_keys and "successor_planner_node_ids" in payload:
-        payload["successor_planner_node_ids"] = _normalize_string_list(
-            payload.get("successor_planner_node_ids")
-        )
-
-    for key in list(payload):
-        if key not in known_keys:
-            extra.setdefault(key, payload.pop(key))
-
-    payload["extra"] = extra
-    return payload
 
 
 class GraphPatchAcceptedPayload(GraphEventPayloadBase):
     patch_id: str
-    base_graph_position: int | None = None
+    base_graph_position: StrictInt | None = None
     actor_role: str | None = None
     proposed_by_node_id: str | None = None
     successor_planner_node_ids: list[str] = Field(default_factory=list)
     session_id: str | None = None
     carryover_record_id: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_patch_event_payload(
-            value,
-            {
-                "patch_id",
-                "base_graph_position",
-                "actor_role",
-                "proposed_by_node_id",
-                "successor_planner_node_ids",
-                "session_id",
-                "carryover_record_id",
-                "extra",
-            },
-        )
 
 
 class GraphPatchRejectedPayload(GraphEventPayloadBase):
@@ -1791,126 +1133,8 @@ class GraphPatchRejectedPayload(GraphEventPayloadBase):
     rejection_reason: str | None = None
     read_set_diff: dict[str, Any] | None = None
     diagnostics: dict[str, Any] | None = None
-    budget: int | None = None
-    count: int | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_patch_event_payload(
-            value,
-            {
-                "patch_id",
-                "base_graph_position",
-                "actor_role",
-                "proposed_by_node_id",
-                "reason",
-                "rejection_reason",
-                "read_set_diff",
-                "diagnostics",
-                "budget",
-                "count",
-                "extra",
-            },
-        )
-
-
-class GraphPatchStatusPayload(GraphEventPayloadBase):
-    proposal_id: str | None = None
-    patch_id: str | None = None
-    node_id: str | None = None
-    proposed_by_node_id: str | None = None
-    base_graph_position: int | None = None
-    actor_role: str | None = None
-    status: str | None = None
-    reason: str | None = None
-    diagnostics: dict[str, Any] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_patch_event_payload(
-            value,
-            {
-                "proposal_id",
-                "patch_id",
-                "node_id",
-                "proposed_by_node_id",
-                "base_graph_position",
-                "actor_role",
-                "status",
-                "reason",
-                "diagnostics",
-                "extra",
-            },
-        )
-
-
-def _normalize_requirement_event_payload(value: Any, known_keys: set[str]) -> Any:
-    if not isinstance(value, dict):
-        return value
-
-    payload = dict(cast(dict[str, Any], value))
-    normalized_extra = payload.get("extra")
-    extra = (
-        dict(cast(dict[str, Any], normalized_extra)) if isinstance(normalized_extra, dict) else {}
-    )
-    string_keys = {
-        "run_id",
-        "requirement_id",
-        "id",
-        "node_id",
-        "revision_id",
-        "version_id",
-        "requirement_version_id",
-        "proposal_id",
-        "patch_id",
-        "change_classification",
-        "classification",
-        "revision_type",
-        "previous_version_id",
-        "authority_required_reason",
-        "support_id",
-        "edge_id",
-        "evidence_id",
-        "status",
-        "stale_reason",
-        "confidence",
-    }
-    boolean_keys = {
-        "requires_authority",
-        "explicit_authority_required",
-        "new_behavior",
-        "behavior_change",
-        "semantic_change",
-        "validation_strengthening",
-        "active",
-    }
-
-    for key in string_keys & known_keys:
-        field_value = payload.get(key)
-        if field_value is not None and not isinstance(field_value, str):
-            extra.setdefault(key, payload.pop(key))
-    for key in boolean_keys & known_keys:
-        field_value = payload.get(key)
-        if field_value is not None and not isinstance(field_value, bool):
-            extra.setdefault(key, payload.pop(key))
-    if "revision_index" in known_keys:
-        revision_index = payload.get("revision_index")
-        if revision_index is not None and (
-            not isinstance(revision_index, int) or isinstance(revision_index, bool)
-        ):
-            extra.setdefault("revision_index", payload.pop("revision_index"))
-    if "requirement" in known_keys:
-        requirement = payload.get("requirement")
-        if requirement is not None and not isinstance(requirement, dict):
-            extra.setdefault("requirement", payload.pop("requirement"))
-
-    for key in list(payload):
-        if key not in known_keys:
-            extra.setdefault(key, payload.pop(key))
-    payload["extra"] = extra
-    return payload
+    budget: StrictInt | None = None
+    count: StrictInt | None = None
 
 
 class RequirementRevisionPayload(GraphEventPayloadBase):
@@ -1926,22 +1150,17 @@ class RequirementRevisionPayload(GraphEventPayloadBase):
     change_classification: str | None = None
     classification: str | None = None
     revision_type: str | None = None
-    requires_authority: bool | None = None
-    explicit_authority_required: bool | None = None
-    new_behavior: bool | None = None
-    behavior_change: bool | None = None
-    semantic_change: bool | None = None
-    validation_strengthening: bool | None = None
-    active: bool | None = None
+    requires_authority: StrictBool | None = None
+    explicit_authority_required: StrictBool | None = None
+    new_behavior: StrictBool | None = None
+    behavior_change: StrictBool | None = None
+    semantic_change: StrictBool | None = None
+    validation_strengthening: StrictBool | None = None
+    active: StrictBool | None = None
     previous_version_id: str | None = None
-    revision_index: int | None = None
+    revision_index: StrictInt | None = None
     authority_required_reason: str | None = None
     requirement: dict[str, Any] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_requirement_event_payload(value, set(cls.model_fields))
 
 
 class SupportEvidencePayload(GraphEventPayloadBase):
@@ -1956,29 +1175,6 @@ class SupportEvidencePayload(GraphEventPayloadBase):
     stale_reason: str | None = None
     confidence: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_requirement_event_payload(value, set(cls.model_fields))
-
-
-class RequirementAuthorityResolutionPayload(GraphEventPayloadBase):
-    run_id: str | None = None
-    requirement_id: str | None = None
-    id: str | None = None
-    node_id: str | None = None
-    revision_id: str | None = None
-    version_id: str | None = None
-    requirement_version_id: str | None = None
-    proposal_id: str | None = None
-    patch_id: str | None = None
-    requirement: dict[str, Any] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_requirement_event_payload(value, set(cls.model_fields))
-
 
 class CleanupRequestedPayload(CleanupEventPayloadBase):
     cleanup_id: str
@@ -1989,24 +1185,6 @@ class CleanupRequestedPayload(CleanupEventPayloadBase):
     reason: str | None = None
     execution_id: str | None = None
     producer_node_id: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_cleanup_event_payload(
-            value,
-            {
-                "cleanup_id",
-                "file_state_record_id",
-                "snapshot_id",
-                "paths",
-                "authority",
-                "reason",
-                "execution_id",
-                "producer_node_id",
-                "extra",
-            },
-        )
 
 
 class CleanupAppliedPayload(CleanupEventPayloadBase):
@@ -2019,27 +1197,7 @@ class CleanupAppliedPayload(CleanupEventPayloadBase):
     authority: str | None = None
     reason: str | None = None
     execution_id: str | None = None
-    deleted_snapshot_ref: bool | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_cleanup_event_payload(
-            value,
-            {
-                "cleanup_id",
-                "file_state_record_id",
-                "superseding_record_id",
-                "old_snapshot_id",
-                "new_snapshot_id",
-                "paths",
-                "authority",
-                "reason",
-                "execution_id",
-                "deleted_snapshot_ref",
-                "extra",
-            },
-        )
+    deleted_snapshot_ref: StrictBool | None = None
 
 
 class PlannerChainRegionPayload(GraphBaseModel):
@@ -2065,132 +1223,8 @@ def _empty_node_created_ports() -> list[PortModel]:
     return []
 
 
-_NODE_CREATED_RETAINED_VALUES = "_retained_values"
-
-
-def _retain_node_created_extra(extra: dict[str, Any], key: str, value: Any) -> None:
-    if key not in extra:
-        extra[key] = value
-        return
-    existing = extra[key]
-    existing_mapping = cast(dict[str, Any], existing) if isinstance(existing, dict) else None
-    if (
-        existing_mapping is not None
-        and set(existing_mapping) == {_NODE_CREATED_RETAINED_VALUES}
-        and isinstance(existing_mapping.get(_NODE_CREATED_RETAINED_VALUES), list)
-    ):
-        cast(list[Any], existing_mapping[_NODE_CREATED_RETAINED_VALUES]).append(value)
-        return
-    extra[key] = {_NODE_CREATED_RETAINED_VALUES: [existing, value]}
-
-
-def _strict_optional_string(mapping: dict[str, Any], key: str) -> bool:
-    return key not in mapping or mapping[key] is None or isinstance(mapping[key], str)
-
-
-def _validated_node_created_ports(value: Any) -> tuple[list[dict[str, Any]], list[Any]]:
-    valid: list[dict[str, Any]] = []
-    invalid: list[Any] = []
-    for item in cast(list[Any], value):
-        if not isinstance(item, dict):
-            invalid.append(item)
-            continue
-        mapping = cast(dict[str, Any], item)
-        direction = mapping.get("direction")
-        record_layers = mapping.get("record_layers")
-        required = mapping.get("required")
-        if not isinstance(mapping.get("port"), str):
-            invalid.append(item)
-            continue
-        if direction is not None and direction not in {"input", "output"}:
-            invalid.append(item)
-            continue
-        if not _strict_optional_string(mapping, "node_id") or not all(
-            _strict_optional_string(mapping, key) for key in ("schema", "schema_")
-        ):
-            invalid.append(item)
-            continue
-        if record_layers is not None and (
-            not isinstance(record_layers, list)
-            or not all(isinstance(layer, str) for layer in cast(list[Any], record_layers))
-        ):
-            invalid.append(item)
-            continue
-        if required is not None and not isinstance(required, bool):
-            invalid.append(item)
-            continue
-        try:
-            port = PortModel.model_validate(item)
-        except ValueError:
-            invalid.append(item)
-            continue
-        valid.append(port.model_dump(mode="json"))
-    return valid, invalid
-
-
-def _validated_node_created_claims(value: Any) -> tuple[list[dict[str, Any]], list[Any]]:
-    valid: list[dict[str, Any]] = []
-    invalid: list[Any] = []
-    for item in cast(list[Any], value):
-        if not isinstance(item, dict):
-            invalid.append(item)
-            continue
-        mapping = cast(dict[str, Any], item)
-        paths = mapping.get("paths")
-        if not all(
-            _strict_optional_string(mapping, key)
-            for key in ("mode", "scope", "external_resource_key")
-        ):
-            invalid.append(item)
-            continue
-        if "path" in mapping and not isinstance(mapping["path"], str):
-            invalid.append(item)
-            continue
-        if paths is not None and (
-            not isinstance(paths, list)
-            or not all(isinstance(path, str) for path in cast(list[Any], paths))
-        ):
-            invalid.append(item)
-            continue
-        try:
-            claim = ResourceClaimProjection.model_validate(item)
-        except ValueError:
-            invalid.append(item)
-            continue
-        valid.append(claim.model_dump(mode="json"))
-    return valid, invalid
-
-
-def _validated_planner_chain_regions(value: Any) -> tuple[list[dict[str, Any]], list[Any]]:
-    valid: list[dict[str, Any]] = []
-    invalid: list[Any] = []
-    for item in cast(list[Any], value):
-        if not isinstance(item, dict):
-            invalid.append(item)
-            continue
-        mapping = cast(dict[str, Any], item)
-        generation_index = mapping.get("generation_index")
-        if generation_index is not None and (
-            not isinstance(generation_index, int) or isinstance(generation_index, bool)
-        ):
-            invalid.append(item)
-            continue
-        if not all(
-            _strict_optional_string(mapping, key) for key in ("region_label", "child_routine")
-        ):
-            invalid.append(item)
-            continue
-        try:
-            region = PlannerChainRegionPayload.model_validate(item)
-        except ValueError:
-            invalid.append(item)
-            continue
-        valid.append(region.model_dump(mode="json"))
-    return valid, invalid
-
-
 class NodeCreatedPayload(GraphEventPayloadBase):
-    """Compatibility payload for every compiler and command-side node creation."""
+    """Canonical payload for every compiler and command-side node creation."""
 
     run_id: str | None = None
     node_id: str | None = None
@@ -2198,9 +1232,11 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     role: str | None = None
     state: str | None = None
     task_region_id: str | None = None
-    attempt_number: int | None = None
+    attempt_number: StrictInt | None = None
     candidate_id: str | None = None
     failed_candidate_id: str | None = None
+    predecessor_node_ids: list[str] = Field(default_factory=list)
+    appealed_node_id: str | None = None
     membership: dict[str, Any] | None = None
     authority: dict[str, Any] | None = None
     resource_claims: list[ResourceClaimProjection] = Field(
@@ -2208,8 +1244,8 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     )
     allowed_actions: list[str] = Field(default_factory=list)
     preconditions: list[str] = Field(default_factory=list)
-    planner_generation_budget: int | None = None
-    generation_index: int | None = None
+    planner_generation_budget: StrictInt | None = None
+    generation_index: StrictInt | None = None
     region_label: str | None = None
     session_id: str | None = None
     carryover_record_id: str | None = None
@@ -2251,14 +1287,14 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     available_tools: list[Any] | None = None
     builder_agent: str | None = None
     candidate_record: dict[str, Any] | None = None
-    check_index: int | None = None
+    check_index: StrictInt | None = None
     complexity: str | None = None
     context_source: dict[str, Any] | None = None
     dynamic_feature: dict[str, Any] | None = None
     execution_id: str | None = None
     fan_out: dict[str, Any] | None = None
     gate: dict[str, Any] | None = None
-    max_attempts: int | None = None
+    max_attempts: StrictInt | None = None
     mcp_servers: list[Any] | None = None
     profile: str | None = None
     requirement_record: dict[str, Any] | None = None
@@ -2268,211 +1304,15 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     run_context_record: dict[str, Any] | None = None
     snapshot: dict[str, Any] | None = None
     step_id: str | None = None
-    step_index: int | None = None
+    step_index: StrictInt | None = None
     step_context: str | None = None
     submission_template: dict[str, Any] | None = None
     task_context: str | None = None
     task_id: str | None = None
-    task_index: int | None = None
+    task_index: StrictInt | None = None
     title: str | None = None
     verifier_agent: str | None = None
     work_mode: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        payload = dict(cast(dict[str, Any], value))
-        raw_extra = payload.get("extra")
-        extra = dict(cast(dict[str, Any], raw_extra)) if isinstance(raw_extra, dict) else {}
-        if raw_extra is not None and not isinstance(raw_extra, dict):
-            extra["extra"] = raw_extra
-        payload.pop("extra", None)
-
-        string_fields = {
-            "run_id",
-            "node_id",
-            "kind",
-            "role",
-            "state",
-            "task_region_id",
-            "candidate_id",
-            "failed_candidate_id",
-            "region_label",
-            "session_id",
-            "carryover_record_id",
-            "session_intent",
-            "gate_type",
-            "approval_type",
-            "reason",
-            "prompt",
-            "approval_prompt",
-            "human_prompt",
-            "message",
-            "blocker",
-            "blocker_reason",
-            "decision_request_record_id",
-            "authority_request_record_id",
-            "command_definition_id",
-            "hidden_oracle_command",
-            "command_binding",
-            "command",
-            "command_text",
-            "recovery_reason",
-            "recovery_of_node_id",
-            "recovery_of_record_id",
-            "guarded_planner_node_id",
-            "rejected_patch_id",
-            "requirement_id",
-            "id",
-            "priority",
-            "builder_agent",
-            "complexity",
-            "execution_id",
-            "profile",
-            "step_id",
-            "step_context",
-            "task_context",
-            "task_id",
-            "title",
-            "verifier_agent",
-            "work_mode",
-        }
-        integer_fields = {
-            "attempt_number",
-            "planner_generation_budget",
-            "generation_index",
-            "check_index",
-            "max_attempts",
-            "step_index",
-            "task_index",
-        }
-        mapping_fields = {
-            "membership",
-            "authority",
-            "planner_chain",
-            "decision_request",
-            "authority_request_record",
-            "authority_request",
-            "command_definition",
-            "requirement",
-            "artifact_reference_record",
-            "candidate_record",
-            "context_source",
-            "dynamic_feature",
-            "fan_out",
-            "gate",
-            "requirement_record",
-            "routine",
-            "routine_snapshot_record",
-            "run_context_record",
-            "snapshot",
-            "submission_template",
-        }
-        list_fields = {
-            "resource_claims",
-            "allowed_actions",
-            "preconditions",
-            "inputs",
-            "outputs",
-            "artifacts",
-            "available_tools",
-            "mcp_servers",
-            "rubric",
-        }
-        for key in string_fields:
-            if key in payload and payload[key] is not None and not isinstance(payload[key], str):
-                _retain_node_created_extra(extra, key, payload.pop(key))
-        for key in integer_fields:
-            field_value = payload.get(key)
-            if field_value is not None and (
-                not isinstance(field_value, int) or isinstance(field_value, bool)
-            ):
-                _retain_node_created_extra(extra, key, payload.pop(key))
-        for key in mapping_fields:
-            if key in payload and payload[key] is not None and not isinstance(payload[key], dict):
-                _retain_node_created_extra(extra, key, payload.pop(key))
-        for key in list_fields:
-            if key in payload and not isinstance(payload[key], list):
-                _retain_node_created_extra(extra, key, payload.pop(key))
-
-        membership = payload.get("membership")
-        if isinstance(membership, dict):
-            typed_membership = cast(dict[str, Any], membership)
-            for key in ("task_region_id", "candidate_id", "failed_candidate_id"):
-                if payload.get(key) is None and isinstance(typed_membership.get(key), str):
-                    payload[key] = typed_membership[key]
-            membership_attempt = typed_membership.get("attempt_number")
-            if (
-                payload.get("attempt_number") is None
-                and isinstance(membership_attempt, int)
-                and not isinstance(membership_attempt, bool)
-            ):
-                payload["attempt_number"] = membership_attempt
-
-        authority = payload.get("authority")
-        if isinstance(authority, dict):
-            typed_authority = cast(dict[str, Any], authority)
-            for key in ("resource_claims", "allowed_actions", "preconditions"):
-                if payload.get(key) is None and isinstance(typed_authority.get(key), list):
-                    payload[key] = typed_authority[key]
-
-        if "resource_claims" in payload:
-            claims, invalid_claims = _validated_node_created_claims(payload["resource_claims"])
-            payload["resource_claims"] = claims
-            if invalid_claims:
-                _retain_node_created_extra(extra, "resource_claims", invalid_claims)
-        if "allowed_actions" in payload:
-            allowed_actions = cast(list[Any], payload["allowed_actions"])
-            payload["allowed_actions"] = [
-                action for action in allowed_actions if isinstance(action, str)
-            ]
-            invalid_actions = [action for action in allowed_actions if not isinstance(action, str)]
-            if invalid_actions:
-                _retain_node_created_extra(extra, "allowed_actions", invalid_actions)
-        if "preconditions" in payload:
-            preconditions = cast(list[Any], payload["preconditions"])
-            payload["preconditions"] = [
-                precondition for precondition in preconditions if isinstance(precondition, str)
-            ]
-            invalid_preconditions = [
-                precondition for precondition in preconditions if not isinstance(precondition, str)
-            ]
-            if invalid_preconditions:
-                _retain_node_created_extra(extra, "preconditions", invalid_preconditions)
-        for key in ("inputs", "outputs"):
-            if key in payload:
-                ports, invalid_ports = _validated_node_created_ports(payload[key])
-                payload[key] = ports
-                if invalid_ports:
-                    _retain_node_created_extra(extra, key, invalid_ports)
-        planner_chain = payload.get("planner_chain")
-        if isinstance(planner_chain, dict):
-            normalized_chain = dict(cast(dict[str, Any], planner_chain))
-            invalid_chain: dict[str, Any] = {}
-            source = normalized_chain.get("source")
-            if source is not None and not isinstance(source, str):
-                invalid_chain["source"] = normalized_chain.pop("source")
-            regions = normalized_chain.get("regions")
-            if isinstance(regions, list):
-                valid_regions, invalid_regions = _validated_planner_chain_regions(regions)
-                normalized_chain["regions"] = valid_regions
-                if invalid_regions:
-                    invalid_chain["regions"] = invalid_regions
-            elif regions is not None:
-                normalized_chain["regions"] = []
-                invalid_chain["regions"] = regions
-            if invalid_chain:
-                _retain_node_created_extra(extra, "planner_chain", invalid_chain)
-            payload["planner_chain"] = normalized_chain
-
-        known_keys = set(cls.model_fields)
-        for key in list(payload):
-            if key not in known_keys:
-                _retain_node_created_extra(extra, key, payload.pop(key))
-        payload["extra"] = extra
-        return payload
 
     def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         kwargs.setdefault("exclude_unset", True)
@@ -2481,125 +1321,38 @@ class NodeCreatedPayload(GraphEventPayloadBase):
         return super().model_dump(*args, **kwargs)
 
 
-def _normalize_node_lifecycle_payload(value: Any, known_keys: set[str]) -> Any:
-    if not isinstance(value, dict):
-        return value
-    payload = dict(cast(dict[str, Any], value))
-    raw_extra = payload.get("extra")
-    extra = dict(cast(dict[str, Any], raw_extra)) if isinstance(raw_extra, dict) else {}
-    string_keys = {
-        "node_id",
-        "new_state",
-        "trigger",
-        "reason",
-        "completion_status",
-        "completion_decision_record_id",
-        "join_result_record_id",
-        "retry_not_before",
-        "region_id",
-    }
-    for key in string_keys & known_keys:
-        if payload.get(key) is not None and not isinstance(payload[key], str):
-            extra.setdefault(key, payload.pop(key))
-    for key in {"attempt_number", "max_attempts"} & known_keys:
-        if payload.get(key) is not None and (
-            not isinstance(payload[key], int) or isinstance(payload[key], bool)
-        ):
-            extra.setdefault(key, payload.pop(key))
-    for key in {"prompt_summary"} & known_keys:
-        if payload.get(key) is not None and not isinstance(payload[key], dict):
-            extra.setdefault(key, payload.pop(key))
-    membership = payload.get("membership")
-    if membership is not None and not isinstance(membership, dict):
-        extra.setdefault("membership", payload.pop("membership"))
-        membership = None
-    if isinstance(membership, dict) and payload.get("attempt_number") is None:
-        legacy_attempt = cast(dict[str, Any], membership).get("attempt_number")
-        if isinstance(legacy_attempt, int) and not isinstance(legacy_attempt, bool):
-            payload["attempt_number"] = legacy_attempt
-    authority = payload.get("authority")
-    if authority is not None and not isinstance(authority, dict):
-        extra.setdefault("authority", payload.pop("authority"))
-        authority = None
-    if isinstance(authority, dict):
-        typed_authority = cast(dict[str, Any], authority)
-        for key in ("resource_claims", "allowed_actions", "preconditions"):
-            if key in known_keys and payload.get(key) is None and key in typed_authority:
-                payload[key] = typed_authority[key]
-    for key in {"node_ids", "region_node_ids", "allowed_actions", "preconditions"} & known_keys:
-        raw_values = payload.get(key)
-        if raw_values is not None and not isinstance(raw_values, list):
-            extra.setdefault(key, payload.pop(key))
-        elif isinstance(raw_values, list):
-            invalid_values = [
-                item for item in cast(list[Any], raw_values) if not isinstance(item, str)
-            ]
-            payload[key] = [item for item in cast(list[Any], raw_values) if isinstance(item, str)]
-            if invalid_values:
-                extra.setdefault(key, invalid_values)
-    if "resource_claims" in known_keys and "resource_claims" in payload:
-        raw_claims = payload["resource_claims"]
-        if not isinstance(raw_claims, list):
-            extra.setdefault("resource_claims", payload.pop("resource_claims"))
-        else:
-            claims, invalid_claims = _validated_node_created_claims(raw_claims)
-            payload["resource_claims"] = claims
-            if invalid_claims:
-                extra.setdefault("resource_claims", invalid_claims)
-    for key in list(payload):
-        if key not in known_keys:
-            extra.setdefault(key, payload.pop(key))
-    payload["extra"] = extra
-    return payload
-
-
 class NodeStateChangedPayload(GraphEventPayloadBase):
     node_id: str | None = None
     new_state: str | None = None
     trigger: str | None = None
     reason: str | None = None
-    attempt_number: int | None = None
-    max_attempts: int | None = None
+    attempt_number: StrictInt | None = None
+    max_attempts: StrictInt | None = None
     completion_status: str | None = None
     completion_decision_record_id: str | None = None
     join_result_record_id: str | None = None
     retry_not_before: str | None = None
     prompt_summary: dict[str, Any] | None = None
     membership: dict[str, Any] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
+    blockers: list[Any] | None = None
+    graph_verifier_grades: dict[str, Any] | None = None
+    tokens_by_node: dict[str, int] | None = None
+    tokens_by_node_kind: dict[str, int] | None = None
+    operations: list[dict[str, Any]] | None = None
 
 
 class NodeRetiredPayload(GraphEventPayloadBase):
     node_id: str | None = None
     reason: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
-
 
 class NodeReadyPayload(GraphEventPayloadBase):
     node_id: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
 
 
 class NodeDeferredPayload(GraphEventPayloadBase):
     node_id: str | None = None
     reason: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
 
 
 class NodeAuthorityChangedPayload(GraphEventPayloadBase):
@@ -2611,11 +1364,6 @@ class NodeAuthorityChangedPayload(GraphEventPayloadBase):
     allowed_actions: list[str] = Field(default_factory=list)
     preconditions: list[str] = Field(default_factory=list)
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
-
 
 class NodeSuspectPayload(GraphEventPayloadBase):
     node_id: str | None = None
@@ -2623,11 +1371,6 @@ class NodeSuspectPayload(GraphEventPayloadBase):
     region_node_ids: list[str] = Field(default_factory=list)
     region_id: str | None = None
     reason: str | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_node_lifecycle_payload(value, set(cls.model_fields))
 
 
 class CleanupRequestedProjection(GraphBaseModel):
@@ -2642,26 +1385,6 @@ class CleanupRequestedProjection(GraphBaseModel):
     reason: str | None = None
     execution_id: str | None = None
     producer_node_id: str | None = None
-    extra: dict[str, Any] = Field(default_factory=_empty_cleanup_extra)
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        return _normalize_cleanup_event_payload(
-            value,
-            {
-                "cleanup_id",
-                "position",
-                "file_state_record_id",
-                "snapshot_id",
-                "paths",
-                "authority",
-                "reason",
-                "execution_id",
-                "producer_node_id",
-                "extra",
-            },
-        )
 
 
 class RequirementRevisionProjection(GraphBaseModel):
@@ -2841,6 +1564,11 @@ class CheckResultRecord(TypedRecordBase):
     task_region_id: str
     attempt_number: int = Field(ge=0)
     value: CheckResultValue
+    candidate_record_id: str | None = None
+    candidate_record_ids: list[str] = Field(default_factory=list)
+    file_state_record_ids: list[str] = Field(default_factory=list)
+    verification_report_record_ids: list[str] = Field(default_factory=list)
+    evaluated_record_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def check_result_fields_are_consistent(self) -> "CheckResultRecord":
@@ -2888,22 +1616,6 @@ class EnvironmentFailureProjection(GraphBaseModel):
     exit_code: int | None = None
 
 
-def _filtered_dict_list(value: Any) -> list[dict[str, Any]]:
-    if not isinstance(value, list):
-        return []
-    return [
-        dict(cast(dict[str, Any], item))
-        for item in cast(list[Any], value)
-        if isinstance(item, dict)
-    ]
-
-
-def _filtered_string_list(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    return [item for item in cast(list[Any], value) if isinstance(item, str)]
-
-
 def _empty_node_resource_claims() -> list[ResourceClaimProjection]:
     return []
 
@@ -2945,36 +1657,6 @@ class NodeCreationProjection(GraphBaseModel):
     hidden_oracle_command: str | None = None
     command_binding: str | None = None
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_fields(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-
-        payload = dict(cast(dict[str, Any], value))
-        membership = payload.get("membership")
-        if isinstance(membership, dict):
-            typed_membership = cast(dict[str, Any], membership)
-            for key in (
-                "task_region_id",
-                "attempt_number",
-                "candidate_id",
-                "failed_candidate_id",
-            ):
-                if payload.get(key) is None and typed_membership.get(key) is not None:
-                    payload[key] = typed_membership[key]
-
-        authority = payload.get("authority")
-        authority_payload = cast(dict[str, Any], authority) if isinstance(authority, dict) else {}
-        for key in ("resource_claims", "allowed_actions", "preconditions"):
-            if payload.get(key) is None and authority_payload.get(key) is not None:
-                payload[key] = authority_payload[key]
-
-        payload["resource_claims"] = _filtered_dict_list(payload.get("resource_claims"))
-        payload["allowed_actions"] = _filtered_string_list(payload.get("allowed_actions"))
-        payload["preconditions"] = _filtered_string_list(payload.get("preconditions"))
-        return payload
-
 
 def _empty_candidate_changed_paths() -> list[str]:
     return []
@@ -3006,6 +1688,8 @@ class CandidateRecord(TypedRecordBase):
     task_region_id: str | None = None
     attempt_number: int | None = Field(default=None, ge=0)
     value: CandidateValue
+    file_state_record_id: str | None = None
+    file_state_record_ids: list[str] = Field(default_factory=_empty_candidate_file_state_ids)
 
     @model_validator(mode="after")
     def candidate_fields_are_consistent(self) -> "CandidateRecord":
@@ -3431,6 +2115,7 @@ class FailureRecord(TypedRecordBase):
     producer_node_id: str
     port: Literal["failure_record"]
     schema_: Literal["FailureRecord"] = Field(alias="schema")
+    task_region_id: str | None = None
     value: FailureRecordValue
 
     @model_validator(mode="after")
@@ -3466,7 +2151,6 @@ class RecoveryPlanRecord(TypedRecordBase):
 
 OutputRecordPayload = (
     OutputRecord
-    | LegacyOutputRecord
     | RoutineSnapshotRecord
     | ArtifactReferenceRecord
     | VerificationReportRecord

@@ -278,7 +278,10 @@ def binding_policy_for_edge(
     edge: dict[str, Any],
     target_port: PortContract | None,
 ) -> BindingPolicy:
-    raw_policy = edge.get("binding_policy")
+    return binding_policy(edge.get("binding_policy"), target_port)
+
+
+def binding_policy(raw_policy: Any, target_port: PortContract | None) -> BindingPolicy:
     if isinstance(raw_policy, str) and raw_policy in VALID_BINDING_POLICIES:
         return cast(BindingPolicy, raw_policy)
     if target_port is not None:

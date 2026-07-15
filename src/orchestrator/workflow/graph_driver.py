@@ -7,7 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -22,6 +22,7 @@ from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktr
 from orchestrator.graph import (
     EnvironmentFailureProjection,
     EventEnvelope,
+    GraphProjection,
     build_projection,
     project_leases,
     project_node_states,
@@ -1079,13 +1080,13 @@ def _node_deferral_reasons(events: list[EventEnvelope]) -> dict[str, str]:
 
 
 def _missing_input_sources(
-    projection: Any,
+    projection: GraphProjection,
     events: list[EventEnvelope],
 ) -> dict[str, list[str]]:
     details: dict[str, list[str]] = {}
     reasons = _node_deferral_reasons(events)
-    node_states = cast(dict[str, str], projection["node_states"])
-    edges = cast(dict[str, dict[str, Any]], projection["edges"])
+    node_states = projection["node_states"]
+    edges = projection["edges"]
     for node_id, reason in reasons.items():
         prefix = "missing_required_input:"
         if not reason.startswith(prefix):
@@ -1093,11 +1094,9 @@ def _missing_input_sources(
         missing_port = reason.removeprefix(prefix)
         sources: list[str] = []
         for edge in edges.values():
-            if edge.get("to_node_id") != node_id or edge.get("to_port") != missing_port:
+            if edge.to_node_id != node_id or edge.to_port != missing_port:
                 continue
-            from_node_id = edge.get("from_node_id")
-            if not isinstance(from_node_id, str):
-                continue
+            from_node_id = edge.from_node_id
             source_state = node_states.get(from_node_id, "unknown")
             sources.append(f"{missing_port} from {from_node_id}={source_state}")
         if sources:

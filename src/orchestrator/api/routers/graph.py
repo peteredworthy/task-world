@@ -1520,7 +1520,7 @@ def _node_detail_controls_from_summary(
 
 def _resource_claims_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
     raw_claims = payload.get("resource_claims")
-    if not isinstance(raw_claims, list):
+    if not isinstance(raw_claims, list) or not raw_claims:
         authority = payload.get("authority")
         if isinstance(authority, dict):
             raw_claims = cast(dict[str, Any], authority).get("resource_claims")
@@ -1535,7 +1535,7 @@ def _resource_claims_from_payload(payload: dict[str, Any]) -> list[dict[str, Any
 
 def _string_list_from_payload(payload: dict[str, Any], field: str) -> list[str]:
     raw_values = payload.get(field)
-    if not isinstance(raw_values, list):
+    if not isinstance(raw_values, list) or not raw_values:
         authority = payload.get("authority")
         if isinstance(authority, dict):
             raw_values = cast(dict[str, Any], authority).get(field)

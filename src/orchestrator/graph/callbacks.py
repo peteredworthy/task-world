@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any, cast
 
-from orchestrator.graph.models import EventEnvelope
+from orchestrator.graph.models import EventEnvelope, LeaseProjection
 from orchestrator.graph.projections import GraphProjection
 
 
@@ -70,22 +70,22 @@ def validate_callback(
     if lease is None:
         return _rejected_stale("unknown lease")
 
-    lease_execution_id = lease.get("execution_id")
+    lease_execution_id = lease.execution_id
     if isinstance(lease_execution_id, str) and lease_execution_id != request.execution_id:
         return _rejected_stale("execution_incompatible")
 
-    lease_base_snapshot_id = lease.get("base_snapshot_id")
+    lease_base_snapshot_id = lease.base_snapshot_id
     if (
         isinstance(lease_base_snapshot_id, str)
         and lease_base_snapshot_id != request.base_snapshot_id
     ):
         return _rejected_stale("snapshot_incompatible")
 
-    generation = lease.get("generation")
+    generation = lease.generation
     if isinstance(generation, int) and request.lease_generation != generation:
         return _rejected_stale("lease_generation_incompatible")
 
-    lease_state = lease.get("state")
+    lease_state = lease.state
     accepting_late_expired_lease = False
     if lease_state in _STALE_LEASE_STATES:
         return _rejected_stale(f"lease {lease_state}")
@@ -132,7 +132,7 @@ def _validate_expired_lease_callback(
     request: CallbackRequest,
     projection: GraphProjection,
     events: list[EventEnvelope],
-    request_lease: dict[str, Any],
+    request_lease: LeaseProjection,
 ) -> CallbackValidationResult:
     if _has_replacement_active_lease(projection, request.lease_id, request.node_id):
         return _rejected_stale("lease expired and redispatched")
@@ -155,9 +155,9 @@ def _has_replacement_active_lease(
     for lease_id, lease in projection["leases"].items():
         if lease_id == request_lease_id:
             continue
-        if lease.get("node_id") != node_id:
+        if lease.node_id != node_id:
             continue
-        if lease.get("state") in {"active", "suspended"}:
+        if lease.state in {"active", "suspended"}:
             return True
     return False
 

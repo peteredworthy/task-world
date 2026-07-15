@@ -72,8 +72,7 @@ def run_scenario(
     projection_snapshot.update(projection["node_states"])
     projection_snapshot.update(projection["task_states"])
     for lease_id, lease in projection["leases"].items():
-        state = lease.get("state", "")
-        projection_snapshot[lease_id] = state if isinstance(state, str) else ""
+        projection_snapshot[lease_id] = lease.state
     failures.extend(
         _check_then_projection(scenario.get("then_projection", {}), projection_snapshot)
     )

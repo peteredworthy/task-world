@@ -84,10 +84,10 @@ def test_step_maps_to_grouping_metadata_and_sequential_task_region_edges() -> No
     assert projection["node_task_regions"]["worker-s-01-t-01"] == "S-01/T-01"
     assert projection["node_task_regions"]["worker-s-02-t-02"] == "S-02/T-02"
     assert any(
-        edge["from_node_id"] == "worker-s-01-t-01"
-        and edge["to_node_id"] == "worker-s-02-t-02"
-        and edge["to_port"] == "prior_step_completion"
-        and edge["dependency_type"] == "state_dependency"
+        edge.from_node_id == "worker-s-01-t-01"
+        and edge.to_node_id == "worker-s-02-t-02"
+        and edge.to_port == "prior_step_completion"
+        and edge.dependency_type == "state_dependency"
         for edge in projection["edges"].values()
     )
 
@@ -224,14 +224,14 @@ def test_requirements_map_to_requirement_nodes_and_bound_edges_to_worker_and_ver
         },
     }
     requirement_edges = [
-        edge for edge in projection["edges"].values() if edge["from_node_id"] == requirement_id
+        edge for edge in projection["edges"].values() if edge.from_node_id == requirement_id
     ]
-    assert {edge["to_node_id"] for edge in requirement_edges} == {
+    assert {edge.to_node_id for edge in requirement_edges} == {
         "worker-s-01-t-01",
         "verifier-s-01-t-01",
     }
     for edge in requirement_edges:
-        assert edge["to_port"] in projection["input_bindings"][edge["to_node_id"]]
+        assert edge.to_port in projection["input_bindings"][edge.to_node_id]
 
 
 def test_auto_verify_maps_to_one_check_node_per_item() -> None:
@@ -260,9 +260,9 @@ def test_auto_verify_maps_to_one_check_node_per_item() -> None:
     for check_id in check_ids:
         assert projection["node_command_definitions"][check_id]["tail_lines"] == 7
         assert any(
-            edge["from_node_id"] == "worker-s-01-t-01"
-            and edge["to_node_id"] == check_id
-            and edge["to_port"] == "candidate_under_test"
+            edge.from_node_id == "worker-s-01-t-01"
+            and edge.to_node_id == check_id
+            and edge.to_port == "candidate_under_test"
             for edge in projection["edges"].values()
         )
 
@@ -310,9 +310,9 @@ def test_verifier_rubric_maps_to_verifier_node() -> None:
 
     assert projection["node_kinds"]["verifier-s-01-t-01"] == "verifier"
     assert any(
-        edge["from_node_id"] == "worker-s-01-t-01"
-        and edge["to_node_id"] == "verifier-s-01-t-01"
-        and edge["to_port"] == "candidate_under_test"
+        edge.from_node_id == "worker-s-01-t-01"
+        and edge.to_node_id == "verifier-s-01-t-01"
+        and edge.to_port == "candidate_under_test"
         for edge in projection["edges"].values()
     )
 
@@ -334,14 +334,14 @@ def test_verifier_and_checks_get_optional_file_state_consumption_edge() -> None:
     file_state_edges = [
         edge
         for edge in projection["edges"].values()
-        if edge["from_node_id"] == "worker-s-01-t-01"
-        and edge["from_port"] == "file_state"
-        and edge["to_port"] == "file_state"
+        if edge.from_node_id == "worker-s-01-t-01"
+        and edge.from_port == "file_state"
+        and edge.to_port == "file_state"
     ]
-    consumers = {edge["to_node_id"] for edge in file_state_edges}
+    consumers = {edge.to_node_id for edge in file_state_edges}
     assert "verifier-s-01-t-01" in consumers
     assert any(consumer.startswith("check-") for consumer in consumers)
-    assert all(edge["required"] is False for edge in file_state_edges)
+    assert all(not edge.required for edge in file_state_edges)
 
 
 def test_human_approval_gate_maps_to_gate_node_only_when_configured() -> None:
@@ -366,11 +366,9 @@ def test_human_approval_gate_maps_to_gate_node_only_when_configured() -> None:
 
     assert projection["node_kinds"]["gate-s-01"] == "gate"
     assert projection["configured_gates"]["S-01/T-01"]["gate-s-01"] is True
-    gate_edges = [
-        edge for edge in projection["edges"].values() if edge["from_node_id"] == "gate-s-01"
-    ]
+    gate_edges = [edge for edge in projection["edges"].values() if edge.from_node_id == "gate-s-01"]
     assert len(gate_edges) == 1
-    assert gate_edges[0]["to_node_id"] == "worker-s-01-t-01"
+    assert gate_edges[0].to_node_id == "worker-s-01-t-01"
     assert "approval" in projection["input_bindings"]["worker-s-01-t-01"]
 
     no_gate_projection = _project(_compile(_minimal_routine()))
@@ -393,9 +391,9 @@ def test_context_dependency_maps_to_bound_input_edge() -> None:
     context_id = "context-s-01-t-01-0-plan"
     assert projection["node_kinds"][context_id] == "artifact"
     assert any(
-        edge["from_node_id"] == context_id
-        and edge["to_node_id"] == "worker-s-01-t-01"
-        and edge["to_port"] == "context_0"
+        edge.from_node_id == context_id
+        and edge.to_node_id == "worker-s-01-t-01"
+        and edge.to_port == "context_0"
         for edge in projection["edges"].values()
     )
     assert "context_0" in projection["input_bindings"]["worker-s-01-t-01"]
@@ -403,7 +401,7 @@ def test_context_dependency_maps_to_bound_input_edge() -> None:
     assert artifact_record.payload["record_type"] == "artifact_reference"
     assert artifact_record.payload["producer_node_id"] == context_id
     assert artifact_record.payload["value"]["uri"] == "docs/plan.md"
-    assert projection["input_bindings"]["worker-s-01-t-01"]["context_0"]["record_ids"] == [
+    assert projection["input_bindings"]["worker-s-01-t-01"]["context_0"].record_ids == [
         "artifact-reference-s-01-t-01-0"
     ]
 
@@ -432,15 +430,15 @@ def test_fan_out_maps_to_reader_template_and_distinct_synthesis_join_template() 
     assert projection["node_kinds"]["worker-s-01-t-01"] == "worker"
     assert _node_event(events, "worker-s-01-t-01").payload["role"] == "builder"
     assert any(
-        edge["from_node_id"] == "fanout-reader-s-01-t-01"
-        and edge["to_node_id"] == "fanout-join-s-01-t-01"
-        and edge["to_port"] == "reader_outputs"
+        edge.from_node_id == "fanout-reader-s-01-t-01"
+        and edge.to_node_id == "fanout-join-s-01-t-01"
+        and edge.to_port == "reader_outputs"
         for edge in projection["edges"].values()
     )
     assert any(
-        edge["from_node_id"] == "fanout-join-s-01-t-01"
-        and edge["to_node_id"] == "worker-s-01-t-01"
-        and edge["to_port"] == "fan_out_inputs"
+        edge.from_node_id == "fanout-join-s-01-t-01"
+        and edge.to_node_id == "worker-s-01-t-01"
+        and edge.to_port == "fan_out_inputs"
         for edge in projection["edges"].values()
     )
 
@@ -482,7 +480,7 @@ def test_compile_planner_step_seeds_chain_head() -> None:
     assert projection["node_kinds"]["planner-plan"] == "planner"
     assert _node_event(events, "planner-plan").payload["role"] == "planner"
     assert _node_event(events, "planner-plan").payload["generation_index"] == 0
-    assert projection["input_bindings"]["planner-plan"]["routine_snapshot"]["record_ids"] == [
+    assert projection["input_bindings"]["planner-plan"]["routine_snapshot"].record_ids == [
         "routine-snapshot-record"
     ]
 
@@ -561,7 +559,7 @@ def test_events_replay_cleanly_into_expected_projection() -> None:
 
     assert len(projection["node_kinds"]) == 3
     assert len(projection["edges"]) == 1
-    assert projection["input_bindings"]["worker-s-01-t-01"]["routine_snapshot"]["record_ids"] == [
+    assert projection["input_bindings"]["worker-s-01-t-01"]["routine_snapshot"].record_ids == [
         "routine-snapshot-record"
     ]
 

@@ -197,7 +197,6 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
             "node_state_changed",
             {
                 "node_id": "worker-stale",
-                "old_state": "planned",
                 "new_state": "cancelled",
                 "trigger": "test_conflict",
             },

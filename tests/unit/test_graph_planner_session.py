@@ -65,7 +65,7 @@ def test_resume_emits_new_generation_same_session() -> None:
     assert lease.payload["session_id"] == "session-1"
     assert lease.payload["generation"] == 2
     assert (
-        _project([*events, *_append(events, scheduled)])["leases"]["lease-planner-0"]["state"]
+        _project([*events, *_append(events, scheduled)])["leases"]["lease-planner-0"].state
         == "released"
     )
 
@@ -99,7 +99,7 @@ def test_carryover_binds_as_optional_input() -> None:
     )
     projection = _project([*events, *_append(events, patch)])
 
-    assert projection["input_bindings"]["planner-1"]["session_carryover"]["record_ids"] == [
+    assert projection["input_bindings"]["planner-1"]["session_carryover"].record_ids == [
         "summary-carryover-1"
     ]
     created = _only(patch, "node_created", "planner-1")

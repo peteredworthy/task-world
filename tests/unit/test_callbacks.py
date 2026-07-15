@@ -10,6 +10,7 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     GraphProjection,
+    LeaseProjection,
     initial_projection,
     reduce_event,
     validate_callback,
@@ -25,7 +26,7 @@ def _projection(
     projection = initial_projection()
     projection["run_state"] = run_state
     projection["node_states"] = node_states or {"worker-1": "running"}
-    projection["leases"] = leases or {
+    raw_leases = leases or {
         "lease-1": {
             "lease_id": "lease-1",
             "node_id": "worker-1",
@@ -34,6 +35,9 @@ def _projection(
             "execution_id": "exec-1",
             "base_snapshot_id": "snapshot-1",
         }
+    }
+    projection["leases"] = {
+        lease_id: LeaseProjection.model_validate(lease) for lease_id, lease in raw_leases.items()
     }
     return projection
 

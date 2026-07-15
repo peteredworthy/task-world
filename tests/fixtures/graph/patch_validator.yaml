@@ -35,7 +35,7 @@
 - name: patch_stale_requirement_in_read_set_rejected
   given_events:
     - node_created: {node_id: task-1, kind: task_projection, state: planned}
-    - requirement_revision_recorded: {record_id: requirement-1, version: 2}
+    - requirement_revision_recorded: {requirement_id: requirement-1, version_id: requirement-1-v2, node_id: requirement-1}
   when_command:
     submit_patch:
       run_id: run-1

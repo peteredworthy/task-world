@@ -6,6 +6,7 @@ from typing import Any, cast
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
+    EdgeProjection,
     EventEnvelope,
     PatchEnvelope,
     PatchOp,
@@ -63,7 +64,9 @@ def _projection(
     if node_roles is not None:
         projection["node_roles"] = node_roles
     if edges is not None:
-        projection["edges"] = edges
+        projection["edges"] = {
+            edge_id: EdgeProjection.model_validate(edge) for edge_id, edge in edges.items()
+        }
     if resource_claims is not None:
         cast(dict[str, Any], projection)["resource_claims"] = resource_claims
     return projection
@@ -878,15 +881,17 @@ def test_gap_planner_can_submit_no_op_patch() -> None:
 
 def test_gap_planner_no_op_allowed_when_classified_gap_successor_waits() -> None:
     projection = initial_projection()
-    projection["edges"]["edge-gap-to-corrective"] = {
-        "edge_id": "edge-gap-to-corrective",
-        "from_node_id": "planner-1",
-        "from_port": "gap_classification",
-        "to_node_id": "worker-corrective",
-        "to_port": "classified_gap",
-        "required": True,
-        "dependency_type": "input_binding",
-    }
+    projection["edges"]["edge-gap-to-corrective"] = EdgeProjection.model_validate(
+        {
+            "edge_id": "edge-gap-to-corrective",
+            "from_node_id": "planner-1",
+            "from_port": "gap_classification",
+            "to_node_id": "worker-corrective",
+            "to_port": "classified_gap",
+            "required": True,
+            "dependency_type": "input_binding",
+        }
+    )
 
     result = _validate(_patch([]), projection=projection, actor_role="gap_planner")
 

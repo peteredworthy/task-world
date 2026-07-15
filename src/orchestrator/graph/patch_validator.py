@@ -6,7 +6,12 @@ from typing import Any, cast
 
 from orchestrator.graph.command_bindings import is_known_check_command_binding
 from orchestrator.graph.contracts import validate_edge_payload, validate_node_payload
-from orchestrator.graph.models import EventEnvelope, PatchEnvelope, normalize_record_selector
+from orchestrator.graph.models import (
+    EdgeProjection,
+    EventEnvelope,
+    PatchEnvelope,
+    normalize_record_selector,
+)
 from orchestrator.graph.projections import GraphProjection
 
 
@@ -387,10 +392,9 @@ def _validate_no_forbidden_cycles(
     patch_nodes: set[str] = set()
 
     for edge in projection["edges"].values():
-        source = edge.get("from_node_id")
-        target = edge.get("to_node_id")
-        if isinstance(source, str) and isinstance(target, str):
-            adjacency.setdefault(source, set()).add(target)
+        source = edge.from_node_id
+        target = edge.to_node_id
+        adjacency.setdefault(source, set()).add(target)
 
     for op in ops:
         if op.get("op") != "create_edge":
@@ -517,7 +521,7 @@ def _validate_no_poisoned_final_invariant_edges(
 ) -> str | None:
     created_nodes = _created_nodes_by_id(ops)
     edge_ops = [op for op in ops if op.get("op") == "create_edge"]
-    all_edges = [*projection["edges"].values(), *edge_ops]
+    existing_edges = projection["edges"].values()
 
     for edge in edge_ops:
         if not _is_required_passed_verification_edge(edge):
@@ -531,7 +535,10 @@ def _validate_no_poisoned_final_invariant_edges(
         if from_kind != "verifier" or to_kind != "check" or to_role != "invariant_gate":
             continue
         if any(
-            _is_failed_verification_continuation(candidate, from_node_id) for candidate in all_edges
+            _is_failed_verification_projection(candidate, from_node_id)
+            for candidate in existing_edges
+        ) or any(
+            _is_failed_verification_continuation(candidate, from_node_id) for candidate in edge_ops
         ):
             return (
                 f"required pass-gated final invariant edge from verifier {from_node_id} "
@@ -587,6 +594,15 @@ def _is_failed_verification_continuation(edge: dict[str, Any], verifier_node_id:
     if edge.get("from_port") != "verification_report":
         return False
     return _selector_outcome(edge) == "failed"
+
+
+def _is_failed_verification_projection(edge: EdgeProjection, verifier_node_id: str) -> bool:
+    if edge.from_node_id != verifier_node_id or edge.from_port != "verification_report":
+        return False
+    selector = edge.accepted_record_selector
+    if not isinstance(selector, dict):
+        return False
+    return _selector_outcome({"accepted_record_selector": selector}) == "failed"
 
 
 def _selector_outcome(edge: dict[str, Any]) -> str | None:

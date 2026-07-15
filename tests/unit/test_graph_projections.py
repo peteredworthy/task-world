@@ -26,7 +26,6 @@ from orchestrator.graph import (
     InMemoryEventStore,
     InputBindingProjection,
     InvalidTestBlockProjection,
-    LegacyOutputRecord,
     LeaseProjection,
     NodeCreationProjection,
     OutputRecord,
@@ -223,22 +222,6 @@ def test_callback_idempotency_projection_checkpoint_round_trips_typed_payload() 
     assert isinstance(projected, CallbackIdempotencyEvent)
     assert projected.event_type == "callback_accepted"
     assert projected.payload == {"payload_hash": "hash-a"}
-
-
-def test_malformed_callback_idempotency_payload_is_tolerated_without_raw_projection_entry() -> None:
-    projection = reduce_event(
-        initial_projection(),
-        _event(
-            "callback_accepted",
-            {
-                "node_id": "worker-1",
-                "idempotency_key": "key-1",
-                "payload": "legacy-non-dict-payload",
-            },
-        ),
-    )
-
-    assert projection["callback_idempotency_events"] == {}
 
 
 def test_callback_idempotency_projection_allows_empty_callback_payload() -> None:
@@ -847,7 +830,7 @@ def test_requirement_revision_projection_uses_typed_payload() -> None:
     projected = projection["requirement_revisions"]["R-1.v2"]
 
     assert isinstance(projected, RequirementRevisionProjection)
-    assert projected.model_dump(mode="json") == {
+    assert projected.model_dump(mode="json", exclude_none=True) == {
         "requirement_id": "R-1",
         "version_id": "R-1.v2",
         "change_classification": "semantic_change",
@@ -890,7 +873,7 @@ def test_support_evidence_projection_checkpoint_round_trips_typed_payload() -> N
     projected = restored["support_evidence"]["S-1"]
 
     assert isinstance(projected, SupportEvidenceProjection)
-    assert projected.model_dump(mode="json") == {
+    assert projected.model_dump(mode="json", exclude_none=True) == {
         "support_id": "S-1",
         "evidence_id": "E-1",
         "requirement_id": "R-1",
@@ -964,7 +947,7 @@ def test_oversight_decision_projection_checkpoint_round_trips_typed_payload() ->
     projected = restored["oversight_decisions"]["oversight-1"]
 
     assert isinstance(projected, OversightDecisionProjection)
-    assert projected.model_dump(mode="json") == {
+    assert projected.model_dump(mode="json", exclude_none=True) == {
         "node_id": "oversight-1",
         "decision": "invalid_test_accepted",
         "position": 40,
@@ -1071,7 +1054,7 @@ def test_task_projection_accepts_file_state_via_producer_node_task_region_fallba
     assert project_task_states(events) == {"task-1": "accepted"}
 
 
-def test_file_state_projection_normalizes_legacy_membership_candidate_id() -> None:
+def test_file_state_projection_uses_direct_membership_fields() -> None:
     projection = reduce_event(
         initial_projection(),
         _event(
@@ -1081,7 +1064,9 @@ def test_file_state_projection_normalizes_legacy_membership_candidate_id() -> No
                 "record_kind": "file_state",
                 "producer_node_id": "worker-1",
                 "port": "file_state",
-                "membership": {"task_region_id": "task-1", "candidate_id": "cand-1"},
+                "record_type": "file_state",
+                "task_region_id": "task-1",
+                "candidate_id": "cand-1",
             },
         ),
     )
@@ -1219,9 +1204,9 @@ def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
         projection = reduce_event(projection, event)
 
     binding = projection["input_bindings"]["summarizer-1"]["source_records"]
-    assert binding["binding_policy"] == "bind_all"
-    assert binding["record_ids"] == ["candidate-1", "candidate-2"]
-    assert binding["record_bound_positions"] == {"candidate-1": 4, "candidate-2": 5}
+    assert binding.binding_policy == "bind_all"
+    assert binding.record_ids == ["candidate-1", "candidate-2"]
+    assert binding.record_bound_positions == {"candidate-1": 4, "candidate-2": 5}
 
 
 def test_edge_projection_uses_typed_payload_and_preserves_topology_shape() -> None:
@@ -1268,11 +1253,11 @@ def test_edge_projection_uses_typed_payload_and_preserves_topology_shape() -> No
 
     edge = projection["edges"]["edge-source-records"]
     assert isinstance(edge, EdgeProjection)
-    assert edge["accepted_record_selector"] == {
+    assert edge.accepted_record_selector == {
         "record_type": "candidate",
         "schema": "ImplementationCandidate",
     }
-    assert "unexpected_payload" not in edge
+    assert "unexpected_payload" not in edge.model_dump(mode="json")
 
     topology = project_graph_topology(events)
     topology_edge = topology["edges"][0]
@@ -1332,8 +1317,8 @@ def test_input_binding_projection_uses_typed_payload_and_drops_raw_event_extras(
 
     binding = projection["input_bindings"]["summarizer-1"]["source_records"]
     assert isinstance(binding, InputBindingProjection)
-    assert binding["record_ids"] == ["candidate-1"]
-    assert binding["trigger"] == "record_accepted"
+    assert binding.record_ids == ["candidate-1"]
+    assert binding.trigger == "record_accepted"
     assert "raw_payload_only" not in binding
 
 
@@ -1376,8 +1361,8 @@ def test_edge_and_input_binding_projection_checkpoint_round_trips_typed_payloads
         restored["input_bindings"]["summarizer-1"]["source_records"],
         InputBindingProjection,
     )
-    assert restored["edges"]["edge-source-records"]["binding_policy"] == "bind_all"
-    assert restored["input_bindings"]["summarizer-1"]["source_records"]["record_ids"] == [
+    assert restored["edges"]["edge-source-records"].binding_policy == "bind_all"
+    assert restored["input_bindings"]["summarizer-1"]["source_records"].record_ids == [
         "candidate-1"
     ]
 
@@ -1931,40 +1916,6 @@ def test_output_record_payloads_are_typed_at_fold() -> None:
     assert accepted["payload"].schema_ == "OpaqueSummary"
 
 
-def test_malformed_output_record_payload_is_tolerated_without_raw_projection_entry() -> None:
-    event = _event(
-        "output_record_accepted",
-        {
-            "record_id": "legacy-malformed-1",
-            "record_kind": "output",
-            "record_type": "opaque_summary",
-            "producer_node_id": "worker-1",
-            "port": "summary",
-            "schema": "OpaqueSummary",
-            "value": "legacy-non-dict-value",
-        },
-    )
-
-    projection = reduce_event(initial_projection(), event)
-
-    payload = projection["output_record_payloads"]["legacy-malformed-1"]
-    assert isinstance(payload, LegacyOutputRecord)
-    assert payload.value == "legacy-non-dict-value"
-    assert projection["output_records_by_node_port"]["worker-1"]["summary"] == [payload]
-    assert projection["accepted_output_records_by_node_port"]["worker-1"]["summary"] == [
-        {"record_id": "legacy-malformed-1", "payload": payload}
-    ]
-    assert projection["node_output_ports"] == {"worker-1": {"summary": ["legacy-malformed-1"]}}
-    assert projection["accepted_record_summaries_by_id"]["legacy-malformed-1"] == {
-        "record_id": "legacy-malformed-1",
-        "record_kind": "output",
-        "schema": "OpaqueSummary",
-        "producer_node_id": "worker-1",
-        "producer_port": "summary",
-        "record_type": "opaque_summary",
-    }
-
-
 def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
     events = [
         _event(
@@ -1977,18 +1928,6 @@ def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
                 "port": "summary",
                 "schema": "OpaqueSummary",
                 "value": {"summary": "done"},
-            },
-        ),
-        _event(
-            "output_record_accepted",
-            {
-                "record_id": "legacy-malformed-1",
-                "record_kind": "output",
-                "record_type": "opaque_summary",
-                "producer_node_id": "worker-1",
-                "port": "summary",
-                "schema": "OpaqueSummary",
-                "value": "legacy-non-dict-value",
             },
         ),
     ]
@@ -2009,18 +1948,6 @@ def test_output_record_checkpoint_round_trip_preserves_typed_payloads() -> None:
     assert isinstance(
         restored["accepted_output_records_by_node_port"]["worker-1"]["summary"][0]["payload"],
         OutputRecord,
-    )
-
-    legacy_payload = restored["output_record_payloads"]["legacy-malformed-1"]
-    assert isinstance(legacy_payload, LegacyOutputRecord)
-    assert legacy_payload.value == "legacy-non-dict-value"
-    assert isinstance(
-        restored["output_records_by_node_port"]["worker-1"]["summary"][1],
-        LegacyOutputRecord,
-    )
-    assert isinstance(
-        restored["accepted_output_records_by_node_port"]["worker-1"]["summary"][1]["payload"],
-        LegacyOutputRecord,
     )
 
 
@@ -2319,6 +2246,13 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
             "producer_node_id": "routine-snapshot",
             "port": "snapshot",
             "schema": "RoutineSnapshot",
+            "value": {
+                "routine_id": "routine-1",
+                "name": "Routine 1",
+                "content_hash": "hash-routine-1",
+                "step_count": 1,
+                "task_count": 1,
+            },
         },
     )
     append_event(
@@ -2384,6 +2318,7 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
                         "producer_node_id": "worker-1",
                         "port": "candidate",
                         "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-1",
                         "value": {"summary": "done"},
                     }
                 ],
@@ -2426,14 +2361,13 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
                     {
                         "record_id": "verification-1",
                         "record_kind": "verification",
-                        "record_type": "verification",
+                        "record_type": "verification_report",
                         "producer_node_id": "verifier-1",
                         "port": "verification_report",
                         "candidate_id": "candidate-1",
                         "verdict": "failed",
-                        "grades": [{"requirement_id": "req-1", "grade": "C"}],
                         "value": {
-                            "verdict": "failed",
+                            "outcome": "failed",
                             "grades": [{"requirement_id": "req-1", "grade": "C"}],
                         },
                     }

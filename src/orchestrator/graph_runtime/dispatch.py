@@ -839,9 +839,9 @@ async def _recovered_lease_still_active(
 ) -> bool:
     projection = await controller.read_projection(run_id)
     lease = projection["leases"].get(lease_id)
-    if lease is None or lease.get("state") != "active":
+    if lease is None or lease.state != "active":
         return False
-    lease_execution_id = lease.get("execution_id")
+    lease_execution_id = lease.execution_id
     return not isinstance(lease_execution_id, str) or lease_execution_id == execution_id
 
 
@@ -886,9 +886,7 @@ def _requirements_for_node(events: list[EventEnvelope], node_id: str) -> list[st
     for port, binding in projection["input_bindings"].get(node_id, {}).items():
         if not port.startswith("requirement_"):
             continue
-        record_ids = binding.get("record_ids")
-        if isinstance(record_ids, list):
-            bound_record_ids.update(str(record_id) for record_id in cast(list[object], record_ids))
+        bound_record_ids.update(binding.record_ids)
 
     requirements: list[str] = []
     for event in events:
@@ -1008,12 +1006,7 @@ def _guard_no_pending_compromised_file_state_bindings(
     can consume that snapshot identity.
     """
     for binding in projection["input_bindings"].get(node_id, {}).values():
-        record_ids = binding.get("record_ids")
-        if not isinstance(record_ids, list):
-            continue
-        for raw_record_id in cast(list[object], record_ids):
-            if not isinstance(raw_record_id, str):
-                continue
+        for raw_record_id in binding.record_ids:
             record = projection["file_state_records"].get(raw_record_id)
             if record is None:
                 continue

@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 from orchestrator.graph import DEFAULT_NODE_CONTRACTS, EventEnvelope, GraphProjection
 from orchestrator.graph.command_bindings import resolve_check_command_definition
-from orchestrator.graph.models import FileStateRecord, GapClassificationRecord
+from orchestrator.graph.models import (
+    FileStateRecord,
+    GapClassificationRecord,
+    InputBindingProjection,
+)
 from orchestrator.graph.patch_validator import PLANNER_OPS
 from orchestrator.graph.projections import project_planner_freshness_packet
 from orchestrator.graph_runtime.horizon_templates import horizon_region_templates
@@ -271,11 +275,7 @@ def _prompt_summary_input_ports(context: GraphDispatchContext) -> dict[str, list
     bindings = context.graph_projection["input_bindings"].get(context.node_id, {})
     input_ports: dict[str, list[str]] = {}
     for port, binding in sorted(bindings.items()):
-        record_ids = binding.get("record_ids")
-        if isinstance(record_ids, list):
-            input_ports[port] = [
-                record_id for record_id in cast(list[Any], record_ids) if isinstance(record_id, str)
-            ]
+        input_ports[port] = list(binding.record_ids)
     return input_ports
 
 
@@ -590,16 +590,14 @@ def _gap_analysis_obligations(
     terminal_states = {"completed", "failed", "cancelled", "retired"}
 
     for edge_id, edge in sorted(projection["edges"].items()):
-        if edge.get("required") is False:
+        if not edge.required:
             continue
-        if edge.get("from_node_id") != context.node_id:
+        if edge.from_node_id != context.node_id:
             continue
-        if edge.get("from_port") != "classified_gap" and edge.get("to_port") != "classified_gap":
+        if edge.from_port != "classified_gap" and edge.to_port != "classified_gap":
             continue
-        to_node_id = edge.get("to_node_id")
-        to_port = edge.get("to_port")
-        if not isinstance(to_node_id, str) or not isinstance(to_port, str):
-            continue
+        to_node_id = edge.to_node_id
+        to_port = edge.to_port
         if projection["node_states"].get(to_node_id) in terminal_states:
             continue
         if to_port in projection["input_bindings"].get(to_node_id, {}):
@@ -659,9 +657,7 @@ def _planner_evidence(
     bound_records: dict[str, list[dict[str, Any]]] = {}
     for port in sorted(bindings):
         binding = bindings[port]
-        raw_record_ids = binding.get("record_ids")
-        if not isinstance(raw_record_ids, list):
-            continue
+        raw_record_ids = binding.record_ids
         hydration_policy = _hydration_policy_for_binding(binding, projection)
         records: list[dict[str, Any]] = []
         for raw_record_id in cast(list[object], raw_record_ids):
@@ -711,16 +707,16 @@ def _planner_evidence(
 
 
 def _hydration_policy_for_binding(
-    binding: dict[str, Any],
+    binding: InputBindingProjection,
     projection: GraphProjection,
 ) -> str:
-    edge_id = binding.get("edge_id")
+    edge_id = binding.edge_id
     if not isinstance(edge_id, str):
         return "structured_json"
     edge = projection["edges"].get(edge_id)
     if edge is None:
         return "structured_json"
-    policy = edge.get("prompt_hydration_policy")
+    policy = edge.prompt_hydration_policy
     if isinstance(policy, str) and policy in {
         "inline_summary",
         "structured_json",
@@ -1314,12 +1310,7 @@ def _bound_record_ids_for_ports(
         binding = bindings.get(port)
         if binding is None:
             continue
-        record_ids = binding.get("record_ids")
-        if not isinstance(record_ids, list):
-            continue
-        output.extend(
-            record_id for record_id in cast(list[Any], record_ids) if isinstance(record_id, str)
-        )
+        output.extend(binding.record_ids)
     return _unique_record_ids(output)
 
 
@@ -1419,6 +1410,7 @@ def _output_records_for_submit(
                 {
                     "record_id": candidate_id,
                     "record_kind": "output",
+                    "record_type": "fan_out_inputs",
                     "producer_node_id": context.node_id,
                     "port": "reader_output",
                     "schema": "FanOutInputs",
@@ -1433,6 +1425,7 @@ def _output_records_for_submit(
                 {
                     "record_id": candidate_id,
                     "record_kind": "output",
+                    "record_type": "fan_out_inputs",
                     "producer_node_id": context.node_id,
                     "port": "fan_out_inputs",
                     "schema": "FanOutJoinedInputs",

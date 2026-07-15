@@ -43,16 +43,16 @@ async def recover(
             events = await store.read_run(current_run_id)
             projection = rebuild_projection(events)
             for lease in projection["leases"].values():
-                if lease.get("state") != "active":
+                if lease.state != "active":
                     continue
-                node_id = lease.get("node_id")
+                node_id = lease.node_id
                 node_state = projection["node_states"].get(str(node_id))
                 record: dict[str, object] = {
                     "run_id": current_run_id,
-                    "lease_id": str(lease.get("lease_id")),
+                    "lease_id": lease.lease_id,
                     "node_id": str(node_id),
-                    "generation": int(lease.get("generation", 0)),
-                    "execution_id": str(lease.get("execution_id", "")),
+                    "generation": lease.generation or 0,
+                    "execution_id": lease.execution_id or "",
                 }
                 if node_state == "leased":
                     record["classification"] = "awaiting_start_ack"
