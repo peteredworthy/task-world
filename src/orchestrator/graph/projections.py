@@ -53,7 +53,6 @@ from orchestrator.graph.models import (
     GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
     GraphPatchResultRecord,
-    GraphPatchStatusPayload,
     InvalidTestBlockProjection,
     InputBindingProjection,
     LegacyOutputRecord,
@@ -83,7 +82,6 @@ from orchestrator.graph.models import (
     PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
     RequirementRecord,
-    RequirementAuthorityResolutionPayload,
     RequirementRevisionPayload,
     RequirementRevisionProjection,
     RunLifecycleChangedPayload,
@@ -1524,29 +1522,11 @@ def _graph_patch_rejected_payload_from_event(
         return None
 
 
-def _graph_patch_status_payload_from_event(event: EventEnvelope) -> GraphPatchStatusPayload | None:
-    try:
-        return GraphPatchStatusPayload.model_validate(event.payload)
-    except ValueError:
-        return None
-
-
 def _graph_patch_payload_for_event(event: EventEnvelope) -> dict[str, Any] | None:
     if event.event_type == "graph_patch_accepted":
         payload = _graph_patch_accepted_payload_from_event(event)
     elif event.event_type == "graph_patch_rejected":
         payload = _graph_patch_rejected_payload_from_event(event)
-    elif event.event_type in {
-        "graph_patch_proposed",
-        "planner_proposal_opened",
-        "proposal_opened",
-        "proposal_recorded",
-        "proposal_accepted",
-        "proposal_rejected",
-        "proposal_resolved",
-        "proposal_closed",
-    }:
-        payload = _graph_patch_status_payload_from_event(event)
     else:
         payload = None
     if payload is None:
@@ -2220,8 +2200,6 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_authority_change(
             next_state, NodeAuthorityChangedPayload.model_validate(event.payload)
         )
-    elif event.event_type in {"environment_failure_accepted", "check_result_classified"}:
-        _record_environment_failure(next_state, event)
     elif event.event_type == "file_state_accepted":
         _record_node_output_port(next_state, event)
         _record_accepted_record_summary(next_state, event)
@@ -2264,42 +2242,17 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         _record_cleanup_applied(next_state, event)
     elif event.event_type == "runtime_retry_scheduled":
         _record_runtime_retry_scheduled(next_state, event)
-    elif event.event_type in {"requirement_revision_recorded", "requirement_amended"}:
+    elif event.event_type == "requirement_revision_recorded":
         _record_requirement_revision(next_state, event)
         _record_authority_revision_blocker(next_state, event)
-    elif event.event_type == "requirement_revision_proposed":
-        _record_authority_revision_blocker(next_state, event)
-    elif event.event_type in {"support_evidence_recorded", "support_edge_recorded"}:
+    elif event.event_type == "support_evidence_recorded":
         _record_support_evidence(next_state, event)
-    elif event.event_type in {
-        "graph_patch_proposed",
-        "planner_proposal_opened",
-        "proposal_opened",
-        "proposal_recorded",
-        "graph_patch_rejected",
-        "proposal_accepted",
-        "proposal_rejected",
-        "proposal_resolved",
-        "proposal_closed",
-    }:
+    elif event.event_type == "graph_patch_rejected":
         _record_open_proposal_blocker(next_state, event)
-    elif event.event_type in {
-        "plan_region_marked_suspect",
-        "node_marked_suspect",
-        "plan_region_suspect_resolved",
-        "node_suspect_resolved",
-        "plan_region_suspect_cleared",
-        "node_suspect_cleared",
-    }:
+    elif event.event_type == "plan_region_marked_suspect":
         _record_suspect_node_reason(
             next_state, event.event_type, NodeSuspectPayload.model_validate(event.payload)
         )
-    elif event.event_type in {
-        "authority_resolution_recorded",
-        "authority_resolved",
-        "requirement_revision_authorized",
-    }:
-        _record_authority_revision_blocker(next_state, event)
     elif event.event_type == "node_deferred":
         payload = NodeDeferredPayload.model_validate(event.payload)
         node_id = payload.node_id
@@ -2785,29 +2738,7 @@ def _open_proposal_blockers(
         proposal_id = _proposal_id(payload)
         if proposal_id is None:
             continue
-        if event.event_type in {
-            "graph_patch_proposed",
-            "planner_proposal_opened",
-            "proposal_opened",
-            "proposal_recorded",
-        }:
-            status = payload.get("status")
-            if status in {"accepted", "rejected", "resolved", "closed"}:
-                open_proposals.pop(proposal_id, None)
-                continue
-            open_proposals[proposal_id] = {
-                "kind": "open_planner_proposal",
-                "reason": "planner proposal has not been accepted or rejected",
-                "proposal_id": proposal_id,
-            }
-        elif event.event_type in {
-            "graph_patch_accepted",
-            "graph_patch_rejected",
-            "proposal_accepted",
-            "proposal_rejected",
-            "proposal_resolved",
-            "proposal_closed",
-        }:
+        if event.event_type in {"graph_patch_accepted", "graph_patch_rejected"}:
             open_proposals.pop(proposal_id, None)
     return [open_proposals[key] for key in sorted(open_proposals)]
 
@@ -2819,20 +2750,11 @@ def _suspect_node_blockers(
     if _has_full_event_history(events):
         suspect_nodes: dict[str, str] = {}
         for event in events:
-            if event.event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
+            if event.event_type == "plan_region_marked_suspect":
                 payload = NodeSuspectPayload.model_validate(event.payload)
                 reason = payload.reason or "suspect graph fact remains unresolved"
                 for node_id in _node_ids_from_suspect_payload(payload):
                     suspect_nodes[node_id] = reason
-            elif event.event_type in {
-                "plan_region_suspect_resolved",
-                "node_suspect_resolved",
-                "plan_region_suspect_cleared",
-                "node_suspect_cleared",
-            }:
-                payload = NodeSuspectPayload.model_validate(event.payload)
-                for node_id in _node_ids_from_suspect_payload(payload):
-                    suspect_nodes.pop(node_id, None)
     else:
         suspect_nodes = projection.get("suspect_node_reasons", {})
 
@@ -2879,49 +2801,7 @@ def _requirement_evidence_blockers(
                 }
             )
 
-    if blockers:
-        return blockers
-    return _legacy_requirement_evidence_blockers(events)
-
-
-def _legacy_requirement_evidence_blockers(
-    events: list[EventEnvelope],
-) -> list[FinalInvariantBlocker]:
-    blockers_by_requirement: dict[tuple[str, str], FinalInvariantBlocker] = {}
-    freshness_events = {
-        "requirement_support_evaluated",
-        "requirement_freshness_evaluated",
-        "requirement_evidence_freshness_recorded",
-    }
-    for event in events:
-        if event.event_type not in freshness_events:
-            continue
-        requirement_id = _requirement_id(event.payload)
-        if requirement_id is None:
-            continue
-        support_ids = _payload_string_list(event.payload, "support_ids")
-        if event.payload.get("supported") is True or event.payload.get("freshness") == "fresh":
-            blockers_by_requirement.pop(("unsupported_active_requirement", requirement_id), None)
-            blockers_by_requirement.pop(("stale_support_evidence", requirement_id), None)
-            continue
-        if _payload_truthy(event.payload, "unsupported") or event.payload.get("supported") is False:
-            blockers_by_requirement[("unsupported_active_requirement", requirement_id)] = {
-                "kind": "unsupported_active_requirement",
-                "reason": "active requirement has no current supporting evidence",
-                "requirement_id": requirement_id,
-                "support_ids": support_ids,
-            }
-        if _is_stale_only_evidence(event.payload):
-            blockers_by_requirement[("stale_support_evidence", requirement_id)] = {
-                "kind": "stale_support_evidence",
-                "reason": "active requirement is supported only by stale evidence",
-                "requirement_id": requirement_id,
-                "support_ids": support_ids,
-            }
-    return [
-        blockers_by_requirement[key]
-        for key in sorted(blockers_by_requirement, key=lambda item: (item[0], item[1]))
-    ]
+    return blockers
 
 
 def _authority_revision_blockers(
@@ -2941,11 +2821,7 @@ def _authority_revision_blockers(
         revision_id = _revision_id(payload)
         if revision_id is None:
             continue
-        if event.event_type in {
-            "requirement_revision_recorded",
-            "requirement_amended",
-            "requirement_revision_proposed",
-        }:
+        if event.event_type == "requirement_revision_recorded":
             if not _requires_authority_resolution(payload):
                 continue
             blocker: FinalInvariantBlocker = {
@@ -2957,12 +2833,6 @@ def _authority_revision_blockers(
             if requirement_id is not None:
                 blocker["requirement_id"] = requirement_id
             unresolved[revision_id] = blocker
-        elif event.event_type in {
-            "authority_resolution_recorded",
-            "authority_resolved",
-            "requirement_revision_authorized",
-        }:
-            unresolved.pop(revision_id, None)
     return [unresolved[key] for key in sorted(unresolved)]
 
 
@@ -3012,29 +2882,7 @@ def _record_open_proposal_blocker(state: GraphProjection, event: EventEnvelope) 
     proposal_id = _proposal_id(payload)
     if proposal_id is None:
         return
-    if event.event_type in {
-        "graph_patch_proposed",
-        "planner_proposal_opened",
-        "proposal_opened",
-        "proposal_recorded",
-    }:
-        status = payload.get("status")
-        if status in {"accepted", "rejected", "resolved", "closed"}:
-            state["open_proposal_blockers"].pop(proposal_id, None)
-            return
-        state["open_proposal_blockers"][proposal_id] = {
-            "kind": "open_planner_proposal",
-            "reason": "planner proposal has not been accepted or rejected",
-            "proposal_id": proposal_id,
-        }
-    elif event.event_type in {
-        "graph_patch_accepted",
-        "graph_patch_rejected",
-        "proposal_accepted",
-        "proposal_rejected",
-        "proposal_resolved",
-        "proposal_closed",
-    }:
+    if event.event_type in {"graph_patch_accepted", "graph_patch_rejected"}:
         state["open_proposal_blockers"].pop(proposal_id, None)
 
 
@@ -3042,13 +2890,11 @@ def _record_suspect_node_reason(
     state: GraphProjection, event_type: str, payload: NodeSuspectPayload
 ) -> None:
     node_ids = _node_ids_from_suspect_payload(payload)
-    if event_type in {"plan_region_marked_suspect", "node_marked_suspect"}:
+    if event_type == "plan_region_marked_suspect":
         reason = payload.reason or "suspect graph fact remains unresolved"
         for node_id in node_ids:
             state["suspect_node_reasons"][node_id] = reason
         return
-    for node_id in node_ids:
-        state["suspect_node_reasons"].pop(node_id, None)
 
 
 def _node_ids_from_suspect_payload(payload: NodeSuspectPayload) -> list[str]:
@@ -3068,11 +2914,7 @@ def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvel
     revision_id = _revision_id(payload)
     if revision_id is None:
         return
-    if event.event_type in {
-        "requirement_revision_recorded",
-        "requirement_amended",
-        "requirement_revision_proposed",
-    }:
+    if event.event_type == "requirement_revision_recorded":
         if not _requires_authority_resolution(payload):
             state["authority_revision_blockers"].pop(revision_id, None)
             return
@@ -3085,29 +2927,11 @@ def _record_authority_revision_blocker(state: GraphProjection, event: EventEnvel
         if requirement_id is not None:
             blocker["requirement_id"] = requirement_id
         state["authority_revision_blockers"][revision_id] = blocker
-    elif event.event_type in {
-        "authority_resolution_recorded",
-        "authority_resolved",
-        "requirement_revision_authorized",
-    }:
-        state["authority_revision_blockers"].pop(revision_id, None)
 
 
 def _authority_revision_payload_for_event(event: EventEnvelope) -> dict[str, Any] | None:
-    if event.event_type in {
-        "requirement_revision_recorded",
-        "requirement_amended",
-        "requirement_revision_proposed",
-    }:
+    if event.event_type == "requirement_revision_recorded":
         return RequirementRevisionPayload.model_validate(event.payload).model_dump(mode="json")
-    if event.event_type in {
-        "authority_resolution_recorded",
-        "authority_resolved",
-        "requirement_revision_authorized",
-    }:
-        return RequirementAuthorityResolutionPayload.model_validate(event.payload).model_dump(
-            mode="json"
-        )
     return None
 
 
@@ -3133,27 +2957,6 @@ def _requirement_id(payload: dict[str, Any]) -> str | None:
     if isinstance(node_id, str) and node_id:
         return node_id
     return None
-
-
-def _payload_string_list(payload: dict[str, Any], key: str) -> list[str]:
-    value = payload.get(key)
-    if not isinstance(value, list):
-        return []
-    return [item for item in cast(list[Any], value) if isinstance(item, str)]
-
-
-def _payload_truthy(payload: dict[str, Any], key: str) -> bool:
-    return payload.get(key) is True
-
-
-def _is_stale_only_evidence(payload: dict[str, Any]) -> bool:
-    if payload.get("stale_only") is True:
-        return True
-    for key in ("freshness", "status", "evidence_freshness"):
-        value = payload.get(key)
-        if value in {"stale_only", "stale"}:
-            return True
-    return False
 
 
 def _requires_authority_resolution(payload: dict[str, Any]) -> bool:
@@ -3353,11 +3156,6 @@ def project_graph_patch_attempts(
     for event in events:
         payload = _graph_patch_payload_for_event(event) or event.payload
         patch_id = _patch_id(payload)
-        if event.event_type == "graph_patch_proposed" and patch_id is not None:
-            attempt = ensure_attempt(patch_id)
-            _apply_patch_payload(attempt, payload)
-            active_patch_id = patch_id
-            continue
         if event.event_type == "graph_patch_accepted" and patch_id is not None:
             attempt = ensure_attempt(patch_id)
             attempt["status"] = "accepted"
@@ -5430,7 +5228,7 @@ def _record_environment_failure(state: GraphProjection, event: EventEnvelope) ->
     if isinstance(value, dict):
         typed_value = cast(dict[str, Any], value)
         classification = typed_value.get("classification", classification)
-    is_environment = event.event_type == "environment_failure_accepted" or classification in {
+    is_environment = classification in {
         "environment_error",
         "tool_error",
         "tool_unavailable",

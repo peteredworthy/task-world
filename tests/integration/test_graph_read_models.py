@@ -311,8 +311,17 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
             _event(
                 "environment-failure",
                 run_id,
-                "environment_failure_accepted",
-                {"task_region_id": "blocked_environment", "reason": "tool_unavailable"},
+                "output_record_accepted",
+                {
+                    "record_id": "check-environment",
+                    "task_region_id": "blocked_environment",
+                    "record_kind": "check_result",
+                    "record_type": "check_result",
+                    "producer_node_id": "check-environment",
+                    "port": "check_result",
+                    "schema": "CheckResult",
+                    "value": {"classification": "tool_unavailable"},
+                },
             ),
         ],
         "in_progress": [

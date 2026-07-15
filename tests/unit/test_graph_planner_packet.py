@@ -270,12 +270,16 @@ def _graph_events() -> list[EventEnvelope]:
             13,
         ),
         _event(
-            "environment_failure_accepted",
+            "output_record_accepted",
             {
+                "record_id": "check-region-1",
+                "record_kind": "check_result",
+                "record_type": "check_result",
+                "producer_node_id": "worker-1",
+                "port": "check_result",
                 "node_id": "worker-1",
                 "task_region_id": "region-1",
-                "classification": "tool_error",
-                "reason": "API timeout",
+                "value": {"classification": "tool_error", "reason": "API timeout"},
             },
             14,
         ),
@@ -355,15 +359,14 @@ def test_planner_packet_includes_generation_frontier_evidence_and_rejections() -
         for record in packet["evidence"]["bound_records"].get("region_summary", [])
     )
     assert packet["evidence"]["session_carryover_record_id"] == "carryover-1"
-    assert packet["evidence"]["outstanding_failures"] == [
-        {
-            "position": 14,
-            "classification": "tool_error",
-            "reason": "API timeout",
-            "node_id": "worker-1",
-            "task_region_id": "region-1",
-        }
-    ]
+    failures = packet["evidence"]["outstanding_failures"]
+    assert len(failures) == 1
+    assert failures[0]["position"] == 14
+    assert failures[0]["classification"] == "tool_error"
+    assert failures[0]["reason"] == "check tool error while running: check command"
+    assert failures[0]["node_id"] == "worker-1"
+    assert failures[0]["task_region_id"] == "region-1"
+    assert failures[0]["record_kind"] == "check_result"
     assert packet["open_planner_proposals"] == []
     assert packet["accepted_planner_patches"] == [
         {

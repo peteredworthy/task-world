@@ -21,7 +21,7 @@ class PatchValidationResult:
 INVALIDATING_NODE_STATES = {"retired", "cancelled"}
 INVALIDATING_RUN_STATES = {"cancelling", "cancelled", "failed"}
 INVALIDATING_EVENT_TYPES = {
-    "requirement_amended",
+    "requirement_revision_recorded",
     "authority_narrowed",
     "node_authority_changed",
     "candidate_superseded",

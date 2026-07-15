@@ -639,15 +639,6 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
     store = GraphEventStore(session)
     events = [
         _event(
-            "graph_patch_proposed",
-            {
-                "patch_id": "patch-accepted",
-                "proposed_by_node_id": "planner-1",
-                "base_graph_position": 2,
-            },
-            position=1,
-        ),
-        _event(
             "graph_patch_accepted",
             {
                 "patch_id": "patch-accepted",
@@ -656,7 +647,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
                 "actor_role": "planner",
                 "successor_planner_node_ids": ["planner-2"],
             },
-            position=2,
+            position=1,
         ),
         _event(
             "node_created",
@@ -721,7 +712,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
     )
 
     assert response.run_id == "run-patches"
-    assert response.current_graph_position == 7
+    assert response.current_graph_position == 6
     assert [attempt.patch_id for attempt in response.attempts] == [
         "patch-accepted",
         "patch-rejected",
@@ -731,7 +722,7 @@ async def test_build_graph_patch_attempts_response_reads_accepted_and_rejected_p
     assert accepted.status == "accepted"
     assert accepted.proposed_by_node_id == "planner-1"
     assert accepted.base_graph_position == 2
-    assert accepted.accepted_position == 2
+    assert accepted.accepted_position == 1
     assert accepted.created_node_ids == ["worker-1"]
     assert accepted.created_edge_ids == ["edge-1"]
     assert accepted.diagnostics["actor_role"] == "planner"

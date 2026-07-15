@@ -8,6 +8,11 @@ from orchestrator.graph.command_bindings import (
     resolve_check_command_definition,
 )
 from orchestrator.graph.commands import apply_command
+from orchestrator.graph.event_registry import (
+    CANONICAL_EVENT_TYPES,
+    EVENT_PAYLOAD_MODELS,
+    EXTERNAL_EVENT_TYPES,
+)
 from orchestrator.graph.compiler import compile_routine
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
@@ -156,6 +161,7 @@ __all__ = [
     "CallbackRejectedPayload",
     "CallbackOutcome",
     "CallbackRequest",
+    "CANONICAL_EVENT_TYPES",
     "CandidateProjection",
     "CheckResultProjection",
     "DEFAULT_NODE_CONTRACTS",
@@ -166,6 +172,8 @@ __all__ = [
     "DeadInputDetectedPayload",
     "EdgeProjection",
     "EnvironmentFailureProjection",
+    "EVENT_PAYLOAD_MODELS",
+    "EXTERNAL_EVENT_TYPES",
     "EventEnvelope",
     "FakeClock",
     "FileStateRecord",

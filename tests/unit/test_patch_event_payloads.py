@@ -97,18 +97,6 @@ def test_patch_reducers_tolerate_legacy_payloads_through_typed_models() -> None:
     assert projection["accepted_graph_patches_by_node"] == {"planner-1": ["patch-1"]}
     assert projection["planner_successors"] == {"planner-1": "planner-2"}
 
-    projection = reduce_event(
-        projection,
-        _event("graph_patch_proposed", {"patch_id": "patch-2", "node_id": "planner-2"}, position=2),
-    )
-    assert "patch-2" in projection["open_proposal_blockers"]
-
-    projection = reduce_event(
-        projection,
-        _event("graph_patch_rejected", {"patch_id": "patch-2", "reason": "invalid"}, position=3),
-    )
-    assert "patch-2" not in projection["open_proposal_blockers"]
-
 
 def test_patch_producers_emit_payloads_validated_by_typed_models() -> None:
     events = [_event("run_lifecycle_changed", {"to_state": "active"}, position=1)]
@@ -156,15 +144,6 @@ def test_patch_producers_emit_payloads_validated_by_typed_models() -> None:
 def test_project_graph_patch_attempts_reads_patch_payloads_through_typed_models() -> None:
     events = [
         _event(
-            "graph_patch_proposed",
-            {
-                "patch_id": "patch-1",
-                "proposed_by_node_id": "planner-1",
-                "base_graph_position": 2,
-            },
-            position=1,
-        ),
-        _event(
             "graph_patch_accepted",
             {
                 "patch_id": "patch-1",
@@ -172,7 +151,7 @@ def test_project_graph_patch_attempts_reads_patch_payloads_through_typed_models(
                 "base_graph_position": 2,
                 "successor_planner_node_ids": ["planner-2"],
             },
-            position=2,
+            position=1,
         ),
     ]
 

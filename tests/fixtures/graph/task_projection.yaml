@@ -28,7 +28,7 @@
 - name: task_projection_blocked_environment
   given_events:
     - output_record_accepted: {task_region_id: task-environment, candidate_id: cand-environment, attempt_number: 1}
-    - environment_failure_accepted: {task_region_id: task-environment, reason: tool_unavailable}
+    - output_record_accepted: {record_id: check-environment, record_kind: check_result, record_type: check_result, producer_node_id: check-environment, port: check_result, task_region_id: task-environment, value: {classification: tool_unavailable}}
   when_command: null
   then_events: []
   then_projection: {task-environment: blocked_environment}

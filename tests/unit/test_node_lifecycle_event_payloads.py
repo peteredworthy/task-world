@@ -158,12 +158,10 @@ def test_node_lifecycle_reducers_use_typed_legacy_payloads() -> None:
     projection = reduce_event(
         projection,
         _event(
-            "node_marked_suspect", {"region_node_ids": ["worker-1"], "reason": "stale"}, position=5
+            "plan_region_marked_suspect",
+            {"region_node_ids": ["worker-1"], "reason": "stale"},
+            position=5,
         ),
-    )
-    projection = reduce_event(
-        projection,
-        _event("node_suspect_cleared", {"node_id": "worker-1"}, position=6),
     )
 
     assert projection["node_states"] == {"worker-1": "running"}
@@ -171,7 +169,7 @@ def test_node_lifecycle_reducers_use_typed_legacy_payloads() -> None:
     assert projection["node_allowed_actions"] == {"worker-1": ["submit_records"]}
     assert projection["node_preconditions"] == {"worker-1": ["has_input"]}
     assert projection["last_deferred_reasons"] == {}
-    assert projection["suspect_node_reasons"] == {}
+    assert projection["suspect_node_reasons"] == {"worker-1": "stale"}
 
 
 def test_node_lifecycle_producers_emit_typed_payloads() -> None:

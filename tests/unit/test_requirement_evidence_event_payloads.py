@@ -8,7 +8,6 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     RequirementRevisionPayload,
-    RequirementAuthorityResolutionPayload,
     SequentialIdGenerator,
     SupportEvidencePayload,
     apply_command,
@@ -16,7 +15,6 @@ from orchestrator.graph import (
     initial_projection,
     project_final_invariant_blockers,
     projection_from_checkpoint,
-    projection_to_checkpoint,
     reduce_event,
 )
 from orchestrator.graph_runtime.store import (
@@ -127,7 +125,7 @@ def test_support_evidence_payload_supports_edge_and_version_aliases() -> None:
     assert payload.extra == {"legacy_note": 1}
 
 
-def test_requirement_reducers_tolerate_recorded_and_replay_only_aliases() -> None:
+def test_requirement_reducers_use_canonical_recorded_events() -> None:
     events = [
         _event(
             "requirement_revision_recorded",
@@ -135,7 +133,7 @@ def test_requirement_reducers_tolerate_recorded_and_replay_only_aliases() -> Non
             position=1,
         ),
         _event(
-            "requirement_amended",
+            "requirement_revision_recorded",
             {
                 "requirement_id": "R-1",
                 "requirement_version_id": "R-1.v2",
@@ -144,7 +142,7 @@ def test_requirement_reducers_tolerate_recorded_and_replay_only_aliases() -> Non
             position=2,
         ),
         _event(
-            "support_edge_recorded",
+            "support_evidence_recorded",
             {
                 "edge_id": "S-1",
                 "evidence_id": "E-1",
@@ -153,51 +151,13 @@ def test_requirement_reducers_tolerate_recorded_and_replay_only_aliases() -> Non
             },
             position=3,
         ),
-        _event(
-            "requirement_revision_proposed",
-            {
-                "proposal_id": "proposal-2",
-                "requirement": {"id": "R-2"},
-                "semantic_change": True,
-            },
-            position=4,
-        ),
     ]
 
     projection = build_projection(events)
 
     assert projection["active_requirement_versions"] == {"R-1": "R-1.v2"}
     assert projection["support_evidence"]["S-1"].requirement_version_id == "R-1.v2"
-    assert set(projection["authority_revision_blockers"]) == {"R-1.v2", "proposal-2"}
-
-
-def test_authority_resolution_aliases_clear_full_history_and_checkpoint_blockers() -> None:
-    revision = _event(
-        "requirement_revision_proposed",
-        {
-            "proposal_id": "proposal-1",
-            "requirement": {"id": "R-1"},
-            "semantic_change": True,
-        },
-        position=1,
-    )
-    checkpoint = projection_to_checkpoint(build_projection([revision]))
-
-    for event_type, identifier in (
-        ("authority_resolution_recorded", {"proposal_id": "proposal-1"}),
-        ("authority_resolved", {"revision_id": "proposal-1"}),
-        ("requirement_revision_authorized", {"patch_id": "proposal-1"}),
-    ):
-        resolution = _event(event_type, identifier, position=2)
-        parsed = RequirementAuthorityResolutionPayload.model_validate(resolution.payload)
-        assert parsed.model_dump(mode="json") == identifier
-        full_events = [revision, resolution]
-        tail_events = [resolution]
-
-        assert project_final_invariants(full_events) == project_final_invariants_from_checkpoint(
-            checkpoint, tail_events
-        )
-        assert project_final_invariants(full_events) == []
+    assert set(projection["authority_revision_blockers"]) == {"R-1.v2"}
 
 
 def test_requirement_and_support_producers_emit_typed_payloads() -> None:

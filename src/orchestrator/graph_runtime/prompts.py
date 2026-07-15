@@ -897,18 +897,6 @@ def _planner_proposals(
 
     for event in events:
         payload = event.payload
-        if event.event_type in {"graph_patch_proposed", "planner_proposal_opened"}:
-            if payload.get("proposed_by_node_id") != context.node_id:
-                continue
-            open_proposals.append(
-                {
-                    "patch_id": payload.get("patch_id"),
-                    "base_graph_position": payload.get("base_graph_position"),
-                    "position": event.position,
-                }
-            )
-            continue
-
         if event.event_type == "graph_patch_accepted":
             if payload.get("proposed_by_node_id") != context.node_id:
                 continue

@@ -541,20 +541,23 @@ def test_malformed_decision_request_details_checkpoint_entry_is_dropped() -> Non
     assert restored["decision_request_details"] == {}
 
 
-def test_environment_failure_projection_uses_typed_payload() -> None:
+def test_environment_failure_projection_uses_check_result_record() -> None:
     projection = reduce_event(
         initial_projection(),
         _event(
-            "environment_failure_accepted",
+            "output_record_accepted",
             {
                 "task_region_id": "task-1",
                 "node_id": "check-1",
                 "record_id": "failure-record-1",
-                "classification": "tool_unavailable",
-                "reason": "tool missing",
-                "command_text": "uv run pytest",
-                "stderr": "uv: command not found",
-                "exit_code": 127,
+                "record_kind": "check_result",
+                "value": {
+                    "classification": "tool_unavailable",
+                    "reason": "tool missing",
+                    "command_text": "uv run pytest",
+                    "stderr": "uv: command not found",
+                    "exit_code": 127,
+                },
             },
         ).model_copy(update={"position": 17}),
     )
@@ -566,20 +569,21 @@ def test_environment_failure_projection_uses_typed_payload() -> None:
     assert projected.node_id == "check-1"
     assert projected.record_id == "failure-record-1"
     assert projected.classification == "tool_unavailable"
-    assert projected.reason == "tool missing"
+    assert projected.reason == "check tool unavailable while running: uv run pytest"
     assert projected.command_text == "uv run pytest"
     assert projected.stderr == "uv: command not found"
     assert projected.exit_code == 127
 
 
-def test_environment_failure_projection_checkpoint_round_trips_typed_payload() -> None:
+def test_environment_failure_projection_checkpoint_round_trips_check_result_record() -> None:
     projection = reduce_event(
         initial_projection(),
         _event(
-            "environment_failure_accepted",
+            "output_record_accepted",
             {
                 "task_region_id": "task-1",
                 "node_id": "check-1",
+                "record_kind": "check_result",
                 "classification": "environment_error",
                 "value": {
                     "command_text": "uv run pytest",
@@ -603,17 +607,18 @@ def test_environment_failure_projection_checkpoint_round_trips_typed_payload() -
     assert projected.exit_code == 1
 
 
-def test_environment_failure_projection_preserves_missing_reason_as_typed_none() -> None:
+def test_environment_failure_projection_derives_missing_reason_from_check_record() -> None:
     events = [
         _event(
             "output_record_accepted",
             {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
         ),
         _event(
-            "environment_failure_accepted",
+            "output_record_accepted",
             {
                 "task_region_id": "task-1",
-                "classification": "tool_error",
+                "record_kind": "check_result",
+                "value": {"classification": "tool_error"},
             },
         ),
     ]
@@ -625,7 +630,7 @@ def test_environment_failure_projection_preserves_missing_reason_as_typed_none()
     projected = projection["environment_failures"]["task-1"]
 
     assert isinstance(projected, EnvironmentFailureProjection)
-    assert projected.reason is None
+    assert projected.reason == "check tool error while running: check command"
     assert project_task_states(events)["task-1"] == "blocked_environment"
 
 
@@ -1167,22 +1172,6 @@ def test_malformed_node_created_payload_is_tolerated_without_raw_projection_entr
 
     assert projection["node_creation_payloads"] == {}
     assert projection["node_states"] == {}
-
-
-def test_malformed_environment_failure_payload_is_tolerated_without_raw_projection_entry() -> None:
-    projection = reduce_event(
-        initial_projection(),
-        _event(
-            "environment_failure_accepted",
-            {
-                "task_region_id": "task-1",
-                "classification": "tool_error",
-                "reason": ["legacy", "bad", "shape"],
-            },
-        ),
-    )
-
-    assert projection["environment_failures"] == {}
 
 
 def test_input_binding_replay_accumulates_many_cardinality_records() -> None:
@@ -4300,43 +4289,6 @@ def test_check_result_must_cite_latest_candidate_file_state() -> None:
     assert project_run_state(events) == "active"
 
 
-def test_open_proposal_blocks_projected_completion_until_resolved() -> None:
-    events = [
-        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
-        _event("proposal_opened", {"proposal_id": "proposal-1"}),
-        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
-    ]
-
-    assert project_final_invariant_blockers(events) == [
-        {
-            "kind": "open_planner_proposal",
-            "reason": "planner proposal has not been accepted or rejected",
-            "proposal_id": "proposal-1",
-        }
-    ]
-    assert project_run_state(events) == "active"
-
-    resolved = [
-        *events[:2],
-        _event("proposal_accepted", {"proposal_id": "proposal-1"}),
-        events[2],
-    ]
-    assert project_final_invariant_blockers(resolved) == []
-    assert project_run_state(resolved) == "completed"
-
-
-def test_accepted_graph_patch_does_not_leave_open_proposal_blocker() -> None:
-    events = [
-        _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
-        _event("graph_patch_proposed", {"patch_id": "patch-1"}),
-        _event("graph_patch_accepted", {"patch_id": "patch-1"}),
-        _event("run_lifecycle_changed", {"from_state": "active", "to_state": "completed"}),
-    ]
-
-    assert project_final_invariant_blockers(events) == []
-    assert project_run_state(events) == "completed"
-
-
 def test_freshness_and_authority_facts_block_projected_completion() -> None:
     events = [
         _event("run_lifecycle_changed", {"from_state": "queued", "to_state": "active"}),
@@ -4798,8 +4750,12 @@ def test_task_projection_blocked_environment() -> None:
             {"task_region_id": "task-1", "candidate_id": "cand-1", "attempt_number": 1},
         ).model_copy(update={"position": 0}),
         _event(
-            "environment_failure_accepted",
-            {"task_region_id": "task-1", "reason": "tool_unavailable"},
+            "output_record_accepted",
+            {
+                "task_region_id": "task-1",
+                "record_kind": "check_result",
+                "value": {"classification": "tool_unavailable"},
+            },
         ).model_copy(update={"position": 1}),
     ]
 

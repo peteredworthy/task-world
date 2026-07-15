@@ -498,3 +498,24 @@ collected the same 844 tests and both passed.
 | Batch 2 iteration | Changed command/API/model files | none |
 | Batch 2 candidate | none | command aggregate, API integration, graph selection with xdist, Ruff, scoped Pyright |
 | Closeout | none | full backend with xdist, Ruff, final Pyright |
+
+## Canonical Event Ownership And Fixtures
+
+Status: complete.
+
+Scope:
+- Added the immutable canonical event registry, deriving canonical names from
+  current producers plus the explicit external `lease_suspended` ingress.
+- Migrated graph fixtures and projection coverage from replay-only aliases to
+  canonical check-result and requirement-revision events.
+- Removed replay-only proposal, environment-failure, requirement/support/
+  authority, and suspect-resolution consumer branches.
+
+RED:
+- `uv run pytest tests/unit/test_graph_event_registry.py -q`
+  - Result: failed during collection because `CANONICAL_EVENT_TYPES` was not
+    exported from `orchestrator.graph`.
+
+GREEN:
+- `uv run pytest tests/unit/test_graph_event_registry.py tests/unit/test_fixture_corpus.py tests/unit/test_graph_projections.py tests/unit/test_patch_validator.py -q`
+  - Result: passed, 189 tests.

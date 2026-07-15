@@ -47,11 +47,14 @@ def test_snapshot_from_events_preserves_typed_environment_failures() -> None:
     snapshot = _snapshot_from_events(
         [
             _event(
-                "environment_failure_accepted",
+                "output_record_accepted",
                 {
                     "task_region_id": "step/task",
-                    "classification": "tool_unavailable",
-                    "reason": "missing tool",
+                    "record_kind": "check_result",
+                    "value": {
+                        "classification": "tool_unavailable",
+                        "reason": "missing tool",
+                    },
                 },
                 position=12,
             )
@@ -62,7 +65,7 @@ def test_snapshot_from_events_preserves_typed_environment_failures() -> None:
 
     assert isinstance(failure, EnvironmentFailureProjection)
     assert failure.position == 12
-    assert failure.reason == "missing tool"
+    assert failure.reason == "check tool unavailable while running: check command"
 
 
 class RecordingController:
