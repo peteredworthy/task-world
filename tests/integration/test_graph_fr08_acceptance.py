@@ -292,7 +292,9 @@ async def test_fr08_invalid_patch_matrix_rejected_and_readable(
                 "to_node_id": "check-hidden",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+                "accepted_record_selector": {
+                    "record_kinds": ["verification_report", "check_result"]
+                },
             },
         ],
     )

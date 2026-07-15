@@ -359,15 +359,16 @@ def _drive_region_to_accepted(events: list[EventEnvelope], prefix: str) -> list[
                             "record_id": f"verification-{prefix}",
                             "record_kind": "verification",
                             "candidate_id": f"candidate-{prefix}",
-                            "verdict": "passed",
+                            "outcome": "passed",
                             "value": {
+                                "outcome": "passed",
                                 "grades": [
                                     {
                                         "requirement_id": "R-1",
                                         "grade": "A",
                                         "reason": "candidate satisfies requirement",
                                     }
-                                ]
+                                ],
                             },
                         },
                         {

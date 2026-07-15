@@ -83,7 +83,6 @@ def _verifier_packet(context: GraphDispatchContext) -> dict[str, Any]:
                 "evidence.evaluated_record_ids",
             ],
             "outcome_values": ["passed", "failed"],
-            "compatibility_alias": "verdict may mirror outcome for legacy readers",
         },
     }
 
@@ -781,7 +780,7 @@ def _inline_record_summary(record_payload: dict[str, Any]) -> dict[str, Any]:
     }
     if isinstance(summary, str) and summary:
         inline["summary"] = _bounded_text(summary, max_chars=MAX_GRAPH_PROMPT_FIELD_CHARS)
-    for key in ("status", "classification", "verdict", "candidate_id"):
+    for key in ("status", "classification", "outcome", "candidate_id"):
         value_field = record_payload.get(key) or typed_value.get(key)
         if isinstance(value_field, str) and value_field:
             inline[key] = value_field
@@ -1453,7 +1452,6 @@ def _output_records_for_submit(
                     "candidate_id": candidate_id,
                     "task_region_id": task_region_id,
                     "outcome": outcome,
-                    "verdict": outcome,
                     "value": {
                         "outcome": outcome,
                         "grades": [

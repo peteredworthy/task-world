@@ -497,8 +497,6 @@ def _dynamic_output_port(contract: NodeContract, port: str) -> PortContract | No
 
 
 def _canonical_port(value: Any) -> Any:
-    if value == "verification_result":
-        return "verification_report"
     if value == "requirement":
         return "requirement_record"
     if value == "graph_patch":
@@ -894,7 +892,6 @@ DEFAULT_NODE_CONTRACTS = _registry(
                     "verification_report",
                     "verification_report",
                     schemas=("VerificationReport",),
-                    aliases=("verification", "verification_result"),
                 ),
                 _port(
                     "file_state",

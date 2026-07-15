@@ -530,15 +530,15 @@ async def test_append_events_adds_durable_base_fields_to_accepted_records(
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-1",
                 "outcome": "passed",
-                "verdict": "passed",
                 "value": {
+                    "outcome": "passed",
                     "grades": [
                         {
                             "requirement_id": "R-1",
                             "grade": "A",
                             "reason": "satisfied",
                         }
-                    ]
+                    ],
                 },
             },
         ),
@@ -1131,7 +1131,6 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
                             "schema": "VerificationReport",
                             "candidate_id": "candidate-1",
                             "outcome": "passed",
-                            "verdict": "passed",
                             "value": {
                                 "outcome": "passed",
                                 "grades": [{"requirement_id": "R-1", "grade": "A"}],
@@ -1180,7 +1179,6 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
             "record_id": "verification-1",
             "record_kind": "verification",
             "schema": "VerificationReport",
-            "verdict": "passed",
             "value": {
                 "outcome": "passed",
                 "grades": [{"requirement_id": "R-1", "grade": "A"}],

@@ -62,6 +62,76 @@ def test_node_created_reducer_reads_direct_membership_fields() -> None:
     assert projection["node_attempts"]["worker-1"] == 2
 
 
+def test_direct_authority_controls_take_precedence_over_nested_authority() -> None:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-1",
+                    "kind": "worker",
+                    "authority": {
+                        "resource_claims": [
+                            {"mode": "write", "scope": "repo", "paths": ["nested"]}
+                        ],
+                        "allowed_actions": ["nested_action"],
+                        "preconditions": ["nested_precondition"],
+                    },
+                    "resource_claims": [{"mode": "read", "scope": "repo", "paths": ["direct"]}],
+                    "allowed_actions": ["direct_action"],
+                    "preconditions": ["direct_precondition"],
+                },
+            )
+        ]
+    )
+    created = projection["node_creation_payloads"]["worker-1"]
+
+    assert [claim.paths for claim in created.resource_claims] == [["direct"]]
+    assert created.allowed_actions == ["direct_action"]
+    assert created.preconditions == ["direct_precondition"]
+
+
+def test_explicit_empty_authority_change_controls_override_nested_authority() -> None:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-1",
+                    "kind": "worker",
+                    "authority": {
+                        "resource_claims": [
+                            {"mode": "write", "scope": "repo", "paths": ["initial"]}
+                        ],
+                        "allowed_actions": ["initial_action"],
+                        "preconditions": ["initial_precondition"],
+                    },
+                },
+            ),
+            event(
+                "node_authority_changed",
+                {
+                    "node_id": "worker-1",
+                    "authority": {
+                        "resource_claims": [
+                            {"mode": "write", "scope": "repo", "paths": ["nested"]}
+                        ],
+                        "allowed_actions": ["nested_action"],
+                        "preconditions": ["nested_precondition"],
+                    },
+                    "resource_claims": [],
+                    "allowed_actions": [],
+                    "preconditions": [],
+                },
+            ),
+        ]
+    )
+
+    assert projection["node_resource_claims"]["worker-1"] == []
+    assert projection["node_allowed_actions"]["worker-1"] == []
+    assert projection["node_preconditions"]["worker-1"] == []
+
+
 def test_compiler_node_created_producer_matches_typed_payload_json() -> None:
     routine = RoutineConfig(
         id="typed-nodes",

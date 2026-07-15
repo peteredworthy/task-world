@@ -477,20 +477,13 @@ def _record_type_for_port(port: str, payload: dict[str, Any]) -> str:
         return "file_state"
     if port in {"file_state", "accepted_file_state"}:
         return "file_state"
-    if port == "verification_result":
-        return "verification_report"
     return port
 
 
 def _typed_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
     value = payload.get("value")
     if isinstance(value, dict):
-        typed_value = dict(cast(dict[str, Any], value))
-        if _is_verification_report_payload(payload):
-            outcome = payload.get("outcome")
-            if isinstance(outcome, str):
-                typed_value.setdefault("outcome", outcome)
-        return typed_value
+        return dict(cast(dict[str, Any], value))
     return {
         key: value
         for key, value in payload.items()
@@ -502,7 +495,7 @@ def _is_verification_report_payload(payload: dict[str, Any]) -> bool:
     return (
         payload.get("record_type") == "verification_report"
         or payload.get("record_kind") == "verification"
-        or payload.get("port") in {"verification_report", "verification_result"}
+        or payload.get("port") == "verification_report"
         or payload.get("schema") == "VerificationReport"
     )
 

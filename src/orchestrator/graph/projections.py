@@ -1555,11 +1555,14 @@ def _node_creation_from_event(event: EventEnvelope) -> NodeCreationProjection | 
     projection_payload = event_payload.model_dump(mode="json")
     authority = event_payload.authority
     if authority is not None:
-        projection_payload["resource_claims"] = [
-            claim.model_dump(mode="json") for claim in authority.resource_claims
-        ]
-        projection_payload["allowed_actions"] = authority.allowed_actions
-        projection_payload["preconditions"] = authority.preconditions
+        if "resource_claims" not in event_payload.model_fields_set:
+            projection_payload["resource_claims"] = [
+                claim.model_dump(mode="json") for claim in authority.resource_claims
+            ]
+        if "allowed_actions" not in event_payload.model_fields_set:
+            projection_payload["allowed_actions"] = authority.allowed_actions
+        if "preconditions" not in event_payload.model_fields_set:
+            projection_payload["preconditions"] = authority.preconditions
     return _node_creation_from_payload(
         {
             **projection_payload,
@@ -5144,24 +5147,24 @@ def _record_authority_change(state: GraphProjection, payload: NodeAuthorityChang
 
     authority = payload.authority
     resource_claims = payload.resource_claims
-    if not resource_claims and authority is not None:
+    if "resource_claims" not in payload.model_fields_set and authority is not None:
         resource_claims = [
             ResourceClaimProjection.model_validate(claim.model_dump(mode="json"))
             for claim in authority.resource_claims
         ]
-    if resource_claims:
+    if "resource_claims" in payload.model_fields_set or authority is not None:
         state["node_resource_claims"][node_id] = resource_claims
 
-    allowed_actions = payload.allowed_actions or (
-        authority.allowed_actions if authority is not None else []
-    )
-    if allowed_actions:
+    allowed_actions = payload.allowed_actions
+    if "allowed_actions" not in payload.model_fields_set and authority is not None:
+        allowed_actions = authority.allowed_actions
+    if "allowed_actions" in payload.model_fields_set or authority is not None:
         state["node_allowed_actions"][node_id] = allowed_actions
 
-    preconditions = payload.preconditions or (
-        authority.preconditions if authority is not None else []
-    )
-    if preconditions:
+    preconditions = payload.preconditions
+    if "preconditions" not in payload.model_fields_set and authority is not None:
+        preconditions = authority.preconditions
+    if "preconditions" in payload.model_fields_set or authority is not None:
         state["node_preconditions"][node_id] = preconditions
 
 

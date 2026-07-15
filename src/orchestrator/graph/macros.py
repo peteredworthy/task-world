@@ -315,7 +315,7 @@ def _attach_check(args: dict[str, Any]) -> list[dict[str, Any]]:
             _str(args, "evidence_source_port") or "verification_report",
             check_id,
             "verification_evidence",
-            ("verification", "check_result"),
+            ("verification_report", "check_result"),
             selector={
                 "record_type": "any_of",
                 "selectors": [
@@ -360,7 +360,7 @@ def _create_gap_planner(args: dict[str, Any]) -> list[dict[str, Any]]:
             _str(args, "evidence_source_port") or "verification_report",
             node_id,
             "verification_evidence",
-            ("verification", "check_result"),
+            ("verification_report", "check_result"),
             selector={
                 "record_type": "any_of",
                 "selectors": [
@@ -414,7 +414,7 @@ def _create_join(args: dict[str, Any]) -> list[dict[str, Any]]:
                 source_port,
                 join_id,
                 f"source_record_{index}",
-                ("candidate", "verification", "check_result", "file_state"),
+                ("candidate", "verification_report", "check_result", "file_state"),
             )
         )
     return ops
@@ -561,7 +561,7 @@ def _selector_for_kinds(selector_kinds: tuple[str, ...]) -> dict[str, Any]:
 def _selector_for_kind(kind: str) -> dict[str, Any]:
     if kind == "candidate":
         return {"record_type": "candidate", "schema": "ImplementationCandidate"}
-    if kind in {"verification", "verification_report", "verification_result"}:
+    if kind == "verification_report":
         return {"record_type": "verification_report", "schema": "VerificationReport"}
     if kind == "check_result":
         return {"record_type": "check_result", "schema": "CheckResult"}

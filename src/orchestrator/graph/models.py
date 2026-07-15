@@ -4,7 +4,16 @@ from datetime import datetime
 from enum import Enum
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel, StrictBool, StrictInt, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    RootModel,
+    StrictBool,
+    StrictFloat,
+    StrictInt,
+    model_validator,
+)
 
 
 class GraphBaseModel(BaseModel):
@@ -148,7 +157,7 @@ class PortModel(StrictNestedModel):
     direction: Literal["input", "output"] | None = None
     schema_: str | None = Field(default=None, alias="schema")
     record_layers: list[str] | None = None
-    required: bool | None = None
+    required: StrictBool | None = None
 
 
 def _empty_ports() -> list[PortModel]:
@@ -157,7 +166,7 @@ def _empty_ports() -> list[PortModel]:
 
 class NodeMembership(StrictNestedModel):
     task_region_id: str
-    attempt_number: int
+    attempt_number: StrictInt
     candidate_id: str
     execution_id: str
 
@@ -287,10 +296,7 @@ _LEGACY_SELECTOR_KIND_MAP: dict[str, dict[str, Any]] = {
     "routine_snapshot": {"record_type": "routine_snapshot", "schema": "RoutineSnapshot"},
     "run_context": {"record_type": "run_context", "schema": "RunContext"},
     "snapshot": {"record_type": "routine_snapshot", "schema": "RoutineSnapshot"},
-    "verification": {"record_type": "verification_report", "schema": "VerificationReport"},
-    "verification_evidence": {"record_type": "verification_report", "schema": "VerificationReport"},
     "verification_report": {"record_type": "verification_report", "schema": "VerificationReport"},
-    "verification_result": {"record_type": "verification_report", "schema": "VerificationReport"},
 }
 
 
@@ -346,12 +352,12 @@ def _apply_legacy_value_matches(
         applied = False
         for part in parts:
             record_type = part.get("record_type")
-            if record_type == "verification_report" and key in {"verdict", "outcome"}:
-                if expected in {"pass", "passed"}:
+            if record_type == "verification_report" and key == "outcome":
+                if expected == "passed":
                     part["outcome"] = "passed"
                     applied = True
                     continue
-                if expected in {"fail", "failed"}:
+                if expected == "failed":
                     part["outcome"] = "failed"
                     applied = True
                     continue
@@ -504,17 +510,6 @@ def _verification_payload_outcome(record_payload: dict[str, Any]) -> str | None:
         value_outcome = cast(dict[str, Any], value).get("outcome")
         if value_outcome in {"passed", "failed"}:
             return cast(str, value_outcome)
-    verdict = record_payload.get("verdict")
-    if verdict in {"passed", "pass"}:
-        return "passed"
-    if verdict in {"failed", "fail"}:
-        return "failed"
-    if isinstance(value, dict):
-        value_verdict = cast(dict[str, Any], value).get("verdict")
-        if value_verdict in {"passed", "pass"}:
-            return "passed"
-        if value_verdict in {"failed", "fail"}:
-            return "failed"
     return None
 
 
@@ -614,7 +609,7 @@ class OutputRecord(TypedRecordBase):
 class RunContextValue(StrictNestedModel):
     routine_id: str
     routine_name: str
-    planner_generation_budget: int | None = None
+    planner_generation_budget: StrictInt | None = None
 
 
 class RunContextRecord(TypedRecordBase):
@@ -640,8 +635,8 @@ class RoutineSnapshotValue(StrictNestedModel):
     content_hash: str
     source_path: str | None = None
     source_ref: str | None = None
-    step_count: int = Field(ge=0)
-    task_count: int = Field(ge=0)
+    step_count: StrictInt = Field(ge=0)
+    task_count: StrictInt = Field(ge=0)
     builder_agent: str | None = None
     verifier_agent: str | None = None
     dynamic_feature: dict[str, Any] | None = None
@@ -669,10 +664,10 @@ class ArtifactReferenceValue(StrictNestedModel):
     uri: str
     summary: str | None = None
     source_record_ids: list[str] = Field(default_factory=list)
-    required: bool | None = None
+    required: StrictBool | None = None
     section: str | None = None
-    max_tokens: int | None = None
-    summarize: bool | None = None
+    max_tokens: StrictInt | None = None
+    summarize: StrictBool | None = None
     summarize_model: str | None = None
 
 
@@ -716,47 +711,17 @@ class VerificationReportRecord(TypedRecordBase):
     record_id: str
     record_kind: Literal["verification"]
     producer_node_id: str
-    port: Literal["verification_report", "verification_result"] = "verification_report"
+    port: Literal["verification_report"] = "verification_report"
     schema_: Literal["VerificationReport"] = Field(default="VerificationReport", alias="schema")
     candidate_id: str
     task_region_id: str | None = None
-    outcome: Literal["passed", "failed"] | None = None
-    verdict: Literal["passed", "failed", "pass", "fail"] | None = None
+    outcome: Literal["passed", "failed"]
     value: VerificationReportValue
     evidence: Any | None = None
     candidate_record_id: str | None = None
     candidate_record_ids: list[str] = Field(default_factory=_empty_verification_record_ids)
     file_state_record_ids: list[str] = Field(default_factory=_empty_verification_record_ids)
     evaluated_record_ids: list[str] = Field(default_factory=_empty_verification_record_ids)
-
-    @model_validator(mode="before")
-    @classmethod
-    def populate_explicit_outcome(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        payload = dict(cast(dict[str, Any], value))
-        if "status" in payload:
-            msg = "VerificationReport uses outcome, not status"
-            raise ValueError(msg)
-        raw_value = payload.get("value")
-        value_payload = dict(cast(dict[str, Any], raw_value)) if isinstance(raw_value, dict) else {}
-        if "status" in value_payload:
-            msg = "VerificationReport value uses outcome, not status"
-            raise ValueError(msg)
-        outcome = payload.get("outcome") or value_payload.get("outcome")
-        verdict = payload.get("verdict") or value_payload.get("verdict")
-        normalized = _normalize_verification_outcome(outcome)
-        if normalized is None:
-            normalized = _normalize_verification_outcome(verdict)
-        if normalized is not None:
-            payload["outcome"] = normalized
-            value_payload["outcome"] = normalized
-        if "grades" in payload and "grades" not in value_payload:
-            value_payload["grades"] = payload["grades"]
-        if "reason" in payload and "reason" not in value_payload:
-            value_payload["reason"] = payload["reason"]
-        payload["value"] = value_payload
-        return payload
 
     @model_validator(mode="after")
     def verification_report_fields_are_consistent(self) -> "VerificationReportRecord":
@@ -766,11 +731,6 @@ class VerificationReportRecord(TypedRecordBase):
         if self.outcome != self.value.outcome:
             msg = "outcome must match value.outcome"
             raise ValueError(msg)
-        if self.verdict is not None:
-            verdict_outcome = _normalize_verification_outcome(self.verdict)
-            if verdict_outcome != self.outcome:
-                msg = "verdict must match outcome"
-                raise ValueError(msg)
         return self
 
 
@@ -1388,14 +1348,6 @@ class OversightDecisionProjection(GraphBaseModel):
     reason: str | None = None
 
 
-def _normalize_verification_outcome(value: Any) -> Literal["passed", "failed"] | None:
-    if value in {"passed", "pass"}:
-        return "passed"
-    if value in {"failed", "fail"}:
-        return "failed"
-    return None
-
-
 def _empty_completion_blockers() -> list[dict[str, Any]]:
     return []
 
@@ -1484,13 +1436,13 @@ class CheckResultValue(StrictNestedModel):
     execution_snapshot_id: str | None = None
     execution_snapshot_ref: str | None = None
     execution_id: str
-    exit_code: int | None = None
-    duration_ms: int = Field(ge=0)
+    exit_code: StrictInt | None = None
+    duration_ms: StrictInt = Field(ge=0)
     stdout: str
     stderr: str
-    stdout_truncated: bool
-    stderr_truncated: bool
-    timeout_seconds: int = Field(gt=0)
+    stdout_truncated: StrictBool
+    stderr_truncated: StrictBool
+    timeout_seconds: StrictFloat = Field(gt=0)
     environment_policy: dict[str, Any]
     source: str | None = None
     cited_record_id: str | None = None
@@ -1663,7 +1615,7 @@ class GapClassificationValue(StrictNestedModel):
     ]
     source: str
     task_region_id: str
-    attempt_number: int = Field(ge=0)
+    attempt_number: StrictInt = Field(ge=0)
 
 
 class GapClassificationRecord(TypedRecordBase):
@@ -1786,7 +1738,7 @@ class AuthorityDecisionProjection(GraphBaseModel):
 class AnalysisSummaryValue(StrictNestedModel):
     summary: str
     source_record_ids: list[str]
-    lossy: bool
+    lossy: StrictBool
     omitted_details: list[str]
 
 
@@ -1908,7 +1860,7 @@ class RequirementRecordValue(StrictNestedModel):
     source: str | None = None
     version: str | None = None
     supersedes: str | None = None
-    must: bool = True
+    must: StrictBool = True
 
 
 class RequirementRecord(TypedRecordBase):
@@ -1995,14 +1947,14 @@ class FailureRecordValue(StrictNestedModel):
     failed_node_id: str
     phase: str
     error_class: str
-    retryable: bool
+    retryable: StrictBool
     lease_id: str | None = None
-    lease_generation: int | None = None
+    lease_generation: StrictInt | None = None
     execution_id: str | None = None
     reason: str | None = None
     expires_at: str | None = None
-    attempt_number: int | None = None
-    max_attempts: int | None = None
+    attempt_number: StrictInt | None = None
+    max_attempts: StrictInt | None = None
 
 
 class FailureRecord(TypedRecordBase):
@@ -2027,7 +1979,7 @@ class RecoveryPlanValue(StrictNestedModel):
     responsible_actor: str
     graph_changes: list[dict[str, Any]]
     reason: str | None = None
-    retry_after_seconds: int | None = None
+    retry_after_seconds: StrictInt | None = None
     retry_not_before: str | None = None
 
 
@@ -2084,12 +2036,12 @@ class FileEntry(StrictNestedModel):
     classification: str | None = None
     policy: str | None = None
     matched_rule: str | None = None
-    needs_gatekeeper: bool | None = None
-    rejected: bool | None = None
+    needs_gatekeeper: StrictBool | None = None
+    rejected: StrictBool | None = None
     reason: str | None = None
-    size_bytes: int | None = None
-    entropy: float | None = None
-    gatekeeper_confidence: float | None = None
+    size_bytes: StrictInt | None = None
+    entropy: StrictFloat | None = None
+    gatekeeper_confidence: StrictFloat | None = None
     gatekeeper_rationale: str | None = None
     manifest: "ExternalArtifactManifest | None" = None
 
@@ -2154,20 +2106,6 @@ class FileStateRecord(TypedRecordBase):
     cleanup_applied_event_id: str | None = None
     compromised_snapshot_deleted: bool | None = None
     compromised_paths: list[str] | None = None
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_membership(cls, value: Any) -> Any:
-        if not isinstance(value, dict):
-            return value
-        payload = dict(cast(dict[str, Any], value))
-        membership = payload.get("membership")
-        if isinstance(membership, dict):
-            typed_membership = cast(dict[str, Any], membership)
-            for key in ("task_region_id", "candidate_id"):
-                if payload.get(key) is None and isinstance(typed_membership.get(key), str):
-                    payload[key] = typed_membership[key]
-        return payload
 
 
 class GraphRecordKind(str, Enum):

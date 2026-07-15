@@ -294,3 +294,20 @@ event fields use strict integers rather than integer/string unions.
 
 Acceptance runs the exact Task 3 aggregate, directly affected producer and
 compact-read tests, Ruff, Pyright, and one full suite before the fix commit.
+
+### Remaining Review Closure
+
+Verification replay has one canonical contract: `verification_report` port,
+`passed` or `failed` outcome, and a nested value carrying the same outcome.
+External callback input may use the former port, verdict, or top-level grade
+shape, but callback ingress translates it once and removes those aliases before
+constructing a typed record or event. Contracts, selectors, reducers, stores,
+and replay models do not recognize verification aliases.
+
+Every scalar declared by a W5-reachable `StrictNestedModel` uses field-level
+strict numeric or boolean validation. This avoids malformed coercion without
+changing canonical enum strings globally. File-state records accept direct
+`task_region_id` and `candidate_id` only. For node authority, explicitly
+supplied direct controls take precedence; nested authority is used only when a
+direct field is omitted. Behavioral tests reject projection mapping access and
+exercise ingress translation separately from strict replay rejection.

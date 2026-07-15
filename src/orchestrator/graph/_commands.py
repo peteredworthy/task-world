@@ -715,12 +715,7 @@ def _validated_seed_output_record_payload(payload: dict[str, Any]) -> dict[str, 
     if record_payload.get("record_type") != "verification_report":
         msg = "verification records require record_type=verification_report"
         raise ValueError(msg)
-    record = VerificationReportRecord.model_validate(
-        _verification_report_record_payload_for_validation(
-            record_payload,
-            str(record_payload.get("producer_node_id", "")),
-        )
-    )
+    record = VerificationReportRecord.model_validate(record_payload)
     return record.model_dump(mode="json")
 
 
@@ -750,7 +745,10 @@ def _apply_callback_command(
             )
         ]
 
-    callback_payload = _callback_payload(payload)
+    callback_payload = _canonical_external_callback_payload(
+        _callback_payload(payload),
+        str(payload["node_id"]),
+    )
     # Mutating-ness is derived from the callback's actual effects, never trusted
     # from the caller's flag: completing the node or carrying output records IS
     # a mutation, so a callback claiming is_mutating=False cannot bypass the
@@ -1169,7 +1167,7 @@ def _output_record_contract_conflict(
                 return f"check_result record at index {index} is invalid: {exc}"
         if _is_verification_report_record_payload(record_payload):
             try:
-                _parse_verification_report_record(record_payload, expected_producer_node_id)
+                _parse_verification_report_record(record_payload)
             except ValueError as exc:
                 return f"verification record at index {index} is invalid: {exc}"
         if _is_analysis_summary_record_payload(record_payload):
@@ -1404,7 +1402,6 @@ def _accepted_file_state_record_events(
             record.record_id,
             payload,
             make_event,
-            aliases={"accepted_file_state", "file_state"},
         )
     )
     return output
@@ -1426,7 +1423,7 @@ def _verification_record_conflict(
         if not _is_verification_report_record_payload(record_payload):
             continue
         try:
-            record = _parse_verification_report_record(record_payload, expected_producer_node_id)
+            record = _parse_verification_report_record(record_payload)
         except ValueError as exc:
             return f"verification record at index {index} is invalid: {exc}"
         if projection["node_kinds"].get(expected_producer_node_id) != "verifier":
@@ -1506,8 +1503,6 @@ def _output_record_contract_port(
         return None
     if output_port_contract(contract, port) is None:
         return None
-    if port == "verification_result":
-        return "verification_report"
     return port
 
 
@@ -1526,7 +1521,7 @@ def _accepted_verification_record_events(
 
     _add_evaluated_record_citations(record_payload, projection, expected_producer_node_id)
     try:
-        record = _parse_verification_report_record(record_payload, expected_producer_node_id)
+        record = _parse_verification_report_record(record_payload)
     except ValueError:
         return []
     payload = record.model_dump(mode="json")
@@ -1537,7 +1532,6 @@ def _accepted_verification_record_events(
         "node_id": request.node_id,
         "verifier_node_id": expected_producer_node_id,
         "candidate_id": candidate_id,
-        "verdict": outcome,
         "outcome": outcome,
         "record_id": record.record_id,
         "evidence": payload.get("evidence"),
@@ -1557,15 +1551,9 @@ def _accepted_verification_record_events(
             record.record_id,
             payload,
             make_event,
-            aliases={"verification_result"},
         )
     )
     return output
-
-
-def _canonicalize_verification_record_port(record_payload: dict[str, Any]) -> None:
-    if record_payload.get("port") == "verification_result":
-        record_payload["port"] = "verification_report"
 
 
 def _candidate_is_bound_to_verifier(
@@ -1622,7 +1610,12 @@ def _verification_report_record_payload_for_validation(
     output["schema"] = "VerificationReport"
     raw_value = output.get("value")
     value = dict(cast(dict[str, Any], raw_value)) if isinstance(raw_value, dict) else {}
-    raw_outcome = output.get("outcome") or output.get("verdict") or value.get("outcome")
+    raw_outcome = (
+        output.get("outcome")
+        or output.get("verdict")
+        or value.get("outcome")
+        or value.get("verdict")
+    )
     if raw_outcome in {"passed", "pass"}:
         output["outcome"] = "passed"
         value["outcome"] = "passed"
@@ -1632,17 +1625,14 @@ def _verification_report_record_payload_for_validation(
     for key in ("grades", "reason"):
         if key in output:
             value.setdefault(key, output.pop(key))
+    output.pop("verdict", None)
+    value.pop("verdict", None)
     output["value"] = value
     return output
 
 
-def _parse_verification_report_record(
-    payload: dict[str, Any],
-    expected_producer_node_id: str,
-) -> VerificationReportRecord:
-    output = _verification_report_record_payload_for_validation(payload, expected_producer_node_id)
-    _canonicalize_verification_record_port(output)
-    return VerificationReportRecord.model_validate(output)
+def _parse_verification_report_record(payload: dict[str, Any]) -> VerificationReportRecord:
+    return VerificationReportRecord.model_validate(payload)
 
 
 def _check_result_status_value(payload: dict[str, Any]) -> str:
@@ -2006,7 +1996,6 @@ def _input_bound_events_for_record(
     record_id: str,
     record_payload: dict[str, Any],
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-    aliases: set[str] | None = None,
 ) -> list[EventEnvelope]:
     output: list[EventEnvelope] = []
     # Output records are facts produced by the leased node. Edges are the only
@@ -2018,7 +2007,7 @@ def _input_bound_events_for_record(
             continue
         if edge.from_port != port:
             continue
-        if not record_selector_matches(edge.accepted_record_selector, record_payload, aliases):
+        if not record_selector_matches(edge.accepted_record_selector, record_payload):
             continue
         edge_id = edge.edge_id
         to_node_id = edge.to_node_id
@@ -2615,11 +2604,11 @@ def _source_repair_events(
                 )
             continue
         if record.get("record_kind") == "verification":
-            verdict = record.get("verdict")
+            outcome = record.get("outcome")
             value = record.get("value")
-            if verdict is None and isinstance(value, dict):
-                verdict = cast(dict[str, Any], value).get("verdict")
-            if verdict in {"passed", "pass"}:
+            if outcome is None and isinstance(value, dict):
+                outcome = cast(dict[str, Any], value).get("outcome")
+            if outcome == "passed":
                 output.extend(
                     _passed_verification_terminalization_events(
                         scoped_projection,
@@ -2628,7 +2617,7 @@ def _source_repair_events(
                         record_ids={record_id},
                     )
                 )
-            elif verdict in {"failed", "fail"}:
+            elif outcome == "failed":
                 output.extend(
                     _failed_verification_recovery_events(
                         scoped_projection,
@@ -3418,7 +3407,7 @@ def _unreachable_failure_branch_node_ids(
             continue
         if edge.to_port != "verification_evidence":
             continue
-        if _selector_value_match(edge, "verdict") != "failed":
+        if _selector_value_match(edge, "outcome") != "failed":
             continue
         roots.append(edge.to_node_id)
     return _downstream_retirable_node_ids(projection, roots)
@@ -3489,7 +3478,7 @@ def _selector_value_match(edge: EdgeProjection, key: str) -> Any:
     if not isinstance(selector, dict):
         return None
     record_type = selector.get("record_type")
-    if record_type == "verification_report" and key in {"verdict", "outcome"}:
+    if record_type == "verification_report" and key == "outcome":
         return selector.get("outcome")
     if record_type == "check_result" and key == "status":
         return selector.get("status")
@@ -4285,7 +4274,6 @@ def _apply_record_decision(
                 str(decision_record["record_id"]),
                 decision_record,
                 make_event,
-                _record_selector_aliases(decision_record),
             )
         )
     output.append(
@@ -4997,7 +4985,7 @@ def _patch_op_events(
         edge_payload = {
             "edge_id": edge_id,
             "from_node_id": op.from_node_id,
-            "from_port": _canonical_patch_edge_from_port(op.from_port),
+            "from_port": op.from_port,
             "to_node_id": op.to_node_id,
             "to_port": op.to_port,
             "required": required if isinstance(required, bool) else True,
@@ -5351,12 +5339,6 @@ def _op_payload(op: PatchOp) -> dict[str, Any]:
     return op.model_dump(exclude_none=True)
 
 
-def _canonical_patch_edge_from_port(from_port: str | None) -> str | None:
-    if from_port == "verification_result":
-        return "verification_report"
-    return from_port
-
-
 def _node_payload_for_op(op_payload: dict[str, Any], *, default_kind: str) -> dict[str, Any]:
     raw_node = op_payload.get("node")
     node_payload = dict(cast(dict[str, Any], raw_node)) if isinstance(raw_node, dict) else {}
@@ -5421,7 +5403,6 @@ def _input_bound_events_for_edge(
             if not record_selector_matches(
                 edge_payload.get("accepted_record_selector"),
                 record_payload,
-                _record_selector_aliases(record_payload),
             ):
                 continue
             binding_payload: dict[str, Any] = {
@@ -5501,15 +5482,6 @@ def _edge_backfill_producer_node_ids(
     ]
 
 
-def _record_selector_aliases(record_payload: dict[str, Any]) -> set[str]:
-    record_kind = record_payload.get("record_kind")
-    if record_kind == "verification":
-        return {"verification_result"}
-    if record_kind == "file_state":
-        return {"accepted_file_state", "file_state"}
-    return set()
-
-
 def _event_factory(
     run_id: str,
     command_type: str,
@@ -5571,6 +5543,30 @@ def _callback_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     if isinstance(raw_payload, dict):
         return cast(dict[str, Any], raw_payload)
     return {"payload": raw_payload}
+
+
+def _canonical_external_callback_payload(
+    payload: dict[str, Any] | None,
+    expected_producer_node_id: str,
+) -> dict[str, Any] | None:
+    if payload is None:
+        return None
+    canonical = dict(payload)
+    records = canonical.get("output_records")
+    if not isinstance(records, list):
+        return canonical
+    canonical_records: list[Any] = []
+    for record in cast(list[Any], records):
+        if isinstance(record, dict):
+            typed_record = cast(dict[str, Any], record)
+            if _is_verification_report_record_payload(typed_record):
+                record = _verification_report_record_payload_for_validation(
+                    typed_record,
+                    expected_producer_node_id,
+                )
+        canonical_records.append(record)
+    canonical["output_records"] = canonical_records
+    return canonical
 
 
 def _claim_from_dict(claim: Any) -> ResourceClaim:

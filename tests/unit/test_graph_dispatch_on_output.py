@@ -1066,7 +1066,7 @@ def test_verifier_submit_cites_bound_candidate_and_file_state_records() -> None:
 
     record = records[0]
     assert record["outcome"] == "passed"
-    assert record["verdict"] == "passed"
+    assert "verdict" not in record
     assert record["value"]["outcome"] == "passed"
     assert record["candidate_record_id"] == "candidate-1"
     assert record["candidate_record_ids"] == ["candidate-1"]

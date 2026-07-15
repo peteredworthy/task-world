@@ -1256,11 +1256,11 @@ def _latest_passed_verification_citation(
             continue
         if payload.get("record_type") != "verification_report":
             continue
-        outcome = payload.get("outcome") or payload.get("verdict")
+        outcome = payload.get("outcome")
         value = payload.get("value")
         if outcome is None and isinstance(value, dict):
             outcome = cast(dict[str, Any], value).get("outcome")
-        if outcome not in {"passed", "pass"}:
+        if outcome != "passed":
             continue
         latest = dict(payload)
     return latest

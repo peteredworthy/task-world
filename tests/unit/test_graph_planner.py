@@ -49,13 +49,13 @@ def test_horizon_patch_creates_region_and_successor() -> None:
     )
 
 
-def test_planner_patch_canonicalizes_verification_result_edge_port() -> None:
+def test_planner_patch_accepts_canonical_verification_report_edge_port() -> None:
     events = _planner_events()
     accepted = _append(
         events,
         _submit_patch(
             events,
-            "patch-verification-port-alias",
+            "patch-verification-report-port",
             [
                 {
                     "op": "create_node",
@@ -81,10 +81,10 @@ def test_planner_patch_canonicalizes_verification_result_edge_port() -> None:
                     "op": "create_edge",
                     "edge_id": "edge-verifier-to-gap",
                     "from_node_id": "verifier-1",
-                    "from_port": "verification_result",
+                    "from_port": "verification_report",
                     "to_node_id": "planner-gap",
                     "to_port": "verification_evidence",
-                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
                 },
             ],
         ),
@@ -180,7 +180,7 @@ def test_planner_patch_binds_dynamic_feature_hidden_oracle_command() -> None:
                     "to_node_id": "check-final",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
                 },
             ],
         ),
@@ -306,7 +306,7 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                     "to_node_id": "planner-gap",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
                 },
                 {
                     "op": "create_edge",
@@ -336,7 +336,7 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                     "to_node_id": "check-final",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
                 },
             ],
         ),
@@ -707,15 +707,16 @@ def _drive_region_to_accepted(events: list[EventEnvelope]) -> list[EventEnvelope
                     "record_id": "verification-1",
                     "record_kind": "verification",
                     "candidate_id": "candidate-1",
-                    "verdict": "passed",
+                    "outcome": "passed",
                     "value": {
+                        "outcome": "passed",
                         "grades": [
                             {
                                 "requirement_id": "R-1",
                                 "grade": "A",
                                 "reason": "candidate satisfies requirement",
                             }
-                        ]
+                        ],
                     },
                 },
                 {

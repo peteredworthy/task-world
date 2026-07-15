@@ -592,7 +592,6 @@ def _verification_record(node_id: str) -> dict[str, object]:
         "schema": "VerificationReport",
         "candidate_id": candidate_id,
         "outcome": "passed",
-        "verdict": "passed",
         "value": {
             "outcome": "passed",
             "grades": [{"requirement_id": "rubric", "grade": "pass"}],

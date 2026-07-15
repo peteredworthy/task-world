@@ -2363,7 +2363,7 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
                         "producer_node_id": "verifier-1",
                         "port": "verification_report",
                         "candidate_id": "candidate-1",
-                        "verdict": "failed",
+                        "outcome": "failed",
                         "value": {
                             "outcome": "failed",
                             "grades": [{"requirement_id": "req-1", "grade": "C"}],

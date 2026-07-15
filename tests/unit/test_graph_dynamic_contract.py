@@ -145,7 +145,7 @@ _VERIFICATION_TO_GAP = _edge(
     "verification_report",
     "planner-gap",
     "verification_evidence",
-    ["verification", "check_result"],
+    ["verification_report", "check_result"],
 )
 _CORRECTIVE_WORKER = {
     "op": "create_node",
@@ -193,7 +193,7 @@ _INVARIANT_EDGE = _edge(
     "verification_report",
     "check-final",
     "verification_evidence",
-    ["verification", "check_result"],
+    ["verification_report", "check_result"],
 )
 
 
@@ -256,7 +256,7 @@ CONTRACT_CASES: list[tuple[str, list[dict[str, Any]], str, bool, str | None]] = 
                 "verification_report",
                 "c",
                 "verification_evidence",
-                ["verification", "check_result"],
+                ["verification_report", "check_result"],
             ),
         ],
         "gap_planner",

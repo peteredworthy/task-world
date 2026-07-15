@@ -436,7 +436,7 @@ def _less_used_contract_ops() -> list[dict[str, Any]]:
             "to_node_id": "gap-planner-1",
             "to_port": "verification_evidence",
             "required": True,
-            "accepted_record_selector": {"record_kinds": ["verification", "check_result"]},
+            "accepted_record_selector": {"record_kinds": ["verification_report", "check_result"]},
             "prompt_hydration_policy": "artifact_reference",
         },
         {

@@ -1803,7 +1803,6 @@ def test_patch_create_edge_backfills_existing_verification_record() -> None:
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-1",
                 "outcome": "passed",
-                "verdict": "passed",
                 "value": {"outcome": "passed", "grades": []},
             },
             4,
@@ -1985,15 +1984,16 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
                         "port": "verification_report",
                         "schema": "VerificationReport",
                         "candidate_id": "candidate-1",
-                        "verdict": "passed",
+                        "outcome": "passed",
                         "value": {
+                            "outcome": "passed",
                             "grades": [
                                 {
                                     "requirement_id": "R-1",
                                     "grade": "A",
                                     "reason": "candidate satisfies requirement",
                                 }
-                            ]
+                            ],
                         },
                     }
                 ],
@@ -2123,7 +2123,7 @@ def test_verifier_callback_rejects_verification_record_with_status_key() -> None
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
     assert "verification record at index 0 is invalid" in output[0].payload["reason"]
-    assert "uses outcome, not status" in output[0].payload["reason"]
+    assert "Extra inputs are not permitted" in output[0].payload["reason"]
 
 
 def test_verifier_callback_failed_output_has_explicit_failed_outcome() -> None:
@@ -2189,15 +2189,16 @@ def test_verifier_callback_failed_output_has_explicit_failed_outcome() -> None:
                         "port": "verification_report",
                         "schema": "VerificationReport",
                         "candidate_id": "candidate-1",
-                        "verdict": "failed",
+                        "outcome": "failed",
                         "value": {
+                            "outcome": "failed",
                             "grades": [
                                 {
                                     "requirement_id": "R-1",
                                     "grade": "C",
                                     "reason": "missing regression evidence",
                                 }
-                            ]
+                            ],
                         },
                     }
                 ],
@@ -2284,8 +2285,8 @@ def test_verifier_callback_rejects_completion_without_grades() -> None:
                         "port": "verification_report",
                         "schema": "VerificationReport",
                         "candidate_id": "candidate-1",
-                        "verdict": "passed",
-                        "value": {"grades": []},
+                        "outcome": "passed",
+                        "value": {"outcome": "passed", "grades": []},
                     }
                 ],
             },
@@ -2375,7 +2376,7 @@ def test_verifier_callback_rejects_stale_status_with_outcome() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "uses outcome, not status" in output[0].payload["reason"]
+    assert "Extra inputs are not permitted" in output[0].payload["reason"]
 
 
 def test_verifier_callback_rejects_report_shaped_output_with_value_status() -> None:
@@ -2458,7 +2459,7 @@ def test_verifier_callback_rejects_report_shaped_output_with_value_status() -> N
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "value uses outcome, not status" in output[0].payload["reason"]
+    assert "Extra inputs are not permitted" in output[0].payload["reason"]
 
 
 def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding() -> None:
@@ -2576,7 +2577,7 @@ def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding
                         "port": "verification_result",
                         "schema": "VerificationReport",
                         "candidate_id": "candidate-fix",
-                        "verdict": "passed",
+                        "verdict": "pass",
                         "value": {
                             "grades": [
                                 {
@@ -2601,6 +2602,9 @@ def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding
         "lease_released",
     ]
     assert output[1].payload["port"] == "verification_report"
+    assert output[1].payload["outcome"] == "passed"
+    assert output[1].payload["value"]["outcome"] == "passed"
+    assert "verdict" not in output[1].payload
     assert output[3].payload == {
         "edge_id": "edge-corrective-verifier-final",
         "to_node_id": "check-final",
@@ -2677,7 +2681,11 @@ def test_verifier_callback_rejects_unbound_verification_candidate() -> None:
                         "port": "verification_report",
                         "schema": "VerificationReport",
                         "candidate_id": "other-candidate",
-                        "verdict": "passed",
+                        "outcome": "passed",
+                        "value": {
+                            "outcome": "passed",
+                            "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                        },
                     }
                 ],
             },
@@ -2742,15 +2750,16 @@ def test_verifier_callback_rejects_mismatched_candidate_record_citation() -> Non
                         "schema": "VerificationReport",
                         "candidate_id": "candidate-1",
                         "candidate_record_ids": ["candidate-other"],
-                        "verdict": "passed",
+                        "outcome": "passed",
                         "value": {
+                            "outcome": "passed",
                             "grades": [
                                 {
                                     "requirement_id": "R-1",
                                     "grade": "A",
                                     "reason": "candidate satisfies requirement",
                                 }
-                            ]
+                            ],
                         },
                     }
                 ],
@@ -2966,7 +2975,11 @@ def test_worker_smuggled_verification_record_rejected_atomically() -> None:
                         "port": "verification_report",
                         "schema": "VerificationReport",
                         "candidate_id": "candidate-1",
-                        "verdict": "passed",
+                        "outcome": "passed",
+                        "value": {
+                            "outcome": "passed",
+                            "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                        },
                     }
                 ],
             },
@@ -3696,7 +3709,7 @@ def test_patch_create_edge_preserves_producer_class_constraints() -> None:
                     "to_node_id": "check-final",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification"]},
+                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
                 }
             ],
         },
@@ -3804,7 +3817,7 @@ def test_submit_patch_rejects_legacy_verification_selector_value_status() -> Non
                     "to_node_id": "planner-gap",
                     "to_port": "verification_evidence",
                     "accepted_record_selector": {
-                        "record_kinds": ["verification"],
+                        "record_kinds": ["verification_report"],
                         "value_matches": {"status": "failed"},
                     },
                 }
@@ -3897,7 +3910,7 @@ def test_seed_compiled_events_rejects_mixed_invalid_legacy_selector_kind() -> No
                         "to_node_id": "planner-gap",
                         "to_port": "verification_evidence",
                         "accepted_record_selector": {
-                            "record_kinds": ["verification", "bogus"],
+                            "record_kinds": ["verification_report", "bogus"],
                         },
                     },
                     1,
@@ -5926,7 +5939,6 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-old",
                 "outcome": "passed",
-                "verdict": "passed",
                 "value": {
                     "outcome": "passed",
                     "grades": [{"requirement_id": "R-1", "grade": "A"}],
@@ -5945,7 +5957,6 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-fix",
                 "outcome": "failed",
-                "verdict": "failed",
                 "value": {
                     "outcome": "failed",
                     "grades": [{"requirement_id": "R-1", "grade": "C"}],
@@ -5959,7 +5970,7 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
                 "node_id": "verifier-corrective",
                 "verifier_node_id": "verifier-corrective",
                 "candidate_id": "candidate-fix",
-                "verdict": "failed",
+                "outcome": "failed",
                 "record_id": "verification-fix-failed",
                 "task_region_id": "corrective_work_region",
             },
@@ -6081,12 +6092,16 @@ def test_schedule_tick_does_not_duplicate_existing_failed_verification_recovery(
             {
                 "record_id": "verification-implementation-failed",
                 "record_kind": "verification",
+                "record_type": "verification_report",
                 "producer_node_id": "verifier-implementation",
                 "port": "verification_report",
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-1",
-                "verdict": "failed",
-                "value": {"grades": [{"requirement_id": "R-1", "grade": "C"}]},
+                "outcome": "failed",
+                "value": {
+                    "outcome": "failed",
+                    "grades": [{"requirement_id": "R-1", "grade": "C"}],
+                },
             },
             6,
         ),
@@ -6096,7 +6111,7 @@ def test_schedule_tick_does_not_duplicate_existing_failed_verification_recovery(
                 "node_id": "verifier-implementation",
                 "verifier_node_id": "verifier-implementation",
                 "candidate_id": "candidate-1",
-                "verdict": "failed",
+                "outcome": "failed",
                 "record_id": "verification-implementation-failed",
                 "task_region_id": "implementation-region",
             },
@@ -6232,12 +6247,16 @@ def test_passed_corrective_verifier_releases_final_check_without_recovery() -> N
             {
                 "record_id": "verification-fix-passed",
                 "record_kind": "verification",
+                "record_type": "verification_report",
                 "producer_node_id": "verifier-corrective",
                 "port": "verification_report",
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-fix",
-                "verdict": "passed",
-                "value": {"grades": [{"requirement_id": "R-1", "grade": "A"}]},
+                "outcome": "passed",
+                "value": {
+                    "outcome": "passed",
+                    "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                },
             },
             8,
         ),
@@ -6247,7 +6266,7 @@ def test_passed_corrective_verifier_releases_final_check_without_recovery() -> N
                 "node_id": "verifier-corrective",
                 "verifier_node_id": "verifier-corrective",
                 "candidate_id": "candidate-fix",
-                "verdict": "passed",
+                "outcome": "passed",
                 "record_id": "verification-fix-passed",
                 "task_region_id": "corrective_work_region",
             },
@@ -6331,8 +6350,11 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-1",
                 "task_region_id": "implementation-region",
-                "verdict": "passed",
-                "value": {"grades": [{"requirement_id": "R-1", "grade": "A"}]},
+                "outcome": "passed",
+                "value": {
+                    "outcome": "passed",
+                    "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                },
             },
             4,
         ),
@@ -6342,7 +6364,7 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
                 "node_id": "verifier-implementation",
                 "verifier_node_id": "verifier-implementation",
                 "candidate_id": "candidate-1",
-                "verdict": "passed",
+                "outcome": "passed",
                 "record_id": "verification-implementation-passed",
                 "task_region_id": "implementation-region",
             },
@@ -6531,7 +6553,11 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
                 "schema": "VerificationReport",
                 "candidate_id": "candidate-1",
                 "task_region_id": "implementation-region",
-                "verdict": "passed",
+                "outcome": "passed",
+                "value": {
+                    "outcome": "passed",
+                    "grades": [{"requirement_id": "R-1", "grade": "A"}],
+                },
             },
             2,
         ),
@@ -6541,7 +6567,7 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
                 "node_id": "verifier-implementation",
                 "verifier_node_id": "verifier-implementation",
                 "candidate_id": "candidate-1",
-                "verdict": "passed",
+                "outcome": "passed",
                 "record_id": "verification-implementation-passed",
                 "task_region_id": "implementation-region",
             },
@@ -8526,7 +8552,7 @@ def test_callback_binds_required_input_by_wildcard_producer_class_edge() -> None
                 "to_node_id": "check-final",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["verification"]},
+                "accepted_record_selector": {"record_kinds": ["verification_report"]},
             },
             7,
         ),

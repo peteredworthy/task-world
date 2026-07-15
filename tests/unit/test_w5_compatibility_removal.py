@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from orchestrator.graph import GraphPatchAcceptedPayload, NodeStateChangedPayload, build_projection
 from orchestrator.graph import (
@@ -41,6 +41,7 @@ def test_historical_compatibility_symbols_are_absent() -> None:
         "_generic_output_record_payload",
         "_legacy_requirement_evidence_blockers",
         "_DictCompatibleProjection",
+        "normalize_legacy_membership",
     ):
         assert symbol not in source
 
@@ -110,9 +111,12 @@ def test_output_replay_accepts_each_explicit_generic_discriminator(record_type: 
 
 
 @pytest.mark.parametrize("model", [EdgeProjection, InputBindingProjection, LeaseProjection])
-def test_typed_projections_have_no_mapping_methods(model: type[object]) -> None:
-    assert "get" not in model.__dict__
-    assert "__getitem__" not in model.__dict__
+def test_typed_projections_reject_mapping_access(model: type[BaseModel]) -> None:
+    projection = model.model_construct()
+    with pytest.raises(AttributeError):
+        getattr(projection, "get")
+    with pytest.raises(TypeError):
+        projection["node_id"]
 
 
 @pytest.mark.parametrize(

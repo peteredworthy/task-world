@@ -458,7 +458,7 @@ def _fr09_gap_planner_probe_ops() -> list[dict[str, Any]]:
             "to_node_id": "gap-planner-1",
             "to_port": "verification_evidence",
             "required": True,
-            "accepted_record_selector": {"record_kinds": ["verification"]},
+            "accepted_record_selector": {"record_kinds": ["verification_report"]},
             "prompt_hydration_policy": "artifact_reference",
         },
     ]

@@ -3,12 +3,14 @@
 from typing import Any, TypeVar
 
 import pytest
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
+    AnalysisSummaryValue,
     AnalysisSummaryRecord,
+    ArtifactReferenceValue,
     ArtifactReferenceRecord,
     Authority,
     AuthorityDecisionRecord,
@@ -17,14 +19,18 @@ from orchestrator.graph.models import (
     CandidateProjection,
     CandidateRecord,
     CheckResultRecord,
+    CheckResultValue,
     CompletionDecisionRecord,
     DecisionRequestRecord,
     DecisionRecord,
     EdgeModel,
     EventEnvelope,
     FileStateRecord,
+    FileEntry,
     FailureRecord,
+    FailureRecordValue,
     GapClassificationRecord,
+    GapClassificationValue,
     GraphRecord,
     GraphRecordKind,
     GraphPatchProposalRecord,
@@ -40,13 +46,18 @@ from orchestrator.graph.models import (
     OutputRecord,
     PatchEnvelope,
     PatchOp,
+    PlannerChainRegionPayload,
     PortModel,
     RecordSelector,
     RequirementRecord,
+    RequirementRecordValue,
     RecoveryPlanRecord,
+    RecoveryPlanValue,
     ResourceClaim,
     RoutineSnapshotRecord,
+    RoutineSnapshotValue,
     RunContextRecord,
+    RunContextValue,
     RunLifecycleState,
     RunModel,
     VerificationReportRecord,
@@ -117,6 +128,136 @@ def test_node_membership_round_trips() -> None:
             "execution_id": "exec-build-A-2-1",
         },
     )
+
+
+@pytest.mark.parametrize(
+    ("model_type", "payload"),
+    [
+        (PortModel, {"port": "input", "required": 1}),
+        (
+            NodeMembership,
+            {
+                "task_region_id": "task-1",
+                "attempt_number": "2",
+                "candidate_id": "candidate-1",
+                "execution_id": "exec-1",
+            },
+        ),
+        (
+            RunContextValue,
+            {
+                "routine_id": "routine-1",
+                "routine_name": "Routine",
+                "planner_generation_budget": "2",
+            },
+        ),
+        (
+            RoutineSnapshotValue,
+            {
+                "routine_id": "routine-1",
+                "name": "Routine",
+                "content_hash": "hash",
+                "step_count": "1",
+                "task_count": 1,
+            },
+        ),
+        (
+            ArtifactReferenceValue,
+            {
+                "artifact_id": "artifact-1",
+                "artifact_type": "context",
+                "uri": "file:///artifact",
+                "summarize": "true",
+            },
+        ),
+        (
+            ArtifactReferenceValue,
+            {
+                "artifact_id": "artifact-1",
+                "artifact_type": "context",
+                "uri": "file:///artifact",
+                "max_tokens": "1000",
+            },
+        ),
+        (
+            ArtifactReferenceValue,
+            {
+                "artifact_id": "artifact-1",
+                "artifact_type": "context",
+                "uri": "file:///artifact",
+                "required": 1,
+            },
+        ),
+        (PlannerChainRegionPayload, {"generation_index": "1"}),
+        (
+            CheckResultValue,
+            {
+                "status": "passed",
+                "classification": "passed",
+                "command_id": "check-1",
+                "command_text": "true",
+                "command": {},
+                "worktree_path": "/tmp/worktree",
+                "base_snapshot_id": "S0",
+                "execution_id": "exec-1",
+                "duration_ms": "1",
+                "stdout": "",
+                "stderr": "",
+                "stdout_truncated": False,
+                "stderr_truncated": False,
+                "timeout_seconds": 60,
+                "environment_policy": {},
+            },
+        ),
+        (
+            GapClassificationValue,
+            {
+                "milestone_kind": "verification",
+                "classification": "no_gap",
+                "source": "verifier",
+                "task_region_id": "task-1",
+                "attempt_number": "1",
+            },
+        ),
+        (
+            AnalysisSummaryValue,
+            {
+                "summary": "summary",
+                "source_record_ids": [],
+                "lossy": 1,
+                "omitted_details": [],
+            },
+        ),
+        (RequirementRecordValue, {"id": "R-1", "text": "Requirement", "must": "true"}),
+        (
+            FailureRecordValue,
+            {
+                "failed_node_id": "worker-1",
+                "phase": "runtime",
+                "error_class": "process_exit",
+                "retryable": 1,
+            },
+        ),
+        (
+            RecoveryPlanValue,
+            {
+                "action": "retry",
+                "responsible_actor": "controller",
+                "graph_changes": [],
+                "retry_after_seconds": "60",
+            },
+        ),
+        (FileEntry, {"path": "artifact.xml", "needs_gatekeeper": "false"}),
+        (FileEntry, {"path": "artifact.xml", "size_bytes": "42"}),
+        (FileEntry, {"path": "artifact.xml", "entropy": "4.2"}),
+        (FileEntry, {"path": "artifact.xml", "gatekeeper_confidence": "0.9"}),
+    ],
+)
+def test_w5_nested_scalar_models_reject_coercion(
+    model_type: type[BaseModel], payload: dict[str, Any]
+) -> None:
+    with pytest.raises(ValidationError):
+        model_type.model_validate(payload)
 
 
 def test_port_model_round_trips() -> None:
@@ -368,7 +509,6 @@ def test_verification_report_record_round_trips() -> None:
             "schema": "VerificationReport",
             "candidate_id": "candidate-A-1",
             "outcome": "passed",
-            "verdict": "passed",
             "candidate_record_ids": ["candidate-A-1"],
             "file_state_record_ids": ["file-state-A-1"],
             "evaluated_record_ids": ["candidate-A-1", "file-state-A-1"],
@@ -396,38 +536,63 @@ def test_verification_report_record_round_trips() -> None:
     )
 
 
-def test_verification_report_record_populates_failed_outcome_from_legacy_verdict() -> None:
-    record = VerificationReportRecord.model_validate(
-        {
-            "record_id": "verification-1",
-            "record_kind": "verification",
-            "record_type": "verification_report",
-            "producer_node_id": "verify-A-1",
-            "port": "verification_report",
-            "schema": "VerificationReport",
-            "candidate_id": "candidate-A-1",
-            "verdict": "failed",
-            "value": {
-                "grades": [
-                    {
-                        "requirement_id": "R-1",
-                        "grade": "C",
-                        "reason": "missing coverage",
-                    }
-                ]
-            },
-        }
-    )
+def test_verification_report_record_rejects_legacy_verdict_outcome() -> None:
+    with pytest.raises(ValidationError):
+        VerificationReportRecord.model_validate(
+            {
+                "record_id": "verification-1",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verify-A-1",
+                "port": "verification_report",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-A-1",
+                "verdict": "failed",
+                "value": {
+                    "grades": [
+                        {
+                            "requirement_id": "R-1",
+                            "grade": "C",
+                            "reason": "missing coverage",
+                        }
+                    ]
+                },
+            }
+        )
 
-    dumped = record.model_dump(mode="json")
 
-    assert dumped["outcome"] == "failed"
-    assert dumped["value"]["outcome"] == "failed"
-    assert dumped["value"]["grades"][0]["reason"] == "missing coverage"
+def test_verification_report_record_rejects_noncanonical_port() -> None:
+    with pytest.raises(ValidationError):
+        VerificationReportRecord.model_validate(
+            {
+                "record_id": "verification-1",
+                "record_kind": "verification",
+                "record_type": "verification_report",
+                "producer_node_id": "verify-A-1",
+                "port": "verification_result",
+                "schema": "VerificationReport",
+                "candidate_id": "candidate-A-1",
+                "outcome": "passed",
+                "value": {"outcome": "passed", "grades": []},
+            }
+        )
+
+
+def test_file_state_record_rejects_nested_membership_without_direct_fields() -> None:
+    with pytest.raises(ValidationError):
+        FileStateRecord.model_validate(
+            {
+                "record_id": "file-state-1",
+                "membership": {
+                    "task_region_id": "task-1",
+                    "candidate_id": "candidate-1",
+                },
+            }
+        )
 
 
 def test_verification_report_record_rejects_top_level_status() -> None:
-    with pytest.raises(ValueError, match="uses outcome, not status"):
+    with pytest.raises(ValidationError):
         VerificationReportRecord.model_validate(
             {
                 "record_id": "verification-1",
@@ -448,7 +613,7 @@ def test_verification_report_record_rejects_top_level_status() -> None:
 
 
 def test_verification_report_record_rejects_value_status() -> None:
-    with pytest.raises(ValueError, match="value uses outcome, not status"):
+    with pytest.raises(ValidationError):
         VerificationReportRecord.model_validate(
             {
                 "record_id": "verification-1",
@@ -483,7 +648,7 @@ def test_legacy_verification_selector_rejects_value_status_match() -> None:
     with pytest.raises(ValueError, match="unsupported selector value match: status"):
         RecordSelector.model_validate(
             {
-                "record_kinds": ["verification"],
+                "record_kinds": ["verification_report"],
                 "value_matches": {"status": "failed"},
             }
         )
@@ -491,14 +656,14 @@ def test_legacy_verification_selector_rejects_value_status_match() -> None:
 
 def test_legacy_selector_rejects_mixed_unknown_record_kind() -> None:
     with pytest.raises(ValueError, match="unknown selector record_kinds: bogus"):
-        RecordSelector.model_validate({"record_kinds": ["verification", "bogus"]})
+        RecordSelector.model_validate({"record_kinds": ["verification_report", "bogus"]})
 
 
-def test_legacy_verification_selector_normalizes_verdict_to_outcome() -> None:
+def test_legacy_verification_selector_normalizes_canonical_outcome() -> None:
     selector = RecordSelector.model_validate(
         {
-            "record_kinds": ["verification"],
-            "value_matches": {"verdict": "failed"},
+            "record_kinds": ["verification_report"],
+            "value_matches": {"outcome": "failed"},
         }
     )
 
@@ -507,6 +672,26 @@ def test_legacy_verification_selector_normalizes_verdict_to_outcome() -> None:
         "schema": "VerificationReport",
         "outcome": "failed",
     }
+
+
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {"record_kinds": ["verification"]},
+        {"record_kinds": ["verification_evidence"]},
+        {
+            "record_kinds": ["verification_report"],
+            "value_matches": {"verdict": "failed"},
+        },
+        {
+            "record_kinds": ["verification_report"],
+            "value_matches": {"outcome": "pass"},
+        },
+    ],
+)
+def test_verification_selector_rejects_noncanonical_aliases(selector: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        RecordSelector.model_validate(selector)
 
 
 def test_completion_decision_record_round_trips() -> None:

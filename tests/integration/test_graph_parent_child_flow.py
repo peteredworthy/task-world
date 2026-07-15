@@ -298,16 +298,19 @@ async def _drive_region(
                 {
                     "record_id": f"verification-{prefix}",
                     "record_kind": "verification",
+                    "port": "verification_report",
+                    "schema": "VerificationReport",
                     "candidate_id": f"candidate-{prefix}",
-                    "verdict": "passed",
+                    "outcome": "passed",
                     "value": {
+                        "outcome": "passed",
                         "grades": [
                             {
                                 "requirement_id": "R-1",
                                 "grade": "A",
                                 "reason": "candidate satisfies requirement",
                             }
-                        ]
+                        ],
                     },
                 },
                 {

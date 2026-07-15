@@ -1433,7 +1433,7 @@ def _is_verification_report_record_payload(payload: dict[str, Any]) -> bool:
     return (
         payload.get("record_type") == "verification_report"
         or payload.get("record_kind") == "verification"
-        or payload.get("port") in {"verification_report", "verification_result"}
+        or payload.get("port") == "verification_report"
         or payload.get("schema") == "VerificationReport"
     )
 
