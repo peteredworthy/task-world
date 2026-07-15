@@ -91,6 +91,35 @@ def test_direct_authority_controls_take_precedence_over_nested_authority() -> No
     assert created.preconditions == ["direct_precondition"]
 
 
+def test_explicit_empty_direct_controls_take_precedence_on_node_created() -> None:
+    projection = build_projection(
+        [
+            event(
+                "node_created",
+                {
+                    "node_id": "worker-1",
+                    "kind": "worker",
+                    "authority": {
+                        "resource_claims": [
+                            {"mode": "write", "scope": "repo", "paths": ["nested"]}
+                        ],
+                        "allowed_actions": ["nested_action"],
+                        "preconditions": ["nested_precondition"],
+                    },
+                    "resource_claims": [],
+                    "allowed_actions": [],
+                    "preconditions": [],
+                },
+            )
+        ]
+    )
+    created = projection["node_creation_payloads"]["worker-1"]
+
+    assert created.resource_claims == []
+    assert created.allowed_actions == []
+    assert created.preconditions == []
+
+
 def test_explicit_empty_authority_change_controls_override_nested_authority() -> None:
     projection = build_projection(
         [

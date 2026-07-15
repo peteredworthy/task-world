@@ -1456,6 +1456,7 @@ def _node_detail_controls_from_summary(
     summary: GraphNodeDetailSummary,
 ) -> dict[str, Any]:
     resource_claims: list[dict[str, Any]] = []
+    resource_claims_resolved = False
     allowed_actions: list[str] = []
     preconditions: list[str] = []
     command_definition: dict[str, Any] | None = None
@@ -1468,19 +1469,20 @@ def _node_detail_controls_from_summary(
         if payload.get("node_id") != summary.node_id:
             continue
         event_claims = _resource_claims_from_payload(payload)
-        if event_claims:
+        if event_claims is not None:
             resource_claims = event_claims
+            resource_claims_resolved = True
         event_allowed_actions = _string_list_from_payload(
             payload,
             "allowed_actions",
         )
-        if event_allowed_actions:
+        if event_allowed_actions is not None:
             allowed_actions = event_allowed_actions
         event_preconditions = _string_list_from_payload(
             payload,
             "preconditions",
         )
-        if event_preconditions:
+        if event_preconditions is not None:
             preconditions = event_preconditions
         raw_command_definition = payload.get("command_definition")
         if isinstance(raw_command_definition, dict):
@@ -1497,7 +1499,7 @@ def _node_detail_controls_from_summary(
     ):
         preconditions = [*preconditions, "has_command_definition"]
 
-    if not resource_claims:
+    if not resource_claims_resolved:
         for lease in summary.leases:
             raw_claims = lease.get("resource_claims")
             if isinstance(raw_claims, list):
@@ -1518,14 +1520,14 @@ def _node_detail_controls_from_summary(
     }
 
 
-def _resource_claims_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    raw_claims = payload.get("resource_claims")
-    if not isinstance(raw_claims, list) or not raw_claims:
+def _resource_claims_from_payload(payload: dict[str, Any]) -> list[dict[str, Any]] | None:
+    raw_claims = payload["resource_claims"] if "resource_claims" in payload else None
+    if not isinstance(raw_claims, list):
         authority = payload.get("authority")
         if isinstance(authority, dict):
             raw_claims = cast(dict[str, Any], authority).get("resource_claims")
     if not isinstance(raw_claims, list):
-        return []
+        return None
     return [
         dict(cast(dict[str, Any], claim))
         for claim in cast(list[Any], raw_claims)
@@ -1533,14 +1535,14 @@ def _resource_claims_from_payload(payload: dict[str, Any]) -> list[dict[str, Any
     ]
 
 
-def _string_list_from_payload(payload: dict[str, Any], field: str) -> list[str]:
-    raw_values = payload.get(field)
-    if not isinstance(raw_values, list) or not raw_values:
+def _string_list_from_payload(payload: dict[str, Any], field: str) -> list[str] | None:
+    raw_values = payload[field] if field in payload else None
+    if not isinstance(raw_values, list):
         authority = payload.get("authority")
         if isinstance(authority, dict):
             raw_values = cast(dict[str, Any], authority).get(field)
     if not isinstance(raw_values, list):
-        return []
+        return None
     return [value for value in cast(list[Any], raw_values) if isinstance(value, str)]
 
 

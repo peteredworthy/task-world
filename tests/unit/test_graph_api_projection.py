@@ -39,6 +39,38 @@ def _event(
     )
 
 
+def _node_detail_summary(
+    payload: dict[str, object],
+    *,
+    leases: list[dict[str, object]] | None = None,
+) -> GraphNodeDetailSummary:
+    return GraphNodeDetailSummary(
+        run_id="run-node",
+        node_id="worker-1",
+        position=1,
+        kind="worker",
+        role="builder",
+        state="planned",
+        task_region_id="task-1",
+        input_ports={},
+        output_records=[],
+        file_state_records=[],
+        leases=leases or [],
+        active_lease=None,
+        callback_history=[],
+        events=[
+            {
+                "event_id": "node-created-event",
+                "event_type": "node_created",
+                "run_id": "run-node",
+                "position": 1,
+                "timestamp": FakeClock().now().isoformat(),
+                "payload": {"node_id": "worker-1", **payload},
+            }
+        ],
+    )
+
+
 @pytest.fixture
 async def session() -> AsyncGenerator[AsyncSession, None]:
     engine = create_engine(":memory:")
@@ -185,6 +217,46 @@ def test_build_node_detail_exposes_contract_and_runtime_controls_separately() ->
         "cmd": "uv run pytest tests/unit/test_example.py -q",
         "timeout_seconds": 30,
     }
+
+
+def test_build_node_detail_falls_back_to_nested_authority_when_direct_controls_omitted() -> None:
+    summary = _node_detail_summary(
+        {
+            "authority": {
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["nested"]}],
+                "allowed_actions": ["nested_action"],
+                "preconditions": ["nested_precondition"],
+            },
+        }
+    )
+
+    detail = build_node_detail_response_from_summary(summary)
+
+    assert detail.resource_claims == [{"mode": "write", "scope": "repo", "paths": ["nested"]}]
+    assert detail.allowed_actions == ["nested_action"]
+    assert detail.preconditions == ["nested_precondition"]
+
+
+def test_build_node_detail_preserves_explicit_empty_direct_authority_controls() -> None:
+    summary = _node_detail_summary(
+        {
+            "authority": {
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["nested"]}],
+                "allowed_actions": ["nested_action"],
+                "preconditions": ["nested_precondition"],
+            },
+            "resource_claims": [],
+            "allowed_actions": [],
+            "preconditions": [],
+        },
+        leases=[{"resource_claims": [{"mode": "write", "scope": "repo", "paths": ["lease"]}]}],
+    )
+
+    detail = build_node_detail_response_from_summary(summary)
+
+    assert detail.resource_claims == []
+    assert detail.allowed_actions == []
+    assert detail.preconditions == []
 
 
 def test_full_node_detail_from_summary_hydrates_compact_positions_only() -> None:
