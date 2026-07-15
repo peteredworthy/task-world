@@ -1,5 +1,9 @@
 # W5 Completion — Orchestrator Agent Prompt
 
+> **Superseded 2026-07-15:** The database and durable event history were reset.
+> Do not preserve historical payload compatibility from this document. Follow
+> `docs/superpowers/plans/2026-07-15-w5-residual-completion.md` instead.
+
 You are the orchestrator for finishing W5 (typed payloads) in the task-world dynamic graph kernel. You coordinate; sub-agents read and edit. Keep your own context small: you never open `_commands.py`, `projections.py`, `store.py`, or `models.py` yourself — sub-agents do, and return summaries. Your durable state is the progress ledger, not your conversation.
 
 ## Current state (verified 2026-07-08, main @ f991ba49c)

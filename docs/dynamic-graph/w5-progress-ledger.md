@@ -1,5 +1,9 @@
 # W5 Typed Payloads Progress Ledger
 
+> **Superseded 2026-07-15:** The database and durable event history were reset.
+> Do not preserve historical payload compatibility from this document. Follow
+> `docs/superpowers/plans/2026-07-15-w5-residual-completion.md` instead.
+
 Seed branch: `main`
 Seed SHA: `bd41b5b24756fec7441cbfd0ee150739b9afede7`
 Work branch: `codex/w5-typed-payloads`
@@ -468,3 +472,29 @@ GREEN (independently rerun by a fresh final verifier):
   - Result: passed, 0 errors.
 - `git diff --check`
   - Result: passed.
+
+## W5 Residual Verification Benchmarks (2026-07-15)
+
+The representative focused, graph, repository, lint, and scoped type-check
+gates were each run with `/usr/bin/time -p`. Serial and xdist graph selections
+collected the same 844 tests and both passed.
+
+| Command | Result | real | user | sys |
+|---|---|---:|---:|---:|
+| `uv run pytest tests/unit/test_node_lifecycle_event_payloads.py -q` | 8 passed | 2.15s | 6.11s | 1.34s |
+| `uv run pytest tests/unit/test_fixture_corpus.py -q` | 7 passed | 8.17s | 13.36s | 5.02s |
+| `uv run pytest tests/ -k graph -q` | 844 passed | 125.11s | 249.87s | 42.54s |
+| `uv run pytest tests/ -k graph -q -n auto --dist worksteal` | 844 passed | 52.24s | 262.82s | 40.61s |
+| `uv run pytest tests/ -q -n auto --dist worksteal` | 4542 passed, 3 skipped, 3 warnings | 100.64s | 438.17s | 135.70s |
+| `uv run ruff check .` | passed | 0.15s | 0.03s | 0.07s |
+| `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime` | 0 errors, 0 warnings, 0 informations | 3.93s | 6.62s | 0.30s |
+
+## W5 Residual Verification Matrix
+
+| Stage | Builder gate | Fresh verifier gate |
+|---|---|---|
+| Batch 1 iteration | Changed focused files + fixture corpus | none |
+| Batch 1 candidate | none | focused aggregate, fixture corpus, graph selection with xdist, Ruff, scoped Pyright |
+| Batch 2 iteration | Changed command/API/model files | none |
+| Batch 2 candidate | none | command aggregate, API integration, graph selection with xdist, Ruff, scoped Pyright |
+| Closeout | none | full backend with xdist, Ruff, final Pyright |

@@ -1,5 +1,9 @@
 # W5 Typed Payloads Completion Implementation Plan
 
+> **Superseded 2026-07-15:** The database and durable event history were reset.
+> Do not preserve historical payload compatibility from this document. Follow
+> `docs/superpowers/plans/2026-07-15-w5-residual-completion.md` instead.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Complete W5 by typing every remaining graph event and command payload, deriving persistence allowlists from a typed registry, typing verification grade rows, and closing the W5 documentation with reproducible verification evidence.

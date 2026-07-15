@@ -1,5 +1,9 @@
 # W5 Typed Payloads Completion Design
 
+> **Superseded 2026-07-15:** The database and durable event history were reset.
+> Do not preserve historical payload compatibility from this document. Follow
+> `docs/superpowers/plans/2026-07-15-w5-residual-completion.md` instead.
+
 ## Objective
 
 Complete the remaining W5 typed-payload migration from commit `7ec4af0ba` while
