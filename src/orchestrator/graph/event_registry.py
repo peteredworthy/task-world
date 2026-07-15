@@ -1,9 +1,14 @@
 """Canonical ownership for graph event names."""
 
-from types import MappingProxyType
 from collections.abc import Iterable, Mapping
+from types import MappingProxyType
 
 from pydantic import BaseModel
+
+
+RETIRED_EVENT_TYPES = frozenset(
+    {"region_marked_suspect", "authority_narrowed", "candidate_superseded"}
+)
 
 
 # Immutable producer metadata is the sole internal-name declaration. Every
@@ -102,6 +107,10 @@ def validate_event_ownership(
     """Reject producer declarations that omit or retain canonical internal names."""
     declared = _event_type_union(event_types_by_producer.values())
     canonical_internal = canonical_event_types - EXTERNAL_EVENT_TYPES
+    retired_overlap = RETIRED_EVENT_TYPES & (declared | canonical_event_types)
+    if retired_overlap:
+        retired_names = ", ".join(sorted(retired_overlap))
+        raise ValueError(f"retired event types cannot be owned: {retired_names}")
     if declared != canonical_internal:
         mismatch = sorted(declared ^ canonical_internal)
         raise ValueError(f"producer ownership mismatch: {', '.join(mismatch)}")
@@ -112,3 +121,6 @@ def validate_emitted_event_type(producer: str, event_type: str) -> None:
     registered_event_types = INTERNAL_EVENT_TYPES_BY_PRODUCER.get(producer, frozenset())
     if event_type not in registered_event_types:
         raise ValueError(f"unregistered event type for {producer}: {event_type}")
+
+
+validate_event_ownership(INTERNAL_EVENT_TYPES_BY_PRODUCER, CANONICAL_EVENT_TYPES)

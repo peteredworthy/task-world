@@ -13,6 +13,7 @@ from orchestrator.graph.event_registry import (
     EVENT_PAYLOAD_MODELS,
     EXTERNAL_EVENT_TYPES,
     INTERNAL_EVENT_TYPES_BY_PRODUCER,
+    RETIRED_EVENT_TYPES,
     validate_emitted_event_type,
     validate_event_ownership,
 )
@@ -178,6 +179,7 @@ __all__ = [
     "EVENT_PAYLOAD_MODELS",
     "EXTERNAL_EVENT_TYPES",
     "INTERNAL_EVENT_TYPES_BY_PRODUCER",
+    "RETIRED_EVENT_TYPES",
     "EventEnvelope",
     "FakeClock",
     "FileStateRecord",

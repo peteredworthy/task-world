@@ -8,6 +8,7 @@ from orchestrator.graph import (
     CANONICAL_EVENT_TYPES,
     EXTERNAL_EVENT_TYPES,
     INTERNAL_EVENT_TYPES_BY_PRODUCER,
+    RETIRED_EVENT_TYPES,
     validate_emitted_event_type,
     validate_event_ownership,
 )
@@ -85,3 +86,23 @@ def test_event_ownership_rejects_a_canonical_event_omission() -> None:
 def test_removed_event_types_have_no_internal_producer_owner() -> None:
     owned_event_types = frozenset().union(*INTERNAL_EVENT_TYPES_BY_PRODUCER.values())
     assert not REMOVED_EVENT_TYPES & owned_event_types
+
+
+def test_retired_event_types_are_disjoint_from_producers_and_canonical_names() -> None:
+    owned_event_types = frozenset().union(*INTERNAL_EVENT_TYPES_BY_PRODUCER.values())
+    assert RETIRED_EVENT_TYPES == frozenset(
+        {"region_marked_suspect", "authority_narrowed", "candidate_superseded"}
+    )
+    assert RETIRED_EVENT_TYPES.isdisjoint(owned_event_types)
+    assert RETIRED_EVENT_TYPES.isdisjoint(CANONICAL_EVENT_TYPES)
+
+
+def test_event_ownership_rejects_reintroducing_a_retired_event() -> None:
+    reintroduced_registry = {
+        **INTERNAL_EVENT_TYPES_BY_PRODUCER,
+        "graph_command_factory": INTERNAL_EVENT_TYPES_BY_PRODUCER["graph_command_factory"]
+        | {"region_marked_suspect"},
+    }
+
+    with pytest.raises(ValueError, match="region_marked_suspect"):
+        validate_event_ownership(reintroduced_registry, CANONICAL_EVENT_TYPES)
