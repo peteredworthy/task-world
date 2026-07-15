@@ -12,6 +12,9 @@ from orchestrator.graph.event_registry import (
     CANONICAL_EVENT_TYPES,
     EVENT_PAYLOAD_MODELS,
     EXTERNAL_EVENT_TYPES,
+    INTERNAL_EVENT_TYPES_BY_PRODUCER,
+    validate_emitted_event_type,
+    validate_event_ownership,
 )
 from orchestrator.graph.compiler import compile_routine
 from orchestrator.graph.contracts import (
@@ -174,6 +177,7 @@ __all__ = [
     "EnvironmentFailureProjection",
     "EVENT_PAYLOAD_MODELS",
     "EXTERNAL_EVENT_TYPES",
+    "INTERNAL_EVENT_TYPES_BY_PRODUCER",
     "EventEnvelope",
     "FakeClock",
     "FileStateRecord",
@@ -281,5 +285,7 @@ __all__ = [
     "secret_name_matches",
     "support_evidence_freshness_from_projection",
     "validate_callback",
+    "validate_emitted_event_type",
+    "validate_event_ownership",
     "validate_patch",
 ]

@@ -12,6 +12,7 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     GraphProjection,
+    validate_emitted_event_type,
     apply_command,
     initial_projection,
     reduce_event,
@@ -181,6 +182,7 @@ class GraphController:
             if event.event_type != "lease_granted":
                 continue
             node_id = event.payload.get("node_id")
+            validate_emitted_event_type("graph_runtime_controller", "agent_dispatch_requested")
             expanded.append(
                 EventEnvelope(
                     event_id=self._id_gen.next_id("event"),

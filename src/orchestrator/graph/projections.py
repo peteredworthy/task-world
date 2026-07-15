@@ -2196,6 +2196,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         authority_payload = AuthorityDecisionRecordedPayload.model_validate(event.payload)
         _record_latest_authority_decision(next_state["authority_decisions"], authority_payload)
         _record_authority_decision(next_state, authority_payload)
+        _clear_authority_revision_blocker(next_state, authority_payload)
     elif event.event_type == "node_authority_changed":
         _record_authority_change(
             next_state, NodeAuthorityChangedPayload.model_validate(event.payload)
@@ -2815,6 +2816,13 @@ def _authority_revision_blockers(
         ]
     unresolved: dict[str, FinalInvariantBlocker] = {}
     for event in events:
+        if event.event_type == "authority_decision_recorded":
+            authority_payload = AuthorityDecisionRecordedPayload.model_validate(event.payload)
+            if authority_payload.decision in {"granted", "approved", "passed", "accepted"}:
+                authority_revision_id = _authority_decision_revision_id(authority_payload)
+                if authority_revision_id is not None:
+                    unresolved.pop(authority_revision_id, None)
+            continue
         payload = _authority_revision_payload_for_event(event)
         if payload is None:
             continue
@@ -4797,6 +4805,27 @@ def _record_authority_decision(
     passed = decision in {"granted", "approved", "passed", "accepted"}
     if isinstance(node_id, str):
         state["node_gate_decisions"][node_id] = passed
+
+
+def _clear_authority_revision_blocker(
+    state: GraphProjection, payload: AuthorityDecisionRecordedPayload
+) -> None:
+    if payload.decision not in {"granted", "approved", "passed", "accepted"}:
+        return
+    revision_id = _authority_decision_revision_id(payload)
+    if revision_id is not None:
+        state["authority_revision_blockers"].pop(revision_id, None)
+
+
+def _authority_decision_revision_id(payload: AuthorityDecisionRecordedPayload) -> str | None:
+    scope_value: object = payload.scope
+    if isinstance(scope_value, dict):
+        scope = cast(dict[str, Any], scope_value)
+        for key in ("revision_id", "requirement_version_id", "version_id"):
+            value = scope.get(key)
+            if isinstance(value, str) and value:
+                return value
+    return payload.record_id
 
 
 def _record_edge(state: GraphProjection, event: EventEnvelope) -> None:

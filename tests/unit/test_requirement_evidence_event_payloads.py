@@ -15,6 +15,7 @@ from orchestrator.graph import (
     initial_projection,
     project_final_invariant_blockers,
     projection_from_checkpoint,
+    projection_to_checkpoint,
     reduce_event,
 )
 from orchestrator.graph_runtime.store import (
@@ -158,6 +159,39 @@ def test_requirement_reducers_use_canonical_recorded_events() -> None:
     assert projection["active_requirement_versions"] == {"R-1": "R-1.v2"}
     assert projection["support_evidence"]["S-1"].requirement_version_id == "R-1.v2"
     assert set(projection["authority_revision_blockers"]) == {"R-1.v2"}
+
+
+def test_authority_decision_clears_matching_revision_blocker_in_history_and_checkpoint_tail() -> (
+    None
+):
+    revision = _event(
+        "requirement_revision_recorded",
+        {
+            "requirement_id": "R-1",
+            "version_id": "R-1.v2",
+            "classification": "semantic",
+        },
+        position=1,
+    )
+    decision = _event(
+        "authority_decision_recorded",
+        {
+            "node_id": "authority-request-1",
+            "decision": "granted",
+            "scope": {"revision_id": "R-1.v2"},
+        },
+        position=2,
+    )
+
+    checkpoint = projection_to_checkpoint(build_projection([revision]))
+
+    assert project_final_invariants([revision, decision]) == []
+    assert project_final_invariants(
+        [revision, decision]
+    ) == project_final_invariants_from_checkpoint(
+        checkpoint,
+        [decision],
+    )
 
 
 def test_requirement_and_support_producers_emit_typed_payloads() -> None:

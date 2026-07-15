@@ -21,6 +21,7 @@ from orchestrator.graph.contracts import (
     output_port_contract,
     validate_output_record,
 )
+from orchestrator.graph.event_registry import validate_emitted_event_type
 from orchestrator.graph.macros import expand_patch_macros
 from orchestrator.graph.models import (
     Actor,
@@ -5530,6 +5531,7 @@ def _event_factory(
     id_gen: IdGenerator,
 ) -> Callable[[str, dict[str, Any]], EventEnvelope]:
     def make_event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+        validate_emitted_event_type("graph_command_factory", event_type)
         typed_payload = (
             NodeCreatedPayload.model_validate(payload).model_dump(mode="json")
             if event_type == "node_created"

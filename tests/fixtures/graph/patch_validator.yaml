@@ -52,7 +52,7 @@
 - name: patch_stale_retired_region_rejected
   given_events:
     - node_created: {node_id: region-1, kind: planner, state: planned}
-    - region_marked_suspect: {region_node_ids: [region-1], reason: requirement_changed}
+    - plan_region_marked_suspect: {node_id: region-1, reason: requirement_changed}
   when_command:
     submit_patch:
       run_id: run-1

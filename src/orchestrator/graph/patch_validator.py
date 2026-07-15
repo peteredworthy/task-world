@@ -22,10 +22,7 @@ INVALIDATING_NODE_STATES = {"retired", "cancelled"}
 INVALIDATING_RUN_STATES = {"cancelling", "cancelled", "failed"}
 INVALIDATING_EVENT_TYPES = {
     "requirement_revision_recorded",
-    "authority_narrowed",
     "node_authority_changed",
-    "candidate_superseded",
-    "region_marked_suspect",
     "plan_region_marked_suspect",
     "graph_patch_accepted",
 }
