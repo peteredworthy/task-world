@@ -19,6 +19,9 @@ roots. Runtime-only `agent_dispatch_requested` and `command_recorded` are
 validated and JSON-dumped at their producer boundaries like every other
 canonical event.
 
+Accepted output records dispatch through the current 22-entry
+`OUTPUT_RECORD_MODELS_BY_TYPE` map; no generic or legacy fallback remains.
+
 `G/L/R/D` reports the per-event field count retained for graph projection,
 light graph, summary rebuild, and node detail. The generated global allowlists
 contain 101, 141, 159, and 84 sorted unique fields respectively.

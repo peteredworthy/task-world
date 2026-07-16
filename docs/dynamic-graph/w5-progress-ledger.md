@@ -1,8 +1,41 @@
 # W5 Typed Payloads Progress Ledger
 
-> **Superseded 2026-07-15:** The database and durable event history were reset.
-> Do not preserve historical payload compatibility from this document. Follow
-> `docs/superpowers/plans/2026-07-15-w5-residual-completion.md` instead.
+> **Compatibility-era sections superseded 2026-07-15:** The database and durable
+> event history were reset. Historical descriptions below of payload `extra`
+> maps, replay aliases, tolerant normalization, and pending commits record the
+> state at the time only; they are not current requirements. The authoritative
+> current state is the queue summary immediately below and the final closeout
+> section. The residual execution plan is
+> `docs/superpowers/plans/2026-07-15-w5-residual-completion.md`.
+
+## Authoritative Current Queue
+
+Status: **W5 closed; no W5 tasks remain queued.**
+
+- [x] Canonical ownership for all 46 event names.
+- [x] Exact strict payload models and explicit retention specs for all 46 events.
+- [x] Producer-boundary validation and canonical JSON serialization.
+- [x] Compatibility aliases, payload `extra`, generic record fallbacks, mapping
+  facades, and graph before validators removed.
+- [x] All 22 output-record discriminators and strict file-state/gatekeeper
+  envelopes validated.
+- [x] Four generated model-owned retention tuples verified.
+- [x] All 23 commands use strict payloads, exact typed handlers, separate
+  runtime context, and shared API/domain schemas.
+- [x] Strict exported `GradeRow` and typed verification grades.
+- [x] Batch 1, Batch 2, and final full verification gates passed.
+- [x] Event/projection inventories refreshed and W5 specification closed.
+
+W5.5 durable artifact storage and truncation recovery are a separate pending
+project, not an open W5 queue item.
+
+## Historical Execution Evidence
+
+Unless a section explicitly says it is authoritative current state, every
+status line below this heading reports status at the time that slice or gate was
+run. In particular, `pending commit` text is historical and is fully superseded
+by the closed queue above. Historical test commands and results are preserved
+unchanged.
 
 Seed branch: `main`
 Seed SHA: `bd41b5b24756fec7441cbfd0ee150739b9afede7`
@@ -10,7 +43,7 @@ Work branch: `codex/w5-typed-payloads`
 
 ## Phase 0 - Corpus Replay Parity Safety Net
 
-Status: complete in working tree, pending commit.
+Historical status at the time: complete in working tree, pending commit.
 
 Changes:
 - Added a corpus-level replay parity test over the graph YAML fixtures.
@@ -35,7 +68,7 @@ Notes:
 
 ## Phase 1 - Event Payload Inventory
 
-Status: complete in working tree, pending commit.
+Historical status at the time: complete in working tree, pending commit.
 
 Artifact:
 - `docs/dynamic-graph/w5-event-payload-inventory.md`
@@ -48,7 +81,7 @@ Notes:
 
 ## Cleanup Event Payload Slice
 
-Status: complete in working tree, pending commit.
+Historical status at the time: complete in working tree, pending commit.
 
 Scope:
 - Added typed event payload models for `cleanup_requested` and
@@ -90,7 +123,7 @@ GREEN:
 
 ## Lease Event Payload Slice
 
-Status: complete in working tree, pending commit.
+Historical status at the time: complete in working tree, pending commit.
 
 Scope:
 - Added typed event payload models for `lease_granted`, `lease_renewed`,
@@ -142,7 +175,7 @@ GREEN:
 
 ## Planner / Session Event Payload Slice
 
-Status: complete in working tree, pending commit.
+Historical status at the time: complete in working tree, pending commit.
 
 Scope:
 - Added a typed event payload model for `session_state_changed` in
@@ -189,7 +222,7 @@ GREEN:
 
 ## Patch Event Payload Slice
 
-Status: complete in working tree, pending commit.
+Historical status at the time: complete in working tree, pending commit.
 
 Scope:
 - Added typed event payload models for `graph_patch_accepted`,
@@ -572,7 +605,7 @@ Compatibility deletion:
   `values`, `__getitem__`, `__iter__`, or `__contains__`).
 
 Records:
-- Output acceptance dispatches through the explicit 21-entry
+- Output acceptance dispatches through the explicit 22-entry
   `OUTPUT_RECORD_MODELS_BY_TYPE` discriminator map. Missing and unknown nonempty
   discriminators are rejected; no generic output-record fallback survives.
 - Canonical record fields are parsed into typed record models before projection;
@@ -692,7 +725,7 @@ Completion criteria:
 - Compatibility removal: obsolete event aliases, generic/legacy record paths,
   projection mapping facades, selector normalization, payload `extra`, and graph
   before validators are absent from production source.
-- Record envelopes: the explicit 21-entry `OUTPUT_RECORD_MODELS_BY_TYPE` map
+- Record envelopes: the explicit 22-entry `OUTPUT_RECORD_MODELS_BY_TYPE` map
   validates complete canonical records and rejects missing/unknown
   discriminators. File-state accepted/rejected envelopes and nested gatekeeper
   verdict/cost rows are strict.

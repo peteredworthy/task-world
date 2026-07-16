@@ -1,95 +1,171 @@
-# W5 — Typed event payloads end-to-end (incremental)
+# W5 - Typed Payloads End-to-End
 
 Status: **closed 2026-07-16**.
 
 Addresses weakness **W5** (medium) and improvement **#6** in
 `dynamic-graph-implementation-review.html` (re-assessed 2026-07-03).
 
-## Problem
+## Historical Origin
 
-Records and node payloads have Pydantic models in `graph/models.py` but are validated
-at the boundary and handled as `dict[str, Any]` everywhere else — `GraphProjection`
-(a TypedDict of `dict[str, Any]` maps), the reducers, and command helpers all use
-defensive extraction shims (`_payload_string_list`, `_is_*_record_payload`,
-`_*_payload_for_validation`, …). Shape drift is caught at runtime, not by mypy.
+W5 began as an incremental proposal to type one read-side payload family at a
+time while preserving historical event-shape tolerance. That proposal is not an
+operative requirement. The database and durable event history were reset before
+the residual completion work, so the final architecture deliberately removes
+the compatibility aliases, permissive payload `extra` maps, normalization
+adapters, mapping facades, and generic record fallbacks described by the early
+proposal.
 
-The typed-edge-selectors commit (`478055890`) already proved the incremental path:
-type one family, delete its shims, repeat.
+## Scope
 
-## Scope (bounded — one slice)
+W5 covers the complete current graph payload boundary:
 
-Convert **one payload family per slice**. First slice: **output records** (they already
-have Pydantic models and the densest shim usage). Later slices repeat the recipe for
-verification results, check results, and node payloads. Do not attempt all families
-at once.
+- 46 canonical event names, their exact payload models, producer ownership, and
+  per-event compact-read retention specifications.
+- Validation and canonical JSON serialization at every current event producer.
+- Strict parsing of canonical events during replay and reduction, without
+  retired event aliases or historical payload normalization.
+- The 22-discriminator typed output-record registry, strict file-state records,
+  strict gatekeeper verdict/cost rows, and typed projection values.
+- 23 strict command payloads, exact typed handlers, separate runtime context,
+  and shared command/API schemas.
+- Strict `GradeRow` values in verification reports.
+
+Durable check-output artifact storage and recovery of truncated stdout/stderr
+belong to W5.5 and are explicitly outside W5.
 
 ## Architecture
 
-1. Define a discriminated union for the family's event payloads (discriminator:
-   `event_type` or the existing record `kind` field — inspect which is already
-   reliable), reusing the existing models in `models.py`.
-2. Parse once at the fold: `reduce_event` converts the raw payload into the typed
-   model and stores the *typed* object in the projection field (change that
-   `GraphProjection` field's annotation from `dict[str, Any]` to the model type).
-   Malformed payloads must behave exactly as today (inspect current shim behavior:
-   skip vs. default), not raise — the log may contain historical events.
-3. Migrate readers of that projection field to attribute access; delete each
-   `_is_*_record_payload` / extraction shim that no longer has callers.
-4. Serialization boundary: events on disk stay JSON dicts — typing lives from
-   fold onward. Snapshot persistence (if W3 landed) must round-trip the typed field.
+### Canonical Events
+
+`CANONICAL_EVENT_TYPES` is derived from immutable internal producer ownership
+plus the sole external-ingress event, `lease_suspended`. It contains exactly 46
+names. `EVENT_PAYLOAD_MODELS` and `EVENT_PAYLOAD_SPECS` have exactly the same
+keys, and every spec references the exact registered model.
+
+Current producers call their ownership guard, validate through the registered
+payload model, and serialize with `model_dump(mode="json")` before constructing
+or persisting an `EventEnvelope`. The envelope remains JSON-shaped at the
+storage boundary; typed models own its canonical shape on both emission and
+consumption. Unknown top-level fields are rejected. Flat output-record and
+file-state `RootModel` envelopes delegate this strictness to their canonical
+record roots.
+
+Replay and reducers consume canonical names only. Removed proposal,
+environment-failure, requirement/support, authority-resolution, and suspect
+resolution aliases are not producer-owned or reducer-consumed. Malformed or
+obsolete shapes are rejected rather than normalized through compatibility
+helpers.
+
+### Retention
+
+Every canonical event owns explicit `projection`, `light`, `summary`, and
+`node_detail` field sets in its `EventPayloadSpec`. A retained field must be
+serialized by that event's model; no global field-name inference or compatibility
+exception exists. The specs generate four sorted unique global tuples:
+
+- `GRAPH_PROJECTION_PAYLOAD_FIELDS`: 101 fields.
+- `LIGHT_GRAPH_PAYLOAD_FIELDS`: 141 fields.
+- `SUMMARY_REBUILD_PAYLOAD_FIELDS`: 159 fields.
+- `NODE_DETAIL_PAYLOAD_FIELDS`: 84 fields.
+
+Complete nested check-result `value` retention intentionally remains until the
+atomic W5.5 artifact cutover.
+
+### Records And Projections
+
+`OUTPUT_RECORD_MODELS_BY_TYPE` contains 22 explicit discriminators. Missing and
+unknown discriminators are rejected; no generic or legacy output-record model
+survives. File-state accepted/rejected envelopes use strict canonical roots.
+Gatekeeper verdict and cost models reject unknown or wrongly typed fields.
+
+Structured projection values use Pydantic models and attribute access where
+their schema is owned by the graph domain. Dynamic identifier indexes remain
+maps, and explicitly documented external/public JSON or provider metadata stays
+JSON-shaped. Compatibility mapping facades are absent.
+
+### Commands And API
+
+`COMMAND_SPECS` contains exactly 23 names. Each maps one
+`StrictCommandPayload` subclass (`extra="forbid"`, strict scalar validation) to
+a handler whose payload annotation is that exact model. `apply_command` is the
+single raw command-ingress validator. Runtime identity, actor, graph position,
+and patch provenance are supplied separately through `GraphCommandContext` or
+`PatchCommandContext`, never accepted as command payload fields.
+
+Decision API requests reuse `RecordDecisionCommand`; patch API and command
+models share `PatchCommandFields`. HTTP-only length, pattern, nonnegative
+position, and required-operation constraints remain at the HTTP boundary.
+
+### Verification Grades
+
+`GradeRow` is exported, inherits the strict nested-model policy, requires
+`requirement_id` and `grade`, permits an optional `reason`, and rejects unknown
+fields. `VerificationReportValue.grades` is a typed list of `GradeRow` values.
 
 ## Requirements
 
-**R1 — Typed at the fold.** The chosen family is parsed once in `reduce_event`; the
-projection field carries model instances, not dicts. *Critical.*
-
-**R2 — Shim deletion.** Every extraction shim exclusive to the family is deleted; grep
-proves no `_is_<family>_record_payload`-style helper survives. *Critical.*
-
-**R3 — Tolerance parity.** A test feeds a malformed/legacy-shaped payload through the
-kernel and asserts identical observable behavior to before (same events, same
-projection semantics). No `mock`/`patch` (AGENTS.md). *Critical.*
-
-**R4 — mypy gate.** `uv run mypy src/orchestrator/graph` (or the project's configured
-type-check command — check `pyproject.toml`/CI config) passes, and a deliberate typo
-on a model attribute in a scratch check fails it. *Expected.*
-
-**R5 — No behavior change.** Full graph suite green, no test weakened. *Critical.*
+- [x] **R1 - Exact canonical event coverage.** All 46 canonical events have one
+  exact strict payload model and one explicit retention spec.
+- [x] **R2 - Producer validation.** Every current producer validates ownership,
+  validates the payload, and emits canonical JSON.
+- [x] **R3 - Strict replay.** Reducers parse canonical typed envelopes; obsolete
+  aliases and historical normalization paths are removed.
+- [x] **R4 - Explicit generated retention.** Per-event specs generate all four
+  global retention tuples, and retained keys are model-owned.
+- [x] **R5 - Typed records and projections.** All 22 output-record
+  discriminators, file-state/gatekeeper envelopes, and schema-owned projection
+  values are strict and typed.
+- [x] **R6 - Typed commands and API reuse.** All 23 commands have strict exact
+  models and handlers, runtime context is separate, and API schemas reuse domain
+  contracts without losing HTTP-only constraints.
+- [x] **R7 - Typed grades.** Verification grade rows use strict `GradeRow`
+  values.
+- [x] **R8 - Compatibility deletion.** Retired aliases, permissive payload
+  `extra`, generic record fallback, selector normalization, mapping facades, and
+  graph `mode="before"` validators are absent.
+- [x] **R9 - Verification and documentation.** Focused batches, full backend,
+  Ruff, Pyright, diff checks, metrics, inventories, and the progress ledger are
+  complete.
 
 ## Constraints
 
-- Event schema on disk unchanged — this is a read-side typing change only.
-- Kernel purity preserved; Pydantic validation in `reduce_event` must stay
-  deterministic (no now()/uuid defaults firing in models).
-- Keep the slice small enough to review; stop after one family.
+- Pydantic validation and reduction remain deterministic and side-effect free.
+- JSON event storage and public read-model shapes remain stable where explicitly
+  documented; strictness is enforced by registered domain models rather than
+  compatibility adapters.
+- Dynamic identifier maps and intentionally flexible external/public metadata
+  are not converted merely to reduce `dict[str, Any]` counts.
+- W5 does not add artifact-store I/O, stdout/stderr reference fields, hydration,
+  garbage collection, artifact-aware SQL, or truncation recovery.
+- Tests use real objects and dependency injection; no mocks, patches, type
+  suppressions, or weakened assertions are introduced.
 
 ## Acceptance
 
-```
-uv run pytest tests/unit/test_graph_models.py tests/unit/test_graph_projections.py \
-  tests/unit/test_projectors.py tests/unit/test_command_handlers.py \
-  tests/integration/test_graph_dynamic_e2e.py tests/integration/test_graph_event_store.py -q
-```
+The final accepted source head was
+`bafeb650d27884ae5584f1fb4b4378780b4f587f`. Its closeout evidence is:
 
-All pass, plus R3 tolerance test and the R4 type-check gate.
+- Registry audit: 46 canonical names, 46 models, 46 exact specs, all strict.
+- Command audit: 23 strict payloads and 23 exact typed handlers.
+- Output-record audit: 22 explicit discriminators.
+- Generated retention: 101/141/159/84 fields.
+- Focused audit: 145 tests passed.
+- Full backend: 4,756 passed, 3 skipped, 3 warnings.
+- Ruff: all checks passed.
+- Scoped Pyright: 0 errors, 0 warnings, 0 informations.
+- `git diff --check`: passed.
+- Metrics: `isinstance(` 603 to 465 (-138); `dict[str, Any]` 174 to
+  136 (-38); direct `event.payload.get(` 28; total `payload.get(` 89; graph
+  before validators 0.
 
-## Closure
+Exact commands and timings are retained in `../w5-progress-ledger.md`.
 
-The incremental slices expanded through the complete current graph boundary.
-All 46 canonical events now have exact strict payload models and explicit
-four-mode retention specs; all current producers validate and JSON-dump their
-envelopes. The command boundary has exactly 23 strict typed payloads and exact
-typed handlers. Record, file-state, gatekeeper, API-schema, projection, and
-verification-grade requirements are complete, and obsolete compatibility
-models, aliases, adapters, and graph before validators are deleted.
+## W5.5 Deferral
 
-Final verification at source head `bafeb650d27884ae5584f1fb4b4378780b4f587f`
-passed 4,756 backend tests with 3 skipped, Ruff, final scoped Pyright with zero
-errors, and `git diff --check`. Detailed evidence and metrics are recorded in
-`../w5-progress-ledger.md`.
+W5 closure does not claim durable stdout/stderr artifact persistence,
+reference-field cutover, bounded hydration, garbage collection, event-aware
+artifact SQL, or recovery of content beyond the current 20,000-character
+truncation. Those remain pending in:
 
-This closure is limited to W5 strict typing. W5.5 durable check-output artifacts
-remain pending: stdout/stderr storage, reference-field cutover, bounded
-hydration, garbage collection, and replacement/recovery of the current
-20,000-character truncation are not implemented or claimed here. Their design
-and implementation plan remain in `docs/superpowers/`.
+- `docs/superpowers/specs/2026-07-15-w5-artifact-output-design.md`
+- `docs/superpowers/plans/2026-07-15-w5-artifact-output.md`
