@@ -862,12 +862,44 @@ async def test_operator_graph_patch_endpoint_accepts_human_patch(
     )
 
 
+async def test_operator_graph_patch_generates_id_only_when_patch_id_is_omitted(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-operator-patch-generated-id-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [_event("run_lifecycle_changed", {"to_state": "active"})],
+        )
+        await session.commit()
+
+    response = await client.post(
+        f"/api/runs/{run_id}/graph/patch",
+        json={"ops": []},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["patch_id"].startswith("operator-patch-")
+
+
 @pytest.mark.parametrize(
     "payload",
     [
         {"patch_id": "p", "base_graph_position": "0", "ops": []},
         {"patch_id": "p", "base_graph_position": 0, "carryover_summary": "r"},
         {"patch_id": "p", "base_graph_position": 0, "unknown": True},
+        {"patch_id": "", "ops": []},
+        {"patch_id": "p" * 201, "ops": []},
+        {"patch_id": "not a patch id", "ops": []},
+        {"rationale_record_id": "", "ops": []},
+        {"rationale_record_id": "r" * 201, "ops": []},
+        {"rationale_record_id": "not a rationale id", "ops": []},
+        {"base_graph_position": -1, "ops": []},
+        {"patch_id": "p"},
     ],
 )
 async def test_operator_graph_patch_rejects_noncanonical_payload_fields(

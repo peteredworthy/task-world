@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from hashlib import sha256
-from typing import Any, Literal, cast
+from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query
@@ -55,6 +55,15 @@ router = APIRouter(prefix="/api/runs", tags=["graph"])
 
 _NODE_DETAIL_MAX_TEXT_CHARS = 1_000_000
 _NODE_DETAIL_MAX_LIST_ITEMS = 200
+_GRAPH_IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.:-]+$"
+
+GraphIdentifier = Annotated[
+    str,
+    Field(min_length=1, max_length=200, pattern=_GRAPH_IDENTIFIER_PATTERN),
+]
+DecisionNodeIdentifier = Annotated[str, Field(min_length=1, max_length=200)]
+DecisionValue = Annotated[str, Field(min_length=1, max_length=64)]
+NonEmptyString = Annotated[str, Field(min_length=1)]
 
 
 class _ApiGraphClock:
@@ -202,7 +211,10 @@ class DecisionViewResponse(ApiModel):
 class RecordGraphDecisionRequest(RecordDecisionCommand):
     """HTTP ingress reuses the strict domain decision command schema."""
 
-    pass
+    node_id: DecisionNodeIdentifier
+    decision: DecisionValue
+    decider: Actor | NonEmptyString
+    record_id: DecisionNodeIdentifier | None = None
 
 
 class RecordGraphDecisionResponse(ApiModel):
@@ -323,8 +335,10 @@ class GraphPatchAttemptsResponse(ApiModel):
 class SubmitGraphPatchRequest(PatchCommandFields):
     """HTTP ingress composes the strict shared graph patch fields."""
 
-    patch_id: str | None = None
-    base_graph_position: int | None = Field(default=None, ge=-1)
+    patch_id: GraphIdentifier | None = None
+    base_graph_position: int | None = Field(default=None, ge=0)
+    ops: list[dict[str, Any]] = Field(...)
+    rationale_record_id: GraphIdentifier | None = None
 
 
 class SubmitGraphPatchResponse(ApiModel):

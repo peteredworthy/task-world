@@ -396,6 +396,39 @@ async def test_record_decision_rejects_removed_decision_aliases_at_api_boundary(
     assert f"decision for {decision_type} must be one of" in response.text
 
 
+@pytest.mark.parametrize(
+    "invalid_fields",
+    [
+        {"node_id": ""},
+        {"node_id": "n" * 201},
+        {"decision": ""},
+        {"decision": "a" * 65},
+        {"record_id": ""},
+        {"record_id": "r" * 201},
+        {"decider": ""},
+        {"decider": {"kind": ""}},
+    ],
+)
+async def test_record_decision_restores_http_field_constraints(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    invalid_fields: dict[str, object],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-decisions-malformed-{uuid4().hex[:8]}"
+    await _seed_decision_graph_run(app, run_id)
+    payload: dict[str, object] = {
+        "decision_type": "authority",
+        "node_id": "authority-1",
+        "decision": "granted",
+        "decider": {"kind": "human", "id": "alice"},
+    }
+    payload.update(invalid_fields)
+
+    response = await client.post(f"/api/runs/{run_id}/graph/decisions", json=payload)
+
+    assert response.status_code == 422
+
+
 async def test_decisions_endpoint_empty_for_non_graph_run(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
