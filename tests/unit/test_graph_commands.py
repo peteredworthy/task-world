@@ -876,9 +876,42 @@ def test_callback_rejection_redacts_nested_record_input() -> None:
     reason = output[0].payload["reason"]
     assert secret not in reason
     assert "invalid_candidate_record" in reason
-    assert "value.summary" in reason
+    assert "payload [string_type]" in reason
     assert "string_type" in reason
     assert len(reason) <= 1_000
+
+
+def test_callback_rejection_redacts_nested_unknown_key_and_value() -> None:
+    secret_key = "sk_nested_callback_secret_key"
+    secret_value = "sk-callback-unknown-value"
+    output = _apply(
+        _active_lease_events(),
+        "submit_callback",
+        _callback_payload(
+            payload={
+                "payload_hash": "hash-a",
+                "output_records": [
+                    {
+                        "record_id": "candidate-1",
+                        "record_kind": "output",
+                        "record_type": "candidate",
+                        "producer_node_id": "worker-1",
+                        "port": "candidate",
+                        "schema": "ImplementationCandidate",
+                        "candidate_id": "candidate-1",
+                        "value": {"summary": "done", secret_key: secret_value},
+                    }
+                ],
+            }
+        ),
+    )
+
+    assert [event.event_type for event in output] == ["callback_rejected_conflict"]
+    reason = output[0].payload["reason"]
+    assert secret_key not in reason
+    assert secret_value not in reason
+    assert "invalid_candidate_record" in reason
+    assert "payload [extra_forbidden]" in reason
 
 
 def test_callback_accepts_analysis_summary_record() -> None:
@@ -2209,7 +2242,7 @@ def test_verifier_callback_rejects_verification_record_with_status_key() -> None
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
     assert "verification record at index 0 is invalid" in output[0].payload["reason"]
-    assert "status [extra_forbidden]" in output[0].payload["reason"]
+    assert "payload [extra_forbidden]" in output[0].payload["reason"]
 
 
 def test_verifier_callback_failed_output_has_explicit_failed_outcome() -> None:
@@ -2462,7 +2495,7 @@ def test_verifier_callback_rejects_stale_status_with_outcome() -> None:
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "status [extra_forbidden]" in output[0].payload["reason"]
+    assert "payload [extra_forbidden]" in output[0].payload["reason"]
 
 
 def test_verifier_callback_rejects_report_shaped_output_with_value_status() -> None:
@@ -2545,7 +2578,7 @@ def test_verifier_callback_rejects_report_shaped_output_with_value_status() -> N
     )
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
-    assert "value.status [extra_forbidden]" in output[0].payload["reason"]
+    assert "payload [extra_forbidden]" in output[0].payload["reason"]
 
 
 def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding() -> None:
@@ -3018,7 +3051,7 @@ def test_callback_rejects_malformed_check_result_record() -> None:
 
     assert [event.event_type for event in output] == ["callback_rejected_conflict"]
     assert "check_result record at index 0 is invalid" in output[0].payload["reason"]
-    assert "value.status [literal_error]" in output[0].payload["reason"]
+    assert "payload [literal_error]" in output[0].payload["reason"]
 
 
 def test_worker_smuggled_verification_record_rejected_atomically() -> None:
@@ -3853,8 +3886,7 @@ def test_submit_patch_rejects_verification_selector_with_status_before_acceptanc
 
     assert [event.event_type for event in output] == ["command_rejected"]
     assert output[0].payload["command_type"] == "submit_patch"
-    assert "accepted_record_selector" in output[0].payload["reason"]
-    assert "status" in output[0].payload["reason"]
+    assert "payload [extra_forbidden]" in output[0].payload["reason"]
 
 
 def test_submit_patch_rejects_legacy_verification_selector_value_status() -> None:
@@ -3904,7 +3936,7 @@ def test_submit_patch_rejects_legacy_verification_selector_value_status() -> Non
     )
 
     assert [event.event_type for event in output] == ["command_rejected"]
-    assert "accepted_record_selector [union_tag_not_found]" in output[0].payload["reason"]
+    assert "payload [union_tag_not_found]" in output[0].payload["reason"]
 
 
 def test_seed_compiled_events_rejects_invalid_edge_selector() -> None:
@@ -3936,7 +3968,7 @@ def test_seed_compiled_events_rejects_invalid_edge_selector() -> None:
 
     assert [event.event_type for event in output] == ["command_rejected"]
     assert output[0].payload["command_type"] == "seed_compiled_events"
-    assert "status" in output[0].payload["reason"]
+    assert "payload [extra_forbidden]" in output[0].payload["reason"]
 
 
 def test_seed_compiled_events_rejects_invalid_verification_report_record() -> None:
@@ -4083,9 +4115,30 @@ def test_patch_rejection_redacts_malformed_op_input() -> None:
     reason = output[0].payload["reason"]
     assert secret not in reason
     assert "malformed_patch" in reason
-    assert "accepted_record_selector" in reason
+    assert "payload [union_tag_invalid]" in reason
     assert "union_tag_invalid" in reason
     assert len(reason) <= 1_000
+
+
+def test_patch_rejection_redacts_unknown_operation_key_and_value() -> None:
+    secret_key = "sk_patch_operation_secret_key"
+    secret_value = "sk-patch-operation-value"
+    output = _apply(
+        [],
+        "submit_patch",
+        {
+            "patch_id": "patch-secret-key",
+            "base_graph_position": -1,
+            "ops": [{"op": "create_node", secret_key: secret_value}],
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    reason = output[0].payload["reason"]
+    assert secret_key not in reason
+    assert secret_value not in reason
+    assert "malformed_patch" in reason
+    assert "payload [extra_forbidden]" in reason
 
 
 def test_patch_rejected_after_run_cancellation() -> None:
@@ -4390,7 +4443,7 @@ def test_patch_rejects_malformed_request_gate_record() -> None:
     assert [event.event_type for event in output] == ["graph_patch_rejected"]
     assert output[0].payload["patch_id"] == "patch-bad-request"
     assert "invalid_request_record" in output[0].payload["reason"]
-    assert "value [value_error]" in output[0].payload["reason"]
+    assert "payload [value_error]" in output[0].payload["reason"]
 
 
 def test_gap_planner_no_op_patch_accepts_through_submit_patch() -> None:
@@ -4567,7 +4620,7 @@ def test_malformed_patch_is_rejected_at_schema_boundary() -> None:
     assert output[0].event_type == "command_rejected"
     assert output[0].payload["command_type"] == "submit_patch"
     assert "invalid command payload" in output[0].payload["reason"]
-    assert "base_graph_position" in output[0].payload["reason"]
+    assert "payload [int_type]" in output[0].payload["reason"]
 
 
 def test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_run() -> None:
@@ -8399,7 +8452,7 @@ def test_record_decision_rejects_missing_target() -> None:
 
     assert output[0].event_type == "command_rejected"
     assert "invalid command payload" in output[0].payload["reason"]
-    assert "node_id" in output[0].payload["reason"]
+    assert "payload [missing]" in output[0].payload["reason"]
 
 
 def test_record_decision_rejects_invalid_decision() -> None:
@@ -8444,7 +8497,7 @@ def test_record_decision_rejects_malformed_typed_authority_record_atomically() -
 
     assert [event.event_type for event in output] == ["command_rejected"]
     assert "invalid command payload" in output[0].payload["reason"]
-    assert "scope" in output[0].payload["reason"]
+    assert "payload [dict_type]" in output[0].payload["reason"]
 
 
 def test_record_decision_rejects_missing_decider() -> None:
@@ -8460,7 +8513,7 @@ def test_record_decision_rejects_missing_decider() -> None:
 
     assert output[0].event_type == "command_rejected"
     assert "invalid command payload" in output[0].payload["reason"]
-    assert "decider" in output[0].payload["reason"]
+    assert "payload [missing]" in output[0].payload["reason"]
 
 
 def test_record_decision_rejects_unknown_target() -> None:

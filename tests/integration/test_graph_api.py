@@ -1398,7 +1398,7 @@ async def test_patch_attempt_readback_surfaces_rejected_patch_diagnostics(
     assert attempt["diagnostics"]["actor_role"] == "planner"
     assert events[0]["payload"]["base_graph_position"] == -1
     assert "invalid_request_record" in attempt["rejection_reason"]
-    assert "value [value_error]" in attempt["rejection_reason"]
+    assert "payload [value_error]" in attempt["rejection_reason"]
 
 
 async def test_node_detail_404_for_unknown_node(

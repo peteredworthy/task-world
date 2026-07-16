@@ -2258,8 +2258,10 @@ class CallbackIdempotencyEvent(GraphBaseModel):
     payload: dict[str, Any] | None
 
 
-class PatchOp(GraphBaseModel):
+class PatchOp(StrictNestedModel):
     op: str
+    kind: str | None = None
+    state: str | None = None
     edge_id: str | None = None
     node: dict[str, Any] | None = None
     from_node_id: str | None = None
@@ -2281,6 +2283,15 @@ class PatchOp(GraphBaseModel):
     node_id: str | None = None
     resource_claims: list[ResourceClaim] | None = None
     allowed_actions: list[str] | None = None
+    task_region_id: str | None = None
+    predecessor_node_ids: list[str] | None = None
+    failed_candidate_id: str | None = None
+    worker_node: dict[str, Any] | None = None
+    verifier_node: dict[str, Any] | None = None
+    appealed_node_id: str | None = None
+    appeal_type: str | None = None
+    region_node_ids: list[str] | None = None
+    reason: str | None = None
 
 
 class PatchEnvelope(GraphBaseModel):

@@ -84,7 +84,7 @@ def test_session_does_not_grant_authority() -> None:
 
     projection = _project([*events, *_append(events, callback)])
     assert callback[0].event_type == "command_rejected"
-    assert "session_id" in str(callback[0].payload["reason"])
+    assert "payload [extra_forbidden]" in str(callback[0].payload["reason"])
     assert projection["node_states"]["planner-0"] == "running"
 
 

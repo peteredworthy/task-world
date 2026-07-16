@@ -97,7 +97,7 @@ def test_record_gatekeeper_verdicts_rejects_invalid_supplied_accounting(
     assert emitted[0].payload["command_type"] == "record_gatekeeper_verdicts"
     reason = str(emitted[0].payload["reason"])
     assert reason.startswith("invalid command payload")
-    assert field in reason
+    assert "payload [" in reason
 
 
 def test_record_gatekeeper_verdicts_rejects_wrong_type_consult_id() -> None:
@@ -121,7 +121,7 @@ def test_record_gatekeeper_verdicts_rejects_wrong_type_consult_id() -> None:
     assert [event.event_type for event in emitted] == ["command_rejected"]
     reason = str(emitted[0].payload["reason"])
     assert reason.startswith("invalid command payload")
-    assert "consult_id" in reason
+    assert "payload [string_type]" in reason
 
 
 @pytest.mark.parametrize(
@@ -158,7 +158,7 @@ def test_record_gatekeeper_verdicts_rejects_nested_cost_ownership_override(
     assert [event.event_type for event in emitted] == ["command_rejected"]
     reason = str(emitted[0].payload["reason"])
     assert reason.startswith("invalid command payload")
-    assert field in reason
+    assert "payload [extra_forbidden]" in reason
     assert not any(event.event_type == "gatekeeper_cost_recorded" for event in emitted)
 
 
@@ -258,7 +258,7 @@ def test_record_gatekeeper_verdicts_rejects_invalid_taxonomy_value() -> None:
     assert emitted[0].event_type == "command_rejected"
     reason = str(emitted[0].payload["reason"])
     assert "invalid command payload" in reason
-    assert "classification" in reason
+    assert "payload [literal_error]" in reason
 
 
 def test_record_gatekeeper_verdicts_rejects_duplicate_already_resolved_path() -> None:
@@ -337,7 +337,7 @@ def test_record_gatekeeper_verdicts_requires_execution_id() -> None:
     assert emitted[0].event_type == "command_rejected"
     reason = str(emitted[0].payload["reason"])
     assert "invalid command payload" in reason
-    assert "execution_id" in reason
+    assert "payload [missing]" in reason
 
 
 def test_record_gatekeeper_verdicts_rejects_duplicate_path_in_same_payload() -> None:

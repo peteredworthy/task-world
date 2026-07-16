@@ -263,7 +263,7 @@ def test_macro_invocations_reject_missing_required_typed_args() -> None:
         _expand(payload)
     except ValueError as exc:
         assert "create_work_region args invalid" in str(exc)
-        assert "region_id" in str(exc)
+        assert "payload [missing]" in str(exc)
     else:  # pragma: no cover - defensive
         raise AssertionError("expected ValueError")
 
@@ -287,7 +287,7 @@ def test_macro_invocations_reject_invalid_invocation_shape() -> None:
         _expand(payload)
     except ValueError as exc:
         assert "create_join args invalid" in str(exc)
-        assert "sources.0.node_id" in str(exc)
+        assert "payload [missing]" in str(exc)
     else:  # pragma: no cover - defensive
         raise AssertionError("expected ValueError")
 
@@ -312,7 +312,7 @@ def test_attach_check_macro_rejects_planner_authored_candidate_id() -> None:
         _expand(payload)
     except ValueError as exc:
         assert "attach_check args invalid" in str(exc)
-        assert "candidate_id" in str(exc)
+        assert "payload [extra_forbidden]" in str(exc)
     else:  # pragma: no cover - defensive
         raise AssertionError("expected ValueError")
 
@@ -336,7 +336,7 @@ def test_attach_verifier_macro_rejects_planner_authored_candidate_id() -> None:
         _expand(payload)
     except ValueError as exc:
         assert "attach_verifier args invalid" in str(exc)
-        assert "candidate_id" in str(exc)
+        assert "payload [extra_forbidden]" in str(exc)
     else:  # pragma: no cover - defensive
         raise AssertionError("expected ValueError")
 

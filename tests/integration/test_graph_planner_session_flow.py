@@ -173,7 +173,7 @@ async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> 
         )
         assert any(
             event.event_type == "command_rejected"
-            and "session_id" in str(event.payload.get("reason"))
+            and "payload [extra_forbidden]" in str(event.payload.get("reason"))
             for event in events
         )
 

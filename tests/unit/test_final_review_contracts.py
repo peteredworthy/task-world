@@ -315,21 +315,24 @@ def test_identity_matrix_covers_all_command_specs_and_rejects_blank_values() -> 
                     model.model_validate(invalid)
 
 
-def test_command_validation_error_redacts_unknown_secret_value() -> None:
-    secret = "sk-super-secret-value"
+def test_command_validation_error_redacts_unknown_secret_key_and_value() -> None:
+    secret_key = "sk_top_level_secret_key"
+    secret_value = "sk-super-secret-value"
     emitted = apply_command(
         initial_projection(),
         [],
         "start",
-        {"unexpected_secret": secret},
+        {secret_key: secret_value},
         GraphCommandContext(run_id="run-1", current_graph_position=-1),
         FakeClock(),
         SequentialIdGenerator(),
     )
 
     reason = emitted[0].payload["reason"]
-    assert secret not in reason
-    assert "unexpected_secret" in reason
+    assert secret_key not in reason
+    assert secret_value not in reason
+    assert "invalid_command_payload" in reason
+    assert "payload [extra_forbidden]" in reason
     assert "extra_forbidden" in reason
     assert len(reason) <= 1_000
 
