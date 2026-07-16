@@ -44,7 +44,12 @@ def test_scenario_with_all_expected_events_passes() -> None:
                         "new_state": "completed",
                     }
                 },
-                {"command_recorded": {"command_type": "raise_appeal"}},
+                {
+                    "command_recorded": {
+                        "command_type": "raise_appeal",
+                        "command_payload": {"node_id": "build-A-1"},
+                    }
+                },
                 {"command_rejected": {"command_type": "raise_appeal"}},
             ],
             "then_projection": {"build-A-1": "completed"},
@@ -58,6 +63,10 @@ def test_scenario_with_all_expected_events_passes() -> None:
     assert result.passed is True
     assert result.failures == []
     assert [event.position for event in result.events_produced] == [0, 1, 2, 3]
+    assert result.events_produced[2].payload == {
+        "command_type": "raise_appeal",
+        "command_payload": {"node_id": "build-A-1"},
+    }
     assert result.projection_snapshot == {"build-A-1": "completed"}
 
 

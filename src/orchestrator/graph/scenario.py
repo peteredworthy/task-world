@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, cast
 
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
-from orchestrator.graph.commands import apply_command
+from orchestrator.graph.commands import apply_command, serialize_event_payload
 from orchestrator.graph.event_registry import validate_emitted_event_type
 from orchestrator.graph.models import Actor, ActorKind, EventEnvelope
 from orchestrator.graph.command_models import GraphCommandContext
@@ -43,7 +43,13 @@ def run_scenario(
             _make_event(
                 run_id,
                 "command_recorded",
-                {"command_type": command_type, **command_payload},
+                serialize_event_payload(
+                    "command_recorded",
+                    {
+                        "command_type": command_type,
+                        "command_payload": command_payload,
+                    },
+                ),
                 clock,
                 id_gen,
             )

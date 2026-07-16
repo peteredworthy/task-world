@@ -95,6 +95,10 @@ def _same(event_type: str, fields: str) -> EventPayloadSpec:
 # value read amplification; SQL remains mode-based until the artifact cutover.
 EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
     {
+        "agent_dispatch_requested": _same(
+            "agent_dispatch_requested",
+            "base_snapshot_id execution_id generation lease_granted_event_id lease_id node_id resource_claims",
+        ),
         "agent_died": _same("agent_died", "execution_id generation lease_id node_id reason"),
         "appeal_opened": _spec(
             "appeal_opened",
@@ -159,6 +163,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
             summary="authority cleanup_id execution_id file_state_record_id producer_node_id reason snapshot_id",
             node_detail="authority execution_id producer_node_id reason",
         ),
+        "command_recorded": _same("command_recorded", "command_payload command_type"),
         "command_rejected": _spec(
             "command_rejected",
             projection="reason",

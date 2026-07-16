@@ -18,7 +18,13 @@ from orchestrator.db import (
     create_session_factory,
     init_db,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FileStateRecord
+from orchestrator.graph import (
+    EVENT_PAYLOAD_MODELS,
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    FileStateRecord,
+)
 from orchestrator.graph_runtime import (
     CompromisedFileStateError,
     GraphDispatchContext,
@@ -1345,6 +1351,10 @@ async def test_agent_dispatch_requested_event_envelope_is_persisted_exactly(
         "base_snapshot_id": "S0",
         "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["src/**"]}],
     }
+    dispatch_model = EVENT_PAYLOAD_MODELS["agent_dispatch_requested"]
+    assert dispatch_event.payload == dispatch_model.model_validate(
+        dispatch_event.payload
+    ).model_dump(mode="json", exclude_none=True)
     assert result.outbox_items[0].event_id == dispatch_event.event_id
 
 

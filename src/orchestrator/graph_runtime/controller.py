@@ -17,6 +17,7 @@ from orchestrator.graph import (
     apply_command,
     initial_projection,
     reduce_event,
+    serialize_event_payload,
 )
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime.errors import StaleProjectionError
@@ -206,15 +207,18 @@ class GraphController:
                     causation_id=command_type,
                     correlation_id=str(node_id) if isinstance(node_id, str) else None,
                     timestamp=self._clock.now(),
-                    payload={
-                        "lease_granted_event_id": event.event_id,
-                        "lease_id": event.payload.get("lease_id"),
-                        "node_id": node_id,
-                        "generation": event.payload.get("generation"),
-                        "execution_id": event.payload.get("execution_id"),
-                        "base_snapshot_id": event.payload.get("base_snapshot_id"),
-                        "resource_claims": event.payload.get("resource_claims", []),
-                    },
+                    payload=serialize_event_payload(
+                        "agent_dispatch_requested",
+                        {
+                            "lease_granted_event_id": event.event_id,
+                            "lease_id": event.payload.get("lease_id"),
+                            "node_id": node_id,
+                            "generation": event.payload.get("generation"),
+                            "execution_id": event.payload.get("execution_id"),
+                            "base_snapshot_id": event.payload.get("base_snapshot_id"),
+                            "resource_claims": event.payload.get("resource_claims", []),
+                        },
+                    ),
                 )
             )
         return expanded

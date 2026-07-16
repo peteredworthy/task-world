@@ -7,7 +7,7 @@ from orchestrator.graph.command_bindings import (
     check_command_uses_acceptance_fallback,
     resolve_check_command_definition,
 )
-from orchestrator.graph.commands import COMMAND_SPECS, apply_command
+from orchestrator.graph.commands import COMMAND_SPECS, apply_command, serialize_event_payload
 from orchestrator.graph.command_models import (
     CommandSpec,
     GraphCommandContext,
@@ -48,6 +48,7 @@ from orchestrator.graph.file_state import (
 from orchestrator.graph.macros import expand_patch_macros
 from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
+    AgentDispatchRequestedPayload,
     Actor,
     ActorKind,
     AppealOpenedPayload,
@@ -66,6 +67,7 @@ from orchestrator.graph.models import (
     CleanupAppliedPayload,
     CleanupRequestedPayload,
     CleanupRequestedProjection,
+    CommandRecordedPayload,
     CommandRejectedPayload,
     DeadInputDetectedPayload,
     EdgeProjection,
@@ -183,6 +185,7 @@ from orchestrator.graph.store import InMemoryEventStore
 
 __all__ = [
     "AcceptedOutputRecordPayload",
+    "AgentDispatchRequestedPayload",
     "Actor",
     "ActorKind",
     "AppealOpenedPayload",
@@ -205,6 +208,7 @@ __all__ = [
     "CleanupRequestedPayload",
     "CleanupRequestedProjection",
     "CommandRejectedPayload",
+    "CommandRecordedPayload",
     "CommandSpec",
     "COMMAND_SPECS",
     "DeadInputDetectedPayload",
@@ -314,6 +318,7 @@ __all__ = [
     "node_contract_summary",
     "payload_model_fields",
     "validate_event_payload_specs",
+    "serialize_event_payload",
     "project_decision_view",
     "project_decision_view_from_projection",
     "project_final_invariant_blockers",

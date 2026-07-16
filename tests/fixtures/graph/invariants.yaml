@@ -14,7 +14,9 @@
     - node_created: {node_id: writer-conflict, kind: worker, state: ready, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
   when_command: {schedule_tick: {base_snapshot_id: S0}}
   then_events:
-    - command_recorded: {command_type: schedule_tick}
+    - command_recorded:
+        command_type: schedule_tick
+        command_payload: {base_snapshot_id: S0}
   then_projection: {writer-conflict: ready, lease-writer-active: active}
 
 - name: invariant_no_callback_without_valid_lease
@@ -34,7 +36,9 @@
     - edge_created: {edge_id: edge-invariant-4, from_node_id: producer-invariant-4, from_port: candidate, to_node_id: successor-invariant-4, to_port: candidate, required: true}
   when_command: {schedule_tick: {base_snapshot_id: S0}}
   then_events:
-    - command_recorded: {command_type: schedule_tick}
+    - command_recorded:
+        command_type: schedule_tick
+        command_payload: {base_snapshot_id: S0}
     - node_deferred: {node_id: successor-invariant-4, reason: missing_required_input:candidate}
   then_projection: {successor-invariant-4: blocked}
 
@@ -111,7 +115,9 @@
     - input_bound: {edge_id: edge-invariant-9, to_node_id: successor-invariant-9, to_port: approval, record_ids: [approval-invariant-9], bound_at_position: 0}
   when_command: {schedule_tick: {base_snapshot_id: S0}}
   then_events:
-    - command_recorded: {command_type: schedule_tick}
+    - command_recorded:
+        command_type: schedule_tick
+        command_payload: {base_snapshot_id: S0}
     - node_deferred: {node_id: successor-invariant-9, reason: gate_not_approved:gate-invariant-9}
   then_projection: {gate-invariant-9: completed, successor-invariant-9: blocked}
 

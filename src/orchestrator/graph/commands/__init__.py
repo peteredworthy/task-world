@@ -14,6 +14,7 @@ from orchestrator.graph._commands import (
     TERMINAL_RUN_STATES,
     command_rejected,
     event_factory,
+    serialize_event_payload,
 )
 from orchestrator.graph.command_models import (
     AcceptRunCommand,
@@ -172,4 +173,5 @@ __all__ = [
     "NONTERMINAL_RUN_STATES",
     "apply_command",
     "COMMAND_SPECS",
+    "serialize_event_payload",
 ]

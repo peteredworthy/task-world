@@ -6,6 +6,7 @@ import pytest
 
 from orchestrator.graph import (
     CANONICAL_EVENT_TYPES,
+    EVENT_PAYLOAD_MODELS,
     EXTERNAL_EVENT_TYPES,
     INTERNAL_EVENT_TYPES_BY_PRODUCER,
     RETIRED_EVENT_TYPES,
@@ -37,6 +38,10 @@ REMOVED_EVENT_TYPES = {
     "plan_region_suspect_cleared",
     "node_suspect_cleared",
 }
+
+
+def test_every_canonical_event_type_has_a_payload_model() -> None:
+    assert CANONICAL_EVENT_TYPES == EVENT_PAYLOAD_MODELS.keys()
 
 
 def test_replay_only_event_types_are_not_canonical() -> None:

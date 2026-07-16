@@ -197,11 +197,13 @@ _NODE_CREATED_EVENT_PAYLOAD_TYPES = frozenset({"node_created"})
 _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES = frozenset(
     {
         "agent_died",
+        "agent_dispatch_requested",
         "callback_accepted",
         "callback_duplicate_returned",
         "callback_rejected_conflict",
         "callback_rejected_stale",
         "command_rejected",
+        "command_recorded",
         "dead_input_detected",
         "heartbeat_recorded",
         "node_authority_changed",
@@ -254,7 +256,7 @@ def _validate_event_serialization_policy() -> None:
 _validate_event_serialization_policy()
 
 
-def _serialize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+def serialize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     model = EVENT_PAYLOAD_MODELS.get(event_type)
     if model is None:
         return payload
@@ -5319,7 +5321,7 @@ def _event_factory(
 ) -> Callable[[str, dict[str, Any]], EventEnvelope]:
     def make_event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
         validate_emitted_event_type("graph_command_factory", event_type)
-        typed_payload = _serialize_event_payload(event_type, payload)
+        typed_payload = serialize_event_payload(event_type, payload)
         return EventEnvelope(
             event_id=id_gen.next_id("event"),
             run_id=run_id,

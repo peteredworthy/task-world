@@ -6,6 +6,7 @@ from types import MappingProxyType
 from pydantic import BaseModel
 
 from orchestrator.graph.models import (
+    AgentDispatchRequestedPayload,
     AgentDiedPayload,
     AppealOpenedPayload,
     ApprovalDecisionRecordedPayload,
@@ -15,6 +16,7 @@ from orchestrator.graph.models import (
     CallbackRejectedPayload,
     CleanupAppliedPayload,
     CleanupRequestedPayload,
+    CommandRecordedPayload,
     CommandRejectedPayload,
     DeadInputDetectedPayload,
     EdgeProjection,
@@ -120,6 +122,7 @@ EXTERNAL_EVENT_TYPES = frozenset({"lease_suspended"})
 
 EVENT_PAYLOAD_MODELS: MappingProxyType[str, type[BaseModel]] = MappingProxyType(
     {
+        "agent_dispatch_requested": AgentDispatchRequestedPayload,
         "agent_died": AgentDiedPayload,
         "appeal_opened": AppealOpenedPayload,
         "approval_decision_recorded": ApprovalDecisionRecordedPayload,
@@ -130,6 +133,7 @@ EVENT_PAYLOAD_MODELS: MappingProxyType[str, type[BaseModel]] = MappingProxyType(
         "callback_rejected_stale": CallbackRejectedPayload,
         "cleanup_applied": CleanupAppliedPayload,
         "cleanup_requested": CleanupRequestedPayload,
+        "command_recorded": CommandRecordedPayload,
         "command_rejected": CommandRejectedPayload,
         "dead_input_detected": DeadInputDetectedPayload,
         "edge_created": EdgeProjection,
@@ -217,3 +221,7 @@ def validate_emitted_event_type(producer: str, event_type: str) -> None:
 
 
 validate_event_ownership(INTERNAL_EVENT_TYPES_BY_PRODUCER, CANONICAL_EVENT_TYPES)
+
+if frozenset(EVENT_PAYLOAD_MODELS) != CANONICAL_EVENT_TYPES:
+    mismatch = ", ".join(sorted(frozenset(EVENT_PAYLOAD_MODELS) ^ CANONICAL_EVENT_TYPES))
+    raise ValueError(f"canonical event payload model coverage mismatch: {mismatch}")

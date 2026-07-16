@@ -13,6 +13,7 @@ from pydantic import (
     StrictBool,
     StrictFloat,
     StrictInt,
+    StrictStr,
     model_validator,
 )
 
@@ -643,6 +644,21 @@ class StrictEventPayload(BaseModel):
     """Canonical event payloads reject unknown envelope fields."""
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class AgentDispatchRequestedPayload(StrictEventPayload):
+    lease_granted_event_id: StrictStr
+    lease_id: StrictStr
+    node_id: StrictStr
+    generation: StrictInt
+    execution_id: StrictStr
+    base_snapshot_id: StrictStr
+    resource_claims: list[ResourceClaimProjection]
+
+
+class CommandRecordedPayload(StrictEventPayload):
+    command_type: StrictStr
+    command_payload: dict[str, Any]
 
 
 class LeaseGrantedPayload(StrictEventPayload):
