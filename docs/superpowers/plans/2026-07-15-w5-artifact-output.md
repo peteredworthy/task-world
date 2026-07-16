@@ -45,17 +45,17 @@ not add a compatibility path for mismatched references.
 - Consumes: `StoredArtifactRef` from `orchestrator.graph`.
 - Produces: `ArtifactStore` protocol and `FilesystemArtifactStore`.
 
-- [ ] **Step 1: Write RED tests**
+- [x] **Step 1: Write RED tests**
 
 Test content deduplication, opaque URI construction, mode `0700`, hash/size verification, missing/corrupt errors, and traversal rejection using a real temporary directory.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 Run: `uv run pytest tests/unit/test_artifact_store.py -q`
 
 Expected: import failure for `orchestrator.artifacts`.
 
-- [ ] **Step 3: Implement errors and protocol**
+- [x] **Step 3: Implement errors and protocol**
 
 ```python
 class ArtifactError(Exception):
@@ -80,11 +80,11 @@ class ArtifactStore(Protocol):
     async def delete(self, ref: StoredArtifactRef) -> None: ...
 ```
 
-- [ ] **Step 4: Implement filesystem CAS**
+- [x] **Step 4: Implement filesystem CAS**
 
 Use SHA-256, `artifact_id=content_hash`, hash-derived directories, a same-directory temporary file, `flush`, `os.fsync`, `os.replace`, and directory mode `0700`. Reuse an existing valid blob without rewriting it.
 
-- [ ] **Step 5: Run GREEN and commit**
+- [x] **Step 5: Run GREEN and commit**
 
 ```bash
 uv run pytest tests/unit/test_artifact_store.py -q

@@ -92,6 +92,10 @@ task-world/
 │   │       ├── discovery.py   # Directory scanning
 │   │       ├── versioning.py  # Git SHA versioning
 │   │       └── errors.py
+│   ├── artifacts/             # Durable content-addressed artifact storage
+│   │   ├── models.py          # Stored artifact reference model export
+│   │   ├── store.py           # ArtifactStore protocol and filesystem CAS
+│   │   └── errors.py          # Artifact storage errors
 │   │
 │   ├── db/                    # Persistence: ORM, repositories, event store
 │   │   ├── orm/               # SQLAlchemy ORM definitions

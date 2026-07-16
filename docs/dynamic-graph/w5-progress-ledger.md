@@ -847,3 +847,26 @@ Evidence:
 - Setup: `uv sync` completed in the isolated worktree.
 - Clean baseline: `uv run pytest tests/ -q -n auto --dist worksteal` passed
   with 4,781 tests passed, 3 skipped, and 3 existing warnings in 118.28s.
+
+### Task 1: Filesystem Artifact Store
+
+Status: implementation in progress; queue checkbox remains controller-owned.
+
+RED evidence:
+- `uv run pytest tests/unit/test_artifact_store.py -q`
+  - Result: collection failed as expected with
+    `ModuleNotFoundError: No module named 'orchestrator.artifacts'`.
+
+GREEN evidence:
+- `uv run pytest tests/unit/test_artifact_store.py -q`
+  - Result: passed, 5 tests.
+- `uv run ruff check src/orchestrator/artifacts tests/unit/test_artifact_store.py`
+  - Result: all checks passed.
+- `uv run pyright src/orchestrator/artifacts tests/unit/test_artifact_store.py`
+  - Result: 0 errors, 0 warnings, 0 informations (with only the available-update notice).
+- `uv run ruff format --check src/orchestrator/artifacts tests/unit/test_artifact_store.py`
+  - Result: all 5 files already formatted.
+- `git diff --check`
+  - Result: passed, no output.
+
+Implementation commit: pending (`Implement filesystem artifact store`).
