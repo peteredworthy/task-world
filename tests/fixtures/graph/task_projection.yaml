@@ -28,7 +28,7 @@
 - name: task_projection_blocked_environment
   given_events:
     - output_record_accepted: {record_id: cand-environment, record_kind: output, record_type: candidate, producer_node_id: worker-cand-environment, port: candidate, schema: ImplementationCandidate, task_region_id: task-environment, candidate_id: cand-environment, attempt_number: 1, value: {summary: test candidate}}
-    - output_record_accepted: {record_id: check-environment, record_kind: output, record_type: check_result, producer_node_id: check-environment, port: check_result, schema: CheckResult, task_region_id: task-environment, candidate_id: cand-environment, attempt_number: 0, value: {status: failed, classification: tool_unavailable, command_id: check-environment, command_text: check command, command: {}, worktree_path: /worktree, base_snapshot_id: S0, execution_id: exec-check-environment, duration_ms: 0, stdout: '', stderr: '', stdout_truncated: false, stderr_truncated: false, timeout_seconds: 1.0, environment_policy: {}}}
+    - output_record_accepted: {record_id: check-environment, record_kind: output, record_type: check_result, producer_node_id: check-environment, port: check_result, schema: CheckResult, task_region_id: task-environment, candidate_id: cand-environment, attempt_number: 0, value: {status: failed, classification: tool_unavailable, command_id: check-environment, command_text: check command, command: {}, worktree_path: /worktree, base_snapshot_id: S0, execution_id: exec-check-environment, duration_ms: 0, stdout_tail: '', stderr_tail: '', stdout_truncated: false, stderr_truncated: false, timeout_seconds: 1.0, environment_policy: {}}}
   when_command: null
   then_events: []
   then_projection: {task-environment: blocked_environment}

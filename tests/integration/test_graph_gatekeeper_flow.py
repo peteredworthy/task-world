@@ -9,6 +9,7 @@ from typing import cast
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
@@ -230,6 +231,7 @@ async def test_gatekeeper_flow_metadata_only_pattern_reuse_and_replay(
         controller,
         AgentFactory({"worker": ResidueWorker(), "verifier": PatternVerifier()}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
         residue_classifier=fake,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
@@ -290,6 +292,7 @@ async def test_gatekeeper_cap_leaves_remainder_flagged(
         controller,
         AgentFactory({"worker": ManyResidueWorker(), "verifier": PatternVerifier()}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
         residue_classifier=fake,
         max_gatekeeper_items_per_boundary=3,
     )
@@ -331,6 +334,7 @@ async def test_secret_suspects_are_not_sent_to_gatekeeper(
         controller,
         AgentFactory({"worker": SecretWorker(), "verifier": PatternVerifier()}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
         residue_classifier=fake,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
@@ -362,6 +366,7 @@ async def test_gatekeeper_secret_verdict_scrubs_compromised_snapshot(
         controller,
         AgentFactory({"worker": RetroactiveSecretWorker(), "verifier": PatternVerifier()}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
         residue_classifier=fake,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)

@@ -535,7 +535,7 @@ def test_environment_failure_projection_uses_check_result_record() -> None:
                     "classification": "tool_unavailable",
                     "reason": "tool missing",
                     "command_text": "uv run pytest",
-                    "stderr": "uv: command not found",
+                    "stderr_tail": "uv: command not found",
                     "exit_code": 127,
                 },
             },
@@ -551,7 +551,7 @@ def test_environment_failure_projection_uses_check_result_record() -> None:
     assert projected.classification == "tool_unavailable"
     assert projected.reason == "check tool unavailable while running: uv run pytest"
     assert projected.command_text == "uv run pytest"
-    assert projected.stderr == "uv: command not found"
+    assert projected.stderr_tail == "uv: command not found"
     assert projected.exit_code == 127
 
 
@@ -567,7 +567,7 @@ def test_environment_failure_projection_checkpoint_round_trips_check_result_reco
                 "classification": "environment_error",
                 "value": {
                     "command_text": "uv run pytest",
-                    "stderr": "missing dependency",
+                    "stderr_tail": "missing dependency",
                     "exit_code": 1,
                 },
             },
@@ -583,7 +583,7 @@ def test_environment_failure_projection_checkpoint_round_trips_check_result_reco
     assert projected.classification == "environment_error"
     assert projected.reason == "check environment setup failed while running: uv run pytest"
     assert projected.command_text == "uv run pytest"
-    assert projected.stderr == "missing dependency"
+    assert projected.stderr_tail == "missing dependency"
     assert projected.exit_code == 1
 
 
@@ -2047,7 +2047,7 @@ def test_check_result_projection_summary_is_typed_at_fold() -> None:
                     "status": "failed",
                     "classification": "tool_error",
                     "command_text": "pytest",
-                    "stderr": "failed",
+                    "stderr_tail": "failed",
                     "exit_code": 1,
                 },
             },
@@ -3593,7 +3593,7 @@ def test_failed_check_result_blocks_projected_completion_after_task_acceptance()
             "reason": "check result did not pass",
             "classification": "failed",
             "command_text": "check command",
-            "stderr": "",
+            "stderr_tail": "",
             "exit_code": 1,
             "node_id": "check-final-1",
             "task_region_id": "task-1",

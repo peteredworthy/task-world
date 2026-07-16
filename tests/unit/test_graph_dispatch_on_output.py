@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.graph import (
     Actor,
@@ -623,6 +624,7 @@ class RecordingExecutor(GraphDispatchExecutor):
             cast(Any, object()),
             cast(Any, object()),
             worktree_path="/tmp/worktree",
+            artifact_store=FilesystemArtifactStore(Path("/tmp/test-graph-artifacts")),
             on_agent_output=on_agent_output,
         )
         self.started: list[GraphDispatchContext] = []
@@ -701,6 +703,7 @@ async def test_wait_for_all_timeout_returns_without_cancelling_active_task() -> 
         cast(Any, object()),
         cast(Any, object()),
         worktree_path="/tmp/worktree",
+        artifact_store=FilesystemArtifactStore(Path("/tmp/test-graph-artifacts")),
         running_executions=running,
     )
 
@@ -871,6 +874,7 @@ async def test_graph_patch_callback_rejects_unauthorized_node_contracts() -> Non
         cast(Any, object()),
         cast(Any, object()),
         worktree_path="/tmp/worktree",
+        artifact_store=FilesystemArtifactStore(Path("/tmp/test-graph-artifacts")),
     )
 
     for context in (
@@ -1190,7 +1194,7 @@ async def test_execute_check_command_records_real_process_success(tmp_path: Path
         },
     )
 
-    record = await _execute_check_command(context)
+    record = await _execute_check_command(context, FilesystemArtifactStore(tmp_path / "artifacts"))
 
     assert record["record_type"] == "check_result"
     assert record["record_kind"] == "output"
@@ -1207,8 +1211,8 @@ async def test_execute_check_command_records_real_process_success(tmp_path: Path
     value = cast(dict[str, Any], record["value"])
     assert value["status"] == "passed"
     assert value["exit_code"] == 0
-    assert value["stdout"] == "pass-output"
-    assert value["stderr"] == ""
+    assert value["stdout_tail"] == "pass-output"
+    assert value["stderr_tail"] == ""
     assert value["command_id"] == "pass-check"
     assert value["command_text"] == "sh -c printf pass-output"
     assert value["base_snapshot_id"] == "routine-snapshot"
@@ -1271,10 +1275,10 @@ async def test_execute_check_command_runs_against_bound_file_state_snapshot(
         },
     )
 
-    record = await _execute_check_command(context)
+    record = await _execute_check_command(context, FilesystemArtifactStore(tmp_path / "artifacts"))
 
     value = cast(dict[str, Any], record["value"])
-    assert value["stdout"] == "snapshot-value"
+    assert value["stdout_tail"] == "snapshot-value"
     assert value["worktree_path"] == str(repo)
     assert value["source_worktree_path"] == str(repo)
     assert value["execution_snapshot_id"] == snap.id
@@ -1358,7 +1362,7 @@ async def test_execute_check_command_provisions_node_dependencies_for_snapshot(
         },
     )
 
-    record = await _execute_check_command(context)
+    record = await _execute_check_command(context, FilesystemArtifactStore(tmp_path / "artifacts"))
 
     value = cast(dict[str, Any], record["value"])
     assert value["status"] == "passed"
@@ -1388,14 +1392,14 @@ async def test_execute_check_command_records_real_process_failure(tmp_path: Path
         },
     )
 
-    record = await _execute_check_command(context)
+    record = await _execute_check_command(context, FilesystemArtifactStore(tmp_path / "artifacts"))
 
     value = cast(dict[str, Any], record["value"])
     assert value["status"] == "failed"
     assert value["classification"] == "failed"
     assert value["exit_code"] == 7
-    assert value["stderr"] == "fail-error"
-    assert value["stdout"] == ""
+    assert value["stderr_tail"] == "fail-error"
+    assert value["stdout_tail"] == ""
 
 
 @pytest.mark.asyncio
@@ -1415,7 +1419,7 @@ async def test_execute_check_command_classifies_missing_tool_as_environment_issu
         },
     )
 
-    record = await _execute_check_command(context)
+    record = await _execute_check_command(context, FilesystemArtifactStore(tmp_path / "artifacts"))
 
     value = cast(dict[str, Any], record["value"])
     assert value["status"] == "failed"
@@ -1450,14 +1454,14 @@ async def test_execute_check_command_resolves_bound_dynamic_feature_oracle(tmp_p
         ],
     )
 
-    record = await _execute_check_command(context)
+    record = await _execute_check_command(context, FilesystemArtifactStore(tmp_path / "artifacts"))
 
     value = cast(dict[str, Any], record["value"])
     assert value["status"] == "passed"
     assert value["command_id"] == "check-1"
     assert value["command_binding"] == "dynamic_feature_hidden_oracle"
     assert value["command"]["source"] == "dynamic_feature_hidden_oracle_binding"
-    assert value["stdout"] == "bound-oracle"
+    assert value["stdout_tail"] == "bound-oracle"
 
 
 @pytest.mark.asyncio
@@ -1519,7 +1523,7 @@ async def test_execute_check_command_cites_verification_when_oracle_falls_back_t
         },
     )
 
-    record = await _execute_check_command(context)
+    record = await _execute_check_command(context, FilesystemArtifactStore(tmp_path / "artifacts"))
 
     value = cast(dict[str, Any], record["value"])
     assert value["status"] == "passed"
@@ -1612,7 +1616,7 @@ async def test_execute_check_command_cites_bound_verification_and_region_file_st
         },
     )
 
-    record = await _execute_check_command(context)
+    record = await _execute_check_command(context, FilesystemArtifactStore(tmp_path / "artifacts"))
 
     assert record["candidate_id"] == "candidate-1"
     assert record["candidate_record_ids"] == ["candidate-1"]
@@ -1654,7 +1658,7 @@ async def test_executor_runs_check_node_without_agent_submit(tmp_path: Path) -> 
     assert check_context is context
     value = cast(dict[str, Any], record["value"])
     assert value["status"] == "passed"
-    assert value["stdout"] == "runtime-ok"
+    assert value["stdout_tail"] == "runtime-ok"
 
 
 @pytest.mark.asyncio
@@ -1837,6 +1841,7 @@ async def test_handle_command_retry_stale_retries_locked_operational_error_then_
         cast(Any, controller),
         cast(Any, object()),
         worktree_path="/tmp/worktree",
+        artifact_store=FilesystemArtifactStore(Path("/tmp/test-graph-artifacts")),
     )
 
     result = await executor._handle_command_retry_stale(
@@ -1860,6 +1865,7 @@ async def test_handle_command_retry_stale_reraises_non_locked_operational_error_
         cast(Any, controller),
         cast(Any, object()),
         worktree_path="/tmp/worktree",
+        artifact_store=FilesystemArtifactStore(Path("/tmp/test-graph-artifacts")),
     )
 
     with pytest.raises(OperationalError):

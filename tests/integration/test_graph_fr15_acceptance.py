@@ -12,6 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
@@ -197,6 +198,7 @@ async def test_fr15_gatekeeper_cleanup_is_explicit_graph_work_and_readable(
         controller,
         UnusedAgentFactory(),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     await OutboxDispatcher(session_factory, executor, FixedClock()).dispatch_pending()
 
@@ -407,6 +409,7 @@ def _driver(
         worktree_path: str | Path,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        artifact_store: Any,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
@@ -416,6 +419,7 @@ def _driver(
             controller,
             AgentFactory(agents),
             worktree_path=repo,
+            artifact_store=artifact_store,
         )
         return controller, executor
 

@@ -373,7 +373,7 @@ class FinalInvariantBlocker(TypedDict, total=False):
     state: str
     classification: str
     command_text: str
-    stderr: str
+    stderr_tail: str
     exit_code: int
     support_ids: list[str]
 
@@ -982,7 +982,7 @@ _FINAL_INVARIANT_BLOCKER_STRING_FIELDS = {
     "state",
     "classification",
     "command_text",
-    "stderr",
+    "stderr_tail",
 }
 
 
@@ -2488,14 +2488,14 @@ def _failed_check_result_blockers(
             typed_value = cast(dict[str, Any], value)
             classification = typed_value.get("classification")
             command_text = typed_value.get("command_text")
-            stderr = typed_value.get("stderr")
+            stderr = typed_value.get("stderr_tail")
             exit_code = typed_value.get("exit_code")
             if isinstance(classification, str):
                 blocker["classification"] = classification
             if isinstance(command_text, str):
                 blocker["command_text"] = command_text
             if isinstance(stderr, str):
-                blocker["stderr"] = stderr
+                blocker["stderr_tail"] = stderr
             if isinstance(exit_code, int) and (
                 isinstance(command_text, str)
                 or isinstance(stderr, str)
@@ -2534,11 +2534,11 @@ def _failed_check_result_blockers_from_projection(
             blocker["classification"] = payload.classification
         if payload.command_text is not None:
             blocker["command_text"] = payload.command_text
-        if payload.stderr is not None:
-            blocker["stderr"] = payload.stderr
+        if payload.stderr_tail is not None:
+            blocker["stderr_tail"] = payload.stderr_tail
         if payload.exit_code is not None and (
             payload.command_text is not None
-            or payload.stderr is not None
+            or payload.stderr_tail is not None
             or payload.classification is not None
         ):
             blocker["exit_code"] = payload.exit_code
@@ -4316,7 +4316,7 @@ def _record_check_result(
         "status": status,
         "position": position,
     }
-    for key in ("classification", "command_text", "stderr", "stdout", "exit_code"):
+    for key in ("classification", "command_text", "stderr_tail", "stdout_tail", "exit_code"):
         value = getattr(record.value, key)
         if value is not None:
             result_payload[key] = value
@@ -4997,7 +4997,7 @@ def _environment_failure_reason_from_check_value(value: dict[str, Any]) -> str:
     command_label = (
         command_text if isinstance(command_text, str) and command_text else "check command"
     )
-    stderr = value.get("stderr")
+    stderr = value.get("stderr_tail")
     if classification == "tool_unavailable":
         return f"check tool unavailable while running: {command_label}"
     if classification == "tool_error":

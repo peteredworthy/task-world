@@ -267,8 +267,8 @@ def test_node_membership_round_trips() -> None:
                 "base_snapshot_id": "S0",
                 "execution_id": "exec-1",
                 "duration_ms": "1",
-                "stdout": "",
-                "stderr": "",
+                "stdout_tail": "",
+                "stderr_tail": "",
                 "stdout_truncated": False,
                 "stderr_truncated": False,
                 "timeout_seconds": 60,
@@ -888,8 +888,8 @@ def _check_result_value(**overrides: Any) -> dict[str, Any]:
         "execution_id": "exec-check",
         "exit_code": 0,
         "duration_ms": 12,
-        "stdout": "ok",
-        "stderr": "",
+        "stdout_tail": "ok",
+        "stderr_tail": "",
         "stdout_truncated": False,
         "stderr_truncated": False,
         "timeout_seconds": 300,
@@ -897,6 +897,23 @@ def _check_result_value(**overrides: Any) -> dict[str, Any]:
     }
     value.update(overrides)
     return value
+
+
+def test_check_output_artifact_fields_replace_inline_output_atomically() -> None:
+    value = _check_result_value(
+        stdout_tail="stdout tail",
+        stdout_ref=None,
+        stderr_tail="stderr tail",
+        stderr_ref=None,
+    )
+    result = CheckResultValue.model_validate(value)
+
+    assert result.stdout_tail == "stdout tail"
+    assert result.stdout_ref is None
+    assert result.stderr_tail == "stderr tail"
+    assert result.stderr_ref is None
+    with pytest.raises(ValueError, match="Extra inputs are not permitted"):
+        CheckResultValue.model_validate(_check_result_value(stdout="", stderr=""))
 
 
 def test_check_result_record_round_trips() -> None:

@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import ArtifactStore, FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType, RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import RunRepository, create_engine, create_session_factory, init_db
@@ -289,6 +290,7 @@ def _driver(
         worktree_path: str | Path,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        artifact_store: ArtifactStore,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
@@ -298,6 +300,7 @@ def _driver(
             controller,
             AgentFactory(agents, dispatch_order),
             worktree_path=repo,
+            artifact_store=artifact_store,
         )
         return controller, executor
 
@@ -529,6 +532,7 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
         controller,
         AgentFactory({}, dispatch_order),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
     driver = GraphRunDriver.__new__(GraphRunDriver)
@@ -750,6 +754,7 @@ def _shared_driver(
         worktree_path: str | Path,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        artifact_store: ArtifactStore,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
             session_factory_arg, clock_arg, id_gen_arg, auto_dispatch=False
@@ -759,6 +764,7 @@ def _shared_driver(
             controller,
             AgentFactory(agents, dispatch_order),
             worktree_path=repo,
+            artifact_store=artifact_store,
         )
         return controller, executor
 

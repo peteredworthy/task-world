@@ -106,11 +106,11 @@ uv run pyright src/orchestrator/artifacts tests/unit/test_artifact_store.py
 - Consumes: injected `ArtifactStore`.
 - Produces: canonical `CheckResultValue.stdout_tail/stdout_ref/stderr_tail/stderr_ref`.
 
-- [ ] **Step 1: Write RED model and producer tests**
+- [x] **Step 1: Write RED model and producer tests**
 
 Assert sub-threshold output produces full tails and no refs; over-threshold output writes complete bytes before callback/event append and emits 4,000-character tails plus refs; write failure prevents append; append failure leaves a readable orphan.
 
-- [ ] **Step 2: Run RED**
+- [x] **Step 2: Run RED**
 
 ```bash
 uv run pytest tests/unit/test_graph_models.py -k check_output_artifact \
@@ -119,7 +119,7 @@ uv run pytest tests/unit/test_graph_models.py -k check_output_artifact \
 
 Expected: missing tail/ref fields and artifact-store injection.
 
-- [ ] **Step 3: Change the canonical model atomically**
+- [x] **Step 3: Change the canonical model atomically**
 
 ```python
 class CheckResultValue(StrictNestedModel):
@@ -134,7 +134,7 @@ class CheckResultValue(StrictNestedModel):
 
 Remove `stdout` and `stderr` in the same commit. `*_truncated` means complete content is not inline; it is true exactly when the corresponding ref exists.
 
-- [ ] **Step 4: Implement deterministic externalization**
+- [x] **Step 4: Implement deterministic externalization**
 
 ```python
 CHECK_OUTPUT_EXTERNALIZE_BYTES = 16_384
@@ -153,11 +153,11 @@ async def _externalize_check_output(
 
 Inject the store into dispatch construction. Externalize stdout and stderr before submitting the callback that causes event append.
 
-- [ ] **Step 5: Migrate current readers to tails**
+- [x] **Step 5: Migrate current readers to tails**
 
 Blocker summaries, activity summaries, projections, and prompts use `stdout_tail` and `stderr_tail`; none hydrate refs.
 
-- [ ] **Step 6: Run GREEN and commit**
+- [x] **Step 6: Run GREEN and commit**
 
 ```bash
 uv run pytest tests/unit/test_graph_models.py \

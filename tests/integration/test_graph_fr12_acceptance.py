@@ -11,6 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType, RunStatus
 from orchestrator.config.models import RoutineConfig
@@ -224,6 +225,7 @@ async def test_fr12_recovery_reentry_skips_stale_report_and_rebuilds_readbacks(
         controller,
         NoRunningAgentFactory(),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
         process_registry=NeverRunningRegistry(),
     )
 

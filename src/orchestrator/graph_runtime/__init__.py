@@ -2,6 +2,8 @@
 
 from orchestrator.graph_runtime.controller import GraphCommandResult, GraphController
 from orchestrator.graph_runtime.dispatch import (
+    CHECK_OUTPUT_EXTERNALIZE_BYTES,
+    CHECK_OUTPUT_TAIL_CHARS,
     GraphAgentFactory,
     GraphDispatchContext,
     GraphDispatchExecutor,
@@ -42,6 +44,8 @@ from orchestrator.graph_runtime.store import GraphEventStore
 
 __all__ = [
     "GraphCommandResult",
+    "CHECK_OUTPUT_EXTERNALIZE_BYTES",
+    "CHECK_OUTPUT_TAIL_CHARS",
     "GraphAgentFactory",
     "GraphController",
     "GraphDispatchContext",

@@ -8,6 +8,7 @@ from uuid import uuid4
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, PatchCommandContext
@@ -97,6 +98,7 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         controller,
         _UnusedAgentFactory(),
         worktree_path=tmp_path,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
     summarizer_context = await _capture_execution_context_from_pending_dispatch(
@@ -155,6 +157,7 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         gap_controller,
         _UnusedAgentFactory(),
         worktree_path=tmp_path,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     gap_dispatcher = OutboxDispatcher(session_factory, gap_executor, clock)
     gap_context = await _capture_execution_context_from_pending_dispatch(

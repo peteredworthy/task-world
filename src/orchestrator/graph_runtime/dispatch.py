@@ -19,6 +19,7 @@ from typing import Any, Literal, Protocol, cast
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import ArtifactStore
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.graph import (
@@ -28,6 +29,7 @@ from orchestrator.graph import (
     GraphProjection,
     PatchCommandContext,
     RequirementRecord,
+    StoredArtifactRef,
     check_command_uses_acceptance_fallback,
     initial_projection,
     resolve_check_command_definition,
@@ -53,6 +55,8 @@ MAX_GRAPH_PROMPT_CHARS = _prompts.MAX_GRAPH_PROMPT_CHARS
 MAX_GRAPH_JSON_SECTION_CHARS = _prompts.MAX_GRAPH_JSON_SECTION_CHARS
 MAX_GRAPH_PROMPT_FIELD_CHARS = _prompts.MAX_GRAPH_PROMPT_FIELD_CHARS
 MAX_CHECK_OUTPUT_CHARS = 20_000
+CHECK_OUTPUT_EXTERNALIZE_BYTES = 16_384
+CHECK_OUTPUT_TAIL_CHARS = 4_000
 DEFAULT_CHECK_TIMEOUT_SECONDS = 300
 MAX_STALE_COMMAND_RETRIES = 5
 DEFAULT_GAP_PLANNER_RUNTIME_DEATH_MAX_ATTEMPTS = 3
@@ -173,6 +177,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         agent_factory: GraphAgentFactory,
         *,
         worktree_path: str | Path,
+        artifact_store: ArtifactStore,
         running_executions: dict[str, asyncio.Task[None]] | None = None,
         process_registry: GraphProcessRegistry | None = None,
         residue_classifier: ResidueClassifier | None = None,
@@ -184,6 +189,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self._controller = controller
         self._agent_factory = agent_factory
         self._worktree_path = str(worktree_path)
+        self._artifact_store = artifact_store
         self._running = running_executions if running_executions is not None else {}
         self._process_registry = process_registry
         self._residue_classifier = residue_classifier
@@ -332,7 +338,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
     async def _run_check(self, context: GraphDispatchContext) -> None:
         try:
             await self._acknowledge_start(context)
-            record = await _execute_check_command(context)
+            record = await _execute_check_command(context, self._artifact_store)
             await self._submit_check_result(context, record)
         except Exception as exc:
             await self._agent_died(context, str(exc))
@@ -863,6 +869,7 @@ def build_graph_runtime(
     id_gen: Any,
     *,
     worktree_path: str | Path,
+    artifact_store: ArtifactStore,
     runner_type: AgentRunnerType,
     runner_config: dict[str, Any] | None = None,
     on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
@@ -876,6 +883,7 @@ def build_graph_runtime(
         controller,
         StaticGraphAgentFactory(runner_type, runner_config),
         worktree_path=worktree_path,
+        artifact_store=artifact_store,
         on_agent_output=on_agent_output,
         on_agent_usage=on_agent_usage,
     )
@@ -1064,7 +1072,10 @@ def _rejected_cleanup_already_applied(
     )
 
 
-async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any]:
+async def _execute_check_command(
+    context: GraphDispatchContext,
+    store: ArtifactStore,
+) -> dict[str, Any]:
     command_definition = _check_command_definition(context.node_payload, context.graph_events)
     cited_record = _check_result_from_bound_verification_if_redundant(
         context,
@@ -1129,6 +1140,8 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
         stderr=stderr,
         dependency_provisioning=dependency_provisioning,
     )
+    stdout_tail, stdout_ref = await _externalize_check_output(stdout, store)
+    stderr_tail, stderr_ref = await _externalize_check_output(stderr, store)
     candidate_id = _candidate_id_for_check(context)
     task_region_id = str(context.node_payload.get("task_region_id") or context.node_id)
     attempt_number = int(context.node_payload.get("attempt_number", 0))
@@ -1150,10 +1163,12 @@ async def _execute_check_command(context: GraphDispatchContext) -> dict[str, Any
         "execution_id": context.execution_id,
         "exit_code": exit_code,
         "duration_ms": duration_ms,
-        "stdout": _trim_check_output(stdout),
-        "stderr": _trim_check_output(stderr),
-        "stdout_truncated": len(stdout) > MAX_CHECK_OUTPUT_CHARS,
-        "stderr_truncated": len(stderr) > MAX_CHECK_OUTPUT_CHARS,
+        "stdout_tail": stdout_tail,
+        "stdout_ref": stdout_ref,
+        "stderr_tail": stderr_tail,
+        "stderr_ref": stderr_ref,
+        "stdout_truncated": stdout_ref is not None,
+        "stderr_truncated": stderr_ref is not None,
         "timeout_seconds": timeout_seconds,
         "environment_policy": {
             "cwd": execution_worktree.path,
@@ -1223,8 +1238,10 @@ def _check_result_from_bound_verification_if_redundant(
         "execution_id": context.execution_id,
         "base_snapshot_id": context.base_snapshot_id,
         "duration_ms": 0,
-        "stdout": "",
-        "stderr": "",
+        "stdout_tail": "",
+        "stdout_ref": None,
+        "stderr_tail": "",
+        "stderr_ref": None,
         "stdout_truncated": False,
         "stderr_truncated": False,
         "timeout_seconds": 1,
@@ -1252,6 +1269,17 @@ def _check_result_from_bound_verification_if_redundant(
         value=True,
     )
     return CheckResultRecord.model_validate(record_payload).model_dump(mode="json")
+
+
+async def _externalize_check_output(
+    output: str,
+    store: ArtifactStore,
+) -> tuple[str, StoredArtifactRef | None]:
+    encoded = output.encode("utf-8")
+    if len(encoded) <= CHECK_OUTPUT_EXTERNALIZE_BYTES:
+        return output, None
+    ref = await store.put(encoded, media_type="text/plain", encoding="utf-8")
+    return output[-CHECK_OUTPUT_TAIL_CHARS:], ref
 
 
 def _latest_passed_verification_citation(

@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
@@ -180,6 +181,7 @@ async def test_file_state_boundary_accepts_residue_and_snapshots_captured_tree(
         controller,
         AgentFactory(BoundaryFixtureAgent()),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
 
@@ -228,6 +230,7 @@ async def test_secret_file_state_rejection_releases_lease_and_retries_clean_atte
         controller,
         AgentFactory(agent),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
 
@@ -275,6 +278,7 @@ async def test_nested_secret_inside_ignored_directory_is_classified_and_not_snap
         controller,
         AgentFactory(NestedIgnoredSecretAgent()),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())
 
@@ -535,6 +539,7 @@ async def test_graph_dispatch_surfaces_agent_usage(
         controller,
         AgentFactory(_UsageFixtureAgent()),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
         on_agent_usage=on_agent_usage,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, FixedClock())

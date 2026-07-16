@@ -51,11 +51,22 @@ def _build_driver(
     ids = SequentialIds()
 
     def runtime_builder(
-        sf, clock_arg, id_gen_arg, *, worktree_path, runner_type, runner_config=None
+        sf,
+        clock_arg,
+        id_gen_arg,
+        *,
+        worktree_path,
+        runner_type,
+        runner_config=None,
+        artifact_store,
     ):  # type: ignore[no-untyped-def]
         controller = GraphController(sf, clock_arg, id_gen_arg, auto_dispatch=False)
         executor = GraphDispatchExecutor(
-            sf, controller, AgentFactory(agents, dispatch_order), worktree_path=repo
+            sf,
+            controller,
+            AgentFactory(agents, dispatch_order),
+            worktree_path=repo,
+            artifact_store=artifact_store,
         )
         return controller, executor
 

@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import GraphOutboxModel, create_engine, create_session_factory, init_db
@@ -413,6 +414,7 @@ async def test_graph_runner_builder_verifier_pass_accepts_task(
         controller,
         AgentFactory({"worker": ResidueSubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -448,6 +450,7 @@ async def test_parallel_worker_start_acknowledgements_retry_stale_positions(
         controller,
         AgentFactory({"worker": SubmitAgent()}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -487,6 +490,7 @@ async def test_graph_runner_verifier_fail_needs_revision(
         controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("C")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -520,6 +524,7 @@ async def test_graph_runner_restart_reattaches_running_builder(
         controller,
         AgentFactory({"worker": builder, "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
         running_executions=running,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
@@ -557,6 +562,7 @@ async def test_graph_runner_restart_reattaches_running_builder(
             restarted_controller,
             AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
             worktree_path=repo,
+            artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
             process_registry=live_process,
         )
         restarted_dispatcher = OutboxDispatcher(
@@ -601,6 +607,7 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
         controller,
         AgentFactory({"worker": builder, "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
         running_executions=running,
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
@@ -623,6 +630,7 @@ async def test_graph_runner_restart_marks_missing_builder_dead_and_redispatches(
         restarted_controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     restarted_dispatcher = OutboxDispatcher(session_factory, restarted_executor, clock)
     report = await recover(session_factory, restarted_dispatcher, run_id=run_id)
@@ -663,6 +671,7 @@ async def test_reconcile_runtime_skips_lease_already_recovered_by_another_driver
         controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     await controller.handle_command(
         run_id,
@@ -722,6 +731,7 @@ async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
         controller,
         AgentFactory({"worker": RaisingAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     failing_dispatcher = OutboxDispatcher(session_factory, failing_executor, clock)
 
@@ -756,6 +766,7 @@ async def test_graph_runner_exception_appends_agent_died_and_releases_retry(
         controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     healthy_dispatcher = OutboxDispatcher(session_factory, healthy_executor, clock)
     await _schedule_dispatch_and_wait(controller, healthy_dispatcher, healthy_executor, run_id)
@@ -783,6 +794,7 @@ async def test_graph_runner_rejects_stale_generation_callback_through_stack(
         controller,
         AgentFactory({"worker": builder, "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 
@@ -835,6 +847,7 @@ async def test_graph_dispatch_requires_base_snapshot_id_without_inventing_identi
         controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock, max_attempts=1)
 
@@ -886,6 +899,7 @@ async def test_graph_dispatch_carries_projection_base_snapshot_id_to_callback(
         controller,
         AgentFactory({"worker": SubmitAgent(), "verifier": GradingAgent("A")}),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
 

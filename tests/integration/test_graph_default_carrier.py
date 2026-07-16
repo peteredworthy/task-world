@@ -283,6 +283,7 @@ def _driver(
         worktree_path: str | Path,
         runner_type: AgentRunnerType,
         runner_config: dict[str, Any] | None = None,
+        artifact_store: Any,
         on_agent_output: Any = None,
     ) -> tuple[GraphController, GraphDispatchExecutor]:
         controller = GraphController(
@@ -293,6 +294,7 @@ def _driver(
             controller,
             AgentFactory(agents, dispatch_order),
             worktree_path=repo,
+            artifact_store=artifact_store,
             on_agent_output=on_agent_output,
         )
         return controller, executor

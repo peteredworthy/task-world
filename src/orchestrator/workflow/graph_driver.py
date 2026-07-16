@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import FilesystemArtifactStore
+
 from orchestrator.config.enums import AgentRunnerType, RunStatus
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -460,10 +462,16 @@ class GraphRunDriver:
             await self._reopen_failed_graph_lifecycle(run_id)
             await self._clear_reopen_marker(run_id)
 
+        main_worktree = await asyncio.to_thread(resolve_main_worktree, Path(run.worktree_path))
+        if main_worktree is None:
+            raise ValueError("cannot resolve main project root for graph artifact storage")
         runtime_kwargs: dict[str, Any] = {
             "worktree_path": Path(run.worktree_path),
             "runner_type": run.agent_runner_type,
             "runner_config": run.agent_runner_config,
+            "artifact_store": FilesystemArtifactStore(
+                main_worktree / ".orchestrator" / "artifacts"
+            ),
         }
         if self._on_agent_output is not None:
             runtime_kwargs["on_agent_output"] = self._on_agent_output
@@ -501,7 +509,6 @@ class GraphRunDriver:
         # before driving, so any path the run leaks into it (an agent escaping its
         # worktree) is flagged immediately rather than discovered later via failing
         # tests. See git/contamination.py and the repos-symlink contamination note.
-        main_worktree = await asyncio.to_thread(resolve_main_worktree, Path(run.worktree_path))
         before_dirty: set[str] = (
             await asyncio.to_thread(dirty_paths, main_worktree) if main_worktree else set()
         )
@@ -548,20 +555,19 @@ class GraphRunDriver:
             else:
                 await self._apply_pause(run_id, "graph_blocked", outcome.blocked_reason)
 
-        if main_worktree is not None:
-            leaked = find_leaked_paths(
-                before_dirty, await asyncio.to_thread(dirty_paths, main_worktree)
+        leaked = find_leaked_paths(
+            before_dirty, await asyncio.to_thread(dirty_paths, main_worktree)
+        )
+        if leaked:
+            logger.error(
+                "GraphRunDriver: run %s leaked %d path(s) into the repo main "
+                "worktree %s: %s — worktree-isolation breach; investigate before "
+                "trusting main",
+                run_id,
+                len(leaked),
+                main_worktree,
+                sorted(leaked)[:20],
             )
-            if leaked:
-                logger.error(
-                    "GraphRunDriver: run %s leaked %d path(s) into the repo main "
-                    "worktree %s: %s — worktree-isolation breach; investigate before "
-                    "trusting main",
-                    run_id,
-                    len(leaked),
-                    main_worktree,
-                    sorted(leaked)[:20],
-                )
         return outcome
 
     async def _handle_command_at_head(

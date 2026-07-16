@@ -1342,8 +1342,10 @@ class CheckResultValue(StrictNestedModel):
     execution_id: str
     exit_code: StrictInt | None = None
     duration_ms: StrictInt = Field(ge=0)
-    stdout: str
-    stderr: str
+    stdout_tail: str
+    stdout_ref: StoredArtifactRef | None = None
+    stderr_tail: str
+    stderr_ref: StoredArtifactRef | None = None
     stdout_truncated: StrictBool
     stderr_truncated: StrictBool
     timeout_seconds: StrictFloat = Field(gt=0)
@@ -1356,6 +1358,14 @@ class CheckResultValue(StrictNestedModel):
     file_state_record_ids: list[str] = Field(default_factory=list)
     verification_report_record_ids: list[str] = Field(default_factory=list)
     evaluated_record_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def truncation_matches_artifact_references(self) -> "CheckResultValue":
+        if self.stdout_truncated != (self.stdout_ref is not None):
+            raise ValueError("stdout_truncated must match stdout_ref presence")
+        if self.stderr_truncated != (self.stderr_ref is not None):
+            raise ValueError("stderr_truncated must match stderr_ref presence")
+        return self
 
 
 class CheckResultRecord(TypedRecordBase):
@@ -1400,8 +1410,8 @@ class CheckResultProjection(GraphBaseModel):
     record_id: str | None = None
     classification: str | None = None
     command_text: str | None = None
-    stderr: str | None = None
-    stdout: str | None = None
+    stderr_tail: str | None = None
+    stdout_tail: str | None = None
     exit_code: int | None = None
     candidate_record_ids: list[str] = Field(default_factory=_empty_check_result_record_ids)
     file_state_record_ids: list[str] = Field(default_factory=_empty_check_result_record_ids)
@@ -1416,7 +1426,7 @@ class EnvironmentFailureProjection(GraphBaseModel):
     task_region_id: str | None = None
     record_id: str | None = None
     command_text: str | None = None
-    stderr: str | None = None
+    stderr_tail: str | None = None
     exit_code: int | None = None
 
 

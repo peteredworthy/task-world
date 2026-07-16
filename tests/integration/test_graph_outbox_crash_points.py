@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.db import (
     EventV2Model,
     GraphOutboxModel,
@@ -997,6 +998,7 @@ async def test_snapshot_cleanup_recovers_when_dispatch_fails_before_side_effect(
         controller,
         UnusedAgentFactory(),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     restarted_dispatcher = OutboxDispatcher(session_factory, executor, clock)
     report = await recover(
@@ -1069,6 +1071,7 @@ async def test_snapshot_cleanup_recovers_after_ref_delete_before_record(
         controller,
         UnusedAgentFactory(),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
     dispatcher = OutboxDispatcher(session_factory, executor, clock)
     await dispatcher.dispatch_pending()
@@ -1164,6 +1167,7 @@ async def test_compromised_file_state_binding_is_refused_before_cleanup_complete
         controller,
         UnusedAgentFactory(),
         worktree_path=repo,
+        artifact_store=FilesystemArtifactStore(tmp_path / "artifacts"),
     )
 
     with pytest.raises(CompromisedFileStateError):

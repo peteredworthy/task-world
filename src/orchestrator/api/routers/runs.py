@@ -115,8 +115,6 @@ _HEAVY_ACTIVITY_PAYLOAD_KEYS = {
     "output_lines",
     "prompt",
     "raw_output",
-    "stderr",
-    "stdout",
     "traceback",
     "transcript",
     "verifier_prompt",
