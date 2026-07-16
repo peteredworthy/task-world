@@ -824,3 +824,26 @@ garbage collection, event-aware artifact SQL, or recovery of content beyond the
 current 20,000-character truncation. Those remain pending in
 `docs/superpowers/specs/2026-07-15-w5-artifact-output-design.md` and
 `docs/superpowers/plans/2026-07-15-w5-artifact-output.md`.
+
+## W5.5
+
+Status: **in progress**.
+
+Execution identity:
+- Seed branch: `main`.
+- Seed SHA: `67f628ae590f0fbbb6edae45c80344e1b67c5e63`.
+- Required W5 ancestor: `67f628ae590f0fbbb6edae45c80344e1b67c5e63`.
+- Work branch: `codex/w5-artifact-output`.
+- Isolated worktree: `worktrees/w5-artifact-output`.
+
+Durable task queue:
+- [ ] Task 1: filesystem artifact store.
+- [ ] Task 2: atomic check-output externalization.
+- [ ] Task 3: explicit prompt and API hydration.
+- [ ] Task 4: mark-and-sweep garbage collection.
+- [ ] Task 5: final artifact verification and closeout.
+
+Evidence:
+- Setup: `uv sync` completed in the isolated worktree.
+- Clean baseline: `uv run pytest tests/ -q -n auto --dist worksteal` passed
+  with 4,781 tests passed, 3 skipped, and 3 existing warnings in 118.28s.
