@@ -36,6 +36,12 @@ def test_callback_requires_payload_or_payload_hash() -> None:
         SubmitCallbackCommand.model_validate(payload)
 
 
+@pytest.mark.parametrize("payload_hash", ["", "   "])
+def test_callback_rejects_blank_payload_hash_without_payload(payload_hash: str) -> None:
+    with pytest.raises(ValidationError):
+        SubmitCallbackCommand.model_validate({**_callback_payload(), "payload_hash": payload_hash})
+
+
 @pytest.mark.parametrize("field", ["node_id", "execution_id", "lease_id", "base_snapshot_id"])
 def test_callback_requires_identity_fields(field: str) -> None:
     payload = _callback_payload()

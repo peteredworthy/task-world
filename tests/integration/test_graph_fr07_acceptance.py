@@ -180,14 +180,10 @@ async def test_fr07_macro_tools_route_expand_validate_and_read_back_patch_attemp
         if event["event_type"] == "command_rejected"
         and event["payload"]["command_type"] == "submit_patch"
     ]
-    assert any(
-        "create_join requires sources or source_ids" in reason
-        for reason in rejected_command_reasons
-    )
-    assert any(
-        "request_gate authority_request requires requested_authority" in reason
-        for reason in rejected_command_reasons
-    )
+    assert rejected_command_reasons == [
+        "malformed patch [malformed_patch]",
+        "malformed patch [malformed_patch]",
+    ]
 
     edge_by_id = {edge["edge_id"]: edge for edge in topology["edges"]}
     assert {

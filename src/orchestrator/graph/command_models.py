@@ -21,6 +21,10 @@ CommandIdentifier = Annotated[
     str,
     StringConstraints(strict=True, min_length=1, pattern=r"^\S+$"),
 ]
+ActorLabel = Annotated[
+    str,
+    StringConstraints(strict=True, min_length=1, pattern=r".*\S.*"),
+]
 
 
 class GraphCommandContext(BaseModel):
@@ -130,7 +134,7 @@ class SubmitCallbackCommand(StrictCommandPayload):
     base_snapshot_id: CommandIdentifier
     observed_graph_position: int = Field(ge=0)
     idempotency_key: CommandIdentifier
-    payload_hash: str | None = None
+    payload_hash: CommandIdentifier | None = None
     payload: dict[str, Any] | None = None
     is_mutating: bool = True
     complete_node: bool = True
@@ -201,7 +205,7 @@ class RecordDecisionCommand(StrictCommandPayload):
     decision_type: Literal["approval", "authority", "oversight"]
     node_id: CommandIdentifier
     decision: str
-    decider: Actor | str
+    decider: Actor | ActorLabel
     scope: dict[str, Any] | None = None
     expires_at: str | None = None
     reason: str | None = None
@@ -321,6 +325,7 @@ __all__ = [
     "AcceptRunCommand",
     "AcknowledgeStartCommand",
     "AgentDiedCommand",
+    "ActorLabel",
     "ApplyCommandHandler",
     "CancelCommand",
     "CommandSpec",

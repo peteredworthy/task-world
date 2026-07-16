@@ -16,6 +16,7 @@ from orchestrator.graph._commands import (
     event_factory,
     serialize_event_payload,
 )
+from orchestrator.graph._error_rendering import safe_exception_reason
 from orchestrator.graph.command_models import (
     AcceptRunCommand,
     AcknowledgeStartCommand,
@@ -111,18 +112,6 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     ),
 }
 
-_MAX_VALIDATION_ERRORS = 8
-_MAX_VALIDATION_REASON_LENGTH = 1_000
-
-
-def _safe_validation_reason(exc: ValidationError) -> str:
-    details: list[str] = []
-    for error in exc.errors(include_input=False)[:_MAX_VALIDATION_ERRORS]:
-        location = ".".join(str(part) for part in error["loc"]) or "payload"
-        details.append(f"{location} [{error['type']}]: {error['msg']}")
-    reason = "invalid command payload: " + "; ".join(details)
-    return reason[:_MAX_VALIDATION_REASON_LENGTH]
-
 
 def apply_command(
     projection: GraphProjection,
@@ -160,7 +149,11 @@ def apply_command(
             command_rejected(
                 make_event,
                 command_type,
-                _safe_validation_reason(exc),
+                safe_exception_reason(
+                    exc,
+                    code="invalid_command_payload",
+                    message="invalid command payload",
+                ),
             )
         ]
     return spec.handler(

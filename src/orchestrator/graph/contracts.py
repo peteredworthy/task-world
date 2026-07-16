@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
+from orchestrator.graph._error_rendering import safe_exception_reason
 from orchestrator.graph.models import normalize_record_selector
 
 
@@ -383,7 +384,11 @@ def _selector_compatibility_error(
     try:
         typed_selector = normalize_record_selector(selector)
     except ValueError as exc:
-        return f"edge {edge_id} selector is invalid: {exc}"
+        return safe_exception_reason(
+            exc,
+            code="invalid_edge_selector",
+            message="edge selector is invalid",
+        )
     accepted = source.record_types | source.schemas | source.selector_aliases
     selected = _selector_record_facts(typed_selector)
     if selected and selected.isdisjoint(accepted):

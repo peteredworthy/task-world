@@ -256,6 +256,7 @@ IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
         "lease_id",
         "base_snapshot_id",
         "idempotency_key",
+        "payload_hash",
     ),
     "submit_patch": (
         "patch_id",
@@ -273,7 +274,7 @@ IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
         "task_region_id",
         "lease_id",
     ),
-    "record_decision": ("node_id", "record_id"),
+    "record_decision": ("node_id", "decider", "record_id"),
     "record_gatekeeper_verdicts": ("file_state_record_id", "execution_id", "consult_id"),
     "record_requirement_revision": (
         "requirement_id",

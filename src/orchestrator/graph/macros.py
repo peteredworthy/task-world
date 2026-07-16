@@ -10,6 +10,8 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from orchestrator.graph._error_rendering import safe_exception_reason
+
 
 MACRO_FIELD = "macro_invocations"
 
@@ -165,12 +167,13 @@ def _validate_invocation(invocation: MacroInvocation) -> MacroInvocation:
     try:
         typed_args = args_model.model_validate(invocation.args)
     except ValidationError as exc:
-        first_error = exc.errors()[0]
-        location = ".".join(str(part) for part in first_error["loc"])
-        detail = first_error["msg"]
-        if location:
-            raise ValueError(f"{invocation.macro} args invalid: {location}: {detail}") from exc
-        raise ValueError(f"{invocation.macro} args invalid: {detail}") from exc
+        raise ValueError(
+            safe_exception_reason(
+                exc,
+                code="invalid_macro_arguments",
+                message=f"{invocation.macro} args invalid",
+            )
+        ) from exc
     return invocation.model_copy(update={"args": typed_args.model_dump(exclude_none=True)})
 
 

@@ -40,6 +40,7 @@ from orchestrator.graph.command_models import (
     SubmitCallbackCommand,
     SubmitPatchCommand,
 )
+from orchestrator.graph._error_rendering import safe_exception_reason
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
     PortContract,
@@ -658,7 +659,17 @@ def _apply_seed_compiled_events(
                 )
             compiled_events.append(event)
     except (TypeError, ValueError) as exc:
-        return [_command_rejected(make_event, "seed_compiled_events", f"malformed event: {exc}")]
+        return [
+            _command_rejected(
+                make_event,
+                "seed_compiled_events",
+                safe_exception_reason(
+                    exc,
+                    code="malformed_seed_event",
+                    message="malformed event",
+                ),
+            )
+        ]
 
     return compiled_events
 
@@ -1107,17 +1118,29 @@ def _output_record_contract_conflict(
             try:
                 CandidateRecord.model_validate(record_payload)
             except ValueError as exc:
-                return f"candidate record at index {index} is invalid: {exc}"
+                return safe_exception_reason(
+                    exc,
+                    code="invalid_candidate_record",
+                    message=f"candidate record at index {index} is invalid",
+                )
         if _is_check_result_record_payload(record_payload):
             try:
                 CheckResultRecord.model_validate(record_payload)
             except ValueError as exc:
-                return f"check_result record at index {index} is invalid: {exc}"
+                return safe_exception_reason(
+                    exc,
+                    code="invalid_check_result_record",
+                    message=f"check_result record at index {index} is invalid",
+                )
         if _is_verification_report_record_payload(record_payload):
             try:
                 _parse_verification_report_record(record_payload)
             except ValueError as exc:
-                return f"verification record at index {index} is invalid: {exc}"
+                return safe_exception_reason(
+                    exc,
+                    code="invalid_verification_record",
+                    message=f"verification record at index {index} is invalid",
+                )
         if _is_gap_classification_record_payload(record_payload):
             record_payload = _gap_classification_record_payload_for_validation(
                 record_payload,
@@ -1126,7 +1149,11 @@ def _output_record_contract_conflict(
             try:
                 GapClassificationRecord.model_validate(record_payload)
             except ValueError as exc:
-                return f"gap classification record at index {index} is invalid: {exc}"
+                return safe_exception_reason(
+                    exc,
+                    code="invalid_gap_classification_record",
+                    message=f"gap classification record at index {index} is invalid",
+                )
         if _is_analysis_summary_record_payload(record_payload):
             record_payload = _analysis_summary_record_payload_for_validation(
                 record_payload,
@@ -1135,7 +1162,11 @@ def _output_record_contract_conflict(
             try:
                 AnalysisSummaryRecord.model_validate(record_payload)
             except ValueError as exc:
-                return f"analysis_summary record at index {index} is invalid: {exc}"
+                return safe_exception_reason(
+                    exc,
+                    code="invalid_analysis_summary_record",
+                    message=f"analysis_summary record at index {index} is invalid",
+                )
         if _is_graph_patch_proposal_record_payload(record_payload):
             record_payload = _graph_patch_proposal_record_payload_for_validation(
                 record_payload,
@@ -1144,7 +1175,11 @@ def _output_record_contract_conflict(
             try:
                 GraphPatchProposalRecord.model_validate(record_payload)
             except ValueError as exc:
-                return f"graph_patch_proposal record at index {index} is invalid: {exc}"
+                return safe_exception_reason(
+                    exc,
+                    code="invalid_graph_patch_proposal_record",
+                    message=f"graph_patch_proposal record at index {index} is invalid",
+                )
         if _is_artifact_reference_record_payload(record_payload):
             record_payload = _artifact_reference_record_payload_for_validation(
                 record_payload,
@@ -1153,7 +1188,11 @@ def _output_record_contract_conflict(
             try:
                 ArtifactReferenceRecord.model_validate(record_payload)
             except ValueError as exc:
-                return f"artifact_reference record at index {index} is invalid: {exc}"
+                return safe_exception_reason(
+                    exc,
+                    code="invalid_artifact_reference_record",
+                    message=f"artifact_reference record at index {index} is invalid",
+                )
     return None
 
 
@@ -1404,7 +1443,11 @@ def _verification_record_conflict(
         try:
             record = _parse_verification_report_record(record_payload)
         except ValueError as exc:
-            return f"verification record at index {index} is invalid: {exc}"
+            return safe_exception_reason(
+                exc,
+                code="invalid_verification_record",
+                message=f"verification record at index {index} is invalid",
+            )
         if projection["node_kinds"].get(expected_producer_node_id) != "verifier":
             return f"verification record at index {index} was not produced by a verifier"
         candidate_id = record.candidate_id
@@ -2109,7 +2152,11 @@ def _apply_patch_command(
     except (TypeError, ValueError) as exc:
         rejected_payload = {
             "command_type": "submit_patch",
-            "reason": f"malformed patch: {exc}",
+            "reason": safe_exception_reason(
+                exc,
+                code="malformed_patch",
+                message="malformed patch",
+            ),
             "patch_id": payload.patch_id,
             "actor_role": actor_role,
             "proposed_by_node_id": context.proposed_by_node_id,
@@ -2279,7 +2326,11 @@ def _request_record_validation_error(patch: PatchEnvelope) -> str | None:
         try:
             _request_record_bindings_for_node(dict(op.node))
         except ValueError as exc:
-            return f"invalid request record for node {op.node.get('node_id')}: {exc}"
+            return safe_exception_reason(
+                exc,
+                code="invalid_request_record",
+                message="invalid request record for patch node",
+            )
     return None
 
 
@@ -4209,7 +4260,17 @@ def _apply_record_decision(
     try:
         decision_record = _decision_output_record(projection, node_id, event_payload, decision_type)
     except ValueError as exc:
-        return [_command_rejected(make_event, "record_decision", f"invalid decision record: {exc}")]
+        return [
+            _command_rejected(
+                make_event,
+                "record_decision",
+                safe_exception_reason(
+                    exc,
+                    code="invalid_decision_record",
+                    message="invalid decision record",
+                ),
+            )
+        ]
     payload_model = {
         "approval_decision_recorded": ApprovalDecisionRecordedPayload,
         "authority_decision_recorded": AuthorityDecisionRecordedPayload,
