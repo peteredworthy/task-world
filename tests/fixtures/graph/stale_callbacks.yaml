@@ -27,7 +27,7 @@
     - lease_granted: {node_id: worker-stale-3, lease_id: lease-3, generation: 1}
     - lease_revoked: {node_id: worker-stale-3, lease_id: lease-3}
   when_command:
-    submit_callback: {run_id: run-1, node_id: worker-stale-3, execution_id: exec-3, lease_id: lease-3, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-3}
+    submit_callback: {run_id: run-1, node_id: worker-stale-3, execution_id: exec-3, lease_id: lease-3, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-3, payload_hash: hash-3}
   then_events:
     - callback_rejected_stale: {node_id: worker-stale-3, lease_id: lease-3}
   then_projection: {lease-3: revoked}
@@ -36,7 +36,7 @@
   given_events:
     - lease_granted: {node_id: worker-stale-4, lease_id: lease-4, generation: 2}
   when_command:
-    submit_callback: {run_id: run-1, node_id: worker-stale-4, execution_id: exec-4, lease_id: lease-4, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-4}
+    submit_callback: {run_id: run-1, node_id: worker-stale-4, execution_id: exec-4, lease_id: lease-4, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-4, payload_hash: hash-4}
   then_events:
     - callback_rejected_stale: {node_id: worker-stale-4, lease_id: lease-4}
   then_projection: {lease-4: active}
@@ -46,7 +46,7 @@
     - node_created: {node_id: worker-stale-4f, kind: worker, state: running}
     - lease_granted: {node_id: worker-stale-4f, lease_id: lease-4f, generation: 1, execution_id: exec-4f, base_snapshot_id: S0}
   when_command:
-    submit_callback: {run_id: run-1, node_id: worker-stale-4f, execution_id: exec-4f, lease_id: lease-4f, lease_generation: 999, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-4f}
+    submit_callback: {run_id: run-1, node_id: worker-stale-4f, execution_id: exec-4f, lease_id: lease-4f, lease_generation: 999, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-4f, payload_hash: hash-4f}
   then_events:
     - callback_rejected_stale: {node_id: worker-stale-4f, lease_id: lease-4f}
   then_projection: {worker-stale-4f: running, lease-4f: active}
@@ -57,7 +57,7 @@
     - node_created: {node_id: worker-stale-5b, kind: worker, state: ready}
     - lease_granted: {node_id: worker-stale-5a, lease_id: lease-5a, generation: 1}
   when_command:
-    submit_callback: {run_id: run-1, node_id: worker-stale-5a, execution_id: exec-5a, lease_id: lease-5a, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 3, idempotency_key: key-5a}
+    submit_callback: {run_id: run-1, node_id: worker-stale-5a, execution_id: exec-5a, lease_id: lease-5a, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 3, idempotency_key: key-5a, payload_hash: hash-5a}
   then_events:
     - callback_rejected_stale: {node_id: worker-stale-5a}
   then_projection: {worker-stale-5a: failed, worker-stale-5b: ready}
@@ -67,7 +67,7 @@
     - node_state_changed: {node_id: worker-stale-6, new_state: completed}
     - lease_granted: {node_id: worker-stale-6, lease_id: lease-6, generation: 1}
   when_command:
-    submit_callback: {run_id: run-1, node_id: worker-stale-6, execution_id: exec-6, lease_id: lease-6, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-6}
+    submit_callback: {run_id: run-1, node_id: worker-stale-6, execution_id: exec-6, lease_id: lease-6, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-6, payload_hash: hash-6}
   then_events:
     - callback_rejected_stale: {node_id: worker-stale-6}
   then_projection: {worker-stale-6: completed}
@@ -77,7 +77,7 @@
     - run_lifecycle_changed: {to_state: cancelled}
     - lease_granted: {node_id: gate-stale-7, lease_id: lease-7, generation: 1}
   when_command:
-    submit_callback: {run_id: run-1, node_id: gate-stale-7, execution_id: exec-7, lease_id: lease-7, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-7}
+    submit_callback: {run_id: run-1, node_id: gate-stale-7, execution_id: exec-7, lease_id: lease-7, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-7, payload_hash: hash-7}
   then_events:
     - callback_rejected_stale: {node_id: gate-stale-7}
   then_projection: {run_state: cancelled}
@@ -131,7 +131,7 @@
     - lease_granted: {node_id: worker-stale-9b, lease_id: lease-9b, generation: 1}
     - lease_suspended: {node_id: worker-stale-9b, lease_id: lease-9b, reason: pause}
   when_command:
-    submit_callback: {run_id: run-1, node_id: worker-stale-9b, execution_id: exec-9b, lease_id: lease-9b, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-9b}
+    submit_callback: {run_id: run-1, node_id: worker-stale-9b, execution_id: exec-9b, lease_id: lease-9b, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-9b, payload_hash: hash-9b}
   then_events:
     - callback_rejected_stale: {node_id: worker-stale-9b, lease_id: lease-9b}
   then_projection: {lease-9b: suspended}

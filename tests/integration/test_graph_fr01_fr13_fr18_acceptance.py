@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.api import create_app
 from orchestrator.config import AgentRunnerType, RunStatus, RoutineConfig
 from orchestrator.db import init_db
-from orchestrator.graph import FakeClock
+from orchestrator.graph import FakeClock, PatchCommandContext
 from orchestrator.graph_runtime import GraphController, GraphDispatchContext, GraphDispatchExecutor
 from orchestrator.runners import AgentRunner
 from orchestrator.runners.types import (
@@ -608,9 +608,7 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
         "submit_patch",
         {
             "patch_id": "patch-invalid-actor-blocked",
-            "proposed_by_node_id": "planner-plan",
             "base_graph_position": 0,
-            "actor_role": "fixer",  # unauthorized: only planner/gap_planner may submit
             "ops": [
                 {
                     "op": "create_node",
@@ -624,6 +622,12 @@ async def test_fr13_partial_region_blockers_and_invalid_patch_in_blocked_state(
                 }
             ],
         },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=current_position,
+            proposed_by_node_id="planner-plan",
+            actor_role="fixer",  # unauthorized: only planner/gap_planner may submit
+        ),
     )
 
     # --- verify graph state is unchanged (FR-13 c) ---------------------------

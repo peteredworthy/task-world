@@ -111,7 +111,6 @@ def _root_planner_patch(proposed_by: str) -> dict[str, Any]:
 
     return {
         "patch_id": "patch-ds-root-plan",
-        "proposed_by_node_id": proposed_by,
         "base_graph_position": 0,
         "ops": [
             {
@@ -284,7 +283,6 @@ def _gap_planner_patch(proposed_by: str) -> dict[str, Any]:
 
     return {
         "patch_id": "patch-ds-gap-invariant",
-        "proposed_by_node_id": proposed_by,
         "base_graph_position": 0,
         "ops": [
             {
@@ -347,7 +345,6 @@ def _gap_planner_no_op() -> dict[str, Any]:
 def _recovery_gap_planner_patch(proposed_by: str) -> dict[str, Any]:
     return {
         "patch_id": f"patch-{proposed_by}-retry-corrective",
-        "proposed_by_node_id": proposed_by,
         "base_graph_position": 0,
         "ops": [
             {

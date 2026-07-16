@@ -73,7 +73,6 @@ async def test_fr10_scheduler_readiness_command_precondition_and_retry_readbacks
         first_tick.projection_position,
         "agent_died",
         {
-            "run_id": run_id,
             "lease_id": "lease-worker-retry",
             "execution_id": "exec-worker-retry",
             "reason": "process_exit",

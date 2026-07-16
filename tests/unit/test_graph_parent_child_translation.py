@@ -9,12 +9,12 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    apply_command,
     compile_routine,
     initial_projection,
     project_planner_chain,
     reduce_event,
 )
+from tests.unit.graph_test_utils import apply_command
 
 
 def test_parent_child_routine_compiles_to_planner_chain() -> None:

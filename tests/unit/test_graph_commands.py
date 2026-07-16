@@ -9,8 +9,10 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     FakeClock,
+    GraphCommandContext,
+    PatchCommandContext,
     SequentialIdGenerator,
-    apply_command,
+    apply_command as apply_graph_command,
     initial_projection,
     project_requirement_freshness_facts,
     project_task_states,
@@ -83,7 +85,7 @@ def _apply(
         _project(events),
         events,
         command_type,
-        payload or {"run_id": "run-1"},
+        payload or {},
         clock,
         SequentialIdGenerator(),
     )
@@ -99,9 +101,57 @@ def _apply_from_checkpoint(
         projection,
         events,
         command_type,
-        payload or {"run_id": "run-1"},
+        payload or {},
         FakeClock(),
         SequentialIdGenerator(),
+    )
+
+
+def apply_command(
+    projection: Any,
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: dict[str, Any],
+    clock: FakeClock,
+    id_gen: SequentialIdGenerator,
+) -> list[EventEnvelope]:
+    command_payload, context = _command_input(events, command_type, payload)
+    return apply_graph_command(
+        projection,
+        events,
+        command_type,
+        command_payload,
+        context,
+        clock,
+        id_gen,
+    )
+
+
+def _command_input(
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: dict[str, Any] | None,
+) -> tuple[dict[str, Any], GraphCommandContext]:
+    command_payload = dict(payload or {})
+    run_id = command_payload.pop("run_id", events[-1].run_id if events else "run-1")
+    current_position = command_payload.pop(
+        "_current_graph_position",
+        max((event.position for event in events), default=-1),
+    )
+    actor_role = command_payload.pop("actor_role", None)
+    proposed_by_node_id = command_payload.pop("proposed_by_node_id", None)
+    if command_type == "submit_patch":
+        return command_payload, PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=current_position,
+            proposed_by_node_id=proposed_by_node_id or "controller",
+            actor_role=actor_role or "planner",
+        )
+    actor = Actor(kind=ActorKind.HUMAN, role=actor_role) if isinstance(actor_role, str) else None
+    return command_payload, GraphCommandContext(
+        run_id=run_id,
+        current_graph_position=current_position,
+        actor=actor,
     )
 
 
@@ -4492,7 +4542,7 @@ def test_patch_reject_emits_rejection() -> None:
     assert output[0].payload["base_graph_position"] == -1
 
 
-def test_malformed_patch_rejection_preserves_submitter_evidence() -> None:
+def test_malformed_patch_is_rejected_at_schema_boundary() -> None:
     output = _apply(
         [],
         "submit_patch",
@@ -4508,10 +4558,8 @@ def test_malformed_patch_rejection_preserves_submitter_evidence() -> None:
 
     assert output[0].event_type == "command_rejected"
     assert output[0].payload["command_type"] == "submit_patch"
-    assert output[0].payload["patch_id"] == "patch-bad"
-    assert output[0].payload["proposed_by_node_id"] == "planner-1"
-    assert output[0].payload["actor_role"] == "planner"
-    assert "base_graph_position" not in output[0].payload
+    assert "invalid command payload" in output[0].payload["reason"]
+    assert "base_graph_position" in output[0].payload["reason"]
 
 
 def test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_run() -> None:
@@ -6506,7 +6554,7 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     recovery_edge = next(
         event
@@ -6880,7 +6928,7 @@ def test_passed_final_check_retires_failure_continuation() -> None:
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "reconcile", {"run_id": "run-1"})
 
     assert [event.payload["node_id"] for event in output if event.event_type == "node_retired"] == [
         "planner-gap-final"
@@ -8342,7 +8390,8 @@ def test_record_decision_rejects_missing_target() -> None:
     output = _apply([], "record_decision", {"run_id": "run-1", "decision_type": "approval"})
 
     assert output[0].event_type == "command_rejected"
-    assert "missing target node_id" in output[0].payload["reason"]
+    assert "invalid command payload" in output[0].payload["reason"]
+    assert "node_id" in output[0].payload["reason"]
 
 
 def test_record_decision_rejects_invalid_decision() -> None:
@@ -8359,7 +8408,7 @@ def test_record_decision_rejects_invalid_decision() -> None:
     )
 
     assert output[0].event_type == "command_rejected"
-    assert "invalid decision value" in output[0].payload["reason"]
+    assert "decision for approval must be one of" in output[0].payload["reason"]
 
 
 def test_record_decision_rejects_malformed_typed_authority_record_atomically() -> None:
@@ -8388,7 +8437,8 @@ def test_record_decision_rejects_malformed_typed_authority_record_atomically() -
     )
 
     assert [event.event_type for event in output] == ["command_rejected"]
-    assert "invalid decision record" in output[0].payload["reason"]
+    assert "invalid command payload" in output[0].payload["reason"]
+    assert "scope" in output[0].payload["reason"]
 
 
 def test_record_decision_rejects_missing_decider() -> None:
@@ -8404,7 +8454,8 @@ def test_record_decision_rejects_missing_decider() -> None:
     )
 
     assert output[0].event_type == "command_rejected"
-    assert "missing decider actor" in output[0].payload["reason"]
+    assert "invalid command payload" in output[0].payload["reason"]
+    assert "decider" in output[0].payload["reason"]
 
 
 def test_record_decision_rejects_unknown_target() -> None:

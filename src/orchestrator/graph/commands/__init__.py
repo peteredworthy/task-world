@@ -1,7 +1,8 @@
 """Pure command applier for execution graph fixtures."""
 
-from collections.abc import Callable
 from typing import Any
+
+from pydantic import ValidationError
 
 from orchestrator.graph._commands import (
     Clock,
@@ -13,7 +14,34 @@ from orchestrator.graph._commands import (
     TERMINAL_RUN_STATES,
     command_rejected,
     event_factory,
-    run_id,
+)
+from orchestrator.graph.command_models import (
+    AcceptRunCommand,
+    AcknowledgeStartCommand,
+    AgentDiedCommand,
+    CancelCommand,
+    CommandSpec,
+    CompleteCommand,
+    EvaluateFinalGateCommand,
+    EvaluateJoinCommand,
+    FailCommand,
+    GraphCommandContext,
+    PatchCommandContext,
+    PauseCommand,
+    RaiseAppealCommand,
+    ReconcileCommand,
+    RecordCleanupAppliedCommand,
+    RecordDecisionCommand,
+    RecordGatekeeperVerdictsCommand,
+    RecordHeartbeatCommand,
+    RecordRequirementRevisionCommand,
+    RecordSupportEvidenceCommand,
+    ResumeCommand,
+    ScheduleTickCommand,
+    SeedCompiledEventsCommand,
+    StartCommand,
+    SubmitCallbackCommand,
+    SubmitPatchCommand,
 )
 from orchestrator.graph.commands.callbacks import (
     handle_acknowledge_start,
@@ -42,44 +70,38 @@ from orchestrator.graph.commands.schedule import (
 )
 
 
-ApplyCommandHandler = Callable[
-    [
-        GraphProjection,
-        list[EventEnvelope],
-        str,
-        dict[str, Any],
-        Callable[[str, dict[str, Any]], EventEnvelope],
-        Clock,
-        IdGenerator,
-    ],
-    list[EventEnvelope],
-]
-
-
-COMMAND_HANDLERS: dict[str, ApplyCommandHandler] = {
-    "accept_run": handle_lifecycle_command,
-    "start": handle_lifecycle_command,
-    "pause": handle_lifecycle_command,
-    "resume": handle_lifecycle_command,
-    "cancel": handle_lifecycle_command,
-    "complete": handle_lifecycle_command,
-    "fail": handle_lifecycle_command,
-    "seed_compiled_events": handle_seed_compiled_events,
-    "submit_callback": handle_submit_callback,
-    "submit_patch": handle_submit_patch,
-    "schedule_tick": handle_schedule_tick,
-    "reconcile": handle_reconcile,
-    "acknowledge_start": handle_acknowledge_start,
-    "agent_died": handle_agent_died,
-    "record_heartbeat": handle_record_heartbeat,
-    "raise_appeal": handle_raise_appeal,
-    "record_decision": handle_record_decision,
-    "record_gatekeeper_verdicts": handle_record_gatekeeper_verdicts,
-    "record_requirement_revision": handle_record_requirement_revision,
-    "record_support_evidence": handle_record_support_evidence,
-    "evaluate_join": handle_evaluate_join,
-    "evaluate_final_gate": handle_evaluate_final_gate,
-    "record_cleanup_applied": handle_record_cleanup_applied,
+COMMAND_SPECS: dict[str, CommandSpec] = {
+    "accept_run": CommandSpec(AcceptRunCommand, handle_lifecycle_command),
+    "start": CommandSpec(StartCommand, handle_lifecycle_command),
+    "pause": CommandSpec(PauseCommand, handle_lifecycle_command),
+    "resume": CommandSpec(ResumeCommand, handle_lifecycle_command),
+    "cancel": CommandSpec(CancelCommand, handle_lifecycle_command),
+    "complete": CommandSpec(CompleteCommand, handle_lifecycle_command),
+    "fail": CommandSpec(FailCommand, handle_lifecycle_command),
+    "record_heartbeat": CommandSpec(RecordHeartbeatCommand, handle_record_heartbeat),
+    "seed_compiled_events": CommandSpec(SeedCompiledEventsCommand, handle_seed_compiled_events),
+    "schedule_tick": CommandSpec(ScheduleTickCommand, handle_schedule_tick),
+    "reconcile": CommandSpec(ReconcileCommand, handle_reconcile),
+    "submit_callback": CommandSpec(SubmitCallbackCommand, handle_submit_callback),
+    "submit_patch": CommandSpec(SubmitPatchCommand, handle_submit_patch),
+    "acknowledge_start": CommandSpec(AcknowledgeStartCommand, handle_acknowledge_start),
+    "agent_died": CommandSpec(AgentDiedCommand, handle_agent_died),
+    "raise_appeal": CommandSpec(RaiseAppealCommand, handle_raise_appeal),
+    "record_decision": CommandSpec(RecordDecisionCommand, handle_record_decision),
+    "record_gatekeeper_verdicts": CommandSpec(
+        RecordGatekeeperVerdictsCommand, handle_record_gatekeeper_verdicts
+    ),
+    "record_requirement_revision": CommandSpec(
+        RecordRequirementRevisionCommand, handle_record_requirement_revision
+    ),
+    "record_support_evidence": CommandSpec(
+        RecordSupportEvidenceCommand, handle_record_support_evidence
+    ),
+    "evaluate_join": CommandSpec(EvaluateJoinCommand, handle_evaluate_join),
+    "evaluate_final_gate": CommandSpec(EvaluateFinalGateCommand, handle_evaluate_final_gate),
+    "record_cleanup_applied": CommandSpec(
+        RecordCleanupAppliedCommand, handle_record_cleanup_applied
+    ),
 }
 
 
@@ -88,15 +110,15 @@ def apply_command(
     events: list[EventEnvelope],
     command_type: str,
     payload: dict[str, Any],
+    context: GraphCommandContext,
     clock: Clock,
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
     """Apply a pure graph command and return events a controller would append."""
 
-    run_id_value = run_id(events, payload)
-    make_event = event_factory(run_id_value, command_type, clock, id_gen)
-    handler = COMMAND_HANDLERS.get(command_type)
-    if handler is None:
+    make_event = event_factory(context.run_id, command_type, clock, id_gen)
+    spec = COMMAND_SPECS.get(command_type)
+    if spec is None:
         return [
             command_rejected(
                 make_event,
@@ -104,7 +126,34 @@ def apply_command(
                 f"unknown command: {command_type}",
             )
         ]
-    return handler(projection, events, command_type, payload, make_event, clock, id_gen)
+    if command_type == "submit_patch" and not isinstance(context, PatchCommandContext):
+        return [
+            command_rejected(
+                make_event,
+                command_type,
+                "invalid command context: submit_patch requires PatchCommandContext",
+            )
+        ]
+    try:
+        validated = spec.payload_model.model_validate(payload)
+    except ValidationError as exc:
+        return [
+            command_rejected(
+                make_event,
+                command_type,
+                f"invalid command payload: {exc}",
+            )
+        ]
+    return spec.handler(
+        projection,
+        events,
+        command_type,
+        validated,
+        context,
+        make_event,
+        clock,
+        id_gen,
+    )
 
 
 __all__ = [
@@ -116,5 +165,5 @@ __all__ = [
     "TERMINAL_RUN_STATES",
     "NONTERMINAL_RUN_STATES",
     "apply_command",
-    "COMMAND_HANDLERS",
+    "COMMAND_SPECS",
 ]

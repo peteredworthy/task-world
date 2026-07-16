@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.api import create_app
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, PatchCommandContext
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 
 
@@ -52,15 +52,14 @@ async def test_fr02_canonical_taxonomy_nodes_are_created_and_readable(
         auto_dispatch=False,
     )
 
+    position = await controller.current_position(run_id)
     accepted = await controller.handle_command(
         run_id,
-        await controller.current_position(run_id),
+        position,
         "submit_patch",
         {
             "patch_id": "patch-fr02-taxonomy",
-            "proposed_by_node_id": "planner-fr02",
-            "actor_role": "planner",
-            "base_graph_position": await controller.current_position(run_id),
+            "base_graph_position": position,
             "ops": [
                 {
                     "op": "create_node",
@@ -97,6 +96,12 @@ async def test_fr02_canonical_taxonomy_nodes_are_created_and_readable(
                 },
             ],
         },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=position,
+            proposed_by_node_id="planner-fr02",
+            actor_role="planner",
+        ),
     )
     assert [event.event_type for event in accepted.events].count("graph_patch_accepted") == 1
 

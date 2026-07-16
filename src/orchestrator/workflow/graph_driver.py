@@ -20,9 +20,12 @@ from orchestrator.config.models import RoutineConfig
 from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktree
 from orchestrator.graph import (
+    Actor,
+    ActorKind,
     EnvironmentFailureProjection,
     EventEnvelope,
     GraphProjection,
+    GraphCommandContext,
     build_projection,
     project_leases,
     project_node_states,
@@ -122,7 +125,7 @@ async def apply_graph_cancel_until_terminal(
         UuidIdGenerator(),
         auto_dispatch=False,
     )
-    payload: dict[str, object] = {"reason": reason or "signal_cancel"}
+    del reason
     delay_seconds = 0.05
 
     for attempt in range(4):
@@ -135,7 +138,15 @@ async def apply_graph_cancel_until_terminal(
         if position == 0:
             return
         try:
-            result = await controller.handle_command(run_id, position, "cancel", payload)
+            result = await controller.handle_command(
+                run_id,
+                position,
+                "cancel",
+                context=GraphCommandContext(
+                    run_id=run_id,
+                    current_graph_position=position,
+                ),
+            )
         except StaleProjectionError:
             continue
         except OperationalError as exc:
@@ -268,6 +279,8 @@ class GraphLoopController(Protocol):
         expected_position: int,
         command_type: str,
         payload: dict[str, object] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
     ) -> Any: ...
 
 
@@ -559,6 +572,7 @@ class GraphRunDriver:
         payload: dict[str, object] | None = None,
         *,
         attempts: int = 5,
+        actor: Actor | None = None,
     ) -> Any:
         """Issue a driver command at the current event-log head, retrying stale races.
 
@@ -573,7 +587,17 @@ class GraphRunDriver:
         for attempt in range(attempts):
             position = await controller.current_position(run_id)
             try:
-                return await controller.handle_command(run_id, position, command_type, payload)
+                return await controller.handle_command(
+                    run_id,
+                    position,
+                    command_type,
+                    payload,
+                    context=GraphCommandContext(
+                        run_id=run_id,
+                        current_graph_position=position,
+                        actor=actor,
+                    ),
+                )
             except (OperationalError, StaleProjectionError) as exc:
                 if not isinstance(
                     exc, StaleProjectionError
@@ -750,10 +774,10 @@ class GraphRunDriver:
         if run_state not in {"failed", "resuming"}:
             return False
         controller = GraphController(self._session_factory, self._clock, self._id_gen)
-        payload: dict[str, object] = {"actor_role": "operator"}
+        actor = Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator")
         if run_state == "failed":
-            await self._handle_command_at_head(controller, run_id, "resume", payload)
-        await self._handle_command_at_head(controller, run_id, "resume", payload)
+            await self._handle_command_at_head(controller, run_id, "resume", actor=actor)
+        await self._handle_command_at_head(controller, run_id, "resume", actor=actor)
         return True
 
     async def _read_projection(self, run_id: str) -> GraphProjectionSnapshot:
@@ -882,9 +906,13 @@ async def _renew_running_expired_leases(
             try:
                 result = await controller.handle_command(
                     run_id,
-                    await controller.current_position(run_id),
+                    (position := await controller.current_position(run_id)),
                     "record_heartbeat",
                     payload,
+                    context=GraphCommandContext(
+                        run_id=run_id,
+                        current_graph_position=position,
+                    ),
                 )
             except (OperationalError, StaleProjectionError) as exc:
                 if not isinstance(
@@ -985,9 +1013,13 @@ async def _recover_orphaned_active_leases(
         try:
             result = await controller.handle_command(
                 run_id,
-                await controller.current_position(run_id),
+                (position := await controller.current_position(run_id)),
                 "agent_died",
                 payload,
+                context=GraphCommandContext(
+                    run_id=run_id,
+                    current_graph_position=position,
+                ),
             )
         except StaleProjectionError:
             continue

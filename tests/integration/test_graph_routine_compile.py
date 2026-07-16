@@ -484,7 +484,6 @@ async def _schedule_ack_and_complete_next(
         },
     )
     callback_payload = {
-        "run_id": run_id,
         "node_id": node_id,
         "execution_id": lease.payload["execution_id"],
         "lease_id": lease.payload["lease_id"],

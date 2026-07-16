@@ -19,7 +19,7 @@ from orchestrator.db import (
     GraphProjectionSnapshotModel,
     RunModel,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, PatchCommandContext
 from orchestrator.graph.commands import IdGenerator
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.db.access.mutations import save_run
@@ -335,10 +335,7 @@ async def _seed_rejected_patch_graph_run(app: Any, run_id: str) -> None:
         0,
         "submit_patch",
         {
-            "run_id": run_id,
             "patch_id": "patch-bad-request",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -357,6 +354,12 @@ async def _seed_rejected_patch_graph_run(app: Any, run_id: str) -> None:
                 }
             ],
         },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=0,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
     )
 
 
@@ -397,7 +400,6 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
         acknowledged.projection_position,
         "submit_callback",
         {
-            "run_id": run_id,
             "node_id": worker_node,
             "execution_id": worker_lease.payload["execution_id"],
             "lease_id": worker_lease.payload["lease_id"],
@@ -470,7 +472,6 @@ async def _seed_worker_verifier_cycle(app: Any, run_id: str) -> None:
         acknowledged_verifier.projection_position,
         "submit_callback",
         {
-            "run_id": run_id,
             "node_id": verifier_node,
             "execution_id": verifier_lease.payload["execution_id"],
             "lease_id": verifier_lease.payload["lease_id"],

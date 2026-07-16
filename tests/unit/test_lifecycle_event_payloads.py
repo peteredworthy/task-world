@@ -7,9 +7,9 @@ from orchestrator.graph import (
     FakeClock,
     RunLifecycleChangedPayload,
     SequentialIdGenerator,
-    apply_command,
     build_projection,
 )
+from tests.unit.graph_test_utils import apply_command
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph.commands import event_factory
 from tests.unit.graph_test_utils import event

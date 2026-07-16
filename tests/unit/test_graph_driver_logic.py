@@ -28,6 +28,7 @@ from orchestrator.graph import (
     EnvironmentFailureProjection,
     EventEnvelope,
     FakeClock,
+    GraphCommandContext,
 )
 from tests.unit.graph_test_utils import canonical_event_payload
 
@@ -85,7 +86,10 @@ class RecordingController:
         expected_position: int,
         command_type: str,
         payload: dict[str, object] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
     ) -> object:
+        assert context is not None
         self.commands.append(command_type)
         events: list[object] = []
         if command_type == "record_heartbeat":
@@ -100,9 +104,13 @@ class ReconcileProgressController(RecordingController):
         expected_position: int,
         command_type: str,
         payload: dict[str, object] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
     ) -> object:
         if command_type != "reconcile":
-            return await super().handle_command(run_id, expected_position, command_type, payload)
+            return await super().handle_command(
+                run_id, expected_position, command_type, payload, context=context
+            )
         self.commands.append(command_type)
         return type(
             "Result",
@@ -123,6 +131,8 @@ class LockedOnceController(RecordingController):
         expected_position: int,
         command_type: str,
         payload: dict[str, object] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
     ) -> object:
         if command_type == self._command_to_lock and not self._raised:
             self._raised = True
@@ -131,7 +141,9 @@ class LockedOnceController(RecordingController):
                 {},
                 sqlite3.OperationalError("database is locked"),
             )
-        return await super().handle_command(run_id, expected_position, command_type, payload)
+        return await super().handle_command(
+            run_id, expected_position, command_type, payload, context=context
+        )
 
 
 class StablePositionAfterFirstTickController(RecordingController):
@@ -228,9 +240,14 @@ class AgentDiedRecordingController(RecordingController):
         expected_position: int,
         command_type: str,
         payload: dict[str, object] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
     ) -> object:
         if command_type != "agent_died":
-            return await super().handle_command(run_id, expected_position, command_type, payload)
+            return await super().handle_command(
+                run_id, expected_position, command_type, payload, context=context
+            )
+        assert context is not None
         self.commands.append(command_type)
         payload = dict(payload or {})
         self.agent_died_payloads.append(payload)

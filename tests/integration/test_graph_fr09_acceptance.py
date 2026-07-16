@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, PatchCommandContext
 from orchestrator.graph_runtime import (
     GraphController,
     GraphDispatchContext,
@@ -56,17 +56,22 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         _RunSeedIdGenerator(run_id),
         auto_dispatch=False,
     )
+    position = await controller.current_position(run_id)
     accepted = await controller.handle_command(
         run_id,
-        await controller.current_position(run_id),
+        position,
         "submit_patch",
         {
             "patch_id": "patch-fr09-executable-packets",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
-            "base_graph_position": await controller.current_position(run_id),
+            "base_graph_position": position,
             "ops": _fr09_summarizer_probe_ops(),
         },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=position,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
     )
     assert [event.event_type for event in accepted.events].count("graph_patch_accepted") == 1
 
@@ -110,17 +115,22 @@ async def test_fr09_execution_packets_and_prompt_hydration_are_readable_for_less
         _RunSeedIdGenerator(gap_run_id),
         auto_dispatch=False,
     )
+    gap_position = await gap_controller.current_position(gap_run_id)
     accepted_gap = await gap_controller.handle_command(
         gap_run_id,
-        await gap_controller.current_position(gap_run_id),
+        gap_position,
         "submit_patch",
         {
             "patch_id": "patch-fr09-gap-planner-packet",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
-            "base_graph_position": await gap_controller.current_position(gap_run_id),
+            "base_graph_position": gap_position,
             "ops": _fr09_gap_planner_probe_ops(),
         },
+        context=PatchCommandContext(
+            run_id=gap_run_id,
+            current_graph_position=gap_position,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
     )
     assert [event.event_type for event in accepted_gap.events].count("graph_patch_accepted") == 1
 

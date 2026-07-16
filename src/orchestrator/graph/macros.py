@@ -8,34 +8,17 @@ from __future__ import annotations
 
 from typing import Any, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 
 MACRO_FIELD = "macro_invocations"
 
 
 class MacroInvocation(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", strict=True)
 
     macro: str = Field(min_length=1)
     args: dict[str, Any] = Field(default_factory=dict)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _normalize_macro_aliases(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        normalized: dict[str, Any] = dict(cast(dict[str, Any], data))
-        if "macro" not in normalized:
-            for alias in ("name", "tool"):
-                alias_value = normalized.get(alias)
-                if alias_value is not None:
-                    normalized["macro"] = alias_value
-                    break
-        raw_args = normalized.get("args")
-        if raw_args is None:
-            normalized["args"] = {}
-        return normalized
 
 
 class MacroArgs(BaseModel):

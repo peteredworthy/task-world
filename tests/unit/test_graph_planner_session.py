@@ -8,11 +8,11 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    apply_command,
     initial_projection,
     project_planner_session,
     reduce_event,
 )
+from tests.unit.graph_test_utils import apply_command
 
 
 def test_successor_inherits_session_id() -> None:
@@ -83,7 +83,8 @@ def test_session_does_not_grant_authority() -> None:
     )
 
     projection = _project([*events, *_append(events, callback)])
-    assert callback[0].event_type == "callback_rejected_stale"
+    assert callback[0].event_type == "command_rejected"
+    assert "session_id" in str(callback[0].payload["reason"])
     assert projection["node_states"]["planner-0"] == "running"
 
 
@@ -94,7 +95,7 @@ def test_carryover_binds_as_optional_input() -> None:
         "submit_patch",
         {
             **_patch_payload(events, "planner-0", _region_ops("planner-1")),
-            "carryover_summary": "summary-carryover-1",
+            "carryover_record_id": "summary-carryover-1",
         },
     )
     projection = _project([*events, *_append(events, patch)])
@@ -132,7 +133,7 @@ def test_project_planner_session() -> None:
         "submit_patch",
         {
             **_patch_payload(events, "planner-0", _region_ops("planner-1")),
-            "carryover_summary": "summary-carryover-1",
+            "carryover_record_id": "summary-carryover-1",
         },
     )
     events = [*events, *_append(events, patch)]

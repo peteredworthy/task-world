@@ -21,7 +21,7 @@
   given_events:
     - node_created: {node_id: worker-invariant-3, kind: worker, state: running}
   when_command:
-    submit_callback: {run_id: run-1, node_id: worker-invariant-3, execution_id: exec-3, lease_id: missing-lease, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 0, idempotency_key: key-3}
+    submit_callback: {run_id: run-1, node_id: worker-invariant-3, execution_id: exec-3, lease_id: missing-lease, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 0, idempotency_key: key-3, payload_hash: hash-3}
   then_events:
     - callback_rejected_stale: {node_id: worker-invariant-3, lease_id: missing-lease}
   then_projection: {worker-invariant-3: running}
@@ -56,7 +56,7 @@
     - node_state_changed: {node_id: retired-invariant-5, new_state: retired}
     - lease_granted: {node_id: retired-invariant-5, lease_id: lease-retired-5, generation: 1}
   when_command:
-    submit_callback: {run_id: run-1, node_id: retired-invariant-5, execution_id: exec-5, lease_id: lease-retired-5, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-5}
+    submit_callback: {run_id: run-1, node_id: retired-invariant-5, execution_id: exec-5, lease_id: lease-retired-5, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-5, payload_hash: hash-5}
   then_events:
     - callback_rejected_stale: {node_id: retired-invariant-5}
   then_projection: {retired-invariant-5: retired}
@@ -101,7 +101,7 @@
     - node_created: {node_id: reader-invariant-8, kind: worker, state: running}
     - lease_granted: {node_id: reader-invariant-8, lease_id: lease-reader-8, generation: 1, execution_id: exec-8, base_snapshot_id: S1}
   when_command:
-    submit_callback: {run_id: run-1, node_id: reader-invariant-8, execution_id: exec-8, lease_id: lease-reader-8, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-8}
+    submit_callback: {run_id: run-1, node_id: reader-invariant-8, execution_id: exec-8, lease_id: lease-reader-8, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-8, payload_hash: hash-8}
   then_events:
     - callback_rejected_stale: {node_id: reader-invariant-8, reason: snapshot_incompatible}
   then_projection: {reader-invariant-8: running, lease-reader-8: active}

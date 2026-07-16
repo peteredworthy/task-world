@@ -12,6 +12,7 @@ from orchestrator.graph.callbacks import (
     validate_callback,
 )
 from orchestrator.graph.command_bindings import canonicalize_check_command_definition
+from orchestrator.graph.command_models import GraphCommandContext, PatchCommandContext
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
     PortContract,
@@ -243,77 +244,12 @@ def _serialize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[s
     raise ValueError(f"missing event payload serialization policy: {event_type}")
 
 
-def apply_command(
-    projection: GraphProjection,
-    events: list[EventEnvelope],
-    command_type: str,
-    payload: dict[str, Any],
-    clock: Clock,
-    id_gen: IdGenerator,
-) -> list[EventEnvelope]:
-    """Apply a pure graph command and return events a controller would append."""
-
-    run_id = _run_id(events, payload)
-    make_event = _event_factory(run_id, command_type, clock, id_gen)
-
-    if command_type in RUN_LIFECYCLE_TRANSITIONS or command_type == "fail":
-        return _apply_lifecycle_command(
-            projection,
-            events,
-            command_type,
-            payload,
-            make_event,
-            id_gen,
-        )
-    if command_type == "seed_compiled_events":
-        return _apply_seed_compiled_events(projection, payload, make_event)
-    if command_type == "submit_callback":
-        return _apply_callback_command(projection, events, payload, make_event)
-    if command_type == "submit_patch":
-        return _apply_patch_command(projection, events, payload, make_event)
-    if command_type == "schedule_tick":
-        return _apply_schedule_tick(projection, events, payload, clock, id_gen, make_event)
-    if command_type == "reconcile":
-        return _apply_reconcile(projection, events, make_event)
-    if command_type == "acknowledge_start":
-        return _apply_acknowledge_start(projection, payload, make_event)
-    if command_type == "agent_died":
-        return _apply_agent_died(projection, payload, clock, make_event)
-    if command_type == "raise_appeal":
-        return _apply_raise_appeal(payload, make_event, id_gen)
-    if command_type == "record_decision":
-        return _apply_record_decision(projection, payload, make_event)
-    if command_type == "record_gatekeeper_verdicts":
-        return _apply_record_gatekeeper_verdicts(projection, payload, make_event)
-    if command_type == "record_requirement_revision":
-        return _apply_record_requirement_revision(payload, make_event)
-    if command_type == "record_support_evidence":
-        return _apply_record_support_evidence(projection, payload, make_event)
-    if command_type == "evaluate_join":
-        return _apply_evaluate_join(projection, payload, make_event, id_gen)
-    if command_type == "evaluate_final_gate":
-        return _apply_evaluate_final_gate(projection, events, payload, make_event, id_gen)
-    if command_type == "record_cleanup_applied":
-        return _apply_record_cleanup_applied(projection, payload, make_event)
-    if command_type == "record_heartbeat":
-        return _apply_record_heartbeat(projection, payload, clock, make_event)
-
-    return [
-        make_event(
-            "command_rejected",
-            {
-                "command_type": command_type,
-                "reason": f"unknown command: {command_type}",
-            },
-        )
-    ]
-
-
 def _apply_lifecycle_command(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
     payload: dict[str, Any],
+    context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
@@ -340,7 +276,7 @@ def _apply_lifecycle_command(
         )
         return [_command_rejected(make_event, command_type, reason)]
     if command_type == "resume" and current_state == "failed":
-        actor_role = payload.get("actor_role")
+        actor_role = context.actor.role if context.actor is not None else None
         if actor_role not in REOPEN_ACTOR_ROLES:
             return [
                 _command_rejected(
@@ -454,7 +390,7 @@ def _apply_record_heartbeat(
     ):
         return [_command_rejected(make_event, "record_heartbeat", "lease_generation_mismatch")]
 
-    ttl_seconds = _positive_int(payload.get("ttl_seconds"), 300)
+    ttl_seconds = payload["ttl_seconds"]
     expires_at = (clock.now() + timedelta(seconds=ttl_seconds)).isoformat()
     heartbeat_payload: dict[str, Any] = {
         "lease_id": lease_id,
@@ -677,6 +613,7 @@ def _release_active_node_leases(
 def _apply_seed_compiled_events(
     projection: GraphProjection,
     payload: dict[str, Any],
+    run_id: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     if projection["node_states"] or projection["edges"] or projection["input_bindings"]:
@@ -688,7 +625,6 @@ def _apply_seed_compiled_events(
     if not isinstance(raw_events, list) or not raw_events:
         return [_command_rejected(make_event, "seed_compiled_events", "missing compiled events")]
 
-    run_id = str(payload.get("run_id", ""))
     compiled_events: list[EventEnvelope] = []
     try:
         for raw_event in cast(list[Any], raw_events):
@@ -765,31 +701,12 @@ def _apply_callback_command(
     projection: GraphProjection,
     events: list[EventEnvelope],
     payload: dict[str, Any],
+    run_id: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    required = [
-        "run_id",
-        "node_id",
-        "execution_id",
-        "lease_id",
-        "lease_generation",
-        "base_snapshot_id",
-        "observed_graph_position",
-        "idempotency_key",
-    ]
-    missing = [field for field in required if field not in payload]
-    if missing:
-        return [
-            _command_rejected(
-                make_event,
-                "submit_callback",
-                f"missing callback fields: {', '.join(missing)}",
-            )
-        ]
-
     callback_payload = _canonical_external_callback_payload(
         _callback_payload(payload),
-        str(payload["node_id"]),
+        payload["node_id"],
     )
     # Mutating-ness is derived from the callback's actual effects, never trusted
     # from the caller's flag: completing the node or carrying output records IS
@@ -799,16 +716,16 @@ def _apply_callback_command(
         (callback_payload or {}).get("output_records")
     )
     request = CallbackRequest(
-        run_id=str(payload["run_id"]),
-        node_id=str(payload["node_id"]),
-        execution_id=str(payload["execution_id"]),
-        lease_id=str(payload["lease_id"]),
-        lease_generation=int(payload["lease_generation"]),
-        base_snapshot_id=str(payload["base_snapshot_id"]),
-        observed_graph_position=int(payload["observed_graph_position"]),
-        idempotency_key=str(payload["idempotency_key"]),
+        run_id=run_id,
+        node_id=payload["node_id"],
+        execution_id=payload["execution_id"],
+        lease_id=payload["lease_id"],
+        lease_generation=payload["lease_generation"],
+        base_snapshot_id=payload["base_snapshot_id"],
+        observed_graph_position=payload["observed_graph_position"],
+        idempotency_key=payload["idempotency_key"],
         payload=callback_payload,
-        is_mutating=bool(payload.get("is_mutating", True)) or has_effects,
+        is_mutating=payload.get("is_mutating", True) or has_effects,
     )
     result = validate_callback(request, projection, events)
 
@@ -2179,9 +2096,10 @@ def _apply_patch_command(
     projection: GraphProjection,
     events: list[EventEnvelope],
     payload: dict[str, Any],
+    context: PatchCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    actor_role = str(payload.get("actor_role", "planner"))
+    actor_role = context.actor_role
     run_state = projection["run_state"]
     if run_state is not None and run_state != "active":
         return [
@@ -2194,9 +2112,9 @@ def _apply_patch_command(
     try:
         payload = expand_patch_macros(payload)
         patch = PatchEnvelope(
-            patch_id=str(payload["patch_id"]),
-            proposed_by_node_id=str(payload.get("proposed_by_node_id", "controller")),
-            base_graph_position=payload.get("base_graph_position", -1),
+            patch_id=payload["patch_id"],
+            proposed_by_node_id=context.proposed_by_node_id,
+            base_graph_position=payload["base_graph_position"],
             ops=[PatchOp(**op) for op in cast(list[dict[str, Any]], payload.get("ops", []))],
             rationale_record_id=cast(str | None, payload.get("rationale_record_id")),
         )
@@ -2206,7 +2124,7 @@ def _apply_patch_command(
             "reason": f"malformed patch: {exc}",
             "patch_id": payload.get("patch_id"),
             "actor_role": actor_role,
-            "proposed_by_node_id": payload.get("proposed_by_node_id"),
+            "proposed_by_node_id": context.proposed_by_node_id,
         }
         base_graph_position = payload.get("base_graph_position")
         if isinstance(base_graph_position, int) and not isinstance(base_graph_position, bool):
@@ -2218,7 +2136,7 @@ def _apply_patch_command(
             )
         ]
 
-    current_position = _current_position(events, payload)
+    current_position = context.current_graph_position
     events_since_base = [event for event in events if event.position > patch.base_graph_position]
     result = validate_patch(patch, current_position, events_since_base, projection, actor_role)
     if not result.accepted:
@@ -2397,11 +2315,8 @@ def _successor_planner_node_ids(patch: PatchEnvelope) -> list[str]:
 
 
 def _carryover_record_id(payload: dict[str, Any]) -> str | None:
-    for key in ("carryover_summary", "carryover_record_id"):
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
-    return None
+    value = payload.get("carryover_record_id")
+    return value if isinstance(value, str) and value else None
 
 
 def _planner_budget_rejection(
@@ -2420,6 +2335,7 @@ def _apply_schedule_tick(
     projection: GraphProjection,
     events: list[EventEnvelope],
     payload: dict[str, Any],
+    current_graph_position: int,
     clock: Clock,
     id_gen: IdGenerator,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
@@ -2509,17 +2425,13 @@ def _apply_schedule_tick(
         nodes,
         projection["run_state"] or "draft",
         active_claims,
-        _current_position(events, payload),
-        max_grants=int(payload.get("max_grants", 10)),
+        current_graph_position,
+        max_grants=payload["max_grants"],
     )
-    lease_seconds = int(payload.get("lease_seconds", 300))
+    lease_seconds = payload["lease_seconds"]
     for node_id in decision.selected:
         claims = projection["node_resource_claims"].get(node_id, [])
-        lease_id = (
-            str(payload.get("lease_ids", {}).get(node_id))
-            if isinstance(payload.get("lease_ids"), dict) and node_id in payload["lease_ids"]
-            else id_gen.next_id("lease")
-        )
+        lease_id = payload["lease_ids"].get(node_id) or id_gen.next_id("lease")
         base_snapshot_id = _base_snapshot_id_for_node(projection, payload, node_id)
         if base_snapshot_id is None:
             _append_node_deferred_if_changed(
@@ -4028,7 +3940,7 @@ def _apply_agent_died(
             ),
         ]
 
-    max_attempts = _positive_int(payload.get("max_attempts"), 0)
+    max_attempts = payload["max_attempts"]
     attempt_number = projection["node_attempts"].get(node_id, 0)
     if max_attempts > 0 and attempt_number >= max_attempts:
         return [
@@ -4075,7 +3987,7 @@ def _apply_agent_died(
     # V1 retry policy: runtime death before an accepted boundary requeues the
     # same executable node. No new retry node is created until output/file-state
     # acceptance semantics exist in the graph runtime slice.
-    retry_backoff_seconds = _positive_int(payload.get("retry_backoff_seconds"), 0)
+    retry_backoff_seconds = payload["retry_backoff_seconds"]
     retry_payload: dict[str, Any] = {
         "node_id": node_id,
         "lease_id": lease_id,
@@ -4309,18 +4221,12 @@ def _apply_record_decision(
     if run_state in {"cancelled", "failed"}:
         return [_command_rejected(make_event, "record_decision", f"terminal run: {run_state}")]
 
-    decider = payload.get("decider") or payload.get("decider_actor")
-    if not _valid_decider(decider):
-        return [_command_rejected(make_event, "record_decision", "missing decider actor")]
-
-    decision = _decision_value(decision_type, payload)
-    if decision is None:
-        return [_command_rejected(make_event, "record_decision", "invalid decision value")]
+    decider = payload["decider"]
+    decision = payload["decision"]
 
     event_payload = dict(payload)
-    event_payload.pop("_current_graph_position", None)
     event_payload["decision"] = decision
-    event_payload.setdefault("decider", decider)
+    event_payload["decider"] = decider
     task_region_id = projection["node_task_regions"].get(node_id)
     if task_region_id is not None:
         event_payload.setdefault("task_region_id", task_region_id)
@@ -4696,7 +4602,6 @@ def _apply_record_requirement_revision(
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     event_payload = dict(payload)
-    event_payload.pop("_current_graph_position", None)
     requirement_id = payload.get("requirement_id")
     if not isinstance(requirement_id, str) or not requirement_id:
         return [
@@ -4708,8 +4613,6 @@ def _apply_record_requirement_revision(
         ]
 
     version_id = payload.get("version_id")
-    if not isinstance(version_id, str) or not version_id:
-        version_id = payload.get("requirement_version_id")
     if not isinstance(version_id, str) or not version_id:
         return [
             _command_rejected(
@@ -4753,8 +4656,6 @@ def _apply_record_support_evidence(
         ]
 
     requirement_version_id = payload.get("requirement_version_id")
-    if not isinstance(requirement_version_id, str) or not requirement_version_id:
-        requirement_version_id = payload.get("version_id")
     if not isinstance(requirement_version_id, str) or not requirement_version_id:
         requirement_version_id = projection["active_requirement_versions"].get(requirement_id)
     if not isinstance(requirement_version_id, str) or not requirement_version_id:
@@ -4890,14 +4791,6 @@ def _gatekeeper_cost_payload(
     return GatekeeperCostRecordedPayload.model_validate({**defaults, **typed_cost}).model_dump(
         mode="json"
     )
-
-
-def _positive_int(value: Any, default: int) -> int:
-    if isinstance(value, bool):
-        return default
-    if isinstance(value, int | float) and value > 0:
-        return int(value)
-    return default
 
 
 def _request_record_events_for_node(
@@ -5400,32 +5293,6 @@ def _node_exists(projection: GraphProjection, node_id: str) -> bool:
     return node_id in projection["node_states"] or node_id in projection["node_kinds"]
 
 
-def _decision_value(decision_type: Any, payload: dict[str, Any]) -> str | None:
-    decision = payload.get("decision")
-    if decision_type == "approval":
-        if decision in {"approved", "rejected", "deferred"}:
-            return cast(str, decision)
-        return None
-
-    if decision_type == "authority":
-        if decision in {"granted", "denied", "deferred"}:
-            return cast(str, decision)
-        return None
-
-    if decision in {"accepted", "rejected", "invalid_test_accepted"}:
-        return cast(str, decision)
-    return None
-
-
-def _valid_decider(decider: Any) -> bool:
-    if isinstance(decider, str):
-        return bool(decider)
-    if isinstance(decider, dict):
-        typed_decider = cast(dict[str, Any], decider)
-        return isinstance(typed_decider.get("kind"), str)
-    return False
-
-
 def _op_payload(op: PatchOp) -> dict[str, Any]:
     return op.model_dump(exclude_none=True)
 
@@ -5597,27 +5464,6 @@ def _event_factory(
     return make_event
 
 
-def _run_id(events: list[EventEnvelope], payload: dict[str, Any]) -> str:
-    run_id = payload.get("run_id")
-    if isinstance(run_id, str):
-        return run_id
-    if events:
-        return events[-1].run_id
-    return "run-1"
-
-
-def _current_position(
-    events: list[EventEnvelope],
-    payload: dict[str, Any] | None = None,
-) -> int:
-    if not events:
-        current = (payload or {}).get("_current_graph_position")
-        if isinstance(current, int) and not isinstance(current, bool):
-            return current
-        return -1
-    return max(event.position for event in events)
-
-
 def _callback_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     raw_payload = payload.get("payload")
     if raw_payload is None:
@@ -5627,7 +5473,7 @@ def _callback_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
         return None
     if isinstance(raw_payload, dict):
         return cast(dict[str, Any], raw_payload)
-    return {"payload": raw_payload}
+    return None
 
 
 def _canonical_external_callback_payload(
@@ -5697,7 +5543,6 @@ def _resource_claim_payload(claim: Any) -> dict[str, Any]:
 
 command_rejected = _command_rejected
 event_factory = _event_factory
-run_id = _run_id
 
 apply_lifecycle_command = _apply_lifecycle_command
 apply_record_heartbeat = _apply_record_heartbeat

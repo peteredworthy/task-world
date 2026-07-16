@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, PatchCommandContext
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 
 
@@ -141,13 +141,17 @@ async def _submit_patch(
         "submit_patch",
         {
             "patch_id": patch_id,
-            "proposed_by_node_id": "planner-1",
             "base_graph_position": expected_position
             if base_graph_position is None
             else base_graph_position,
-            "actor_role": actor_role,
             "ops": ops,
         },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=expected_position,
+            proposed_by_node_id="planner-1",
+            actor_role=actor_role,
+        ),
     )
 
 

@@ -24,7 +24,9 @@ from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.graph import (
     CheckResultRecord,
     EventEnvelope,
+    GraphCommandContext,
     GraphProjection,
+    PatchCommandContext,
     RequirementRecord,
     check_command_uses_acceptance_fallback,
     initial_projection,
@@ -575,24 +577,13 @@ class GraphDispatchExecutor(SideEffectExecutor):
             raise ValueError(msg)
         observed_position = await self._current_position(context.run_id)
         payload: dict[str, object] = dict(patch_payload)
-        payload["run_id"] = context.run_id
-        payload["proposed_by_node_id"] = context.node_id
-        payload["actor_role"] = context.node_role
-        payload["lease_id"] = context.lease_id
-        payload["lease_generation"] = context.lease_generation
-        payload["execution_id"] = context.execution_id
-        payload["base_snapshot_id"] = context.base_snapshot_id
-        payload["observed_graph_position"] = observed_position
-        payload["idempotency_key"] = (
-            f"{context.dispatch_event_id}:{context.execution_id}:submit-graph-patch:"
-            f"{payload.get('patch_id', 'unknown')}"
-        )
-
         result = await self._handle_command_retry_stale(
             context.run_id,
             observed_position,
             "submit_patch",
             payload,
+            proposed_by_node_id=context.node_id,
+            actor_role=context.node_role,
         )
         accepted = [event for event in result.events if event.event_type == "graph_patch_accepted"]
         if accepted:
@@ -645,6 +636,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
         expected_position: int,
         command_type: str,
         payload: dict[str, object],
+        *,
+        proposed_by_node_id: str | None = None,
+        actor_role: str | None = None,
     ) -> Any:
         """Issue a graph command, retrying stale-projection races and transient DB locks.
 
@@ -661,11 +655,25 @@ class GraphDispatchExecutor(SideEffectExecutor):
         delay_seconds = 0.1
         for attempt in range(MAX_STALE_COMMAND_RETRIES + 1):
             try:
+                command_context = (
+                    PatchCommandContext(
+                        run_id=run_id,
+                        current_graph_position=current_position,
+                        proposed_by_node_id=proposed_by_node_id,
+                        actor_role=actor_role,
+                    )
+                    if proposed_by_node_id is not None and actor_role is not None
+                    else GraphCommandContext(
+                        run_id=run_id,
+                        current_graph_position=current_position,
+                    )
+                )
                 return await self._controller.handle_command(
                     run_id,
                     current_position,
                     command_type,
                     retry_payload,
+                    context=command_context,
                 )
             except OperationalError as exc:
                 if (
@@ -808,13 +816,17 @@ async def reconcile_runtime(
             try:
                 await controller.handle_command(
                     run_id,
-                    await controller.current_position(run_id),
+                    (position := await controller.current_position(run_id)),
                     "agent_died",
                     {
                         "lease_id": lease_id,
                         "execution_id": execution_id,
                         "reason": "runtime_process_missing_after_restart",
                     },
+                    context=GraphCommandContext(
+                        run_id=run_id,
+                        current_graph_position=position,
+                    ),
                 )
                 break
             except StaleProjectionError:

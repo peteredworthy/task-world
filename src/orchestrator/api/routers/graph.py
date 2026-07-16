@@ -20,6 +20,8 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
+    GraphCommandContext,
+    PatchCommandContext,
     RecordSelector,
     build_projection,
     check_command_reference,
@@ -1614,13 +1616,10 @@ async def submit_operator_graph_patch(
     payload = request.model_dump(exclude_none=True)
     payload.update(
         {
-            "run_id": run_id,
             "patch_id": patch_id,
             "base_graph_position": request.base_graph_position
             if request.base_graph_position is not None
             else current_position,
-            "actor_role": "human",
-            "proposed_by_node_id": "human-operator",
         }
     )
     controller = GraphController(
@@ -1635,6 +1634,13 @@ async def submit_operator_graph_patch(
             current_position,
             "submit_patch",
             payload,
+            context=PatchCommandContext(
+                run_id=run_id,
+                current_graph_position=current_position,
+                actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+                actor_role="human",
+                proposed_by_node_id="human-operator",
+            ),
         )
     except StaleProjectionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1832,6 +1838,11 @@ async def record_graph_decision(
             current_position,
             "record_decision",
             request.model_dump(exclude_none=True),
+            context=GraphCommandContext(
+                run_id=run_id,
+                current_graph_position=current_position,
+                actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+            ),
         )
     except StaleProjectionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -1853,6 +1864,11 @@ async def record_graph_decision(
                 "max_grants": 0,
                 "base_snapshot_id": "routine-snapshot",
             },
+            context=GraphCommandContext(
+                run_id=run_id,
+                current_graph_position=result.projection_position,
+                actor=Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator"),
+            ),
         )
         response_events.extend(schedule_result.events)
         events = await graph_store.read_run_light(run_id)

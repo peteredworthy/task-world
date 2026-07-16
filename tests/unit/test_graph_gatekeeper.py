@@ -10,13 +10,13 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    apply_command,
     initial_projection,
     project_gatekeeper_report,
     project_pattern_library,
     project_residue_report,
     reduce_event,
 )
+from tests.unit.graph_test_utils import apply_command
 
 
 def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
@@ -95,7 +95,9 @@ def test_record_gatekeeper_verdicts_rejects_invalid_supplied_accounting(
 
     assert [event.event_type for event in emitted] == ["command_rejected"]
     assert emitted[0].payload["command_type"] == "record_gatekeeper_verdicts"
-    assert str(emitted[0].payload["reason"]).startswith(f"invalid gatekeeper {location}")
+    reason = str(emitted[0].payload["reason"])
+    assert reason.startswith("invalid command payload")
+    assert field in reason
 
 
 def test_record_gatekeeper_verdicts_rejects_wrong_type_consult_id() -> None:
@@ -117,7 +119,9 @@ def test_record_gatekeeper_verdicts_rejects_wrong_type_consult_id() -> None:
     )
 
     assert [event.event_type for event in emitted] == ["command_rejected"]
-    assert str(emitted[0].payload["reason"]).startswith("invalid gatekeeper cost")
+    reason = str(emitted[0].payload["reason"])
+    assert reason.startswith("invalid command payload")
+    assert "consult_id" in reason
 
 
 @pytest.mark.parametrize(
@@ -152,9 +156,9 @@ def test_record_gatekeeper_verdicts_rejects_nested_cost_ownership_override(
     )
 
     assert [event.event_type for event in emitted] == ["command_rejected"]
-    assert emitted[0].payload["reason"] == (
-        f"invalid gatekeeper cost: nested cost field is producer-owned: {field}"
-    )
+    reason = str(emitted[0].payload["reason"])
+    assert reason.startswith("invalid command payload")
+    assert field in reason
     assert not any(event.event_type == "gatekeeper_cost_recorded" for event in emitted)
 
 
@@ -252,7 +256,9 @@ def test_record_gatekeeper_verdicts_rejects_invalid_taxonomy_value() -> None:
     )
 
     assert emitted[0].event_type == "command_rejected"
-    assert "invalid classification for tmp.out" in str(emitted[0].payload["reason"])
+    reason = str(emitted[0].payload["reason"])
+    assert "invalid command payload" in reason
+    assert "classification" in reason
 
 
 def test_record_gatekeeper_verdicts_rejects_duplicate_already_resolved_path() -> None:
@@ -329,7 +335,9 @@ def test_record_gatekeeper_verdicts_requires_execution_id() -> None:
     )
 
     assert emitted[0].event_type == "command_rejected"
-    assert emitted[0].payload["reason"] == "missing execution_id"
+    reason = str(emitted[0].payload["reason"])
+    assert "invalid command payload" in reason
+    assert "execution_id" in reason
 
 
 def test_record_gatekeeper_verdicts_rejects_duplicate_path_in_same_payload() -> None:

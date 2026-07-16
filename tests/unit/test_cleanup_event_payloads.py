@@ -6,9 +6,9 @@ from orchestrator.graph import (
     CleanupRequestedPayload,
     FakeClock,
     SequentialIdGenerator,
-    apply_command,
     build_projection,
 )
+from tests.unit.graph_test_utils import apply_command
 from tests.unit.graph_test_utils import event
 
 

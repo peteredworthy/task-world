@@ -6,10 +6,10 @@ from orchestrator.graph import (
     RequirementRevisionPayload,
     SequentialIdGenerator,
     SupportEvidencePayload,
-    apply_command,
     build_projection,
     initial_projection,
 )
+from tests.unit.graph_test_utils import apply_command
 
 
 def test_requirement_payload_serializes_canonical_shape() -> None:

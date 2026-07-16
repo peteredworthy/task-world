@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, PatchCommandContext
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 from orchestrator.runners import route_tool_call
 
@@ -228,15 +228,18 @@ async def _route_macro(
     payload["base_graph_position"] = await controller.current_position(run_id)
 
     async def on_submit_graph_patch(patch_payload: dict[str, Any]) -> str:
+        position = await controller.current_position(run_id)
         result = await controller.handle_command(
             run_id,
-            await controller.current_position(run_id),
+            position,
             "submit_patch",
-            {
-                **patch_payload,
-                "proposed_by_node_id": "planner-fr07",
-                "actor_role": "planner",
-            },
+            patch_payload,
+            context=PatchCommandContext(
+                run_id=run_id,
+                current_graph_position=position,
+                proposed_by_node_id="planner-fr07",
+                actor_role="planner",
+            ),
         )
         if result.events[0].event_type == "graph_patch_accepted":
             return "accepted"

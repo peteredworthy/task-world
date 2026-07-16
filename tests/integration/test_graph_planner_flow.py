@@ -11,6 +11,7 @@ from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     EventEnvelope,
+    PatchCommandContext,
     compile_routine,
     project_planner_chain,
     project_run_state,
@@ -334,7 +335,22 @@ async def _command(
     payload: dict[str, Any],
 ) -> list[EventEnvelope]:
     position = await controller.current_position(run_id)
-    await controller.handle_command(run_id, position, command_type, payload)
+    command_payload = dict(payload)
+    actor_role = command_payload.pop("actor_role", None)
+    proposed_by_node_id = command_payload.pop("proposed_by_node_id", None)
+    context = (
+        PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=position,
+            proposed_by_node_id=proposed_by_node_id or "controller",
+            actor_role=actor_role or "planner",
+        )
+        if command_type == "submit_patch"
+        else None
+    )
+    await controller.handle_command(
+        run_id, position, command_type, command_payload, context=context
+    )
     return await _read_events(session_factory, run_id)
 
 

@@ -11,6 +11,7 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
+    GraphCommandContext,
     GraphProjection,
     validate_emitted_event_type,
     apply_command,
@@ -54,6 +55,8 @@ class GraphController:
         expected_position: int,
         command_type: str,
         payload: dict[str, object] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
     ) -> GraphCommandResult:
         """Apply a command and atomically commit accepted events plus outbox rows.
 
@@ -74,7 +77,6 @@ class GraphController:
         holds even if two callers somehow race past the explicit check below.
         """
         command_payload = dict(payload or {})
-        command_payload["run_id"] = run_id
 
         # Phase 1: load the persisted projection snapshot and fold only the
         # event tail OUTSIDE any write lock. This is the part that can take
@@ -94,7 +96,16 @@ class GraphController:
             )
             raise StaleProjectionError(msg)
 
-        command_payload["_current_graph_position"] = current_position
+        command_context = context or GraphCommandContext(
+            run_id=run_id,
+            current_graph_position=current_position,
+        )
+        if (
+            command_context.run_id != run_id
+            or command_context.current_graph_position != current_position
+        ):
+            msg = "command context does not match the loaded graph head"
+            raise ValueError(msg)
         command_events = existing_events
         patch_base_position = _patch_base_graph_position(command_type, command_payload)
         if patch_base_position is not None and patch_base_position < current_position:
@@ -108,6 +119,7 @@ class GraphController:
             command_events,
             command_type,
             command_payload,
+            command_context,
             self._clock,
             self._id_gen,
         )
@@ -226,9 +238,4 @@ def _patch_base_graph_position(
         return None
     if isinstance(value, int):
         return value
-    if isinstance(value, str):
-        try:
-            return int(value)
-        except ValueError:
-            return None
     return None

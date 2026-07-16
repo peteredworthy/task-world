@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.api import create_app
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, PatchCommandContext
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 
 
@@ -254,11 +254,15 @@ async def _submit_bad_edge_patch(
         "submit_patch",
         {
             "patch_id": patch_id,
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": expected_position,
             "ops": [op],
         },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=expected_position,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
     )
     assert [event.event_type for event in result.events] == ["graph_patch_rejected"]
     return result
@@ -455,7 +459,6 @@ def _callback_payload(
     complete_node: bool,
 ) -> dict[str, Any]:
     return {
-        "run_id": run_id,
         "node_id": "worker-1",
         "execution_id": "exec-worker-1",
         "lease_id": "lease-worker-1",

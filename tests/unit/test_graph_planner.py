@@ -8,12 +8,12 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     SequentialIdGenerator,
-    apply_command,
     initial_projection,
     project_planner_chain,
     project_run_state,
     reduce_event,
 )
+from tests.unit.graph_test_utils import apply_command
 
 
 def test_planner_lifecycle_states() -> None:

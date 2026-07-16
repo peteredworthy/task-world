@@ -14,13 +14,15 @@ from orchestrator.graph._commands import (
     apply_evaluate_join,
     apply_agent_died,
 )
+from orchestrator.graph.command_models import GraphCommandContext, StrictCommandPayload
 
 
 def handle_evaluate_join(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: dict[str, Any],
+    payload: StrictCommandPayload,
+    context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
     id_gen: IdGenerator,
@@ -28,28 +30,43 @@ def handle_evaluate_join(
     del events
     del command_type
     del clock
-    return apply_evaluate_join(projection, payload, make_event, id_gen)
+    del context
+    return apply_evaluate_join(
+        projection,
+        payload.model_dump(mode="python", exclude_none=True),
+        make_event,
+        id_gen,
+    )
 
 
 def handle_evaluate_final_gate(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: dict[str, Any],
+    payload: StrictCommandPayload,
+    context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
     del clock
     del command_type
-    return apply_evaluate_final_gate(projection, events, payload, make_event, id_gen)
+    del context
+    return apply_evaluate_final_gate(
+        projection,
+        events,
+        payload.model_dump(mode="python", exclude_none=True),
+        make_event,
+        id_gen,
+    )
 
 
 def handle_agent_died(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: dict[str, Any],
+    payload: StrictCommandPayload,
+    context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
     id_gen: IdGenerator,
@@ -57,7 +74,13 @@ def handle_agent_died(
     del events
     del command_type
     del id_gen
-    return apply_agent_died(projection, payload, clock, make_event)
+    del context
+    return apply_agent_died(
+        projection,
+        payload.model_dump(mode="python", exclude_none=True),
+        clock,
+        make_event,
+    )
 
 
 __all__ = [

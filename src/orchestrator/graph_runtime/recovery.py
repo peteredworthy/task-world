@@ -8,6 +8,7 @@ from sqlalchemy import distinct, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.db import EventV2Model
+from orchestrator.graph import GraphCommandContext
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem
 from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, GraphEventStore
@@ -78,10 +79,15 @@ async def reconcile_graph(
     projection = await controller.read_projection(run_id)
     if projection["run_state"] != "active":
         return
+    position = await controller.current_position(run_id)
     await controller.handle_command(
         run_id,
-        await controller.current_position(run_id),
+        position,
         "reconcile",
+        context=GraphCommandContext(
+            run_id=run_id,
+            current_graph_position=position,
+        ),
     )
 
 

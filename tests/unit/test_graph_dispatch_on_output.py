@@ -17,6 +17,7 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     GraphProjection,
+    GraphCommandContext,
     initial_projection,
     reduce_event,
 )
@@ -1798,7 +1799,10 @@ class LockedOnceController:
         expected_position: int,
         command_type: str,
         payload: dict[str, Any] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
     ) -> _FakeCommandResult:
+        assert context is not None
         self.calls += 1
         if self.calls <= self._fail_times:
             raise _locked_operational_error()
@@ -1817,7 +1821,10 @@ class AlwaysNonLockedErrorController:
         expected_position: int,
         command_type: str,
         payload: dict[str, Any] | None = None,
+        *,
+        context: GraphCommandContext | None = None,
     ) -> _FakeCommandResult:
+        assert context is not None
         self.calls += 1
         raise OperationalError("SELECT 1", {}, sqlite3.OperationalError("no such table"))
 

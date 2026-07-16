@@ -36,7 +36,6 @@ from orchestrator.graph import (
     SupportEvidenceProjection,
     VerifierVerdictProjection,
     VerificationResultProjection,
-    apply_command,
     initial_projection,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
@@ -60,6 +59,7 @@ from orchestrator.graph import (
     reduce_event,
     support_evidence_freshness_from_projection,
 )
+from tests.unit.graph_test_utils import apply_command
 from tests.unit.graph_test_utils import canonical_event_payload
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "graph"

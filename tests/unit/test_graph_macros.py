@@ -7,12 +7,12 @@ from orchestrator.graph import (
     FakeClock,
     PatchEnvelope,
     PatchOp,
-    apply_command,
     expand_patch_macros,
     initial_projection,
     reduce_event,
     validate_patch,
 )
+from tests.unit.graph_test_utils import apply_command
 
 
 def _patch(payload: dict[str, Any]) -> PatchEnvelope:

@@ -7,7 +7,13 @@ from orchestrator.graph.command_bindings import (
     check_command_uses_acceptance_fallback,
     resolve_check_command_definition,
 )
-from orchestrator.graph.commands import apply_command
+from orchestrator.graph.commands import COMMAND_SPECS, apply_command
+from orchestrator.graph.command_models import (
+    CommandSpec,
+    GraphCommandContext,
+    PatchCommandContext,
+    StrictCommandPayload,
+)
 from orchestrator.graph.event_registry import (
     CANONICAL_EVENT_TYPES,
     EVENT_PAYLOAD_MODELS,
@@ -195,6 +201,8 @@ __all__ = [
     "CleanupRequestedPayload",
     "CleanupRequestedProjection",
     "CommandRejectedPayload",
+    "CommandSpec",
+    "COMMAND_SPECS",
     "DeadInputDetectedPayload",
     "EdgeProjection",
     "EnvironmentFailureProjection",
@@ -227,6 +235,7 @@ __all__ = [
     "GraphPatchRejectedPayload",
     "HeartbeatRecordedPayload",
     "GraphProjection",
+    "GraphCommandContext",
     "InMemoryEventStore",
     "InputEdgeInfo",
     "InputBindingProjection",
@@ -256,6 +265,7 @@ __all__ = [
     "PLANNER_OPS",
     "PROJECTION_SCHEMA_VERSION",
     "PatchEnvelope",
+    "PatchCommandContext",
     "PatchOp",
     "PendingGateDecisionProjection",
     "PlannerSessionStateChangedPayload",
@@ -269,6 +279,7 @@ __all__ = [
     "SupportEvidencePayload",
     "SupportEvidenceProjection",
     "StoredArtifactRef",
+    "StrictCommandPayload",
     "CheckResultRecord",
     "SchedulerView",
     "SequentialIdGenerator",

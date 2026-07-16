@@ -7,9 +7,9 @@ from orchestrator.graph import (
     GraphPatchAcceptedPayload,
     GraphPatchRejectedPayload,
     SequentialIdGenerator,
-    apply_command,
     build_projection,
 )
+from tests.unit.graph_test_utils import apply_command
 from tests.unit.graph_test_utils import event
 
 

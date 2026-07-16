@@ -23,6 +23,7 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     FakeClock,
+    PatchCommandContext,
     SequentialIdGenerator,
     initial_projection,
     reduce_event,
@@ -212,10 +213,15 @@ async def test_submit_patch_uses_events_since_base_when_snapshot_tail_is_empty(
         "submit_patch",
         {
             "patch_id": "patch-stale",
-            "proposed_by_node_id": "planner-1",
             "base_graph_position": 2,
             "ops": [{"op": "retire_node", "node_id": "worker-stale"}],
         },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=3,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
     )
 
     assert [event.event_type for event in result.events] == ["graph_patch_rejected"]
@@ -294,7 +300,6 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
             await GraphEventStore(session).append_events(run_id, 0, setup_events)
 
     payload = {
-        "run_id": run_id,
         "node_id": "planner-1",
         "execution_id": "exec-1",
         "lease_id": "lease-1",
@@ -302,6 +307,7 @@ async def test_callback_idempotency_uses_valid_snapshot_without_replay(
         "base_snapshot_id": "S0",
         "observed_graph_position": 3,
         "idempotency_key": "callback-key-1",
+        "payload_hash": "callback-hash-1",
     }
     first = await controller.handle_command(run_id, 3, "submit_callback", payload)
     second = await controller.handle_command(

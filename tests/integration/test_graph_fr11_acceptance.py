@@ -209,7 +209,6 @@ async def _complete_worker(
         expected_position,
         "submit_callback",
         {
-            "run_id": run_id,
             "node_id": node_id,
             "execution_id": lease["execution_id"],
             "lease_id": lease["lease_id"],

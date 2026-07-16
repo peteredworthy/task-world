@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from orchestrator.api import create_app
 from orchestrator.config import RunStatus
 from orchestrator.db import RunModel, StepModel, TaskModel, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, PatchCommandContext
 from orchestrator.graph_runtime import GraphController, GraphEventStore
 
 
@@ -51,17 +51,22 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
         auto_dispatch=False,
     )
 
+    position = await controller.current_position(run_id)
     accepted = await controller.handle_command(
         run_id,
-        await controller.current_position(run_id),
+        position,
         "submit_patch",
         {
             "patch_id": "patch-fr03-less-used-contracts",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
-            "base_graph_position": await controller.current_position(run_id),
+            "base_graph_position": position,
             "ops": _less_used_contract_ops(),
         },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=position,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
     )
     assert [event.event_type for event in accepted.events].count("graph_patch_accepted") == 1, [
         event.payload.get("reason") for event in accepted.events
@@ -72,8 +77,6 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
         "submit_patch",
         {
             "patch_id": "patch-fr03-bad-review-port",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": accepted.projection_position,
             "ops": [
                 {
@@ -87,6 +90,12 @@ async def test_fr03_less_used_contracts_govern_validation_runtime_and_readbacks(
                 }
             ],
         },
+        context=PatchCommandContext(
+            run_id=run_id,
+            current_graph_position=accepted.projection_position,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
     )
     assert [event.event_type for event in rejected.events] == ["graph_patch_rejected"]
     assert "unknown input port" in str(rejected.events[0].payload["reason"])
