@@ -837,7 +837,7 @@ Execution identity:
 - Isolated worktree: `worktrees/w5-artifact-output`.
 
 Durable task queue:
-- [ ] Task 1: filesystem artifact store.
+- [x] Task 1: filesystem artifact store.
 - [ ] Task 2: atomic check-output externalization.
 - [ ] Task 3: explicit prompt and API hydration.
 - [ ] Task 4: mark-and-sweep garbage collection.
@@ -850,7 +850,8 @@ Evidence:
 
 ### Task 1: Filesystem Artifact Store
 
-Status: implementation in progress; queue checkbox remains controller-owned.
+Status: complete; independent task review passed specification and code-quality
+gates.
 
 RED evidence:
 - `uv run pytest tests/unit/test_artifact_store.py -q`
@@ -869,7 +870,8 @@ GREEN evidence:
 - `git diff --check`
   - Result: passed, no output.
 
-Implementation commit: pending (`Implement filesystem artifact store`).
+Implementation commit: `550c45f6596c2b2049948dbbf3a23cd86b9ee1a2`
+(`Implement filesystem artifact store`).
 
 Review Fix evidence:
 - Added a regression proving `FilesystemArtifactStore` construction does not
@@ -881,4 +883,11 @@ Review Fix evidence:
 - GREEN: `uv run pytest tests/unit/test_artifact_store.py -q` — 6 passed;
   focused Ruff and Pyright passed, format check reported 5 files already
   formatted, and `git diff --check` passed.
-- Review-fix commit: pending (`Make artifact store construction side-effect free`).
+- Review-fix commit: `69e3f0a3babdfc9dc67be1cd1aa3124a01ac8318`
+  (`Make artifact store construction side-effect free`).
+- Independent review: no Critical, Important, or Minor findings after the fix;
+  `Spec compliance: PASS` and `Code quality: APPROVED` over commits
+  `297e2b52d..69e3f0a3b`.
+- Deferred review observations were confirmed as out of Task 1 scope: production
+  root composition and event/hydration/GC integration belong to later tasks;
+  the pre-existing `StoredArtifactRef` invariant is established by W5.
