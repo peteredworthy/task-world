@@ -102,24 +102,24 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         "agent_died": _same("agent_died", "execution_id generation lease_id node_id reason"),
         "appeal_opened": _spec(
             "appeal_opened",
-            projection="appeal_type candidate_id kind lease_id membership node_id state task_region_id",
+            projection="appeal_type appealed_node_id candidate_id kind lease_id membership node_id state task_region_id",
             light="appeal_type appealed_node_id candidate_id kind lease_id membership node_id state task_region_id",
             summary="appeal_type appealed_node_id candidate_id kind lease_id membership node_id run_id state task_region_id",
-            node_detail="candidate_id kind lease_id membership node_id state task_region_id",
+            node_detail="appeal_type appealed_node_id candidate_id kind lease_id membership node_id state task_region_id",
         ),
         "approval_decision_recorded": _spec(
             "approval_decision_recorded",
-            projection="appeal_type candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
-            light="appeal_node_id appeal_type appealed_node_id candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
+            projection="appeal_type candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
+            light="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
             summary="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id run_id task_region_id",
-            node_detail="candidate_id expires_at membership node_id reason record_id task_region_id",
+            node_detail="candidate_id decider decision decision_type expires_at membership node_id reason record_id task_region_id",
         ),
         "authority_decision_recorded": _spec(
             "authority_decision_recorded",
-            projection="appeal_type candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
-            light="appeal_node_id appeal_type appealed_node_id candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
+            projection="appeal_type candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
+            light="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
             summary="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id run_id task_region_id",
-            node_detail="candidate_id expires_at membership node_id reason record_id task_region_id",
+            node_detail="candidate_id decider decision decision_type expires_at membership node_id reason record_id task_region_id",
         ),
         "callback_accepted": _spec(
             "callback_accepted",
@@ -173,7 +173,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "dead_input_detected": _same(
             "dead_input_detected",
-            "edge_id from_node_id from_port node_id reason to_node_id to_port",
+            "from_node_id node_id reason to_port",
         ),
         "edge_created": _spec(
             "edge_created",
@@ -281,10 +281,10 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "oversight_decision_recorded": _spec(
             "oversight_decision_recorded",
-            projection="appeal_type candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
-            light="appeal_node_id appeal_type appealed_node_id candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
+            projection="appeal_type candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
+            light="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id task_region_id",
             summary="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id run_id task_region_id",
-            node_detail="candidate_id expires_at membership node_id reason record_id task_region_id",
+            node_detail="candidate_id decider decision decision_type expires_at membership node_id reason record_id task_region_id",
         ),
         "plan_region_marked_suspect": _spec(
             "plan_region_marked_suspect",
@@ -309,14 +309,14 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "run_lifecycle_changed": _spec(
             "run_lifecycle_changed",
-            projection="from_state node_id reason recovery_of_node_id recovery_of_record_id recovery_reason to_state trigger",
-            light="from_state node_id patch_id reason recovery_of_node_id recovery_of_record_id recovery_reason to_state trigger",
+            projection="command_type from_state node_id reason recovery_of_node_id recovery_of_record_id recovery_reason to_state trigger",
+            light="command_type from_state node_id patch_id reason recovery_of_node_id recovery_of_record_id recovery_reason to_state trigger",
             summary="command_type from_state node_id patch_id reason recovery_of_node_id recovery_of_record_id recovery_reason to_state trigger",
-            node_detail="node_id reason recovery_of_node_id recovery_of_record_id recovery_reason trigger",
+            node_detail="command_type from_state node_id reason recovery_of_node_id recovery_of_record_id recovery_reason to_state trigger",
         ),
         "runtime_retry_scheduled": _same(
             "runtime_retry_scheduled",
-            "generation lease_id node_id reason retry_not_before",
+            "generation lease_id node_id policy reason retry_not_before",
         ),
         "session_state_changed": _spec(
             "session_state_changed",

@@ -46,7 +46,10 @@ Current producers call their ownership guard, validate through the registered
 payload model, and serialize with `model_dump(mode="json")` before constructing
 or persisting an `EventEnvelope`. The envelope remains JSON-shaped at the
 storage boundary; typed models own its canonical shape on both emission and
-consumption. Unknown top-level fields are rejected. Flat output-record and
+consumption. No modeled event returns the caller's original dictionary after
+validation. Explicit `exclude_none`/`exclude_unset` policies exist only for
+documented sparse wire contracts; all other events use the complete JSON dump.
+Unknown top-level fields are rejected. Flat output-record and
 file-state `RootModel` envelopes delegate this strictness to their canonical
 record roots.
 
@@ -63,10 +66,10 @@ Every canonical event owns explicit `projection`, `light`, `summary`, and
 serialized by that event's model; no global field-name inference or compatibility
 exception exists. The specs generate four sorted unique global tuples:
 
-- `GRAPH_PROJECTION_PAYLOAD_FIELDS`: 101 fields.
-- `LIGHT_GRAPH_PAYLOAD_FIELDS`: 141 fields.
-- `SUMMARY_REBUILD_PAYLOAD_FIELDS`: 159 fields.
-- `NODE_DETAIL_PAYLOAD_FIELDS`: 84 fields.
+- `GRAPH_PROJECTION_PAYLOAD_FIELDS`: 105 fields.
+- `LIGHT_GRAPH_PAYLOAD_FIELDS`: 144 fields.
+- `SUMMARY_REBUILD_PAYLOAD_FIELDS`: 160 fields.
+- `NODE_DETAIL_PAYLOAD_FIELDS`: 92 fields.
 
 Complete nested check-result `value` retention intentionally remains until the
 atomic W5.5 artifact cutover.
@@ -91,6 +94,12 @@ a handler whose payload annotation is that exact model. `apply_command` is the
 single raw command-ingress validator. Runtime identity, actor, graph position,
 and patch provenance are supplied separately through `GraphCommandContext` or
 `PatchCommandContext`, never accepted as command payload fields.
+
+Command, record, node, lease, execution, idempotency, requirement, support,
+cleanup, and evaluation identifiers use a shared strict nonempty contract that
+rejects whitespace. Validation failures are rendered from bounded
+`errors(include_input=False)` details, so rejection events retain location and
+error type without copying submitted values or unbounded provider text.
 
 Decision API requests reuse `RecordDecisionCommand`; patch API and command
 models share `PatchCommandFields`. HTTP-only length, pattern, nonnegative
@@ -126,6 +135,10 @@ fields. `VerificationReportValue.grades` is a typed list of `GradeRow` values.
 - [x] **R9 - Verification and documentation.** Focused batches, full backend,
   Ruff, Pyright, diff checks, metrics, inventories, and the progress ledger are
   complete.
+- [x] **R10 - Identity and error safety.** Semantic scalars and identities reject
+  coercion/blank values, command validation errors are bounded and redacted,
+  and `StoredArtifactRef.storage_uri` carries the same SHA-256 digest as
+  `content_hash`.
 
 ## Constraints
 
@@ -148,7 +161,7 @@ The final accepted source head was
 - Registry audit: 46 canonical names, 46 models, 46 exact specs, all strict.
 - Command audit: 23 strict payloads and 23 exact typed handlers.
 - Output-record audit: 22 explicit discriminators.
-- Generated retention: 101/141/159/84 fields.
+- Generated retention at final-review correction head: 105/144/160/92 fields.
 - Focused audit: 145 tests passed.
 - Full backend: 4,756 passed, 3 skipped, 3 warnings.
 - Ruff: all checks passed.

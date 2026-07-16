@@ -3,7 +3,7 @@
     - node_state_changed: {node_id: worker-stale-1, new_state: completed}
     - lease_granted: {node_id: worker-stale-1, lease_id: lease-1, generation: 1}
     - lease_released: {node_id: worker-stale-1, lease_id: lease-1}
-    - callback_accepted: {node_id: worker-stale-1, idempotency_key: key-1, payload: {payload_hash: hash-a}}
+    - callback_accepted: {node_id: worker-stale-1, lease_id: lease-1, lease_generation: 1, execution_id: exec-1, idempotency_key: key-1, payload: {payload_hash: hash-a}, reason: accepted}
   when_command:
     submit_callback: {node_id: worker-stale-1, execution_id: exec-1, lease_id: lease-1, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-1, payload_hash: hash-a}
   then_events:
@@ -15,7 +15,7 @@
     - node_state_changed: {node_id: worker-stale-2, new_state: completed}
     - lease_granted: {node_id: worker-stale-2, lease_id: lease-2, generation: 1}
     - lease_released: {node_id: worker-stale-2, lease_id: lease-2}
-    - callback_accepted: {node_id: worker-stale-2, idempotency_key: key-2, payload: {payload_hash: hash-a}}
+    - callback_accepted: {node_id: worker-stale-2, lease_id: lease-2, lease_generation: 1, execution_id: exec-2, idempotency_key: key-2, payload: {payload_hash: hash-a}, reason: accepted}
   when_command:
     submit_callback: {node_id: worker-stale-2, execution_id: exec-2, lease_id: lease-2, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 1, idempotency_key: key-2, payload_hash: hash-b}
   then_events:
@@ -74,7 +74,7 @@
 
 - name: stale_approval_after_cancellation
   given_events:
-    - run_lifecycle_changed: {to_state: cancelled}
+    - run_lifecycle_changed: {command_type: cancel, from_state: cancelling, to_state: cancelled, trigger: cancel_command_accepted}
     - lease_granted: {node_id: gate-stale-7, lease_id: lease-7, generation: 1}
   when_command:
     submit_callback: {node_id: gate-stale-7, execution_id: exec-7, lease_id: lease-7, lease_generation: 1, base_snapshot_id: S0, observed_graph_position: 2, idempotency_key: key-7, payload_hash: hash-7}
@@ -84,7 +84,7 @@
 
 - name: stale_resume_after_cancel
   given_events:
-    - run_lifecycle_changed: {to_state: cancelled}
+    - run_lifecycle_changed: {command_type: cancel, from_state: cancelling, to_state: cancelled, trigger: cancel_command_accepted}
   when_command: {resume: {}}
   then_events:
     - command_rejected: {command_type: resume}
@@ -92,7 +92,7 @@
 
 - name: stale_pause_callback_race_callback_first
   given_events:
-    - run_lifecycle_changed: {to_state: active}
+    - run_lifecycle_changed: {command_type: start, from_state: queued, to_state: active, trigger: start_command_accepted}
     - node_created: {node_id: worker-stale-9a, kind: worker, state: running}
     - lease_granted: {node_id: worker-stale-9a, lease_id: lease-9a, generation: 1}
   when_command:

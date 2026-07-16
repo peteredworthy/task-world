@@ -132,7 +132,7 @@ The final W5 audit confirms:
 
 - All 46 canonical events have exact strict models and explicit projection,
   light, summary-rebuild, and node-detail retention specs.
-- The four generated sorted unique allowlists contain 101, 141, 159, and 84
+- The four generated sorted unique allowlists contain 105, 144, 160, and 92
   fields. No retained field is unowned by its model and no `extra` field is
   generated.
 - `GraphProjection` outer identifier indexes remain maps by design; structured

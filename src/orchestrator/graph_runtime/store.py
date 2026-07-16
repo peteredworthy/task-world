@@ -1788,6 +1788,7 @@ def _compact_file_state_record(payload: dict[str, Any]) -> dict[str, Any]:
         "record_kind",
         "port",
         "producer_node_id",
+        "schema",
         "snapshot_id",
         "verdict",
         "patch_bundle_id",

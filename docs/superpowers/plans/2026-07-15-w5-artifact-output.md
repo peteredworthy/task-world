@@ -6,6 +6,10 @@
 
 **Architecture:** An injected filesystem `ArtifactStore` writes immutable blobs under the main project root before event append. Dispatch replaces over-threshold output with bounded inline tails plus `StoredArtifactRef`; reducers replay only inline metadata, while prompt/API consumers hydrate explicitly. Run-purge mark-and-sweep removes unreferenced blobs after a grace period.
 
+`StoredArtifactRef` already validates that the digest embedded in `storage_uri`
+equals the `content_hash` digest. W5.5 consumers rely on that invariant and must
+not add a compatibility path for mismatched references.
+
 **Tech Stack:** Python 3.12+, Pydantic v2, asyncio filesystem I/O, FastAPI, SQLite event store, pytest.
 
 ## Global Constraints

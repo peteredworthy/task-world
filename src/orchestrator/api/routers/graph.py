@@ -61,9 +61,9 @@ GraphIdentifier = Annotated[
     str,
     Field(min_length=1, max_length=200, pattern=_GRAPH_IDENTIFIER_PATTERN),
 ]
-DecisionNodeIdentifier = Annotated[str, Field(min_length=1, max_length=200)]
+DecisionNodeIdentifier = Annotated[str, Field(min_length=1, max_length=200, pattern=r"^\S+$")]
 DecisionValue = Annotated[str, Field(min_length=1, max_length=64)]
-NonEmptyString = Annotated[str, Field(min_length=1)]
+NonEmptyString = Annotated[str, Field(min_length=1, pattern=r".*\S.*")]
 
 
 class _ApiGraphClock:

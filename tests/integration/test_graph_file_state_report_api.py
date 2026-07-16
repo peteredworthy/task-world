@@ -39,6 +39,8 @@ def _routine() -> RoutineConfig:
 
 
 def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+    from tests.unit.graph_test_utils import canonical_event_payload
+
     return EventEnvelope(
         event_id=f"{event_type}-{uuid4().hex}",
         run_id="placeholder",
@@ -47,7 +49,7 @@ def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 

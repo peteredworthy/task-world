@@ -1924,9 +1924,7 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
 
     if event.event_type == "run_lifecycle_changed":
         lifecycle_payload = RunLifecycleChangedPayload.model_validate(event.payload)
-        to_state = lifecycle_payload.to_state
-        if to_state is not None:
-            next_state["run_state"] = to_state
+        next_state["run_state"] = lifecycle_payload.to_state
     elif event.event_type == "node_created":
         typed_node_payload = _node_created_payload_from_event(event)
         node_payload = _node_creation_from_event(event)
@@ -1992,15 +1990,13 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         payload = NodeStateChangedPayload.model_validate(event.payload)
         node_id = payload.node_id
         new_state = payload.new_state
-        if isinstance(node_id, str) and isinstance(new_state, str):
-            next_state["node_states"][node_id] = new_state
-            attempt_number = payload.attempt_number
-            if attempt_number is not None:
-                next_state["node_attempts"][node_id] = attempt_number
+        next_state["node_states"][node_id] = new_state
+        attempt_number = payload.attempt_number
+        if attempt_number is not None:
+            next_state["node_attempts"][node_id] = attempt_number
     elif event.event_type == "node_retired":
         node_id = NodeRetiredPayload.model_validate(event.payload).node_id
-        if isinstance(node_id, str):
-            next_state["node_states"][node_id] = "retired"
+        next_state["node_states"][node_id] = "retired"
     elif event.event_type == "edge_created":
         _record_edge(next_state, event)
     elif event.event_type == "input_bound":
@@ -2214,14 +2210,12 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         payload = NodeDeferredPayload.model_validate(event.payload)
         node_id = payload.node_id
         reason = payload.reason
-        if isinstance(node_id, str) and isinstance(reason, str):
-            next_state["last_deferred_reasons"][node_id] = reason
+        next_state["last_deferred_reasons"][node_id] = reason
     elif event.event_type == "callback_accepted":
         _record_callback_idempotency_event(next_state, event)
     elif event.event_type == "node_ready":
         node_id = NodeReadyPayload.model_validate(event.payload).node_id
-        if isinstance(node_id, str):
-            next_state["last_deferred_reasons"].pop(node_id, None)
+        next_state["last_deferred_reasons"].pop(node_id, None)
     # node_ready/node_deferred and agent_died/runtime_retry_scheduled are
     # audit/policy facts. Projection facts are updated only by lease_* and
     # node_state_changed events so replay has a single state authority.
@@ -3932,13 +3926,11 @@ def _record_callback_idempotency_event(state: GraphProjection, event: EventEnvel
 def _callback_idempotency_event_from_envelope(
     event: EventEnvelope,
 ) -> CallbackIdempotencyEvent | None:
-    payload = CallbackAcceptedPayload.model_validate(event.payload)
-    if (
-        payload.node_id is None
-        or payload.idempotency_key is None
-        or "payload" not in payload.model_fields_set
-    ):
+    # Projection/light/node-detail rows intentionally omit callback bodies and
+    # idempotency keys; only full and summary-rebuild rows carry this state.
+    if not {"idempotency_key", "payload"} <= event.payload.keys():
         return None
+    payload = CallbackAcceptedPayload.model_validate(event.payload)
     callback_payload = payload.model_dump(mode="json")
     callback_payload["event_type"] = event.event_type
     callback_payload["outcome"] = event.event_type
@@ -4075,8 +4067,7 @@ def _latest_node_deferrals(events: list[EventEnvelope]) -> dict[str, str]:
         payload = NodeDeferredPayload.model_validate(event.payload)
         node_id = payload.node_id
         reason = payload.reason
-        if isinstance(node_id, str) and isinstance(reason, str):
-            reasons[node_id] = reason
+        reasons[node_id] = reason
     return reasons
 
 
@@ -4249,7 +4240,7 @@ def _record_recovery_node(state: GraphProjection, payload: NodeCreatedPayload) -
     node_id = payload.node_id
     recovery_reason = payload.recovery_reason
     record_id = payload.recovery_of_record_id
-    if not isinstance(node_id, str) or not node_id:
+    if not node_id:
         return
     if not isinstance(recovery_reason, str) or not recovery_reason:
         return
@@ -4447,10 +4438,7 @@ def _record_open_appeal(
     state: GraphProjection, payload: AppealOpenedPayload, position: int
 ) -> None:
     appealed_node_id = payload.appealed_node_id
-    if appealed_node_id is None and payload.node_id in state["node_states"]:
-        appealed_node_id = payload.node_id
-    if isinstance(appealed_node_id, str):
-        state["node_pending_appeals"][appealed_node_id] = True
+    state["node_pending_appeals"][appealed_node_id] = True
 
     task_region_id = payload.task_region_id
     candidate_id = payload.candidate_id
@@ -4512,17 +4500,14 @@ def _record_gate_decision(state: GraphProjection, payload: ApprovalDecisionRecor
     node_id = payload.node_id
     decision = payload.decision
     passed = decision == "approved"
-    if isinstance(node_id, str):
-        state["node_gate_decisions"][node_id] = passed
-    if task_region_id is None and isinstance(node_id, str):
+    state["node_gate_decisions"][node_id] = passed
+    if task_region_id is None:
         task_region_id = state["node_task_regions"].get(node_id)
     if task_region_id is None:
         return
     gate_id = payload.gate_id
-    if not isinstance(gate_id, str):
+    if gate_id is None:
         gate_id = node_id
-    if not isinstance(gate_id, str):
-        gate_id = "default"
     state["gate_decisions"].setdefault(task_region_id, {})[gate_id] = passed
 
 
@@ -4532,8 +4517,7 @@ def _record_authority_decision(
     node_id = payload.node_id
     decision = payload.decision
     passed = decision == "granted"
-    if isinstance(node_id, str):
-        state["node_gate_decisions"][node_id] = passed
+    state["node_gate_decisions"][node_id] = passed
 
 
 def _clear_authority_revision_blocker(
@@ -4935,8 +4919,6 @@ def _bound_record_ids_from_payload(binding: dict[str, Any]) -> list[str]:
 
 def _record_authority_change(state: GraphProjection, payload: NodeAuthorityChangedPayload) -> None:
     node_id = payload.node_id
-    if not isinstance(node_id, str):
-        return
 
     authority = payload.authority
     resource_claims = payload.resource_claims
@@ -5103,7 +5085,7 @@ def _record_cleanup_applied(state: GraphProjection, event: EventEnvelope) -> Non
 def _record_runtime_retry_scheduled(state: GraphProjection, event: EventEnvelope) -> None:
     payload = RuntimeRetryScheduledPayload.model_validate(event.payload)
     node_id = payload.node_id
-    if node_id is None or not node_id:
+    if not node_id:
         return
     value = payload.retry_not_before
     state["retry_not_before_by_node"][node_id] = value if value else None

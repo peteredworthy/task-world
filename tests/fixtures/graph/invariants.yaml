@@ -1,14 +1,14 @@
 - name: invariant_replay_is_deterministic
   given_events:
-    - run_lifecycle_changed: {from_state: draft, to_state: queued}
+    - run_lifecycle_changed: {command_type: accept_run, from_state: draft, to_state: queued, trigger: accept_run_command_accepted}
   when_command: {start: {}}
   then_events:
-    - run_lifecycle_changed: {from_state: queued, to_state: active}
+    - run_lifecycle_changed: {command_type: start, from_state: queued, to_state: active, trigger: start_command_accepted}
   then_projection: {run_state: active}
 
 - name: invariant_no_conflicting_write_leases
   given_events:
-    - run_lifecycle_changed: {to_state: active}
+    - run_lifecycle_changed: {command_type: start, from_state: queued, to_state: active, trigger: start_command_accepted}
     - node_created: {node_id: writer-active, kind: worker, state: leased, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
     - lease_granted: {node_id: writer-active, lease_id: lease-writer-active, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
     - node_created: {node_id: writer-conflict, kind: worker, state: ready, resource_claims: [{mode: write, scope: repo, paths: [src/a.py]}]}
@@ -30,7 +30,7 @@
 
 - name: invariant_successor_requires_inputs
   given_events:
-    - run_lifecycle_changed: {to_state: active}
+    - run_lifecycle_changed: {command_type: start, from_state: queued, to_state: active, trigger: start_command_accepted}
     - node_created: {node_id: producer-invariant-4, kind: worker, state: completed}
     - node_created: {node_id: successor-invariant-4, kind: worker, state: blocked}
     - edge_created: {edge_id: edge-invariant-4, from_node_id: producer-invariant-4, from_port: candidate, to_node_id: successor-invariant-4, to_port: candidate, required: true}
@@ -44,7 +44,7 @@
 
 - name: invariant_successor_releases_after_required_input
   given_events:
-    - run_lifecycle_changed: {to_state: active}
+    - run_lifecycle_changed: {command_type: start, from_state: queued, to_state: active, trigger: start_command_accepted}
     - node_created: {node_id: producer-invariant-4b, kind: worker, state: completed}
     - node_created: {node_id: successor-invariant-4b, kind: worker, state: blocked}
     - edge_created: {edge_id: edge-invariant-4b, from_node_id: producer-invariant-4b, from_port: candidate, to_node_id: successor-invariant-4b, to_port: candidate, required: true}
@@ -108,7 +108,7 @@
 
 - name: invariant_human_gate_blocks_successors
   given_events:
-    - run_lifecycle_changed: {to_state: active}
+    - run_lifecycle_changed: {command_type: start, from_state: queued, to_state: active, trigger: start_command_accepted}
     - node_created: {node_id: gate-invariant-9, kind: gate, state: completed}
     - node_created: {node_id: successor-invariant-9, kind: worker, state: blocked}
     - edge_created: {edge_id: edge-invariant-9, from_node_id: gate-invariant-9, from_port: decision, to_node_id: successor-invariant-9, to_port: approval, required: true}
@@ -123,9 +123,9 @@
 
 - name: invariant_human_gate_approval_releases_successor
   given_events:
-    - run_lifecycle_changed: {to_state: active}
+    - run_lifecycle_changed: {command_type: start, from_state: queued, to_state: active, trigger: start_command_accepted}
     - node_created: {node_id: gate-invariant-9b, kind: gate, state: completed}
-    - approval_decision_recorded: {node_id: gate-invariant-9b, decision: approved}
+    - approval_decision_recorded: {decision_type: approval, node_id: gate-invariant-9b, decision: approved, decider: fixture-controller}
     - node_created: {node_id: successor-invariant-9b, kind: worker, state: blocked}
     - edge_created: {edge_id: edge-invariant-9b, from_node_id: gate-invariant-9b, from_port: decision, to_node_id: successor-invariant-9b, to_port: approval, required: true}
     - input_bound: {edge_id: edge-invariant-9b, to_node_id: successor-invariant-9b, to_port: approval, record_ids: [approval-invariant-9b], bound_at_position: 0}

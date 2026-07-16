@@ -13,7 +13,7 @@
 - name: appeal_ready_to_completed
   given_events:
     - node_created: {node_id: appeal-2, kind: appeal, state: ready}
-    - oversight_decision_recorded: {node_id: appeal-2, decision: accepted}
+    - oversight_decision_recorded: {decision_type: oversight, node_id: appeal-2, decision: accepted, decider: fixture-controller}
     - node_state_changed: {node_id: appeal-2, new_state: completed, trigger: oversight_decision_accepted}
   when_command: null
   then_events: []
@@ -22,7 +22,7 @@
 - name: appeal_ready_to_failed
   given_events:
     - node_created: {node_id: appeal-3, kind: appeal, state: ready}
-    - oversight_decision_recorded: {node_id: appeal-3, decision: rejected}
+    - oversight_decision_recorded: {decision_type: oversight, node_id: appeal-3, decision: rejected, decider: fixture-controller}
     - node_state_changed: {node_id: appeal-3, new_state: failed, trigger: appeal_rejected}
   when_command: null
   then_events: []

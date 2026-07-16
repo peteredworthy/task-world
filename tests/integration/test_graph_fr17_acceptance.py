@@ -562,6 +562,8 @@ async def _get_json(client: AsyncClient, path: str) -> Any:
 
 
 def _event(run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+    from tests.unit.graph_test_utils import canonical_event_payload
+
     return EventEnvelope(
         event_id=f"{event_type}-{uuid4().hex}",
         run_id=run_id,
@@ -570,7 +572,7 @@ def _event(run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelo
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 

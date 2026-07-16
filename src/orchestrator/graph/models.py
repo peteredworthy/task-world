@@ -435,7 +435,7 @@ class EdgeProjection(_AttributeProjection):
     from_port: str
     to_node_id: str
     to_port: str
-    required: bool = True
+    required: StrictBool = True
     dependency_type: Literal["input_binding", "state_dependency"] = "input_binding"
     from_node_kind: str | None = None
     from_node_role: str | None = None
@@ -554,6 +554,14 @@ class StoredArtifactRef(StrictNestedModel):
     media_type: str
     encoding: str | None = None
     storage_uri: str = Field(pattern=r"^artifact://sha256/[0-9a-f]{64}$")
+
+    @model_validator(mode="after")
+    def storage_uri_matches_content_hash(self) -> "StoredArtifactRef":
+        if self.storage_uri.removeprefix("artifact://sha256/") != self.content_hash.removeprefix(
+            "sha256:"
+        ):
+            raise ValueError("storage_uri digest must match content_hash digest")
+        return self
 
 
 class ArtifactReferenceRecord(TypedRecordBase):
@@ -725,10 +733,10 @@ class LeaseSuspendedPayload(StrictEventPayload):
 
 
 class RunLifecycleChangedPayload(StrictEventPayload):
-    command_type: str | None = None
-    from_state: str | None = None
-    to_state: str | None = None
-    trigger: str | None = None
+    command_type: str
+    from_state: str
+    to_state: str
+    trigger: str
     node_id: str | None = None
     patch_id: str | None = None
     recovery_of_node_id: str | None = None
@@ -738,8 +746,8 @@ class RunLifecycleChangedPayload(StrictEventPayload):
 
 
 class CommandRejectedPayload(StrictEventPayload):
-    command_type: str | None = None
-    reason: str | None = None
+    command_type: str
+    reason: str
     blockers: list[dict[str, Any]] | None = None
     patch_id: str | None = None
     base_graph_position: StrictInt | None = None
@@ -753,13 +761,12 @@ class CommandRejectedPayload(StrictEventPayload):
 
 
 class CallbackPayloadBase(StrictEventPayload):
-    node_id: str | None = None
-    lease_id: str | None = None
-    lease_generation: StrictInt | None = None
-    execution_id: str | None = None
-    idempotency_key: str | None = None
-    payload: dict[str, Any] | None = None
-    reason: str | None = None
+    node_id: str
+    lease_id: str
+    lease_generation: StrictInt
+    execution_id: str
+    idempotency_key: str
+    payload: dict[str, Any] | None
 
     def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
         data = super().model_dump(*args, **kwargs)
@@ -769,53 +776,50 @@ class CallbackPayloadBase(StrictEventPayload):
 
 
 class CallbackAcceptedPayload(CallbackPayloadBase):
-    pass
+    reason: str
 
 
 class CallbackRejectedPayload(CallbackPayloadBase):
-    pass
+    reason: str
 
 
 class CallbackDuplicateReturnedPayload(CallbackPayloadBase):
-    prior_result: dict[str, Any] | None = None
+    reason: str
+    prior_result: dict[str, Any] | None
 
 
 class RuntimeRetryScheduledPayload(StrictEventPayload):
-    node_id: str | None = None
-    lease_id: str | None = None
-    generation: StrictInt | None = None
-    policy: str | None = None
-    reason: str | None = None
+    node_id: str
+    lease_id: str
+    generation: StrictInt
+    policy: str
+    reason: str
     retry_after_seconds: StrictInt | None = None
     retry_not_before: str | None = None
 
 
 class HeartbeatRecordedPayload(StrictEventPayload):
-    lease_id: str | None = None
-    node_id: str | None = None
+    lease_id: str
+    node_id: str
     generation: StrictInt | None = None
     execution_id: str | None = None
-    observed_at: str | None = None
-    expires_at: str | None = None
+    observed_at: str
+    expires_at: str
 
 
 class AgentDiedPayload(StrictEventPayload):
-    lease_id: str | None = None
-    node_id: str | None = None
+    lease_id: str
+    node_id: str
     generation: StrictInt | None = None
     execution_id: str | None = None
-    reason: str | None = None
+    reason: str
 
 
 class DeadInputDetectedPayload(StrictEventPayload):
-    node_id: str | None = None
-    edge_id: str | None = None
-    from_node_id: str | None = None
-    from_port: str | None = None
-    to_node_id: str | None = None
-    to_port: str | None = None
-    source_node_id: str | None = None
-    reason: str | None = None
+    node_id: str
+    from_node_id: str
+    to_port: str
+    reason: str
 
 
 class LeaseProjection(_AttributeProjection):
@@ -887,11 +891,11 @@ class CleanupEventPayloadBase(GraphEventPayloadBase):
 
 class AppealOpenedPayload(GraphEventPayloadBase):
     run_id: str | None = None
-    node_id: str | None = None
-    appealed_node_id: str | None = None
+    node_id: str
+    appealed_node_id: str
     candidate_id: str | None = None
     task_region_id: str | None = None
-    appeal_type: str | None = None
+    appeal_type: str
     lease_id: str | None = None
     membership: dict[str, Any] | None = None
     kind: str | None = None
@@ -900,8 +904,8 @@ class AppealOpenedPayload(GraphEventPayloadBase):
 
 class DecisionRecordedPayloadBase(GraphEventPayloadBase):
     run_id: str | None = None
-    decision_type: str | None = None
-    node_id: str | None = None
+    decision_type: str
+    node_id: str
     task_region_id: str | None = None
     gate_id: str | None = None
     appeal_node_id: str | None = None
@@ -912,7 +916,7 @@ class DecisionRecordedPayloadBase(GraphEventPayloadBase):
     reason: str | None = None
     record_id: str | None = None
     membership: dict[str, Any] | None = None
-    decider: Any | None = None
+    decider: Any
     scope: Any | None = None
 
 
@@ -1049,10 +1053,10 @@ class NodeCreatedPayload(GraphEventPayloadBase):
     """Canonical payload for every compiler and command-side node creation."""
 
     run_id: str | None = None
-    node_id: str | None = None
-    kind: str | None = None
+    node_id: str
+    kind: str
     role: str | None = None
-    state: str | None = None
+    state: str
     task_region_id: str | None = None
     attempt_number: StrictInt | None = None
     candidate_id: str | None = None
@@ -1144,8 +1148,8 @@ class NodeCreatedPayload(GraphEventPayloadBase):
 
 
 class NodeStateChangedPayload(GraphEventPayloadBase):
-    node_id: str | None = None
-    new_state: str | None = None
+    node_id: str
+    new_state: str
     trigger: str | None = None
     reason: str | None = None
     attempt_number: StrictInt | None = None
@@ -1164,21 +1168,21 @@ class NodeStateChangedPayload(GraphEventPayloadBase):
 
 
 class NodeRetiredPayload(GraphEventPayloadBase):
-    node_id: str | None = None
+    node_id: str
     reason: str | None = None
 
 
 class NodeReadyPayload(GraphEventPayloadBase):
-    node_id: str | None = None
+    node_id: str
 
 
 class NodeDeferredPayload(GraphEventPayloadBase):
-    node_id: str | None = None
-    reason: str | None = None
+    node_id: str
+    reason: str
 
 
 class NodeAuthorityChangedPayload(GraphEventPayloadBase):
-    node_id: str | None = None
+    node_id: str
     authority: Authority | None = None
     resource_claims: list[ResourceClaimProjection] = Field(
         default_factory=_empty_node_created_resource_claims

@@ -171,6 +171,8 @@ async def file_db_with_path(
 
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+    from tests.unit.graph_test_utils import canonical_event_payload
+
     return EventEnvelope(
         event_id=event_id,
         run_id=run_id,
@@ -180,7 +182,7 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 

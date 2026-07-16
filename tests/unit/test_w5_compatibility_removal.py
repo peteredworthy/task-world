@@ -149,6 +149,7 @@ def test_named_dynamic_node_created_fields_remain_open() -> None:
         {
             "node_id": "check-1",
             "kind": "check",
+            "state": "planned",
             "command_definition": {"argv": ["uv", "run", "pytest"], "future": {"ok": True}},
             "dynamic_feature": {"provider_extension": [1, 2, 3]},
         }

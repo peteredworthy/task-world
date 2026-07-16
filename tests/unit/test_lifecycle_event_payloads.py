@@ -42,16 +42,35 @@ def test_lifecycle_payload_rejects_unknown_and_wrong_typed_fields(
         RunLifecycleChangedPayload.model_validate(raw)
 
 
-def test_callback_payload_distinguishes_omitted_from_explicit_null() -> None:
-    omitted = CallbackAcceptedPayload.model_validate({"node_id": "worker-1"})
-    explicit_null = CallbackAcceptedPayload.model_validate({"node_id": "worker-1", "payload": None})
-    assert "payload" not in omitted.model_fields_set
+def test_callback_payload_requires_explicit_payload_even_when_null() -> None:
+    raw = {
+        "node_id": "worker-1",
+        "lease_id": "lease-1",
+        "lease_generation": 1,
+        "execution_id": "exec-1",
+        "idempotency_key": "callback-1",
+        "reason": "accepted",
+    }
+    with pytest.raises(ValidationError):
+        CallbackAcceptedPayload.model_validate(raw)
+    explicit_null = CallbackAcceptedPayload.model_validate({**raw, "payload": None})
     assert "payload" in explicit_null.model_fields_set
     assert explicit_null.model_dump(mode="json")["payload"] is None
 
 
 def test_lifecycle_producer_matches_typed_payload_json() -> None:
-    events = [event("run_lifecycle_changed", {"to_state": "queued"}, position=1)]
+    events = [
+        event(
+            "run_lifecycle_changed",
+            {
+                "command_type": "accept_run",
+                "from_state": "draft",
+                "to_state": "queued",
+                "trigger": "accept_run_command_accepted",
+            },
+            position=1,
+        )
+    ]
     emitted = apply_command(
         build_projection(events),
         events,
@@ -73,10 +92,21 @@ def test_lifecycle_event_factory_excludes_explicit_none() -> None:
 
     emitted = make_event(
         "run_lifecycle_changed",
-        {"command_type": "start", "to_state": "active", "reason": None},
+        {
+            "command_type": "start",
+            "from_state": "queued",
+            "to_state": "active",
+            "trigger": "start_command_accepted",
+            "reason": None,
+        },
     )
 
-    assert emitted.payload == {"command_type": "start", "to_state": "active"}
+    assert emitted.payload == {
+        "command_type": "start",
+        "from_state": "queued",
+        "to_state": "active",
+        "trigger": "start_command_accepted",
+    }
 
 
 @pytest.mark.asyncio

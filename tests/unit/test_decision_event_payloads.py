@@ -20,6 +20,7 @@ def test_decision_payload_serializes_canonical_membership_fields() -> None:
         "decision": "accepted",
         "task_region_id": "task-1",
         "candidate_id": "candidate-1",
+        "decider": "controller",
     }
     assert (
         OversightDecisionRecordedPayload.model_validate(raw).model_dump(

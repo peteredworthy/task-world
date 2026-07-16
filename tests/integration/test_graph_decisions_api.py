@@ -12,6 +12,7 @@ from orchestrator.db.access.mutations import save_run
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
+from tests.unit.graph_test_utils import canonical_event_payload
 
 
 def _routine() -> RoutineConfig:
@@ -46,7 +47,7 @@ def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> Even
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 

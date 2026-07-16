@@ -9,7 +9,7 @@
 
 - name: review_ready_to_leased
   given_events:
-    - run_lifecycle_changed: {to_state: active}
+    - run_lifecycle_changed: {command_type: start, from_state: queued, to_state: active, trigger: start_command_accepted}
     - node_created: {node_id: review-2, kind: review, state: ready, resource_claims: [{mode: review_write, scope: repo, paths: [docs/review.md]}]}
   when_command: {schedule_tick: {base_snapshot_id: S0}}
   then_events:

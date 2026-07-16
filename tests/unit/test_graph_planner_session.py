@@ -296,6 +296,8 @@ def _project(events: list[EventEnvelope]) -> Any:
 
 
 def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+    from tests.unit.graph_test_utils import canonical_event_payload
+
     return EventEnvelope(
         event_id=f"{event_type}-{payload.get('node_id', payload.get('patch_id', 'event'))}",
         run_id="run-1",
@@ -304,7 +306,7 @@ def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 

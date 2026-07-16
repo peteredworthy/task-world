@@ -62,7 +62,63 @@ def apply_command(
 def canonical_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Complete sparse test fixtures into the smallest canonical event payload."""
     canonical = dict(payload)
-    if event_type == "output_record_accepted":
+    if event_type == "run_lifecycle_changed":
+        to_state = str(canonical.setdefault("to_state", "active"))
+        canonical.setdefault("command_type", "fixture_transition")
+        canonical.setdefault("from_state", "queued" if to_state == "active" else "active")
+        canonical.setdefault("trigger", "fixture_transition")
+    elif event_type == "node_created":
+        canonical.setdefault("kind", "worker")
+        canonical.setdefault("state", "planned")
+    elif event_type in {
+        "callback_accepted",
+        "callback_rejected_stale",
+        "callback_rejected_conflict",
+        "callback_duplicate_returned",
+    }:
+        canonical.setdefault("lease_id", "lease-1")
+        canonical.setdefault("lease_generation", 1)
+        canonical.setdefault("execution_id", "execution-1")
+        canonical.setdefault("idempotency_key", "fixture-callback")
+        canonical.setdefault("payload", None)
+        canonical.setdefault(
+            "reason", "accepted" if event_type == "callback_accepted" else "rejected"
+        )
+        if event_type == "callback_duplicate_returned":
+            canonical.setdefault("prior_result", None)
+    elif event_type in {
+        "approval_decision_recorded",
+        "authority_decision_recorded",
+        "oversight_decision_recorded",
+    }:
+        canonical.setdefault("decision_type", event_type.removesuffix("_decision_recorded"))
+        canonical.setdefault("node_id", "decision-node-1")
+        canonical.setdefault("decider", "fixture-controller")
+    elif event_type == "appeal_opened":
+        canonical.setdefault("node_id", "appeal-1")
+        canonical.setdefault("appealed_node_id", "verifier-1")
+        canonical.setdefault("appeal_type", "invalid_test")
+    elif event_type == "runtime_retry_scheduled":
+        canonical.setdefault("node_id", "worker-1")
+        canonical.setdefault("lease_id", "lease-1")
+        canonical.setdefault("generation", 1)
+        canonical.setdefault("policy", "v1_requeue_same_node_after_agent_death")
+        canonical.setdefault("reason", "fixture_runtime_death")
+    elif event_type == "heartbeat_recorded":
+        canonical.setdefault("lease_id", "lease-1")
+        canonical.setdefault("node_id", "worker-1")
+        canonical.setdefault("observed_at", "2026-01-01T00:00:00+00:00")
+        canonical.setdefault("expires_at", "2026-01-01T00:05:00+00:00")
+    elif event_type == "agent_died":
+        canonical.setdefault("lease_id", "lease-1")
+        canonical.setdefault("node_id", "worker-1")
+        canonical.setdefault("reason", "fixture_runtime_death")
+    elif event_type == "dead_input_detected":
+        canonical.setdefault("node_id", "worker-1")
+        canonical.setdefault("from_node_id", "producer-1")
+        canonical.setdefault("to_port", "input")
+        canonical.setdefault("reason", "upstream_failed:producer-1")
+    elif event_type == "output_record_accepted":
         record_kind = canonical.get("record_kind")
         if record_kind == "file_state":
             canonical.setdefault("record_type", "file_state")

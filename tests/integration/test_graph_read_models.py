@@ -19,6 +19,7 @@ from orchestrator.db import (
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, project_task_states
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph_runtime.store import graph_aggregate_id
+from tests.unit.graph_test_utils import canonical_event_payload
 
 
 @pytest.fixture(scope="module")
@@ -44,7 +45,7 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 

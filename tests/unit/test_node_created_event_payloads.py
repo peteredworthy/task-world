@@ -39,6 +39,7 @@ def test_node_created_event_factory_uses_aliases_and_excludes_none() -> None:
         {
             "node_id": "worker-1",
             "kind": "worker",
+            "state": "planned",
             "reason": None,
             "inputs": [{"port": "candidate", "schema_": "ImplementationCandidate"}],
         },

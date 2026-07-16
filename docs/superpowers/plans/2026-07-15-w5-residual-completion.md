@@ -16,6 +16,11 @@
 - Do not add top-level `extra: dict[str, Any]`, malformed-value quarantine, replay-only aliases, or generic record fallbacks.
 - Dynamic patch operations, macro arguments, command definitions, diagnostics/read-set diffs, edge policy metadata, decision scope/decider data, and typed-record payload/provenance remain dynamic only inside named fields.
 - W5 Task 5 defines `StoredArtifactRef` but does not alter check-output fields or persist artifacts; the atomic tail/reference cutover belongs to the separate W5.5 plan.
+- Final-review correction: all modeled events persist canonical model JSON rather
+  than validated raw input; stable producer/reducer identities are required;
+  command identities reject blank/whitespace values; command validation details
+  exclude submitted input; and `StoredArtifactRef` requires matching URI/hash
+  digests. This correction does not reopen the completed W5 task queue.
 - Every retained event type must have a current producer or an explicit current external-ingress designation.
 - `lease_suspended` is the only designated external event because current stale-callback and worker scenarios consume it; suspect resolution/clearing and proposal-opening aliases are deleted.
 - Builders run focused tests and corpus replay while iterating. A fresh verifier alone runs the expensive graph, Ruff, and Pyright gates at each batch boundary.

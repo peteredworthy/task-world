@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from orchestrator.graph.macros import MacroInvocation
 from orchestrator.graph.models import Actor, EventEnvelope, FileStateRecord
@@ -17,16 +17,22 @@ class StrictCommandPayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
 
+CommandIdentifier = Annotated[
+    str,
+    StringConstraints(strict=True, min_length=1, pattern=r"^\S+$"),
+]
+
+
 class GraphCommandContext(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
-    run_id: str
+    run_id: CommandIdentifier
     current_graph_position: int = Field(ge=-1)
     actor: Actor | None = None
 
 
 class PatchCommandContext(GraphCommandContext):
-    proposed_by_node_id: str
+    proposed_by_node_id: CommandIdentifier
     actor_role: str
 
 
@@ -84,8 +90,8 @@ class CancelCommand(TriggerCommand):
 
 
 class CompleteCommand(TriggerCommand):
-    completion_decision_record_id: str | None = None
-    node_id: str | None = None
+    completion_decision_record_id: CommandIdentifier | None = None
+    node_id: CommandIdentifier | None = None
 
 
 class FailCommand(StrictCommandPayload):
@@ -93,8 +99,8 @@ class FailCommand(StrictCommandPayload):
 
 
 class RecordHeartbeatCommand(StrictCommandPayload):
-    lease_id: str
-    node_id: str | None = None
+    lease_id: CommandIdentifier
+    node_id: CommandIdentifier | None = None
     generation: int | None = Field(default=None, ge=0)
     ttl_seconds: int = Field(default=300, gt=0)
 
@@ -104,10 +110,10 @@ class SeedCompiledEventsCommand(StrictCommandPayload):
 
 
 class ScheduleTickCommand(StrictCommandPayload):
-    base_snapshot_id: str | None = None
+    base_snapshot_id: CommandIdentifier | None = None
     max_grants: int = Field(default=10, ge=0)
     lease_seconds: int = Field(default=300, gt=0)
-    lease_ids: dict[str, str] = Field(default_factory=dict)
+    lease_ids: dict[CommandIdentifier, CommandIdentifier] = Field(default_factory=dict)
     priorities: dict[str, int] = Field(default_factory=dict)
     region_order: dict[str, int] = Field(default_factory=dict)
 
@@ -117,13 +123,13 @@ class ReconcileCommand(StrictCommandPayload):
 
 
 class SubmitCallbackCommand(StrictCommandPayload):
-    node_id: str
-    execution_id: str
-    lease_id: str
+    node_id: CommandIdentifier
+    execution_id: CommandIdentifier
+    lease_id: CommandIdentifier
     lease_generation: int = Field(ge=0)
-    base_snapshot_id: str
+    base_snapshot_id: CommandIdentifier
     observed_graph_position: int = Field(ge=0)
-    idempotency_key: str
+    idempotency_key: CommandIdentifier
     payload_hash: str | None = None
     payload: dict[str, Any] | None = None
     is_mutating: bool = True
@@ -147,41 +153,41 @@ def _empty_macro_invocations() -> list[MacroInvocation]:
 
 class PatchCommandFields(StrictCommandPayload):
     macro_invocations: list[MacroInvocation] = Field(default_factory=_empty_macro_invocations)
-    rationale_record_id: str | None = None
-    budget_gate_node_id: str | None = None
-    carryover_record_id: str | None = None
+    rationale_record_id: CommandIdentifier | None = None
+    budget_gate_node_id: CommandIdentifier | None = None
+    carryover_record_id: CommandIdentifier | None = None
 
 
 class SubmitPatchCommand(PatchCommandFields):
-    patch_id: str
+    patch_id: CommandIdentifier
     base_graph_position: int = Field(ge=-1)
     ops: list[dict[str, Any]] = Field(default_factory=_empty_patch_ops)
 
 
 class AcknowledgeStartCommand(StrictCommandPayload):
-    node_id: str
-    lease_id: str
+    node_id: CommandIdentifier
+    lease_id: CommandIdentifier
     lease_generation: int = Field(ge=0)
-    execution_id: str
+    execution_id: CommandIdentifier
     prompt_summary: dict[str, Any] | None = None
 
 
 class AgentDiedCommand(StrictCommandPayload):
-    lease_id: str
-    execution_id: str | None = None
+    lease_id: CommandIdentifier
+    execution_id: CommandIdentifier | None = None
     reason: str = "runtime_process_died"
     max_attempts: int = Field(default=0, ge=0)
     retry_backoff_seconds: int = Field(default=0, ge=0)
 
 
 class RaiseAppealCommand(StrictCommandPayload):
-    node_id: str
+    node_id: CommandIdentifier
     appeal_type: Literal["invalid_test"]
-    appeal_node_id: str | None = None
-    oversight_node_id: str | None = None
-    candidate_id: str | None = None
-    task_region_id: str | None = None
-    lease_id: str | None = None
+    appeal_node_id: CommandIdentifier | None = None
+    oversight_node_id: CommandIdentifier | None = None
+    candidate_id: CommandIdentifier | None = None
+    task_region_id: CommandIdentifier | None = None
+    lease_id: CommandIdentifier | None = None
 
 
 DECISION_VALUES = {
@@ -193,13 +199,13 @@ DECISION_VALUES = {
 
 class RecordDecisionCommand(StrictCommandPayload):
     decision_type: Literal["approval", "authority", "oversight"]
-    node_id: str
+    node_id: CommandIdentifier
     decision: str
     decider: Actor | str
     scope: dict[str, Any] | None = None
     expires_at: str | None = None
     reason: str | None = None
-    record_id: str | None = None
+    record_id: CommandIdentifier | None = None
 
     @model_validator(mode="after")
     def validate_decision(self) -> RecordDecisionCommand:
@@ -244,45 +250,45 @@ class GatekeeperCostCommandRow(StrictCommandPayload):
 
 
 class RecordGatekeeperVerdictsCommand(StrictCommandPayload):
-    file_state_record_id: str
-    execution_id: str
+    file_state_record_id: CommandIdentifier
+    execution_id: CommandIdentifier
     verdicts: list[GatekeeperVerdictCommandRow] = Field(min_length=1)
-    consult_id: str = "gatekeeper-consult"
+    consult_id: CommandIdentifier = "gatekeeper-consult"
     model_id: str | None = None
     cost: GatekeeperCostCommandRow | None = None
 
 
 class RecordRequirementRevisionCommand(StrictCommandPayload):
-    requirement_id: str
-    version_id: str
+    requirement_id: CommandIdentifier
+    version_id: CommandIdentifier
     classification: str | None = None
     requires_authority: bool | None = None
     validation_strengthening: bool | None = None
     active: bool = True
-    previous_version_id: str | None = None
+    previous_version_id: CommandIdentifier | None = None
     revision_index: int | None = Field(default=None, ge=0)
     authority_required_reason: str | None = None
-    revision_id: str | None = None
-    proposal_id: str | None = None
-    patch_id: str | None = None
-    node_id: str | None = None
+    revision_id: CommandIdentifier | None = None
+    proposal_id: CommandIdentifier | None = None
+    patch_id: CommandIdentifier | None = None
+    node_id: CommandIdentifier | None = None
     requirement: dict[str, Any] | None = None
 
 
 class RecordSupportEvidenceCommand(StrictCommandPayload):
-    support_id: str
-    evidence_id: str
-    requirement_id: str
-    requirement_version_id: str | None = None
+    support_id: CommandIdentifier
+    evidence_id: CommandIdentifier
+    requirement_id: CommandIdentifier
+    requirement_version_id: CommandIdentifier | None = None
     status: str | None = None
     stale_reason: str | None = None
     confidence: str | None = None
 
 
 class LeaseScopedEvaluationCommand(StrictCommandPayload):
-    node_id: str
-    record_id: str | None = None
-    lease_id: str | None = None
+    node_id: CommandIdentifier
+    record_id: CommandIdentifier | None = None
+    lease_id: CommandIdentifier | None = None
     lease_generation: int | None = Field(default=None, ge=0)
 
     @model_validator(mode="after")
@@ -305,7 +311,7 @@ class StrictFileStateRecord(FileStateRecord):
 
 
 class RecordCleanupAppliedCommand(StrictCommandPayload):
-    cleanup_id: str
+    cleanup_id: CommandIdentifier
     superseding_file_state_record: StrictFileStateRecord
     deleted_snapshot_ref: bool = False
     reason: str | None = None
@@ -318,6 +324,7 @@ __all__ = [
     "ApplyCommandHandler",
     "CancelCommand",
     "CommandSpec",
+    "CommandIdentifier",
     "CompleteCommand",
     "EvaluateFinalGateCommand",
     "EvaluateJoinCommand",

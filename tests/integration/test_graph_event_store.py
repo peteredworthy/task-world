@@ -35,6 +35,7 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from orchestrator.graph_runtime.store import graph_aggregate_id
+from tests.unit.graph_test_utils import canonical_event_payload
 
 
 @pytest.fixture(scope="module")
@@ -60,7 +61,7 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 
@@ -854,6 +855,17 @@ async def test_append_events_rejects_malformed_accepted_record_atomically(
             },
         ),
     ]
+    events[1] = events[1].model_copy(
+        update={
+            "payload": {
+                "record_id": "candidate-1",
+                "record_kind": "output",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "value": {"summary": "done"},
+            }
+        }
+    )
 
     with pytest.raises(ValueError, match="missing durable record base field: producer_node_id"):
         async with session_factory() as session:
@@ -1158,7 +1170,13 @@ async def test_read_run_summaries_avoids_heavy_payload_materialization(
         "evt-summary-2",
         "evt-summary-3",
     ]
-    assert summaries[0].payload == {"lease_id": "lease-1", "node_id": "worker-1"}
+    assert summaries[0].payload == {
+        "execution_id": "execution-1",
+        "lease_generation": 1,
+        "lease_id": "lease-1",
+        "node_id": "worker-1",
+        "reason": "accepted",
+    }
     assert summaries[1].payload == {
         "kind": "worker",
         "node_id": "worker-1",
@@ -1319,9 +1337,16 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "record_id": "candidate-1",
         "record_kind": "output",
         "record_type": "candidate",
+        "schema": "ImplementationCandidate",
         "task_region_id": "step/task",
     }
-    assert events[2].payload == {"lease_id": "lease-1", "node_id": "worker-1"}
+    assert events[2].payload == {
+        "execution_id": "execution-1",
+        "lease_generation": 1,
+        "lease_id": "lease-1",
+        "node_id": "worker-1",
+        "reason": "accepted",
+    }
     assert events[3].payload == {
         "bound_at_position": 2,
         "edge_id": "edge-candidate",
@@ -1341,6 +1366,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "to_port": "candidate_under_test",
     }
     assert events[5].payload == {
+        "attempt_number": 0,
         "candidate_id": "candidate-check-1",
         "classification": "passed",
         "port": "check_result",
@@ -1348,6 +1374,7 @@ async def test_read_run_light_preserves_projection_fields_without_heavy_payloads
         "record_id": "check-result-1",
         "record_kind": "output",
         "record_type": "check_result",
+        "schema": "CheckResult",
         "status": "passed",
         "task_region_id": "step/task",
     }

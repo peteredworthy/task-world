@@ -15,6 +15,8 @@ from orchestrator.graph_runtime.store import _lease_view_from_projection
 
 
 def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnvelope:
+    from tests.unit.graph_test_utils import canonical_event_payload
+
     return EventEnvelope(
         event_id=f"{event_type}-{position}",
         run_id="run-1",
@@ -23,7 +25,7 @@ def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnve
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 

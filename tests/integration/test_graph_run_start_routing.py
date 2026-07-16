@@ -210,6 +210,8 @@ async def _create_run(
 
 
 def _graph_event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+    from tests.unit.graph_test_utils import canonical_event_payload
+
     return EventEnvelope(
         event_id=f"{event_type}-{len(str(payload))}",
         run_id="placeholder",
@@ -218,5 +220,5 @@ def _graph_event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )

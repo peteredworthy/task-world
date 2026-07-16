@@ -193,7 +193,6 @@ _SPARSE_EVENT_PAYLOAD_TYPES = frozenset(
         "verification_passed",
     }
 )
-_NODE_CREATED_EVENT_PAYLOAD_TYPES = frozenset({"node_created"})
 _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES = frozenset(
     {
         "agent_died",
@@ -207,6 +206,7 @@ _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES = frozenset(
         "dead_input_detected",
         "heartbeat_recorded",
         "node_authority_changed",
+        "node_created",
         "node_deferred",
         "node_ready",
         "node_retired",
@@ -216,41 +216,16 @@ _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES = frozenset(
         "runtime_retry_scheduled",
     }
 )
-_RAW_EVENT_PAYLOAD_TYPES = frozenset(
-    {
-        "appeal_opened",
-        "approval_decision_recorded",
-        "authority_decision_recorded",
-        "cleanup_applied",
-        "cleanup_requested",
-        "edge_created",
-        "graph_patch_accepted",
-        "graph_patch_rejected",
-        "lease_expired",
-        "lease_granted",
-        "lease_released",
-        "lease_renewed",
-        "lease_revoked",
-        "lease_suspended",
-        "oversight_decision_recorded",
-        "requirement_revision_recorded",
-        "session_state_changed",
-        "support_evidence_recorded",
-    }
-)
 
 
 def _validate_event_serialization_policy() -> None:
     modeled_event_types = frozenset(EVENT_PAYLOAD_MODELS)
-    policy_types = (
-        _SPARSE_EVENT_PAYLOAD_TYPES
-        | _NODE_CREATED_EVENT_PAYLOAD_TYPES
-        | _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES
-        | _RAW_EVENT_PAYLOAD_TYPES
+    unknown_policy_types = (_SPARSE_EVENT_PAYLOAD_TYPES | _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES) - (
+        modeled_event_types
     )
-    if policy_types != modeled_event_types:
-        mismatch = ", ".join(sorted(policy_types ^ modeled_event_types))
-        raise ValueError(f"event payload serialization policy mismatch: {mismatch}")
+    if unknown_policy_types:
+        mismatch = ", ".join(sorted(unknown_policy_types))
+        raise ValueError(f"unknown event payload serialization policy: {mismatch}")
 
 
 _validate_event_serialization_policy()
@@ -263,13 +238,9 @@ def serialize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[st
     typed = model.model_validate(payload)
     if event_type in _SPARSE_EVENT_PAYLOAD_TYPES:
         return typed.model_dump(mode="json", exclude_none=True, exclude_unset=True)
-    if event_type in _NODE_CREATED_EVENT_PAYLOAD_TYPES:
-        return typed.model_dump(mode="json", exclude_none=True)
     if event_type in _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES:
         return typed.model_dump(mode="json", exclude_none=True)
-    if event_type in _RAW_EVENT_PAYLOAD_TYPES:
-        return payload
-    raise ValueError(f"missing event payload serialization policy: {event_type}")
+    return typed.model_dump(mode="json")
 
 
 def _apply_lifecycle_command(
@@ -748,6 +719,7 @@ def _apply_callback_command(
         "node_id": request.node_id,
         "lease_id": request.lease_id,
         "lease_generation": request.lease_generation,
+        "execution_id": request.execution_id,
         "idempotency_key": request.idempotency_key,
         "payload": request.payload,
         "reason": result.reason,
@@ -4818,6 +4790,7 @@ def _patch_op_events(
     op_payload = _op_payload(op)
     if op.op == "create_node" and isinstance(op.node, dict):
         node_payload = dict(op.node)
+        node_payload.setdefault("state", "planned")
         _ensure_default_node_authority(node_payload)
         canonicalize_check_command_definition(node_payload, events)
         if node_payload.get("kind") == "planner" and node_payload.get("role") == "planner":

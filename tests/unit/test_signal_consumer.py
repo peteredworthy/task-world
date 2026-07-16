@@ -469,7 +469,16 @@ async def test_cancel_graph_run_appends_graph_cancel_before_run_row_failure(
             run_id,
             0,
             [
-                _graph_event(run_id, "run_lifecycle_changed", {"to_state": "active"}),
+                _graph_event(
+                    run_id,
+                    "run_lifecycle_changed",
+                    {
+                        "command_type": "start",
+                        "from_state": "queued",
+                        "to_state": "active",
+                        "trigger": "start_command_accepted",
+                    },
+                ),
                 _graph_event(
                     run_id,
                     "node_created",

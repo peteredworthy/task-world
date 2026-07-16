@@ -954,6 +954,8 @@ def test_oversight_decision_projection_checkpoint_round_trips_typed_payload() ->
         "appealed_node_id": "verifier-1",
         "appeal_type": "invalid_test",
         "reason": "test assertion was wrong",
+        "decision_type": "oversight",
+        "decider": "fixture-controller",
     }
     assert restored["oversight_decisions"]["appeal-1"] is projected
 

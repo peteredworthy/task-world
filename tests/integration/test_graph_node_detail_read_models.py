@@ -40,6 +40,8 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+    from tests.unit.graph_test_utils import canonical_event_payload
+
     return EventEnvelope(
         event_id=event_id,
         run_id=run_id,
@@ -49,7 +51,7 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 
@@ -193,6 +195,7 @@ def _representative_events(run_id: str) -> list[EventEnvelope]:
             {
                 "edge_id": "edge-1",
                 "to_node_id": "verifier-1",
+                "to_port": "candidate_under_test",
                 "record_ids": ["candidate-1"],
             },
         ),

@@ -25,9 +25,17 @@ Status: **W5 closed; no W5 tasks remain queued.**
 - [x] Strict exported `GradeRow` and typed verification grades.
 - [x] Batch 1, Batch 2, and final full verification gates passed.
 - [x] Event/projection inventories refreshed and W5 specification closed.
+- [x] Final whole-branch review correction: canonical model dumping, exact
+  producer-required event cores, strict shared identifiers, bounded redacted
+  command validation details, and `StoredArtifactRef` digest consistency.
 
 W5.5 durable artifact storage and truncation recovery are a separate pending
 project, not an open W5 queue item.
+
+The final-review correction does not reopen W5 and does not implement W5.5.
+Generated retention is now 105/144/160/92 after retaining newly required reducer
+identities. Exact RED/GREEN and gate evidence is recorded in
+`.superpowers/sdd/final-review-fix-report.md`.
 
 ## Historical Execution Evidence
 
@@ -730,7 +738,8 @@ Completion criteria:
   discriminators. File-state accepted/rejected envelopes and nested gatekeeper
   verdict/cost rows are strict.
 - Generated retention: projection/light/summary/node-detail allowlists are
-  sorted, unique, model-owned, and contain 101/141/159/84 fields.
+  sorted, unique, model-owned, and contain 105/144/160/92 fields after the
+  final-review required-identity correction.
 - Commands: all 23 `COMMAND_SPECS` payloads inherit strict validation, and all
   23 handlers accept their exact registered payload model.
 - API reuse: decision and patch HTTP schemas reuse command-domain fields while
