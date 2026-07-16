@@ -60,6 +60,68 @@ def test_runtime_event_payload_models_serialize_canonical_json(
                 ],
             },
         ),
+        (
+            "agent_dispatch_requested",
+            {
+                **_dispatch_payload(),
+                "resource_claims": [{"mode": b"write", "scope": "repo", "paths": []}],
+            },
+        ),
+        (
+            "agent_dispatch_requested",
+            {
+                **_dispatch_payload(),
+                "resource_claims": [{"mode": "write", "scope": b"repo", "paths": []}],
+            },
+        ),
+        (
+            "agent_dispatch_requested",
+            {
+                **_dispatch_payload(),
+                "resource_claims": [{"mode": 7, "scope": "repo", "paths": []}],
+            },
+        ),
+        (
+            "agent_dispatch_requested",
+            {
+                **_dispatch_payload(),
+                "resource_claims": [{"mode": "write", "scope": 7, "paths": []}],
+            },
+        ),
+        (
+            "agent_dispatch_requested",
+            {
+                **_dispatch_payload(),
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ("src/**",)}],
+            },
+        ),
+        (
+            "agent_dispatch_requested",
+            {
+                **_dispatch_payload(),
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": [7]}],
+            },
+        ),
+        (
+            "agent_dispatch_requested",
+            {
+                **_dispatch_payload(),
+                "resource_claims": [
+                    {
+                        "mode": "external",
+                        "scope": "build-cache",
+                        "external_resource_key": b"cache-1",
+                    }
+                ],
+            },
+        ),
+        (
+            "agent_dispatch_requested",
+            {
+                **_dispatch_payload(),
+                "resource_claims": ({"mode": "write", "scope": "repo", "paths": ["src/**"]},),
+            },
+        ),
         ("command_recorded", {**_command_payload(), "node_id": "worker-1"}),
         ("command_recorded", {"command_type": 7, "command_payload": {}}),
         ("command_recorded", {"command_type": "start", "command_payload": []}),

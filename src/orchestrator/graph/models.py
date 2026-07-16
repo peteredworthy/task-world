@@ -134,6 +134,13 @@ class ResourceClaimProjection(StrictNestedModel):
     external_resource_key: str | None = None
 
 
+class AgentDispatchResourceClaim(StrictNestedModel):
+    mode: StrictStr
+    scope: StrictStr
+    paths: Annotated[list[StrictStr], Field(strict=True)] | None = None
+    external_resource_key: StrictStr | None = None
+
+
 class ResourceClaim(ResourceClaimProjection):
     @model_validator(mode="after")
     def external_claims_require_keys(self) -> "ResourceClaim":
@@ -653,7 +660,7 @@ class AgentDispatchRequestedPayload(StrictEventPayload):
     generation: StrictInt
     execution_id: StrictStr
     base_snapshot_id: StrictStr
-    resource_claims: list[ResourceClaimProjection]
+    resource_claims: Annotated[list[AgentDispatchResourceClaim], Field(strict=True)]
 
 
 class CommandRecordedPayload(StrictEventPayload):

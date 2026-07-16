@@ -86,7 +86,7 @@ class AgentDispatchRequestedPayload(StrictEventPayload):
     generation: StrictInt
     execution_id: str
     base_snapshot_id: str
-    resource_claims: list[ResourceClaimProjection]
+    resource_claims: Annotated[list[AgentDispatchResourceClaim], Field(strict=True)]
 
 
 class CommandRecordedPayload(StrictEventPayload):
@@ -98,7 +98,7 @@ Register/export both, assert canonical keys equal model keys at module load, and
 
 - [ ] **Step 6: Route producers through the shared policy**
 
-Rename `_serialize_event_payload` to public `serialize_event_payload`, export it through commands and `orchestrator.graph`, retain the policy completeness check, and add both new names to the raw JSON policy because all fields are required and already canonical. Build `command_recorded` with nested `command_payload`; validate and serialize both producers before `EventEnvelope` construction.
+Rename `_serialize_event_payload` to public `serialize_event_payload`, export it through commands and `orchestrator.graph`, retain the policy completeness check, and add both new names to the JSON-dumping `exclude_none` policy. Build `command_recorded` with nested `command_payload`; validate and serialize both producers before `EventEnvelope` construction. Use a dispatch-only strict claim model so shared projection claim contracts retain their existing behavior.
 
 - [ ] **Step 7: Canonicalize fixtures and make focused tests GREEN**
 

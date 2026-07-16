@@ -48,6 +48,7 @@ from orchestrator.graph.file_state import (
 from orchestrator.graph.macros import expand_patch_macros
 from orchestrator.graph.models import (
     AcceptedOutputRecordPayload,
+    AgentDispatchResourceClaim,
     AgentDispatchRequestedPayload,
     Actor,
     ActorKind,
@@ -185,6 +186,7 @@ from orchestrator.graph.store import InMemoryEventStore
 
 __all__ = [
     "AcceptedOutputRecordPayload",
+    "AgentDispatchResourceClaim",
     "AgentDispatchRequestedPayload",
     "Actor",
     "ActorKind",

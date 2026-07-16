@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import cast
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.graph import (
+    AgentDispatchResourceClaim,
     Actor,
     ActorKind,
     EventEnvelope,
@@ -195,6 +197,18 @@ class GraphController:
             if event.event_type != "lease_granted":
                 continue
             node_id = event.payload.get("node_id")
+            raw_resource_claims = event.payload.get("resource_claims", [])
+            resource_claims = (
+                [
+                    AgentDispatchResourceClaim.model_validate(claim).model_dump(
+                        mode="json",
+                        exclude_none=True,
+                    )
+                    for claim in cast(list[object], raw_resource_claims)
+                ]
+                if isinstance(raw_resource_claims, list)
+                else raw_resource_claims
+            )
             validate_emitted_event_type("graph_runtime_controller", "agent_dispatch_requested")
             expanded.append(
                 EventEnvelope(
@@ -216,7 +230,7 @@ class GraphController:
                             "generation": event.payload.get("generation"),
                             "execution_id": event.payload.get("execution_id"),
                             "base_snapshot_id": event.payload.get("base_snapshot_id"),
-                            "resource_claims": event.payload.get("resource_claims", []),
+                            "resource_claims": resource_claims,
                         },
                     ),
                 )

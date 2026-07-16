@@ -10,7 +10,7 @@ serialization, and focused replay coverage.
 ## Changes
 
 - Added required `AgentDispatchRequestedPayload` fields with strict scalar
-  types and strict `ResourceClaimProjection` entries.
+  types and dispatch-only `AgentDispatchResourceClaim` entries.
 - Added required `CommandRecordedPayload` fields with the sole dynamic boundary
   at `command_payload: dict[str, Any]`.
 - Exported both models and `serialize_event_payload` through
@@ -64,4 +64,33 @@ concerns remain.
 ## Commits
 
 - Design: `5fac38e91` (`Design final canonical event payloads`)
-- Implementation: the commit containing this report
+- Implementation: `511d88d44` (`Add strict runtime event payloads`)
+
+## Important Finding Follow-Up
+
+The shared `ResourceClaimProjection` contract remains unchanged because it is
+used by leases, nodes, authorities, projection checkpoints, and scheduler read
+models. Dispatch now uses a dedicated `AgentDispatchResourceClaim` with strict
+`mode`, `scope`, and `external_resource_key` strings, plus strict list
+containers and strict string elements for `paths`. The top-level
+`resource_claims` container is also strict. The controller explicitly converts
+its current claim dictionaries through this nested model before canonical event
+serialization; no aliases or coercion paths were added.
+
+The new RED matrix demonstrated five prior coercions: byte strings for nested
+strings, tuple-to-list coercion for `paths` and `resource_claims`, and byte
+coercion for `external_resource_key`. Integer mode/scope and path elements were
+already rejected and remain covered.
+
+Follow-up verification:
+
+- Runtime payload tests: `19 passed`.
+- Focused runtime event, registry, shared-model, controller, corpus, and
+  allowlist tests: `162 passed`.
+- Ruff lint: passed.
+- Ruff format check: 700 files formatted.
+- Pyright: 0 errors, 0 warnings, 0 informations.
+- Repository hooks: run by the follow-up commit.
+
+Follow-up self-review found no remaining strictness or scope issues. The only
+intentional dynamic boundary remains `command_payload`.

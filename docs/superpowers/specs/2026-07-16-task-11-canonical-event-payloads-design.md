@@ -11,7 +11,8 @@ not supported, and `lease_suspended` remains modeled external ingress.
 `AgentDispatchRequestedPayload` is a strict event payload with required
 `lease_granted_event_id`, `lease_id`, `node_id`, `generation`, `execution_id`,
 `base_snapshot_id`, and `resource_claims` fields. Scalar values use strict
-types. Resource claims reuse the existing strict nested
+types. Resource claims use a dispatch-only nested model with strict strings and
+strict list containers, avoiding behavior changes to the broadly shared
 `ResourceClaimProjection` contract.
 
 `CommandRecordedPayload` is a strict event payload with required
