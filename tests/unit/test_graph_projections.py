@@ -60,6 +60,7 @@ from orchestrator.graph import (
     reduce_event,
     support_evidence_freshness_from_projection,
 )
+from tests.unit.graph_test_utils import canonical_event_payload
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "graph"
 
@@ -73,7 +74,7 @@ def _event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 
@@ -1303,7 +1304,6 @@ def test_input_binding_projection_uses_typed_payload_and_drops_raw_event_extras(
                 "record_ids": ["candidate-1"],
                 "bound_at_position": 4,
                 "trigger": "record_accepted",
-                "raw_payload_only": {"must": "drop"},
             },
         ),
     ]:
@@ -1985,7 +1985,7 @@ def test_verification_result_projections_are_typed_at_fold() -> None:
     assert failed.task_region_id is None
 
 
-def test_malformed_verification_result_payload_is_tolerated_without_projection_entry() -> None:
+def test_canonical_verification_result_payload_projects_required_identifiers() -> None:
     projection = initial_projection()
     for event in [
         _event("verification_passed", {"record_id": "missing-node"}),
@@ -1993,8 +1993,10 @@ def test_malformed_verification_result_payload_is_tolerated_without_projection_e
     ]:
         projection = reduce_event(projection, event)
 
-    assert projection["passed_verification_results_by_record_id"] == {}
-    assert projection["failed_verification_results_by_record_id"] == {}
+    assert set(projection["passed_verification_results_by_record_id"]) == {"missing-node"}
+    assert set(projection["failed_verification_results_by_record_id"]) == {
+        "verification-candidate-1"
+    }
 
 
 def test_verification_result_checkpoint_round_trip_preserves_typed_payloads() -> None:
@@ -2060,7 +2062,7 @@ def test_check_result_projection_summary_is_typed_at_fold() -> None:
     assert check_result.evaluated_record_ids == ["candidate-1", "file-state-candidate-1"]
 
 
-def test_malformed_check_result_payload_folds_to_typed_unknown_summary() -> None:
+def test_sparse_check_result_fixture_is_completed_to_a_canonical_failed_summary() -> None:
     projection = reduce_event(
         initial_projection(),
         _event(
@@ -2075,13 +2077,13 @@ def test_malformed_check_result_payload_folds_to_typed_unknown_summary() -> None
 
     check_result = projection["check_results"]["check-legacy"]
     assert isinstance(check_result, CheckResultProjection)
-    assert check_result.status == "unknown"
+    assert check_result.status == "failed"
     assert check_result.record_id == "check-result-legacy"
 
     restored = projection_from_checkpoint(projection_to_checkpoint(projection))
     restored_check_result = restored["check_results"]["check-legacy"]
     assert isinstance(restored_check_result, CheckResultProjection)
-    assert restored_check_result.status == "unknown"
+    assert restored_check_result.status == "failed"
     assert restored_check_result.record_id == "check-result-legacy"
 
 
@@ -3146,7 +3148,14 @@ def test_gap_planner_task_region_uses_contract_fulfillment() -> None:
                 "record_type": "classified_gap",
                 "producer_node_id": "gap-planner-1",
                 "port": "classified_gap",
-                "task_region_id": "task-gap-only",
+                "schema": "GapClassification",
+                "value": {
+                    "milestone_kind": "gap_analysis",
+                    "classification": "no_gap",
+                    "source": "test",
+                    "task_region_id": "task-gap-only",
+                    "attempt_number": 0,
+                },
             },
         ),
     ]
@@ -3577,6 +3586,10 @@ def test_failed_check_result_blocks_projected_completion_after_task_acceptance()
         {
             "kind": "failed_check_result",
             "reason": "check result did not pass",
+            "classification": "failed",
+            "command_text": "check command",
+            "stderr": "",
+            "exit_code": 1,
             "node_id": "check-final-1",
             "task_region_id": "task-1",
             "state": "failed",

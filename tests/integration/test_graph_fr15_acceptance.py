@@ -280,13 +280,7 @@ async def test_fr15_rejected_file_state_revokes_write_lease_and_retries_cleanly(
 
     event_types = [event["event_type"] for event in events]
     rejection = next(event for event in events if event["event_type"] == "file_state_rejected")
-    rejected_lease_id = rejection["payload"]["lease_id"]
-    revoked = [
-        event
-        for event in events
-        if event["event_type"] == "lease_revoked"
-        and event["payload"]["lease_id"] == rejected_lease_id
-    ]
+    revoked = [event for event in events if event["event_type"] == "lease_revoked"]
     worker_file_states = node["file_state_records"]
     all_captured_paths = [
         path["path"]

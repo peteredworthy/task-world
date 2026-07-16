@@ -1,8 +1,8 @@
 - name: task_projection_accepted
   given_events:
-    - output_record_accepted: {task_region_id: task-accepted, candidate_id: cand-accepted, attempt_number: 1}
-    - verification_passed: {candidate_id: cand-accepted}
-    - file_state_accepted: {record_id: file-state-cand-accepted, record_kind: file_state, task_region_id: task-accepted, candidate_id: cand-accepted, snapshot_id: snapshot-cand-accepted, base_snapshot_id: S0, verdict: captured}
+    - output_record_accepted: {record_id: cand-accepted, record_kind: output, record_type: candidate, producer_node_id: worker-cand-accepted, port: candidate, schema: ImplementationCandidate, task_region_id: task-accepted, candidate_id: cand-accepted, attempt_number: 1, value: {summary: test candidate}}
+    - verification_passed: {node_id: verifier-cand-accepted, verifier_node_id: verifier-cand-accepted, candidate_id: cand-accepted, record_id: verification-cand-accepted, outcome: passed, evidence: [], value: {outcome: passed, grades: []}}
+    - file_state_accepted: {record_id: file-state-cand-accepted, record_kind: file_state, record_type: file_state, producer_node_id: worker-cand-accepted, port: file_state, schema: FileStateRecord, task_region_id: task-accepted, candidate_id: cand-accepted, snapshot_id: snapshot-cand-accepted, base_snapshot_id: S0, verdict: captured}
     - approval_decision_recorded: {task_region_id: task-accepted, gate_id: gate-accepted, decision: approved}
   when_command: null
   then_events: []
@@ -10,16 +10,16 @@
 
 - name: task_projection_needs_revision
   given_events:
-    - output_record_accepted: {task_region_id: task-revision, candidate_id: cand-revision, attempt_number: 1}
-    - verification_failed: {candidate_id: cand-revision}
+    - output_record_accepted: {record_id: cand-revision, record_kind: output, record_type: candidate, producer_node_id: worker-cand-revision, port: candidate, schema: ImplementationCandidate, task_region_id: task-revision, candidate_id: cand-revision, attempt_number: 1, value: {summary: test candidate}}
+    - verification_failed: {node_id: verifier-cand-revision, verifier_node_id: verifier-cand-revision, candidate_id: cand-revision, record_id: verification-cand-revision, outcome: failed, evidence: [], value: {outcome: failed, grades: []}}
   when_command: null
   then_events: []
   then_projection: {task-revision: needs_revision}
 
 - name: task_projection_blocked_invalid_test
   given_events:
-    - output_record_accepted: {task_region_id: task-invalid-test, candidate_id: cand-invalid-test, attempt_number: 1}
-    - verification_failed: {candidate_id: cand-invalid-test}
+    - output_record_accepted: {record_id: cand-invalid-test, record_kind: output, record_type: candidate, producer_node_id: worker-cand-invalid-test, port: candidate, schema: ImplementationCandidate, task_region_id: task-invalid-test, candidate_id: cand-invalid-test, attempt_number: 1, value: {summary: test candidate}}
+    - verification_failed: {node_id: verifier-cand-invalid-test, verifier_node_id: verifier-cand-invalid-test, candidate_id: cand-invalid-test, record_id: verification-cand-invalid-test, outcome: failed, evidence: [], value: {outcome: failed, grades: []}}
     - oversight_decision_recorded: {task_region_id: task-invalid-test, candidate_id: cand-invalid-test, appeal_type: invalid_test, decision: accepted}
   when_command: null
   then_events: []
@@ -27,8 +27,8 @@
 
 - name: task_projection_blocked_environment
   given_events:
-    - output_record_accepted: {task_region_id: task-environment, candidate_id: cand-environment, attempt_number: 1}
-    - output_record_accepted: {record_id: check-environment, record_kind: check_result, record_type: check_result, producer_node_id: check-environment, port: check_result, task_region_id: task-environment, value: {classification: tool_unavailable}}
+    - output_record_accepted: {record_id: cand-environment, record_kind: output, record_type: candidate, producer_node_id: worker-cand-environment, port: candidate, schema: ImplementationCandidate, task_region_id: task-environment, candidate_id: cand-environment, attempt_number: 1, value: {summary: test candidate}}
+    - output_record_accepted: {record_id: check-environment, record_kind: output, record_type: check_result, producer_node_id: check-environment, port: check_result, schema: CheckResult, task_region_id: task-environment, candidate_id: cand-environment, attempt_number: 0, value: {status: failed, classification: tool_unavailable, command_id: check-environment, command_text: check command, command: {}, worktree_path: /worktree, base_snapshot_id: S0, execution_id: exec-check-environment, duration_ms: 0, stdout: '', stderr: '', stdout_truncated: false, stderr_truncated: false, timeout_seconds: 1.0, environment_policy: {}}}
   when_command: null
   then_events: []
   then_projection: {task-environment: blocked_environment}

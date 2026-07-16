@@ -21,7 +21,7 @@ from orchestrator.graph.contracts import (
     output_port_contract,
     validate_output_record,
 )
-from orchestrator.graph.event_registry import validate_emitted_event_type
+from orchestrator.graph.event_registry import EVENT_PAYLOAD_MODELS, validate_emitted_event_type
 from orchestrator.graph.macros import expand_patch_macros
 from orchestrator.graph.models import (
     Actor,
@@ -51,6 +51,7 @@ from orchestrator.graph.models import (
     EventEnvelope,
     FailureRecord,
     FileStateRecord,
+    GapClassificationRecord,
     GraphPatchAcceptedPayload,
     GraphEventPayloadBase,
     JoinResultRecord,
@@ -1080,10 +1081,15 @@ def _file_state_rejected_events(
     if not isinstance(rejection, dict):
         return []
     payload = dict(cast(dict[str, Any], rejection))
-    payload.setdefault("node_id", request.node_id)
-    payload.setdefault("lease_id", request.lease_id)
-    payload.setdefault("lease_generation", request.lease_generation)
+    payload.setdefault("record_id", f"file-state-rejected-{request.node_id}-{request.execution_id}")
+    payload["record_kind"] = "file_state"
+    payload["record_type"] = "file_state"
+    payload.setdefault("producer_node_id", request.node_id)
+    payload["port"] = "file_state"
+    payload["schema"] = "FileStateRecord"
     payload.setdefault("base_snapshot_id", request.base_snapshot_id)
+    for key in ("node_id", "execution_id", "lease_id", "lease_generation"):
+        payload.pop(key, None)
     return [make_event("file_state_rejected", payload)]
 
 
@@ -1170,6 +1176,15 @@ def _output_record_contract_conflict(
                 _parse_verification_report_record(record_payload)
             except ValueError as exc:
                 return f"verification record at index {index} is invalid: {exc}"
+        if _is_gap_classification_record_payload(record_payload):
+            record_payload = _gap_classification_record_payload_for_validation(
+                record_payload,
+                expected_producer_node_id,
+            )
+            try:
+                GapClassificationRecord.model_validate(record_payload)
+            except ValueError as exc:
+                return f"gap classification record at index {index} is invalid: {exc}"
         if _is_analysis_summary_record_payload(record_payload):
             record_payload = _analysis_summary_record_payload_for_validation(
                 record_payload,
@@ -1279,6 +1294,28 @@ def _accepted_output_record_events(
             )
             try:
                 record = CandidateRecord.model_validate(record_payload)
+            except ValueError:
+                continue
+            payload = record.model_dump(mode="json")
+            output.append(make_event("output_record_accepted", payload))
+            output.extend(
+                _input_bound_events_for_record(
+                    projection,
+                    record.producer_node_id,
+                    record.port,
+                    record.record_id,
+                    payload,
+                    make_event,
+                )
+            )
+            continue
+        if _is_gap_classification_record_payload(record_payload):
+            record_payload = _gap_classification_record_payload_for_validation(
+                record_payload,
+                expected_producer_node_id,
+            )
+            try:
+                record = GapClassificationRecord.model_validate(record_payload)
             except ValueError:
                 continue
             payload = record.model_dump(mode="json")
@@ -1528,13 +1565,17 @@ def _accepted_verification_record_events(
     outcome = record.outcome
     event_type = "verification_passed" if outcome == "passed" else "verification_failed"
     task_region_id = projection["node_task_regions"].get(expected_producer_node_id)
-    event_payload = {
+    evidence = payload.get("evidence")
+    evidence_rows: list[dict[str, Any]] = []
+    if isinstance(evidence, dict):
+        evidence_rows.append(dict(cast(dict[str, Any], evidence)))
+    event_payload: dict[str, Any] = {
         "node_id": request.node_id,
         "verifier_node_id": expected_producer_node_id,
         "candidate_id": candidate_id,
         "outcome": outcome,
         "record_id": record.record_id,
-        "evidence": payload.get("evidence"),
+        "evidence": evidence_rows,
         "value": payload.get("value"),
     }
     if task_region_id is not None:
@@ -1671,6 +1712,28 @@ def _candidate_record_payload_for_validation(
     record_id = output.get("record_id")
     if isinstance(record_id, str) and record_id:
         output.setdefault("candidate_id", record_id)
+    return output
+
+
+GAP_CLASSIFICATION_PORTS = frozenset({"gap_plan", "gap_classification", "classified_gap"})
+
+
+def _is_gap_classification_record_payload(payload: dict[str, Any]) -> bool:
+    return (
+        payload.get("record_type") in GAP_CLASSIFICATION_PORTS
+        or payload.get("port") in GAP_CLASSIFICATION_PORTS
+    )
+
+
+def _gap_classification_record_payload_for_validation(
+    payload: dict[str, Any],
+    expected_producer_node_id: str,
+) -> dict[str, Any]:
+    output = dict(payload)
+    output.setdefault("producer_node_id", expected_producer_node_id)
+    port = output.get("port")
+    if isinstance(port, str):
+        output.setdefault("record_type", port)
     return output
 
 
@@ -2012,17 +2075,29 @@ def _input_bound_events_for_record(
         edge_id = edge.edge_id
         to_node_id = edge.to_node_id
         to_port = edge.to_port
-        binding_payload = _input_bound_payload_for_record(
-            projection,
-            edge,
-            edge_id=edge_id,
-            to_node_id=to_node_id,
-            to_port=to_port,
-            record_id=record_id,
-            record_payload=record_payload,
+        existing_ids = _existing_bound_record_ids(projection, to_node_id, to_port)
+        target_port = _target_port_contract_for_edge(projection, edge)
+        policy = binding_policy(edge.binding_policy, target_port)
+        next_ids = merge_bound_record_ids(
+            policy,
+            existing_ids,
+            [record_id],
+            supersedes_record_id=record_payload.get("supersedes_record_id"),
         )
-        if binding_payload is None:
+        if next_ids == existing_ids and existing_ids:
             continue
+        binding_payload: dict[str, Any] = {
+            "edge_id": edge_id,
+            "to_node_id": to_node_id,
+            "to_port": to_port,
+            "record_ids": next_ids,
+            "bound_at_position": 0,
+        }
+        if policy != "bind_first" or isinstance(edge.binding_policy, str):
+            binding_payload["binding_policy"] = policy
+        supersedes_record_id = record_payload.get("supersedes_record_id")
+        if isinstance(supersedes_record_id, str):
+            binding_payload["supersedes_record_id"] = supersedes_record_id
         output.append(
             make_event(
                 "input_bound",
@@ -2030,43 +2105,6 @@ def _input_bound_events_for_record(
             )
         )
     return output
-
-
-def _input_bound_payload_for_record(
-    projection: GraphProjection,
-    edge: EdgeProjection,
-    *,
-    edge_id: str,
-    to_node_id: str,
-    to_port: str,
-    record_id: str,
-    record_payload: dict[str, Any],
-) -> dict[str, Any] | None:
-    existing_ids = _existing_bound_record_ids(projection, to_node_id, to_port)
-    target_port = _target_port_contract_for_edge(projection, edge)
-    policy = binding_policy(edge.binding_policy, target_port)
-    next_ids = merge_bound_record_ids(
-        policy,
-        existing_ids,
-        [record_id],
-        supersedes_record_id=record_payload.get("supersedes_record_id"),
-    )
-    if next_ids == existing_ids and existing_ids:
-        return None
-
-    payload: dict[str, Any] = {
-        "edge_id": edge_id,
-        "to_node_id": to_node_id,
-        "to_port": to_port,
-        "record_ids": next_ids,
-        "bound_at_position": 0,
-    }
-    if policy != "bind_first" or isinstance(edge.binding_policy, str):
-        payload["binding_policy"] = policy
-    supersedes_record_id = record_payload.get("supersedes_record_id")
-    if isinstance(supersedes_record_id, str):
-        payload["supersedes_record_id"] = supersedes_record_id
-    return payload
 
 
 def _existing_bound_record_ids(
@@ -5022,13 +5060,30 @@ def _patch_op_events(
         node_payload = _node_payload_for_op(op_payload, default_kind="gate")
         return [make_event("node_created", node_payload)]
     if op.op == "create_revision_attempt":
+        worker_raw = op_payload.get("worker_node")
+        verifier_raw = op_payload.get("verifier_node")
+        worker_node = dict(cast(dict[str, Any], worker_raw)) if isinstance(worker_raw, dict) else {}
+        verifier_node = (
+            dict(cast(dict[str, Any], verifier_raw)) if isinstance(verifier_raw, dict) else {}
+        )
+        task_region_id = str(op_payload.get("task_region_id", "revision"))
+        worker_node.setdefault("node_id", f"worker-revision-{task_region_id}")
+        worker_node.setdefault("kind", "worker")
+        worker_node.setdefault("state", "planned")
+        verifier_node.setdefault("node_id", f"verifier-revision-{task_region_id}")
+        verifier_node.setdefault("kind", "verifier")
+        verifier_node.setdefault("state", "planned")
         events = [
             make_event(
                 "revision_created",
                 {
-                    key: value
-                    for key, value in op_payload.items()
-                    if key not in {"op", "node", "worker_node", "verifier_node"}
+                    "node": {
+                        "node_id": f"revision-{task_region_id}",
+                        "kind": "task_projection",
+                        "state": "planned",
+                    },
+                    "worker_node": worker_node,
+                    "verifier_node": verifier_node,
                 },
             )
         ]
@@ -5490,13 +5545,21 @@ def _event_factory(
 ) -> Callable[[str, dict[str, Any]], EventEnvelope]:
     def make_event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
         validate_emitted_event_type("graph_command_factory", event_type)
-        typed_payload = (
-            NodeCreatedPayload.model_validate(payload).model_dump(mode="json", exclude_none=True)
-            if event_type == "node_created"
-            else _typed_node_lifecycle_event_payload(
+        model = EVENT_PAYLOAD_MODELS.get(event_type)
+        if model is not None:
+            typed_payload = model.model_validate(payload).model_dump(
+                mode="json",
+                exclude_none=True,
+                exclude_unset=True,
+            )
+        elif event_type == "node_created":
+            typed_payload = NodeCreatedPayload.model_validate(payload).model_dump(
+                mode="json", exclude_none=True
+            )
+        else:
+            typed_payload = _typed_node_lifecycle_event_payload(
                 event_type, _typed_lifecycle_event_payload(event_type, payload)
             )
-        )
         return EventEnvelope(
             event_id=id_gen.next_id("event"),
             run_id=run_id,

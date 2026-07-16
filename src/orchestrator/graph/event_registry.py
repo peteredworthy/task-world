@@ -5,6 +5,17 @@ from types import MappingProxyType
 
 from pydantic import BaseModel
 
+from orchestrator.graph.models import (
+    FileStateAcceptedPayload,
+    FileStateRejectedPayload,
+    GatekeeperCostRecordedPayload,
+    GatekeeperVerdictRecordedPayload,
+    InputBoundPayload,
+    OutputRecordAcceptedPayload,
+    RevisionCreatedPayload,
+    VerificationOutcomePayload,
+)
+
 
 RETIRED_EVENT_TYPES = frozenset(
     {"region_marked_suspect", "authority_narrowed", "candidate_superseded"}
@@ -72,7 +83,19 @@ INTERNAL_EVENT_TYPES_BY_PRODUCER: MappingProxyType[str, frozenset[str]] = Mappin
 # producer emits it.
 EXTERNAL_EVENT_TYPES = frozenset({"lease_suspended"})
 
-EVENT_PAYLOAD_MODELS: MappingProxyType[str, type[BaseModel]] = MappingProxyType({})
+EVENT_PAYLOAD_MODELS: MappingProxyType[str, type[BaseModel]] = MappingProxyType(
+    {
+        "output_record_accepted": OutputRecordAcceptedPayload,
+        "verification_passed": VerificationOutcomePayload,
+        "verification_failed": VerificationOutcomePayload,
+        "input_bound": InputBoundPayload,
+        "revision_created": RevisionCreatedPayload,
+        "file_state_accepted": FileStateAcceptedPayload,
+        "file_state_rejected": FileStateRejectedPayload,
+        "gatekeeper_verdict_recorded": GatekeeperVerdictRecordedPayload,
+        "gatekeeper_cost_recorded": GatekeeperCostRecordedPayload,
+    }
+)
 
 
 def _event_type_union(event_type_sets: Iterable[frozenset[str]]) -> frozenset[str]:

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 import sqlite3
+from typing import Any
 
 import pytest
 from sqlalchemy.exc import OperationalError
@@ -28,9 +29,10 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
 )
+from tests.unit.graph_test_utils import canonical_event_payload
 
 
-def _event(event_type: str, payload: dict[str, object], position: int = -1) -> EventEnvelope:
+def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> EventEnvelope:
     return EventEnvelope(
         event_id=f"{event_type}-{position}",
         run_id="run-1",
@@ -39,7 +41,7 @@ def _event(event_type: str, payload: dict[str, object], position: int = -1) -> E
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 

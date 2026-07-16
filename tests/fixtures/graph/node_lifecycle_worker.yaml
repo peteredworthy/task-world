@@ -28,8 +28,8 @@
 - name: worker_running_to_completed
   given_events:
     - node_created: {node_id: worker-4, kind: worker, state: running}
-    - output_record_accepted: {producer_node_id: worker-4, record_id: candidate-1}
-    - file_state_accepted: {producer_node_id: worker-4, snapshot_id: S1}
+    - output_record_accepted: {record_id: candidate-1, record_kind: output, record_type: candidate, producer_node_id: worker-4, port: candidate, schema: ImplementationCandidate, candidate_id: candidate-1, value: {summary: completed candidate}}
+    - file_state_accepted: {record_id: file-state-candidate-1, record_kind: file_state, record_type: file_state, producer_node_id: worker-4, port: file_state, schema: FileStateRecord, snapshot_id: S1, candidate_id: candidate-1}
     - node_state_changed: {node_id: worker-4, new_state: completed, trigger: output_callback_accepted}
   when_command: null
   then_events: []

@@ -310,6 +310,7 @@ def test_output_record_round_trips() -> None:
         {
             "record_id": "rec-output-1",
             "record_kind": "output",
+            "record_type": "fan_out_inputs",
             "producer_node_id": "build-A-1",
             "port": "candidate",
             "schema": "ImplementationCandidate",
@@ -328,7 +329,7 @@ def test_output_record_optional_base_fields_round_trip() -> None:
         {
             "record_id": "rec-output-1",
             "record_kind": "output",
-            "record_type": "candidate",
+            "record_type": "fan_out_inputs",
             "schema_version": 1,
             "producer_node_id": "build-A-1",
             "producer_port": "candidate",
@@ -355,6 +356,7 @@ def test_output_record_rejects_producer_port_mismatch() -> None:
             {
                 "record_id": "rec-output-1",
                 "record_kind": "output",
+                "record_type": "fan_out_inputs",
                 "producer_node_id": "build-A-1",
                 "producer_port": "check_result",
                 "port": "candidate",

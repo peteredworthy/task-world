@@ -90,8 +90,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "behavior_change": "requirement revision classification helper, not task_states",
     "binding_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (_topology_edge); "
     "not read by _derive_task_states/_task_file_state_accepted/_downstream_node_ids",
-    "bound_at_position": "input_bindings structural position metadata for topology/scheduler; "
-    "not read by task_states",
     "change_classification": "requirement_revisions bookkeeping",
     "command_text": "environment_failures/check_results informational field; only "
     "classification/status/key-existence matter to task_states",
@@ -103,8 +101,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "evidence_id": "support_evidence bookkeeping",
     "exit_code": "environment_failures/check_results informational field (see command_text)",
     "explicit_authority_required": "requirement revision authority-resolution bookkeeping",
-    "file_state_record_id": "gatekeeper-verdict/cleanup lookups mutate file_state_records fields "
-    "_task_file_state_accepted never reads (classifications/residue/compromised/cleanup_*)",
     "from_node_kind": "edges metadata; recovery-lineage traversal only reads "
     "from_node_id/to_node_id",
     "from_node_role": "edges metadata; recovery-lineage traversal only reads "
@@ -112,7 +108,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "freshness_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata "
     "(see binding_policy)",
     "id": "requirement id fallback helper, used only for authority_revision_blockers/support views",
-    "input": "legacy scheduler input-binding fallback, not task_states",
     "metadata": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "new_behavior": "requirement revision classification helper",
     "patch_id": "accepted_no_successor_patches_by_node / graph-patch-attempt bookkeeping",
@@ -124,10 +119,6 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "purpose": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "reason": "informational annotation (environment_failures/cleanup/suspect-node); never "
     "gates a task_states branch",
-    "record_bound_positions": "input_bindings per-record topology metadata; not read by "
-    "task_states",
-    "record_ids": "input_bindings bound-record list for scheduler/topology/prompt hydration; "
-    "task_states reads accepted file-state records directly",
     "required": 'edges metadata ("required" flag); traversal helper ignores it',
     "requirement": "requirement id/priority resolution helper, not task_states",
     "requirement_id": "requirement_revisions/authority_revision_blockers bookkeeping",
@@ -141,16 +132,11 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "semantic_change": "requirement revision authority-resolution bookkeeping",
     "stale_reason": "support_evidence bookkeeping",
     "stderr": "environment_failures/check_results informational field (see command_text)",
-    "supersedes_record_id": "input_bindings merge policy helper; task_states does not read "
-    "bound input records",
     "support_id": "support_evidence bookkeeping",
-    "trigger": "input_bindings informational trigger metadata; not read by task_states",
     "validation_strengthening": "requirement_revisions bookkeeping",
     "value": "nested payload.value.* reads; status/classification fallbacks are already handled "
     "by the dedicated __value_status/__value_classification json_extract columns in "
     "_read_run_extracting_fields regardless of whether 'value' itself is listed",
-    "verdicts": "gatekeeper per-path file verdicts (_record_gatekeeper_verdicts); mutates "
-    "file_state_records fields _task_file_state_accepted never reads",
     "version_id": "requirement_revisions bookkeeping",
 }
 

@@ -63,12 +63,14 @@ SUMMARY_PAYLOAD_FIELDS = (
     "command_definition",
     "command_type",
     "execution_id",
+    "evidence",
     "generation",
     "grade",
     "kind",
     "lease_generation",
     "lease_id",
     "new_state",
+    "node",
     "node_id",
     "node_kind",
     "outcome",
@@ -88,6 +90,7 @@ SUMMARY_PAYLOAD_FIELDS = (
     "task_region_id",
     "to_state",
     "tokens",
+    "verifier_node_id",
 )
 LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "accepted_record_selector",
@@ -116,6 +119,8 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "command_definition",
     "command_definition_id",
     "confidence",
+    "consult_id",
+    "cost_usd",
     "decision",
     "deleted_snapshot_ref",
     "dependency_type",
@@ -140,6 +145,7 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "freshness_policy",
     "input",
     "input_tokens",
+    "item_count",
     "id",
     "kind",
     "lease_generation",
@@ -168,6 +174,7 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "reason",
     "record_id",
     "record_ids",
+    "record_bound_positions",
     "record_kind",
     "record_type",
     "region_id",
@@ -182,6 +189,7 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "revision_index",
     "revision_id",
     "revision_type",
+    "resolved_count",
     "retry_not_before",
     "role",
     "schema",
@@ -208,6 +216,9 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "verdict",
     "verdicts",
     "version_id",
+    "wall_time_ms",
+    "worker_node",
+    "verifier_node",
     "approval_prompt",
     "approval_type",
     "attempt_number",
@@ -230,10 +241,15 @@ LIGHT_GRAPH_PAYLOAD_FIELDS = (
     "rejected_patch_id",
 )
 DECISION_RECORD_VALUE_FIELDS = (
+    "decision",
+    "decision_type",
+    "decider",
+    "scope",
     "consequence_summary",
     "default_option",
     "expires_at",
     "options",
+    "reason",
     "requested_authority",
     "target_node_id",
     "target_region_id",
@@ -686,6 +702,7 @@ class GraphEventStore:
             run_id,
             from_position,
             GRAPH_PROJECTION_PAYLOAD_FIELDS,
+            include_nested_value_fallbacks=False,
         )
 
     async def read_run_node_detail(
@@ -781,7 +798,14 @@ class GraphEventStore:
                     payload["value"] = value_payload
             record_type = payload.get("record_type")
             port = payload.get("port")
-            if record_type in {"decision_request", "authority_request_record"} or port in {
+            if record_type in {
+                "decision_record",
+                "authority_decision",
+                "decision_request",
+                "authority_request_record",
+            } or port in {
+                "decision_record",
+                "authority_decision",
                 "decision_request",
                 "authority_request_record",
             }:

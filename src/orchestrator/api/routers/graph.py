@@ -1577,7 +1577,7 @@ async def get_graph_topology(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> GraphTopologyResponse:
-    events = await graph_store.read_run_light(run_id)
+    events = await graph_store.read_run_projection(run_id)
     return build_graph_topology_response(run_id, events)
 
 
@@ -1666,7 +1666,7 @@ async def get_graph_final_blockers(
     graph_store: GraphEventStore = Depends(get_graph_store),
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
 ) -> FinalInvariantBlockersResponse:
-    events = await graph_store.read_run_light(run_id)
+    events = await graph_store.read_run_projection(run_id)
     async with session_factory() as session:
         result = await session.execute(
             select(GraphOutboxModel)
@@ -1759,7 +1759,7 @@ async def get_graph_regions(
     run_id: str,
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> GraphRegionsResponse:
-    events = await graph_store.read_run_light(run_id)
+    events = await graph_store.read_run_projection(run_id)
     return build_graph_regions_response(run_id, events)
 
 

@@ -84,8 +84,10 @@ def _sample_events(run_id: str) -> list[EventEnvelope]:
             {
                 "record_id": "record-1",
                 "record_kind": "output",
+                "record_type": "fan_out_inputs",
                 "producer_node_id": "worker-1",
                 "port": "result",
+                "schema": "TestRecord",
                 "value": {"large": "x" * 1024},
             },
         ),
@@ -109,13 +111,14 @@ def _corrective_supersession_events(run_id: str) -> list[EventEnvelope]:
                 "record_type": "candidate",
                 "port": "candidate",
                 "schema": "ImplementationCandidate",
+                "value": {"summary": "origin candidate"},
             },
         ),
         _event(
             "evt-origin-failed",
             run_id,
             "verification_failed",
-            {"candidate_id": "cand-origin"},
+            _verification_payload("cand-origin", "failed"),
         ),
         _event(
             "evt-corrective-candidate",
@@ -132,13 +135,14 @@ def _corrective_supersession_events(run_id: str) -> list[EventEnvelope]:
                 "port": "candidate",
                 "schema": "ImplementationCandidate",
                 "supersedes_task_region_id": "origin",
+                "value": {"summary": "corrective candidate"},
             },
         ),
         _event(
             "evt-corrective-passed",
             run_id,
             "verification_passed",
-            {"candidate_id": "cand-fix"},
+            _verification_payload("cand-fix", "passed"),
         ),
         _event(
             "evt-corrective-file-state",
@@ -174,6 +178,7 @@ def _file_state_event(
         {
             "record_id": f"file-state-{candidate_id}",
             "record_kind": "file_state",
+            "record_type": "file_state",
             "producer_node_id": f"worker-{candidate_id}",
             "port": "file_state",
             "schema": "FileStateRecord",
@@ -207,8 +212,21 @@ def _candidate_event(
             "producer_node_id": f"worker-{candidate_id}",
             "port": "candidate",
             "schema": "ImplementationCandidate",
+            "value": {"summary": f"candidate {candidate_id}"},
         },
     )
+
+
+def _verification_payload(candidate_id: str, outcome: str) -> dict[str, Any]:
+    return {
+        "node_id": f"verifier-{candidate_id}",
+        "verifier_node_id": f"verifier-{candidate_id}",
+        "candidate_id": candidate_id,
+        "record_id": f"verification-{candidate_id}",
+        "outcome": outcome,
+        "evidence": [],
+        "value": {"outcome": outcome, "grades": []},
+    }
 
 
 def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
@@ -219,7 +237,7 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                 "accepted-verification",
                 run_id,
                 "verification_passed",
-                {"candidate_id": "cand-accepted"},
+                _verification_payload("cand-accepted", "passed"),
             ),
             _file_state_event(
                 "accepted-file-state",
@@ -249,7 +267,7 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                 "gate-verification",
                 run_id,
                 "verification_passed",
-                {"candidate_id": "cand-accepted-with-gate"},
+                _verification_payload("cand-accepted-with-gate", "passed"),
             ),
             _file_state_event(
                 "gate-file-state",
@@ -273,7 +291,7 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                 "revision-verification",
                 run_id,
                 "verification_failed",
-                {"candidate_id": "cand-revision"},
+                _verification_payload("cand-revision", "failed"),
             ),
         ],
         "blocked_invalid_test": [
@@ -287,7 +305,7 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                 "invalid-test-verification",
                 run_id,
                 "verification_failed",
-                {"candidate_id": "cand-invalid-test"},
+                _verification_payload("cand-invalid-test", "failed"),
             ),
             _event(
                 "invalid-test-oversight",
@@ -315,12 +333,30 @@ def _task_state_parity_cases(run_id: str) -> dict[str, list[EventEnvelope]]:
                 {
                     "record_id": "check-environment",
                     "task_region_id": "blocked_environment",
-                    "record_kind": "check_result",
+                    "record_kind": "output",
                     "record_type": "check_result",
                     "producer_node_id": "check-environment",
                     "port": "check_result",
                     "schema": "CheckResult",
-                    "value": {"classification": "tool_unavailable"},
+                    "candidate_id": "cand-environment",
+                    "attempt_number": 0,
+                    "value": {
+                        "status": "failed",
+                        "classification": "tool_unavailable",
+                        "command_id": "environment-check",
+                        "command_text": "environment check",
+                        "command": {},
+                        "worktree_path": "/worktree",
+                        "base_snapshot_id": "S0",
+                        "execution_id": "environment-check-execution",
+                        "duration_ms": 0,
+                        "stdout": "",
+                        "stderr": "",
+                        "stdout_truncated": False,
+                        "stderr_truncated": False,
+                        "timeout_seconds": 1.0,
+                        "environment_policy": {},
+                    },
                 },
             ),
         ],

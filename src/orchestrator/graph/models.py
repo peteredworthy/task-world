@@ -605,6 +605,13 @@ class OutputRecord(TypedRecordBase):
     file_state_record_id: str | None = None
     file_state_record_ids: list[str] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def generic_output_record_type_is_explicit(self) -> "OutputRecord":
+        if self.record_type != "fan_out_inputs":
+            msg = "record_type must be fan_out_inputs"
+            raise ValueError(msg)
+        return self
+
 
 class RunContextValue(StrictNestedModel):
     routine_id: str
@@ -1590,6 +1597,8 @@ class CandidateRecord(TypedRecordBase):
     value: CandidateValue
     file_state_record_id: str | None = None
     file_state_record_ids: list[str] = Field(default_factory=_empty_candidate_file_state_ids)
+    supersedes_task_region_id: str | None = None
+    supersedes_task_region_ids: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def candidate_fields_are_consistent(self) -> "CandidateRecord":
@@ -1634,7 +1643,10 @@ class GapClassificationRecord(TypedRecordBase):
         if self.port not in {"gap_plan", "gap_classification", "classified_gap"}:
             msg = "port must be a gap classification port"
             raise ValueError(msg)
-        if self.record_type != self.port:
+        valid_pair = self.record_type == self.port or (
+            self.record_type == "classified_gap" and self.port == "gap_classification"
+        )
+        if not valid_pair:
             msg = "record_type must match port"
             raise ValueError(msg)
         if self.schema_ != "GapClassification":
@@ -1884,6 +1896,9 @@ class DecisionRequestValue(StrictNestedModel):
     options: list[str]
     default_option: str | None = None
     consequence_summary: str
+    expires_at: str | None = None
+    target_node_id: str | None = None
+    target_region_id: str | None = None
 
     @model_validator(mode="after")
     def decision_options_are_consistent(self) -> "DecisionRequestValue":
@@ -2106,6 +2121,93 @@ class FileStateRecord(TypedRecordBase):
     cleanup_applied_event_id: str | None = None
     compromised_snapshot_deleted: bool | None = None
     compromised_paths: list[str] | None = None
+
+
+class OutputRecordAcceptedPayload(RootModel[OutputRecordPayload | FileStateRecord]):
+    """Flat, canonical output-record acceptance event payload."""
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.root.model_dump(*args, **kwargs)
+
+
+class VerificationOutcomePayload(StrictEventPayload):
+    node_id: str
+    verifier_node_id: str
+    candidate_id: str
+    task_region_id: str | None = None
+    record_id: str
+    outcome: Literal["passed", "failed"]
+    evidence: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    value: VerificationReportValue
+
+
+class InputBoundPayload(StrictEventPayload):
+    edge_id: str
+    to_node_id: str
+    to_port: str
+    record_ids: list[str] = Field(min_length=1)
+    bound_at_position: int = Field(ge=0)
+    binding_policy: str | None = None
+    supersedes_record_id: str | None = None
+    record_bound_positions: dict[str, int] = Field(default_factory=dict)
+    trigger: str | None = None
+
+
+class RevisionCreatedPayload(StrictEventPayload):
+    node: NodeModel
+    worker_node: NodeModel
+    verifier_node: NodeModel
+
+
+class CanonicalFileStateRecord(FileStateRecord):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+
+class FileStateAcceptedPayload(RootModel[CanonicalFileStateRecord]):
+    """Flat, canonical file-state acceptance event payload."""
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        return self.root.model_dump(*args, **kwargs)
+
+
+class FileStateRejectedPayload(CanonicalFileStateRecord):
+    reason: str | None = None
+
+
+class GatekeeperVerdictRow(StrictEventPayload):
+    path: str
+    classification: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    rationale: str
+    model_id: str | None = None
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    cost_usd: float = Field(default=0.0, ge=0.0)
+    wall_time_ms: int = Field(default=0, ge=0)
+
+
+class GatekeeperVerdictRecordedPayload(StrictEventPayload):
+    file_state_record_id: str
+    execution_id: str
+    producer_node_id: str
+    verdicts: list[GatekeeperVerdictRow] = Field(min_length=1)
+    resolved_count: int = Field(ge=0)
+
+
+class GatekeeperCostRecordedPayload(StrictEventPayload):
+    execution_id: str
+    file_state_record_id: str
+    consult_id: str
+    model_id: str | None = None
+    input_tokens: int = Field(default=0, ge=0)
+    output_tokens: int = Field(default=0, ge=0)
+    cache_read_tokens: int = Field(default=0, ge=0)
+    cache_write_tokens: int = Field(default=0, ge=0)
+    item_count: int = Field(default=0, ge=0)
+    cost_usd: float = Field(default=0.0, ge=0.0)
+    wall_time_ms: int = Field(default=0, ge=0)
 
 
 class GraphRecordKind(str, Enum):

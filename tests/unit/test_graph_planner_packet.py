@@ -18,6 +18,7 @@ from orchestrator.graph_runtime.dispatch import (
     _planner_packet,
     _prompt_for_node,
 )
+from tests.unit.graph_test_utils import canonical_event_payload
 
 
 def _event(
@@ -36,7 +37,7 @@ def _event(
         causation_id="test",
         correlation_id=None,
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 
@@ -366,7 +367,7 @@ def test_planner_packet_includes_generation_frontier_evidence_and_rejections() -
     assert failures[0]["reason"] == "check tool error while running: check command"
     assert failures[0]["node_id"] == "worker-1"
     assert failures[0]["task_region_id"] == "region-1"
-    assert failures[0]["record_kind"] == "check_result"
+    assert failures[0]["record_kind"] == "output"
     assert packet["open_planner_proposals"] == []
     assert packet["accepted_planner_patches"] == [
         {

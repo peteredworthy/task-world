@@ -218,9 +218,11 @@ async def _seed_control_topology_graph_run(app: Any, run_id: str) -> None:
             {
                 "record_id": "candidate-control",
                 "record_kind": "output",
+                "record_type": "candidate",
                 "producer_node_id": "worker-control",
                 "port": "candidate",
                 "schema": "ImplementationCandidate",
+                "candidate_id": "candidate-control",
                 "value": {"summary": "control readback candidate"},
             },
         ),

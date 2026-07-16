@@ -3,6 +3,7 @@
 from typing import Any
 
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, project_decision_view
+from tests.unit.graph_test_utils import canonical_event_payload
 
 
 def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnvelope:
@@ -14,7 +15,7 @@ def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnve
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 

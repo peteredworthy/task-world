@@ -42,6 +42,7 @@ from orchestrator.runners.types import (
     LogLineCallback,
     SubmitCallback,
 )
+from tests.unit.graph_test_utils import canonical_event_payload
 
 
 def _context(
@@ -90,7 +91,7 @@ def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> Even
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 
@@ -272,6 +273,7 @@ def test_bound_record_hydration_policy_shapes_prompt_records() -> None:
         "record_id": "candidate-inline",
         "record_type": "candidate",
         "schema": "ImplementationCandidate",
+        "candidate_id": "candidate-inline",
         "summary": "short candidate",
     }
     assert "record_payload" not in inline

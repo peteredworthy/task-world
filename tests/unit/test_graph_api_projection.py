@@ -1,6 +1,7 @@
 """Unit tests for graph API projection helpers."""
 
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,11 +19,12 @@ from orchestrator.api import (
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime.store import GraphEventStore, GraphNodeDetailSummary
 from orchestrator.db import create_engine, create_session_factory, init_db
+from tests.unit.graph_test_utils import canonical_event_payload
 
 
 def _event(
     event_type: str,
-    payload: dict[str, object],
+    payload: dict[str, Any],
     *,
     run_id: str = "run-1",
     position: int = -1,
@@ -35,7 +37,7 @@ def _event(
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 

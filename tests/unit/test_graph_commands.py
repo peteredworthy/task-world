@@ -18,9 +18,16 @@ from orchestrator.graph import (
     projection_to_checkpoint,
     reduce_event,
 )
+from tests.unit.graph_test_utils import canonical_event_payload
 
 
-def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> EventEnvelope:
+def _event(
+    event_type: str,
+    payload: dict[str, Any],
+    position: int = -1,
+    *,
+    canonicalize: bool = True,
+) -> EventEnvelope:
     return EventEnvelope(
         event_id=f"{event_type}-{position}",
         run_id="run-1",
@@ -29,7 +36,7 @@ def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> Even
         schema_version=1,
         actor=Actor(kind=ActorKind.CONTROLLER),
         timestamp=FakeClock().now(),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload) if canonicalize else payload,
     )
 
 
@@ -1606,12 +1613,16 @@ def test_callback_accepts_gap_analysis_output_and_binds_classified_gap() -> None
                     {
                         "record_id": "gap-classification-1",
                         "record_kind": "output",
+                        "record_type": "classified_gap",
                         "producer_node_id": "worker-1",
                         "port": "gap_classification",
                         "schema": "GapClassification",
                         "value": {
                             "milestone_kind": "gap_analysis",
                             "classification": "corrective_work_required",
+                            "source": "test",
+                            "task_region_id": "task-1",
+                            "attempt_number": 0,
                         },
                     }
                 ],
@@ -1670,12 +1681,16 @@ def test_callback_accepts_classified_gap_port_and_binds_classified_gap() -> None
                     {
                         "record_id": "classified-gap-1",
                         "record_kind": "output",
+                        "record_type": "classified_gap",
                         "producer_node_id": "worker-1",
                         "port": "classified_gap",
                         "schema": "GapClassification",
                         "value": {
                             "milestone_kind": "gap_analysis",
                             "classification": "corrective_work_required",
+                            "source": "test",
+                            "task_region_id": "task-1",
+                            "attempt_number": 0,
                         },
                     }
                 ],
@@ -1735,6 +1750,7 @@ def test_callback_value_selector_blocks_no_gap_from_corrective_worker() -> None:
                     {
                         "record_id": "classified-gap-1",
                         "record_kind": "output",
+                        "record_type": "classified_gap",
                         "producer_node_id": "worker-1",
                         "port": "classified_gap",
                         "schema": "GapClassification",
@@ -2023,7 +2039,7 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
     assert accepted_record["evidence"]["file_state_record_ids"] == ["file-state-1"]
     assert output[2].payload["candidate_id"] == "candidate-1"
     assert output[2].payload["outcome"] == "passed"
-    assert output[2].payload["evidence"]["evaluated_record_ids"] == [
+    assert output[2].payload["evidence"][0]["evaluated_record_ids"] == [
         "candidate-1",
         "file-state-1",
     ]
@@ -3851,6 +3867,7 @@ def test_seed_compiled_events_rejects_invalid_edge_selector() -> None:
                         },
                     },
                     1,
+                    canonicalize=False,
                 )
             ],
         },
@@ -3884,6 +3901,7 @@ def test_seed_compiled_events_rejects_invalid_verification_report_record() -> No
                         },
                     },
                     1,
+                    canonicalize=False,
                 )
             ],
         },

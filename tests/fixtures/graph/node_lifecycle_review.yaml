@@ -52,12 +52,13 @@
       payload:
         review_record_id: review-record-5
         output_records:
-          - record_id: recovery-plan-review-5
-            record_kind: output
-            producer_node_id: review-5
-            port: recovery_plan
-            schema: RecoveryPlan
-            value: {summary: review completed}
+           - record_id: recovery-plan-review-5
+             record_kind: output
+             record_type: recovery_plan
+             producer_node_id: review-5
+             port: recovery_plan
+             schema: RecoveryPlan
+             value: {action: retry, responsible_actor: review-5, graph_changes: []}
   then_events:
     - callback_accepted: {node_id: review-5}
     - node_state_changed: {node_id: review-5, new_state: completed}

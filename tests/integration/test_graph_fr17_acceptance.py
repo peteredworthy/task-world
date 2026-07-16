@@ -286,7 +286,11 @@ def _less_used_events(run_id: str) -> list[EventEnvelope]:
                 "producer_node_id": "recovery-1",
                 "port": "recovery_plan",
                 "schema": "RecoveryPlan",
-                "value": {"action": "retry", "target_node_id": "worker-source"},
+                "value": {
+                    "action": "retry",
+                    "responsible_actor": "recovery-1",
+                    "graph_changes": [{"target_node_id": "worker-source"}],
+                },
             },
         ),
         _event(
@@ -337,7 +341,6 @@ def _less_used_events(run_id: str) -> list[EventEnvelope]:
             _decision_request_record(
                 "decision-request-pending",
                 "gate-pending",
-                "Approve FR-17 pending work?",
             ),
         ),
         _event(
@@ -346,7 +349,6 @@ def _less_used_events(run_id: str) -> list[EventEnvelope]:
             _decision_request_record(
                 "decision-request-approved",
                 "gate-decision",
-                "Approve FR-17 completed readback fixture?",
             ),
         ),
         _event(
@@ -405,17 +407,16 @@ def _less_used_events(run_id: str) -> list[EventEnvelope]:
     ]
 
 
-def _decision_request_record(record_id: str, node_id: str, prompt: str) -> dict[str, Any]:
+def _decision_request_record(record_id: str, node_id: str) -> dict[str, Any]:
     return {
         "record_id": record_id,
-        "record_kind": "output",
+        "record_kind": "graph_record",
         "record_type": "decision_request",
         "producer_node_id": node_id,
         "port": "decision_request",
         "schema": "DecisionRequest",
         "value": {
             "decision_type": "approval",
-            "prompt": prompt,
             "options": ["approved", "rejected"],
             "default_option": "rejected",
             "consequence_summary": "FR-17 acceptance fixture.",
