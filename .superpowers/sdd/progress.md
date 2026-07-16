@@ -3,7 +3,3 @@ Task W5-continuation: complete (typed node creation, file-state, approval/author
 Task 1: complete (commits 72967d7..9402c3f, fresh review clean)
 Task 2: complete (commit 73c68b75a, fresh final review clean after compact replay fix)
 Task 3: complete (commit ad25bfa9b, fresh final review clean)
-W5 residual setup: complete (commit 7833024, approved design and plan staged exactly)
-W5 Residual Task 1: complete (commit 38738569f, review clean)
-W5 Residual Task 2: complete (commits 4fdefe14d..d2b628ddb, review clean after ownership and tombstone fixes)
-W5 Residual Task 3: complete (commits de1c92dab..794ccd8e9, review clean after strictness and precedence fixes)
