@@ -721,7 +721,9 @@ Grade rows and artifact boundary:
 Status: **complete**.
 
 Verified source head:
-- `bafeb650d27884ae5584f1fb4b4378780b4f587f` (`Correct event payload implementation docs`).
+- `29c5264d9` (`Redact durable graph rejection reasons`).
+- The documentation closeout is the commit containing this update and does not
+  self-reference its own hash.
 
 Completion criteria:
 - Canonical event ownership: 46 canonical names, 45 internally producer-owned
@@ -742,6 +744,15 @@ Completion criteria:
   final-review required-identity correction.
 - Commands: all 23 `COMMAND_SPECS` payloads inherit strict validation, and all
   23 handlers accept their exact registered payload model.
+- Durable rejection safety: command ingress, callback output records, patch
+  parsing/macro expansion, selector/request records, seed records, decisions,
+  and gatekeeper payloads use one bounded graph-internal renderer. Validation
+  output retains safe location/type entries only (maximum 8 errors and 1,000
+  characters); arbitrary `TypeError`/`ValueError` paths use fixed codes and
+  messages.
+- Callback payload hashes use strict nonblank `CommandIdentifier`; decision
+  string deciders use strict nonblank `ActorLabel` while valid `Actor` values
+  remain accepted.
 - API reuse: decision and patch HTTP schemas reuse command-domain fields while
   retaining HTTP-only constraints and server-owned context.
 - Grade rows: `GradeRow` is strict and exported; verification report grades are
@@ -776,15 +787,22 @@ The broader deleted-symbol search also returned no matches under `src` for
 `_legacy_requirement_evidence_blockers`, `_LEGACY_SELECTOR_KIND_MAP`,
 `_normalize_legacy_selector`, or `normalize_legacy_membership`.
 
-Final commands, counts, and timings:
+Final commands, counts, and timings at `29c5264d9`:
 
 | Command | Result | Timing |
 |---|---|---:|
-| `uv run pytest tests/unit/test_graph_event_registry.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_runtime_event_payloads.py tests/unit/test_lifecycle_command_payloads.py tests/unit/test_scheduling_command_payloads.py tests/unit/test_callback_patch_command_payloads.py tests/unit/test_decision_record_command_payloads.py tests/integration/test_graph_api.py tests/integration/test_graph_decisions_api.py -q -n auto --dist worksteal` | 145 passed in 4.86s | 6.46s real |
-| `uv run pytest tests/ -q -n auto --dist worksteal` | 4,756 passed, 3 skipped, 3 warnings in 105.28s | 110.08s real |
-| `uv run ruff check .` | all checks passed | 0.11s real |
-| `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime src/orchestrator/api src/orchestrator/workflow tests/unit tests/integration` | 0 errors, 0 warnings, 0 informations | 6.47s real |
-| `git diff --check` | passed, no output | 0.01s real |
+| `uv run pytest tests/unit/test_graph_gatekeeper.py tests/unit/test_graph_macros.py tests/unit/test_graph_commands.py tests/unit/test_final_review_contracts.py tests/unit/test_callback_patch_command_payloads.py tests/integration/test_graph_api.py tests/integration/test_graph_decisions_api.py tests/integration/test_graph_fr07_acceptance.py -q` | 305 passed | 5.01s |
+| `uv run pytest -q` | 4,779 passed, 3 skipped, 3 existing `aiosqlite` warnings | 131.02s |
+| `uv run ruff check .` | all checks passed | n/a |
+| `uv run ruff format --check .` | 702 files already formatted | n/a |
+| `uv run pyright` | 0 errors, 0 warnings, 0 informations | n/a |
+| `git diff --check` | passed, no output | n/a |
+| source commit hooks | Ruff, format, secret detection, Pyright, pytest, module imports, signal routing, UI lint, and UI typecheck passed; enum drift skipped with no relevant files | n/a |
+
+Historical closeout evidence: the earlier source head
+`bafeb650d27884ae5584f1fb4b4378780b4f587f`, 145-test focused run, and 4,756
+passed full run remain useful chronology but are superseded by the final source
+head and evidence above.
 
 Final metrics recomputed from current source:
 

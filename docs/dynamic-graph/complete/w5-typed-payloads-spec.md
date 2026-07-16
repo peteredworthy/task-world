@@ -155,21 +155,38 @@ fields. `VerificationReportValue.grades` is a typed list of `GradeRow` values.
 
 ## Acceptance
 
-The final accepted source head was
-`bafeb650d27884ae5584f1fb4b4378780b4f587f`. Its closeout evidence is:
+The final accepted source implementation head is
+`29c5264d9` (`Redact durable graph rejection reasons`). The documentation
+closeout is the commit containing this update; it intentionally does not
+self-reference its own hash.
 
 - Registry audit: 46 canonical names, 46 models, 46 exact specs, all strict.
 - Command audit: 23 strict payloads and 23 exact typed handlers.
 - Output-record audit: 22 explicit discriminators.
 - Generated retention at final-review correction head: 105/144/160/92 fields.
-- Focused audit: 145 tests passed.
-- Full backend: 4,756 passed, 3 skipped, 3 warnings.
+- Durable rejection reasons use one graph-internal safe renderer. Pydantic
+  validation retains at most eight location/type entries and 1,000 characters
+  without rejected input or user-derived messages; arbitrary `TypeError` and
+  `ValueError` paths emit fixed safe codes/messages.
+- `SubmitCallbackCommand.payload_hash` and string decision deciders are strict,
+  nonblank domain-ingress values.
+- Focused callback/patch/command/gatekeeper/macro/API audit: 305 passed.
+- Full backend: 4,779 passed, 3 skipped, 3 existing `aiosqlite` warnings.
 - Ruff: all checks passed.
-- Scoped Pyright: 0 errors, 0 warnings, 0 informations.
+- Format: 702 files already formatted.
+- Full Pyright: 0 errors, 0 warnings, 0 informations.
 - `git diff --check`: passed.
+- Pre-commit hooks: Ruff, format, secret detection, Pyright, pytest, module
+  imports, signal routing, UI lint, and UI typecheck passed; enum drift skipped
+  because no relevant files changed.
 - Metrics: `isinstance(` 603 to 465 (-138); `dict[str, Any]` 174 to
   136 (-38); direct `event.payload.get(` 28; total `payload.get(` 89; graph
   before validators 0.
+
+Historical evidence: `bafeb650d27884ae5584f1fb4b4378780b4f587f`
+(`Correct event payload implementation docs`), the 145-test focused audit, and
+the 4,756-test backend run were the earlier W5 closeout baseline. They are
+superseded by the final-review evidence above, not current-head results.
 
 Exact commands and timings are retained in `../w5-progress-ledger.md`.
 

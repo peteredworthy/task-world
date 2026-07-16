@@ -151,3 +151,88 @@ command `ValidationError` interpolation, or stale `101/141/159/84` final counts.
 
 No blocking concerns. The three full-suite warnings are the existing Python 3.12
 `aiosqlite` datetime-adapter deprecation warnings.
+
+## Last Fix Wave
+
+Status: **DONE**.
+
+Source implementation commit: `29c5264d9` (`Redact durable graph rejection
+reasons`). The documentation commit is the commit containing this appended
+closeout and intentionally does not self-reference its own hash.
+
+Changes:
+
+- Added graph-internal `_error_rendering.safe_exception_reason` and routed all
+  current graph `except ... as exc` durable rejection paths through it.
+- Pydantic errors use `errors(include_input=False)`, at most 8 entries and 1,000
+  characters, and retain only safe location/type plus static messages. This
+  additionally avoids Pydantic union messages that embed rejected discriminator
+  values even when `include_input=False` is used.
+- Arbitrary `TypeError`/`ValueError` patch, macro, selector, request-record,
+  seed, decision, and record paths emit fixed safe codes/messages.
+- `SubmitCallbackCommand.payload_hash` now uses strict nonblank
+  `CommandIdentifier`; `RecordDecisionCommand.decider` accepts `Actor` or strict
+  nonblank `ActorLabel`.
+- Added secret-bearing malformed nested callback-record and patch-op tests. Both
+  prove the secret is absent while safe code/location/type remain.
+
+RED evidence:
+
+```text
+uv run pytest tests/unit/test_final_review_contracts.py \
+  tests/unit/test_callback_patch_command_payloads.py \
+  tests/unit/test_graph_commands.py -q
+# 5 failed, 206 passed
+# Failures: two blank payload hashes, identity matrix, callback secret leak,
+# patch secret leak.
+```
+
+GREEN evidence:
+
+```text
+uv run pytest tests/unit/test_graph_gatekeeper.py tests/unit/test_graph_macros.py \
+  tests/unit/test_graph_commands.py tests/unit/test_final_review_contracts.py \
+  tests/unit/test_callback_patch_command_payloads.py \
+  tests/integration/test_graph_api.py tests/integration/test_graph_decisions_api.py \
+  tests/integration/test_graph_fr07_acceptance.py -q
+# 305 passed in 5.01s
+
+uv run pytest -q
+# 4779 passed, 3 skipped, 3 warnings in 131.02s
+
+uv run ruff check .
+# All checks passed
+
+uv run ruff format --check .
+# 702 files already formatted
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+
+git diff --check
+# passed
+```
+
+Source commit hooks passed Ruff, format, secret detection, Pyright, pytest,
+module imports, signal routing, UI lint, and UI typecheck; enum drift skipped
+because no relevant files changed.
+
+Compatibility searches:
+
+```text
+rg '\{exc[!}:]|str\(exc\)|exc\.errors\(\)' src/orchestrator/graph
+# no matches
+
+rg 'reason["'"']?\s*[:=].*(\{exc\}|str\(exc\))|f["'"'][^"'"']*\{exc\}' \
+  src/orchestrator/graph
+# no matches
+
+rg 'payload_hash:\s*str|decider:\s*Actor\s*\|\s*str|_safe_validation_reason' \
+  src/orchestrator/graph
+# no matches
+```
+
+Generated retention remains `105/144/160/92`. No mocks, suppressions, database
+changes, hook bypasses, compatibility adapters, or W5.5 implementation were
+introduced. The only concerns are the three existing Python 3.12 `aiosqlite`
+datetime-adapter deprecation warnings.
