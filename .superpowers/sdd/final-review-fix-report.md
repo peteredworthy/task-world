@@ -59,8 +59,8 @@ pass.
 
 - Replaced direct `ValidationError` interpolation with bounded details from
   `errors(include_input=False)`.
-- Retains location, error type, and safe message only; caps errors at 8 and the
-  reason at 1,000 characters.
+- Retains only static `payload`, error type, and fixed message; caps errors at 8
+  and the reason at 1,000 characters.
 - Added a secret-like unknown-field regression proving the value is absent while
   `unexpected_secret` and `extra_forbidden` remain visible.
 
@@ -165,7 +165,7 @@ Changes:
 - Added graph-internal `_error_rendering.safe_exception_reason` and routed all
   current graph `except ... as exc` durable rejection paths through it.
 - Pydantic errors use `errors(include_input=False)`, at most 8 entries and 1,000
-  characters, and retain only safe location/type plus static messages. This
+  characters, and retain only static `payload`, safe type, and fixed messages. This
   additionally avoids Pydantic union messages that embed rejected discriminator
   values even when `include_input=False` is used.
 - Arbitrary `TypeError`/`ValueError` patch, macro, selector, request-record,
@@ -174,7 +174,7 @@ Changes:
   `CommandIdentifier`; `RecordDecisionCommand.decider` accepts `Actor` or strict
   nonblank `ActorLabel`.
 - Added secret-bearing malformed nested callback-record and patch-op tests. Both
-  prove the secret is absent while safe code/location/type remain.
+  prove the secret is absent while safe static context/code/type remain.
 
 RED evidence:
 
@@ -236,3 +236,60 @@ Generated retention remains `105/144/160/92`. No mocks, suppressions, database
 changes, hook bypasses, compatibility adapters, or W5.5 implementation were
 introduced. The only concerns are the three existing Python 3.12 `aiosqlite`
 datetime-adapter deprecation warnings.
+
+## Final Static-Location Security Correction
+
+Status: **DONE**.
+
+Source/tests commit: `b4da6182b` (`Remove validation locations from durable
+reasons`). The documentation commit is the commit containing this update.
+
+- Removed all use of arbitrary `ValidationError.loc` components from durable
+  rendering. Every validation detail now uses literal `payload`, a safe error
+  type, and a fixed message under caller-supplied static context/code.
+- Made `PatchOp` reject unknown operation fields while explicitly retaining the
+  existing v1 operation field set.
+- Added regressions with secret-like top-level command field names, nested
+  callback-record field names, and patch-operation field names. Every emitted
+  rejection omits both key and value while retaining `extra_forbidden` and its
+  static rejection code.
+
+RED:
+
+```text
+uv run pytest tests/unit/test_final_review_contracts.py \
+  tests/unit/test_graph_commands.py -q -k 'redact or redacts or redaction'
+# 3 failed, 2 passed
+```
+
+GREEN:
+
+```text
+uv run pytest tests/unit/test_final_review_contracts.py \
+  tests/unit/test_callback_patch_command_payloads.py \
+  tests/unit/test_graph_commands.py tests/unit/test_graph_gatekeeper.py \
+  tests/unit/test_graph_macros.py tests/integration/test_graph_api.py \
+  tests/integration/test_graph_decisions_api.py \
+  tests/integration/test_graph_fr07_acceptance.py -q
+# 307 passed in 5.87s
+
+uv run pytest tests/unit/test_graph_planner_session.py \
+  tests/integration/test_graph_parent_child_flow.py -q
+# 7 passed in 4.94s
+
+uv run ruff check .
+# All checks passed
+
+uv run ruff format --check .
+# 702 files already formatted
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+
+git diff --check
+# passed
+```
+
+The source commit hooks passed Ruff, format, secret detection, Pyright, full
+pytest, module imports, signal routing, UI lint, and UI typecheck. No blocking
+concerns remain; enum drift skipped because no relevant files changed.

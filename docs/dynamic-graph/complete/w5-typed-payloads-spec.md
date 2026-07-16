@@ -156,7 +156,7 @@ fields. `VerificationReportValue.grades` is a typed list of `GradeRow` values.
 ## Acceptance
 
 The final accepted source implementation head is
-`29c5264d9` (`Redact durable graph rejection reasons`). The documentation
+`b4da6182b` (`Remove validation locations from durable reasons`). The documentation
 closeout is the commit containing this update; it intentionally does not
 self-reference its own hash.
 
@@ -165,13 +165,15 @@ self-reference its own hash.
 - Output-record audit: 22 explicit discriminators.
 - Generated retention at final-review correction head: 105/144/160/92 fields.
 - Durable rejection reasons use one graph-internal safe renderer. Pydantic
-  validation retains at most eight location/type entries and 1,000 characters
-  without rejected input or user-derived messages; arbitrary `TypeError` and
+  validation retains at most eight entries and 1,000 characters using only
+  caller-supplied static context, literal `payload`, safe error type, and fixed
+  message. Rejected field names, nested keys, discriminator values, input, and
+  user-derived messages are never persisted; arbitrary `TypeError` and
   `ValueError` paths emit fixed safe codes/messages.
 - `SubmitCallbackCommand.payload_hash` and string decision deciders are strict,
   nonblank domain-ingress values.
-- Focused callback/patch/command/gatekeeper/macro/API audit: 305 passed.
-- Full backend: 4,779 passed, 3 skipped, 3 existing `aiosqlite` warnings.
+- Focused callback/patch/command/gatekeeper/macro/API audit: 307 passed.
+- Full source commit pytest hook: passed.
 - Ruff: all checks passed.
 - Format: 702 files already formatted.
 - Full Pyright: 0 errors, 0 warnings, 0 informations.
@@ -183,7 +185,9 @@ self-reference its own hash.
   136 (-38); direct `event.payload.get(` 28; total `payload.get(` 89; graph
   before validators 0.
 
-Historical evidence: `bafeb650d27884ae5584f1fb4b4378780b4f587f`
+Historical evidence: `29c5264d9` passed 4,779 tests with 3 skips and 3 existing
+`aiosqlite` warnings before the final static-location security correction.
+`bafeb650d27884ae5584f1fb4b4378780b4f587f`
 (`Correct event payload implementation docs`), the 145-test focused audit, and
 the 4,756-test backend run were the earlier W5 closeout baseline. They are
 superseded by the final-review evidence above, not current-head results.

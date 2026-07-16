@@ -105,9 +105,10 @@ Deleted compatibility models/helpers include `GraphEventPayloadBase.extra`,
   all-optional shared envelope.
 - Semantic booleans such as `EdgeProjection.required` are strict. Compact
   retention carries required lifecycle and decision identities used by reducers.
-- Command validation errors expose bounded location/type/message details without
-  submitted input values. Shared command identity types reject empty and
-  whitespace-containing IDs.
+- Command validation errors expose only bounded static `payload` context, safe
+  error type, and fixed message without rejected field names or submitted input
+  values. Shared command identity types reject empty and whitespace-containing
+  IDs.
 - `StoredArtifactRef.storage_uri` and `content_hash` must contain the same digest;
   durable artifact I/O and truncation recovery remain W5.5 scope.
 
