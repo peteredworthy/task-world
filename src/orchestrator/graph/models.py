@@ -679,6 +679,15 @@ class ArtifactReferenceValue(StrictNestedModel):
     summarize_model: str | None = None
 
 
+class StoredArtifactRef(StrictNestedModel):
+    artifact_id: str
+    content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    size_bytes: StrictInt = Field(ge=0)
+    media_type: str
+    encoding: str | None = None
+    storage_uri: str = Field(pattern=r"^artifact://sha256/[0-9a-f]{64}$")
+
+
 class ArtifactReferenceRecord(TypedRecordBase):
     record_id: str
     record_kind: Literal["graph_record"]

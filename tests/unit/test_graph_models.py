@@ -5,6 +5,7 @@ from typing import Any, TypeVar
 import pytest
 from pydantic import BaseModel, ValidationError
 
+from orchestrator.graph import StoredArtifactRef
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -74,6 +75,46 @@ def assert_round_trips(model_type: type[ModelT], example: dict[str, Any]) -> Non
 
     assert reparsed == parsed
     assert dumped == example
+
+
+def test_stored_artifact_ref_is_strict_and_portable() -> None:
+    ref = StoredArtifactRef.model_validate(
+        {
+            "artifact_id": "check-output-1",
+            "content_hash": f"sha256:{'a' * 64}",
+            "size_bytes": 1_048_576,
+            "media_type": "text/plain",
+            "encoding": "utf-8",
+            "storage_uri": f"artifact://sha256/{'a' * 64}",
+        }
+    )
+    assert ref.size_bytes == 1_048_576
+    assert ref.storage_uri.startswith("artifact://sha256/")
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"content_hash": "sha256:../escape"},
+        {"content_hash": "md5:" + "a" * 32},
+        {"size_bytes": -1},
+        {"size_bytes": "12"},
+        {"storage_uri": "file:///tmp/output"},
+        {"unknown": True},
+    ],
+)
+def test_stored_artifact_ref_rejects_noncanonical_identity(update: dict[str, Any]) -> None:
+    payload = {
+        "artifact_id": "check-output-1",
+        "content_hash": f"sha256:{'a' * 64}",
+        "size_bytes": 12,
+        "media_type": "text/plain",
+        "encoding": "utf-8",
+        "storage_uri": f"artifact://sha256/{'a' * 64}",
+    }
+    payload.update(update)
+    with pytest.raises(ValidationError):
+        StoredArtifactRef.model_validate(payload)
 
 
 def test_run_model_round_trips() -> None:

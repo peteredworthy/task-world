@@ -21,7 +21,11 @@ from orchestrator.graph.contracts import (
     output_port_contract,
     validate_output_record,
 )
-from orchestrator.graph.event_registry import EVENT_PAYLOAD_MODELS, validate_emitted_event_type
+from orchestrator.graph.event_registry import (
+    EVENT_PAYLOAD_MODELS,
+    SPARSE_EVENT_PAYLOAD_TYPES,
+    validate_emitted_event_type,
+)
 from orchestrator.graph.macros import expand_patch_macros
 from orchestrator.graph.models import (
     Actor,
@@ -5544,13 +5548,17 @@ def _event_factory(
         validate_emitted_event_type("graph_command_factory", event_type)
         model = EVENT_PAYLOAD_MODELS.get(event_type)
         if model is not None:
-            # Sparse wire payloads omit defaults, but model_fields_set preserves
-            # explicitly supplied empty values that downstream routing distinguishes.
-            typed_payload = model.model_validate(payload).model_dump(
-                mode="json",
-                exclude_none=True,
-                exclude_unset=True,
-            )
+            typed = model.model_validate(payload)
+            if event_type in SPARSE_EVENT_PAYLOAD_TYPES:
+                # Sparse wire payloads omit defaults, but model_fields_set preserves
+                # explicitly supplied empty values that downstream routing distinguishes.
+                typed_payload = typed.model_dump(
+                    mode="json",
+                    exclude_none=True,
+                    exclude_unset=True,
+                )
+            else:
+                typed_payload = payload
         elif event_type == "node_created":
             typed_payload = NodeCreatedPayload.model_validate(payload).model_dump(
                 mode="json", exclude_none=True

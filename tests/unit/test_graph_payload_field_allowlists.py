@@ -65,10 +65,22 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path
+from typing import Any
 
-from orchestrator.graph import projections
+import pytest
+
+from orchestrator.graph import (
+    EVENT_PAYLOAD_MODELS,
+    EVENT_PAYLOAD_SPECS,
+    GRAPH_PROJECTION_PAYLOAD_FIELDS,
+    LIGHT_GRAPH_PAYLOAD_FIELDS,
+    NODE_DETAIL_PAYLOAD_FIELDS,
+    SUMMARY_REBUILD_PAYLOAD_FIELDS,
+    generated_payload_fields,
+    payload_model_fields,
+    projections,
+)
 from orchestrator.graph_runtime import store
-from orchestrator.graph_runtime.store import GRAPH_PROJECTION_PAYLOAD_FIELDS
 
 _PROJECTIONS_PATH = Path(inspect.getfile(projections))
 _ROOT_FUNCTION = "reduce_event"
@@ -126,6 +138,38 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "validation_strengthening": "requirement_revisions bookkeeping",
     "version_id": "requirement_revisions bookkeeping",
 }
+
+
+def test_all_payload_allowlists_are_generated_exactly() -> None:
+    assert GRAPH_PROJECTION_PAYLOAD_FIELDS == generated_payload_fields("projection")
+    assert LIGHT_GRAPH_PAYLOAD_FIELDS == generated_payload_fields("light")
+    assert SUMMARY_REBUILD_PAYLOAD_FIELDS == generated_payload_fields("summary")
+    assert NODE_DETAIL_PAYLOAD_FIELDS == generated_payload_fields("node_detail")
+
+
+def test_generated_fields_are_sorted_unique_and_strict() -> None:
+    for mode in ("projection", "light", "summary", "node_detail"):
+        fields = generated_payload_fields(mode)
+        assert fields == tuple(sorted(set(fields)))
+        assert "extra" not in fields
+
+
+def test_every_canonical_payload_model_has_an_immutable_spec() -> None:
+    assert EVENT_PAYLOAD_SPECS.keys() == EVENT_PAYLOAD_MODELS.keys()
+    for event_type, model in EVENT_PAYLOAD_MODELS.items():
+        assert EVENT_PAYLOAD_SPECS[event_type].model is model
+
+    mutable_view: Any = EVENT_PAYLOAD_SPECS
+    with pytest.raises(TypeError):
+        mutable_view["new_event"] = EVENT_PAYLOAD_SPECS["node_created"]
+
+
+def test_retained_fields_are_declared_by_payload_models_or_envelope() -> None:
+    for spec in EVENT_PAYLOAD_SPECS.values():
+        serialized_fields = payload_model_fields(spec.model)
+        for mode in ("projection", "light", "summary", "node_detail"):
+            undeclared = getattr(spec, mode) - serialized_fields - spec.envelope_fields
+            assert not undeclared, (spec.model.__name__, mode, undeclared)
 
 
 def test_graph_projection_payload_fields_are_owned_by_projection_module() -> None:
