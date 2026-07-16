@@ -1,170 +1,99 @@
-# Residual Task 2 Report: Canonical Event Ownership And Fixtures
+# W5.5 Task 2 Report
 
 ## Status
 
-Completed and committed as `4fdefe14d Canonicalize W5 event names`.
+Implemented atomic check-output externalization on `codex/w5-artifact-output`.
+The durable Task 2 queue checkbox remains unchecked for controller review; all
+Task 2 plan step checkboxes are checked.
 
-## RED Evidence
+## Files changed
+
+- Canonical contracts and readers: `src/orchestrator/graph/models.py`,
+  `src/orchestrator/graph/projections.py`,
+  `src/orchestrator/api/routers/runs.py`.
+- Producer and composition: `src/orchestrator/graph_runtime/dispatch.py`,
+  `src/orchestrator/graph_runtime/__init__.py`,
+  `src/orchestrator/workflow/graph_driver.py`.
+- New producer/failure integration coverage:
+  `tests/integration/test_check_output_artifacts.py`.
+- Existing model, projection, dispatch, driver, callback, fixture, and E2E tests
+  were migrated to canonical `stdout_tail`/`stderr_tail` fields and explicit
+  artifact-store injection.
+- Tracking: `docs/superpowers/plans/2026-07-15-w5-artifact-output.md` and
+  `docs/dynamic-graph/w5-progress-ledger.md`.
+
+## RED evidence
 
 Command:
 
-```bash
-uv run pytest tests/unit/test_graph_event_registry.py -q
-```
-
-Result: collection failed as intended because `CANONICAL_EVENT_TYPES` was not
-yet exported from `orchestrator.graph`.
-
 ```text
-ImportError: cannot import name 'CANONICAL_EVENT_TYPES' from 'orchestrator.graph'
+uv run pytest tests/unit/test_graph_models.py -k check_output_artifact tests/integration/test_check_output_artifacts.py -q
 ```
 
-## GREEN Evidence
+Exact result: `1 failed, 1 error in 2.70s`.
 
-Focused ownership, fixture, projection, and patch-validation checks:
+- The model test failed with six validation errors: existing `stdout` and
+  `stderr` were required, while `stdout_tail`, `stdout_ref`, `stderr_tail`, and
+  `stderr_ref` were forbidden extras.
+- Integration collection errored with
+  `ImportError: cannot import name 'CHECK_OUTPUT_TAIL_CHARS' from 'orchestrator.graph_runtime'`.
+- This was the expected missing canonical fields, externalization API, and
+  artifact-store dispatch integration—not a test typo or setup failure.
 
-```bash
-uv run pytest tests/unit/test_graph_event_registry.py \
-  tests/unit/test_fixture_corpus.py \
-  tests/unit/test_graph_projections.py \
-  tests/unit/test_patch_validator.py -q
-```
+## GREEN evidence
 
-Result: `189 passed`.
+- Required focused command:
+  `249 passed in 19.23s`.
+- Full suite:
+  `4792 passed, 3 skipped, 3 warnings in 102.45s`; warnings are the existing
+  Python 3.12 aiosqlite datetime-adapter deprecations.
+- `uv run ruff check .`: `All checks passed!`
+- `uv run pyright`: `0 errors, 0 warnings, 0 informations` plus the tool's
+  available-version notice.
+- `uv run ruff format --check .`: `708 files already formatted`.
+- `git diff --check`: exit 0 with no output.
+- Commit hooks on the implementation commit passed Ruff, Ruff format, secret
+  detection, Pyright, pytest, module imports, signal routing, UI lint, and UI
+  typecheck; enum drift had no applicable files.
 
-Expanded directly affected coverage after removing alias expectations:
+## Ordering and failure evidence
 
-```bash
-uv run pytest tests/unit/test_graph_event_registry.py \
-  tests/unit/test_fixture_corpus.py \
-  tests/unit/test_graph_projections.py \
-  tests/unit/test_patch_validator.py \
-  tests/unit/test_patch_event_payloads.py \
-  tests/unit/test_graph_driver_logic.py \
-  tests/unit/test_requirement_evidence_event_payloads.py \
-  tests/unit/test_node_lifecycle_event_payloads.py \
-  tests/unit/test_graph_planner_packet.py \
-  tests/unit/test_graph_api_projection.py \
-  tests/integration/test_graph_read_models.py -q
-```
+- Sub-threshold stdout/stderr remain complete in tails and create no artifact
+  root or reference.
+- Over-threshold tests execute real shell checks producing 17,000 bytes on each
+  stream. The real temporary `FilesystemArtifactStore` reads back every byte,
+  while durable callback events expose 4,000-character tails and typed refs.
+- A real filesystem failure (store root occupied by a file) occurs before the
+  callback and leaves no accepted callback/check-result event.
+- An integration store writes through to the real filesystem CAS and then uses
+  a real SQLite trigger to reject event insertion. The callback append fails,
+  but the resulting orphan remains readable and integrity checked.
+- Externalization runs before `_submit_check_result`; stdout is written before
+  stderr, and any failed write prevents event append. Append failures do not
+  remove already durable blobs.
 
-Result: `260 passed`.
+## Self-review
 
-Commit hooks also passed Ruff, formatting, secret detection, Pyright, the full
-pytest hook, module-import enforcement, signal routing, UI lint, and UI
-typecheck.
+- Confirmed canonical `CheckResultValue` removes `stdout` and `stderr`, forbids
+  them as extras, and enforces `*_truncated == (*_ref is not None)`.
+- Confirmed byte threshold is exactly 16,384 UTF-8 bytes and tails are exactly
+  the final 4,000 Unicode characters.
+- Confirmed reducers, projections, blockers, activity summaries, command
+  handlers, and prompt paths receive no store and perform no hydration.
+- Confirmed production `GraphRunDriver` resolves the main git worktree and
+  injects a side-effect-free store rooted at its `.orchestrator/artifacts`, not
+  at the run worktree.
+- Searched graph and graph-runtime production code for old quoted `stdout` and
+  `stderr` canonical keys; none remain.
+- Reviewed the complete diff and found no compatibility aliases or unrelated
+  behavior additions.
 
-## Changed Files
+## Commits
 
-- Added `src/orchestrator/graph/event_registry.py` with producer-derived
-  canonical ownership, explicit `lease_suspended` external ingress, and the
-  incremental payload-model mapping.
-- Exported registry symbols through `src/orchestrator/graph/__init__.py`.
-- Removed replay-only alias consumers from projections, planner prompts, and
-  patch validation; environment failures now derive from check-result records.
-- Canonicalized graph fixtures and updated affected unit/integration coverage
-  to use check-result, requirement-revision, and produced suspect/patch events.
-- Added the ownership/fixture guard and recorded evidence in the W5 ledger.
-
-## Self-Review
-
-- Confirmed all specified removed event names have no graph consumer path.
-- Confirmed every graph fixture event name is a subset of
-  `CANONICAL_EVENT_TYPES`.
-- Kept `lease_suspended` as the only external canonical event and retained its
-  existing projection/presenter consumers.
-- Verified `EVENT_PAYLOAD_MODELS` remains deliberately incomplete, per staged
-  payload-task scope.
-- Ran `git diff --check`; it passed before commit.
+- `0c8b26a1b` — `Externalize large check output artifacts`
+- Ledger/report tracking commit: recorded after creation; see final response.
 
 ## Concerns
 
-No implementation concerns. The pre-existing, user-owned
-`.superpowers/sdd/progress.md` modification was deliberately left uncommitted.
-The expensive Batch 1 verifier gates were not independently invoked; commit
-hooks supplied the required repository checks.
-
-## Review Fixes (Needs-Fixes Follow-up)
-
-Committed as `2d8bde199 Enforce canonical event ownership`.
-
-- Replaced the uncoupled event-name set with immutable producer metadata.
-  `CANONICAL_EVENT_TYPES` derives from that metadata, command-factory and
-  runtime-controller emission paths validate their declared producer ownership,
-  and scenario command events use their explicit harness producer declaration.
-- Added ownership tests for unregistered emission, stale registry entries,
-  canonical omissions, and removed names with no producer owner.
-- Removed the stale `region_marked_suspect`, `authority_narrowed`, and
-  `candidate_superseded` ownership/invalidation entries. The only retained
-  suspect event is `plan_region_marked_suspect`.
-- Restored authority revision resolution through granted
-  `authority_decision_recorded` events. The reducer now obtains the matching
-  revision identifier from canonical decision scope (`revision_id`,
-  `requirement_version_id`, or `version_id`) or `record_id`, and clears the
-  blocker in both full-history and checkpoint-tail replay.
-
-### Follow-up RED/GREEN Evidence
-
-RED initially exposed the absent producer-metadata public API and showed that a
-canonical authority decision did not clear a requirement revision blocker.
-
-GREEN:
-
-```bash
-uv run pytest tests/unit/test_graph_event_registry.py \
-  tests/unit/test_patch_validator.py \
-  tests/unit/test_requirement_evidence_event_payloads.py \
-  tests/unit/test_graph_projections.py \
-  tests/unit/test_fixture_corpus.py -q
-```
-
-Result: `201 passed`.
-
-```bash
-uv run ruff check src/orchestrator/graph/event_registry.py \
-  src/orchestrator/graph/__init__.py src/orchestrator/graph/_commands.py \
-  src/orchestrator/graph/patch_validator.py src/orchestrator/graph/projections.py \
-  src/orchestrator/graph/scenario.py src/orchestrator/graph_runtime/controller.py \
-  tests/unit/test_graph_event_registry.py \
-  tests/unit/test_requirement_evidence_event_payloads.py
-```
-
-Result: passed.
-
-## Final Retired Event Tombstone Fix
-
-Committed as the follow-up retired-event tombstone fix.
-
-The immutable `RETIRED_EVENT_TYPES` tombstone now contains exactly
-`region_marked_suspect`, `authority_narrowed`, and `candidate_superseded`.
-Ownership validation rejects any producer declaration or canonical set that
-overlaps the tombstones, and validates the current immutable declaration during
-module initialization. The tombstone is exported through `orchestrator.graph`
-for direct invariant tests.
-
-RED:
-
-```bash
-uv run pytest tests/unit/test_graph_event_registry.py tests/unit/test_patch_validator.py -q
-```
-
-Result: collection failed because `RETIRED_EVENT_TYPES` was not exported.
-
-GREEN:
-
-```bash
-uv run pytest tests/unit/test_graph_event_registry.py tests/unit/test_patch_validator.py -q
-```
-
-Result: `63 passed`.
-
-Relevant Ruff:
-
-```bash
-uv run ruff check src/orchestrator/graph/event_registry.py \
-  src/orchestrator/graph/__init__.py tests/unit/test_graph_event_registry.py
-uv run ruff format --check src/orchestrator/graph/event_registry.py \
-  src/orchestrator/graph/__init__.py tests/unit/test_graph_event_registry.py
-```
-
-Result: both passed; all three files were already formatted.
+None. Task 3 remains responsible for explicit bounded hydration and artifact
+read APIs; Task 2 intentionally leaves reducers and ordinary prompts tail-only.

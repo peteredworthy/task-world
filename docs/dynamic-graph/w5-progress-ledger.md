@@ -891,3 +891,42 @@ Review Fix evidence:
 - Deferred review observations were confirmed as out of Task 1 scope: production
   root composition and event/hydration/GC integration belong to later tasks;
   the pre-existing `StoredArtifactRef` invariant is established by W5.
+
+### Task 2: Atomic Check-Output Externalization
+
+Status: implementation complete; durable Task 2 queue checkbox intentionally
+remains unchecked for controller review.
+
+RED evidence:
+- `uv run pytest tests/unit/test_graph_models.py -k check_output_artifact tests/integration/test_check_output_artifacts.py -q`
+  - Result: 1 failed and collection had 1 error, as expected. The model rejected
+    `stdout_tail`, `stdout_ref`, `stderr_tail`, and `stderr_ref` while requiring
+    removed `stdout`/`stderr`; integration collection failed because
+    `CHECK_OUTPUT_TAIL_CHARS` and artifact-store dispatch injection did not exist.
+
+GREEN evidence:
+- `uv run pytest tests/unit/test_graph_models.py tests/unit/test_graph_projections.py tests/integration/test_check_output_artifacts.py tests/integration/test_graph_runner_e2e.py -q`
+  - Result: 249 passed in 19.23s.
+- `uv run pytest tests/ -q -n auto --dist worksteal`
+  - Result: 4,792 passed, 3 skipped, and 3 existing warnings in 102.45s.
+- `uv run ruff check .`
+  - Result: all checks passed.
+- `uv run pyright`
+  - Result: 0 errors, 0 warnings, 0 informations (with only the available-update notice).
+- `uv run ruff format --check .`
+  - Result: all 708 files already formatted.
+- `git diff --check`
+  - Result: passed, no output.
+
+Ordering and failure evidence:
+- Real callback/event-path integration tests prove over-threshold stdout and
+  stderr blobs contain all 17,000 bytes before accepted events expose their
+  references, while event values contain only 4,000-character tails.
+- A real filesystem write failure leaves no accepted callback or check-result
+  event. A real SQLite append failure after the write leaves a hash-verified,
+  readable orphan in the temporary filesystem store.
+- Reducers, projections, blockers, activity summaries, and prompts remain
+  store-free and consume only canonical tails; production composition resolves
+  the main git worktree before constructing `.orchestrator/artifacts`.
+
+Implementation commit: `0c8b26a1b` (`Externalize large check output artifacts`).
