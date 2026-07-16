@@ -124,6 +124,14 @@ allowlist tuples from those sets. Do not retain every model field in every read
 mode. Named legacy exceptions remain possible, but tests must prove each
 exception is necessary and reject stale exceptions.
 
+Task 5 also adds the strict `StoredArtifactRef` identity model specified in
+`docs/superpowers/specs/2026-07-15-w5-artifact-output-design.md`. It does not
+change current check-output fields or add artifact persistence. Global generated
+retention tuples keep the SQL layer simple but do not solve complete nested
+`value` read amplification. That operational limitation and the existing
+20,000-character check-output truncation are explicitly deferred to W5.5, where
+producer externalization and the tail/reference record cutover land atomically.
+
 Focused test files cover output/verification records, input binding/revision
 routing, file-state/gatekeeper behavior, canonical fixture replay, strict
 malformed-input rejection, cost-field retention, event producer/consumer name
@@ -212,6 +220,8 @@ Batch 1 acceptance includes:
 - Static assertions that removed compatibility bases, replay models, fallback
   helpers, and dict-compatible facades no longer exist.
 - Projection and all-four-allowlist equality tests.
+- Strict `StoredArtifactRef` identity, hash, size, media type, encoding, and URI
+  validation tests; no artifact-store I/O in W5.
 - Relevant graph read-model and event-store integration tests.
 - One parallelized full graph selection.
 - Ruff and scoped Pyright across graph and graph runtime.
