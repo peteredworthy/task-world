@@ -5,7 +5,7 @@ from typing import Any, TypeVar
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from orchestrator.graph import StoredArtifactRef
+from orchestrator.graph import GradeRow, StoredArtifactRef
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
@@ -62,6 +62,7 @@ from orchestrator.graph.models import (
     RunLifecycleState,
     RunModel,
     VerificationReportRecord,
+    VerificationReportValue,
     VerifierVerdictProjection,
 )
 
@@ -115,6 +116,30 @@ def test_stored_artifact_ref_rejects_noncanonical_identity(update: dict[str, Any
     payload.update(update)
     with pytest.raises(ValidationError):
         StoredArtifactRef.model_validate(payload)
+
+
+def test_grade_row_is_strict_and_complete() -> None:
+    row = GradeRow.model_validate({"requirement_id": "R1", "grade": "pass", "reason": "covered"})
+    assert row.grade == "pass"
+    with pytest.raises(ValidationError):
+        GradeRow.model_validate({"requirement_id": "R1"})
+    with pytest.raises(ValidationError):
+        GradeRow.model_validate({"requirement_id": "R1", "grade": "pass", "legacy": True})
+
+
+def test_grade_row_allows_partial_reason_and_unknown_grade() -> None:
+    report = VerificationReportValue.model_validate(
+        {
+            "outcome": "passed",
+            "grades": [
+                {"requirement_id": "R1", "grade": "partial"},
+                {"requirement_id": "R2", "grade": "future-grade"},
+            ],
+        }
+    )
+
+    assert report.grades[0].reason is None
+    assert report.grades[1].grade == "future-grade"
 
 
 def test_run_model_round_trips() -> None:
