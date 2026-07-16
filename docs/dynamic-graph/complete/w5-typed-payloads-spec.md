@@ -1,5 +1,7 @@
 # W5 — Typed event payloads end-to-end (incremental)
 
+Status: **closed 2026-07-16**.
+
 Addresses weakness **W5** (medium) and improvement **#6** in
 `dynamic-graph-implementation-review.html` (re-assessed 2026-07-03).
 
@@ -70,3 +72,24 @@ uv run pytest tests/unit/test_graph_models.py tests/unit/test_graph_projections.
 ```
 
 All pass, plus R3 tolerance test and the R4 type-check gate.
+
+## Closure
+
+The incremental slices expanded through the complete current graph boundary.
+All 46 canonical events now have exact strict payload models and explicit
+four-mode retention specs; all current producers validate and JSON-dump their
+envelopes. The command boundary has exactly 23 strict typed payloads and exact
+typed handlers. Record, file-state, gatekeeper, API-schema, projection, and
+verification-grade requirements are complete, and obsolete compatibility
+models, aliases, adapters, and graph before validators are deleted.
+
+Final verification at source head `bafeb650d27884ae5584f1fb4b4378780b4f587f`
+passed 4,756 backend tests with 3 skipped, Ruff, final scoped Pyright with zero
+errors, and `git diff --check`. Detailed evidence and metrics are recorded in
+`../w5-progress-ledger.md`.
+
+This closure is limited to W5 strict typing. W5.5 durable check-output artifacts
+remain pending: stdout/stderr storage, reference-field cutover, bounded
+hydration, garbage collection, and replacement/recovery of the current
+20,000-character truncation are not implemented or claimed here. Their design
+and implementation plan remain in `docs/superpowers/`.

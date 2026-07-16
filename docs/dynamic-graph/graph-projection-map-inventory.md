@@ -79,9 +79,9 @@ public JSON, or intentionally flexible.
 
 | Location | Classification | Decision | Rationale |
 |---|---|---|---|
-| `TypedRecordBase.payload`, `TypedRecordBase.provenance` | direct copied event payload | Intentionally raw | Forward-compatible event/record envelope metadata. |
-| `EventEnvelope.payload` | direct copied event payload | Intentionally raw | Central event envelope dispatches heterogeneous event payloads. Discriminated event payload models would be a larger API-boundary project. |
-| `OutputRecord.value`, `LegacyOutputRecord.value`, generic output payload helpers | direct copied event payload | Intentionally raw | Generic and legacy outputs must preserve arbitrary record values. |
+| `TypedRecordBase.payload`, `TypedRecordBase.provenance` | direct copied record metadata | Intentionally raw | Heterogeneous record metadata remains JSON, while each accepted record envelope is selected by its required canonical discriminator and validated by its strict model. |
+| `EventEnvelope.payload` | heterogeneous transport envelope | Raw only at storage/transport boundary | Every one of the 46 canonical event names maps to an exact strict payload model and retention spec. Current producers validate and JSON-dump before constructing the envelope; reducers parse through the registered model before typed consumption. |
+| Typed output-record `value` fields | schema-owned record value | Typed by record discriminator | The explicit 21-entry `OUTPUT_RECORD_MODELS_BY_TYPE` map rejects missing/unknown discriminators and validates each complete record. No generic or legacy output fallback remains. |
 | `ResourceClaimProjection` | already sufficiently constrained by Pydantic | Converted | Projection-state claim shape that normalizes legacy `path` claims while preserving scheduler-invalid but structurally valid claims for scheduler readiness decisions. |
 | `ResourceClaim` | already sufficiently constrained by Pydantic | Keep strict | Command/patch model claim shape; external claims still require `external_resource_key`. |
 | `LeaseProjection.resource_claims` | derived structural state | Converted | Now `list[ResourceClaimProjection]`; scheduler command output still serializes claims as JSON dicts. |
@@ -125,3 +125,22 @@ Converted or hardened in this pass:
 Intentionally raw maps remain only where the payload is an external/public
 JSON shape, a direct heterogeneous event payload, or a broad metadata bag whose
 schema is owned by another validator layer.
+
+## W5 Closeout
+
+The final W5 audit confirms:
+
+- All 46 canonical events have exact strict models and explicit projection,
+  light, summary-rebuild, and node-detail retention specs.
+- The four generated sorted unique allowlists contain 101, 141, 159, and 84
+  fields. No retained field is unowned by its model and no `extra` field is
+  generated.
+- `GraphProjection` outer identifier indexes remain maps by design; structured
+  values and record envelopes are typed as documented above. Compatibility
+  mapping facades and generic output-record fallbacks are deleted.
+- `GradeRow` is strict and `VerificationReportValue.grades` is typed.
+
+W5.5 is not part of this closure. Check stdout/stderr still use current inline
+complete-value retention and 20,000-character truncation. Durable artifact
+storage, reference cutover, hydration, garbage collection, and truncation
+recovery remain pending in the separate W5.5 design and implementation plan.

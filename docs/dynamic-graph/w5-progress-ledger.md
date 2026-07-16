@@ -674,3 +674,89 @@ Grade rows and artifact boundary:
   store, persistence, hydration, garbage collection, reference cutover, or
   `stdout`/`stderr` cutover. Existing `StoredArtifactRef` remains an exported
   identity model only; artifact implementation remains deferred.
+
+## Final W5 Closeout (2026-07-16)
+
+Status: **complete**.
+
+Verified source head:
+- `bafeb650d27884ae5584f1fb4b4378780b4f587f` (`Correct event payload implementation docs`).
+
+Completion criteria:
+- Canonical event ownership: 46 canonical names, 45 internally producer-owned
+  and strict `lease_suspended` as the sole external-ingress event.
+- Exact event coverage: `CANONICAL_EVENT_TYPES`, `EVENT_PAYLOAD_MODELS`, and
+  `EVENT_PAYLOAD_SPECS` each contain the same 46 names. All 46 models reject
+  unknown top-level fields; the two flat root envelopes delegate this invariant
+  to their strict canonical record roots.
+- Compatibility removal: obsolete event aliases, generic/legacy record paths,
+  projection mapping facades, selector normalization, payload `extra`, and graph
+  before validators are absent from production source.
+- Record envelopes: the explicit 21-entry `OUTPUT_RECORD_MODELS_BY_TYPE` map
+  validates complete canonical records and rejects missing/unknown
+  discriminators. File-state accepted/rejected envelopes and nested gatekeeper
+  verdict/cost rows are strict.
+- Generated retention: projection/light/summary/node-detail allowlists are
+  sorted, unique, model-owned, and contain 101/141/159/84 fields.
+- Commands: all 23 `COMMAND_SPECS` payloads inherit strict validation, and all
+  23 handlers accept their exact registered payload model.
+- API reuse: decision and patch HTTP schemas reuse command-domain fields while
+  retaining HTTP-only constraints and server-owned context.
+- Grade rows: `GradeRow` is strict and exported; verification report grades are
+  typed.
+- Fresh Batch 1 and Batch 2 verifier evidence remains recorded above. The final
+  closeout independently reran focused and full gates at the corrected head.
+
+Static compatibility evidence:
+
+```bash
+rg -n 'mode="before"|mode='"'"'before'"'"'|LegacyOutputRecord|_DictCompatibleProjection|payload\.extra' src/orchestrator/graph
+```
+
+Result: no matches.
+
+```bash
+rg -n 'environment_failure_accepted|check_result_classified|proposal_opened|requirement_amended|support_edge_recorded|node_suspect_resolved|node_suspect_cleared' src tests
+```
+
+Result: no matches under `src`. Matches under
+`tests/unit/test_graph_event_registry.py` are negative-test data proving removed
+names are not canonical or producer-owned. The
+`tests/fixtures/graph/node_lifecycle_check.yaml` occurrence of
+`environment_failure_accepted` is a current diagnostic `trigger` inside
+canonical `node_state_changed`, not an event type or compatibility consumer.
+
+The broader deleted-symbol search also returned no matches under `src` for
+`GraphEventPayloadBase.extra`, `LeaseEventPayloadBase`,
+`LifecycleEventPayloadBase`, `LegacyOutputRecord`, `GraphPatchStatusPayload`,
+`RequirementAuthorityResolutionPayload`, `_DictCompatibleProjection`,
+`_legacy_output_record_payload`, `_generic_output_record_payload`,
+`_legacy_requirement_evidence_blockers`, `_LEGACY_SELECTOR_KIND_MAP`,
+`_normalize_legacy_selector`, or `normalize_legacy_membership`.
+
+Final commands, counts, and timings:
+
+| Command | Result | Timing |
+|---|---|---:|
+| `uv run pytest tests/unit/test_graph_event_registry.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_runtime_event_payloads.py tests/unit/test_lifecycle_command_payloads.py tests/unit/test_scheduling_command_payloads.py tests/unit/test_callback_patch_command_payloads.py tests/unit/test_decision_record_command_payloads.py tests/integration/test_graph_api.py tests/integration/test_graph_decisions_api.py -q -n auto --dist worksteal` | 145 passed in 4.86s | 6.46s real |
+| `uv run pytest tests/ -q -n auto --dist worksteal` | 4,756 passed, 3 skipped, 3 warnings in 105.28s | 110.08s real |
+| `uv run ruff check .` | all checks passed | 0.11s real |
+| `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime src/orchestrator/api src/orchestrator/workflow tests/unit tests/integration` | 0 errors, 0 warnings, 0 informations | 6.47s real |
+| `git diff --check` | passed, no output | 0.01s real |
+
+Final metrics recomputed from current source:
+
+| Metric | Baseline | Final | Delta |
+|---|---:|---:|---:|
+| `isinstance(` in `_commands.py` and `projections.py` | 603 | 465 | -138 |
+| `dict[str, Any]` in `projections.py` | 174 | 136 | -38 |
+| Direct `event.payload.get(` diagnostic | n/a | 28 | n/a |
+| Total `payload.get(` diagnostic | n/a | 89 | n/a |
+| Graph `mode="before"` diagnostic | n/a | 0 | n/a |
+
+W5.5 deferral remains explicit and atomic. This closure does not claim durable
+stdout/stderr artifact persistence, reference-field cutover, bounded hydration,
+garbage collection, event-aware artifact SQL, or recovery of content beyond the
+current 20,000-character truncation. Those remain pending in
+`docs/superpowers/specs/2026-07-15-w5-artifact-output-design.md` and
+`docs/superpowers/plans/2026-07-15-w5-artifact-output.md`.
