@@ -97,3 +97,26 @@ Exact result: `1 failed, 1 error in 2.70s`.
 
 None. Task 3 remains responsible for explicit bounded hydration and artifact
 read APIs; Task 2 intentionally leaves reducers and ordinary prompts tail-only.
+
+## Boundary Coverage Review Fix
+
+- Added real producer-path regressions proving exactly 16,384 UTF-8 bytes stay
+  inline without creating a blob/reference, while 16,385 bytes produce a typed
+  reference whose real temporary filesystem blob contains the complete output.
+- Added a 16,385-byte multibyte case (`16,381` ASCII characters plus one
+  four-byte emoji) proving thresholding uses UTF-8 bytes while the retained tail
+  is the final 4,000 Unicode characters (`3,999` ASCII characters plus the
+  emoji), not the final 4,000 bytes.
+- `uv run pytest tests/integration/test_check_output_artifacts.py -q`
+  - Result: `7 passed in 4.68s`.
+- `uv run pytest tests/integration/test_check_output_artifacts.py tests/unit/test_graph_models.py -k 'check_output_artifact or test_exact_byte_threshold or test_one_byte_above_threshold or test_multibyte_output' -q`
+  - Result: `8 passed in 4.82s`.
+- `uv run ruff check tests/integration/test_check_output_artifacts.py tests/unit/test_graph_models.py`
+  - Result: `All checks passed!`.
+- `uv run pyright tests/integration/test_check_output_artifacts.py tests/unit/test_graph_models.py`
+  - Result: `0 errors, 0 warnings, 0 informations` (plus the available-version notice).
+- `uv run ruff format --check tests/integration/test_check_output_artifacts.py tests/unit/test_graph_models.py`
+  - Result: `2 files already formatted`.
+- `git diff --check`
+  - Result: passed with no output.
+- Review-fix commit: `ae3b35f60` (`Cover check output artifact boundaries`).

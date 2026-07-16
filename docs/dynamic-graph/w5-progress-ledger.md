@@ -930,3 +930,12 @@ Ordering and failure evidence:
   the main git worktree before constructing `.orchestrator/artifacts`.
 
 Implementation commit: `0c8b26a1b` (`Externalize large check output artifacts`).
+
+Boundary Coverage Review Fix:
+- Added real producer/store regressions for inclusive 16,384-byte inline output,
+  16,385-byte externalization with complete blob recovery, and a 16,385-byte
+  multibyte output whose tail is the final 4,000 Unicode characters.
+- Focused verification: 8 passed; Ruff and Pyright passed, both files were
+  formatted, and `git diff --check` passed.
+- Review-fix commit: `ae3b35f60` (`Cover check output artifact boundaries`).
+- Durable Task 2 queue checkbox remains unchecked for controller review.
