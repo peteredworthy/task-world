@@ -15,6 +15,7 @@
 - Event payloads and typed records use `ConfigDict(extra="forbid")`; command payloads use `ConfigDict(extra="forbid", strict=True)`. Event enum strings remain valid canonical JSON, while numeric and boolean event fields use strict field types where coercion would hide malformed input.
 - Do not add top-level `extra: dict[str, Any]`, malformed-value quarantine, replay-only aliases, or generic record fallbacks.
 - Dynamic patch operations, macro arguments, command definitions, diagnostics/read-set diffs, edge policy metadata, decision scope/decider data, and typed-record payload/provenance remain dynamic only inside named fields.
+- W5 Task 5 defines `StoredArtifactRef` but does not alter check-output fields or persist artifacts; the atomic tail/reference cutover belongs to the separate W5.5 plan.
 - Every retained event type must have a current producer or an explicit current external-ingress designation.
 - `lease_suspended` is the only designated external event because current stale-callback and worker scenarios consume it; suspect resolution/clearing and proposal-opening aliases are deleted.
 - Builders run focused tests and corpus replay while iterating. A fresh verifier alone runs the expensive graph, Ruff, and Pyright gates at each batch boundary.
@@ -573,21 +574,92 @@ git add src/orchestrator/graph tests/unit/test_output_record_event_payloads.py \
 git commit -m "Type remaining canonical graph events"
 ```
 
-### Task 5: Generate All Four Retention Allowlists
+### Task 5: Define Durable Artifact Identity And Generate Retention Allowlists
 
 **Files:**
 - Create: `src/orchestrator/graph/payload_registry.py`
+- Modify: `src/orchestrator/graph/models.py`
 - Modify: `src/orchestrator/graph/event_registry.py`
 - Modify: `src/orchestrator/graph/projections.py`
 - Modify: `src/orchestrator/graph/__init__.py`
 - Modify: `src/orchestrator/graph_runtime/store.py`
+- Modify: `tests/unit/test_graph_models.py`
 - Modify: `tests/unit/test_graph_payload_field_allowlists.py`
 
 **Interfaces:**
 - Produces: `GRAPH_PROJECTION_PAYLOAD_FIELDS`, `LIGHT_GRAPH_PAYLOAD_FIELDS`, `SUMMARY_REBUILD_PAYLOAD_FIELDS`, and `NODE_DETAIL_PAYLOAD_FIELDS` generated from immutable specs.
+- Produces: strict `StoredArtifactRef` durable blob identity for the separate W5.5 producer/storage cutover.
 - Consumes: complete `EVENT_PAYLOAD_MODELS` from Tasks 2-4.
 
-- [ ] **Step 1: Add exact-equality RED tests**
+- [ ] **Step 1: Add `StoredArtifactRef` RED tests**
+
+Add to `tests/unit/test_graph_models.py`:
+
+```python
+def test_stored_artifact_ref_is_strict_and_portable() -> None:
+    ref = StoredArtifactRef.model_validate(
+        {
+            "artifact_id": "check-output-1",
+            "content_hash": f"sha256:{'a' * 64}",
+            "size_bytes": 1_048_576,
+            "media_type": "text/plain",
+            "encoding": "utf-8",
+            "storage_uri": f"artifact://sha256/{'a' * 64}",
+        }
+    )
+    assert ref.size_bytes == 1_048_576
+    assert ref.storage_uri.startswith("artifact://sha256/")
+
+
+@pytest.mark.parametrize(
+    "update",
+    [
+        {"content_hash": "sha256:../escape"},
+        {"content_hash": "md5:" + "a" * 32},
+        {"size_bytes": -1},
+        {"size_bytes": "12"},
+        {"storage_uri": "file:///tmp/output"},
+        {"unknown": True},
+    ],
+)
+def test_stored_artifact_ref_rejects_noncanonical_identity(update: dict[str, Any]) -> None:
+    payload = {
+        "artifact_id": "check-output-1",
+        "content_hash": f"sha256:{'a' * 64}",
+        "size_bytes": 12,
+        "media_type": "text/plain",
+        "encoding": "utf-8",
+        "storage_uri": f"artifact://sha256/{'a' * 64}",
+    }
+    payload.update(update)
+    with pytest.raises(ValidationError):
+        StoredArtifactRef.model_validate(payload)
+```
+
+Run: `uv run pytest tests/unit/test_graph_models.py -k stored_artifact_ref -q`
+
+Expected: import/name failure for `StoredArtifactRef`.
+
+- [ ] **Step 2: Implement and export durable artifact identity**
+
+Add beside other strict nested record values:
+
+```python
+class StoredArtifactRef(StrictNestedModel):
+    artifact_id: str
+    content_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    size_bytes: StrictInt = Field(ge=0)
+    media_type: str
+    encoding: str | None = None
+    storage_uri: str = Field(pattern=r"^artifact://sha256/[0-9a-f]{64}$")
+```
+
+Export it through `orchestrator.graph`. Do not add it to `CheckResultValue`,
+change `stdout`/`stderr`, write artifact files, add hydration, or alter SQL
+serialization. Those changes must land atomically under
+`docs/superpowers/plans/2026-07-15-w5-artifact-output.md`.
+
+- [ ] **Step 3: Add exact-equality retention RED tests**
 
 Add:
 
@@ -615,13 +687,13 @@ def test_generated_fields_are_sorted_unique_and_strict() -> None:
         assert "extra" not in fields
 ```
 
-- [ ] **Step 2: Run RED**
+- [ ] **Step 4: Run retention RED**
 
 Run: `uv run pytest tests/unit/test_graph_payload_field_allowlists.py -q`
 
 Expected: import failure for `generated_payload_fields`.
 
-- [ ] **Step 3: Implement declarative retention**
+- [ ] **Step 5: Implement declarative retention**
 
 Create:
 
@@ -652,14 +724,19 @@ def generated_payload_fields(mode: RetentionMode) -> tuple[str, ...]:
 
 Build `EVENT_PAYLOAD_SPECS` for every canonical event model. Each retained set must be explicit and a subset of the model's serialized fields, except named envelope columns extracted outside payload JSON. Preserve SQLite JSON boolean conversion and nested `value` extraction because they support current canonical payloads.
 
-- [ ] **Step 4: Replace handwritten tuples and keep the AST guard**
+Generated mode-wide tuples deliberately preserve the current complete `value`
+behavior. Record this as a W5.5 operational limitation; do not introduce
+event-aware SQL or silently remove large values in this task.
+
+- [ ] **Step 6: Replace handwritten tuples and keep the AST guard**
 
 Import generated constants into `projections.py` and `graph_runtime/store.py`. Keep the AST test as an independent reducer-read guard, but delete stale `_EXCLUDED_KEYS` entries made unreachable by typed attribute access.
 
-- [ ] **Step 5: Run retention and read-model tests**
+- [ ] **Step 7: Run retention and read-model tests**
 
 ```bash
 uv run pytest tests/unit/test_graph_payload_field_allowlists.py \
+  tests/unit/test_graph_models.py \
   tests/unit/test_fixture_corpus.py \
   tests/integration/test_graph_read_models.py \
   tests/integration/test_graph_event_store.py \
@@ -668,13 +745,15 @@ uv run pytest tests/unit/test_graph_payload_field_allowlists.py \
 
 Expected: all pass and compact/full projection results are equal.
 
-- [ ] **Step 6: Commit generated retention**
+- [ ] **Step 8: Commit artifact identity and generated retention**
 
 ```bash
 git add src/orchestrator/graph/payload_registry.py src/orchestrator/graph/event_registry.py \
+  src/orchestrator/graph/models.py \
   src/orchestrator/graph/projections.py src/orchestrator/graph/__init__.py \
-  src/orchestrator/graph_runtime/store.py tests/unit/test_graph_payload_field_allowlists.py
-git commit -m "Generate graph payload retention allowlists"
+  src/orchestrator/graph_runtime/store.py tests/unit/test_graph_models.py \
+  tests/unit/test_graph_payload_field_allowlists.py
+git commit -m "Define artifact identity and generate payload retention"
 ```
 
 ### Task 6: Batch 1 Verification Gate
