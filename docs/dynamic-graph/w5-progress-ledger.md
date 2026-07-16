@@ -838,7 +838,7 @@ Execution identity:
 
 Durable task queue:
 - [x] Task 1: filesystem artifact store.
-- [ ] Task 2: atomic check-output externalization.
+- [x] Task 2: atomic check-output externalization.
 - [ ] Task 3: explicit prompt and API hydration.
 - [ ] Task 4: mark-and-sweep garbage collection.
 - [ ] Task 5: final artifact verification and closeout.
@@ -894,8 +894,7 @@ Review Fix evidence:
 
 ### Task 2: Atomic Check-Output Externalization
 
-Status: implementation complete; durable Task 2 queue checkbox intentionally
-remains unchecked for controller review.
+Status: complete; independent task review and fresh verifier gate passed.
 
 RED evidence:
 - `uv run pytest tests/unit/test_graph_models.py -k check_output_artifact tests/integration/test_check_output_artifacts.py -q`
@@ -929,7 +928,9 @@ Ordering and failure evidence:
   store-free and consume only canonical tails; production composition resolves
   the main git worktree before constructing `.orchestrator/artifacts`.
 
-Implementation commit: `0c8b26a1b` (`Externalize large check output artifacts`).
+Implementation commits:
+- `0c8b26a1b` (`Externalize large check output artifacts`).
+- `2193185f0` (`Record check output artifact evidence`).
 
 Boundary Coverage Review Fix:
 - Added real producer/store regressions for inclusive 16,384-byte inline output,
@@ -938,4 +939,20 @@ Boundary Coverage Review Fix:
 - Focused verification: 8 passed; Ruff and Pyright passed, both files were
   formatted, and `git diff --check` passed.
 - Review-fix commit: `ae3b35f60` (`Cover check output artifact boundaries`).
-- Durable Task 2 queue checkbox remains unchecked for controller review.
+- Evidence commit: `a80131c40` (`Record check output boundary coverage`).
+
+Independent review:
+- Complete range: `120c300f3..a80131c40`.
+- Result after review fix: no Critical, Important, or Minor findings;
+  `Spec compliance: PASS` and `Code quality: APPROVED`.
+
+Fresh verifier gate at `a80131c40c1d93252113feb6ee33e3fc247c68b0`:
+- `uv run pytest tests/ -k "graph or artifact" -q -n auto --dist worksteal`
+  - Result: 998 passed in 57.15s.
+- `uv run ruff check .`
+  - Result: passed.
+- `uv run pyright`
+  - Result: 0 errors, 0 warnings, 0 informations.
+- `git diff --check`
+  - Result: passed, no output.
+- Post-verification `git status --short` was clean.
