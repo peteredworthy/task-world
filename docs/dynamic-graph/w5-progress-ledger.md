@@ -956,3 +956,26 @@ Fresh verifier gate at `a80131c40c1d93252113feb6ee33e3fc247c68b0`:
 - `git diff --check`
   - Result: passed, no output.
 - Post-verification `git status --short` was clean.
+
+### Task 3: Explicit Prompt and API Hydration
+
+Implementation evidence (awaiting independent review; durable queue checkbox remains unchecked):
+
+- RED: `uv run pytest tests/unit/test_artifact_prompt_hydration.py tests/integration/test_artifact_api.py -q`
+  failed as intended with 2 failed and 1 collection error: the explicit prompt
+  hydration function was not exported and the artifact endpoint did not exist.
+- GREEN: the same focused command passed 6 tests. The coverage uses a real
+  temporary filesystem CAS, typed check-result references in a real in-memory
+  graph event store, and an auth-enabled ASGI application. It proves JWT
+  enforcement, run-scoped typed-reference authorization, range constraints,
+  complete-blob integrity before slicing, and stable missing/integrity errors.
+- Ordinary prompt packets remove check-output references and retain their tails;
+  explicit hydration accepts an injected store and typed reference, decodes only
+  a caller-bounded excerpt, and does not involve reducers, projections, or
+  commands.
+- API authorization evidence: an authenticated request for the same digest under
+  a different run receives 404 before any blob read; a valid bearer token for the
+  referenced run receives only the requested `206` byte range.
+- Integrity evidence: a referenced deleted blob returns `404 Artifact blob not
+  found`; a referenced tampered blob returns `409 Artifact blob failed integrity
+  verification`. Both outcomes occur before slicing.

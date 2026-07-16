@@ -7,12 +7,23 @@ from hashlib import sha256
 from typing import Annotated, Any, Literal, cast
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query
+from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query, Response
 from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.api.deps import get_graph_store, get_session_factory, get_workflow_service
+from orchestrator.api.deps import (
+    get_artifact_store,
+    get_graph_store,
+    get_session_factory,
+    get_workflow_service,
+)
+from orchestrator.artifacts import (
+    ArtifactIntegrityError,
+    ArtifactNotFoundError,
+    ArtifactStore,
+    StoredArtifactRef,
+)
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import RunStatus
 from orchestrator.db import GraphOutboxModel
@@ -21,6 +32,7 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     GraphCommandContext,
+    CheckResultRecord,
     PatchCommandFields,
     PatchCommandContext,
     RecordSelector,
@@ -61,6 +73,7 @@ GraphIdentifier = Annotated[
     str,
     Field(min_length=1, max_length=200, pattern=_GRAPH_IDENTIFIER_PATTERN),
 ]
+ArtifactHash = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 DecisionNodeIdentifier = Annotated[str, Field(min_length=1, max_length=200, pattern=r"^\S+$")]
 DecisionValue = Annotated[str, Field(min_length=1, max_length=64)]
 NonEmptyString = Annotated[str, Field(min_length=1, pattern=r".*\S.*")]
@@ -1531,6 +1544,56 @@ def _string_list_from_payload(payload: dict[str, Any], field: str) -> list[str] 
     if not isinstance(raw_values, list):
         return None
     return [value for value in cast(list[Any], raw_values) if isinstance(value, str)]
+
+
+def _artifact_reference_for_run(
+    events: list[EventEnvelope], sha256_hex: str
+) -> StoredArtifactRef | None:
+    content_hash = f"sha256:{sha256_hex}"
+    for event in events:
+        if event.event_type != "output_record_accepted":
+            continue
+        if event.payload.get("record_type") != "check_result":
+            continue
+        try:
+            record = CheckResultRecord.model_validate(event.payload)
+        except ValueError:
+            continue
+        for ref in (record.value.stdout_ref, record.value.stderr_ref):
+            if ref is not None and ref.content_hash == content_hash:
+                return ref
+    return None
+
+
+@router.get("/{run_id}/artifacts/{sha256_hex}")
+async def get_run_artifact(
+    run_id: str,
+    sha256_hex: ArtifactHash,
+    offset: int = Query(default=0, ge=0),
+    limit: int = Query(default=65_536, ge=1, le=1_048_576),
+    graph_store: GraphEventStore = Depends(get_graph_store),
+    artifact_store: ArtifactStore = Depends(get_artifact_store),
+) -> Response:
+    """Return an authorized byte range only after complete-blob verification."""
+    ref = _artifact_reference_for_run(await graph_store.read_run(run_id), sha256_hex)
+    if ref is None:
+        raise HTTPException(status_code=404, detail="Artifact reference not found for run")
+    try:
+        content = await artifact_store.read(ref)
+    except ArtifactNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Artifact blob not found") from exc
+    except ArtifactIntegrityError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="Artifact blob failed integrity verification",
+        ) from exc
+    end = min(offset + limit, len(content))
+    return Response(
+        content=content[offset:end],
+        status_code=206,
+        media_type=ref.media_type,
+        headers={"Content-Range": f"bytes {offset}-{max(offset, end) - 1}/{len(content)}"},
+    )
 
 
 @router.get("/{run_id}/graph", response_model=GraphProjectionResponse)

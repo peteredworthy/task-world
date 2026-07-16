@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, cast
 
+from orchestrator.artifacts import ArtifactStore, StoredArtifactRef
 from orchestrator.graph import DEFAULT_NODE_CONTRACTS, EventEnvelope, GraphProjection
 from orchestrator.graph.command_bindings import resolve_check_command_definition
 from orchestrator.graph.models import (
@@ -23,6 +24,19 @@ if TYPE_CHECKING:
 MAX_GRAPH_PROMPT_CHARS = 60_000
 MAX_GRAPH_JSON_SECTION_CHARS = 36_000
 MAX_GRAPH_PROMPT_FIELD_CHARS = 8_000
+
+
+async def hydrate_artifact_excerpt(
+    store: ArtifactStore,
+    ref: StoredArtifactRef,
+    *,
+    max_chars: int = MAX_GRAPH_PROMPT_FIELD_CHARS,
+) -> str:
+    """Read a verified artifact through the injected store and bound its text excerpt."""
+    if max_chars < 1:
+        raise ValueError("max_chars must be at least 1")
+    content = await store.read(ref)
+    return content.decode(ref.encoding or "utf-8", errors="replace")[:max_chars]
 
 
 def _bounded_prompt(prompt: str) -> str:
@@ -682,7 +696,7 @@ def _planner_evidence(
                     _hydrated_bound_record(
                         record_id=raw_record_id,
                         record_kind=str(output_payload.get("record_kind", "output")),
-                        record_payload=output_payload,
+                        record_payload=_tail_only_prompt_record_payload(output_payload),
                         hydration_policy=hydration_policy,
                     )
                 )
@@ -703,6 +717,21 @@ def _planner_evidence(
         "outstanding_failures": _planner_outstanding_failures(context, projection),
         "session_carryover_record_id": _planner_session_carryover_record(context, projection),
     }
+
+
+def _tail_only_prompt_record_payload(record_payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep normal prompt assembly independent from artifact hydration."""
+    if record_payload.get("record_type") != "check_result":
+        return record_payload
+    value = record_payload.get("value")
+    if not isinstance(value, dict):
+        return record_payload
+    bounded_value = dict(cast(dict[str, Any], value))
+    bounded_value.pop("stdout_ref", None)
+    bounded_value.pop("stderr_ref", None)
+    bounded_record = dict(record_payload)
+    bounded_record["value"] = bounded_value
+    return bounded_record
 
 
 def _hydration_policy_for_binding(

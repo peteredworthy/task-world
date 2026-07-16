@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.auth import AuthConfig
 from orchestrator.api.websocket import ConnectionManager
+from orchestrator.artifacts import ArtifactStore
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.db import (
@@ -47,6 +48,11 @@ def get_session_factory(request: Request) -> async_sessionmaker[AsyncSession]:
 def get_connection_manager(request: Request) -> ConnectionManager:
     """Get the WebSocket connection manager from app state."""
     return request.app.state.connection_manager  # type: ignore[no-any-return]
+
+
+def get_artifact_store(request: Request) -> ArtifactStore:
+    """Get the application-composed artifact store for verified blob reads."""
+    return request.app.state.artifact_store  # type: ignore[no-any-return]
 
 
 async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:

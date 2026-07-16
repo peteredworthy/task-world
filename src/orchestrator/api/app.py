@@ -22,6 +22,7 @@ from orchestrator.api.auth import (
 )
 from orchestrator.api.errors import register_error_handlers
 from orchestrator.api.websocket import BatchingConnectionManager, ConnectionManager
+from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config.enums import RoutineSource, RunStatus
 from orchestrator.config.global_config import GlobalConfig, load_global_config
 from orchestrator.db import create_engine, create_session_factory, init_db
@@ -661,6 +662,7 @@ def create_app(
     app.state.session_factory = create_session_factory(engine)
     app.state.routine_dirs = routine_dirs or []
     app.state.global_config = global_cfg
+    app.state.artifact_store = FilesystemArtifactStore(Path.cwd() / ".orchestrator" / "artifacts")
 
     # WebSocket connection manager (with optional batching)
     if global_cfg.websocket.batching_enabled:

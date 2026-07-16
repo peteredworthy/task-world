@@ -70,7 +70,8 @@ task-world/
 │   │   │   ├── config.py      # GET /api/config
 │   │   │   ├── clarifications.py
 │   │   │   ├── envfiles.py
-│   │   │   └── review.py      # Review & merge workbench (13 endpoints)
+│   │   │   ├── review.py      # Review & merge workbench (13 endpoints)
+│   │   │   └── graph.py       # Graph projections and authorized artifact reads
 │   │   └── schemas/           # Pydantic request/response models
 │   │       ├── runs.py, tasks.py, steps.py, routines.py
 │   │       ├── repos.py, clarifications.py, envfiles.py
@@ -152,6 +153,7 @@ task-world/
 │   ├── graph_runtime/         # Effectful graph runtime bridge
 │   │   ├── controller.py      # Applies graph commands and appends events/outbox rows
 │   │   ├── dispatch.py        # Outbox-to-runner/controller execution bridge
+│   │   ├── prompts.py         # Bounded prompt packets and explicit artifact excerpts
 │   │   ├── outbox.py          # Durable side-effect outbox mapping/dispatcher
 │   │   └── store.py           # Graph event store and summary read models
 │   │
@@ -640,6 +642,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/activity` | Activity log (paginated, compact `payload_mode=summary` by default; use `payload_mode=full` for transcript payloads) |
 | GET | `/api/runs/{id}/activity/stream` | Activity SSE stream (compact `payload_mode=summary` by default; use `payload_mode=full` for transcript payloads) |
 | GET | `/api/runs/{id}/guidance` | Aggregate guidance for agents |
+| GET | `/api/runs/{id}/artifacts/{sha256_hex}?offset=0&limit=65536` | Authenticated, run-referenced byte range after complete blob verification (`0 <= offset`, `1 <= limit <= 1,048,576`) |
 | GET | `/api/runs/{id}/graph/events` | Graph event log for a run |
 | GET | `/api/runs/{id}/graph/scheduler` | Graph scheduler buckets and leases |
 | GET | `/api/runs/{id}/graph/decisions` | Graph human decisions, appeals, and review readiness |
