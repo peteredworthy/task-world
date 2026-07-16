@@ -4795,6 +4795,22 @@ def _record_residue(record: dict[str, Any] | FileStateRecord) -> list[dict[str, 
     return [dict(cast(dict[str, Any], entry)) for entry in typed_residue if isinstance(entry, dict)]
 
 
+_GATEKEEPER_COST_OVERRIDABLE_FIELDS = frozenset(
+    {
+        "model_id",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "cost_usd",
+        "wall_time_ms",
+    }
+)
+_GATEKEEPER_COST_PRODUCER_FIELDS = frozenset(
+    {"file_state_record_id", "execution_id", "consult_id", "item_count"}
+)
+
+
 def _gatekeeper_cost_payload(
     record_id: str,
     execution_id: str,
@@ -4809,6 +4825,14 @@ def _gatekeeper_cost_payload(
         typed_cost = cast(dict[str, Any], cost)
     else:
         msg = "cost must be an object"
+        raise ValueError(msg)
+    producer_fields = sorted(typed_cost.keys() & _GATEKEEPER_COST_PRODUCER_FIELDS)
+    if producer_fields:
+        msg = f"nested cost field is producer-owned: {producer_fields[0]}"
+        raise ValueError(msg)
+    unsupported_fields = sorted(typed_cost.keys() - _GATEKEEPER_COST_OVERRIDABLE_FIELDS)
+    if unsupported_fields:
+        msg = f"nested cost field is unsupported: {unsupported_fields[0]}"
         raise ValueError(msg)
     model_ids = sorted({str(verdict.get("model_id", "unknown")) for verdict in verdicts})
     defaults = {

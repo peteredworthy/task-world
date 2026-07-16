@@ -120,6 +120,80 @@ def test_record_gatekeeper_verdicts_rejects_wrong_type_consult_id() -> None:
     assert str(emitted[0].payload["reason"]).startswith("invalid gatekeeper cost")
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("file_state_record_id", "other-file-state"),
+        ("execution_id", "other-execution"),
+        ("consult_id", "other-consult"),
+        ("item_count", 99),
+    ],
+)
+def test_record_gatekeeper_verdicts_rejects_nested_cost_ownership_override(
+    field: str,
+    value: object,
+) -> None:
+    events = [_file_state_event("file-state-1", "tmp.out")]
+
+    emitted = apply_command(
+        _project(events),
+        events,
+        "record_gatekeeper_verdicts",
+        {
+            "run_id": "run-1",
+            "file_state_record_id": "file-state-1",
+            "execution_id": "exec-1",
+            "consult_id": "consult-1",
+            "verdicts": [_verdict("tmp.out", "build_output")],
+            "cost": {field: value},
+        },
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+
+    assert [event.event_type for event in emitted] == ["command_rejected"]
+    assert emitted[0].payload["reason"] == (
+        f"invalid gatekeeper cost: nested cost field is producer-owned: {field}"
+    )
+    assert not any(event.event_type == "gatekeeper_cost_recorded" for event in emitted)
+
+
+def test_record_gatekeeper_verdicts_allows_only_nested_accounting_overrides() -> None:
+    events = [_file_state_event("file-state-1", "tmp.out")]
+    accounting = {
+        "model_id": "cost-model",
+        "input_tokens": 20,
+        "output_tokens": 10,
+        "cache_read_tokens": 5,
+        "cache_write_tokens": 2,
+        "cost_usd": 0.25,
+        "wall_time_ms": 40,
+    }
+
+    emitted = apply_command(
+        _project(events),
+        events,
+        "record_gatekeeper_verdicts",
+        {
+            "run_id": "run-1",
+            "file_state_record_id": "file-state-1",
+            "execution_id": "exec-1",
+            "consult_id": "consult-1",
+            "verdicts": [_verdict("tmp.out", "build_output")],
+            "cost": accounting,
+        },
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+
+    cost = next(event for event in emitted if event.event_type == "gatekeeper_cost_recorded")
+    assert {field: cost.payload[field] for field in accounting} == accounting
+    assert cost.payload["file_state_record_id"] == "file-state-1"
+    assert cost.payload["execution_id"] == "exec-1"
+    assert cost.payload["consult_id"] == "consult-1"
+    assert cost.payload["item_count"] == 1
+
+
 def test_record_gatekeeper_verdicts_rejects_unknown_record_id() -> None:
     emitted = apply_command(
         initial_projection(),
