@@ -124,6 +124,7 @@ from orchestrator.graph.payload_registry import (
     EventPayloadSpec,
     generated_payload_fields,
     payload_model_fields,
+    validate_event_payload_specs,
 )
 import orchestrator.graph.projections as projections
 from orchestrator.graph.projections import (
@@ -293,6 +294,7 @@ __all__ = [
     "merge_bound_record_ids",
     "node_contract_summary",
     "payload_model_fields",
+    "validate_event_payload_specs",
     "project_decision_view",
     "project_decision_view_from_projection",
     "project_final_invariant_blockers",

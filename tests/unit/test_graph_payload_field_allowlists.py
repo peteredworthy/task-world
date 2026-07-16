@@ -68,10 +68,12 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from pydantic import BaseModel, ConfigDict
 
 from orchestrator.graph import (
     EVENT_PAYLOAD_MODELS,
     EVENT_PAYLOAD_SPECS,
+    EventPayloadSpec,
     GRAPH_PROJECTION_PAYLOAD_FIELDS,
     LIGHT_GRAPH_PAYLOAD_FIELDS,
     NODE_DETAIL_PAYLOAD_FIELDS,
@@ -79,6 +81,7 @@ from orchestrator.graph import (
     generated_payload_fields,
     payload_model_fields,
     projections,
+    validate_event_payload_specs,
 )
 from orchestrator.graph_runtime import store
 
@@ -140,6 +143,12 @@ _EXCLUDED_KEYS: dict[str, str] = {
 }
 
 
+class _CoincidentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    node_id: str
+
+
 def test_all_payload_allowlists_are_generated_exactly() -> None:
     assert GRAPH_PROJECTION_PAYLOAD_FIELDS == generated_payload_fields("projection")
     assert LIGHT_GRAPH_PAYLOAD_FIELDS == generated_payload_fields("light")
@@ -162,6 +171,39 @@ def test_every_canonical_payload_model_has_an_immutable_spec() -> None:
     mutable_view: Any = EVENT_PAYLOAD_SPECS
     with pytest.raises(TypeError):
         mutable_view["new_event"] = EVENT_PAYLOAD_SPECS["node_created"]
+
+
+def test_new_payload_model_cannot_inherit_retention_by_field_name() -> None:
+    with pytest.raises(ValueError, match="missing payload specs: coincident_event"):
+        validate_event_payload_specs(
+            {**EVENT_PAYLOAD_MODELS, "coincident_event": _CoincidentPayload},
+            EVENT_PAYLOAD_SPECS,
+        )
+
+
+def test_stale_retention_field_and_exception_are_rejected() -> None:
+    with pytest.raises(ValueError, match="not serialized: stale_field"):
+        EventPayloadSpec(
+            model=_CoincidentPayload,
+            projection=frozenset({"stale_field"}),
+        )
+    with pytest.raises(ValueError, match="unknown envelope fields: stale_field"):
+        EventPayloadSpec(
+            model=_CoincidentPayload,
+            envelope_fields=frozenset({"stale_field"}),
+        )
+
+
+def test_retention_registry_has_no_mode_wide_inference_policy() -> None:
+    source = Path(inspect.getfile(EventPayloadSpec)).read_text()
+    for stale_symbol in (
+        "_PROJECTION_FIELDS",
+        "_LIGHT_FIELDS",
+        "_SUMMARY_FIELDS",
+        "_NODE_DETAIL_FIELDS",
+    ):
+        assert stale_symbol not in source
+    assert "def _payload_spec(" not in source
 
 
 def test_retained_fields_are_declared_by_payload_models_or_envelope() -> None:

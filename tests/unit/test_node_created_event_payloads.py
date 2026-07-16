@@ -12,6 +12,7 @@ from orchestrator.graph import (
     projection_to_checkpoint,
 )
 from orchestrator.graph_runtime import GraphEventStore
+from orchestrator.graph.commands import event_factory
 from tests.unit.graph_test_utils import event
 
 
@@ -28,6 +29,23 @@ def test_node_created_payload_serializes_canonical_shape() -> None:
         "preconditions": ["inputs_bound"],
     }
     assert NodeCreatedPayload.model_validate(raw).model_dump(mode="json") == raw
+
+
+def test_node_created_event_factory_uses_aliases_and_excludes_none() -> None:
+    make_event = event_factory("run-1", "submit_patch", FakeClock(), SequentialIdGenerator())
+
+    emitted = make_event(
+        "node_created",
+        {
+            "node_id": "worker-1",
+            "kind": "worker",
+            "reason": None,
+            "inputs": [{"port": "candidate", "schema_": "ImplementationCandidate"}],
+        },
+    )
+
+    assert "reason" not in emitted.payload
+    assert emitted.payload["inputs"] == [{"port": "candidate", "schema": "ImplementationCandidate"}]
 
 
 @pytest.mark.parametrize(

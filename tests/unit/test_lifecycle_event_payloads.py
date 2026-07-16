@@ -11,6 +11,7 @@ from orchestrator.graph import (
     build_projection,
 )
 from orchestrator.graph_runtime import GraphEventStore
+from orchestrator.graph.commands import event_factory
 from tests.unit.graph_test_utils import event
 
 
@@ -64,6 +65,17 @@ def test_lifecycle_producer_matches_typed_payload_json() -> None:
     assert payload == RunLifecycleChangedPayload.model_validate(payload).model_dump(
         mode="json", exclude_unset=True
     )
+
+
+def test_lifecycle_event_factory_excludes_explicit_none() -> None:
+    make_event = event_factory("run-1", "start", FakeClock(), SequentialIdGenerator())
+
+    emitted = make_event(
+        "run_lifecycle_changed",
+        {"command_type": "start", "to_state": "active", "reason": None},
+    )
+
+    assert emitted.payload == {"command_type": "start", "to_state": "active"}
 
 
 @pytest.mark.asyncio

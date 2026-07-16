@@ -1,5 +1,6 @@
 """Declarative payload retention for compact graph-event reads."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Literal, get_args, get_origin
@@ -9,117 +10,11 @@ from pydantic import BaseModel
 from orchestrator.graph.event_registry import EVENT_PAYLOAD_MODELS
 
 RetentionMode = Literal["projection", "light", "summary", "node_detail"]
+_KNOWN_ENVELOPE_FIELDS = frozenset[str]()
 
 
-def _field_names(source: str) -> frozenset[str]:
+def _fields(source: str) -> frozenset[str]:
     return frozenset(source.split())
-
-
-# These mode policies preserve the current compact readers. Fields no longer
-# serialized by any canonical payload model are intentionally not retained.
-# W5.5 debt: retaining complete ``value`` keeps SQL mode-based and preserves
-# parity, but does not solve large nested-value read amplification.
-_PROJECTION_FIELDS = _field_names(
-    """
-    accepted_record_selector allowed_actions approval_prompt approval_type appeal_type
-    attempt_number approved authority authority_request authority_request_record
-    authority_request_record_id base_snapshot_id binding_policy blocker blocker_reason
-    bound_at_position candidate_id carryover_record_id classification command_binding
-    command_definition command_definition_id decision decision_request
-    decision_request_record_id dependency_type edge_id evidence execution_id expires_at
-    failed_candidate_id file_state_record_id freshness_policy from_node_id from_node_kind
-    from_node_role from_port from_state gate_id gate_type generation generation_index
-    guarded_planner_node_id hidden_oracle_command human_prompt id inputs kind lease_id
-    membership message metadata new_state node_id outcome outputs planner_chain
-    planner_generation_budget port preconditions priority producer_node_id prompt
-    prompt_hydration_policy reason record_bound_positions record_id record_ids record_kind
-    record_type recovery_of_node_id recovery_of_record_id recovery_reason region_label
-    rejected_patch_id requirement requirement_id required resolved_count resource_claims
-    retry_not_before role schema session_id snapshot_id state status supersedes_record_id
-    supersedes_task_region_id supersedes_task_region_ids task_region_id to_node_id to_port
-    to_state trigger value verdict verdicts verifier_node_id
-    """
-)
-_LIGHT_FIELDS = _field_names(
-    """
-    accepted_record_selector active allowed_actions appeal_node_id appeal_type
-    appealed_node_id approval_prompt approval_type attempt_number approved authority
-    authority_request authority_request_record authority_request_record_id
-    authority_required_reason base_snapshot_id behavior_change binding_policy blocker
-    blocker_reason bound_at_position cache_read_tokens cache_write_tokens candidate_id
-    candidate_record_id candidate_record_ids change_classification classification cleanup_id
-    command_binding command_definition command_definition_id confidence consult_id cost_usd
-    decision decision_request decision_request_record_id deleted_snapshot_ref dependency_type
-    edge_id evaluated_record_ids evidence_id execution_id expires_at
-    explicit_authority_required failed_candidate_id file_state_record_id
-    file_state_record_ids freshness_policy from_node_id from_node_kind from_node_role
-    from_port from_state gate_id gate_type generation generation_index
-    guarded_planner_node_id hidden_oracle_command human_prompt id input input_tokens inputs
-    item_count kind lease_generation lease_id membership message metadata model_id
-    new_behavior new_state node_id operation outcome output_tokens outputs patch_id path
-    planner_chain planner_generation_budget port preconditions previous_version_id priority
-    producer_node_id prompt prompt_hydration_policy proposal_id proposed_by_node_id reason
-    record_bound_positions record_id record_ids record_kind record_type recovery_of_node_id
-    recovery_of_record_id recovery_reason region_id region_label rejected_patch_id
-    rejected_patches requirement requirement_id requirement_version_id required
-    requires_authority resolved_count resource_claims retry_not_before revision_id
-    revision_index revision_type role schema semantic_change session_id stale_only
-    stale_reason state status successor_planner_node_ids supersedes_record_id
-    supersedes_task_region_id supersedes_task_region_ids superseding_record_id support_id
-    supported task_region_id to_node_id to_port to_state trigger unsupported
-    validation_strengthening verdict verdicts version_id wall_time_ms worker_node verifier_node
-    """
-)
-_SUMMARY_FIELDS = _field_names(
-    """
-    accepted_patches accepted_record_selector active actor_role allowed_actions appeal_node_id
-    appeal_type appealed_node_id approval_prompt approval_type attempt_number approved authority
-    authority_request authority_request_record authority_request_record_id
-    authority_required_reason base_snapshot_id behavior_change binding_policy blocker blockers
-    blocker_reason bound_at_position cache_read_tokens cache_write_tokens candidate_id
-    candidate_record_id candidate_record_ids change_classification classification cleanup_id
-    command_binding command_definition command_definition_id command_type confidence consult_id
-    cost_usd decider decision decision_request decision_request_record_id decision_type
-    deleted_snapshot_ref dependency_type edge_id evaluated_record_ids evidence evidence_id
-    execution_id expires_at explicit_authority_required failed_candidate_id
-    file_state_record_id file_state_record_ids freshness_policy from_node_id from_node_kind
-    from_node_role from_port from_state gate_id gate_type generation generation_index grade
-    grades graph_verifier_grades guarded_planner_node_id hidden_oracle_command human_prompt id
-    idempotency_key input input_tokens inputs item_count kind lease_generation lease_id
-    membership message metadata model_id new_behavior new_state node node_id node_kind operation
-    operations ops outcome output_tokens outputs patch_id patch_ops patch_rejection_reasons path
-    payload planner_chain planner_generation_budget port preconditions previous_version_id
-    priority producer_node_id prompt prompt_hydration_policy proposal_id proposed_by_node_id
-    provenance reason record_bound_positions record_id record_ids record_kind record_type
-    recovery_of_node_id recovery_of_record_id recovery_reason region_id region_label
-    rejected_patch_id rejected_patches rejection_reason requirement requirement_id
-    requirement_version_id required requires_authority resolved_count resource_claims
-    retry_not_before revision_id revision_index revision_type role run_id schema semantic_change
-    session_id snapshot_id stale_only stale_reason state status successor_planner_node_ids
-    supersedes_record_id supersedes_task_region_id supersedes_task_region_ids
-    superseding_record_id support_id supported task_region_id to_node_id to_port to_state tokens
-    tokens_by_node tokens_by_node_kind trigger unsupported validation_strengthening value verdict
-    verdicts verifier_node_id version_id wall_time_ms worker_node verifier_node
-    """
-)
-_NODE_DETAIL_FIELDS = _field_names(
-    """
-    accepted_record_selector allowed_actions approval_prompt approval_type attempt_number
-    authority authority_request authority_request_record authority_request_record_id
-    base_snapshot_id binding_policy blocker blocker_reason candidate_id candidate_record_id
-    candidate_record_ids classifications command_binding command_definition
-    command_definition_id decision_request decision_request_record_id diff_summary edge_id
-    evaluated_record_ids execution_id expires_at failed_candidate_id file_state_record_ids
-    from_node_id from_node_kind from_node_role from_port gate_type generation generation_index
-    guarded_planner_node_id hidden_oracle_command human_prompt id input inputs kind
-    lease_generation lease_id membership message new_state node_id outcome outputs
-    patch_bundle_id planner_chain planner_generation_budget port preconditions priority
-    producer_node_id prompt prompt_summary reason record_id record_ids record_kind
-    recovery_of_node_id recovery_of_record_id recovery_reason region_label rejected_patch_id
-    requirement requirement_id resource_claims retry_not_before role schema session_id state
-    supersedes_record_id task_region_id to_node_id to_port trigger verdict
-    """
-)
 
 
 def payload_model_fields(model: type[BaseModel]) -> frozenset[str]:
@@ -155,6 +50,10 @@ class EventPayloadSpec:
     envelope_fields: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
+        unknown_envelope_fields = self.envelope_fields - _KNOWN_ENVELOPE_FIELDS
+        if unknown_envelope_fields:
+            names = ", ".join(sorted(unknown_envelope_fields))
+            raise ValueError(f"unknown envelope fields: {names}")
         serialized_fields = payload_model_fields(self.model) | self.envelope_fields
         for mode in ("projection", "light", "summary", "node_detail"):
             unknown = getattr(self, mode) - serialized_fields
@@ -163,20 +62,309 @@ class EventPayloadSpec:
                 raise ValueError(f"{self.model.__name__} {mode} fields are not serialized: {names}")
 
 
-def _payload_spec(model: type[BaseModel]) -> EventPayloadSpec:
-    serialized_fields = payload_model_fields(model)
+def _spec(
+    event_type: str,
+    *,
+    projection: str,
+    light: str,
+    summary: str,
+    node_detail: str,
+) -> EventPayloadSpec:
     return EventPayloadSpec(
-        model=model,
-        projection=_PROJECTION_FIELDS & serialized_fields,
-        light=_LIGHT_FIELDS & serialized_fields,
-        summary=_SUMMARY_FIELDS & serialized_fields,
-        node_detail=_NODE_DETAIL_FIELDS & serialized_fields,
+        model=EVENT_PAYLOAD_MODELS[event_type],
+        projection=_fields(projection),
+        light=_fields(light),
+        summary=_fields(summary),
+        node_detail=_fields(node_detail),
     )
 
 
+def _same(event_type: str, fields: str) -> EventPayloadSpec:
+    retained = _fields(fields)
+    return EventPayloadSpec(
+        model=EVENT_PAYLOAD_MODELS[event_type],
+        projection=retained,
+        light=retained,
+        summary=retained,
+        node_detail=retained,
+    )
+
+
+# Every modeled event deliberately owns its four retention sets. W5.5 debt:
+# complete ``value`` retention preserves parity but does not solve large nested-
+# value read amplification; SQL remains mode-based until the artifact cutover.
 EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
-    {event_type: _payload_spec(model) for event_type, model in EVENT_PAYLOAD_MODELS.items()}
+    {
+        "agent_died": _same("agent_died", "execution_id generation lease_id node_id reason"),
+        "appeal_opened": _spec(
+            "appeal_opened",
+            projection="appeal_type candidate_id kind lease_id membership node_id state task_region_id",
+            light="appeal_type appealed_node_id candidate_id kind lease_id membership node_id state task_region_id",
+            summary="appeal_type appealed_node_id candidate_id kind lease_id membership node_id run_id state task_region_id",
+            node_detail="candidate_id kind lease_id membership node_id state task_region_id",
+        ),
+        "approval_decision_recorded": _spec(
+            "approval_decision_recorded",
+            projection="appeal_type candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
+            light="appeal_node_id appeal_type appealed_node_id candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
+            summary="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id run_id task_region_id",
+            node_detail="candidate_id expires_at membership node_id reason record_id task_region_id",
+        ),
+        "authority_decision_recorded": _spec(
+            "authority_decision_recorded",
+            projection="appeal_type candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
+            light="appeal_node_id appeal_type appealed_node_id candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
+            summary="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id run_id task_region_id",
+            node_detail="candidate_id expires_at membership node_id reason record_id task_region_id",
+        ),
+        "callback_accepted": _spec(
+            "callback_accepted",
+            projection="execution_id lease_id node_id reason",
+            light="execution_id lease_generation lease_id node_id reason",
+            summary="execution_id idempotency_key lease_generation lease_id node_id payload reason",
+            node_detail="execution_id lease_generation lease_id node_id reason",
+        ),
+        "callback_duplicate_returned": _spec(
+            "callback_duplicate_returned",
+            projection="execution_id lease_id node_id reason",
+            light="execution_id lease_generation lease_id node_id reason",
+            summary="execution_id idempotency_key lease_generation lease_id node_id payload reason",
+            node_detail="execution_id lease_generation lease_id node_id reason",
+        ),
+        "callback_rejected_conflict": _spec(
+            "callback_rejected_conflict",
+            projection="execution_id lease_id node_id reason",
+            light="execution_id lease_generation lease_id node_id reason",
+            summary="execution_id idempotency_key lease_generation lease_id node_id payload reason",
+            node_detail="execution_id lease_generation lease_id node_id reason",
+        ),
+        "callback_rejected_stale": _spec(
+            "callback_rejected_stale",
+            projection="execution_id lease_id node_id reason",
+            light="execution_id lease_generation lease_id node_id reason",
+            summary="execution_id idempotency_key lease_generation lease_id node_id payload reason",
+            node_detail="execution_id lease_generation lease_id node_id reason",
+        ),
+        "cleanup_applied": _spec(
+            "cleanup_applied",
+            projection="authority execution_id file_state_record_id reason",
+            light="authority cleanup_id deleted_snapshot_ref execution_id file_state_record_id reason superseding_record_id",
+            summary="authority cleanup_id deleted_snapshot_ref execution_id file_state_record_id reason superseding_record_id",
+            node_detail="authority execution_id reason",
+        ),
+        "cleanup_requested": _spec(
+            "cleanup_requested",
+            projection="authority execution_id file_state_record_id producer_node_id reason snapshot_id",
+            light="authority cleanup_id execution_id file_state_record_id producer_node_id reason",
+            summary="authority cleanup_id execution_id file_state_record_id producer_node_id reason snapshot_id",
+            node_detail="authority execution_id producer_node_id reason",
+        ),
+        "command_rejected": _spec(
+            "command_rejected",
+            projection="reason",
+            light="patch_id proposed_by_node_id reason",
+            summary="actor_role blockers command_type patch_id proposed_by_node_id reason rejection_reason",
+            node_detail="reason",
+        ),
+        "dead_input_detected": _same(
+            "dead_input_detected",
+            "edge_id from_node_id from_port node_id reason to_node_id to_port",
+        ),
+        "edge_created": _spec(
+            "edge_created",
+            projection="accepted_record_selector binding_policy dependency_type edge_id freshness_policy from_node_id from_node_kind from_node_role from_port metadata prompt_hydration_policy required to_node_id to_port",
+            light="accepted_record_selector binding_policy dependency_type edge_id freshness_policy from_node_id from_node_kind from_node_role from_port metadata prompt_hydration_policy required to_node_id to_port",
+            summary="accepted_record_selector binding_policy dependency_type edge_id freshness_policy from_node_id from_node_kind from_node_role from_port metadata prompt_hydration_policy required to_node_id to_port",
+            node_detail="accepted_record_selector binding_policy edge_id from_node_id from_node_kind from_node_role from_port to_node_id to_port",
+        ),
+        "file_state_accepted": _spec(
+            "file_state_accepted",
+            projection="base_snapshot_id candidate_id port producer_node_id record_id record_kind record_type schema snapshot_id supersedes_record_id task_region_id verdict",
+            light="base_snapshot_id candidate_id cleanup_id port producer_node_id record_id record_kind record_type schema supersedes_record_id task_region_id verdict",
+            summary="base_snapshot_id candidate_id cleanup_id payload port producer_node_id provenance record_id record_kind record_type run_id schema snapshot_id supersedes_record_id task_region_id verdict",
+            node_detail="base_snapshot_id candidate_id classifications patch_bundle_id port producer_node_id record_id record_kind schema supersedes_record_id task_region_id verdict",
+        ),
+        "file_state_rejected": _spec(
+            "file_state_rejected",
+            projection="base_snapshot_id candidate_id port producer_node_id reason record_id record_kind record_type schema snapshot_id supersedes_record_id task_region_id verdict",
+            light="base_snapshot_id candidate_id cleanup_id port producer_node_id reason record_id record_kind record_type schema supersedes_record_id task_region_id verdict",
+            summary="base_snapshot_id candidate_id cleanup_id payload port producer_node_id provenance reason record_id record_kind record_type run_id schema snapshot_id supersedes_record_id task_region_id verdict",
+            node_detail="base_snapshot_id candidate_id classifications patch_bundle_id port producer_node_id reason record_id record_kind schema supersedes_record_id task_region_id verdict",
+        ),
+        "gatekeeper_cost_recorded": _spec(
+            "gatekeeper_cost_recorded",
+            projection="execution_id file_state_record_id",
+            light="cache_read_tokens cache_write_tokens consult_id cost_usd execution_id file_state_record_id input_tokens item_count model_id output_tokens wall_time_ms",
+            summary="cache_read_tokens cache_write_tokens consult_id cost_usd execution_id file_state_record_id input_tokens item_count model_id output_tokens wall_time_ms",
+            node_detail="execution_id",
+        ),
+        "gatekeeper_verdict_recorded": _spec(
+            "gatekeeper_verdict_recorded",
+            projection="execution_id file_state_record_id producer_node_id resolved_count verdicts",
+            light="execution_id file_state_record_id producer_node_id resolved_count verdicts",
+            summary="execution_id file_state_record_id producer_node_id resolved_count verdicts",
+            node_detail="execution_id producer_node_id",
+        ),
+        "graph_patch_accepted": _spec(
+            "graph_patch_accepted",
+            projection="carryover_record_id session_id",
+            light="patch_id proposed_by_node_id session_id successor_planner_node_ids",
+            summary="actor_role patch_id proposed_by_node_id session_id successor_planner_node_ids",
+            node_detail="session_id",
+        ),
+        "graph_patch_rejected": _spec(
+            "graph_patch_rejected",
+            projection="reason",
+            light="patch_id proposed_by_node_id reason",
+            summary="actor_role patch_id proposed_by_node_id reason rejection_reason",
+            node_detail="reason",
+        ),
+        "heartbeat_recorded": _same(
+            "heartbeat_recorded", "execution_id expires_at generation lease_id node_id"
+        ),
+        "input_bound": _spec(
+            "input_bound",
+            projection="binding_policy bound_at_position edge_id record_bound_positions record_ids supersedes_record_id to_node_id to_port trigger",
+            light="binding_policy bound_at_position edge_id record_bound_positions record_ids supersedes_record_id to_node_id to_port trigger",
+            summary="binding_policy bound_at_position edge_id record_bound_positions record_ids supersedes_record_id to_node_id to_port trigger",
+            node_detail="binding_policy edge_id record_ids supersedes_record_id to_node_id to_port trigger",
+        ),
+        "lease_expired": _same(
+            "lease_expired", "execution_id expires_at generation lease_id node_id reason"
+        ),
+        "lease_granted": _same(
+            "lease_granted",
+            "base_snapshot_id execution_id expires_at generation kind lease_id node_id resource_claims session_id task_region_id",
+        ),
+        "lease_released": _same("lease_released", "generation lease_id node_id"),
+        "lease_renewed": _same(
+            "lease_renewed", "execution_id expires_at generation lease_id node_id"
+        ),
+        "lease_revoked": _same(
+            "lease_revoked", "execution_id generation lease_id node_id reason trigger"
+        ),
+        "lease_suspended": _same(
+            "lease_suspended", "execution_id generation lease_id node_id reason"
+        ),
+        "node_authority_changed": _same(
+            "node_authority_changed",
+            "allowed_actions authority node_id preconditions resource_claims",
+        ),
+        "node_created": _spec(
+            "node_created",
+            projection="allowed_actions approval_prompt approval_type attempt_number authority authority_request authority_request_record authority_request_record_id blocker blocker_reason candidate_id carryover_record_id command_binding command_definition command_definition_id decision_request decision_request_record_id execution_id failed_candidate_id gate_type generation_index guarded_planner_node_id hidden_oracle_command human_prompt id inputs kind membership message node_id outputs planner_chain planner_generation_budget preconditions priority prompt reason recovery_of_node_id recovery_of_record_id recovery_reason region_label rejected_patch_id requirement requirement_id resource_claims role session_id state task_region_id",
+            light="allowed_actions appealed_node_id approval_prompt approval_type attempt_number authority authority_request authority_request_record authority_request_record_id blocker blocker_reason candidate_id command_binding command_definition command_definition_id decision_request decision_request_record_id execution_id failed_candidate_id gate_type generation_index guarded_planner_node_id hidden_oracle_command human_prompt id inputs kind membership message node_id outputs planner_chain planner_generation_budget preconditions priority prompt reason recovery_of_node_id recovery_of_record_id recovery_reason region_label rejected_patch_id requirement requirement_id resource_claims role session_id state task_region_id",
+            summary="allowed_actions appealed_node_id approval_prompt approval_type attempt_number authority authority_request authority_request_record authority_request_record_id blocker blocker_reason candidate_id command_binding command_definition command_definition_id decision_request decision_request_record_id execution_id failed_candidate_id gate_type generation_index guarded_planner_node_id hidden_oracle_command human_prompt id inputs kind membership message node_id outputs planner_chain planner_generation_budget preconditions priority prompt reason recovery_of_node_id recovery_of_record_id recovery_reason region_label rejected_patch_id requirement requirement_id resource_claims role run_id session_id state task_region_id",
+            node_detail="allowed_actions approval_prompt approval_type attempt_number authority authority_request authority_request_record authority_request_record_id blocker blocker_reason candidate_id command_binding command_definition command_definition_id decision_request decision_request_record_id execution_id failed_candidate_id gate_type generation_index guarded_planner_node_id hidden_oracle_command human_prompt id inputs kind membership message node_id outputs planner_chain planner_generation_budget preconditions priority prompt reason recovery_of_node_id recovery_of_record_id recovery_reason region_label rejected_patch_id requirement requirement_id resource_claims role session_id state task_region_id",
+        ),
+        "node_deferred": _same("node_deferred", "node_id reason"),
+        "node_ready": _same("node_ready", "node_id"),
+        "node_retired": _same("node_retired", "node_id reason"),
+        "node_state_changed": _spec(
+            "node_state_changed",
+            projection="attempt_number membership new_state node_id reason retry_not_before trigger",
+            light="attempt_number membership new_state node_id reason retry_not_before trigger",
+            summary="attempt_number blockers graph_verifier_grades membership new_state node_id operations reason retry_not_before tokens_by_node tokens_by_node_kind trigger",
+            node_detail="attempt_number membership new_state node_id prompt_summary reason retry_not_before trigger",
+        ),
+        "output_record_accepted": _spec(
+            "output_record_accepted",
+            projection="attempt_number base_snapshot_id candidate_id evidence file_state_record_id outcome port producer_node_id record_id record_kind record_type schema snapshot_id supersedes_record_id supersedes_task_region_id supersedes_task_region_ids task_region_id value verdict",
+            light="attempt_number base_snapshot_id candidate_id candidate_record_id candidate_record_ids cleanup_id evaluated_record_ids file_state_record_id file_state_record_ids outcome port producer_node_id record_id record_kind record_type schema supersedes_record_id supersedes_task_region_id supersedes_task_region_ids task_region_id verdict",
+            summary="attempt_number base_snapshot_id candidate_id candidate_record_id candidate_record_ids cleanup_id evaluated_record_ids evidence file_state_record_id file_state_record_ids outcome payload port producer_node_id provenance record_id record_kind record_type run_id schema snapshot_id supersedes_record_id supersedes_task_region_id supersedes_task_region_ids task_region_id value verdict",
+            node_detail="attempt_number base_snapshot_id candidate_id candidate_record_id candidate_record_ids classifications evaluated_record_ids file_state_record_ids outcome patch_bundle_id port producer_node_id record_id record_kind schema supersedes_record_id task_region_id verdict",
+        ),
+        "oversight_decision_recorded": _spec(
+            "oversight_decision_recorded",
+            projection="appeal_type candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
+            light="appeal_node_id appeal_type appealed_node_id candidate_id decision expires_at gate_id membership node_id reason record_id task_region_id",
+            summary="appeal_node_id appeal_type appealed_node_id candidate_id decider decision decision_type expires_at gate_id membership node_id reason record_id run_id task_region_id",
+            node_detail="candidate_id expires_at membership node_id reason record_id task_region_id",
+        ),
+        "plan_region_marked_suspect": _spec(
+            "plan_region_marked_suspect",
+            projection="node_id reason",
+            light="node_id reason region_id",
+            summary="node_id reason region_id",
+            node_detail="node_id reason",
+        ),
+        "requirement_revision_recorded": _spec(
+            "requirement_revision_recorded",
+            projection="classification id node_id requirement requirement_id",
+            light="active authority_required_reason behavior_change change_classification classification explicit_authority_required id new_behavior node_id patch_id previous_version_id proposal_id requirement requirement_id requirement_version_id requires_authority revision_id revision_index revision_type semantic_change validation_strengthening version_id",
+            summary="active authority_required_reason behavior_change change_classification classification explicit_authority_required id new_behavior node_id patch_id previous_version_id proposal_id requirement requirement_id requirement_version_id requires_authority revision_id revision_index revision_type run_id semantic_change validation_strengthening version_id",
+            node_detail="id node_id requirement requirement_id",
+        ),
+        "revision_created": _spec(
+            "revision_created",
+            projection="",
+            light="verifier_node worker_node",
+            summary="node verifier_node worker_node",
+            node_detail="",
+        ),
+        "run_lifecycle_changed": _spec(
+            "run_lifecycle_changed",
+            projection="from_state node_id reason recovery_of_node_id recovery_of_record_id recovery_reason to_state trigger",
+            light="from_state node_id patch_id reason recovery_of_node_id recovery_of_record_id recovery_reason to_state trigger",
+            summary="command_type from_state node_id patch_id reason recovery_of_node_id recovery_of_record_id recovery_reason to_state trigger",
+            node_detail="node_id reason recovery_of_node_id recovery_of_record_id recovery_reason trigger",
+        ),
+        "runtime_retry_scheduled": _same(
+            "runtime_retry_scheduled",
+            "generation lease_id node_id reason retry_not_before",
+        ),
+        "session_state_changed": _spec(
+            "session_state_changed",
+            projection="carryover_record_id node_id session_id state",
+            light="lease_generation node_id session_id state",
+            summary="lease_generation node_id session_id state",
+            node_detail="lease_generation node_id session_id state",
+        ),
+        "support_evidence_recorded": _spec(
+            "support_evidence_recorded",
+            projection="edge_id requirement_id status",
+            light="confidence edge_id evidence_id requirement_id requirement_version_id stale_reason status support_id version_id",
+            summary="confidence edge_id evidence_id requirement_id requirement_version_id run_id stale_reason status support_id version_id",
+            node_detail="edge_id requirement_id",
+        ),
+        "verification_failed": _spec(
+            "verification_failed",
+            projection="candidate_id evidence node_id outcome record_id task_region_id value verifier_node_id",
+            light="candidate_id node_id outcome record_id task_region_id",
+            summary="candidate_id evidence node_id outcome record_id task_region_id value verifier_node_id",
+            node_detail="candidate_id node_id outcome record_id task_region_id",
+        ),
+        "verification_passed": _spec(
+            "verification_passed",
+            projection="candidate_id evidence node_id outcome record_id task_region_id value verifier_node_id",
+            light="candidate_id node_id outcome record_id task_region_id",
+            summary="candidate_id evidence node_id outcome record_id task_region_id value verifier_node_id",
+            node_detail="candidate_id node_id outcome record_id task_region_id",
+        ),
+    }
 )
+
+
+def validate_event_payload_specs(
+    payload_models: Mapping[str, type[BaseModel]],
+    payload_specs: Mapping[str, EventPayloadSpec],
+) -> None:
+    missing = payload_models.keys() - payload_specs.keys()
+    if missing:
+        raise ValueError(f"missing payload specs: {', '.join(sorted(missing))}")
+    stale = payload_specs.keys() - payload_models.keys()
+    if stale:
+        raise ValueError(f"stale payload specs: {', '.join(sorted(stale))}")
+    mismatched = [
+        event_type
+        for event_type, model in payload_models.items()
+        if payload_specs[event_type].model is not model
+    ]
+    if mismatched:
+        raise ValueError(f"payload spec model mismatch: {', '.join(sorted(mismatched))}")
+
+
+validate_event_payload_specs(EVENT_PAYLOAD_MODELS, EVENT_PAYLOAD_SPECS)
 
 
 def generated_payload_fields(mode: RetentionMode) -> tuple[str, ...]:

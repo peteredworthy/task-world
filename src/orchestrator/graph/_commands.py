@@ -23,14 +23,12 @@ from orchestrator.graph.contracts import (
 )
 from orchestrator.graph.event_registry import (
     EVENT_PAYLOAD_MODELS,
-    SPARSE_EVENT_PAYLOAD_TYPES,
     validate_emitted_event_type,
 )
 from orchestrator.graph.macros import expand_patch_macros
 from orchestrator.graph.models import (
     Actor,
     ActorKind,
-    AgentDiedPayload,
     AnalysisSummaryRecord,
     AppealOpenedPayload,
     ApprovalDecisionRecordedPayload,
@@ -39,18 +37,13 @@ from orchestrator.graph.models import (
     AuthorityDecisionRecord,
     AuthorityRequestRecord,
     CandidateRecord,
-    CallbackAcceptedPayload,
-    CallbackDuplicateReturnedPayload,
-    CallbackRejectedPayload,
     CheckResultRecord,
     CleanupAppliedPayload,
     CleanupRequestedPayload,
     CleanupRequestedProjection,
-    CommandRejectedPayload,
     CompletionDecisionRecord,
     DecisionRequestRecord,
     DecisionRecord,
-    DeadInputDetectedPayload,
     EdgeProjection,
     EventEnvelope,
     FailureRecord,
@@ -59,11 +52,9 @@ from orchestrator.graph.models import (
     GatekeeperCostRecordedPayload,
     GatekeeperVerdictRow,
     GraphPatchAcceptedPayload,
-    GraphEventPayloadBase,
     JoinResultRecord,
     GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
-    HeartbeatRecordedPayload,
     LeaseExpiredPayload,
     LeaseGrantedPayload,
     LeaseProjection,
@@ -71,12 +62,6 @@ from orchestrator.graph.models import (
     LeaseRenewedPayload,
     LeaseRevokedPayload,
     NodeCreatedPayload,
-    NodeAuthorityChangedPayload,
-    NodeDeferredPayload,
-    NodeReadyPayload,
-    NodeRetiredPayload,
-    NodeStateChangedPayload,
-    NodeSuspectPayload,
     OutputRecord,
     OversightDecisionRecordedPayload,
     PatchEnvelope,
@@ -84,10 +69,7 @@ from orchestrator.graph.models import (
     PlannerSessionStateChangedPayload,
     RecoveryPlanRecord,
     RequirementRevisionPayload,
-    RunLifecycleChangedPayload,
-    RuntimeRetryScheduledPayload,
     SupportEvidencePayload,
-    StrictEventPayload,
     VerificationResultProjection,
     VerificationReportRecord,
     normalize_record_selector,
@@ -171,41 +153,94 @@ def _typed_lease_event_payload(event_type: str, payload: dict[str, Any]) -> dict
     return model.model_validate(payload).model_dump(mode="json", exclude_none=True)
 
 
-_LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[StrictEventPayload]] = {
-    "run_lifecycle_changed": RunLifecycleChangedPayload,
-    "command_rejected": CommandRejectedPayload,
-    "callback_accepted": CallbackAcceptedPayload,
-    "callback_rejected_stale": CallbackRejectedPayload,
-    "callback_rejected_conflict": CallbackRejectedPayload,
-    "callback_duplicate_returned": CallbackDuplicateReturnedPayload,
-    "runtime_retry_scheduled": RuntimeRetryScheduledPayload,
-    "heartbeat_recorded": HeartbeatRecordedPayload,
-    "agent_died": AgentDiedPayload,
-    "dead_input_detected": DeadInputDetectedPayload,
-}
+_SPARSE_EVENT_PAYLOAD_TYPES = frozenset(
+    {
+        "file_state_accepted",
+        "file_state_rejected",
+        "gatekeeper_cost_recorded",
+        "gatekeeper_verdict_recorded",
+        "input_bound",
+        "output_record_accepted",
+        "revision_created",
+        "verification_failed",
+        "verification_passed",
+    }
+)
+_NODE_CREATED_EVENT_PAYLOAD_TYPES = frozenset({"node_created"})
+_EXCLUDE_NONE_EVENT_PAYLOAD_TYPES = frozenset(
+    {
+        "agent_died",
+        "callback_accepted",
+        "callback_duplicate_returned",
+        "callback_rejected_conflict",
+        "callback_rejected_stale",
+        "command_rejected",
+        "dead_input_detected",
+        "heartbeat_recorded",
+        "node_authority_changed",
+        "node_deferred",
+        "node_ready",
+        "node_retired",
+        "node_state_changed",
+        "plan_region_marked_suspect",
+        "run_lifecycle_changed",
+        "runtime_retry_scheduled",
+    }
+)
+_RAW_EVENT_PAYLOAD_TYPES = frozenset(
+    {
+        "appeal_opened",
+        "approval_decision_recorded",
+        "authority_decision_recorded",
+        "cleanup_applied",
+        "cleanup_requested",
+        "edge_created",
+        "graph_patch_accepted",
+        "graph_patch_rejected",
+        "lease_expired",
+        "lease_granted",
+        "lease_released",
+        "lease_renewed",
+        "lease_revoked",
+        "lease_suspended",
+        "oversight_decision_recorded",
+        "requirement_revision_recorded",
+        "session_state_changed",
+        "support_evidence_recorded",
+    }
+)
 
-_NODE_LIFECYCLE_EVENT_PAYLOAD_MODELS: dict[str, type[GraphEventPayloadBase]] = {
-    "node_state_changed": NodeStateChangedPayload,
-    "node_retired": NodeRetiredPayload,
-    "node_ready": NodeReadyPayload,
-    "node_deferred": NodeDeferredPayload,
-    "node_authority_changed": NodeAuthorityChangedPayload,
-    "plan_region_marked_suspect": NodeSuspectPayload,
-}
+
+def _validate_event_serialization_policy() -> None:
+    modeled_event_types = frozenset(EVENT_PAYLOAD_MODELS)
+    policy_types = (
+        _SPARSE_EVENT_PAYLOAD_TYPES
+        | _NODE_CREATED_EVENT_PAYLOAD_TYPES
+        | _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES
+        | _RAW_EVENT_PAYLOAD_TYPES
+    )
+    if policy_types != modeled_event_types:
+        mismatch = ", ".join(sorted(policy_types ^ modeled_event_types))
+        raise ValueError(f"event payload serialization policy mismatch: {mismatch}")
 
 
-def _typed_lifecycle_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    model = _LIFECYCLE_EVENT_PAYLOAD_MODELS.get(event_type)
+_validate_event_serialization_policy()
+
+
+def _serialize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
+    model = EVENT_PAYLOAD_MODELS.get(event_type)
     if model is None:
         return payload
-    return model.model_validate(payload).model_dump(mode="json", exclude_none=True)
-
-
-def _typed_node_lifecycle_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]:
-    model = _NODE_LIFECYCLE_EVENT_PAYLOAD_MODELS.get(event_type)
-    if model is None:
+    typed = model.model_validate(payload)
+    if event_type in _SPARSE_EVENT_PAYLOAD_TYPES:
+        return typed.model_dump(mode="json", exclude_none=True, exclude_unset=True)
+    if event_type in _NODE_CREATED_EVENT_PAYLOAD_TYPES:
+        return typed.model_dump(mode="json", exclude_none=True)
+    if event_type in _EXCLUDE_NONE_EVENT_PAYLOAD_TYPES:
+        return typed.model_dump(mode="json", exclude_none=True)
+    if event_type in _RAW_EVENT_PAYLOAD_TYPES:
         return payload
-    return model.model_validate(payload).model_dump(mode="json", exclude_none=True)
+    raise ValueError(f"missing event payload serialization policy: {event_type}")
 
 
 def apply_command(
@@ -5546,27 +5581,7 @@ def _event_factory(
 ) -> Callable[[str, dict[str, Any]], EventEnvelope]:
     def make_event(event_type: str, payload: dict[str, Any]) -> EventEnvelope:
         validate_emitted_event_type("graph_command_factory", event_type)
-        model = EVENT_PAYLOAD_MODELS.get(event_type)
-        if model is not None:
-            typed = model.model_validate(payload)
-            if event_type in SPARSE_EVENT_PAYLOAD_TYPES:
-                # Sparse wire payloads omit defaults, but model_fields_set preserves
-                # explicitly supplied empty values that downstream routing distinguishes.
-                typed_payload = typed.model_dump(
-                    mode="json",
-                    exclude_none=True,
-                    exclude_unset=True,
-                )
-            else:
-                typed_payload = payload
-        elif event_type == "node_created":
-            typed_payload = NodeCreatedPayload.model_validate(payload).model_dump(
-                mode="json", exclude_none=True
-            )
-        else:
-            typed_payload = _typed_node_lifecycle_event_payload(
-                event_type, _typed_lifecycle_event_payload(event_type, payload)
-            )
+        typed_payload = _serialize_event_payload(event_type, payload)
         return EventEnvelope(
             event_id=id_gen.next_id("event"),
             run_id=run_id,

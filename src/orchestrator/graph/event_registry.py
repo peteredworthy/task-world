@@ -167,22 +167,6 @@ EVENT_PAYLOAD_MODELS: MappingProxyType[str, type[BaseModel]] = MappingProxyType(
     }
 )
 
-# These flat record/routing families intentionally use sparse wire payloads.
-# Other producers already pass their canonical model dump into the event factory.
-SPARSE_EVENT_PAYLOAD_TYPES = frozenset(
-    {
-        "file_state_accepted",
-        "file_state_rejected",
-        "gatekeeper_cost_recorded",
-        "gatekeeper_verdict_recorded",
-        "input_bound",
-        "output_record_accepted",
-        "revision_created",
-        "verification_failed",
-        "verification_passed",
-    }
-)
-
 
 def _event_type_union(event_type_sets: Iterable[frozenset[str]]) -> frozenset[str]:
     event_types: set[str] = set()
