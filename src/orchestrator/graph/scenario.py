@@ -7,7 +7,7 @@ from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
 from orchestrator.graph.commands import apply_command
 from orchestrator.graph.event_registry import validate_emitted_event_type
 from orchestrator.graph.models import Actor, ActorKind, EventEnvelope
-from orchestrator.graph.command_models import GraphCommandContext, PatchCommandContext
+from orchestrator.graph.command_models import GraphCommandContext
 from orchestrator.graph.projections import initial_projection, reduce_event
 from orchestrator.graph.store import InMemoryEventStore
 
@@ -23,6 +23,7 @@ class ScenarioResult:
 
 def run_scenario(
     scenario: dict[str, Any],
+    command_context: GraphCommandContext,
     store: InMemoryEventStore,
     clock: FakeClock,
     id_gen: SequentialIdGenerator,
@@ -37,10 +38,6 @@ def run_scenario(
     when_command = scenario.get("when_command")
     if when_command is not None:
         command_type, command_payload = _single_mapping("when_command", when_command)
-        command_payload = dict(command_payload)
-        command_payload.pop("run_id", None)
-        actor_role = command_payload.pop("actor_role", None)
-        proposed_by_node_id = command_payload.pop("proposed_by_node_id", None)
         validate_emitted_event_type("graph_scenario_harness", "command_recorded")
         store.append(
             _make_event(
@@ -60,23 +57,7 @@ def run_scenario(
             events_before_command,
             command_type,
             command_payload,
-            (
-                PatchCommandContext(
-                    run_id=run_id,
-                    current_graph_position=max(
-                        (event.position for event in events_before_command), default=-1
-                    ),
-                    proposed_by_node_id=proposed_by_node_id or "controller",
-                    actor_role=actor_role or "planner",
-                )
-                if command_type == "submit_patch"
-                else GraphCommandContext(
-                    run_id=run_id,
-                    current_graph_position=max(
-                        (event.position for event in events_before_command), default=-1
-                    ),
-                )
-            ),
+            command_context,
             clock,
             id_gen,
         ):

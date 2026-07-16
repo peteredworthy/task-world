@@ -23,6 +23,8 @@ from orchestrator.graph import (
     FileStateRecord,
     FinalInvariantBlocker,
     GraphProjection,
+    GraphCommandContext,
+    PatchCommandContext,
     InMemoryEventStore,
     InputBindingProjection,
     InvalidTestBlockProjection,
@@ -59,7 +61,7 @@ from orchestrator.graph import (
     reduce_event,
     support_evidence_freshness_from_projection,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context
 from tests.unit.graph_test_utils import canonical_event_payload
 
 FIXTURE_DIR = Path(__file__).parent.parent / "fixtures" / "graph"
@@ -2223,6 +2225,7 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
             events_before,
             command_type,
             payload,
+            command_context(events_before),
             clock,
             id_gen,
         ):
@@ -2302,7 +2305,6 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
     append_command(
         "submit_callback",
         {
-            "run_id": "run-1",
             "node_id": "worker-1",
             "execution_id": "exec-worker",
             "lease_id": "lease-worker",
@@ -2349,7 +2351,6 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
     append_command(
         "submit_callback",
         {
-            "run_id": "run-1",
             "node_id": "verifier-1",
             "execution_id": "exec-verifier",
             "lease_id": "lease-verifier",
@@ -2381,7 +2382,6 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
     append_command(
         "schedule_tick",
         {
-            "run_id": "run-1",
             "lease_seconds": 300,
             "max_grants": 0,
             "base_snapshot_id": "S0",
@@ -4858,6 +4858,25 @@ def test_fixture_corpus_then_projections_satisfied() -> None:
 
             result = run_scenario(
                 typed_scenario,
+                (
+                    PatchCommandContext.model_validate(
+                        {
+                            "run_id": str(typed_scenario.get("run_id", "run-1")),
+                            "current_graph_position": len(typed_scenario.get("given_events", [])),
+                            **typed_scenario["command_context"],
+                        }
+                    )
+                    if isinstance(typed_scenario.get("when_command"), dict)
+                    and "submit_patch" in typed_scenario["when_command"]
+                    else GraphCommandContext(
+                        run_id=str(typed_scenario.get("run_id", "run-1")),
+                        current_graph_position=(
+                            len(typed_scenario.get("given_events", []))
+                            if typed_scenario.get("when_command")
+                            else -1
+                        ),
+                    )
+                ),
                 InMemoryEventStore(),
                 FakeClock(),
                 SequentialIdGenerator(),

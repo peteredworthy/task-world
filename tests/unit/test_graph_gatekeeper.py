@@ -16,7 +16,7 @@ from orchestrator.graph import (
     project_residue_report,
     reduce_event,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context
 
 
 def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
@@ -28,11 +28,11 @@ def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "verdicts": [_verdict("reports/result.xml", "test_artifact")],
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -74,7 +74,6 @@ def test_record_gatekeeper_verdicts_rejects_invalid_supplied_accounting(
     events = [_file_state_event("file-state-1", "tmp.out")]
     verdict = _verdict("tmp.out", "build_output")
     payload: dict[str, Any] = {
-        "run_id": "run-1",
         "file_state_record_id": "file-state-1",
         "execution_id": "exec-1",
         "verdicts": [verdict],
@@ -89,6 +88,7 @@ def test_record_gatekeeper_verdicts_rejects_invalid_supplied_accounting(
         events,
         "record_gatekeeper_verdicts",
         payload,
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -108,12 +108,12 @@ def test_record_gatekeeper_verdicts_rejects_wrong_type_consult_id() -> None:
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "consult_id": 7,
             "verdicts": [_verdict("tmp.out", "build_output")],
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -144,13 +144,13 @@ def test_record_gatekeeper_verdicts_rejects_nested_cost_ownership_override(
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "consult_id": "consult-1",
             "verdicts": [_verdict("tmp.out", "build_output")],
             "cost": {field: value},
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -179,13 +179,13 @@ def test_record_gatekeeper_verdicts_allows_only_nested_accounting_overrides() ->
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "consult_id": "consult-1",
             "verdicts": [_verdict("tmp.out", "build_output")],
             "cost": accounting,
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -204,11 +204,11 @@ def test_record_gatekeeper_verdicts_rejects_unknown_record_id() -> None:
         [],
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "missing",
             "execution_id": "exec-1",
             "verdicts": [_verdict("tmp.out", "build_output")],
         },
+        command_context([]),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -225,11 +225,11 @@ def test_record_gatekeeper_verdicts_rejects_path_not_in_residue() -> None:
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "verdicts": [_verdict("other.out", "build_output")],
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -246,11 +246,11 @@ def test_record_gatekeeper_verdicts_rejects_invalid_taxonomy_value() -> None:
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "verdicts": [_verdict("tmp.out", "unknown_untracked")],
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -268,11 +268,11 @@ def test_record_gatekeeper_verdicts_rejects_duplicate_already_resolved_path() ->
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "verdicts": [_verdict("tmp.out", "build_output")],
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -282,11 +282,11 @@ def test_record_gatekeeper_verdicts_rejects_duplicate_already_resolved_path() ->
         [*events, *first],
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "verdicts": [_verdict("tmp.out", "build_output")],
         },
+        command_context([*events, *first]),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -326,10 +326,10 @@ def test_record_gatekeeper_verdicts_requires_execution_id() -> None:
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "verdicts": [_verdict("tmp.out", "build_output")],
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -348,7 +348,6 @@ def test_record_gatekeeper_verdicts_rejects_duplicate_path_in_same_payload() -> 
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "verdicts": [
@@ -356,6 +355,7 @@ def test_record_gatekeeper_verdicts_rejects_duplicate_path_in_same_payload() -> 
                 _verdict("tmp.out", "build_output"),
             ],
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -372,11 +372,11 @@ def test_record_gatekeeper_verdicts_secret_requests_cleanup_and_marks_projection
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "verdicts": [_verdict("residue.txt", "secret")],
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -406,11 +406,11 @@ def test_record_cleanup_applied_rejects_unknown_cleanup() -> None:
         events,
         "record_cleanup_applied",
         {
-            "run_id": "run-1",
             "cleanup_id": "missing-cleanup",
             "superseding_file_state_record": _superseding_record(),
             "deleted_snapshot_ref": True,
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -426,11 +426,11 @@ def test_record_cleanup_applied_rejects_duplicate_cleanup() -> None:
         events,
         "record_cleanup_applied",
         {
-            "run_id": "run-1",
             "cleanup_id": "cleanup-1",
             "superseding_file_state_record": _superseding_record(cleanup_id="cleanup-1"),
             "deleted_snapshot_ref": True,
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -440,11 +440,11 @@ def test_record_cleanup_applied_rejects_duplicate_cleanup() -> None:
         [*events, *first],
         "record_cleanup_applied",
         {
-            "run_id": "run-1",
             "cleanup_id": "cleanup-1",
             "superseding_file_state_record": _superseding_record(cleanup_id="cleanup-1"),
             "deleted_snapshot_ref": False,
         },
+        command_context([*events, *first]),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -463,11 +463,11 @@ def test_record_cleanup_applied_rejects_same_snapshot_supersede() -> None:
         events,
         "record_cleanup_applied",
         {
-            "run_id": "run-1",
             "cleanup_id": "cleanup-1",
             "superseding_file_state_record": record,
             "deleted_snapshot_ref": True,
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -492,11 +492,11 @@ def test_record_cleanup_applied_rejects_superseding_record_with_secret_path() ->
         events,
         "record_cleanup_applied",
         {
-            "run_id": "run-1",
             "cleanup_id": "cleanup-1",
             "superseding_file_state_record": record,
             "deleted_snapshot_ref": True,
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -643,12 +643,12 @@ def _cleanup_requested_events() -> list[EventEnvelope]:
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "consult_id": "consult-1",
             "verdicts": [_verdict("residue.txt", "secret")],
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )

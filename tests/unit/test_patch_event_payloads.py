@@ -9,7 +9,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     build_projection,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, patch_command_context
 from tests.unit.graph_test_utils import event
 
 
@@ -59,13 +59,11 @@ def test_patch_command_producer_matches_canonical_payload_json() -> None:
         events,
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-1",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": 1,
             "ops": [],
         },
+        patch_command_context(events, proposed_by_node_id="planner-1", actor_role="planner"),
         FakeClock(),
         SequentialIdGenerator(),
     )

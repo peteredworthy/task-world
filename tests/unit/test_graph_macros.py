@@ -6,23 +6,32 @@ from orchestrator.graph import (
     EventEnvelope,
     FakeClock,
     PatchEnvelope,
+    PatchCommandContext,
     PatchOp,
     expand_patch_macros,
     initial_projection,
     reduce_event,
     validate_patch,
 )
+from orchestrator.graph.command_models import SubmitPatchCommand
 from tests.unit.graph_test_utils import apply_command
 
 
-def _patch(payload: dict[str, Any]) -> PatchEnvelope:
-    expanded = expand_patch_macros(payload)
+def _patch(payload: dict[str, Any], proposed_by_node_id: str = "planner-1") -> PatchEnvelope:
+    command = SubmitPatchCommand.model_validate(payload)
+    ops = expand_patch_macros(command.ops, command.macro_invocations, proposed_by_node_id)
     return PatchEnvelope(
-        patch_id=str(expanded["patch_id"]),
-        proposed_by_node_id=str(expanded.get("proposed_by_node_id", "planner-1")),
-        base_graph_position=int(expanded["base_graph_position"]),
-        ops=[PatchOp(**op) for op in expanded["ops"]],
+        patch_id=command.patch_id,
+        proposed_by_node_id=proposed_by_node_id,
+        base_graph_position=command.base_graph_position,
+        ops=[PatchOp(**op) for op in ops],
     )
+
+
+def _expand(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    proposed_by_node_id = "planner-1"
+    command = SubmitPatchCommand.model_validate(payload)
+    return expand_patch_macros(command.ops, command.macro_invocations, proposed_by_node_id)
 
 
 def test_create_work_region_macro_expands_to_valid_patch() -> None:
@@ -72,7 +81,6 @@ def test_gap_planner_corrective_region_macro_expands_to_valid_patch() -> None:
     patch = _patch(
         {
             "patch_id": "macro-corrective",
-            "proposed_by_node_id": "planner-gap",
             "base_graph_position": 0,
             "macro_invocations": [
                 {
@@ -85,7 +93,8 @@ def test_gap_planner_corrective_region_macro_expands_to_valid_patch() -> None:
                     },
                 }
             ],
-        }
+        },
+        proposed_by_node_id="planner-gap",
     )
 
     result = validate_patch(
@@ -212,8 +221,6 @@ def test_submit_patch_command_accepts_macro_invocations() -> None:
         {
             "patch_id": "macro-work",
             "base_graph_position": 0,
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "macro_invocations": [
                 {
                     "macro": "create_work_region",
@@ -221,6 +228,12 @@ def test_submit_patch_command_accepts_macro_invocations() -> None:
                 }
             ],
         },
+        PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=0,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        ),
         FakeClock(),
         _Ids(),
     )
@@ -247,7 +260,7 @@ def test_macro_invocations_reject_missing_required_typed_args() -> None:
     }
 
     try:
-        expand_patch_macros(payload)
+        _expand(payload)
     except ValueError as exc:
         assert "create_work_region args invalid" in str(exc)
         assert "region_id" in str(exc)
@@ -271,7 +284,7 @@ def test_macro_invocations_reject_invalid_invocation_shape() -> None:
     }
 
     try:
-        expand_patch_macros(payload)
+        _expand(payload)
     except ValueError as exc:
         assert "create_join args invalid" in str(exc)
         assert "sources.0.node_id" in str(exc)
@@ -296,7 +309,7 @@ def test_attach_check_macro_rejects_planner_authored_candidate_id() -> None:
     }
 
     try:
-        expand_patch_macros(payload)
+        _expand(payload)
     except ValueError as exc:
         assert "attach_check args invalid" in str(exc)
         assert "candidate_id" in str(exc)
@@ -320,7 +333,7 @@ def test_attach_verifier_macro_rejects_planner_authored_candidate_id() -> None:
     }
 
     try:
-        expand_patch_macros(payload)
+        _expand(payload)
     except ValueError as exc:
         assert "attach_verifier args invalid" in str(exc)
         assert "candidate_id" in str(exc)

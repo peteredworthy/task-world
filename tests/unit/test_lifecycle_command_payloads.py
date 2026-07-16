@@ -1,5 +1,8 @@
 """Strict lifecycle command payload and registry coverage."""
 
+import inspect
+from typing import get_type_hints
+
 import pytest
 from pydantic import ValidationError
 
@@ -45,6 +48,14 @@ def test_command_registry_has_exactly_23_strict_models() -> None:
     assert all(
         spec.payload_model.model_config["extra"] == "forbid" for spec in COMMAND_SPECS.values()
     )
+
+
+def test_each_registered_handler_accepts_its_concrete_payload_model() -> None:
+    for command_type, spec in COMMAND_SPECS.items():
+        payload_annotation = get_type_hints(spec.handler)[
+            list(inspect.signature(spec.handler).parameters)[3]
+        ]
+        assert payload_annotation is spec.payload_model, command_type
 
 
 def test_graph_command_context_owns_runtime_and_actor_provenance() -> None:

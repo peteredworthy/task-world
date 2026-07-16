@@ -9,7 +9,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     build_projection,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph.commands import event_factory
 from tests.unit.graph_test_utils import event
@@ -56,7 +56,8 @@ def test_lifecycle_producer_matches_typed_payload_json() -> None:
         build_projection(events),
         events,
         "start",
-        {"run_id": "run-1"},
+        {},
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )

@@ -949,7 +949,6 @@ def _planner_patch_examples(
                     else "create_worker_verifier_region"
                 ),
                 "patch_id": "example-worker-verifier-region",
-                "proposed_by_node_id": context.node_id,
                 "base_graph_position": base_position,
                 "ops": [
                     {
@@ -997,7 +996,6 @@ def _planner_patch_examples(
             {
                 "purpose": "no_gap_no_op_patch",
                 "patch_id": "example-gap-no-op",
-                "proposed_by_node_id": context.node_id,
                 "base_graph_position": base_position,
                 "ops": [],
             }
@@ -1009,7 +1007,6 @@ def _planner_patch_examples(
             {
                 "purpose": "create_successor_planner",
                 "patch_id": "example-successor-planner",
-                "proposed_by_node_id": context.node_id,
                 "base_graph_position": base_position,
                 "ops": [
                     {
@@ -1029,7 +1026,6 @@ def _planner_patch_examples(
             {
                 "purpose": "create_gap_planner",
                 "patch_id": "example-gap-planner",
-                "proposed_by_node_id": context.node_id,
                 "base_graph_position": base_position,
                 "ops": [
                     {
@@ -1063,7 +1059,6 @@ def _planner_patch_examples(
             {
                 "purpose": "create_invariant_check",
                 "patch_id": "example-invariant-check",
-                "proposed_by_node_id": context.node_id,
                 "base_graph_position": base_position,
                 "ops": [
                     {
@@ -1098,7 +1093,6 @@ def _planner_patch_examples(
             {
                 "purpose": "no_safe_mutation_termination",
                 "patch_id": "example-no-safe-mutation",
-                "proposed_by_node_id": context.node_id,
                 "base_graph_position": base_position,
                 "ops": [
                     {
@@ -1121,7 +1115,6 @@ def _planner_patch_examples(
             {
                 "purpose": "set_resource_claims",
                 "patch_id": "example-set-resource-claims",
-                "proposed_by_node_id": context.node_id,
                 "base_graph_position": base_position,
                 "ops": [
                     {
@@ -1145,7 +1138,6 @@ def _planner_patch_examples(
             {
                 "purpose": "set_allowed_actions",
                 "patch_id": "example-set-allowed-actions",
-                "proposed_by_node_id": context.node_id,
                 "base_graph_position": base_position,
                 "ops": [
                     {

@@ -8,7 +8,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     build_projection,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context
 from tests.unit.graph_test_utils import event
 
 
@@ -80,7 +80,8 @@ def test_schedule_producer_matches_typed_node_state_payload_json() -> None:
         build_projection(events),
         events,
         "schedule_tick",
-        {"run_id": "run-1", "max_grants": 1},
+        {"max_grants": 1},
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )

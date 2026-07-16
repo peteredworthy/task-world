@@ -9,7 +9,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     build_projection,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context
 from tests.unit.graph_test_utils import event
 
 
@@ -85,12 +85,12 @@ def test_decision_command_producer_matches_canonical_payload_json() -> None:
         events,
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "approval",
             "node_id": "gate-1",
             "decision": "approved",
             "decider": "operator-1",
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )

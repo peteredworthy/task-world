@@ -24,7 +24,7 @@ from orchestrator.graph import (
     initial_projection,
     reduce_event,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context
 
 
 def test_routine_maps_to_root_and_routine_snapshot_record_node() -> None:
@@ -157,7 +157,7 @@ def test_same_step_artifact_scoped_workers_can_schedule_without_conflict() -> No
     schedule_events = _apply(
         active_events,
         "schedule_tick",
-        {"run_id": "run-1", "max_grants": 10},
+        {"max_grants": 10},
     )
 
     lease_grants = schedule_events_by_type(schedule_events, "lease_granted")
@@ -457,7 +457,7 @@ def test_minimal_single_task_graph_has_exact_minimum_executable_node_set_and_sch
     assert _node_ids_by_kind(projection, "gate") == []
 
     active_events = _with_lifecycle_started(events)
-    schedule_events = _apply(active_events, "schedule_tick", {"run_id": "run-1", "max_grants": 1})
+    schedule_events = _apply(active_events, "schedule_tick", {"max_grants": 1})
 
     assert "lease_granted" in [event.event_type for event in schedule_events]
     assert schedule_events_by_type(schedule_events, "lease_granted")[0].payload["node_id"] == (
@@ -583,7 +583,7 @@ def test_compiled_projection_schedules_first_worker_and_blocks_downstream_step()
     )
     active_events = _with_lifecycle_started(_compile(routine))
 
-    schedule_events = _apply(active_events, "schedule_tick", {"run_id": "run-1", "max_grants": 10})
+    schedule_events = _apply(active_events, "schedule_tick", {"max_grants": 10})
 
     lease_grants = schedule_events_by_type(schedule_events, "lease_granted")
     assert [event.payload["node_id"] for event in lease_grants] == ["worker-s-01-t-01"]
@@ -600,7 +600,7 @@ def test_two_step_routine_worker_completion_unblocks_next_step_worker() -> None:
 
     first_tick = _append(
         events,
-        _apply(events, "schedule_tick", {"run_id": "run-1", "max_grants": 10}),
+        _apply(events, "schedule_tick", {"max_grants": 10}),
     )
     first_lease = schedule_events_by_type(first_tick, "lease_granted")[0]
     assert first_lease.payload["node_id"] == "worker-s-01-t-01"
@@ -621,7 +621,7 @@ def test_two_step_routine_worker_completion_unblocks_next_step_worker() -> None:
     ]
     events = [*events, *completed]
 
-    second_tick = _apply(events, "schedule_tick", {"run_id": "run-1", "max_grants": 10})
+    second_tick = _apply(events, "schedule_tick", {"max_grants": 10})
     second_grants = schedule_events_by_type(second_tick, "lease_granted")
     assert [event.payload["node_id"] for event in second_grants] == ["worker-s-02-t-02"]
 
@@ -630,7 +630,7 @@ def test_two_step_routine_worker_failure_blocks_next_step_worker() -> None:
     events = _with_positions(_with_lifecycle_started(_compile(_two_step_routine())))
     first_tick = _append(
         events,
-        _apply(events, "schedule_tick", {"run_id": "run-1", "max_grants": 10}),
+        _apply(events, "schedule_tick", {"max_grants": 10}),
     )
     first_lease = schedule_events_by_type(first_tick, "lease_granted")[0]
     events = [*events, *first_tick]
@@ -645,7 +645,7 @@ def test_two_step_routine_worker_failure_blocks_next_step_worker() -> None:
     )
     events = [*events, *failed]
 
-    second_tick = _apply(events, "schedule_tick", {"run_id": "run-1", "max_grants": 10})
+    second_tick = _apply(events, "schedule_tick", {"max_grants": 10})
 
     assert schedule_events_by_type(second_tick, "lease_granted") == []
     assert any(
@@ -712,15 +712,16 @@ def _apply(
         events,
         command_type,
         payload,
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
 
 
 def _with_lifecycle_started(events: list[EventEnvelope]) -> list[EventEnvelope]:
-    accepted = _apply(events, "accept_run", {"run_id": "run-1"})
+    accepted = _apply(events, "accept_run", {})
     queued_events = [*events, *accepted]
-    started = _apply(queued_events, "start", {"run_id": "run-1"})
+    started = _apply(queued_events, "start", {})
     return [*queued_events, *started]
 
 
@@ -748,7 +749,6 @@ def _callback_payload(
 ) -> dict[str, Any]:
     node_id = str(lease_granted.payload["node_id"])
     payload: dict[str, Any] = {
-        "run_id": "run-1",
         "node_id": node_id,
         "execution_id": lease_granted.payload["execution_id"],
         "lease_id": lease_granted.payload["lease_id"],
@@ -788,7 +788,6 @@ def _callback_payload(
 
 def _start_payload(lease_granted: EventEnvelope) -> dict[str, Any]:
     return {
-        "run_id": "run-1",
         "node_id": lease_granted.payload["node_id"],
         "execution_id": lease_granted.payload["execution_id"],
         "lease_id": lease_granted.payload["lease_id"],

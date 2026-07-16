@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.db import EventV2Model, create_engine, create_session_factory, init_db
 from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
+from orchestrator.graph.command_models import GraphCommandContext, PatchCommandContext
 from orchestrator.graph.models import EventEnvelope
 from orchestrator.graph.projections import build_projection, projection_to_checkpoint
 from orchestrator.graph.scenario import run_scenario
@@ -37,6 +38,21 @@ def _all_scenarios() -> list[tuple[Path, dict[str, Any]]]:
     return scenarios
 
 
+def _command_context(scenario: dict[str, Any]) -> GraphCommandContext:
+    run_id = str(scenario.get("run_id", "run-1"))
+    position = len(scenario.get("given_events", [])) if scenario.get("when_command") else -1
+    when_command = scenario.get("when_command")
+    if isinstance(when_command, dict) and "submit_patch" in when_command:
+        return PatchCommandContext.model_validate(
+            {
+                "run_id": run_id,
+                "current_graph_position": position,
+                **scenario["command_context"],
+            }
+        )
+    return GraphCommandContext(run_id=run_id, current_graph_position=position)
+
+
 def test_all_fixtures_parse() -> None:
     assert len(_fixture_paths()) >= 8
     for path, scenario in _all_scenarios():
@@ -49,6 +65,7 @@ def test_all_fixtures_run_through_harness() -> None:
     for path, scenario in _all_scenarios():
         result = run_scenario(
             scenario,
+            _command_context(scenario),
             InMemoryEventStore(),
             FakeClock(),
             SequentialIdGenerator(),
@@ -105,6 +122,7 @@ async def _assert_fixture_corpus_replay_parity(session: AsyncSession) -> None:
     for index, (path, scenario) in enumerate(_all_scenarios(), start=1):
         result = run_scenario(
             scenario,
+            _command_context(scenario),
             InMemoryEventStore(),
             FakeClock(),
             SequentialIdGenerator(),

@@ -11,45 +11,48 @@ from orchestrator.graph import (
 )
 
 
+def command_context(
+    events: list[EventEnvelope],
+    *,
+    run_id: str = "run-1",
+    actor: Actor | None = None,
+) -> GraphCommandContext:
+    return GraphCommandContext(
+        run_id=run_id,
+        current_graph_position=max((event.position for event in events), default=-1),
+        actor=actor,
+    )
+
+
+def patch_command_context(
+    events: list[EventEnvelope],
+    *,
+    proposed_by_node_id: str,
+    actor_role: str,
+    run_id: str = "run-1",
+) -> PatchCommandContext:
+    return PatchCommandContext(
+        run_id=run_id,
+        current_graph_position=max((event.position for event in events), default=-1),
+        proposed_by_node_id=proposed_by_node_id,
+        actor_role=actor_role,
+    )
+
+
 def apply_command(
     projection: Any,
     events: list[EventEnvelope],
     command_type: str,
     payload: dict[str, Any],
+    context: GraphCommandContext,
     clock: Any,
     id_gen: Any,
 ) -> list[EventEnvelope]:
-    """Apply a command while keeping legacy test fixtures' context explicit."""
-    command_payload = dict(payload)
-    run_id = command_payload.pop("run_id", events[-1].run_id if events else "run-1")
-    current_position = command_payload.pop(
-        "_current_graph_position",
-        max((event.position for event in events), default=-1),
-    )
-    actor_role = command_payload.pop("actor_role", None)
-    proposed_by_node_id = command_payload.pop("proposed_by_node_id", None)
-    if command_type == "submit_patch":
-        context: GraphCommandContext = PatchCommandContext(
-            run_id=run_id,
-            current_graph_position=current_position,
-            proposed_by_node_id=proposed_by_node_id or "controller",
-            actor_role=actor_role or "planner",
-        )
-    else:
-        context = GraphCommandContext(
-            run_id=run_id,
-            current_graph_position=current_position,
-            actor=(
-                Actor(kind=ActorKind.HUMAN, role=actor_role)
-                if isinstance(actor_role, str)
-                else None
-            ),
-        )
     return apply_strict_command(
         projection,
         events,
         command_type,
-        command_payload,
+        payload,
         context,
         clock,
         id_gen,

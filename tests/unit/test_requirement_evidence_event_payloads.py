@@ -9,7 +9,7 @@ from orchestrator.graph import (
     build_projection,
     initial_projection,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context
 
 
 def test_requirement_payload_serializes_canonical_shape() -> None:
@@ -59,11 +59,11 @@ def test_requirement_and_support_command_producers_match_typed_payload_json() ->
         [],
         "record_requirement_revision",
         {
-            "run_id": "run-1",
             "requirement_id": "R-1",
             "version_id": "R-1-v1",
             "classification": "initial",
         },
+        command_context([]),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -75,11 +75,11 @@ def test_requirement_and_support_command_producers_match_typed_payload_json() ->
         revision_events,
         "record_support_evidence",
         {
-            "run_id": "run-1",
             "support_id": "support-1",
             "evidence_id": "evidence-1",
             "requirement_id": "R-1",
         },
+        command_context(revision_events),
         FakeClock(),
         SequentialIdGenerator(),
     )

@@ -14,14 +14,19 @@ from orchestrator.graph._commands import (
     apply_evaluate_join,
     apply_agent_died,
 )
-from orchestrator.graph.command_models import GraphCommandContext, StrictCommandPayload
+from orchestrator.graph.command_models import (
+    AgentDiedCommand,
+    EvaluateFinalGateCommand,
+    EvaluateJoinCommand,
+    GraphCommandContext,
+)
 
 
 def handle_evaluate_join(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: EvaluateJoinCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -33,7 +38,7 @@ def handle_evaluate_join(
     del context
     return apply_evaluate_join(
         projection,
-        payload.model_dump(mode="python", exclude_none=True),
+        payload,
         make_event,
         id_gen,
     )
@@ -43,7 +48,7 @@ def handle_evaluate_final_gate(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: EvaluateFinalGateCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -55,7 +60,7 @@ def handle_evaluate_final_gate(
     return apply_evaluate_final_gate(
         projection,
         events,
-        payload.model_dump(mode="python", exclude_none=True),
+        payload,
         make_event,
         id_gen,
     )
@@ -65,7 +70,7 @@ def handle_agent_died(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: AgentDiedCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -77,7 +82,7 @@ def handle_agent_died(
     del context
     return apply_agent_died(
         projection,
-        payload.model_dump(mode="python", exclude_none=True),
+        payload,
         clock,
         make_event,
     )

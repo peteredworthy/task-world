@@ -8,7 +8,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     build_projection,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context
 from tests.unit.graph_test_utils import event
 
 
@@ -76,7 +76,6 @@ def test_cleanup_command_producers_match_typed_payload_json() -> None:
         events,
         "record_gatekeeper_verdicts",
         {
-            "run_id": "run-1",
             "file_state_record_id": "file-state-1",
             "execution_id": "exec-1",
             "verdicts": [
@@ -93,6 +92,7 @@ def test_cleanup_command_producers_match_typed_payload_json() -> None:
                 }
             ],
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -110,7 +110,6 @@ def test_cleanup_command_producers_match_typed_payload_json() -> None:
         events,
         "record_cleanup_applied",
         {
-            "run_id": "run-1",
             "cleanup_id": "cleanup-1",
             "superseding_file_state_record": {
                 "record_id": "file-state-1-cleanup",
@@ -129,6 +128,7 @@ def test_cleanup_command_producers_match_typed_payload_json() -> None:
             },
             "deleted_snapshot_ref": True,
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )

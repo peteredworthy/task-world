@@ -12,7 +12,34 @@ from orchestrator.graph.callbacks import (
     validate_callback,
 )
 from orchestrator.graph.command_bindings import canonicalize_check_command_definition
-from orchestrator.graph.command_models import GraphCommandContext, PatchCommandContext
+from orchestrator.graph.command_models import (
+    AcceptRunCommand,
+    AcknowledgeStartCommand,
+    AgentDiedCommand,
+    CancelCommand,
+    CompleteCommand,
+    EvaluateFinalGateCommand,
+    EvaluateJoinCommand,
+    FailCommand,
+    GatekeeperCostCommandRow,
+    GraphCommandContext,
+    PatchCommandContext,
+    PauseCommand,
+    RaiseAppealCommand,
+    ReconcileCommand,
+    RecordCleanupAppliedCommand,
+    RecordDecisionCommand,
+    RecordGatekeeperVerdictsCommand,
+    RecordHeartbeatCommand,
+    RecordRequirementRevisionCommand,
+    RecordSupportEvidenceCommand,
+    ResumeCommand,
+    ScheduleTickCommand,
+    SeedCompiledEventsCommand,
+    StartCommand,
+    SubmitCallbackCommand,
+    SubmitPatchCommand,
+)
 from orchestrator.graph.contracts import (
     DEFAULT_NODE_CONTRACTS,
     PortContract,
@@ -76,7 +103,6 @@ from orchestrator.graph.models import (
     normalize_record_selector,
     record_selector_matches,
 )
-from orchestrator.graph.file_state import GATEKEEPER_TAXONOMY
 from orchestrator.graph.patch_validator import validate_patch
 from orchestrator.graph.projections import (
     GraphProjection,
@@ -248,7 +274,13 @@ def _apply_lifecycle_command(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: dict[str, Any],
+    payload: AcceptRunCommand
+    | StartCommand
+    | PauseCommand
+    | ResumeCommand
+    | CancelCommand
+    | CompleteCommand
+    | FailCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     id_gen: IdGenerator,
@@ -262,7 +294,9 @@ def _apply_lifecycle_command(
                     command_type,
                     current_state,
                     "failed",
-                    payload.get("reason", "unrecoverable_controller_error"),
+                    payload.reason
+                    if isinstance(payload, FailCommand)
+                    else "unrecoverable_controller_error",
                 )
             ]
         return [_command_rejected(make_event, command_type, f"terminal run: {current_state}")]
@@ -299,9 +333,15 @@ def _apply_lifecycle_command(
                     },
                 )
             ]
-    trigger = payload.get("trigger", f"{command_type}_command_accepted")
+    trigger = (
+        payload.trigger
+        if not isinstance(payload, FailCommand) and payload.trigger is not None
+        else f"{command_type}_command_accepted"
+    )
     output: list[EventEnvelope] = []
     if command_type == "complete" and not _has_passed_completion_decision(projection):
+        if not isinstance(payload, CompleteCommand):
+            raise TypeError("complete command requires CompleteCommand")
         output.append(_lifecycle_completion_decision_event(payload, make_event, id_gen))
     output.append(
         _lifecycle_event(
@@ -322,16 +362,12 @@ def _has_passed_completion_decision(projection: GraphProjection) -> bool:
 
 
 def _lifecycle_completion_decision_event(
-    payload: dict[str, Any],
+    payload: CompleteCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     id_gen: IdGenerator,
 ) -> EventEnvelope:
-    record_id = payload.get("completion_decision_record_id") or payload.get("record_id")
-    if not isinstance(record_id, str) or not record_id:
-        record_id = id_gen.next_id("completion-decision")
-    producer_node_id = payload.get("node_id")
-    if not isinstance(producer_node_id, str) or not producer_node_id:
-        producer_node_id = "run_lifecycle"
+    record_id = payload.completion_decision_record_id or id_gen.next_id("completion-decision")
+    producer_node_id = payload.node_id or "run_lifecycle"
     record = CompletionDecisionRecord.model_validate(
         {
             "record_id": record_id,
@@ -352,13 +388,11 @@ def _lifecycle_completion_decision_event(
 
 def _apply_record_heartbeat(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: RecordHeartbeatCommand,
     clock: Clock,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    lease_id = payload.get("lease_id")
-    if not isinstance(lease_id, str) or not lease_id:
-        return [_command_rejected(make_event, "record_heartbeat", "heartbeat requires lease_id")]
+    lease_id = payload.lease_id
     lease = projection["leases"].get(lease_id)
     if lease is None:
         return [_command_rejected(make_event, "record_heartbeat", f"unknown lease: {lease_id}")]
@@ -374,23 +408,21 @@ def _apply_record_heartbeat(
         ]
 
     node_id = lease.node_id
-    payload_node_id = payload.get("node_id")
-    if isinstance(payload_node_id, str) and payload_node_id != node_id:
+    if payload.node_id is not None and payload.node_id != node_id:
         return [_command_rejected(make_event, "record_heartbeat", "node_id_mismatch")]
     if not isinstance(node_id, str):
         return [_command_rejected(make_event, "record_heartbeat", "lease_missing_node_id")]
 
-    expected_generation = payload.get("generation")
+    expected_generation = payload.generation
     lease_generation = lease.generation
     if (
-        isinstance(expected_generation, int)
-        and not isinstance(expected_generation, bool)
+        expected_generation is not None
         and isinstance(lease_generation, int)
         and expected_generation != lease_generation
     ):
         return [_command_rejected(make_event, "record_heartbeat", "lease_generation_mismatch")]
 
-    ttl_seconds = payload["ttl_seconds"]
+    ttl_seconds = payload.ttl_seconds
     expires_at = (clock.now() + timedelta(seconds=ttl_seconds)).isoformat()
     heartbeat_payload: dict[str, Any] = {
         "lease_id": lease_id,
@@ -456,13 +488,11 @@ def _cancel_active_lease_events(
 def _apply_evaluate_final_gate(
     projection: GraphProjection,
     events: list[EventEnvelope],
-    payload: dict[str, Any],
+    payload: EvaluateFinalGateCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
-    node_id = payload.get("node_id")
-    if not isinstance(node_id, str) or not node_id:
-        return [_command_rejected(make_event, "evaluate_final_gate", "missing node_id")]
+    node_id = payload.node_id
     if projection["node_kinds"].get(node_id) != "final_gate":
         return [_command_rejected(make_event, "evaluate_final_gate", "node is not a final_gate")]
 
@@ -472,9 +502,7 @@ def _apply_evaluate_final_gate(
         include_completion_decision=False,
     )
     status = "blocked" if blockers else "passed"
-    record_id = payload.get("record_id")
-    if not isinstance(record_id, str) or not record_id:
-        record_id = id_gen.next_id("completion-decision")
+    record_id = payload.record_id or id_gen.next_id("completion-decision")
     decision = {
         "status": status,
         "blockers": blockers,
@@ -509,22 +537,18 @@ def _apply_evaluate_final_gate(
 
 def _apply_evaluate_join(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: EvaluateJoinCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
-    node_id = payload.get("node_id")
-    if not isinstance(node_id, str) or not node_id:
-        return [_command_rejected(make_event, "evaluate_join", "missing node_id")]
+    node_id = payload.node_id
     if projection["node_kinds"].get(node_id) != "join":
         return [_command_rejected(make_event, "evaluate_join", "node is not a join")]
 
     source_record_ids = _join_source_record_ids(projection, node_id)
     if not source_record_ids:
         return [_command_rejected(make_event, "evaluate_join", "join has no bound source records")]
-    record_id = payload.get("record_id")
-    if not isinstance(record_id, str) or not record_id:
-        record_id = id_gen.next_id("join-result")
+    record_id = payload.record_id or id_gen.next_id("join-result")
     output_record = JoinResultRecord.model_validate(
         {
             "record_id": record_id,
@@ -565,13 +589,13 @@ def _join_source_record_ids(projection: GraphProjection, node_id: str) -> list[s
 
 
 def _maybe_release_lease(
-    payload: dict[str, Any],
+    payload: EvaluateJoinCommand | EvaluateFinalGateCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     node_id: str,
 ) -> list[EventEnvelope]:
-    lease_id = payload.get("lease_id")
-    generation = payload.get("lease_generation")
-    if not isinstance(lease_id, str) or not isinstance(generation, int):
+    lease_id = payload.lease_id
+    generation = payload.lease_generation
+    if lease_id is None or generation is None:
         return []
     return [
         make_event(
@@ -612,7 +636,7 @@ def _release_active_node_leases(
 
 def _apply_seed_compiled_events(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: SeedCompiledEventsCommand,
     run_id: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
@@ -621,18 +645,9 @@ def _apply_seed_compiled_events(
             _command_rejected(make_event, "seed_compiled_events", "run topology already seeded")
         ]
 
-    raw_events = payload.get("events")
-    if not isinstance(raw_events, list) or not raw_events:
-        return [_command_rejected(make_event, "seed_compiled_events", "missing compiled events")]
-
     compiled_events: list[EventEnvelope] = []
     try:
-        for raw_event in cast(list[Any], raw_events):
-            event = (
-                raw_event
-                if isinstance(raw_event, EventEnvelope)
-                else EventEnvelope.model_validate(raw_event)
-            )
+        for event in payload.events:
             if event.run_id != run_id:
                 return [
                     _command_rejected(
@@ -700,32 +715,30 @@ def _validated_seed_output_record_payload(payload: dict[str, Any]) -> dict[str, 
 def _apply_callback_command(
     projection: GraphProjection,
     events: list[EventEnvelope],
-    payload: dict[str, Any],
+    payload: SubmitCallbackCommand,
     run_id: str,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     callback_payload = _canonical_external_callback_payload(
         _callback_payload(payload),
-        payload["node_id"],
+        payload.node_id,
     )
     # Mutating-ness is derived from the callback's actual effects, never trusted
     # from the caller's flag: completing the node or carrying output records IS
     # a mutation, so a callback claiming is_mutating=False cannot bypass the
     # running-state and suspended-lease guards.
-    has_effects = bool(payload.get("complete_node", True)) or bool(
-        (callback_payload or {}).get("output_records")
-    )
+    has_effects = payload.complete_node or bool((callback_payload or {}).get("output_records"))
     request = CallbackRequest(
         run_id=run_id,
-        node_id=payload["node_id"],
-        execution_id=payload["execution_id"],
-        lease_id=payload["lease_id"],
-        lease_generation=payload["lease_generation"],
-        base_snapshot_id=payload["base_snapshot_id"],
-        observed_graph_position=payload["observed_graph_position"],
-        idempotency_key=payload["idempotency_key"],
+        node_id=payload.node_id,
+        execution_id=payload.execution_id,
+        lease_id=payload.lease_id,
+        lease_generation=payload.lease_generation,
+        base_snapshot_id=payload.base_snapshot_id,
+        observed_graph_position=payload.observed_graph_position,
+        idempotency_key=payload.idempotency_key,
         payload=callback_payload,
-        is_mutating=payload.get("is_mutating", True) or has_effects,
+        is_mutating=payload.is_mutating or has_effects,
     )
     result = validate_callback(request, projection, events)
 
@@ -825,10 +838,7 @@ def _apply_callback_command(
         projection,
         request,
         expected_producer_node_id,
-        successful_completion=(
-            bool(payload.get("complete_node", True))
-            and str(payload.get("new_state", "completed")) == "completed"
-        ),
+        successful_completion=(payload.complete_node and payload.new_state == "completed"),
     )
     if missing_output_conflict is not None:
         return [
@@ -849,13 +859,13 @@ def _apply_callback_command(
             make_event,
         )
     )
-    if payload.get("complete_node", True):
+    if payload.complete_node:
         output.append(
             make_event(
                 "node_state_changed",
                 {
                     "node_id": request.node_id,
-                    "new_state": str(payload.get("new_state", "completed")),
+                    "new_state": payload.new_state,
                     "trigger": "callback_accepted",
                 },
             )
@@ -2095,7 +2105,7 @@ def _target_port_contract_for_edge(
 def _apply_patch_command(
     projection: GraphProjection,
     events: list[EventEnvelope],
-    payload: dict[str, Any],
+    payload: SubmitPatchCommand,
     context: PatchCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
@@ -2110,25 +2120,27 @@ def _apply_patch_command(
             )
         ]
     try:
-        payload = expand_patch_macros(payload)
-        patch = PatchEnvelope(
-            patch_id=payload["patch_id"],
-            proposed_by_node_id=context.proposed_by_node_id,
-            base_graph_position=payload["base_graph_position"],
-            ops=[PatchOp(**op) for op in cast(list[dict[str, Any]], payload.get("ops", []))],
-            rationale_record_id=cast(str | None, payload.get("rationale_record_id")),
+        ops = expand_patch_macros(
+            payload.ops,
+            payload.macro_invocations,
+            context.proposed_by_node_id,
         )
-    except (KeyError, TypeError, ValueError) as exc:
+        patch = PatchEnvelope(
+            patch_id=payload.patch_id,
+            proposed_by_node_id=context.proposed_by_node_id,
+            base_graph_position=payload.base_graph_position,
+            ops=[PatchOp(**op) for op in ops],
+            rationale_record_id=payload.rationale_record_id,
+        )
+    except (TypeError, ValueError) as exc:
         rejected_payload = {
             "command_type": "submit_patch",
             "reason": f"malformed patch: {exc}",
-            "patch_id": payload.get("patch_id"),
+            "patch_id": payload.patch_id,
             "actor_role": actor_role,
             "proposed_by_node_id": context.proposed_by_node_id,
+            "base_graph_position": payload.base_graph_position,
         }
-        base_graph_position = payload.get("base_graph_position")
-        if isinstance(base_graph_position, int) and not isinstance(base_graph_position, bool):
-            rejected_payload["base_graph_position"] = base_graph_position
         return [
             make_event(
                 "command_rejected",
@@ -2168,11 +2180,8 @@ def _apply_patch_command(
     if actor_role == "planner" and successor_planner_node_ids:
         budget_rejection = _planner_budget_rejection(projection, patch)
         if budget_rejection is not None:
-            gate_node_id = str(
-                payload.get(
-                    "budget_gate_node_id",
-                    f"gate-planner-budget-{patch.proposed_by_node_id}",
-                )
+            gate_node_id = payload.budget_gate_node_id or (
+                f"gate-planner-budget-{patch.proposed_by_node_id}"
             )
             return [
                 make_event(
@@ -2225,7 +2234,7 @@ def _apply_patch_command(
         ]
 
     parent_session_id = projection["planner_sessions"].get(patch.proposed_by_node_id)
-    carryover_record_id = _carryover_record_id(payload)
+    carryover_record_id = payload.carryover_record_id
     output = [
         make_event(
             "graph_patch_accepted",
@@ -2314,11 +2323,6 @@ def _successor_planner_node_ids(patch: PatchEnvelope) -> list[str]:
     return node_ids
 
 
-def _carryover_record_id(payload: dict[str, Any]) -> str | None:
-    value = payload.get("carryover_record_id")
-    return value if isinstance(value, str) and value else None
-
-
 def _planner_budget_rejection(
     projection: GraphProjection,
     patch: PatchEnvelope,
@@ -2334,7 +2338,7 @@ def _planner_budget_rejection(
 def _apply_schedule_tick(
     projection: GraphProjection,
     events: list[EventEnvelope],
-    payload: dict[str, Any],
+    payload: ScheduleTickCommand,
     current_graph_position: int,
     clock: Clock,
     id_gen: IdGenerator,
@@ -2426,12 +2430,12 @@ def _apply_schedule_tick(
         projection["run_state"] or "draft",
         active_claims,
         current_graph_position,
-        max_grants=payload["max_grants"],
+        max_grants=payload.max_grants,
     )
-    lease_seconds = payload["lease_seconds"]
+    lease_seconds = payload.lease_seconds
     for node_id in decision.selected:
         claims = projection["node_resource_claims"].get(node_id, [])
-        lease_id = payload["lease_ids"].get(node_id) or id_gen.next_id("lease")
+        lease_id = payload.lease_ids.get(node_id) or id_gen.next_id("lease")
         base_snapshot_id = _base_snapshot_id_for_node(projection, payload, node_id)
         if base_snapshot_id is None:
             _append_node_deferred_if_changed(
@@ -2525,8 +2529,10 @@ def _dead_input_from_readiness(
 def _apply_reconcile(
     projection: GraphProjection,
     events: list[EventEnvelope],
+    payload: ReconcileCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
+    del events, payload
     run_state = projection["run_state"]
     if run_state in TERMINAL_RUN_STATES:
         return [_command_rejected(make_event, "reconcile", f"terminal run: {run_state}")]
@@ -3648,7 +3654,7 @@ def _stable_graph_id_part(value: str) -> str:
 
 def _base_snapshot_id_for_node(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: ScheduleTickCommand,
     node_id: str,
 ) -> str | None:
     """Resolve a node's base snapshot from command override or input bindings.
@@ -3657,9 +3663,8 @@ def _base_snapshot_id_for_node(
     node rather than fabricating an identity (PRD §19: every lease carries a
     real base snapshot).
     """
-    override = payload.get("base_snapshot_id")
-    if isinstance(override, str) and override:
-        return override
+    if payload.base_snapshot_id:
+        return payload.base_snapshot_id
 
     bindings = projection["input_bindings"].get(node_id, {})
     for port in ("base_snapshot", "root_snapshot", "routine_snapshot"):
@@ -3761,19 +3766,13 @@ def _is_chain_planner(projection: GraphProjection, node_id: str) -> bool:
 
 def _apply_acknowledge_start(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: AcknowledgeStartCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    node_id = payload.get("node_id")
-    lease_id = payload.get("lease_id")
-    lease_generation = payload.get("lease_generation")
-    execution_id = payload.get("execution_id")
-    if not isinstance(node_id, str) or not isinstance(lease_id, str):
-        return [_command_rejected(make_event, "acknowledge_start", "missing lease identity")]
-    if not isinstance(lease_generation, int):
-        return [_command_rejected(make_event, "acknowledge_start", "missing lease generation")]
-    if not isinstance(execution_id, str):
-        return [_command_rejected(make_event, "acknowledge_start", "missing execution_id")]
+    node_id = payload.node_id
+    lease_id = payload.lease_id
+    lease_generation = payload.lease_generation
+    execution_id = payload.execution_id
 
     lease = projection["leases"].get(lease_id)
     if lease is None:
@@ -3793,22 +3792,19 @@ def _apply_acknowledge_start(
         "new_state": "running",
         "trigger": "runtime_start_acknowledged",
     }
-    prompt_summary = payload.get("prompt_summary")
-    if isinstance(prompt_summary, dict):
-        event_payload["prompt_summary"] = dict(cast(dict[str, Any], prompt_summary))
+    if payload.prompt_summary is not None:
+        event_payload["prompt_summary"] = payload.prompt_summary
 
     return [make_event("node_state_changed", event_payload)]
 
 
 def _apply_agent_died(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: AgentDiedCommand,
     clock: Clock,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    lease_id = payload.get("lease_id")
-    if not isinstance(lease_id, str):
-        return [_command_rejected(make_event, "agent_died", "missing lease_id")]
+    lease_id = payload.lease_id
 
     lease = projection["leases"].get(lease_id)
     if lease is None:
@@ -3816,19 +3812,19 @@ def _apply_agent_died(
     if lease.state != "active":
         return [_command_rejected(make_event, "agent_died", "lease not active")]
 
-    execution_id = payload.get("execution_id")
+    execution_id = payload.execution_id
     lease_execution_id = lease.execution_id
     if isinstance(lease_execution_id, str):
         # A lease with a recorded execution requires the caller to present the
         # matching execution identity — omitting it cannot revoke the lease.
-        if not isinstance(execution_id, str):
+        if execution_id is None:
             return [_command_rejected(make_event, "agent_died", "missing execution_id")]
         if execution_id != lease_execution_id:
             return [_command_rejected(make_event, "agent_died", "execution_incompatible")]
 
     node_id = str(lease.node_id)
     generation = lease.generation
-    reason = str(payload.get("reason", "runtime_process_died"))
+    reason = payload.reason
     event_payload = {
         "lease_id": lease_id,
         "node_id": node_id,
@@ -3940,7 +3936,7 @@ def _apply_agent_died(
             ),
         ]
 
-    max_attempts = payload["max_attempts"]
+    max_attempts = payload.max_attempts
     attempt_number = projection["node_attempts"].get(node_id, 0)
     if max_attempts > 0 and attempt_number >= max_attempts:
         return [
@@ -3987,7 +3983,7 @@ def _apply_agent_died(
     # V1 retry policy: runtime death before an accepted boundary requeues the
     # same executable node. No new retry node is created until output/file-state
     # acceptance semantics exist in the graph runtime slice.
-    retry_backoff_seconds = payload["retry_backoff_seconds"]
+    retry_backoff_seconds = payload.retry_backoff_seconds
     retry_payload: dict[str, Any] = {
         "node_id": node_id,
         "lease_id": lease_id,
@@ -4150,27 +4146,22 @@ def _is_non_retryable_runtime_death(reason: str) -> bool:
 
 
 def _apply_raise_appeal(
-    payload: dict[str, Any],
+    payload: RaiseAppealCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
-    node_id = payload.get("node_id")
-    appeal_type = payload.get("appeal_type")
-    if not isinstance(node_id, str) or appeal_type != "invalid_test":
-        return [_command_rejected(make_event, "raise_appeal", "malformed appeal")]
-
-    oversight_node_id = str(payload.get("oversight_node_id", id_gen.next_id("oversight")))
+    oversight_node_id = payload.oversight_node_id or id_gen.next_id("oversight")
     return [
         make_event(
             "appeal_opened",
             AppealOpenedPayload.model_validate(
                 {
-                    "node_id": str(payload.get("appeal_node_id", id_gen.next_id("appeal"))),
-                    "appealed_node_id": node_id,
-                    "candidate_id": payload.get("candidate_id"),
-                    "task_region_id": payload.get("task_region_id"),
-                    "appeal_type": appeal_type,
-                    "lease_id": payload.get("lease_id"),
+                    "node_id": payload.appeal_node_id or id_gen.next_id("appeal"),
+                    "appealed_node_id": payload.node_id,
+                    "candidate_id": payload.candidate_id,
+                    "task_region_id": payload.task_region_id,
+                    "appeal_type": payload.appeal_type,
+                    "lease_id": payload.lease_id,
                 }
             ).model_dump(mode="json"),
         ),
@@ -4180,7 +4171,7 @@ def _apply_raise_appeal(
                 "node_id": oversight_node_id,
                 "kind": "oversight",
                 "state": "planned",
-                "task_region_id": payload.get("task_region_id"),
+                "task_region_id": payload.task_region_id,
             },
         ),
     ]
@@ -4188,16 +4179,11 @@ def _apply_raise_appeal(
 
 def _apply_record_decision(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: RecordDecisionCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    decision_type = payload.get("decision_type")
-    if decision_type not in {"approval", "oversight", "authority"}:
-        return [_command_rejected(make_event, "record_decision", "unknown decision_type")]
-
-    node_id = payload.get("node_id")
-    if not isinstance(node_id, str):
-        return [_command_rejected(make_event, "record_decision", "missing target node_id")]
+    decision_type = payload.decision_type
+    node_id = payload.node_id
     if not _node_exists(projection, node_id):
         return [_command_rejected(make_event, "record_decision", f"unknown target node: {node_id}")]
 
@@ -4221,12 +4207,21 @@ def _apply_record_decision(
     if run_state in {"cancelled", "failed"}:
         return [_command_rejected(make_event, "record_decision", f"terminal run: {run_state}")]
 
-    decider = payload["decider"]
-    decision = payload["decision"]
-
-    event_payload = dict(payload)
-    event_payload["decision"] = decision
-    event_payload["decider"] = decider
+    event_payload: dict[str, Any] = {
+        "decision_type": decision_type,
+        "node_id": node_id,
+        "decision": payload.decision,
+        "decider": (
+            payload.decider.model_dump(mode="json")
+            if isinstance(payload.decider, Actor)
+            else payload.decider
+        ),
+        "scope": payload.scope,
+        "expires_at": payload.expires_at,
+        "reason": payload.reason,
+        "record_id": payload.record_id,
+    }
+    event_payload = {key: value for key, value in event_payload.items() if value is not None}
     task_region_id = projection["node_task_regions"].get(node_id)
     if task_region_id is not None:
         event_payload.setdefault("task_region_id", task_region_id)
@@ -4319,12 +4314,10 @@ def _decision_output_record(
 
 def _apply_record_gatekeeper_verdicts(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: RecordGatekeeperVerdictsCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    record_id = payload.get("file_state_record_id")
-    if not isinstance(record_id, str) or not record_id:
-        return [_command_rejected(make_event, "record_gatekeeper_verdicts", "missing record id")]
+    record_id = payload.file_state_record_id
 
     record = projection["file_state_records"].get(record_id)
     if record is None:
@@ -4336,46 +4329,17 @@ def _apply_record_gatekeeper_verdicts(
             )
         ]
 
-    execution_id = payload.get("execution_id")
-    if not isinstance(execution_id, str) or not execution_id:
-        return [
-            _command_rejected(
-                make_event,
-                "record_gatekeeper_verdicts",
-                "missing execution_id",
-            )
-        ]
-
-    raw_verdicts = payload.get("verdicts")
-    if not isinstance(raw_verdicts, list) or not raw_verdicts:
-        return [_command_rejected(make_event, "record_gatekeeper_verdicts", "missing verdicts")]
+    execution_id = payload.execution_id
 
     unresolved_paths = {
         str(entry["path"])
         for entry in _record_residue(record)
         if isinstance(entry.get("path"), str) and entry.get("needs_gatekeeper") is True
     }
-    accepted: list[dict[str, Any]] = []
+    accepted: list[GatekeeperVerdictRow] = []
     seen_paths: set[str] = set()
-    for index, raw_verdict in enumerate(cast(list[Any], raw_verdicts)):
-        if not isinstance(raw_verdict, dict):
-            return [
-                _command_rejected(
-                    make_event,
-                    "record_gatekeeper_verdicts",
-                    f"malformed verdict at index {index}",
-                )
-            ]
-        verdict = dict(cast(dict[str, Any], raw_verdict))
-        path = verdict.get("path")
-        if not isinstance(path, str) or not path:
-            return [
-                _command_rejected(
-                    make_event,
-                    "record_gatekeeper_verdicts",
-                    f"verdict at index {index} missing path",
-                )
-            ]
+    for verdict in payload.verdicts:
+        path = verdict.path
         if path in seen_paths:
             return [
                 _command_rejected(
@@ -4393,44 +4357,24 @@ def _apply_record_gatekeeper_verdicts(
                     f"path is not unresolved residue: {path}",
                 )
             ]
-        classification = verdict.get("classification")
-        if classification not in GATEKEEPER_TAXONOMY:
-            valid = ", ".join(sorted(GATEKEEPER_TAXONOMY))
-            return [
-                _command_rejected(
-                    make_event,
-                    "record_gatekeeper_verdicts",
-                    f"invalid classification for {path}: {classification}; valid: {valid}",
-                )
-            ]
-        verdict.setdefault("confidence", 0.0)
-        verdict.setdefault("rationale", "")
-        verdict.setdefault("model_id", payload.get("model_id", "unknown"))
-        try:
-            accepted_verdict = GatekeeperVerdictRow.model_validate(verdict)
-        except ValueError as exc:
-            return [
-                _command_rejected(
-                    make_event,
-                    "record_gatekeeper_verdicts",
-                    f"invalid gatekeeper verdict at index {index}: {exc}",
-                )
-            ]
-        accepted.append(accepted_verdict.model_dump(mode="json"))
-
-    consult_id = payload.get("consult_id", "gatekeeper-consult")
-    try:
-        cost_payload = _gatekeeper_cost_payload(
-            record_id, execution_id, consult_id, accepted, payload
+        accepted_verdict = GatekeeperVerdictRow(
+            path=path,
+            classification=verdict.classification,
+            confidence=verdict.confidence,
+            rationale=verdict.rationale,
+            model_id=verdict.model_id or payload.model_id or "unknown",
+            input_tokens=verdict.input_tokens,
+            output_tokens=verdict.output_tokens,
+            cache_read_tokens=verdict.cache_read_tokens,
+            cache_write_tokens=verdict.cache_write_tokens,
+            cost_usd=verdict.cost_usd,
+            wall_time_ms=verdict.wall_time_ms,
         )
-    except ValueError as exc:
-        return [
-            _command_rejected(
-                make_event,
-                "record_gatekeeper_verdicts",
-                f"invalid gatekeeper cost: {exc}",
-            )
-        ]
+        accepted.append(accepted_verdict)
+
+    cost_payload = _gatekeeper_cost_payload(
+        record_id, execution_id, payload.consult_id, accepted, payload.cost
+    )
     events = [
         make_event(
             "gatekeeper_verdict_recorded",
@@ -4438,14 +4382,12 @@ def _apply_record_gatekeeper_verdicts(
                 "file_state_record_id": record_id,
                 "execution_id": execution_id,
                 "producer_node_id": record.producer_node_id,
-                "verdicts": accepted,
+                "verdicts": [verdict.model_dump(mode="json") for verdict in accepted],
                 "resolved_count": len(accepted),
             },
         ),
     ]
-    secret_paths = [
-        str(verdict["path"]) for verdict in accepted if verdict.get("classification") == "secret"
-    ]
+    secret_paths = [verdict.path for verdict in accepted if verdict.classification == "secret"]
     if secret_paths:
         cleanup_id = f"{record_id}:gatekeeper-secret"
         events.append(
@@ -4471,12 +4413,10 @@ def _apply_record_gatekeeper_verdicts(
 
 def _apply_record_cleanup_applied(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: RecordCleanupAppliedCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    cleanup_id = payload.get("cleanup_id")
-    if not isinstance(cleanup_id, str) or not cleanup_id:
-        return [_command_rejected(make_event, "record_cleanup_applied", "missing cleanup_id")]
+    cleanup_id = payload.cleanup_id
 
     requested = _cleanup_requested_event(projection, cleanup_id)
     if requested is None:
@@ -4518,19 +4458,8 @@ def _apply_record_cleanup_applied(
             )
         ]
 
-    raw_record = payload.get("superseding_file_state_record")
-    if not isinstance(raw_record, dict):
-        return [
-            _command_rejected(
-                make_event,
-                "record_cleanup_applied",
-                "missing superseding file_state record",
-            )
-        ]
-    record_payload = dict(cast(dict[str, Any], raw_record))
-    record_payload.setdefault("supersedes_record_id", record_id)
-    record_payload.setdefault("cleanup_id", cleanup_id)
-    if record_payload.get("supersedes_record_id") != record_id:
+    command_record = payload.superseding_file_state_record
+    if command_record.supersedes_record_id not in {None, record_id}:
         return [
             _command_rejected(
                 make_event,
@@ -4538,7 +4467,7 @@ def _apply_record_cleanup_applied(
                 "superseding record does not match cleanup target",
             )
         ]
-    if record_payload.get("cleanup_id") != cleanup_id:
+    if command_record.cleanup_id not in {None, cleanup_id}:
         return [
             _command_rejected(
                 make_event,
@@ -4546,7 +4475,10 @@ def _apply_record_cleanup_applied(
                 "superseding record cleanup_id does not match cleanup target",
             )
         ]
-    if record_payload.get("snapshot_id") == compromised_snapshot_id:
+    record = command_record.model_copy(
+        update={"supersedes_record_id": record_id, "cleanup_id": cleanup_id}
+    )
+    if record.snapshot_id == compromised_snapshot_id:
         return [
             _command_rejected(
                 make_event,
@@ -4555,7 +4487,7 @@ def _apply_record_cleanup_applied(
             )
         ]
     secret_paths = _cleanup_secret_paths(requested_payload)
-    retained_secret_path = _record_contains_any_path(record_payload, secret_paths)
+    retained_secret_path = _record_contains_any_path(record.model_dump(mode="json"), secret_paths)
     if retained_secret_path is not None:
         return [
             _command_rejected(
@@ -4564,17 +4496,6 @@ def _apply_record_cleanup_applied(
                 f"superseding record still contains cleanup secret path: {retained_secret_path}",
             )
         ]
-    try:
-        record = FileStateRecord.model_validate(record_payload)
-    except ValueError as exc:
-        return [
-            _command_rejected(
-                make_event,
-                "record_cleanup_applied",
-                f"invalid superseding file_state record: {exc}",
-            )
-        ]
-
     applied_payload = CleanupAppliedPayload.model_validate(
         {
             "cleanup_id": cleanup_id,
@@ -4584,9 +4505,9 @@ def _apply_record_cleanup_applied(
             "new_snapshot_id": record.snapshot_id,
             "paths": requested.paths,
             "authority": requested.authority or "gatekeeper",
-            "reason": payload.get("reason", requested.reason),
+            "reason": payload.reason or requested.reason,
             "execution_id": requested.execution_id,
-            "deleted_snapshot_ref": payload.get("deleted_snapshot_ref") is True,
+            "deleted_snapshot_ref": payload.deleted_snapshot_ref,
         }
     ).model_dump(mode="json")
     accepted_payload = record.model_dump(mode="json")
@@ -4598,35 +4519,25 @@ def _apply_record_cleanup_applied(
 
 
 def _apply_record_requirement_revision(
-    payload: dict[str, Any],
+    payload: RecordRequirementRevisionCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    event_payload = dict(payload)
-    requirement_id = payload.get("requirement_id")
-    if not isinstance(requirement_id, str) or not requirement_id:
-        return [
-            _command_rejected(
-                make_event,
-                "record_requirement_revision",
-                "missing requirement_id",
-            )
-        ]
-
-    version_id = payload.get("version_id")
-    if not isinstance(version_id, str) or not version_id:
-        return [
-            _command_rejected(
-                make_event,
-                "record_requirement_revision",
-                "missing version_id",
-            )
-        ]
-
     event_payload = RequirementRevisionPayload.model_validate(
         {
-            **event_payload,
-            "requirement_id": requirement_id,
-            "version_id": version_id,
+            "requirement_id": payload.requirement_id,
+            "version_id": payload.version_id,
+            "classification": payload.classification,
+            "requires_authority": payload.requires_authority,
+            "validation_strengthening": payload.validation_strengthening,
+            "active": payload.active,
+            "previous_version_id": payload.previous_version_id,
+            "revision_index": payload.revision_index,
+            "authority_required_reason": payload.authority_required_reason,
+            "revision_id": payload.revision_id,
+            "proposal_id": payload.proposal_id,
+            "patch_id": payload.patch_id,
+            "node_id": payload.node_id,
+            "requirement": payload.requirement,
         }
     ).model_dump(mode="json")
     return [make_event("requirement_revision_recorded", event_payload)]
@@ -4634,29 +4545,12 @@ def _apply_record_requirement_revision(
 
 def _apply_record_support_evidence(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: RecordSupportEvidenceCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
-    support_id = payload.get("support_id")
-    if not isinstance(support_id, str) or not support_id:
-        return [_command_rejected(make_event, "record_support_evidence", "missing support_id")]
-
-    evidence_id = payload.get("evidence_id")
-    if not isinstance(evidence_id, str) or not evidence_id:
-        return [_command_rejected(make_event, "record_support_evidence", "missing evidence_id")]
-
-    requirement_id = payload.get("requirement_id")
-    if not isinstance(requirement_id, str) or not requirement_id:
-        return [
-            _command_rejected(
-                make_event,
-                "record_support_evidence",
-                "missing requirement_id",
-            )
-        ]
-
-    requirement_version_id = payload.get("requirement_version_id")
-    if not isinstance(requirement_version_id, str) or not requirement_version_id:
+    requirement_id = payload.requirement_id
+    requirement_version_id = payload.requirement_version_id
+    if requirement_version_id is None:
         requirement_version_id = projection["active_requirement_versions"].get(requirement_id)
     if not isinstance(requirement_version_id, str) or not requirement_version_id:
         return [
@@ -4669,11 +4563,13 @@ def _apply_record_support_evidence(
 
     event_payload = SupportEvidencePayload.model_validate(
         {
-            **payload,
-            "support_id": support_id,
-            "evidence_id": evidence_id,
-            "requirement_id": requirement_id,
+            "support_id": payload.support_id,
+            "evidence_id": payload.evidence_id,
+            "requirement_id": payload.requirement_id,
             "requirement_version_id": requirement_version_id,
+            "status": payload.status,
+            "stale_reason": payload.stale_reason,
+            "confidence": payload.confidence,
         }
     ).model_dump(mode="json")
     return [make_event("support_evidence_recorded", event_payload)]
@@ -4735,60 +4631,45 @@ def _record_residue(record: dict[str, Any] | FileStateRecord) -> list[dict[str, 
     return [dict(cast(dict[str, Any], entry)) for entry in typed_residue if isinstance(entry, dict)]
 
 
-_GATEKEEPER_COST_OVERRIDABLE_FIELDS = frozenset(
-    {
-        "model_id",
-        "input_tokens",
-        "output_tokens",
-        "cache_read_tokens",
-        "cache_write_tokens",
-        "cost_usd",
-        "wall_time_ms",
-    }
-)
-_GATEKEEPER_COST_PRODUCER_FIELDS = frozenset(
-    {"file_state_record_id", "execution_id", "consult_id", "item_count"}
-)
-
-
 def _gatekeeper_cost_payload(
     record_id: str,
     execution_id: str,
-    consult_id: Any,
-    verdicts: list[dict[str, Any]],
-    payload: dict[str, Any],
+    consult_id: str,
+    verdicts: list[GatekeeperVerdictRow],
+    cost: GatekeeperCostCommandRow | None,
 ) -> dict[str, Any]:
-    cost = payload.get("cost")
-    if cost is None:
-        typed_cost: dict[str, Any] = {}
-    elif isinstance(cost, dict):
-        typed_cost = cast(dict[str, Any], cost)
-    else:
-        msg = "cost must be an object"
-        raise ValueError(msg)
-    producer_fields = sorted(typed_cost.keys() & _GATEKEEPER_COST_PRODUCER_FIELDS)
-    if producer_fields:
-        msg = f"nested cost field is producer-owned: {producer_fields[0]}"
-        raise ValueError(msg)
-    unsupported_fields = sorted(typed_cost.keys() - _GATEKEEPER_COST_OVERRIDABLE_FIELDS)
-    if unsupported_fields:
-        msg = f"nested cost field is unsupported: {unsupported_fields[0]}"
-        raise ValueError(msg)
-    model_ids = sorted({str(verdict.get("model_id", "unknown")) for verdict in verdicts})
+    model_ids = sorted({verdict.model_id or "unknown" for verdict in verdicts})
     defaults = {
         "file_state_record_id": record_id,
         "execution_id": execution_id,
         "consult_id": consult_id,
         "model_id": model_ids[0] if len(model_ids) == 1 else "mixed",
-        "input_tokens": sum(int(v["input_tokens"]) for v in verdicts),
-        "output_tokens": sum(int(v["output_tokens"]) for v in verdicts),
-        "cache_read_tokens": sum(int(v["cache_read_tokens"]) for v in verdicts),
-        "cache_write_tokens": sum(int(v["cache_write_tokens"]) for v in verdicts),
-        "cost_usd": sum(float(v["cost_usd"]) for v in verdicts),
-        "wall_time_ms": sum(int(v["wall_time_ms"]) for v in verdicts),
+        "input_tokens": sum(verdict.input_tokens for verdict in verdicts),
+        "output_tokens": sum(verdict.output_tokens for verdict in verdicts),
+        "cache_read_tokens": sum(verdict.cache_read_tokens for verdict in verdicts),
+        "cache_write_tokens": sum(verdict.cache_write_tokens for verdict in verdicts),
+        "cost_usd": sum(verdict.cost_usd for verdict in verdicts),
+        "wall_time_ms": sum(verdict.wall_time_ms for verdict in verdicts),
         "item_count": len(verdicts),
     }
-    return GatekeeperCostRecordedPayload.model_validate({**defaults, **typed_cost}).model_dump(
+    overrides = (
+        {
+            key: value
+            for key, value in {
+                "model_id": cost.model_id,
+                "input_tokens": cost.input_tokens,
+                "output_tokens": cost.output_tokens,
+                "cache_read_tokens": cost.cache_read_tokens,
+                "cache_write_tokens": cost.cache_write_tokens,
+                "cost_usd": cost.cost_usd,
+                "wall_time_ms": cost.wall_time_ms,
+            }.items()
+            if value is not None
+        }
+        if cost is not None
+        else {}
+    )
+    return GatekeeperCostRecordedPayload.model_validate({**defaults, **overrides}).model_dump(
         mode="json"
     )
 
@@ -5179,27 +5060,17 @@ def _lease_is_expired(lease: LeaseProjection, now: datetime) -> bool:
 
 def _node_schedule_info(
     projection: GraphProjection,
-    payload: dict[str, Any],
+    payload: ScheduleTickCommand,
     node_id: str,
 ) -> NodeScheduleInfo:
-    priorities = (
-        cast(dict[str, Any], payload.get("priorities"))
-        if isinstance(payload.get("priorities"), dict)
-        else {}
-    )
-    region_order = (
-        cast(dict[str, Any], payload.get("region_order"))
-        if isinstance(payload.get("region_order"), dict)
-        else {}
-    )
     required_edges = _required_edges_for_node(projection, node_id)
     upstream_node_ids = {edge.from_node_id for edge in required_edges}
     return NodeScheduleInfo(
         node_id=node_id,
         kind=projection["node_kinds"].get(node_id, "worker"),
         state=projection["node_states"][node_id],
-        priority=int(priorities.get(node_id, 0)),
-        region_order=int(region_order.get(node_id, 0)),
+        priority=payload.priorities.get(node_id, 0),
+        region_order=payload.region_order.get(node_id, 0),
         creation_position=_node_creation_position(projection, node_id),
         resource_claims=[
             _claim_from_dict(claim) for claim in projection["node_resource_claims"].get(node_id, [])
@@ -5464,15 +5335,11 @@ def _event_factory(
     return make_event
 
 
-def _callback_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
-    raw_payload = payload.get("payload")
-    if raw_payload is None:
-        payload_hash = payload.get("payload_hash")
-        if isinstance(payload_hash, str):
-            return {"payload_hash": payload_hash}
-        return None
-    if isinstance(raw_payload, dict):
-        return cast(dict[str, Any], raw_payload)
+def _callback_payload(payload: SubmitCallbackCommand) -> dict[str, Any] | None:
+    if payload.payload is not None:
+        return payload.payload
+    if payload.payload_hash is not None:
+        return {"payload_hash": payload.payload_hash}
     return None
 
 
@@ -5565,7 +5432,7 @@ apply_evaluate_final_gate = _apply_evaluate_final_gate
 def apply_record_cleanup_applied(
     projection: GraphProjection,
     events: list[EventEnvelope],
-    payload: dict[str, Any],
+    payload: RecordCleanupAppliedCommand,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
 ) -> list[EventEnvelope]:
     del events

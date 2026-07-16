@@ -7,7 +7,7 @@ from orchestrator.graph import (
     SequentialIdGenerator,
     build_projection,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context
 from tests.unit.graph_test_utils import event
 
 
@@ -97,7 +97,6 @@ def test_planner_callback_producer_matches_typed_session_payload_json() -> None:
         events,
         "submit_callback",
         {
-            "run_id": "run-1",
             "node_id": "planner-1",
             "execution_id": "exec-1",
             "lease_id": "lease-1",
@@ -107,6 +106,7 @@ def test_planner_callback_producer_matches_typed_session_payload_json() -> None:
             "idempotency_key": "callback-1",
             "payload": {"payload_hash": "hash-1"},
         },
+        command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )

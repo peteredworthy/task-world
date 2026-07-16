@@ -38,18 +38,19 @@ class IdGenerator(Protocol):
     def next_id(self, prefix: str = "") -> str: ...
 
 
-class ApplyCommandHandler(Protocol):
-    def __call__(
-        self,
-        projection: GraphProjection,
-        events: list[EventEnvelope],
-        command_type: str,
-        payload: StrictCommandPayload,
-        context: GraphCommandContext,
-        make_event: Callable[[str, dict[str, Any]], EventEnvelope],
-        clock: Clock,
-        id_gen: IdGenerator,
-    ) -> list[EventEnvelope]: ...
+ApplyCommandHandler = Callable[
+    [
+        GraphProjection,
+        list[EventEnvelope],
+        str,
+        Any,
+        GraphCommandContext,
+        Callable[[str, dict[str, Any]], EventEnvelope],
+        Clock,
+        IdGenerator,
+    ],
+    list[EventEnvelope],
+]
 
 
 @dataclass(frozen=True)

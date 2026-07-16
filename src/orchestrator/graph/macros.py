@@ -118,35 +118,29 @@ _MACRO_SPECS = {
 }
 
 
-def expand_patch_macros(payload: dict[str, Any]) -> dict[str, Any]:
-    """Return a patch payload with macro invocations expanded into ``ops``."""
+def expand_patch_macros(
+    ops: list[dict[str, Any]],
+    invocations: list[MacroInvocation],
+    proposed_by_node_id: str,
+) -> list[dict[str, Any]]:
+    """Expand validated macro invocations into patch operations."""
 
-    invocations = payload.get(MACRO_FIELD)
-    if invocations is None:
-        return dict(payload)
-    if not isinstance(invocations, list):
-        msg = "macro_invocations must be a list"
-        raise ValueError(msg)
-
-    ops = _ops(payload.get("ops"))
-    for raw_invocation in cast(list[Any], invocations):
-        invocation = _validate_invocation(raw_invocation)
-        ops.extend(_expand_macro(invocation.macro, invocation.args, payload))
-
-    expanded = dict(payload)
-    expanded["ops"] = ops
+    expanded = list(ops)
+    for invocation in invocations:
+        invocation = _validate_invocation(invocation)
+        expanded.extend(_expand_macro(invocation.macro, invocation.args, proposed_by_node_id))
     return expanded
 
 
 def _expand_macro(
     macro_name: str,
     args: dict[str, Any],
-    patch_payload: dict[str, Any],
+    proposed_by_node_id: str,
 ) -> list[dict[str, Any]]:
     if macro_name == "create_work_region":
-        return _create_work_region(args, corrective=False, patch_payload=patch_payload)
+        return _create_work_region(args, corrective=False, proposed_by_node_id=proposed_by_node_id)
     if macro_name == "create_corrective_region":
-        return _create_work_region(args, corrective=True, patch_payload=patch_payload)
+        return _create_work_region(args, corrective=True, proposed_by_node_id=proposed_by_node_id)
     if macro_name == "attach_verifier":
         return _attach_verifier(args)
     if macro_name == "attach_check":
@@ -163,12 +157,7 @@ def _expand_macro(
     raise ValueError(msg)
 
 
-def _validate_invocation(raw_invocation: Any) -> MacroInvocation:
-    try:
-        invocation = MacroInvocation.model_validate(raw_invocation)
-    except ValidationError as exc:
-        raise ValueError(f"invalid macro invocation: {exc.errors()[0]['msg']}") from exc
-
+def _validate_invocation(invocation: MacroInvocation) -> MacroInvocation:
     args_model = _MACRO_SPECS.get(invocation.macro)
     if args_model is None:
         msg = f"unknown graph macro: {invocation.macro}"
@@ -189,7 +178,7 @@ def _create_work_region(
     args: dict[str, Any],
     *,
     corrective: bool,
-    patch_payload: dict[str, Any],
+    proposed_by_node_id: str,
 ) -> list[dict[str, Any]]:
     region_id = _required_str(args, "region_id")
     candidate_id = _str(args, "candidate_id") or (
@@ -229,26 +218,25 @@ def _create_work_region(
         gap_source = (
             _str(args, "classified_gap_source_node_id")
             or _str(args, "gap_planner_node_id")
-            or _str(patch_payload, "proposed_by_node_id")
+            or proposed_by_node_id
         )
-        if gap_source is not None:
-            ops.insert(
-                2,
-                _edge(
-                    _str(args, "classified_gap_edge_id")
-                    or f"edge-{gap_source}-classified-gap-to-{worker_id}",
-                    gap_source,
-                    "classified_gap",
-                    worker_id,
-                    "classified_gap",
-                    ("gap_analysis",),
-                    selector={
-                        "record_type": "gap_classification",
-                        "schema": "GapClassification",
-                        "classification": "corrective_work_required",
-                    },
-                ),
-            )
+        ops.insert(
+            2,
+            _edge(
+                _str(args, "classified_gap_edge_id")
+                or f"edge-{gap_source}-classified-gap-to-{worker_id}",
+                gap_source,
+                "classified_gap",
+                worker_id,
+                "classified_gap",
+                ("gap_analysis",),
+                selector={
+                    "record_type": "gap_classification",
+                    "schema": "GapClassification",
+                    "classification": "corrective_work_required",
+                },
+            ),
+        )
     for check_args in _checks(args):
         normalized = {"region_id": region_id, "evidence_source_node_id": verifier_id, **check_args}
         ops.extend(_attach_check(normalized))

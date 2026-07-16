@@ -13,7 +13,7 @@ from orchestrator.graph import (
     project_run_state,
     reduce_event,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context, patch_command_context
 
 
 def test_planner_lifecycle_states() -> None:
@@ -40,7 +40,7 @@ def test_horizon_patch_creates_region_and_successor() -> None:
     assert projection["node_kinds"]["planner-1"] == "planner"
     assert "region_summary" not in projection["input_bindings"].get("planner-1", {})
 
-    scheduled = _apply([*events, *accepted], "schedule_tick", {"run_id": "run-1"})
+    scheduled = _apply([*events, *accepted], "schedule_tick", {})
     assert any(
         event.event_type == "node_deferred"
         and event.payload
@@ -377,7 +377,7 @@ def test_successor_readiness_via_milestone_records() -> None:
     scheduled = _apply(
         events,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "snapshot-1", "max_grants": 10},
+        {"base_snapshot_id": "snapshot-1", "max_grants": 10},
     )
     assert any(
         event.event_type == "lease_granted" and event.payload["node_id"] == "planner-1"
@@ -781,13 +781,11 @@ def _submit_patch(
         events,
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": patch_id,
-            "proposed_by_node_id": planner_id,
             "base_graph_position": max(event.position for event in events),
-            "actor_role": "planner",
             "ops": ops,
         },
+        patch_command_context(events, proposed_by_node_id=planner_id, actor_role="planner"),
     )
 
 
@@ -800,7 +798,6 @@ def _callback_payload(
     base_snapshot_id: str = "snapshot-0",
 ) -> dict[str, Any]:
     return {
-        "run_id": "run-1",
         "node_id": node_id,
         "execution_id": execution_id,
         "lease_id": lease_id,
@@ -816,12 +813,14 @@ def _apply(
     events: list[EventEnvelope],
     command_type: str,
     payload: dict[str, Any],
+    context: Any | None = None,
 ) -> list[EventEnvelope]:
     return apply_command(
         _project(events),
         events,
         command_type,
         payload,
+        context or command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )

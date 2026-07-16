@@ -19,14 +19,24 @@ from orchestrator.graph._commands import (
     apply_record_support_evidence,
     apply_raise_appeal,
 )
-from orchestrator.graph.command_models import GraphCommandContext, StrictCommandPayload
+from orchestrator.graph.command_models import (
+    AcknowledgeStartCommand,
+    GraphCommandContext,
+    RaiseAppealCommand,
+    RecordCleanupAppliedCommand,
+    RecordDecisionCommand,
+    RecordGatekeeperVerdictsCommand,
+    RecordRequirementRevisionCommand,
+    RecordSupportEvidenceCommand,
+    SubmitCallbackCommand,
+)
 
 
 def handle_submit_callback(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: SubmitCallbackCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -38,7 +48,7 @@ def handle_submit_callback(
     return apply_callback_command(
         projection,
         events,
-        payload.model_dump(mode="python", exclude_none=True),
+        payload,
         context.run_id,
         make_event,
     )
@@ -48,7 +58,7 @@ def handle_acknowledge_start(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: AcknowledgeStartCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -59,16 +69,14 @@ def handle_acknowledge_start(
     del clock
     del id_gen
     del context
-    return apply_acknowledge_start(
-        projection, payload.model_dump(mode="python", exclude_none=True), make_event
-    )
+    return apply_acknowledge_start(projection, payload, make_event)
 
 
 def handle_raise_appeal(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: RaiseAppealCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -79,16 +87,14 @@ def handle_raise_appeal(
     del command_type
     del clock
     del context
-    return apply_raise_appeal(
-        payload.model_dump(mode="python", exclude_none=True), make_event, id_gen
-    )
+    return apply_raise_appeal(payload, make_event, id_gen)
 
 
 def handle_record_decision(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: RecordDecisionCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -99,16 +105,14 @@ def handle_record_decision(
     del clock
     del id_gen
     del context
-    return apply_record_decision(
-        projection, payload.model_dump(mode="python", exclude_none=True), make_event
-    )
+    return apply_record_decision(projection, payload, make_event)
 
 
 def handle_record_gatekeeper_verdicts(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: RecordGatekeeperVerdictsCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -119,16 +123,14 @@ def handle_record_gatekeeper_verdicts(
     del clock
     del id_gen
     del context
-    return apply_record_gatekeeper_verdicts(
-        projection, payload.model_dump(mode="python", exclude_none=True), make_event
-    )
+    return apply_record_gatekeeper_verdicts(projection, payload, make_event)
 
 
 def handle_record_requirement_revision(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: RecordRequirementRevisionCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -140,16 +142,14 @@ def handle_record_requirement_revision(
     del clock
     del id_gen
     del context
-    return apply_record_requirement_revision(
-        payload.model_dump(mode="python", exclude_none=True), make_event
-    )
+    return apply_record_requirement_revision(payload, make_event)
 
 
 def handle_record_support_evidence(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: RecordSupportEvidenceCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -160,16 +160,14 @@ def handle_record_support_evidence(
     del clock
     del id_gen
     del context
-    return apply_record_support_evidence(
-        projection, payload.model_dump(mode="python", exclude_none=True), make_event
-    )
+    return apply_record_support_evidence(projection, payload, make_event)
 
 
 def handle_record_cleanup_applied(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: RecordCleanupAppliedCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -182,7 +180,7 @@ def handle_record_cleanup_applied(
     return apply_record_cleanup_applied(
         projection,
         events,
-        payload.model_dump(mode="json", by_alias=True, exclude_none=True),
+        payload,
         make_event,
     )
 

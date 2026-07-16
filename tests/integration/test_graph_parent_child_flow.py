@@ -11,6 +11,7 @@ from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     EventEnvelope,
+    GraphCommandContext,
     PatchCommandContext,
     compile_routine,
     project_decision_view,
@@ -55,10 +56,10 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
             _patch_payload(
                 events,
                 "patch-child-one",
-                "planner-parent",
                 _region_ops("one", "planner-child-two"),
                 carryover_record_id="summary-one",
             ),
+            _patch_context(run_id, "planner-parent"),
         )
         events = await _drive_region(session_factory, controller, run_id, events, "one")
 
@@ -74,9 +75,9 @@ async def test_two_child_parent_runs_as_one_graph_run(tmp_path: Path) -> None:
             _patch_payload(
                 events,
                 "patch-child-two",
-                "planner-child-two",
                 _region_ops("two", None),
             ),
+            _patch_context(run_id, "planner-child-two"),
         )
         events = await _drive_region(session_factory, controller, run_id, events, "two")
 
@@ -116,7 +117,6 @@ async def test_child_oversight_maps_to_in_chain_appeal(tmp_path: Path) -> None:
             _patch_payload(
                 events,
                 "patch-child-appeal",
-                "planner-parent",
                 [
                     *_region_ops("one", None),
                     {
@@ -130,6 +130,7 @@ async def test_child_oversight_maps_to_in_chain_appeal(tmp_path: Path) -> None:
                     },
                 ],
             ),
+            _patch_context(run_id, "planner-parent"),
         )
 
         projection = project_decision_view(events)
@@ -192,19 +193,28 @@ async def _complete_node(
         run_id,
         "schedule_tick",
         {"base_snapshot_id": "snapshot-0", "max_grants": 10},
+        _context(run_id),
     )
     lease = next(
         event
         for event in events
         if event.event_type == "lease_granted" and event.payload["node_id"] == node_id
     )
-    await _command(session_factory, controller, run_id, "acknowledge_start", _start_payload(lease))
+    await _command(
+        session_factory,
+        controller,
+        run_id,
+        "acknowledge_start",
+        _start_payload(lease),
+        _context(run_id),
+    )
     return await _command(
         session_factory,
         controller,
         run_id,
         "submit_callback",
         _callback_payload(node_id, lease, []),
+        _context(run_id),
     )
 
 
@@ -223,6 +233,7 @@ async def _drive_region(
         run_id,
         "schedule_tick",
         {"base_snapshot_id": "snapshot-0", "max_grants": 10},
+        _context(run_id),
     )
     worker_lease = next(
         event
@@ -235,6 +246,7 @@ async def _drive_region(
         run_id,
         "acknowledge_start",
         _start_payload(worker_lease),
+        _context(run_id),
     )
     events = await _command(
         session_factory,
@@ -266,6 +278,7 @@ async def _drive_region(
                 },
             ],
         ),
+        _context(run_id),
     )
 
     events = await _command(
@@ -274,6 +287,7 @@ async def _drive_region(
         run_id,
         "schedule_tick",
         {"base_snapshot_id": f"snapshot-{prefix}", "max_grants": 10},
+        _context(run_id),
     )
     verifier_lease = next(
         event
@@ -286,6 +300,7 @@ async def _drive_region(
         run_id,
         "acknowledge_start",
         _start_payload(verifier_lease),
+        _context(run_id),
     )
     return await _command(
         session_factory,
@@ -329,6 +344,7 @@ async def _drive_region(
                 },
             ],
         ),
+        _context(run_id),
     )
 
 
@@ -338,24 +354,11 @@ async def _command(
     run_id: str,
     command_type: str,
     payload: dict[str, Any],
+    context: GraphCommandContext,
 ) -> list[EventEnvelope]:
     position = await controller.current_position(run_id)
-    command_payload = dict(payload)
-    actor_role = command_payload.pop("actor_role", None)
-    proposed_by_node_id = command_payload.pop("proposed_by_node_id", None)
-    context = (
-        PatchCommandContext(
-            run_id=run_id,
-            current_graph_position=position,
-            proposed_by_node_id=proposed_by_node_id or "controller",
-            actor_role=actor_role or "planner",
-        )
-        if command_type == "submit_patch"
-        else None
-    )
-    await controller.handle_command(
-        run_id, position, command_type, command_payload, context=context
-    )
+    context = context.model_copy(update={"current_graph_position": position})
+    await controller.handle_command(run_id, position, command_type, payload, context=context)
     return await _read_events(session_factory, run_id)
 
 
@@ -370,21 +373,31 @@ async def _read_events(
 def _patch_payload(
     events: list[EventEnvelope],
     patch_id: str,
-    planner_id: str,
     ops: list[dict[str, Any]],
     *,
     carryover_record_id: str | None = None,
 ) -> dict[str, Any]:
     payload = {
         "patch_id": patch_id,
-        "proposed_by_node_id": planner_id,
         "base_graph_position": max(event.position for event in events),
-        "actor_role": "planner",
         "ops": ops,
     }
     if carryover_record_id is not None:
         payload["carryover_record_id"] = carryover_record_id
     return payload
+
+
+def _context(run_id: str) -> GraphCommandContext:
+    return GraphCommandContext(run_id=run_id, current_graph_position=-1)
+
+
+def _patch_context(run_id: str, planner_id: str) -> PatchCommandContext:
+    return PatchCommandContext(
+        run_id=run_id,
+        current_graph_position=-1,
+        proposed_by_node_id=planner_id,
+        actor_role="planner",
+    )
 
 
 def _region_ops(prefix: str, successor_id: str | None) -> list[dict[str, Any]]:

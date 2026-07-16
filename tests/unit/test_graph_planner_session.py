@@ -12,7 +12,7 @@ from orchestrator.graph import (
     project_planner_session,
     reduce_event,
 )
-from tests.unit.graph_test_utils import apply_command
+from tests.unit.graph_test_utils import apply_command, command_context, patch_command_context
 
 
 def test_successor_inherits_session_id() -> None:
@@ -22,13 +22,14 @@ def test_successor_inherits_session_id() -> None:
         events,
         "submit_patch",
         _patch_payload(events, "planner-0", _region_ops("planner-1")),
+        patch_command_context(events, proposed_by_node_id="planner-0", actor_role="planner"),
     )
     events = [*events, *_append(events, patch)]
     lease = _only(
         _apply(
             events,
             "schedule_tick",
-            {"run_id": "run-1", "base_snapshot_id": "snapshot-1", "max_grants": 10},
+            {"base_snapshot_id": "snapshot-1", "max_grants": 10},
         ),
         "lease_granted",
         "planner-1",
@@ -55,7 +56,6 @@ def test_resume_emits_new_generation_same_session() -> None:
         events,
         "schedule_tick",
         {
-            "run_id": "run-1",
             "base_snapshot_id": "snapshot-1",
             "lease_ids": {"planner-0": "lease-planner-0-resume"},
         },
@@ -97,6 +97,7 @@ def test_carryover_binds_as_optional_input() -> None:
             **_patch_payload(events, "planner-0", _region_ops("planner-1")),
             "carryover_record_id": "summary-carryover-1",
         },
+        patch_command_context(events, proposed_by_node_id="planner-0", actor_role="planner"),
     )
     projection = _project([*events, *_append(events, patch)])
 
@@ -115,13 +116,14 @@ def test_carryover_binds_as_optional_input() -> None:
         events,
         "submit_patch",
         _patch_payload(events, "planner-0", _region_ops("planner-2")),
+        patch_command_context(events, proposed_by_node_id="planner-0", actor_role="planner"),
     )
     without_projection = _project([*events, *_append(events, without_carryover)])
     assert "session_carryover" not in without_projection["input_bindings"].get("planner-2", {})
     scheduled = _apply(
         [*events, *_append(events, without_carryover)],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "snapshot-1", "max_grants": 10},
+        {"base_snapshot_id": "snapshot-1", "max_grants": 10},
     )
     assert _only(scheduled, "lease_granted", "planner-2").payload["generation"] == 2
 
@@ -135,12 +137,13 @@ def test_project_planner_session() -> None:
             **_patch_payload(events, "planner-0", _region_ops("planner-1")),
             "carryover_record_id": "summary-carryover-1",
         },
+        patch_command_context(events, proposed_by_node_id="planner-0", actor_role="planner"),
     )
     events = [*events, *_append(events, patch)]
     schedule = _apply(
         events,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "snapshot-1", "max_grants": 10},
+        {"base_snapshot_id": "snapshot-1", "max_grants": 10},
     )
     events = [*events, *_append(events, schedule)]
 
@@ -232,11 +235,8 @@ def _patch_payload(
     ops: list[dict[str, Any]],
 ) -> dict[str, Any]:
     return {
-        "run_id": "run-1",
         "patch_id": "patch-1",
-        "proposed_by_node_id": planner_id,
         "base_graph_position": max(event.position for event in events),
-        "actor_role": "planner",
         "ops": ops,
     }
 
@@ -248,7 +248,6 @@ def _callback_payload(
     lease_generation: int,
 ) -> dict[str, Any]:
     return {
-        "run_id": "run-1",
         "node_id": node_id,
         "execution_id": execution_id,
         "lease_id": lease_id,
@@ -276,12 +275,14 @@ def _apply(
     events: list[EventEnvelope],
     command_type: str,
     payload: dict[str, Any],
+    context: Any | None = None,
 ) -> list[EventEnvelope]:
     return apply_command(
         _project(events),
         events,
         command_type,
         payload,
+        context or command_context(events),
         FakeClock(),
         SequentialIdGenerator(),
     )

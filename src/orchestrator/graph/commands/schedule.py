@@ -14,14 +14,19 @@ from orchestrator.graph._commands import (
     apply_seed_compiled_events,
     apply_schedule_tick,
 )
-from orchestrator.graph.command_models import GraphCommandContext, StrictCommandPayload
+from orchestrator.graph.command_models import (
+    GraphCommandContext,
+    ReconcileCommand,
+    ScheduleTickCommand,
+    SeedCompiledEventsCommand,
+)
 
 
 def handle_seed_compiled_events(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: SeedCompiledEventsCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -33,7 +38,7 @@ def handle_seed_compiled_events(
     del id_gen
     return apply_seed_compiled_events(
         projection,
-        payload.model_dump(mode="python", exclude_none=True),
+        payload,
         context.run_id,
         make_event,
     )
@@ -43,7 +48,7 @@ def handle_schedule_tick(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: ScheduleTickCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -53,7 +58,7 @@ def handle_schedule_tick(
     return apply_schedule_tick(
         projection,
         events,
-        payload.model_dump(mode="python", exclude_none=True),
+        payload,
         context.current_graph_position,
         clock,
         id_gen,
@@ -65,18 +70,17 @@ def handle_reconcile(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: ReconcileCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
     id_gen: IdGenerator,
 ) -> list[EventEnvelope]:
     del command_type
-    del payload
     del context
     del clock
     del id_gen
-    return apply_reconcile(projection, events, make_event)
+    return apply_reconcile(projection, events, payload, make_event)
 
 
 __all__ = [

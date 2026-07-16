@@ -15,7 +15,7 @@ from orchestrator.graph._commands import (
 from orchestrator.graph.command_models import (
     GraphCommandContext,
     PatchCommandContext,
-    StrictCommandPayload,
+    SubmitPatchCommand,
 )
 
 
@@ -23,7 +23,7 @@ def handle_submit_patch(
     projection: GraphProjection,
     events: list[EventEnvelope],
     command_type: str,
-    payload: StrictCommandPayload,
+    payload: SubmitPatchCommand,
     context: GraphCommandContext,
     make_event: Callable[[str, dict[str, Any]], EventEnvelope],
     clock: Clock,
@@ -37,7 +37,7 @@ def handle_submit_patch(
     return apply_patch_command(
         projection,
         events,
-        payload.model_dump(mode="python", exclude_none=True),
+        payload,
         context,
         make_event,
     )

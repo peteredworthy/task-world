@@ -11,6 +11,7 @@ from orchestrator.config.models import RoutineConfig, StepConfig
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.graph import (
     EventEnvelope,
+    GraphCommandContext,
     PatchCommandContext,
     compile_routine,
     project_planner_chain,
@@ -56,10 +57,10 @@ async def test_two_horizon_chain_retains_one_session(tmp_path: Path) -> None:
             _patch_payload(
                 events,
                 "patch-h1",
-                "planner-plan",
                 _region_ops("h1", "planner-1"),
                 carryover_record_id="carryover-h1",
             ),
+            _patch_context(run_id, "planner-plan"),
         )
         events = await _drive_region(session_factory, controller, run_id, events, "h1")
         events, successor_lease = await _complete_node(
@@ -70,7 +71,8 @@ async def test_two_horizon_chain_retains_one_session(tmp_path: Path) -> None:
             controller,
             run_id,
             "submit_patch",
-            _patch_payload(events, "patch-h2", "planner-1", _region_ops("h2", None)),
+            _patch_payload(events, "patch-h2", _region_ops("h2", None)),
+            _patch_context(run_id, "planner-1"),
         )
         events = await _drive_region(session_factory, controller, run_id, events, "h2")
 
@@ -131,7 +133,8 @@ async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> 
             controller,
             run_id,
             "submit_patch",
-            _patch_payload(events, "patch-h1", "planner-plan", _region_ops("h1", "planner-1")),
+            _patch_payload(events, "patch-h1", _region_ops("h1", "planner-1")),
+            _patch_context(run_id, "planner-plan"),
         )
         events = await _drive_region(session_factory, controller, run_id, events, "h1")
         events = await _command(
@@ -140,6 +143,7 @@ async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> 
             run_id,
             "schedule_tick",
             {"base_snapshot_id": "snapshot-h1", "max_grants": 10},
+            _context(run_id),
         )
         successor_lease = next(
             event
@@ -152,6 +156,7 @@ async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> 
             run_id,
             "acknowledge_start",
             _start_payload(successor_lease),
+            _context(run_id),
         )
         events = await _command(
             session_factory,
@@ -164,6 +169,7 @@ async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> 
                 "session_id": head_lease.payload["session_id"],
                 "idempotency_key": "stale-planner-1",
             },
+            _context(run_id),
         )
         assert any(
             event.event_type == "command_rejected"
@@ -177,13 +183,15 @@ async def test_session_retained_but_authority_per_generation(tmp_path: Path) -> 
             run_id,
             "submit_callback",
             _callback_payload("planner-1", successor_lease, []),
+            _context(run_id),
         )
         events = await _command(
             session_factory,
             controller,
             run_id,
             "submit_patch",
-            _patch_payload(events, "patch-h2", "planner-1", _region_ops("h2", None)),
+            _patch_payload(events, "patch-h2", _region_ops("h2", None)),
+            _patch_context(run_id, "planner-1"),
         )
         events = await _drive_region(session_factory, controller, run_id, events, "h2")
 
@@ -233,19 +241,28 @@ async def _complete_node(
         run_id,
         "schedule_tick",
         {"base_snapshot_id": "snapshot-0", "max_grants": 10},
+        _context(run_id),
     )
     lease = next(
         event
         for event in events
         if event.event_type == "lease_granted" and event.payload["node_id"] == node_id
     )
-    await _command(session_factory, controller, run_id, "acknowledge_start", _start_payload(lease))
+    await _command(
+        session_factory,
+        controller,
+        run_id,
+        "acknowledge_start",
+        _start_payload(lease),
+        _context(run_id),
+    )
     events = await _command(
         session_factory,
         controller,
         run_id,
         "submit_callback",
         _callback_payload(node_id, lease, []),
+        _context(run_id),
     )
     return events, lease
 
@@ -265,6 +282,7 @@ async def _drive_region(
         run_id,
         "schedule_tick",
         {"base_snapshot_id": "snapshot-0", "max_grants": 10},
+        _context(run_id),
     )
     worker_lease = next(
         event
@@ -277,6 +295,7 @@ async def _drive_region(
         run_id,
         "acknowledge_start",
         _start_payload(worker_lease),
+        _context(run_id),
     )
     events = await _command(
         session_factory,
@@ -308,6 +327,7 @@ async def _drive_region(
                 },
             ],
         ),
+        _context(run_id),
     )
 
     events = await _command(
@@ -316,6 +336,7 @@ async def _drive_region(
         run_id,
         "schedule_tick",
         {"base_snapshot_id": f"snapshot-{prefix}", "max_grants": 10},
+        _context(run_id),
     )
     verifier_lease = next(
         event
@@ -328,6 +349,7 @@ async def _drive_region(
         run_id,
         "acknowledge_start",
         _start_payload(verifier_lease),
+        _context(run_id),
     )
     return await _command(
         session_factory,
@@ -371,6 +393,7 @@ async def _drive_region(
                 },
             ],
         ),
+        _context(run_id),
     )
 
 
@@ -380,26 +403,15 @@ async def _command(
     run_id: str,
     command_type: str,
     payload: dict[str, Any],
+    context: GraphCommandContext,
 ) -> list[EventEnvelope]:
     position = await controller.current_position(run_id)
-    command_payload = dict(payload)
-    actor_role = command_payload.pop("actor_role", None)
-    proposed_by_node_id = command_payload.pop("proposed_by_node_id", None)
-    context = (
-        PatchCommandContext(
-            run_id=run_id,
-            current_graph_position=position,
-            proposed_by_node_id=proposed_by_node_id or "controller",
-            actor_role=actor_role or "planner",
-        )
-        if command_type == "submit_patch"
-        else None
-    )
+    context = context.model_copy(update={"current_graph_position": position})
     await controller.handle_command(
         run_id,
         position,
         command_type,
-        command_payload,
+        payload,
         context=context,
     )
     return await _read_events(session_factory, run_id)
@@ -416,21 +428,31 @@ async def _read_events(
 def _patch_payload(
     events: list[EventEnvelope],
     patch_id: str,
-    planner_id: str,
     ops: list[dict[str, Any]],
     *,
     carryover_record_id: str | None = None,
 ) -> dict[str, Any]:
     payload = {
         "patch_id": patch_id,
-        "proposed_by_node_id": planner_id,
         "base_graph_position": max(event.position for event in events),
-        "actor_role": "planner",
         "ops": ops,
     }
     if carryover_record_id is not None:
         payload["carryover_record_id"] = carryover_record_id
     return payload
+
+
+def _context(run_id: str) -> GraphCommandContext:
+    return GraphCommandContext(run_id=run_id, current_graph_position=-1)
+
+
+def _patch_context(run_id: str, planner_id: str) -> PatchCommandContext:
+    return PatchCommandContext(
+        run_id=run_id,
+        current_graph_position=-1,
+        proposed_by_node_id=planner_id,
+        actor_role="planner",
+    )
 
 
 def _region_ops(prefix: str, successor_id: str | None) -> list[dict[str, Any]]:

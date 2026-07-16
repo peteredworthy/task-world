@@ -79,6 +79,7 @@ def _apply(
     events: list[EventEnvelope],
     command_type: str,
     payload: dict[str, Any] | None = None,
+    context: GraphCommandContext | None = None,
 ) -> list[EventEnvelope]:
     clock = FakeClock()
     return apply_command(
@@ -86,6 +87,7 @@ def _apply(
         events,
         command_type,
         payload or {},
+        context or _default_context(events, command_type),
         clock,
         SequentialIdGenerator(),
     )
@@ -102,6 +104,7 @@ def _apply_from_checkpoint(
         events,
         command_type,
         payload or {},
+        _default_context(events, command_type),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -112,52 +115,42 @@ def apply_command(
     events: list[EventEnvelope],
     command_type: str,
     payload: dict[str, Any],
+    context: GraphCommandContext,
     clock: FakeClock,
     id_gen: SequentialIdGenerator,
 ) -> list[EventEnvelope]:
-    command_payload, context = _command_input(events, command_type, payload)
     return apply_graph_command(
         projection,
         events,
         command_type,
-        command_payload,
+        payload,
         context,
         clock,
         id_gen,
     )
 
 
-def _command_input(
+def _default_context(
     events: list[EventEnvelope],
     command_type: str,
-    payload: dict[str, Any] | None,
-) -> tuple[dict[str, Any], GraphCommandContext]:
-    command_payload = dict(payload or {})
-    run_id = command_payload.pop("run_id", events[-1].run_id if events else "run-1")
-    current_position = command_payload.pop(
-        "_current_graph_position",
-        max((event.position for event in events), default=-1),
-    )
-    actor_role = command_payload.pop("actor_role", None)
-    proposed_by_node_id = command_payload.pop("proposed_by_node_id", None)
+) -> GraphCommandContext:
+    run_id = events[-1].run_id if events else "run-1"
+    current_position = max((event.position for event in events), default=-1)
     if command_type == "submit_patch":
-        return command_payload, PatchCommandContext(
+        return PatchCommandContext(
             run_id=run_id,
             current_graph_position=current_position,
-            proposed_by_node_id=proposed_by_node_id or "controller",
-            actor_role=actor_role or "planner",
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
         )
-    actor = Actor(kind=ActorKind.HUMAN, role=actor_role) if isinstance(actor_role, str) else None
-    return command_payload, GraphCommandContext(
+    return GraphCommandContext(
         run_id=run_id,
         current_graph_position=current_position,
-        actor=actor,
     )
 
 
 def _callback_payload(**overrides: Any) -> dict[str, Any]:
     payload: dict[str, Any] = {
-        "run_id": "run-1",
         "node_id": "worker-1",
         "execution_id": "exec-1",
         "lease_id": "lease-1",
@@ -214,7 +207,7 @@ def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None
     decision_events = _apply(
         completion_events,
         "evaluate_final_gate",
-        {"run_id": "run-1", "node_id": "gate-final", "record_id": "decision-1"},
+        {"node_id": "gate-final", "record_id": "decision-1"},
     )
     completion_stream = [*completion_events, *decision_events]
     completion_projection = _project(completion_stream)
@@ -244,12 +237,12 @@ def test_projection_fields_match_legacy_scans_for_completion_and_retry() -> None
         retry_events,
         "agent_died",
         {
-            "run_id": "run-1",
             "lease_id": "lease-1",
             "execution_id": "exec-1",
             "reason": "process_exit",
             "retry_backoff_seconds": 60,
         },
+        _default_context(retry_events, "agent_died"),
         clock,
         SequentialIdGenerator(),
     )
@@ -425,7 +418,7 @@ def test_record_heartbeat_renews_active_lease() -> None:
     output = _apply(
         events,
         "record_heartbeat",
-        {"run_id": "run-1", "lease_id": "lease-1", "node_id": "worker-1", "ttl_seconds": 120},
+        {"lease_id": "lease-1", "node_id": "worker-1", "ttl_seconds": 120},
     )
 
     assert [event.event_type for event in output] == ["heartbeat_recorded", "lease_renewed"]
@@ -455,7 +448,7 @@ def test_record_heartbeat_rejects_non_active_lease() -> None:
     output = _apply(
         events,
         "record_heartbeat",
-        {"run_id": "run-1", "lease_id": "lease-1", "node_id": "worker-1"},
+        {"lease_id": "lease-1", "node_id": "worker-1"},
     )
 
     assert [event.event_type for event in output] == ["command_rejected"]
@@ -538,7 +531,7 @@ def test_evaluate_final_gate_emits_blocked_completion_decision() -> None:
         ),
     ]
 
-    output = _apply(events, "evaluate_final_gate", {"run_id": "run-1", "node_id": "gate-final"})
+    output = _apply(events, "evaluate_final_gate", {"node_id": "gate-final"})
 
     assert [event.event_type for event in output] == [
         "output_record_accepted",
@@ -581,7 +574,6 @@ def test_evaluate_final_gate_releases_runtime_lease_when_present() -> None:
         events,
         "evaluate_final_gate",
         {
-            "run_id": "run-1",
             "node_id": "gate-final",
             "lease_id": "lease-final",
             "lease_generation": 2,
@@ -636,7 +628,6 @@ def test_evaluate_join_emits_join_result_and_releases_lease() -> None:
         events,
         "evaluate_join",
         {
-            "run_id": "run-1",
             "node_id": "join-1",
             "lease_id": "lease-join",
             "lease_generation": 1,
@@ -677,7 +668,7 @@ def test_evaluate_final_gate_passed_decision_allows_lifecycle_completion() -> No
     decision_events = _apply(
         events,
         "evaluate_final_gate",
-        {"run_id": "run-1", "node_id": "gate-final", "record_id": "decision-1"},
+        {"node_id": "gate-final", "record_id": "decision-1"},
     )
     completion = _apply([*events, *decision_events], "complete")
 
@@ -714,7 +705,6 @@ def test_record_requirement_revision_command_emits_replayable_policy_event() -> 
         [],
         "record_requirement_revision",
         {
-            "run_id": "run-1",
             "requirement_id": "R-1",
             "version_id": "R-1.v1",
             "classification": "semantic",
@@ -741,7 +731,6 @@ def test_record_support_evidence_command_uses_active_requirement_version() -> No
         [],
         "record_requirement_revision",
         {
-            "run_id": "run-1",
             "requirement_id": "R-1",
             "version_id": "R-1.v1",
             "classification": "initial",
@@ -752,7 +741,6 @@ def test_record_support_evidence_command_uses_active_requirement_version() -> No
         events,
         "record_support_evidence",
         {
-            "run_id": "run-1",
             "support_id": "S-1",
             "evidence_id": "E-1",
             "requirement_id": "R-1",
@@ -769,7 +757,6 @@ def test_record_support_evidence_rejects_unknown_active_requirement_version() ->
         [],
         "record_support_evidence",
         {
-            "run_id": "run-1",
             "support_id": "S-1",
             "evidence_id": "E-1",
             "requirement_id": "R-1",
@@ -1092,7 +1079,7 @@ def test_schedule_tick_defers_node_without_base_snapshot() -> None:
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "ready"}, 1),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {})
 
     assert not any(event.event_type == "lease_granted" for event in output)
     assert any(
@@ -1139,7 +1126,8 @@ def test_schedule_tick_fails_node_when_active_lease_expires_without_callback() -
         _project(events),
         events,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"base_snapshot_id": "S0"},
+        _default_context(events, "schedule_tick"),
         clock,
         SequentialIdGenerator(),
     )
@@ -1345,7 +1333,8 @@ def test_callback_accepts_output_records_and_binds_downstream_inputs() -> None:
         projected,
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"base_snapshot_id": "S0"},
+        _default_context([*events, *output], "schedule_tick"),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -1879,10 +1868,7 @@ def test_patch_create_edge_backfills_existing_verification_record() -> None:
         events,
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-late-edge",
-            "proposed_by_node_id": "planner-gap",
-            "actor_role": "gap_planner",
             "base_graph_position": 2,
             "ops": [
                 {
@@ -2106,7 +2092,8 @@ def test_verifier_callback_accepts_verification_record_for_bound_candidate() -> 
         projected,
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"base_snapshot_id": "S0"},
+        _default_context([*events, *output], "schedule_tick"),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -2684,7 +2671,8 @@ def test_verifier_callback_canonicalizes_result_port_for_final_invariant_binding
         projected,
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"base_snapshot_id": "S0"},
+        _default_context([*events, *output], "schedule_tick"),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -3135,7 +3123,8 @@ def test_callback_rejects_output_record_producer_forgery_without_partial_events(
         projected,
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1", "max_grants": 10},
+        {"max_grants": 10},
+        _default_context([*events, *output], "schedule_tick"),
         FakeClock(),
         SequentialIdGenerator(),
     )
@@ -3515,7 +3504,6 @@ def test_callback_rejects_forged_file_state_rejected_node_id() -> None:
                 "output_records": [],
                 "file_state_rejected": {
                     "record_kind": "file_state_rejected",
-                    "run_id": "run-1",
                     "node_id": "other-1",
                     "reason": "file_state_rejected",
                     "classifications": [],
@@ -3730,10 +3718,7 @@ def test_patch_accept_emits_graph_events() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-1",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -3759,10 +3744,7 @@ def test_patch_create_edge_preserves_producer_class_constraints() -> None:
         ],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-class-edge",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "oversight",
             "base_graph_position": 1,
             "ops": [
                 {
@@ -3816,10 +3798,7 @@ def test_submit_patch_rejects_verification_selector_with_status_before_acceptanc
         ],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-invalid-selector",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": 2,
             "ops": [
                 {
@@ -3872,10 +3851,7 @@ def test_submit_patch_rejects_legacy_verification_selector_value_status() -> Non
         ],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-invalid-legacy-selector",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": 2,
             "ops": [
                 {
@@ -3903,7 +3879,6 @@ def test_seed_compiled_events_rejects_invalid_edge_selector() -> None:
         [],
         "seed_compiled_events",
         {
-            "run_id": "run-1",
             "events": [
                 _event(
                     "edge_created",
@@ -3936,7 +3911,6 @@ def test_seed_compiled_events_rejects_invalid_verification_report_record() -> No
         [],
         "seed_compiled_events",
         {
-            "run_id": "run-1",
             "events": [
                 _event(
                     "output_record_accepted",
@@ -3970,7 +3944,6 @@ def test_seed_compiled_events_rejects_legacy_selector_key() -> None:
         [],
         "seed_compiled_events",
         {
-            "run_id": "run-1",
             "events": [
                 _event(
                     "edge_created",
@@ -4000,10 +3973,7 @@ def test_patch_rejects_planner_authored_verifier_candidate_id() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-verifier-candidate",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -4033,10 +4003,7 @@ def test_patch_rejects_planner_authored_check_candidate_id() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-check-candidate",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -4075,10 +4042,7 @@ def test_patch_rejected_after_run_cancellation() -> None:
         events,
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-after-cancel",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": 1,
             "ops": [
                 {
@@ -4101,10 +4065,7 @@ def test_patch_accept_adds_default_worker_write_authority() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-worker",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -4134,10 +4095,7 @@ def test_patch_accept_emits_human_gate_request_record_and_binding() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-human-gate",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -4199,10 +4157,7 @@ def test_patch_accept_emits_authority_request_record_and_binding() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-authority-request",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -4250,10 +4205,7 @@ def test_patch_accepts_authority_request_typed_record_envelope() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-authority-request-envelope",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -4295,10 +4247,7 @@ def test_patch_accepts_authority_request_edge_to_worker_authority_input() -> Non
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-authority-gated-worker",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -4358,10 +4307,7 @@ def test_patch_rejects_malformed_request_gate_record() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-bad-request",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -4393,13 +4339,16 @@ def test_gap_planner_no_op_patch_accepts_through_submit_patch() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "gap-no-op",
-            "proposed_by_node_id": "gap-planner-1",
-            "actor_role": "gap_planner",
             "base_graph_position": -1,
             "ops": [],
         },
+        PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=-1,
+            proposed_by_node_id="gap-planner-1",
+            actor_role="gap_planner",
+        ),
     )
 
     assert [event.event_type for event in output] == ["graph_patch_accepted"]
@@ -4411,10 +4360,7 @@ def test_gap_planner_corrective_work_patch_accepts_through_submit_patch() -> Non
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "gap-corrective",
-            "proposed_by_node_id": "gap-planner-1",
-            "actor_role": "gap_planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -4429,6 +4375,12 @@ def test_gap_planner_corrective_work_patch_accepts_through_submit_patch() -> Non
                 }
             ],
         },
+        PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=-1,
+            proposed_by_node_id="gap-planner-1",
+            actor_role="gap_planner",
+        ),
     )
 
     assert [event.event_type for event in output] == ["graph_patch_accepted", "node_created"]
@@ -4455,10 +4407,7 @@ def test_patch_accept_emits_events_for_all_v1_ops() -> None:
         events,
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-v1",
-            "proposed_by_node_id": "oversight-1",
-            "actor_role": "oversight",
             "base_graph_position": 1,
             "ops": [
                 {
@@ -4500,6 +4449,12 @@ def test_patch_accept_emits_events_for_all_v1_ops() -> None:
                 },
             ],
         },
+        PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=1,
+            proposed_by_node_id="oversight-1",
+            actor_role="oversight",
+        ),
     )
 
     assert [event.event_type for event in output] == [
@@ -4525,10 +4480,7 @@ def test_patch_reject_emits_rejection() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-1",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": -1,
             "ops": [{"op": "create_gate", "predecessor_node_ids": ["worker-1"]}],
         },
@@ -4547,10 +4499,7 @@ def test_malformed_patch_is_rejected_at_schema_boundary() -> None:
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "patch-bad",
-            "proposed_by_node_id": "planner-1",
-            "actor_role": "planner",
             "base_graph_position": "not-an-int",
             "ops": [],
         },
@@ -4602,7 +4551,7 @@ def test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_
         ),
     ]
 
-    output = _apply([], "seed_compiled_events", {"run_id": "run-1", "events": seed_events})
+    output = _apply([], "seed_compiled_events", {"events": seed_events})
 
     assert output == seed_events
 
@@ -4610,7 +4559,7 @@ def test_seed_compiled_events_accepts_topology_and_controller_records_for_empty_
 def test_seed_compiled_events_rejects_already_seeded_run() -> None:
     events = [_event("node_created", {"node_id": "root", "kind": "root", "state": "completed"}, 0)]
 
-    output = _apply(events, "seed_compiled_events", {"run_id": "run-1", "events": events})
+    output = _apply(events, "seed_compiled_events", {"events": events})
 
     assert output[0].event_type == "command_rejected"
     assert output[0].payload["reason"] == "run topology already seeded"
@@ -4631,7 +4580,7 @@ def test_schedule_tick_grants_leases() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -4672,7 +4621,7 @@ def test_schedule_tick_path_in_scope_write_claim_blocks_overlapping_path() -> No
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     assert "lease_granted" not in [event.event_type for event in output]
 
@@ -4697,7 +4646,7 @@ def test_schedule_tick_path_in_scope_write_claim_allows_disjoint_path() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     granted_node_ids = [
         event.payload["node_id"] for event in output if event.event_type == "lease_granted"
@@ -4785,7 +4734,7 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
 
     assert project_task_states(events) == {"region-r1-final": "pending"}
 
-    output = _apply_from_checkpoint(events, "reconcile", {"run_id": "run-1"})
+    output = _apply_from_checkpoint(events, "reconcile", {})
 
     assert [event.event_type for event in output] == [
         "node_created",
@@ -4804,7 +4753,7 @@ def test_reconcile_recovers_quiescent_graph_after_failed_required_check() -> Non
     assert output[4].payload["to_port"] == "routine_snapshot"
     assert output[4].payload["record_ids"] == ["routine-snapshot-record"]
 
-    next_output = _apply(events + output, "schedule_tick", {"run_id": "run-1"})
+    next_output = _apply(events + output, "schedule_tick", {})
 
     assert any(
         event.event_type == "lease_granted"
@@ -4881,7 +4830,7 @@ def test_reconcile_recovers_runtime_failed_check_without_check_result() -> None:
 
     assert project_task_states(events) == {"region-r1-final": "pending"}
 
-    output = _apply_from_checkpoint(events, "reconcile", {"run_id": "run-1"})
+    output = _apply_from_checkpoint(events, "reconcile", {})
 
     assert [event.event_type for event in output] == [
         "node_created",
@@ -5003,7 +4952,7 @@ def test_schedule_tick_does_not_repair_failed_required_check() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {})
 
     assert output == []
 
@@ -5067,12 +5016,12 @@ def test_reconcile_is_idempotent_and_rejects_terminal_runs() -> None:
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
-    second_output = _apply([*events, *output], "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
+    second_output = _apply([*events, *output], "reconcile", {})
     terminal_output = _apply(
         [_event("run_lifecycle_changed", {"to_state": "completed"}, 0)],
         "reconcile",
-        {"run_id": "run-1"},
+        {},
     )
 
     assert any(event.event_type == "node_created" for event in output)
@@ -5274,7 +5223,7 @@ def test_schedule_tick_does_not_duplicate_existing_failed_check_recovery() -> No
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {})
 
     assert output == []
 
@@ -5332,7 +5281,7 @@ def test_reconcile_fails_after_no_successor_failed_check_recovery() -> None:
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     assert [event.event_type for event in output] == ["run_lifecycle_changed"]
     assert output[0].payload["to_state"] == "failed"
@@ -5401,7 +5350,7 @@ def test_reconcile_does_not_fail_after_environment_no_successor_recovery() -> No
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     assert not any(
         event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
@@ -5421,7 +5370,12 @@ def test_lifecycle_resume_reopens_failed_run_for_operator_only() -> None:
     rejected_planner = _apply(
         failed_events,
         "resume",
-        {"run_id": "run-1", "actor_role": "planner"},
+        {},
+        GraphCommandContext(
+            run_id="run-1",
+            current_graph_position=0,
+            actor=Actor(kind=ActorKind.HUMAN, role="planner"),
+        ),
     )
     assert rejected_planner[0].event_type == "command_rejected"
 
@@ -5430,7 +5384,12 @@ def test_lifecycle_resume_reopens_failed_run_for_operator_only() -> None:
         reopened = _apply(
             failed_events,
             "resume",
-            {"run_id": "run-1", "actor_role": actor_role},
+            {},
+            GraphCommandContext(
+                run_id="run-1",
+                current_graph_position=0,
+                actor=Actor(kind=ActorKind.HUMAN, role=actor_role),
+            ),
         )
         assert reopened[0].event_type == "run_lifecycle_changed"
         assert reopened[0].payload["from_state"] == "failed"
@@ -5522,7 +5481,7 @@ def test_reconcile_no_successor_skips_recovery_with_executable_successors() -> N
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     assert not any(
         event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
@@ -5531,7 +5490,7 @@ def test_reconcile_no_successor_skips_recovery_with_executable_successors() -> N
 
     # Validity control: without the executable successor the same graph is a
     # genuine dead end and the sweep still fails the run.
-    dead_end_output = _apply(events[:5], "reconcile", {"run_id": "run-1"})
+    dead_end_output = _apply(events[:5], "reconcile", {})
     assert any(
         event.event_type == "run_lifecycle_changed"
         and event.payload.get("to_state") == "failed"
@@ -5635,7 +5594,7 @@ def test_reconcile_no_successor_skips_superseded_failed_verification() -> None:
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     assert not any(
         event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
@@ -5644,7 +5603,7 @@ def test_reconcile_no_successor_skips_superseded_failed_verification() -> None:
 
     # Validity control: without the later regional pass, the failed
     # verification is current and its dead-end recovery fails the run.
-    dead_end_output = _apply(events[:7], "reconcile", {"run_id": "run-1"})
+    dead_end_output = _apply(events[:7], "reconcile", {})
     assert any(
         event.event_type == "run_lifecycle_changed"
         and event.payload.get("to_state") == "failed"
@@ -5830,7 +5789,7 @@ def test_reconcile_does_not_fail_recovered_run_w2_shape() -> None:
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     assert not any(
         event.event_type == "run_lifecycle_changed" and event.payload.get("to_state") == "failed"
@@ -5917,7 +5876,7 @@ def test_reconcile_ignores_retired_failed_check_recovery_target() -> None:
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     recovery_node = next(event.payload for event in output if event.event_type == "node_created")
     assert recovery_node["node_id"] == "planner-recover-check-result-r1"
@@ -6061,7 +6020,7 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
 
     assert project_task_states(events)["corrective_work_region"] == "needs_revision"
 
-    output = _apply_from_checkpoint(events, "reconcile", {"run_id": "run-1"})
+    output = _apply_from_checkpoint(events, "reconcile", {})
 
     assert [event.event_type for event in output[:5]] == [
         "node_created",
@@ -6084,7 +6043,7 @@ def test_reconcile_creates_gap_planner_for_failed_corrective_verifier() -> None:
     assert output[4].payload["to_port"] == "routine_snapshot"
     assert output[4].payload["record_ids"] == ["routine-snapshot-record"]
 
-    next_output = _apply(events + output, "schedule_tick", {"run_id": "run-1"})
+    next_output = _apply(events + output, "schedule_tick", {})
 
     assert any(
         event.event_type == "lease_granted"
@@ -6215,7 +6174,7 @@ def test_schedule_tick_does_not_duplicate_existing_failed_verification_recovery(
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1"})
+    output = _apply(events, "schedule_tick", {})
 
     assert output == []
 
@@ -6353,7 +6312,7 @@ def test_passed_corrective_verifier_releases_final_check_without_recovery() -> N
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert not any(
         event.event_type == "node_created"
@@ -6554,7 +6513,7 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     recovery_edge = next(
         event
@@ -6584,7 +6543,7 @@ def test_passed_verification_recovers_final_check_and_retires_failure_branch() -
     next_output = _apply(
         events + output,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"base_snapshot_id": "S0"},
     )
 
     assert any(
@@ -6700,7 +6659,7 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     assert not any(
         event.event_type == "edge_created"
@@ -6716,7 +6675,7 @@ def test_passed_verification_final_check_sweep_skips_cycle_forming_edge() -> Non
     valid_output = _apply(
         events[:-1],
         "reconcile",
-        {"run_id": "run-1"},
+        {},
     )
     assert any(
         event.event_type == "edge_created"
@@ -6850,7 +6809,7 @@ def test_corrective_passed_verification_repoints_stranded_final_check() -> None:
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     recovery_edges = [
         event
@@ -6928,7 +6887,7 @@ def test_passed_final_check_retires_failure_continuation() -> None:
         ),
     ]
 
-    output = _apply(events, "reconcile", {"run_id": "run-1"})
+    output = _apply(events, "reconcile", {})
 
     assert [event.payload["node_id"] for event in output if event.event_type == "node_retired"] == [
         "planner-gap-final"
@@ -6963,7 +6922,7 @@ def test_schedule_tick_marks_planned_node_ready_when_required_input_bound() -> N
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -7147,7 +7106,7 @@ def test_schedule_tick_defers_missing_required_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         ("node_deferred", {"node_id": "worker-1", "reason": "missing_required_input:candidate"})
@@ -7178,7 +7137,7 @@ def test_schedule_tick_emits_dead_input_for_terminal_failed_source() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         (
@@ -7215,11 +7174,11 @@ def test_schedule_tick_dedupes_unchanged_missing_required_input() -> None:
         ),
     ]
 
-    first = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    first = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
     second = _apply(
         [*events, *first],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"base_snapshot_id": "S0"},
     )
 
     assert [(event.event_type, event.payload) for event in first] == [
@@ -7252,7 +7211,7 @@ def test_schedule_tick_defers_unapproved_gate_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         ("node_deferred", {"node_id": "worker-1", "reason": "gate_not_approved:gate-1"})
@@ -7284,7 +7243,7 @@ def test_schedule_tick_allows_approved_gate_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -7322,7 +7281,7 @@ def test_schedule_tick_defers_ungranted_authority_request_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         (
@@ -7361,7 +7320,7 @@ def test_schedule_tick_allows_granted_authority_request_input() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -7377,7 +7336,7 @@ def test_schedule_tick_projection_ready_state_comes_from_node_state_changed() ->
         _event("node_created", {"node_id": "worker-1", "kind": "worker", "state": "planned"}, 1),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "max_grants": 0})
+    output = _apply(events, "schedule_tick", {"max_grants": 0})
     projection = _project([*events, *output])
 
     assert [event.event_type for event in output] == [
@@ -7397,7 +7356,7 @@ def test_schedule_tick_check_precondition_requires_command_definition() -> None:
         _event("node_created", {"node_id": "check-1", "kind": "check", "state": "planned"}, 1),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         (
@@ -7413,7 +7372,7 @@ def test_schedule_tick_rechecks_ready_check_precondition_requires_command_defini
         _event("node_created", {"node_id": "check-1", "kind": "check", "state": "ready"}, 1),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         (
@@ -7438,7 +7397,7 @@ def test_schedule_tick_check_precondition_passes_with_command_definition() -> No
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -7463,7 +7422,7 @@ def test_schedule_tick_check_precondition_passes_with_known_command_binding() ->
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [event.event_type for event in output] == [
         "node_ready",
@@ -7488,7 +7447,7 @@ def test_schedule_tick_external_claim_missing_key_is_invalid() -> None:
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         ("node_deferred", {"node_id": "external-1", "reason": "invalid_claim:external_missing_key"})
@@ -7515,7 +7474,6 @@ def test_acknowledge_start_validates_lease_identity_and_marks_running() -> None:
         events,
         "acknowledge_start",
         {
-            "run_id": "run-1",
             "node_id": "planner-1",
             "lease_id": "lease-planner-1",
             "lease_generation": 1,
@@ -7555,7 +7513,6 @@ def test_acknowledge_start_rejects_wrong_execution_id() -> None:
         events,
         "acknowledge_start",
         {
-            "run_id": "run-1",
             "node_id": "planner-1",
             "lease_id": "lease-planner-1",
             "lease_generation": 1,
@@ -7587,7 +7544,6 @@ def test_agent_died_revokes_active_lease_and_requeues_node() -> None:
         events,
         "agent_died",
         {
-            "run_id": "run-1",
             "lease_id": "lease-1",
             "execution_id": "exec-1",
             "reason": "process_exit",
@@ -7654,7 +7610,6 @@ def test_agent_died_check_missing_command_fails_without_retry() -> None:
         events,
         "agent_died",
         {
-            "run_id": "run-1",
             "lease_id": "lease-1",
             "execution_id": "exec-1",
             "reason": "check node missing command_definition",
@@ -7712,12 +7667,12 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         events,
         "agent_died",
         {
-            "run_id": "run-1",
             "lease_id": "lease-1",
             "execution_id": "exec-1",
             "reason": "process_exit",
             "retry_backoff_seconds": 60,
         },
+        _default_context(events, "agent_died"),
         clock,
         id_gen,
     )
@@ -7750,7 +7705,8 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         projection,
         [*events, *output],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"base_snapshot_id": "S0"},
+        _default_context([*events, *output], "schedule_tick"),
         clock,
         id_gen,
     )
@@ -7769,7 +7725,8 @@ def test_agent_died_retry_backoff_blocks_until_not_before() -> None:
         _project([*events, *output, *immediate]),
         [*events, *output, *immediate],
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"base_snapshot_id": "S0"},
+        _default_context([*events, *output, *immediate], "schedule_tick"),
         clock,
         id_gen,
     )
@@ -7816,7 +7773,6 @@ def test_agent_died_fails_node_when_max_attempts_exhausted() -> None:
         events,
         "agent_died",
         {
-            "run_id": "run-1",
             "lease_id": "lease-1",
             "execution_id": "exec-1",
             "reason": "process_exit",
@@ -7877,7 +7833,6 @@ def test_agent_died_rate_limit_revokes_lease_and_fails_without_retry() -> None:
         events,
         "agent_died",
         {
-            "run_id": "run-1",
             "lease_id": "lease-1",
             "execution_id": "exec-1",
             "reason": reason,
@@ -7939,7 +7894,6 @@ def test_agent_died_usage_limit_revokes_lease_and_fails_without_retry() -> None:
         events,
         "agent_died",
         {
-            "run_id": "run-1",
             "lease_id": "lease-1",
             "execution_id": "exec-1",
             "reason": reason,
@@ -7993,7 +7947,6 @@ def test_agent_died_completes_non_gap_planner_after_accepted_patch() -> None:
         events,
         "agent_died",
         {
-            "run_id": "run-1",
             "lease_id": "lease-1",
             "execution_id": "exec-1",
             "reason": "process_exit",
@@ -8052,7 +8005,6 @@ def test_agent_died_requeues_gap_planner_after_accepted_patch() -> None:
         events,
         "agent_died",
         {
-            "run_id": "run-1",
             "lease_id": "lease-1",
             "execution_id": "exec-1",
             "reason": "process_exit",
@@ -8081,11 +8033,11 @@ def test_agent_died_rejects_unknown_or_inactive_lease() -> None:
         _event("lease_revoked", {"node_id": "worker-1", "lease_id": "lease-1"}, 2),
     ]
 
-    unknown_output = _apply([], "agent_died", {"run_id": "run-1", "lease_id": "missing-lease"})
+    unknown_output = _apply([], "agent_died", {"lease_id": "missing-lease"})
     inactive_output = _apply(
         inactive_events,
         "agent_died",
-        {"run_id": "run-1", "lease_id": "lease-1"},
+        {"lease_id": "lease-1"},
     )
 
     assert unknown_output[0].event_type == "command_rejected"
@@ -8111,16 +8063,16 @@ def test_agent_died_requires_execution_id_when_lease_records_one() -> None:
         ),
     ]
 
-    omitted = _apply(events, "agent_died", {"run_id": "run-1", "lease_id": "lease-1"})
+    omitted = _apply(events, "agent_died", {"lease_id": "lease-1"})
     mismatched = _apply(
         events,
         "agent_died",
-        {"run_id": "run-1", "lease_id": "lease-1", "execution_id": "exec-other"},
+        {"lease_id": "lease-1", "execution_id": "exec-other"},
     )
     matching = _apply(
         events,
         "agent_died",
-        {"run_id": "run-1", "lease_id": "lease-1", "execution_id": "exec-1"},
+        {"lease_id": "lease-1", "execution_id": "exec-1"},
     )
 
     assert omitted[0].event_type == "command_rejected"
@@ -8152,7 +8104,8 @@ def test_schedule_tick_expires_past_leases_only() -> None:
         _project(events),
         events,
         "schedule_tick",
-        {"run_id": "run-1", "base_snapshot_id": "S0"},
+        {"base_snapshot_id": "S0"},
+        _default_context(events, "schedule_tick"),
         clock,
         SequentialIdGenerator(),
     )
@@ -8166,7 +8119,7 @@ def test_raise_appeal_accepts_well_formed() -> None:
     output = _apply(
         [],
         "raise_appeal",
-        {"run_id": "run-1", "node_id": "verify-1", "appeal_type": "invalid_test"},
+        {"node_id": "verify-1", "appeal_type": "invalid_test"},
     )
 
     assert [event.event_type for event in output] == ["appeal_opened", "node_created"]
@@ -8174,7 +8127,7 @@ def test_raise_appeal_accepts_well_formed() -> None:
 
 
 def test_raise_appeal_rejects_malformed() -> None:
-    output = _apply([], "raise_appeal", {"run_id": "run-1", "node_id": "verify-1"})
+    output = _apply([], "raise_appeal", {"node_id": "verify-1"})
 
     assert output[0].event_type == "command_rejected"
 
@@ -8198,7 +8151,6 @@ def test_record_decision_accepts_approval() -> None:
         events,
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "approval",
             "node_id": "gate-1",
             "decision": "approved",
@@ -8246,7 +8198,6 @@ def test_record_decision_accepts_authority_request_with_typed_record() -> None:
         events,
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "authority",
             "node_id": "authority-1",
             "decision": "granted",
@@ -8324,7 +8275,6 @@ def test_record_decision_binds_authority_decision_to_worker_input() -> None:
         events,
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "authority",
             "node_id": "authority-1",
             "decision": "granted",
@@ -8371,7 +8321,6 @@ def test_record_decision_rejects_authority_for_non_authority_target() -> None:
         events,
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "authority",
             "node_id": "gate-1",
             "decision": "granted",
@@ -8387,7 +8336,7 @@ def test_record_decision_rejects_authority_for_non_authority_target() -> None:
 
 
 def test_record_decision_rejects_missing_target() -> None:
-    output = _apply([], "record_decision", {"run_id": "run-1", "decision_type": "approval"})
+    output = _apply([], "record_decision", {"decision_type": "approval"})
 
     assert output[0].event_type == "command_rejected"
     assert "invalid command payload" in output[0].payload["reason"]
@@ -8399,7 +8348,6 @@ def test_record_decision_rejects_invalid_decision() -> None:
         [_event("node_created", {"node_id": "gate-1", "kind": "gate", "state": "blocked"}, 0)],
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "approval",
             "node_id": "gate-1",
             "decision": "maybe",
@@ -8427,7 +8375,6 @@ def test_record_decision_rejects_malformed_typed_authority_record_atomically() -
         ],
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "authority",
             "node_id": "authority-1",
             "decision": "granted",
@@ -8446,7 +8393,6 @@ def test_record_decision_rejects_missing_decider() -> None:
         [_event("node_created", {"node_id": "gate-1", "kind": "gate", "state": "blocked"}, 0)],
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "approval",
             "node_id": "gate-1",
             "decision": "approved",
@@ -8463,7 +8409,6 @@ def test_record_decision_rejects_unknown_target() -> None:
         [],
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "approval",
             "node_id": "missing-gate",
             "decision": "approved",
@@ -8480,7 +8425,6 @@ def test_record_decision_rejects_terminal_target() -> None:
         [_event("node_created", {"node_id": "gate-1", "kind": "gate", "state": "completed"}, 0)],
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "approval",
             "node_id": "gate-1",
             "decision": "approved",
@@ -8500,7 +8444,6 @@ def test_record_decision_rejects_terminal_run() -> None:
         ],
         "record_decision",
         {
-            "run_id": "run-1",
             "decision_type": "approval",
             "node_id": "gate-1",
             "decision": "approved",
@@ -8517,10 +8460,7 @@ def test_submit_patch_accepts_edge_between_revision_attempt_embedded_nodes() -> 
         [],
         "submit_patch",
         {
-            "run_id": "run-1",
             "patch_id": "revision-edge",
-            "proposed_by_node_id": "gap-planner-1",
-            "actor_role": "gap_planner",
             "base_graph_position": -1,
             "ops": [
                 {
@@ -8707,7 +8647,7 @@ def test_schedule_tick_marks_dead_required_input_when_required_source_failed_unb
         ),
     ]
 
-    output = _apply(events, "schedule_tick", {"run_id": "run-1", "base_snapshot_id": "S0"})
+    output = _apply(events, "schedule_tick", {"base_snapshot_id": "S0"})
 
     assert [(event.event_type, event.payload) for event in output] == [
         (

@@ -54,8 +54,14 @@ from orchestrator.graph.commands.callbacks import (
     handle_submit_callback,
 )
 from orchestrator.graph.commands.lifecycle import (
-    handle_lifecycle_command,
+    handle_accept_run,
+    handle_cancel,
+    handle_complete,
+    handle_fail,
+    handle_pause,
     handle_record_heartbeat,
+    handle_resume,
+    handle_start,
 )
 from orchestrator.graph.commands.patches import handle_submit_patch
 from orchestrator.graph.commands.records import (
@@ -71,13 +77,13 @@ from orchestrator.graph.commands.schedule import (
 
 
 COMMAND_SPECS: dict[str, CommandSpec] = {
-    "accept_run": CommandSpec(AcceptRunCommand, handle_lifecycle_command),
-    "start": CommandSpec(StartCommand, handle_lifecycle_command),
-    "pause": CommandSpec(PauseCommand, handle_lifecycle_command),
-    "resume": CommandSpec(ResumeCommand, handle_lifecycle_command),
-    "cancel": CommandSpec(CancelCommand, handle_lifecycle_command),
-    "complete": CommandSpec(CompleteCommand, handle_lifecycle_command),
-    "fail": CommandSpec(FailCommand, handle_lifecycle_command),
+    "accept_run": CommandSpec(AcceptRunCommand, handle_accept_run),
+    "start": CommandSpec(StartCommand, handle_start),
+    "pause": CommandSpec(PauseCommand, handle_pause),
+    "resume": CommandSpec(ResumeCommand, handle_resume),
+    "cancel": CommandSpec(CancelCommand, handle_cancel),
+    "complete": CommandSpec(CompleteCommand, handle_complete),
+    "fail": CommandSpec(FailCommand, handle_fail),
     "record_heartbeat": CommandSpec(RecordHeartbeatCommand, handle_record_heartbeat),
     "seed_compiled_events": CommandSpec(SeedCompiledEventsCommand, handle_seed_compiled_events),
     "schedule_tick": CommandSpec(ScheduleTickCommand, handle_schedule_tick),

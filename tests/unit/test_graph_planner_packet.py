@@ -388,9 +388,11 @@ def test_planner_packet_includes_generation_frontier_evidence_and_rejections() -
     assert allowed_ops == sorted(PLANNER_OPS)
     examples = packet["patch_examples"]
     assert examples
-    assert all(example["proposed_by_node_id"] == "planner-1" for example in examples)
     for example in examples:
         # Match PatchEnvelope shape.
+        assert "proposed_by_node_id" not in example
+        assert "actor_role" not in example
+        assert "run_id" not in example
         assert isinstance(example["patch_id"], str)
         assert isinstance(example["ops"], list)
         assert example["base_graph_position"] == 16

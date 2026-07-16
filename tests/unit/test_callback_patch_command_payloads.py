@@ -10,6 +10,9 @@ from orchestrator.graph.command_models import (
     SubmitCallbackCommand,
     SubmitPatchCommand,
 )
+from orchestrator.graph import GraphCommandContext, initial_projection
+from orchestrator.graph.clock import FakeClock, SequentialIdGenerator
+from tests.unit.graph_test_utils import apply_command
 
 
 def _callback_payload() -> dict[str, object]:
@@ -115,3 +118,48 @@ def test_runtime_commands_require_canonical_identity_fields() -> None:
         AcknowledgeStartCommand.model_validate({"node_id": "worker-1"})
     with pytest.raises(ValidationError):
         AgentDiedCommand.model_validate({})
+
+
+@pytest.mark.parametrize(
+    ("command_type", "field", "value"),
+    [
+        ("complete", "run_id", "smuggled-run"),
+        ("complete", "_current_graph_position", 9),
+        ("complete", "actor_role", "operator"),
+        ("submit_patch", "proposed_by_node_id", "smuggled-planner"),
+    ],
+)
+def test_shared_command_boundary_rejects_payload_smuggled_context(
+    command_type: str,
+    field: str,
+    value: object,
+) -> None:
+    context: GraphCommandContext
+    if command_type == "submit_patch":
+        context = PatchCommandContext(
+            run_id="run-1",
+            current_graph_position=-1,
+            proposed_by_node_id="planner-1",
+            actor_role="planner",
+        )
+        payload: dict[str, object] = {
+            "patch_id": "patch-1",
+            "base_graph_position": -1,
+            field: value,
+        }
+    else:
+        context = GraphCommandContext(run_id="run-1", current_graph_position=-1)
+        payload = {field: value}
+
+    emitted = apply_command(
+        initial_projection(),
+        [],
+        command_type,
+        payload,
+        context,
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+
+    assert [event.event_type for event in emitted] == ["command_rejected"]
+    assert "invalid command payload" in emitted[0].payload["reason"]
