@@ -34,6 +34,18 @@ def test_file_state_accepted_preserves_flat_record_shape() -> None:
     assert payload.model_dump(mode="json") == CANONICAL_FILE_STATE
 
 
+@pytest.mark.parametrize("record_type", [None, "candidate"])
+def test_file_state_accepted_requires_exact_record_type(record_type: str | None) -> None:
+    payload = dict(CANONICAL_FILE_STATE)
+    if record_type is None:
+        payload.pop("record_type")
+    else:
+        payload["record_type"] = record_type
+
+    with pytest.raises(ValidationError):
+        FileStateAcceptedPayload.model_validate(payload)
+
+
 def test_file_state_rejected_accepts_only_canonical_record_fields_and_reason() -> None:
     payload = FileStateRejectedPayload.model_validate({**CANONICAL_FILE_STATE, "reason": "denied"})
 

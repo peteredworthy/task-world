@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from orchestrator.graph import (
     Actor,
     ActorKind,
@@ -43,6 +45,79 @@ def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
     assert report["reports/result.xml"][0]["classification"] == "test_artifact"
     assert report["reports/result.xml"][0]["matched_rule"] == "gatekeeper:claude-test"
     assert report["reports/result.xml"][0]["needs_gatekeeper"] is False
+
+
+@pytest.mark.parametrize(
+    ("location", "field", "value"),
+    [
+        ("verdict", "input_tokens", -1),
+        ("verdict", "input_tokens", 1.5),
+        ("verdict", "input_tokens", "1"),
+        ("verdict", "wall_time_ms", 1.5),
+        ("verdict", "cost_usd", -1.0),
+        ("verdict", "cost_usd", "1.0"),
+        ("verdict", "unknown_cost", 1),
+        ("cost", "output_tokens", -1),
+        ("cost", "output_tokens", 1.5),
+        ("cost", "output_tokens", "1"),
+        ("cost", "wall_time_ms", 1.5),
+        ("cost", "cost_usd", -1.0),
+        ("cost", "cost_usd", "1.0"),
+        ("cost", "unknown_cost", 1),
+    ],
+)
+def test_record_gatekeeper_verdicts_rejects_invalid_supplied_accounting(
+    location: str,
+    field: str,
+    value: object,
+) -> None:
+    events = [_file_state_event("file-state-1", "tmp.out")]
+    verdict = _verdict("tmp.out", "build_output")
+    payload: dict[str, Any] = {
+        "run_id": "run-1",
+        "file_state_record_id": "file-state-1",
+        "execution_id": "exec-1",
+        "verdicts": [verdict],
+    }
+    if location == "verdict":
+        verdict[field] = value
+    else:
+        payload["cost"] = {field: value}
+
+    emitted = apply_command(
+        _project(events),
+        events,
+        "record_gatekeeper_verdicts",
+        payload,
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+
+    assert [event.event_type for event in emitted] == ["command_rejected"]
+    assert emitted[0].payload["command_type"] == "record_gatekeeper_verdicts"
+    assert str(emitted[0].payload["reason"]).startswith(f"invalid gatekeeper {location}")
+
+
+def test_record_gatekeeper_verdicts_rejects_wrong_type_consult_id() -> None:
+    events = [_file_state_event("file-state-1", "tmp.out")]
+
+    emitted = apply_command(
+        _project(events),
+        events,
+        "record_gatekeeper_verdicts",
+        {
+            "run_id": "run-1",
+            "file_state_record_id": "file-state-1",
+            "execution_id": "exec-1",
+            "consult_id": 7,
+            "verdicts": [_verdict("tmp.out", "build_output")],
+        },
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+
+    assert [event.event_type for event in emitted] == ["command_rejected"]
+    assert str(emitted[0].payload["reason"]).startswith("invalid gatekeeper cost")
 
 
 def test_record_gatekeeper_verdicts_rejects_unknown_record_id() -> None:
@@ -411,6 +486,7 @@ def _file_state_event(
         {
             "record_id": record_id,
             "record_kind": "file_state",
+            "record_type": "file_state",
             "producer_node_id": "worker-1",
             "snapshot_id": f"snapshot-{record_id}",
             "base_snapshot_id": "base-1",
@@ -503,6 +579,7 @@ def _superseding_record(*, cleanup_id: str = "missing-cleanup") -> dict[str, Any
     return {
         "record_id": "file-state-1-cleanup",
         "record_kind": "file_state",
+        "record_type": "file_state",
         "producer_node_id": "worker-1",
         "snapshot_id": "snapshot-clean",
         "base_snapshot_id": "base-1",

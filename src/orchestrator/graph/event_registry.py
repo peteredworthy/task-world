@@ -13,7 +13,8 @@ from orchestrator.graph.models import (
     InputBoundPayload,
     OutputRecordAcceptedPayload,
     RevisionCreatedPayload,
-    VerificationOutcomePayload,
+    VerificationFailedPayload,
+    VerificationPassedPayload,
 )
 
 
@@ -86,8 +87,8 @@ EXTERNAL_EVENT_TYPES = frozenset({"lease_suspended"})
 EVENT_PAYLOAD_MODELS: MappingProxyType[str, type[BaseModel]] = MappingProxyType(
     {
         "output_record_accepted": OutputRecordAcceptedPayload,
-        "verification_passed": VerificationOutcomePayload,
-        "verification_failed": VerificationOutcomePayload,
+        "verification_passed": VerificationPassedPayload,
+        "verification_failed": VerificationFailedPayload,
         "input_bound": InputBoundPayload,
         "revision_created": RevisionCreatedPayload,
         "file_state_accepted": FileStateAcceptedPayload,

@@ -280,7 +280,26 @@ async def test_fr15_rejected_file_state_revokes_write_lease_and_retries_cleanly(
 
     event_types = [event["event_type"] for event in events]
     rejection = next(event for event in events if event["event_type"] == "file_state_rejected")
-    revoked = [event for event in events if event["event_type"] == "lease_revoked"]
+    callback = next(
+        event
+        for event in events
+        if event["event_type"] == "callback_accepted"
+        and event["payload"]["node_id"] == "worker-step-1-task-1"
+    )
+    callback_lease_id = callback["payload"]["lease_id"]
+    granted = next(
+        event
+        for event in events
+        if event["event_type"] == "lease_granted"
+        and event["payload"]["lease_id"] == callback_lease_id
+        and event["payload"]["node_id"] == "worker-step-1-task-1"
+    )
+    revoked = [
+        event
+        for event in events
+        if event["event_type"] == "lease_revoked"
+        and event["payload"]["lease_id"] == callback_lease_id
+    ]
     worker_file_states = node["file_state_records"]
     all_captured_paths = [
         path["path"]
@@ -295,7 +314,8 @@ async def test_fr15_rejected_file_state_revokes_write_lease_and_retries_cleanly(
     assert graph["node_states"]["worker-step-1-task-1"] == "completed"
     assert event_types.index("file_state_rejected") < event_types.index("agent_died")
     assert event_types.index("agent_died") < event_types.index("runtime_retry_scheduled")
-    assert revoked
+    assert len(revoked) == 1
+    assert revoked[0]["payload"]["lease_id"] == granted["payload"]["lease_id"]
     assert rejection["payload"]["rejected_paths"][0]["path"] == "fake_key.pem"
     assert rejection["payload"]["rejected_paths"][0]["classification"] == "secret"
     assert not any(

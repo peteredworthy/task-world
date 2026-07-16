@@ -38,6 +38,7 @@ from orchestrator.graph.file_state import (
 )
 from orchestrator.graph.macros import expand_patch_macros
 from orchestrator.graph.models import (
+    AcceptedOutputRecordPayload,
     Actor,
     ActorKind,
     AppealOpenedPayload,
@@ -90,6 +91,7 @@ from orchestrator.graph.models import (
     NodeSuspectPayload,
     OutputRecord,
     OutputRecordAcceptedPayload,
+    OUTPUT_RECORD_MODELS_BY_TYPE,
     OversightDecisionRecordedPayload,
     OversightDecisionProjection,
     PatchEnvelope,
@@ -106,7 +108,9 @@ from orchestrator.graph.models import (
     SupportEvidencePayload,
     SupportEvidenceProjection,
     VerificationResultProjection,
+    VerificationFailedPayload,
     VerificationOutcomePayload,
+    VerificationPassedPayload,
     VerifierVerdictProjection,
 )
 from orchestrator.graph.patch_validator import PLANNER_OPS, validate_patch
@@ -157,6 +161,7 @@ from orchestrator.graph.scheduler import (
 from orchestrator.graph.store import InMemoryEventStore
 
 __all__ = [
+    "AcceptedOutputRecordPayload",
     "Actor",
     "ActorKind",
     "AppealOpenedPayload",
@@ -230,6 +235,7 @@ __all__ = [
     "NodeSuspectPayload",
     "OutputRecord",
     "OutputRecordAcceptedPayload",
+    "OUTPUT_RECORD_MODELS_BY_TYPE",
     "OversightDecisionRecordedPayload",
     "OversightDecisionProjection",
     "PLANNER_OPS",
@@ -251,7 +257,9 @@ __all__ = [
     "SchedulerView",
     "SequentialIdGenerator",
     "VerificationResultProjection",
+    "VerificationFailedPayload",
     "VerificationOutcomePayload",
+    "VerificationPassedPayload",
     "VerifierVerdictProjection",
     "WorktreeStatus",
     "apply_command",

@@ -46,9 +46,8 @@ the allowlist backing ``read_run_projection`` -> ``project_task_states`` (the
 Why over-approximate the whole ``reduce_event`` closure rather than slice
 down to exactly the state fields ``_derive_task_states`` reads: several
 writer functions mutate an already-fetched substate entry in place (e.g.
-``_record_file_state`` does ``dict(event.payload)`` wholesale, and
-``_record_cleanup_requested``/``_record_gatekeeper_verdicts`` mutate that
-copy's fields later by aliasing, not by ``payload["key"] = ...``). A
+``_record_cleanup_requested``/``_record_gatekeeper_verdicts`` mutate the
+typed file-state record stored by ``_record_file_state``). A
 call-graph slice keyed on assignment targets misses those silently. Rather
 than trust a second, harder-to-verify layer of static analysis for a
 narrower scope, this test accepts a larger, honestly-justified exclusion
@@ -91,15 +90,11 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "binding_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (_topology_edge); "
     "not read by _derive_task_states/_task_file_state_accepted/_downstream_node_ids",
     "change_classification": "requirement_revisions bookkeeping",
-    "command_text": "environment_failures/check_results informational field; only "
-    "classification/status/key-existence matter to task_states",
     "confidence": "support_evidence bookkeeping",
     "dependency_type": "edges metadata; downstream traversal only uses from_node_id/to_node_id",
     "description": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "edge_id": "edges dict key/metadata; not read by the recovery-lineage traversal helper",
-    "evidence": "support_evidence bookkeeping",
     "evidence_id": "support_evidence bookkeeping",
-    "exit_code": "environment_failures/check_results informational field (see command_text)",
     "explicit_authority_required": "requirement revision authority-resolution bookkeeping",
     "from_node_kind": "edges metadata; recovery-lineage traversal only reads "
     "from_node_id/to_node_id",
@@ -115,10 +110,7 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "proposal_id": "open_proposal_blockers bookkeeping",
     "prompt_hydration_policy": "_EDGE_METADATA_KEYS: topology-view-only edge metadata "
     "(see binding_policy)",
-    "provenance": "support_evidence bookkeeping",
     "purpose": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
-    "reason": "informational annotation (environment_failures/cleanup/suspect-node); never "
-    "gates a task_states branch",
     "required": 'edges metadata ("required" flag); traversal helper ignores it',
     "requirement": "requirement id/priority resolution helper, not task_states",
     "requirement_id": "requirement_revisions/authority_revision_blockers bookkeeping",
@@ -127,16 +119,11 @@ _EXCLUDED_KEYS: dict[str, str] = {
     "revision_id": "authority_revision_blockers bookkeeping",
     "revision_index": "requirement_revisions bookkeeping",
     "revision_type": "requirement revision classification helper",
-    "schema": "node_command_definitions/record-type classification (topology/summary views)",
     "selection": "_EDGE_METADATA_KEYS: topology-view-only edge metadata (see binding_policy)",
     "semantic_change": "requirement revision authority-resolution bookkeeping",
     "stale_reason": "support_evidence bookkeeping",
-    "stderr": "environment_failures/check_results informational field (see command_text)",
     "support_id": "support_evidence bookkeeping",
     "validation_strengthening": "requirement_revisions bookkeeping",
-    "value": "nested payload.value.* reads; status/classification fallbacks are already handled "
-    "by the dedicated __value_status/__value_classification json_extract columns in "
-    "_read_run_extracting_fields regardless of whether 'value' itself is listed",
     "version_id": "requirement_revisions bookkeeping",
 }
 
@@ -396,7 +383,7 @@ def test_reduce_event_closure_extraction_finds_a_plausible_number_of_functions_a
         "did the AST extraction break?"
     )
     keys = _extract_reduce_event_payload_keys()
-    assert len(keys) >= 50, (
+    assert len(keys) >= 40, (
         f"only {len(keys)} payload keys extracted from the reduce_event closure; "
         "expected many more -- did the AST extraction break?"
     )

@@ -494,6 +494,7 @@ def test_file_state_record_rejects_invalid_schema_version() -> None:
             {
                 "record_id": "rec-file-S1",
                 "record_kind": "file_state",
+                "record_type": "file_state",
                 "schema_version": 0,
                 "snapshot_id": "S1",
             }
@@ -506,6 +507,7 @@ def test_verification_report_record_round_trips() -> None:
         {
             "record_id": "verification-1",
             "record_kind": "verification",
+            "record_type": "verification_report",
             "producer_node_id": "verify-A-1",
             "port": "verification_report",
             "schema": "VerificationReport",
@@ -1576,6 +1578,7 @@ def test_file_state_record_round_trips() -> None:
         {
             "record_id": "rec-file-S1",
             "record_kind": "file_state",
+            "record_type": "file_state",
             "snapshot_id": "S1",
             "base_snapshot_id": "S0",
             "producer_node_id": "build-A-1",

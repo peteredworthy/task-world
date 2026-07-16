@@ -52,6 +52,8 @@ from orchestrator.graph.models import (
     FailureRecord,
     FileStateRecord,
     GapClassificationRecord,
+    GatekeeperCostRecordedPayload,
+    GatekeeperVerdictRow,
     GraphPatchAcceptedPayload,
     GraphEventPayloadBase,
     JoinResultRecord,
@@ -4456,33 +4458,34 @@ def _apply_record_gatekeeper_verdicts(
                     f"invalid classification for {path}: {classification}; valid: {valid}",
                 )
             ]
-        confidence = verdict.get("confidence", 0.0)
-        if not isinstance(confidence, int | float) or confidence < 0 or confidence > 1:
+        verdict.setdefault("confidence", 0.0)
+        verdict.setdefault("rationale", "")
+        verdict.setdefault("model_id", payload.get("model_id", "unknown"))
+        try:
+            accepted_verdict = GatekeeperVerdictRow.model_validate(verdict)
+        except ValueError as exc:
             return [
                 _command_rejected(
                     make_event,
                     "record_gatekeeper_verdicts",
-                    f"invalid confidence for {path}",
+                    f"invalid gatekeeper verdict at index {index}: {exc}",
                 )
             ]
-        accepted.append(
-            {
-                "path": path,
-                "classification": classification,
-                "confidence": float(confidence),
-                "rationale": str(verdict.get("rationale", "")),
-                "model_id": str(verdict.get("model_id", payload.get("model_id", "unknown"))),
-                "input_tokens": _nonnegative_int(verdict.get("input_tokens", 0)),
-                "output_tokens": _nonnegative_int(verdict.get("output_tokens", 0)),
-                "cache_read_tokens": _nonnegative_int(verdict.get("cache_read_tokens", 0)),
-                "cache_write_tokens": _nonnegative_int(verdict.get("cache_write_tokens", 0)),
-                "cost_usd": _nonnegative_float(verdict.get("cost_usd", 0.0)),
-                "wall_time_ms": _nonnegative_int(verdict.get("wall_time_ms", 0)),
-            }
-        )
+        accepted.append(accepted_verdict.model_dump(mode="json"))
 
-    consult_id = str(payload.get("consult_id", "gatekeeper-consult"))
-    cost_payload = _gatekeeper_cost_payload(record_id, execution_id, consult_id, accepted, payload)
+    consult_id = payload.get("consult_id", "gatekeeper-consult")
+    try:
+        cost_payload = _gatekeeper_cost_payload(
+            record_id, execution_id, consult_id, accepted, payload
+        )
+    except ValueError as exc:
+        return [
+            _command_rejected(
+                make_event,
+                "record_gatekeeper_verdicts",
+                f"invalid gatekeeper cost: {exc}",
+            )
+        ]
     events = [
         make_event(
             "gatekeeper_verdict_recorded",
@@ -4795,57 +4798,35 @@ def _record_residue(record: dict[str, Any] | FileStateRecord) -> list[dict[str, 
 def _gatekeeper_cost_payload(
     record_id: str,
     execution_id: str,
-    consult_id: str,
+    consult_id: Any,
     verdicts: list[dict[str, Any]],
     payload: dict[str, Any],
 ) -> dict[str, Any]:
     cost = payload.get("cost")
-    if isinstance(cost, dict):
+    if cost is None:
+        typed_cost: dict[str, Any] = {}
+    elif isinstance(cost, dict):
         typed_cost = cast(dict[str, Any], cost)
     else:
-        typed_cost = {}
+        msg = "cost must be an object"
+        raise ValueError(msg)
     model_ids = sorted({str(verdict.get("model_id", "unknown")) for verdict in verdicts})
-    return {
+    defaults = {
         "file_state_record_id": record_id,
         "execution_id": execution_id,
         "consult_id": consult_id,
-        "model_id": str(
-            typed_cost.get("model_id") or (model_ids[0] if len(model_ids) == 1 else "mixed")
-        ),
-        "input_tokens": _nonnegative_int(
-            typed_cost.get("input_tokens", sum(int(v["input_tokens"]) for v in verdicts))
-        ),
-        "output_tokens": _nonnegative_int(
-            typed_cost.get("output_tokens", sum(int(v["output_tokens"]) for v in verdicts))
-        ),
-        "cache_read_tokens": _nonnegative_int(
-            typed_cost.get(
-                "cache_read_tokens",
-                sum(int(v["cache_read_tokens"]) for v in verdicts),
-            )
-        ),
-        "cache_write_tokens": _nonnegative_int(
-            typed_cost.get(
-                "cache_write_tokens",
-                sum(int(v["cache_write_tokens"]) for v in verdicts),
-            )
-        ),
-        "cost_usd": _nonnegative_float(
-            typed_cost.get("cost_usd", sum(float(v["cost_usd"]) for v in verdicts))
-        ),
-        "wall_time_ms": _nonnegative_int(
-            typed_cost.get("wall_time_ms", sum(int(v["wall_time_ms"]) for v in verdicts))
-        ),
+        "model_id": model_ids[0] if len(model_ids) == 1 else "mixed",
+        "input_tokens": sum(int(v["input_tokens"]) for v in verdicts),
+        "output_tokens": sum(int(v["output_tokens"]) for v in verdicts),
+        "cache_read_tokens": sum(int(v["cache_read_tokens"]) for v in verdicts),
+        "cache_write_tokens": sum(int(v["cache_write_tokens"]) for v in verdicts),
+        "cost_usd": sum(float(v["cost_usd"]) for v in verdicts),
+        "wall_time_ms": sum(int(v["wall_time_ms"]) for v in verdicts),
         "item_count": len(verdicts),
     }
-
-
-def _nonnegative_int(value: Any) -> int:
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int | float) and value >= 0:
-        return int(value)
-    return 0
+    return GatekeeperCostRecordedPayload.model_validate({**defaults, **typed_cost}).model_dump(
+        mode="json"
+    )
 
 
 def _positive_int(value: Any, default: int) -> int:
@@ -4854,14 +4835,6 @@ def _positive_int(value: Any, default: int) -> int:
     if isinstance(value, int | float) and value > 0:
         return int(value)
     return default
-
-
-def _nonnegative_float(value: Any) -> float:
-    if isinstance(value, bool):
-        return 0.0
-    if isinstance(value, int | float) and value >= 0:
-        return float(value)
-    return 0.0
 
 
 def _request_record_events_for_node(
@@ -5547,6 +5520,8 @@ def _event_factory(
         validate_emitted_event_type("graph_command_factory", event_type)
         model = EVENT_PAYLOAD_MODELS.get(event_type)
         if model is not None:
+            # Sparse wire payloads omit defaults, but model_fields_set preserves
+            # explicitly supplied empty values that downstream routing distinguishes.
             typed_payload = model.model_validate(payload).model_dump(
                 mode="json",
                 exclude_none=True,

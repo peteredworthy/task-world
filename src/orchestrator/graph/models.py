@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
+from types import MappingProxyType
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import (
@@ -732,7 +733,7 @@ class VerificationReportRecord(TypedRecordBase):
 
     @model_validator(mode="after")
     def verification_report_fields_are_consistent(self) -> "VerificationReportRecord":
-        if self.record_type not in {None, "verification_report"}:
+        if self.record_type != "verification_report":
             msg = "record_type must be verification_report"
             raise ValueError(msg)
         if self.outcome != self.value.outcome:
@@ -2016,6 +2017,7 @@ class RecoveryPlanRecord(TypedRecordBase):
 
 OutputRecordPayload = (
     OutputRecord
+    | RunContextRecord
     | RoutineSnapshotRecord
     | ArtifactReferenceRecord
     | VerificationReportRecord
@@ -2122,8 +2124,45 @@ class FileStateRecord(TypedRecordBase):
     compromised_snapshot_deleted: bool | None = None
     compromised_paths: list[str] | None = None
 
+    @model_validator(mode="after")
+    def file_state_record_type_is_canonical(self) -> "FileStateRecord":
+        if self.record_type != "file_state":
+            msg = "record_type must be file_state"
+            raise ValueError(msg)
+        return self
 
-class OutputRecordAcceptedPayload(RootModel[OutputRecordPayload | FileStateRecord]):
+
+AcceptedOutputRecordPayload: TypeAlias = OutputRecordPayload | FileStateRecord
+
+OUTPUT_RECORD_MODELS_BY_TYPE: MappingProxyType[str, type[GraphBaseModel]] = MappingProxyType(
+    {
+        "analysis_summary": AnalysisSummaryRecord,
+        "artifact_reference": ArtifactReferenceRecord,
+        "authority_decision": AuthorityDecisionRecord,
+        "authority_request_record": AuthorityRequestRecord,
+        "candidate": CandidateRecord,
+        "check_result": CheckResultRecord,
+        "classified_gap": GapClassificationRecord,
+        "completion_decision": CompletionDecisionRecord,
+        "decision_record": DecisionRecord,
+        "decision_request": DecisionRequestRecord,
+        "failure_record": FailureRecord,
+        "fan_out_inputs": OutputRecord,
+        "file_state": FileStateRecord,
+        "gap_classification": GapClassificationRecord,
+        "gap_plan": GapClassificationRecord,
+        "graph_patch_proposal": GraphPatchProposalRecord,
+        "join_result": JoinResultRecord,
+        "recovery_plan": RecoveryPlanRecord,
+        "requirement_record": RequirementRecord,
+        "routine_snapshot": RoutineSnapshotRecord,
+        "run_context": RunContextRecord,
+        "verification_report": VerificationReportRecord,
+    }
+)
+
+
+class OutputRecordAcceptedPayload(RootModel[AcceptedOutputRecordPayload]):
     """Flat, canonical output-record acceptance event payload."""
 
     def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
@@ -2139,6 +2178,49 @@ class VerificationOutcomePayload(StrictEventPayload):
     outcome: Literal["passed", "failed"]
     evidence: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
     value: VerificationReportValue
+
+    @model_validator(mode="after")
+    def outcome_matches_value(self) -> "VerificationOutcomePayload":
+        if self.outcome != self.value.outcome:
+            msg = "outcome must match value.outcome"
+            raise ValueError(msg)
+        return self
+
+
+class VerificationPassedPayload(StrictEventPayload):
+    node_id: str
+    verifier_node_id: str
+    candidate_id: str
+    task_region_id: str | None = None
+    record_id: str
+    outcome: Literal["passed"]
+    evidence: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    value: VerificationReportValue
+
+    @model_validator(mode="after")
+    def outcome_matches_value(self) -> "VerificationPassedPayload":
+        if self.outcome != self.value.outcome:
+            msg = "outcome must match value.outcome"
+            raise ValueError(msg)
+        return self
+
+
+class VerificationFailedPayload(StrictEventPayload):
+    node_id: str
+    verifier_node_id: str
+    candidate_id: str
+    task_region_id: str | None = None
+    record_id: str
+    outcome: Literal["failed"]
+    evidence: list[dict[str, Any]] = Field(default_factory=list[dict[str, Any]])
+    value: VerificationReportValue
+
+    @model_validator(mode="after")
+    def outcome_matches_value(self) -> "VerificationFailedPayload":
+        if self.outcome != self.value.outcome:
+            msg = "outcome must match value.outcome"
+            raise ValueError(msg)
+        return self
 
 
 class InputBoundPayload(StrictEventPayload):
@@ -2177,15 +2259,15 @@ class FileStateRejectedPayload(CanonicalFileStateRecord):
 class GatekeeperVerdictRow(StrictEventPayload):
     path: str
     classification: str
-    confidence: float = Field(ge=0.0, le=1.0)
+    confidence: StrictFloat = Field(ge=0.0, le=1.0)
     rationale: str
     model_id: str | None = None
-    input_tokens: int = Field(default=0, ge=0)
-    output_tokens: int = Field(default=0, ge=0)
-    cache_read_tokens: int = Field(default=0, ge=0)
-    cache_write_tokens: int = Field(default=0, ge=0)
-    cost_usd: float = Field(default=0.0, ge=0.0)
-    wall_time_ms: int = Field(default=0, ge=0)
+    input_tokens: StrictInt = Field(default=0, ge=0)
+    output_tokens: StrictInt = Field(default=0, ge=0)
+    cache_read_tokens: StrictInt = Field(default=0, ge=0)
+    cache_write_tokens: StrictInt = Field(default=0, ge=0)
+    cost_usd: StrictFloat = Field(default=0.0, ge=0.0)
+    wall_time_ms: StrictInt = Field(default=0, ge=0)
 
 
 class GatekeeperVerdictRecordedPayload(StrictEventPayload):
@@ -2201,13 +2283,13 @@ class GatekeeperCostRecordedPayload(StrictEventPayload):
     file_state_record_id: str
     consult_id: str
     model_id: str | None = None
-    input_tokens: int = Field(default=0, ge=0)
-    output_tokens: int = Field(default=0, ge=0)
-    cache_read_tokens: int = Field(default=0, ge=0)
-    cache_write_tokens: int = Field(default=0, ge=0)
-    item_count: int = Field(default=0, ge=0)
-    cost_usd: float = Field(default=0.0, ge=0.0)
-    wall_time_ms: int = Field(default=0, ge=0)
+    input_tokens: StrictInt = Field(default=0, ge=0)
+    output_tokens: StrictInt = Field(default=0, ge=0)
+    cache_read_tokens: StrictInt = Field(default=0, ge=0)
+    cache_write_tokens: StrictInt = Field(default=0, ge=0)
+    item_count: StrictInt = Field(default=0, ge=0)
+    cost_usd: StrictFloat = Field(default=0.0, ge=0.0)
+    wall_time_ms: StrictInt = Field(default=0, ge=0)
 
 
 class GraphRecordKind(str, Enum):

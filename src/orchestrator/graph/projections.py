@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from types import MappingProxyType
 from typing import Any, Iterable, Literal, TypedDict, cast
 
 from pydantic import ConfigDict, field_validator
@@ -20,14 +19,12 @@ from orchestrator.graph.contracts import (
     port_contract_summary,
 )
 from orchestrator.graph.models import (
-    AnalysisSummaryRecord,
+    AcceptedOutputRecordPayload,
     AppealOpenedPayload,
     ApprovalDecisionRecordedPayload,
     ApprovalDecisionProjection,
-    ArtifactReferenceRecord,
     AuthorityDecisionProjection,
     AuthorityDecisionRecordedPayload,
-    AuthorityDecisionRecord,
     AuthorityRequestRecord,
     CallbackAcceptedPayload,
     CallbackIdempotencyEvent,
@@ -40,7 +37,6 @@ from orchestrator.graph.models import (
     CleanupRequestedProjection,
     CommandDefinitionProjection,
     CompletionDecisionRecord,
-    DecisionRecord,
     DecisionRequestRecord,
     EdgeProjection,
     EnvironmentFailureProjection,
@@ -49,13 +45,10 @@ from orchestrator.graph.models import (
     FileEntry,
     FileStateAcceptedPayload,
     FileStateRecord,
-    FailureRecord,
-    GapClassificationRecord,
     GatekeeperCostRecordedPayload,
     GatekeeperVerdictRecordedPayload,
     GraphBaseModel,
     GraphPatchAcceptedPayload,
-    GraphPatchProposalRecord,
     GraphPatchRejectedPayload,
     GraphPatchResultRecord,
     InvalidTestBlockProjection,
@@ -68,7 +61,6 @@ from orchestrator.graph.models import (
     LeaseRenewedPayload,
     LeaseRevokedPayload,
     LeaseSuspendedPayload,
-    JoinResultRecord,
     NodeCreationProjection,
     NodeAuthorityChangedPayload,
     NodeCreatedPayload,
@@ -83,22 +75,19 @@ from orchestrator.graph.models import (
     OversightDecisionRecordedPayload,
     OutputRecord,
     OutputRecordAcceptedPayload,
-    OutputRecordPayload,
     PendingGateDecisionProjection,
     PlannerSessionStateChangedPayload,
-    RecoveryPlanRecord,
-    RequirementRecord,
     RequirementRevisionPayload,
     RequirementRevisionProjection,
-    RunContextRecord,
     RunLifecycleChangedPayload,
     RuntimeRetryScheduledPayload,
     ResourceClaimProjection,
     RoutineSnapshotRecord,
     SupportEvidenceProjection,
     SupportEvidencePayload,
-    VerificationReportRecord,
+    VerificationFailedPayload,
     VerificationOutcomePayload,
+    VerificationPassedPayload,
     VerificationResultProjection,
     VerifierVerdictProjection,
 )
@@ -244,7 +233,7 @@ class GraphRecordSummary(TypedDict, total=False):
 
 class AcceptedOutputRecord(TypedDict):
     record_id: str
-    payload: OutputRecordPayload
+    payload: AcceptedOutputRecordPayload
 
 
 class RecoveryNodeIndexEntry(GraphBaseModel):
@@ -298,7 +287,7 @@ class GraphProjection(TypedDict):
     node_output_ports: dict[str, dict[str, list[str]]]
     accepted_output_records_by_node_port: dict[str, dict[str, list[AcceptedOutputRecord]]]
     accepted_record_summaries_by_id: dict[str, GraphRecordSummary]
-    output_records_by_node_port: dict[str, dict[str, list[OutputRecordPayload]]]
+    output_records_by_node_port: dict[str, dict[str, list[AcceptedOutputRecordPayload]]]
     edges: dict[str, EdgeProjection]
     input_bindings: dict[str, dict[str, InputBindingProjection]]
     node_pending_appeals: dict[str, bool]
@@ -335,7 +324,7 @@ class GraphProjection(TypedDict):
     last_deferred_reasons: dict[str, str]
     retry_not_before_by_node: dict[str, str | None]
     node_creation_payloads: dict[str, NodeCreationProjection]
-    output_record_payloads: dict[str, OutputRecordPayload]
+    output_record_payloads: dict[str, AcceptedOutputRecordPayload]
     approval_decisions: dict[str, ApprovalDecisionProjection]
     authority_decisions: dict[str, AuthorityDecisionProjection]
     oversight_decisions: dict[str, OversightDecisionProjection]
@@ -1711,14 +1700,14 @@ def _accepted_output_records_from_checkpoint(
 
 def _output_records_from_checkpoint(
     raw_ports_by_node: Any,
-) -> dict[str, dict[str, list[OutputRecordPayload]]]:
+) -> dict[str, dict[str, list[AcceptedOutputRecordPayload]]]:
     if not isinstance(raw_ports_by_node, dict):
         return {}
-    typed: dict[str, dict[str, list[OutputRecordPayload]]] = {}
+    typed: dict[str, dict[str, list[AcceptedOutputRecordPayload]]] = {}
     for node_id, raw_ports in cast(dict[Any, Any], raw_ports_by_node).items():
         if not isinstance(node_id, str) or not isinstance(raw_ports, dict):
             continue
-        ports: dict[str, list[OutputRecordPayload]] = {}
+        ports: dict[str, list[AcceptedOutputRecordPayload]] = {}
         for port, raw_records in cast(dict[Any, Any], raw_ports).items():
             if not isinstance(port, str) or not isinstance(raw_records, list):
                 continue
@@ -1732,10 +1721,10 @@ def _output_records_from_checkpoint(
     return typed
 
 
-def _output_payloads_from_checkpoint(raw_payloads: Any) -> dict[str, OutputRecordPayload]:
+def _output_payloads_from_checkpoint(raw_payloads: Any) -> dict[str, AcceptedOutputRecordPayload]:
     if not isinstance(raw_payloads, dict):
         return {}
-    typed: dict[str, OutputRecordPayload] = {}
+    typed: dict[str, AcceptedOutputRecordPayload] = {}
     for record_id, raw_payload in cast(dict[Any, Any], raw_payloads).items():
         if not isinstance(record_id, str):
             continue
@@ -1750,7 +1739,7 @@ def _checkpoint_record_id(raw_record: dict[str, Any]) -> str | None:
     return record_id if isinstance(record_id, str) else None
 
 
-def _checkpoint_output_record_payload(raw_payload: Any) -> OutputRecordPayload | None:
+def _checkpoint_output_record_payload(raw_payload: Any) -> AcceptedOutputRecordPayload | None:
     if not isinstance(raw_payload, dict):
         return None
     return _parse_output_record_payload(cast(dict[str, Any], raw_payload))
@@ -2202,26 +2191,28 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 next_state["leases"][lease_id] = lease
     elif event.event_type == "output_record_accepted":
         try:
-            output_record_payload = cast(
-                OutputRecordPayload,
-                OutputRecordAcceptedPayload.model_validate(event.payload).root,
-            )
+            output_record_payload = OutputRecordAcceptedPayload.model_validate(event.payload).root
         except ValueError:
             return next_state
         _record_output_record(next_state, output_record_payload)
-        _record_node_output_port(next_state, event)
+        _record_node_output_port(next_state, output_record_payload, event.position)
         _record_accepted_output_record(next_state, output_record_payload)
-        _record_accepted_record_summary(next_state, event)
+        _record_accepted_record_summary(next_state, output_record_payload)
         _record_output_payload(next_state, output_record_payload)
-        _record_latest_routine_snapshot(next_state, event)
-        _record_completion_decision(next_state, event)
-        _record_decision_request_details(next_state, event)
-        _record_candidate(next_state, event)
-        _record_check_result(next_state, event)
-        _record_environment_failure(next_state, event)
+        _record_latest_routine_snapshot(next_state, output_record_payload)
+        _record_completion_decision(next_state, output_record_payload)
+        _record_decision_request_details(next_state, output_record_payload)
+        _record_candidate(next_state, output_record_payload, event.position)
+        _record_check_result(next_state, output_record_payload, event.position)
+        _record_environment_failure(next_state, output_record_payload, event.position)
     elif event.event_type in {"verification_passed", "verification_failed"}:
         try:
-            verification_payload = VerificationOutcomePayload.model_validate(event.payload)
+            verification_model = (
+                VerificationPassedPayload
+                if event.event_type == "verification_passed"
+                else VerificationFailedPayload
+            )
+            verification_payload = verification_model.model_validate(event.payload)
         except ValueError:
             return next_state
         _record_verdict(next_state, verification_payload, event.position)
@@ -2256,9 +2247,14 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
             file_state_payload = FileStateAcceptedPayload.model_validate(event.payload)
         except ValueError:
             return next_state
-        _record_node_output_port(next_state, event)
-        _record_accepted_record_summary(next_state, event)
-        _record_file_state(next_state, file_state_payload.root, event)
+        _record_node_output_port(next_state, file_state_payload.root, event.position)
+        _record_accepted_record_summary(next_state, file_state_payload.root)
+        _record_file_state(
+            next_state,
+            file_state_payload.root,
+            run_id=event.run_id,
+            position=event.position,
+        )
     elif event.event_type == "graph_patch_accepted":
         _record_open_proposal_blocker(next_state, event)
         accepted_payload = _graph_patch_accepted_payload_from_event(event)
@@ -3781,34 +3777,6 @@ def _add_record_summary_positions(
             summary["position"] = event.position
 
 
-def _record_type_for_summary(
-    payload: dict[str, Any],
-    projection: GraphProjection,
-) -> str | None:
-    record_type = payload.get("record_type")
-    if isinstance(record_type, str):
-        return record_type
-    record_kind = payload.get("record_kind")
-    if record_kind == "file_state":
-        return "file_state"
-    if record_kind == "verification":
-        return "verification_report"
-    producer_node_id = payload.get("producer_node_id")
-    port = payload.get("port")
-    if isinstance(producer_node_id, str) and isinstance(port, str):
-        node_kind = projection["node_kinds"].get(producer_node_id)
-        node_role = projection["node_roles"].get(producer_node_id)
-        contract = (
-            DEFAULT_NODE_CONTRACTS.contract_for(node_kind, node_role)
-            if node_kind is not None
-            else None
-        )
-        port_contract = output_port_contract(contract, port) if contract is not None else None
-        if port_contract is not None and port_contract.record_types:
-            return sorted(port_contract.record_types)[0]
-    return record_kind if isinstance(record_kind, str) else None
-
-
 def project_pattern_library(events: list[EventEnvelope]) -> dict[str, Any]:
     """Project accepted gatekeeper verdicts into exact paths and derived globs.
 
@@ -4088,23 +4056,15 @@ def _callback_idempotency_projection_key(node_id: str, idempotency_key: str) -> 
     return f"{node_id}\0{idempotency_key}"
 
 
-def _record_decision_request_details(state: GraphProjection, event: EventEnvelope) -> None:
-    node_id = event.payload.get("producer_node_id")
-    if not isinstance(node_id, str):
+def _record_decision_request_details(
+    state: GraphProjection,
+    record: AcceptedOutputRecordPayload,
+) -> None:
+    if not isinstance(record, DecisionRequestRecord | AuthorityRequestRecord):
         return
-    record_type = event.payload.get("record_type")
-    port = event.payload.get("port")
-    if record_type not in {"decision_request", "authority_request_record"} and port not in {
-        "decision_request",
-        "authority_request_record",
-    }:
-        return
-    value = event.payload.get("value")
-    if not isinstance(value, dict):
-        return
-    projected = _request_details_from_value(cast(dict[str, Any], value))
+    projected = _request_details_from_value(record.value.model_dump(mode="json"))
     if projected is not None:
-        state["decision_request_details"][node_id] = projected
+        state["decision_request_details"][record.producer_node_id] = projected
 
 
 def _request_details_for_pending_gate(
@@ -4323,59 +4283,40 @@ def _copy_latest_routine_snapshot_record(
     return _latest_routine_snapshot_from_checkpoint(record)
 
 
-def _record_candidate(state: GraphProjection, event: EventEnvelope) -> None:
-    record_kind = event.payload.get("record_kind")
-    if record_kind is not None and record_kind != "output":
+def _record_candidate(
+    state: GraphProjection,
+    record: AcceptedOutputRecordPayload,
+    position: int,
+) -> None:
+    if not isinstance(record, CandidateRecord | OutputRecord):
         return
-    port = event.payload.get("port")
-    record_type = event.payload.get("record_type")
-    schema = event.payload.get("schema")
-    candidate_ports = {"candidate", "reader_output", "fan_out_inputs"}
-    candidate_schemas = {"ImplementationCandidate", "FanOutInputs", "FanOutJoinedInputs"}
-    explicit_non_candidate = port is not None or record_type is not None or schema is not None
-    if (
-        explicit_non_candidate
-        and port not in candidate_ports
-        and record_type != "candidate"
-        and schema not in candidate_schemas
-    ):
-        return
-
-    producer_node_id = event.payload.get("producer_node_id")
-    task_region_id = _task_region_id(event.payload)
-    if task_region_id is None and isinstance(producer_node_id, str):
-        task_region_id = state["node_task_regions"].get(producer_node_id)
+    task_region_id = record.task_region_id or state["node_task_regions"].get(
+        record.producer_node_id
+    )
     if task_region_id is None:
         return
-
-    candidate_id = _candidate_id(event.payload)
-    if candidate_id is None:
-        record_id = event.payload.get("record_id")
-        candidate_id = record_id if isinstance(record_id, str) else None
-    if candidate_id is None:
-        return
-
-    attempt_number = _attempt_number(event.payload)
-    if attempt_number is None and isinstance(producer_node_id, str):
-        attempt_number = state["node_attempts"].get(producer_node_id)
+    candidate_id = record.candidate_id or record.record_id
+    attempt_number = record.attempt_number
+    if attempt_number is None:
+        attempt_number = state["node_attempts"].get(record.producer_node_id)
     if attempt_number is None:
         attempt_number = 0
-
+    supersedes_task_region_ids: list[str] = []
+    file_state_record_ids = list(record.file_state_record_ids)
+    if isinstance(record, CandidateRecord):
+        supersedes_task_region_ids.extend(record.supersedes_task_region_ids)
+        if record.supersedes_task_region_id is not None:
+            supersedes_task_region_ids.append(record.supersedes_task_region_id)
+        if not file_state_record_ids:
+            file_state_record_ids = list(record.value.file_state_record_ids)
     try:
         candidate = CandidateProjection.model_validate(
             {
                 "candidate_id": candidate_id,
                 "attempt_number": attempt_number,
-                "position": event.position,
-                "file_state_record_ids": _record_ids_from_payload(
-                    event.payload,
-                    "file_state_record_ids",
-                ),
-                "supersedes_task_region_ids": _task_region_ids_from_payload(
-                    event.payload,
-                    "supersedes_task_region_ids",
-                    "supersedes_task_region_id",
-                ),
+                "position": position,
+                "file_state_record_ids": file_state_record_ids,
+                "supersedes_task_region_ids": supersedes_task_region_ids,
             }
         )
     except ValueError:
@@ -4385,7 +4326,7 @@ def _record_candidate(state: GraphProjection, event: EventEnvelope) -> None:
 
 def _record_verdict(
     state: GraphProjection,
-    payload: VerificationOutcomePayload,
+    payload: VerificationOutcomePayload | VerificationPassedPayload | VerificationFailedPayload,
     position: int,
 ) -> None:
     candidate_id = payload.candidate_id
@@ -4422,21 +4363,21 @@ def _record_recovery_node(state: GraphProjection, payload: NodeCreatedPayload) -
     )
 
 
-def _record_completion_decision(state: GraphProjection, event: EventEnvelope) -> None:
+def _record_completion_decision(
+    state: GraphProjection,
+    record: AcceptedOutputRecordPayload,
+) -> None:
     if state["completion_decision_passed"]:
         return
-    if event.payload.get("record_type") != "completion_decision":
+    if not isinstance(record, CompletionDecisionRecord):
         return
-    if event.payload.get("port") != "completion_decision":
-        return
-    value = event.payload.get("value")
-    if isinstance(value, dict) and cast(dict[str, Any], value).get("status") == "passed":
+    if record.value.status == "passed":
         state["completion_decision_passed"] = True
 
 
 def _record_verification_result(
     state: GraphProjection,
-    payload: VerificationOutcomePayload,
+    payload: VerificationOutcomePayload | VerificationPassedPayload | VerificationFailedPayload,
     event_type: str,
 ) -> None:
     candidate_id = payload.candidate_id
@@ -4467,34 +4408,30 @@ def _record_verification_result(
         state["failed_verification_results_by_record_id"][record_id] = result
 
 
-def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
-    if not _is_check_result_record(event.payload):
+def _record_check_result(
+    state: GraphProjection,
+    record: AcceptedOutputRecordPayload,
+    position: int,
+) -> None:
+    if not isinstance(record, CheckResultRecord):
         return
-    node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
-    if not isinstance(node_id, str):
-        return
-    status = _check_result_status(event.payload)
-    if status is None:
-        status = "unknown"
-    task_region_id = _task_region_id(event.payload) or state["node_task_regions"].get(node_id)
+    node_id = record.producer_node_id
+    status = record.value.status
+    task_region_id = record.task_region_id or state["node_task_regions"].get(node_id)
     result_payload: dict[str, Any] = {
         "node_id": node_id,
         "status": status,
-        "position": event.position,
+        "position": position,
     }
-    value = event.payload.get("value")
-    if isinstance(value, dict):
-        typed_value = cast(dict[str, Any], value)
-        for key in ("classification", "command_text", "stderr", "stdout", "exit_code"):
-            if key in typed_value:
-                result_payload[key] = typed_value[key]
+    for key in ("classification", "command_text", "stderr", "stdout", "exit_code"):
+        value = getattr(record.value, key)
+        if value is not None:
+            result_payload[key] = value
     if task_region_id is not None:
         result_payload["task_region_id"] = task_region_id
-    record_id = event.payload.get("record_id")
-    if isinstance(record_id, str):
-        result_payload["record_id"] = record_id
+    result_payload["record_id"] = record.record_id
     for field in ("candidate_record_ids", "file_state_record_ids", "evaluated_record_ids"):
-        record_ids = _record_ids_from_payload(event.payload, field)
+        record_ids = getattr(record, field) or getattr(record.value, field)
         if record_ids:
             result_payload[field] = record_ids
     try:
@@ -4504,72 +4441,35 @@ def _record_check_result(state: GraphProjection, event: EventEnvelope) -> None:
     state["check_results"][node_id] = result
 
 
-def _copy_output_record_payload(payload: OutputRecordPayload) -> OutputRecordPayload:
+def _copy_output_record_payload(
+    payload: AcceptedOutputRecordPayload,
+) -> AcceptedOutputRecordPayload:
     return payload.model_copy(deep=True)
 
 
-def _output_record_payload_dict(payload: OutputRecordPayload) -> dict[str, Any]:
+def _output_record_payload_dict(payload: AcceptedOutputRecordPayload) -> dict[str, Any]:
     return payload.model_dump(mode="json")
 
 
-def _parse_output_record_payload(payload: dict[str, Any]) -> OutputRecordPayload | None:
-    model = _output_record_model_for_payload(payload)
-    if model is None:
-        return None
+def _parse_output_record_payload(
+    payload: dict[str, Any],
+) -> AcceptedOutputRecordPayload | None:
     try:
-        return cast(OutputRecordPayload, model.model_validate(payload))
+        return OutputRecordAcceptedPayload.model_validate(payload).root
     except ValueError:
         return None
 
 
-_OUTPUT_RECORD_MODELS = MappingProxyType(
-    {
-        "analysis_summary": AnalysisSummaryRecord,
-        "artifact_reference": ArtifactReferenceRecord,
-        "authority_decision": AuthorityDecisionRecord,
-        "authority_request_record": AuthorityRequestRecord,
-        "candidate": CandidateRecord,
-        "check_result": CheckResultRecord,
-        "classified_gap": GapClassificationRecord,
-        "completion_decision": CompletionDecisionRecord,
-        "decision_record": DecisionRecord,
-        "decision_request": DecisionRequestRecord,
-        "failure_record": FailureRecord,
-        "fan_out_inputs": OutputRecord,
-        "file_state": FileStateRecord,
-        "gap_classification": GapClassificationRecord,
-        "gap_plan": GapClassificationRecord,
-        "graph_patch_proposal": GraphPatchProposalRecord,
-        "join_result": JoinResultRecord,
-        "recovery_plan": RecoveryPlanRecord,
-        "requirement_record": RequirementRecord,
-        "routine_snapshot": RoutineSnapshotRecord,
-        "run_context": RunContextRecord,
-        "verification_report": VerificationReportRecord,
-    }
-)
-
-
-def _output_record_model_for_payload(payload: dict[str, Any]) -> type[GraphBaseModel] | None:
-    record_type = payload.get("record_type")
-    if not isinstance(record_type, str) or not record_type:
-        return None
-    return _OUTPUT_RECORD_MODELS.get(record_type)
-
-
-def _record_node_output_port(state: GraphProjection, event: EventEnvelope) -> None:
-    node_id = event.payload.get("producer_node_id") or event.payload.get("node_id")
-    if not isinstance(node_id, str):
+def _record_node_output_port(
+    state: GraphProjection,
+    record: AcceptedOutputRecordPayload,
+    position: int,
+) -> None:
+    node_id = record.producer_node_id
+    if not node_id:
         return
-    port = event.payload.get("port")
-    if not isinstance(port, str) or not port:
-        if event.event_type == "file_state_accepted":
-            port = "file_state"
-        else:
-            return
-    record_id = event.payload.get("record_id")
-    if not isinstance(record_id, str) or not record_id:
-        record_id = f"{event.event_type}:{event.position}"
+    port = record.port
+    record_id = record.record_id or f"accepted-record:{position}"
     ports = state["node_output_ports"].setdefault(node_id, {})
     records = ports.setdefault(port, [])
     if record_id not in records:
@@ -4578,10 +4478,8 @@ def _record_node_output_port(state: GraphProjection, event: EventEnvelope) -> No
 
 def _record_accepted_output_record(
     state: GraphProjection,
-    record: OutputRecordPayload | None,
+    record: AcceptedOutputRecordPayload,
 ) -> None:
-    if record is None:
-        return
     node_id = record.producer_node_id
     port = record.port
     record_id = record.record_id
@@ -4597,51 +4495,27 @@ def _record_accepted_output_record(
     )
 
 
-def _record_accepted_record_summary(state: GraphProjection, event: EventEnvelope) -> None:
-    record_id = event.payload.get("record_id")
-    if not isinstance(record_id, str):
+def _record_accepted_record_summary(
+    state: GraphProjection,
+    record: AcceptedOutputRecordPayload,
+) -> None:
+    record_type = record.record_type
+    if record_type is None:
         return
-    payload = _stable_accepted_record_payload(event.payload)
-    summary: GraphRecordSummary = {"record_id": record_id}
-    record_kind = payload.get("record_kind")
-    if isinstance(record_kind, str):
-        summary["record_kind"] = record_kind
-    schema = payload.get("schema")
-    if isinstance(schema, str):
-        summary["schema"] = schema
-    producer_node_id = payload.get("producer_node_id")
-    if isinstance(producer_node_id, str):
-        summary["producer_node_id"] = producer_node_id
-    producer_port = payload.get("port")
-    if isinstance(producer_port, str):
-        summary["producer_port"] = producer_port
-    record_type = _record_type_for_summary(payload, state)
-    if record_type is not None:
-        summary["record_type"] = record_type
-    state["accepted_record_summaries_by_id"][record_id] = summary
-
-
-_DURABLE_RECORD_DECORATION_FIELDS = frozenset(
-    {
-        "created_at",
-        "graph_position",
-        "payload",
-        "producer_port",
-        "provenance",
-        "run_id",
-        "schema_version",
+    summary: GraphRecordSummary = {
+        "record_id": record.record_id,
+        "record_kind": record.record_kind,
+        "schema": record.schema_,
+        "producer_port": record.port,
+        "record_type": record_type,
     }
-)
+    if record.producer_node_id is not None:
+        summary["producer_node_id"] = record.producer_node_id
+    state["accepted_record_summaries_by_id"][record.record_id] = summary
 
 
-def _stable_accepted_record_payload(payload: dict[str, Any]) -> dict[str, Any]:
-    return {
-        key: value for key, value in payload.items() if key not in _DURABLE_RECORD_DECORATION_FIELDS
-    }
-
-
-def _record_output_record(state: GraphProjection, record: OutputRecordPayload | None) -> None:
-    if record is None:
+def _record_output_record(state: GraphProjection, record: AcceptedOutputRecordPayload) -> None:
+    if record.producer_node_id is None:
         return
     state["output_records_by_node_port"].setdefault(record.producer_node_id, {}).setdefault(
         record.port,
@@ -4649,32 +4523,21 @@ def _record_output_record(state: GraphProjection, record: OutputRecordPayload | 
     ).append(record)
 
 
-def _record_output_payload(state: GraphProjection, record: OutputRecordPayload | None) -> None:
-    if record is None:
-        return
+def _record_output_payload(state: GraphProjection, record: AcceptedOutputRecordPayload) -> None:
     if record.record_id:
         state["output_record_payloads"][record.record_id] = record
 
 
-def _record_latest_routine_snapshot(state: GraphProjection, event: EventEnvelope) -> None:
-    payload = event.payload
-    record_id = payload.get("record_id")
-    producer_node_id = payload.get("producer_node_id")
-    port = payload.get("port")
-    if not all(isinstance(value, str) and value for value in (record_id, producer_node_id, port)):
-        return
-    is_routine_snapshot = (
-        payload.get("record_type") == "routine_snapshot"
-        or payload.get("record_kind") == "routine_snapshot"
-        or payload.get("schema") == "RoutineSnapshot"
-        or (producer_node_id == "routine-snapshot" and port in {"snapshot", "routine_snapshot"})
-    )
-    if not is_routine_snapshot:
+def _record_latest_routine_snapshot(
+    state: GraphProjection,
+    record: AcceptedOutputRecordPayload,
+) -> None:
+    if not isinstance(record, RoutineSnapshotRecord):
         return
     state["latest_routine_snapshot_record"] = LatestRoutineSnapshotRecord(
-        record_id=cast(str, record_id),
-        producer_node_id=cast(str, producer_node_id),
-        port=cast(str, port),
+        record_id=record.record_id,
+        producer_node_id=record.producer_node_id,
+        port=record.port,
     )
 
 
@@ -5196,19 +5059,19 @@ def _record_authority_change(state: GraphProjection, payload: NodeAuthorityChang
         state["node_preconditions"][node_id] = preconditions
 
 
-def _record_environment_failure(state: GraphProjection, event: EventEnvelope) -> None:
-    task_region_id = _task_region_id(event.payload)
-    node_id = event.payload.get("node_id") or event.payload.get("producer_node_id")
-    if task_region_id is None and isinstance(node_id, str):
-        task_region_id = state["node_task_regions"].get(node_id)
+def _record_environment_failure(
+    state: GraphProjection,
+    record: AcceptedOutputRecordPayload,
+    position: int,
+) -> None:
+    if not isinstance(record, CheckResultRecord):
+        return
+    task_region_id = record.task_region_id or state["node_task_regions"].get(
+        record.producer_node_id
+    )
     if task_region_id is None:
         return
-
-    classification = event.payload.get("classification")
-    value = event.payload.get("value")
-    if isinstance(value, dict):
-        typed_value = cast(dict[str, Any], value)
-        classification = typed_value.get("classification", classification)
+    classification = record.value.classification
     is_environment = classification in {
         "environment_error",
         "tool_error",
@@ -5217,36 +5080,22 @@ def _record_environment_failure(state: GraphProjection, event: EventEnvelope) ->
     if not is_environment:
         return
 
-    failure = _environment_failure_from_event_payload(task_region_id, event)
+    value = record.value.model_dump(mode="json")
+    reason = _environment_failure_reason_from_check_value(value)
+    failure = _environment_failure_from_payload(
+        {
+            **value,
+            "node_id": record.producer_node_id,
+            "record_id": record.record_id,
+            "record_kind": record.record_kind,
+            "record_type": record.record_type,
+            "task_region_id": task_region_id,
+            "position": position,
+            "reason": reason,
+        }
+    )
     if failure is not None:
         state["environment_failures"][task_region_id] = failure
-
-
-def _environment_failure_from_event_payload(
-    task_region_id: str,
-    event: EventEnvelope,
-) -> EnvironmentFailureProjection | None:
-    payload = {
-        **event.payload,
-        "position": event.position,
-        "task_region_id": task_region_id,
-    }
-    if payload.get("node_id") is None:
-        payload["node_id"] = payload.get("producer_node_id")
-    value = payload.get("value")
-    if isinstance(value, dict):
-        typed_value = cast(dict[str, Any], value)
-        payload["classification"] = typed_value.get("classification", payload.get("classification"))
-        payload["command_text"] = typed_value.get("command_text", payload.get("command_text"))
-        payload["stderr"] = typed_value.get("stderr", payload.get("stderr"))
-        payload["exit_code"] = typed_value.get("exit_code", payload.get("exit_code"))
-        if payload.get("reason") is None:
-            derived_reason_payload = dict(typed_value)
-            derived_reason_payload["classification"] = payload.get("classification")
-            payload["reason"] = _environment_failure_reason_from_check_value(
-                derived_reason_payload,
-            )
-    return _environment_failure_from_payload(payload)
 
 
 def _environment_failure_from_payload(
@@ -5279,10 +5128,12 @@ def _environment_failure_reason_from_check_value(value: dict[str, Any]) -> str:
 def _record_file_state(
     state: GraphProjection,
     payload: FileStateRecord,
-    event: EventEnvelope,
+    *,
+    run_id: str,
+    position: int,
 ) -> None:
     record = payload.model_copy(
-        update={"run_id": event.run_id, "position": event.position},
+        update={"run_id": run_id, "position": position},
     )
     state["file_state_records"][record.record_id] = record
 
@@ -5963,79 +5814,6 @@ def _task_region_for_candidate(state: GraphProjection, candidate_id: str) -> str
         if any(candidate.candidate_id == candidate_id for candidate in candidates):
             return task_region_id
     return None
-
-
-def _task_region_id(payload: dict[str, Any]) -> str | None:
-    value = payload.get("task_region_id")
-    if isinstance(value, str):
-        return value
-    membership = payload.get("membership")
-    if isinstance(membership, dict):
-        typed_membership = cast(dict[str, Any], membership)
-        value = typed_membership.get("task_region_id")
-        if isinstance(value, str):
-            return value
-    return None
-
-
-def _attempt_number(payload: dict[str, Any]) -> int | None:
-    value = payload.get("attempt_number")
-    if isinstance(value, int):
-        return value
-    membership = payload.get("membership")
-    if isinstance(membership, dict):
-        typed_membership = cast(dict[str, Any], membership)
-        value = typed_membership.get("attempt_number")
-        if isinstance(value, int):
-            return value
-    return None
-
-
-def _candidate_id(payload: dict[str, Any]) -> str | None:
-    value = payload.get("candidate_id")
-    if isinstance(value, str):
-        return value
-    membership = payload.get("membership")
-    if isinstance(membership, dict):
-        typed_membership = cast(dict[str, Any], membership)
-        value = typed_membership.get("candidate_id")
-        if isinstance(value, str):
-            return value
-    return None
-
-
-def _record_ids_from_payload(payload: dict[str, Any], field: str) -> list[str]:
-    for source in (
-        payload,
-        payload.get("value"),
-        payload.get("provenance"),
-        payload.get("evidence"),
-    ):
-        if not isinstance(source, dict):
-            continue
-        raw_value = cast(dict[str, Any], source).get(field)
-        if not isinstance(raw_value, list):
-            continue
-        record_ids = [
-            record_id for record_id in cast(list[Any], raw_value) if isinstance(record_id, str)
-        ]
-        if record_ids:
-            return record_ids
-    return []
-
-
-def _task_region_ids_from_payload(
-    payload: dict[str, Any],
-    list_field: str,
-    scalar_field: str,
-) -> list[str]:
-    raw_list = payload.get(list_field)
-    if isinstance(raw_list, list):
-        return [value for value in cast(list[Any], raw_list) if isinstance(value, str)]
-    raw_scalar = payload.get(scalar_field)
-    if isinstance(raw_scalar, str):
-        return [raw_scalar]
-    return []
 
 
 def _command_definition_for_node_creation(

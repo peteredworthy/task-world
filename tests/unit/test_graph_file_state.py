@@ -230,6 +230,8 @@ def test_project_residue_report_from_accepted_file_state_events() -> None:
             "file_state_accepted",
             {
                 "record_id": "file-state-1",
+                "record_kind": "file_state",
+                "record_type": "file_state",
                 "producer_node_id": "worker-1",
                 "residue": [
                     {
