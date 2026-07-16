@@ -11,6 +11,14 @@ from orchestrator.artifacts import (
 from orchestrator.graph import StoredArtifactRef
 
 
+def test_store_construction_is_side_effect_free(tmp_path: Path) -> None:
+    store_root = tmp_path / "artifacts"
+
+    FilesystemArtifactStore(store_root)
+
+    assert not store_root.exists()
+
+
 @pytest.mark.asyncio
 async def test_put_deduplicates_content_and_returns_opaque_reference(tmp_path: Path) -> None:
     store_root = tmp_path / "artifacts"

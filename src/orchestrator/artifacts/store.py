@@ -29,7 +29,6 @@ class FilesystemArtifactStore:
 
     def __init__(self, root: Path) -> None:
         self._root = root
-        self._ensure_private_directory(self._root)
 
     async def put(
         self, content: bytes, *, media_type: str, encoding: str | None = None
@@ -46,6 +45,7 @@ class FilesystemArtifactStore:
         content_hash = f"sha256:{hashlib.sha256(content).hexdigest()}"
         digest = content_hash.removeprefix("sha256:")
         blob_path = self._blob_path(digest)
+        self._ensure_private_directory(self._root)
         self._ensure_private_directory(blob_path.parent.parent)
         self._ensure_private_directory(blob_path.parent)
 

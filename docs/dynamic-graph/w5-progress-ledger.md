@@ -870,3 +870,15 @@ GREEN evidence:
   - Result: passed, no output.
 
 Implementation commit: pending (`Implement filesystem artifact store`).
+
+Review Fix evidence:
+- Added a regression proving `FilesystemArtifactStore` construction does not
+  create its root; root and hash-directory setup now runs inside `_put_sync`,
+  which is dispatched through `asyncio.to_thread`.
+- RED: `uv run pytest tests/unit/test_artifact_store.py -q` — 1 failed, 5
+  passed; `test_store_construction_is_side_effect_free` observed the root
+  created during construction.
+- GREEN: `uv run pytest tests/unit/test_artifact_store.py -q` — 6 passed;
+  focused Ruff and Pyright passed, format check reported 5 files already
+  formatted, and `git diff --check` passed.
+- Review-fix commit: pending (`Make artifact store construction side-effect free`).
