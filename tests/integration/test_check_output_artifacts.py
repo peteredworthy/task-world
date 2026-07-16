@@ -251,6 +251,54 @@ async def test_sub_threshold_check_output_stays_inline_without_artifacts(tmp_pat
 
 
 @pytest.mark.asyncio
+async def test_exact_byte_threshold_stays_inline_without_artifact(tmp_path: Path) -> None:
+    artifact_root = tmp_path / "artifacts"
+    events = await _run_check(
+        tmp_path,
+        "printf '%*s' 16384 '' | tr ' ' x",
+        FilesystemArtifactStore(artifact_root),
+    )
+
+    value = _check_value(events)
+    assert value["stdout_tail"] == "x" * 16_384
+    assert value.get("stdout_ref") is None
+    assert value["stdout_truncated"] is False
+    assert not artifact_root.exists()
+
+
+@pytest.mark.asyncio
+async def test_one_byte_above_threshold_writes_complete_artifact(tmp_path: Path) -> None:
+    store = FilesystemArtifactStore(tmp_path / "artifacts")
+    events = await _run_check(tmp_path, "printf '%*s' 16385 '' | tr ' ' x", store)
+
+    value = _check_value(events)
+    assert value["stdout_tail"] == "x" * CHECK_OUTPUT_TAIL_CHARS
+    assert value["stdout_truncated"] is True
+    ref = StoredArtifactRef.model_validate(value["stdout_ref"])
+    assert await store.read(ref) == b"x" * 16_385
+
+
+@pytest.mark.asyncio
+async def test_multibyte_output_uses_byte_threshold_and_unicode_character_tail(
+    tmp_path: Path,
+) -> None:
+    store = FilesystemArtifactStore(tmp_path / "artifacts")
+    output = "a" * 16_381 + "🙂"
+    assert len(output.encode("utf-8")) == 16_385
+    events = await _run_check(
+        tmp_path,
+        "printf '%*s' 16381 '' | tr ' ' a; printf '🙂'",
+        store,
+    )
+
+    value = _check_value(events)
+    assert value["stdout_tail"] == "a" * 3_999 + "🙂"
+    assert len(value["stdout_tail"]) == CHECK_OUTPUT_TAIL_CHARS
+    ref = StoredArtifactRef.model_validate(value["stdout_ref"])
+    assert await store.read(ref) == output.encode("utf-8")
+
+
+@pytest.mark.asyncio
 async def test_large_check_output_is_written_before_bounded_event_append(tmp_path: Path) -> None:
     store = FilesystemArtifactStore(tmp_path / "artifacts")
     command = (
