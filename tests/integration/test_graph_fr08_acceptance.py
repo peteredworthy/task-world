@@ -224,7 +224,10 @@ async def _seed_authority_denial_graph_run(app: Any, run_id: str) -> None:
                 "to_node_id": "worker-docs",
                 "to_port": "authority",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["authority_decision"]},
+                "accepted_record_selector": {
+                    "record_type": "authority_decision",
+                    "schema": "AuthorityDecision",
+                },
             },
         ),
     ]
@@ -293,7 +296,11 @@ async def test_fr08_invalid_patch_matrix_rejected_and_readable(
                 "to_port": "verification_evidence",
                 "required": True,
                 "accepted_record_selector": {
-                    "record_kinds": ["verification_report", "check_result"]
+                    "record_type": "any_of",
+                    "selectors": [
+                        {"record_type": "verification_report", "schema": "VerificationReport"},
+                        {"record_type": "check_result", "schema": "CheckResult"},
+                    ],
                 },
             },
         ],

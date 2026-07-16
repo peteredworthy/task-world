@@ -308,7 +308,11 @@ def test_planner_cannot_create_check_with_hidden_oracle_command() -> None:
                     "to_port": "verification_evidence",
                     "required": True,
                     "accepted_record_selector": {
-                        "record_kinds": ["verification_report", "check_result"]
+                        "record_type": "any_of",
+                        "selectors": [
+                            {"record_type": "verification_report", "schema": "VerificationReport"},
+                            {"record_type": "check_result", "schema": "CheckResult"},
+                        ],
                     },
                 },
             ]
@@ -346,7 +350,11 @@ def test_planner_can_create_check_with_command_definition() -> None:
                     "to_port": "verification_evidence",
                     "required": True,
                     "accepted_record_selector": {
-                        "record_kinds": ["verification_report", "check_result"]
+                        "record_type": "any_of",
+                        "selectors": [
+                            {"record_type": "verification_report", "schema": "VerificationReport"},
+                            {"record_type": "check_result", "schema": "CheckResult"},
+                        ],
                     },
                 },
             ]
@@ -380,7 +388,11 @@ def test_planner_can_create_check_with_dynamic_feature_oracle_binding() -> None:
                     "to_port": "verification_evidence",
                     "required": True,
                     "accepted_record_selector": {
-                        "record_kinds": ["verification_report", "check_result"]
+                        "record_type": "any_of",
+                        "selectors": [
+                            {"record_type": "verification_report", "schema": "VerificationReport"},
+                            {"record_type": "check_result", "schema": "CheckResult"},
+                        ],
                     },
                 },
             ]
@@ -428,7 +440,10 @@ def test_create_edge_rejects_unknown_endpoint_node_in_projection() -> None:
                     "to_node_id": "missing-target",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 }
             ]
         )
@@ -459,7 +474,10 @@ def test_create_edge_rejects_unknown_endpoint_node_in_same_patch() -> None:
                     "to_node_id": "missing-target",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 },
             ]
         ),
@@ -602,7 +620,10 @@ def test_create_edge_rejects_unknown_source_port() -> None:
                     "to_node_id": "check-1",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 },
             ]
         ),
@@ -646,7 +667,10 @@ def test_create_edge_rejects_unknown_target_port() -> None:
                     "to_node_id": "check-1",
                     "to_port": "not_a_real_input",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 },
             ]
         ),
@@ -796,7 +820,10 @@ def test_create_edge_rejects_new_cycle() -> None:
                     "to_node_id": "worker-1",
                     "to_port": "verification_report",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 },
             ]
         ),
@@ -852,7 +879,10 @@ def test_create_edge_rejects_selector_incompatible_with_source_port() -> None:
                     "to_node_id": "check-1",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["candidate"]},
+                    "accepted_record_selector": {
+                        "record_type": "candidate",
+                        "schema": "ImplementationCandidate",
+                    },
                 },
             ]
         ),
@@ -1385,7 +1415,10 @@ def test_edge_selector_incompatible_with_source_port_rejected() -> None:
                     "from_port": "candidate",
                     "to_node_id": "verifier-1",
                     "to_port": "candidate_under_test",
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 }
             ]
         ),
@@ -1445,7 +1478,10 @@ def test_create_edge_accepts_revision_attempt_embedded_nodes_in_same_patch() -> 
                     "from_port": "candidate",
                     "to_node_id": "verifier-revision-2",
                     "to_port": "candidate_under_test",
-                    "accepted_record_selector": {"record_kinds": ["candidate"]},
+                    "accepted_record_selector": {
+                        "record_type": "candidate",
+                        "schema": "ImplementationCandidate",
+                    },
                 },
             ]
         )

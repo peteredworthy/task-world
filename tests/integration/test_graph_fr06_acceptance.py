@@ -153,7 +153,10 @@ async def test_fr06_edges_bind_fanout_join_optional_bind_all_and_supersede(
             "to_node_id": "verifier-b",
             "to_port": "candidate_under_test",
             "required": True,
-            "accepted_record_selector": {"record_kinds": ["verification_report"]},
+            "accepted_record_selector": {
+                "record_type": "verification_report",
+                "schema": "VerificationReport",
+            },
         },
     )
     assert [event.event_type for event in third_rejection.events] == ["graph_patch_rejected"]

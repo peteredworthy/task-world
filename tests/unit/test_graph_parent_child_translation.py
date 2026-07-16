@@ -272,8 +272,18 @@ def _selector_edge(
         "from_port": from_port,
         "to_node_id": to_node_id,
         "to_port": to_port,
-        "accepted_record_selector": {"record_kinds": [to_port]},
+        "accepted_record_selector": _selector_for_port(to_port),
     }
+
+
+def _selector_for_port(port: str) -> dict[str, Any]:
+    if port in {"candidate", "candidate_under_test"}:
+        return {"record_type": "candidate", "schema": "ImplementationCandidate"}
+    if port in {"file_state", "accepted_file_state"}:
+        return {"record_type": "file_state", "schema": "FileStateRecord"}
+    if port == "region_summary":
+        return {"record_type": "analysis_summary"}
+    return {"record_type": port}
 
 
 def _drive_region_to_accepted(events: list[EventEnvelope], prefix: str) -> list[EventEnvelope]:

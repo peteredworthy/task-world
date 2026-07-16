@@ -379,7 +379,10 @@ def test_build_graph_topology_response_exposes_edge_contracts_and_bindings() -> 
                 "to_port": "candidate_under_test",
                 "required": True,
                 "dependency_type": "input_binding",
-                "accepted_record_selector": {"record_kinds": ["candidate"]},
+                "accepted_record_selector": {
+                    "record_type": "candidate",
+                    "schema": "ImplementationCandidate",
+                },
                 "metadata": {"purpose": "candidate validation"},
                 "binding_policy": "bind_first",
             },

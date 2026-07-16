@@ -689,26 +689,32 @@ def test_verification_report_selector_rejects_status_field() -> None:
         )
 
 
-def test_legacy_verification_selector_rejects_value_status_match() -> None:
-    with pytest.raises(ValueError, match="unsupported selector value match: status"):
-        RecordSelector.model_validate(
-            {
-                "record_kinds": ["verification_report"],
-                "value_matches": {"status": "failed"},
-            }
-        )
-
-
-def test_legacy_selector_rejects_mixed_unknown_record_kind() -> None:
-    with pytest.raises(ValueError, match="unknown selector record_kinds: bogus"):
-        RecordSelector.model_validate({"record_kinds": ["verification_report", "bogus"]})
-
-
-def test_legacy_verification_selector_normalizes_canonical_outcome() -> None:
-    selector = RecordSelector.model_validate(
+@pytest.mark.parametrize(
+    "selector",
+    [
+        {"record_kinds": ["verification_report"]},
         {
             "record_kinds": ["verification_report"],
             "value_matches": {"outcome": "failed"},
+        },
+        {
+            "record_type": "verification_report",
+            "schema": "VerificationReport",
+            "value_matches": {"outcome": "failed"},
+        },
+    ],
+)
+def test_record_selector_rejects_legacy_keys(selector: dict[str, Any]) -> None:
+    with pytest.raises(ValueError):
+        RecordSelector.model_validate(selector)
+
+
+def test_record_selector_round_trips_canonical_verification_selector() -> None:
+    selector = RecordSelector.model_validate(
+        {
+            "record_type": "verification_report",
+            "schema": "VerificationReport",
+            "outcome": "failed",
         }
     )
 
@@ -1823,7 +1829,9 @@ def test_all_models_import_and_enums_cover_prd_values() -> None:
     assert PatchOp.model_validate({"op": "retire_node", "node_id": "build-A-1"}).op
     assert ResourceClaim.model_validate({"mode": "read", "scope": "repo"}).mode == "read"
     assert Authority.model_validate({"allowed_actions": []}).allowed_actions == []
-    selector = RecordSelector.model_validate({"record_kinds": ["output"]})
+    selector = RecordSelector.model_validate(
+        {"record_type": "candidate", "schema": "ImplementationCandidate"}
+    )
     assert selector.model_dump(mode="json") == {
         "record_type": "candidate",
         "schema": "ImplementationCandidate",

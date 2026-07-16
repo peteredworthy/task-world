@@ -195,7 +195,10 @@ async def _seed_active_authority_graph_run(app: Any, run_id: str) -> None:
                 "to_node_id": "worker-docs",
                 "to_port": "authority",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["authority_decision"]},
+                "accepted_record_selector": {
+                    "record_type": "authority_decision",
+                    "schema": "AuthorityDecision",
+                },
             },
         ),
     ]

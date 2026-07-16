@@ -271,117 +271,9 @@ AcceptedRecordSelector = Annotated[
     Field(discriminator="record_type"),
 ]
 
-_LEGACY_SELECTOR_KIND_MAP: dict[str, dict[str, Any]] = {
-    "accepted_file_state": {"record_type": "file_state", "schema": "FileStateRecord"},
-    "accepted_candidate": {"record_type": "candidate", "schema": "ImplementationCandidate"},
-    "artifact": {"record_type": "artifact_reference", "schema": "ContextArtifact"},
-    "artifact_reference": {"record_type": "artifact_reference", "schema": "ArtifactReference"},
-    "authority_decision": {"record_type": "authority_decision", "schema": "AuthorityDecision"},
-    "candidate": {"record_type": "candidate", "schema": "ImplementationCandidate"},
-    "candidate_under_test": {"record_type": "candidate", "schema": "ImplementationCandidate"},
-    "check_result": {"record_type": "check_result", "schema": "CheckResult"},
-    "classified_gap": {"record_type": "gap_classification", "schema": "GapClassification"},
-    "completion_decision": {"record_type": "completion_decision", "schema": "CompletionDecision"},
-    "decision_record": {"record_type": "decision_record", "schema": "DecisionRecord"},
-    "failure_record": {"record_type": "failure_record", "schema": "FailureRecord"},
-    "file_state": {"record_type": "file_state", "schema": "FileStateRecord"},
-    "gap_analysis": {"record_type": "gap_classification", "schema": "GapClassification"},
-    "gap_classification": {"record_type": "gap_classification", "schema": "GapClassification"},
-    "gap_plan": {"record_type": "gap_classification", "schema": "GapClassification"},
-    "graph_patch": {"record_type": "graph_patch_proposal", "schema": "GraphPatch"},
-    "graph_patch_proposal": {"record_type": "graph_patch_proposal", "schema": "GraphPatch"},
-    "output": {"record_type": "candidate", "schema": "ImplementationCandidate"},
-    "region_summary": {"record_type": "analysis_summary"},
-    "requirement": {"record_type": "requirement_record", "schema": "RequirementRecord"},
-    "requirement_record": {"record_type": "requirement_record", "schema": "RequirementRecord"},
-    "routine_snapshot": {"record_type": "routine_snapshot", "schema": "RoutineSnapshot"},
-    "run_context": {"record_type": "run_context", "schema": "RunContext"},
-    "snapshot": {"record_type": "routine_snapshot", "schema": "RoutineSnapshot"},
-    "verification_report": {"record_type": "verification_report", "schema": "VerificationReport"},
-}
-
-
-def _normalize_legacy_selector(value: Any) -> Any:
-    if isinstance(value, RecordSelector):
-        return value.root.model_dump(mode="json")
-    if not isinstance(value, dict):
-        return value
-    selector = dict(cast(dict[str, Any], value))
-    if isinstance(selector.get("record_type"), str):
-        _reject_legacy_value_paths(selector)
-        return selector
-
-    raw_kinds = selector.get("record_kinds")
-    if not isinstance(raw_kinds, list):
-        _reject_legacy_value_paths(selector)
-        return selector
-    normalized_parts: list[dict[str, Any]] = []
-    unknown_kinds: list[str] = []
-    for raw_kind in cast(list[Any], raw_kinds):
-        if not isinstance(raw_kind, str) or raw_kind not in _LEGACY_SELECTOR_KIND_MAP:
-            unknown_kinds.append(str(raw_kind))
-            continue
-        normalized_parts.append(dict(_LEGACY_SELECTOR_KIND_MAP[raw_kind]))
-    if unknown_kinds:
-        msg = f"unknown selector record_kinds: {', '.join(unknown_kinds)}"
-        raise ValueError(msg)
-    if not normalized_parts:
-        return selector
-    schema = selector.get("schema")
-    if isinstance(schema, str) and len(normalized_parts) == 1:
-        normalized_parts[0]["schema"] = schema
-    value_matches = selector.get("value_matches")
-    if isinstance(value_matches, dict):
-        _apply_legacy_value_matches(normalized_parts, cast(dict[str, Any], value_matches))
-    if len(normalized_parts) == 1:
-        return normalized_parts[0]
-    return {"record_type": "any_of", "selectors": normalized_parts}
-
-
-def _reject_legacy_value_paths(selector: dict[str, Any]) -> None:
-    value_matches = selector.get("value_matches")
-    if value_matches is not None:
-        msg = "typed selectors must use schema fields, not value_matches"
-        raise ValueError(msg)
-
-
-def _apply_legacy_value_matches(
-    parts: list[dict[str, Any]],
-    value_matches: dict[str, Any],
-) -> None:
-    for key, expected in value_matches.items():
-        applied = False
-        for part in parts:
-            record_type = part.get("record_type")
-            if record_type == "verification_report" and key == "outcome":
-                if expected == "passed":
-                    part["outcome"] = "passed"
-                    applied = True
-                    continue
-                if expected == "failed":
-                    part["outcome"] = "failed"
-                    applied = True
-                    continue
-            if record_type == "check_result" and key == "status":
-                part["status"] = expected
-                applied = True
-                continue
-            if record_type == "gap_classification" and key == "classification":
-                part["classification"] = expected
-                applied = True
-                continue
-        if not applied:
-            msg = f"unsupported selector value match: {key}"
-            raise ValueError(msg)
-
 
 class RecordSelector(RootModel[AcceptedRecordSelector]):
     """Schema-aware selector wrapper for accepted graph edge records."""
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_legacy_shape(cls, value: Any) -> Any:
-        return _normalize_legacy_selector(value)
 
     def model_dump(self, *args: Any, **kwargs: Any) -> Any:
         kwargs.setdefault("by_alias", True)
@@ -464,41 +356,9 @@ def _payload_record_types(record_payload: dict[str, Any], aliases: set[str]) -> 
         milestone_kind = cast(dict[str, Any], value).get("milestone_kind")
         if isinstance(milestone_kind, str):
             candidates.add(milestone_kind)
-    normalized_candidates: set[str] = set()
-    for candidate in candidates:
-        normalized = _LEGACY_SELECTOR_KIND_MAP.get(candidate)
-        if normalized is not None:
-            record_type = normalized.get("record_type")
-            if isinstance(record_type, str):
-                normalized_candidates.add(record_type)
-    candidates.update(normalized_candidates)
-    output: set[str] = set()
-    for candidate in candidates:
-        normalized = _LEGACY_SELECTOR_KIND_MAP.get(candidate)
-        if normalized is not None:
-            record_type = normalized.get("record_type")
-            if isinstance(record_type, str):
-                output.add(record_type)
-            continue
-        if candidate in {
-            "analysis_summary",
-            "artifact_reference",
-            "authority_decision",
-            "candidate",
-            "check_result",
-            "completion_decision",
-            "decision_record",
-            "failure_record",
-            "file_state",
-            "gap_classification",
-            "graph_patch_proposal",
-            "requirement_record",
-            "routine_snapshot",
-            "run_context",
-            "verification_report",
-        }:
-            output.add(candidate)
-    return output
+    if record_payload.get("schema") == "GapClassification":
+        candidates.add("gap_classification")
+    return candidates
 
 
 def _verification_payload_outcome(record_payload: dict[str, Any]) -> str | None:

@@ -84,7 +84,10 @@ def test_planner_patch_accepts_canonical_verification_report_edge_port() -> None
                     "from_port": "verification_report",
                     "to_node_id": "planner-gap",
                     "to_port": "verification_evidence",
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 },
             ],
         ),
@@ -180,7 +183,10 @@ def test_planner_patch_binds_dynamic_feature_hidden_oracle_command() -> None:
                     "to_node_id": "check-final",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 },
             ],
         ),
@@ -306,7 +312,10 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                     "to_node_id": "planner-gap",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 },
                 {
                     "op": "create_edge",
@@ -316,7 +325,10 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                     "to_node_id": "worker-corrective",
                     "to_port": "classified_gap",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["gap_plan"]},
+                    "accepted_record_selector": {
+                        "record_type": "gap_classification",
+                        "schema": "GapClassification",
+                    },
                 },
                 {
                     "op": "create_edge",
@@ -326,7 +338,10 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                     "to_node_id": "verifier-corrective",
                     "to_port": "candidate_under_test",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["candidate"]},
+                    "accepted_record_selector": {
+                        "record_type": "candidate",
+                        "schema": "ImplementationCandidate",
+                    },
                 },
                 {
                     "op": "create_edge",
@@ -336,7 +351,10 @@ def test_planner_patch_accepts_dynamic_nodes_with_required_input_edges() -> None
                     "to_node_id": "check-final",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 },
             ],
         ),
@@ -630,8 +648,18 @@ def _selector_edge(
         "from_port": from_port,
         "to_node_id": to_node_id,
         "to_port": to_port,
-        "accepted_record_selector": {"record_kinds": [to_port]},
+        "accepted_record_selector": _selector_for_port(to_port),
     }
+
+
+def _selector_for_port(port: str) -> dict[str, Any]:
+    if port in {"candidate", "candidate_under_test"}:
+        return {"record_type": "candidate", "schema": "ImplementationCandidate"}
+    if port in {"file_state", "accepted_file_state"}:
+        return {"record_type": "file_state", "schema": "FileStateRecord"}
+    if port == "region_summary":
+        return {"record_type": "analysis_summary"}
+    return {"record_type": port}
 
 
 def _drive_region_to_accepted(events: list[EventEnvelope]) -> list[EventEnvelope]:

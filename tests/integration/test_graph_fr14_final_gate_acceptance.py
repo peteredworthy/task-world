@@ -112,7 +112,10 @@ class PlannerFinalGateAgent:
                         "to_node_id": "final-gate-s-01-t-01",
                         "to_port": "check_result",
                         "required": True,
-                        "accepted_record_selector": {"record_kinds": ["check_result"]},
+                        "accepted_record_selector": {
+                            "record_type": "check_result",
+                            "schema": "CheckResult",
+                        },
                     },
                 ],
             }

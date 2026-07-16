@@ -40,7 +40,10 @@ def _projection_with_classified_gap_successor(gap_node_id: str) -> GraphProjecti
                 "to_node_id": "worker-corrective",
                 "to_port": "classified_gap",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["gap_analysis"]},
+                "accepted_record_selector": {
+                    "record_type": "gap_classification",
+                    "schema": "GapClassification",
+                },
             }
         )
     }
@@ -117,8 +120,27 @@ def _edge(
         "to_node_id": to,
         "to_port": to_port,
         "required": True,
-        "accepted_record_selector": {"record_kinds": kinds},
+        "accepted_record_selector": _selector_for_kinds(kinds),
     }
+
+
+def _selector_for_kinds(kinds: list[str]) -> dict[str, Any]:
+    selectors = [_selector_for_kind(kind) for kind in kinds]
+    return (
+        selectors[0] if len(selectors) == 1 else {"record_type": "any_of", "selectors": selectors}
+    )
+
+
+def _selector_for_kind(kind: str) -> dict[str, Any]:
+    if kind in {"gap_analysis", "gap_plan", "classified_gap"}:
+        return {"record_type": "gap_classification", "schema": "GapClassification"}
+    if kind == "candidate":
+        return {"record_type": "candidate", "schema": "ImplementationCandidate"}
+    if kind == "verification_report":
+        return {"record_type": "verification_report", "schema": "VerificationReport"}
+    if kind == "check_result":
+        return {"record_type": "check_result", "schema": "CheckResult"}
+    return {"record_type": kind}
 
 
 _GAP_NODE = {

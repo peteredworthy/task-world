@@ -2283,7 +2283,10 @@ def test_graph_projection_derived_indexes_match_legacy_event_scan() -> None:
             "to_node_id": "verifier-1",
             "to_port": "candidate_under_test",
             "required": True,
-            "accepted_record_selector": {"record_kinds": ["candidate"]},
+            "accepted_record_selector": {
+                "record_type": "candidate",
+                "schema": "ImplementationCandidate",
+            },
         },
     )
     append_event(

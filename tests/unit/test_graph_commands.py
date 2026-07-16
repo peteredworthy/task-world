@@ -3725,7 +3725,10 @@ def test_patch_create_edge_preserves_producer_class_constraints() -> None:
                     "to_node_id": "check-final",
                     "to_port": "verification_evidence",
                     "required": True,
-                    "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                    "accepted_record_selector": {
+                        "record_type": "verification_report",
+                        "schema": "VerificationReport",
+                    },
                 }
             ],
         },
@@ -3842,7 +3845,7 @@ def test_submit_patch_rejects_legacy_verification_selector_value_status() -> Non
     )
 
     assert [event.event_type for event in output] == ["command_rejected"]
-    assert "unsupported selector value match: status" in output[0].payload["reason"]
+    assert "record_type" in output[0].payload["reason"]
 
 
 def test_seed_compiled_events_rejects_invalid_edge_selector() -> None:
@@ -3912,7 +3915,7 @@ def test_seed_compiled_events_rejects_invalid_verification_report_record() -> No
     assert "require record_type=verification_report" in output[0].payload["reason"]
 
 
-def test_seed_compiled_events_rejects_mixed_invalid_legacy_selector_kind() -> None:
+def test_seed_compiled_events_rejects_legacy_selector_key() -> None:
     output = _apply(
         [],
         "seed_compiled_events",
@@ -3928,7 +3931,7 @@ def test_seed_compiled_events_rejects_mixed_invalid_legacy_selector_kind() -> No
                         "to_node_id": "planner-gap",
                         "to_port": "verification_evidence",
                         "accepted_record_selector": {
-                            "record_kinds": ["verification_report", "bogus"],
+                            "record_kinds": ["verification_report"],
                         },
                     },
                     1,
@@ -3939,7 +3942,7 @@ def test_seed_compiled_events_rejects_mixed_invalid_legacy_selector_kind() -> No
 
     assert [event.event_type for event in output] == ["command_rejected"]
     assert output[0].payload["command_type"] == "seed_compiled_events"
-    assert "unknown selector record_kinds: bogus" in output[0].payload["reason"]
+    assert "record_type" in output[0].payload["reason"]
 
 
 def test_patch_rejects_planner_authored_verifier_candidate_id() -> None:
@@ -7048,7 +7051,10 @@ def test_output_record_does_not_bind_to_non_matching_producer_class_edge() -> No
                 "to_node_id": "check-final",
                 "to_port": "candidate_under_test",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["candidate"]},
+                "accepted_record_selector": {
+                    "record_type": "candidate",
+                    "schema": "ImplementationCandidate",
+                },
             },
             4,
         ),
@@ -8570,7 +8576,10 @@ def test_callback_binds_required_input_by_wildcard_producer_class_edge() -> None
                 "to_node_id": "check-final",
                 "to_port": "verification_evidence",
                 "required": True,
-                "accepted_record_selector": {"record_kinds": ["verification_report"]},
+                "accepted_record_selector": {
+                    "record_type": "verification_report",
+                    "schema": "VerificationReport",
+                },
             },
             7,
         ),
