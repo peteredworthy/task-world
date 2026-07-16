@@ -608,3 +608,69 @@ Allowlists and artifact boundary:
   check-output cutover was added. Current `stdout`/`stderr` complete-value and
   truncation behavior remains unchanged. Complete nested `value` retention and
   its read amplification are explicitly deferred to the W5.5 artifact cutover.
+
+## Batch 2 Verification Gate (2026-07-16)
+
+Status: complete.
+
+Verified head:
+- `3282dee88c0f8227bf0984e3046d1a9404e892db` (`Add strict verification grade rows`).
+
+Fresh verifier verdict:
+- PASS. Every required command exited 0. Independent source review confirmed
+  the exact 23-spec command registry, typed handlers and attribute access,
+  shared API/domain validation, strict exported grade rows, preserved HTTP-only
+  request constraints, and no command compatibility or artifact implementation
+  leakage.
+
+Commands, counts, and wall-clock timings:
+
+| Command | Result | elapsed |
+|---|---|---:|
+| `uv run pytest tests/unit/test_lifecycle_command_payloads.py tests/unit/test_scheduling_command_payloads.py tests/unit/test_callback_patch_command_payloads.py tests/unit/test_decision_record_command_payloads.py tests/unit/test_graph_commands.py tests/unit/test_graph_models.py tests/integration/test_graph_api.py tests/integration/test_graph_decisions_api.py -q -n auto --dist worksteal` | 379 passed in 4.77s | 6.26s |
+| `uv run pytest tests/ -k graph -q -n auto --dist worksteal` | 934 passed in 60.24s | 64.59s |
+| `uv run ruff check .` | all checks passed | 0.13s |
+| `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime src/orchestrator/api src/orchestrator/workflow tests/unit tests/integration` | 0 errors, 0 warnings, 0 informations | 6.48s |
+| `git diff --check` | passed, no output | 0.02s |
+
+Command registry and handler groups:
+- `COMMAND_SPECS` contains exactly the required 23 names and maps each name to
+  one `StrictCommandPayload` subclass with `extra="forbid"` and strict scalar
+  validation. `apply_command` performs the sole raw ingress validation and
+  passes the resulting model to the registered handler.
+- Lifecycle, scheduling, callback, patch, and record/evaluation handlers each
+  annotate `payload` with their concrete registered model. Their delegates in
+  `_commands.py` consume model attributes; no registered handler accepts a raw
+  command dictionary or installs a dictionary compatibility adapter.
+- `GraphCommandContext` owns run/head/actor state and `PatchCommandContext` owns
+  proposer/role provenance. Controller, runtime, API, scenario, and workflow
+  callers pass context separately. Strict payloads reject `run_id`,
+  `_current_graph_position`, actor/proposer fields, and ignored patch runtime
+  identity fields.
+- Command models reject scalar callback payloads, integer coercion, macro
+  `name`/`tool`, `carryover_summary`, decision `approved`/`outcome`/`verdict`,
+  `defer`/`grant`/`deny`, and requirement/support version aliases. No handler
+  restores those historical command aliases or scalar coercion shims.
+
+API reuse and HTTP constraints:
+- `RecordGraphDecisionRequest` inherits `RecordDecisionCommand`; no API copy of
+  its decision validator exists. `SubmitGraphPatchRequest` and
+  `SubmitPatchCommand` share `PatchCommandFields`; no patch validator is
+  duplicated between API and domain layers.
+- HTTP-only constraints remain explicit: decision node/record IDs and values
+  retain nonempty length bounds, patch/rationale IDs retain length and character
+  patterns, HTTP patch positions remain nonnegative, and `ops` remains required.
+  The focused API suite covers these constraints and removed aliases with 422s.
+- Actor, proposer, run ID, and graph position are built from authenticated or
+  server state and supplied through command context, never accepted from the
+  request payload.
+
+Grade rows and artifact boundary:
+- `GradeRow` inherits `StrictNestedModel`, requires `requirement_id` and `grade`,
+  rejects unknown fields, keeps `reason` optional and the grade string open,
+  types `VerificationReportValue.grades`, and is exported from
+  `orchestrator.graph`.
+- The Batch 2 source diff contains no artifact-named file and adds no artifact
+  store, persistence, hydration, garbage collection, reference cutover, or
+  `stdout`/`stderr` cutover. Existing `StoredArtifactRef` remains an exported
+  identity model only; artifact implementation remains deferred.
