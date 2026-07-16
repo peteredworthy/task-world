@@ -141,9 +141,9 @@ Legacy normalization:
 - Legacy top-level `lease_granted.task_region_id` and `lease_granted.kind`
   are moved under `extra` and still consumed for replay compatibility before
   falling back to node projection state.
-- `resource_claims` keeps using the existing typed
-  `ResourceClaimProjection` shape; legacy scalar `path` is normalized to
-  `paths`, and non-dict claim entries are dropped.
+- `resource_claims` uses strict `ResourceClaimProjection` values with canonical
+  `paths` only. A malformed legacy singular `path` claim fails validation and
+  is dropped during checkpoint restoration; no legacy path normalization occurs.
 - Partial legacy lease events remain tolerant: reducer parsing still accepts
   old events that only carry `lease_id` and the minimum historical fields.
 
