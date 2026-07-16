@@ -94,3 +94,22 @@ Follow-up verification:
 
 Follow-up self-review found no remaining strictness or scope issues. The only
 intentional dynamic boundary remains `command_payload`.
+
+## Documentation-Only Important Finding Follow-Up
+
+Updated `docs/superpowers/plans/2026-07-16-task-11-canonical-event-payloads.md`
+to match the final implementation exactly: it now defines
+`AgentDispatchResourceClaim` with `StrictStr` fields and strict list-of-
+`StrictStr` paths, uses direct `StrictStr` dispatch fields with `StrictInt`
+generation and a strict top-level claims list, and declares
+`CommandRecordedPayload.command_type` as `StrictStr`. It identifies
+`ResourceClaimProjection` as the unchanged upstream lease representation rather
+than the canonical dispatch claim contract, and describes the serializer as
+using the JSON-dumping `exclude_none` policy.
+
+The plan now distinguishes the historical pre-hardening full-suite result
+(`4748 passed, 3 skipped, 3 warnings`) from final-head evidence. Final-head
+verification for this documentation-only follow-up: placeholder/consistency
+scan passed and `git diff --check` passed. The preceding final-head focused
+tests (`162 passed`) and all hooks remain the relevant implementation evidence;
+the pre-hardening full-suite count is not claimed for the final head.

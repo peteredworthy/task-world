@@ -11,7 +11,7 @@
 ## Global Constraints
 
 - Do not mark either event external or add compatibility aliases/defaults for sparse historical fixtures.
-- `command_recorded` is exactly `{"command_type": str, "command_payload": dict[str, Any]}`.
+- `command_recorded` is exactly `{"command_type": StrictStr, "command_payload": dict[str, Any]}`.
 - Unknown fields and scalar coercion must fail; dynamic content is allowed only in `command_payload`.
 - Use `uv run` for every Python command, no mocks, suppressions, database deletion, or hook bypasses.
 - Preserve the unrelated existing `.superpowers/sdd/progress.md` change.
@@ -38,7 +38,7 @@
 - Create: `.superpowers/sdd/task-11-event-fix-report.md`
 
 **Interfaces:**
-- Consumes: `EVENT_PAYLOAD_MODELS`, `EventPayloadSpec`, `ResourceClaimProjection`, and the existing event serialization policy.
+- Consumes: `EVENT_PAYLOAD_MODELS`, `EventPayloadSpec`, the upstream lease `ResourceClaimProjection` representation, and the existing event serialization policy. `ResourceClaimProjection` remains unchanged and is not the canonical dispatch claim contract.
 - Produces: `AgentDispatchRequestedPayload`, `CommandRecordedPayload`, and `serialize_event_payload(event_type: str, payload: dict[str, Any]) -> dict[str, Any]`, exported from `orchestrator.graph`.
 
 - [ ] **Step 1: Add registry and strict-model tests**
@@ -79,18 +79,25 @@ Expected: FAIL on the old flattened scenario payload and missing typed serializa
 Add required fields without defaults:
 
 ```python
+class AgentDispatchResourceClaim(StrictNestedModel):
+    mode: StrictStr
+    scope: StrictStr
+    paths: Annotated[list[StrictStr], Field(strict=True)] | None = None
+    external_resource_key: StrictStr | None = None
+
+
 class AgentDispatchRequestedPayload(StrictEventPayload):
-    lease_granted_event_id: str
-    lease_id: str
-    node_id: str
+    lease_granted_event_id: StrictStr
+    lease_id: StrictStr
+    node_id: StrictStr
     generation: StrictInt
-    execution_id: str
-    base_snapshot_id: str
+    execution_id: StrictStr
+    base_snapshot_id: StrictStr
     resource_claims: Annotated[list[AgentDispatchResourceClaim], Field(strict=True)]
 
 
 class CommandRecordedPayload(StrictEventPayload):
-    command_type: str
+    command_type: StrictStr
     command_payload: dict[str, Any]
 ```
 
@@ -114,17 +121,19 @@ Run the focused registry/model/scenario/controller/corpus/allowlist/read tests a
 
 - [ ] **Step 8: Verify the repository**
 
-Run, in order:
+Historical verification before the final dispatch-claim hardening recorded
+`4748 passed, 3 skipped, 3 warnings` in 132.94 seconds. That result is not
+final-head evidence. At the final head, run the focused runtime event,
+registry/model, controller, corpus, allowlist, and read tests, followed by:
 
 ```bash
-uv run pytest
 uv run ruff check .
 uv run ruff format --check .
 uv run pyright
 uv run pre-commit run --all-files
 ```
 
-Expected: all commands pass.
+Expected: all final-head focused tests and checks pass.
 
 - [ ] **Step 9: Self-review and report**
 
