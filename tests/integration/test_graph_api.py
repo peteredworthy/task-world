@@ -1,9 +1,10 @@
 """Integration tests for graph compatibility projection endpoints."""
 
 from datetime import datetime, timezone
-from uuid import uuid4
 from typing import Any
+from uuid import uuid4
 
+import pytest
 from fastapi import HTTPException
 from httpx import AsyncClient
 from sqlalchemy import delete, func, select, update
@@ -859,6 +860,35 @@ async def test_operator_graph_patch_endpoint_accepts_human_patch(
         event["event_type"] == "node_created" and event["payload"]["node_id"] == "operator-note"
         for event in body["events"]
     )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"patch_id": "p", "base_graph_position": "0", "ops": []},
+        {"patch_id": "p", "base_graph_position": 0, "carryover_summary": "r"},
+        {"patch_id": "p", "base_graph_position": 0, "unknown": True},
+    ],
+)
+async def test_operator_graph_patch_rejects_noncanonical_payload_fields(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    payload: dict[str, object],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-operator-patch-invalid-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(
+            run_id,
+            0,
+            [_event("run_lifecycle_changed", {"to_state": "active"})],
+        )
+        await session.commit()
+
+    response = await client.post(f"/api/runs/{run_id}/graph/patch", json=payload)
+
+    assert response.status_code == 422
 
 
 async def test_graph_projection_uses_paused_run_row_as_effective_state(

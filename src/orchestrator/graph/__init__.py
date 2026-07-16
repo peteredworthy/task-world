@@ -11,8 +11,11 @@ from orchestrator.graph.commands import COMMAND_SPECS, apply_command
 from orchestrator.graph.command_models import (
     CommandSpec,
     GraphCommandContext,
+    PatchCommandFields,
     PatchCommandContext,
+    RecordDecisionCommand,
     StrictCommandPayload,
+    SubmitPatchCommand,
 )
 from orchestrator.graph.event_registry import (
     CANONICAL_EVENT_TYPES,
@@ -265,11 +268,13 @@ __all__ = [
     "PLANNER_OPS",
     "PROJECTION_SCHEMA_VERSION",
     "PatchEnvelope",
+    "PatchCommandFields",
     "PatchCommandContext",
     "PatchOp",
     "PendingGateDecisionProjection",
     "PlannerSessionStateChangedPayload",
     "RecordSelector",
+    "RecordDecisionCommand",
     "RequirementRecord",
     "RequirementRevisionPayload",
     "RequirementRevisionProjection",
@@ -280,6 +285,7 @@ __all__ = [
     "SupportEvidenceProjection",
     "StoredArtifactRef",
     "StrictCommandPayload",
+    "SubmitPatchCommand",
     "CheckResultRecord",
     "SchedulerView",
     "SequentialIdGenerator",

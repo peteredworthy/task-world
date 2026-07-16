@@ -8,7 +8,7 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Path as ApiPath, Query
-from pydantic import Field, model_validator
+from pydantic import Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -21,8 +21,10 @@ from orchestrator.graph import (
     ActorKind,
     EventEnvelope,
     GraphCommandContext,
+    PatchCommandFields,
     PatchCommandContext,
     RecordSelector,
+    RecordDecisionCommand,
     build_projection,
     check_command_reference,
     project_final_invariant_blockers,
@@ -197,34 +199,10 @@ class DecisionViewResponse(ApiModel):
     review: ReviewReadinessResponse
 
 
-class RecordGraphDecisionRequest(ApiModel):
-    decision_type: Literal["approval", "authority", "oversight"]
-    node_id: str = Field(min_length=1, max_length=200)
-    decision: str = Field(min_length=1, max_length=64)
-    decider: dict[str, Any] | str
-    scope: dict[str, Any] | None = None
-    expires_at: str | None = None
-    reason: str | None = None
-    record_id: str | None = Field(default=None, min_length=1, max_length=200)
+class RecordGraphDecisionRequest(RecordDecisionCommand):
+    """HTTP ingress reuses the strict domain decision command schema."""
 
-    @model_validator(mode="after")
-    def validate_decision_request(self) -> "RecordGraphDecisionRequest":
-        valid_by_type = {
-            "approval": {"approved", "rejected", "deferred"},
-            "authority": {"granted", "denied", "deferred"},
-            "oversight": {"accepted", "rejected", "invalid_test_accepted"},
-        }
-        valid = valid_by_type[self.decision_type]
-        if self.decision not in valid:
-            options = ", ".join(sorted(valid))
-            raise ValueError(f"decision for {self.decision_type} must be one of: {options}")
-        if isinstance(self.decider, str):
-            if not self.decider:
-                raise ValueError("decider must be a non-empty string or an actor object")
-            return self
-        if not isinstance(self.decider.get("kind"), str) or not self.decider["kind"]:
-            raise ValueError("decider actor object must include a non-empty kind")
-        return self
+    pass
 
 
 class RecordGraphDecisionResponse(ApiModel):
@@ -342,18 +320,11 @@ class GraphPatchAttemptsResponse(ApiModel):
     attempts: list[GraphPatchAttemptResponse]
 
 
-class SubmitGraphPatchRequest(ApiModel):
-    patch_id: str | None = Field(
-        default=None, min_length=1, max_length=200, pattern=r"^[A-Za-z0-9_.:-]+$"
-    )
-    base_graph_position: int | None = Field(default=None, ge=0)
-    ops: list[dict[str, Any]]
-    rationale_record_id: str | None = Field(
-        default=None,
-        min_length=1,
-        max_length=200,
-        pattern=r"^[A-Za-z0-9_.:-]+$",
-    )
+class SubmitGraphPatchRequest(PatchCommandFields):
+    """HTTP ingress composes the strict shared graph patch fields."""
+
+    patch_id: str | None = None
+    base_graph_position: int | None = Field(default=None, ge=-1)
 
 
 class SubmitGraphPatchResponse(ApiModel):

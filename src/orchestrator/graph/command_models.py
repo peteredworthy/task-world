@@ -145,14 +145,17 @@ def _empty_macro_invocations() -> list[MacroInvocation]:
     return []
 
 
-class SubmitPatchCommand(StrictCommandPayload):
-    patch_id: str
-    base_graph_position: int = Field(ge=-1)
+class PatchCommandFields(StrictCommandPayload):
     ops: list[dict[str, Any]] = Field(default_factory=_empty_patch_ops)
     macro_invocations: list[MacroInvocation] = Field(default_factory=_empty_macro_invocations)
     rationale_record_id: str | None = None
     budget_gate_node_id: str | None = None
     carryover_record_id: str | None = None
+
+
+class SubmitPatchCommand(PatchCommandFields):
+    patch_id: str
+    base_graph_position: int = Field(ge=-1)
 
 
 class AcknowledgeStartCommand(StrictCommandPayload):

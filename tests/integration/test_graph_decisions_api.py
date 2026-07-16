@@ -3,6 +3,7 @@
 from typing import Any
 from uuid import uuid4
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -362,6 +363,37 @@ async def test_record_decision_rejects_invalid_decision_at_api_boundary(
 
     assert response.status_code == 422
     assert "decision for authority must be one of" in response.text
+
+
+@pytest.mark.parametrize(
+    ("decision_type", "decision"),
+    [
+        ("approval", "defer"),
+        ("authority", "grant"),
+        ("authority", "deny"),
+    ],
+)
+async def test_record_decision_rejects_removed_decision_aliases_at_api_boundary(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+    decision_type: str,
+    decision: str,
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-decisions-invalid-{uuid4().hex[:8]}"
+    await _seed_decision_graph_run(app, run_id)
+
+    response = await client.post(
+        f"/api/runs/{run_id}/graph/decisions",
+        json={
+            "decision_type": decision_type,
+            "node_id": "authority-1",
+            "decision": decision,
+            "decider": {"kind": "human", "id": "alice"},
+        },
+    )
+
+    assert response.status_code == 422
+    assert f"decision for {decision_type} must be one of" in response.text
 
 
 async def test_decisions_endpoint_empty_for_non_graph_run(
