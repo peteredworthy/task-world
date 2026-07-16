@@ -519,3 +519,92 @@ RED:
 GREEN:
 - `uv run pytest tests/unit/test_graph_event_registry.py tests/unit/test_fixture_corpus.py tests/unit/test_graph_projections.py tests/unit/test_patch_validator.py -q`
   - Result: passed, 189 tests.
+
+## Batch 1 Verification Gate (2026-07-16)
+
+Status: complete.
+
+Verified head:
+- `f837206d12a6e7f9c2c0086b72c276d237b45d7b` (`Remove legacy selector compatibility`).
+
+Fresh verifier verdict:
+- PASS. Every required command exited 0, and the source review found no surviving
+  Batch 1 compatibility layer or W5.5 implementation leakage.
+
+Commands and timings:
+
+| Command | Result | real | user | sys |
+|---|---|---:|---:|---:|
+| `uv run pytest tests/unit/test_graph_event_registry.py tests/unit/test_w5_compatibility_removal.py tests/unit/test_output_record_event_payloads.py tests/unit/test_record_routing_event_payloads.py tests/unit/test_file_state_gatekeeper_event_payloads.py tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_fixture_corpus.py -q -n auto --dist worksteal` | 82 passed in 4.01s | 4.38s | 17.38s | 2.72s |
+| `uv run pytest tests/ -k graph -q -n auto --dist worksteal` | 904 passed in 56.72s | 57.06s | 276.49s | 41.49s |
+| `uv run ruff check .` | all checks passed | 0.06s | 0.03s | 0.05s |
+| `uv run pyright src/orchestrator/graph src/orchestrator/graph_runtime tests/unit` | 0 errors, 0 warnings, 0 informations | 3.54s | 6.49s | 0.26s |
+| `git diff --check` | passed, no output | 0.01s | 0.00s | 0.00s |
+
+Event ownership:
+- The immutable registry contains 46 canonical names: 45 are owned by the
+  declared internal producers and `lease_suspended` is the sole external name.
+- `lease_suspended` remains justified because stale callback/worker ingress can
+  surface it even though no current command producer emits it. It has a strict
+  payload model and explicit retention spec.
+- No removed event name occurs under `src/`; retired names are disjoint from
+  canonical and producer-owned names. Fixtures contain canonical event names
+  only, and ownership validation rejects omissions, stale registrations, and
+  retired-name reintroduction.
+
+Compatibility deletion:
+- Source searches found none of `LegacyOutputRecord`, `GraphPatchStatusPayload`,
+  `RequirementAuthorityResolutionPayload`, `_legacy_output_record_payload`,
+  `_generic_output_record_payload`, `_legacy_requirement_evidence_blockers`,
+  `_DictCompatibleProjection`, or `normalize_legacy_membership`.
+- The removed selector symbols `_LEGACY_SELECTOR_KIND_MAP` and
+  `_normalize_legacy_selector`, legacy `record_kinds`/`value_matches` handling,
+  and `RecordSelector`'s historical `mode="before"` validator are absent.
+  `RecordSelector` now accepts only its strict discriminated canonical union.
+- The only `mode="before"` validator under `orchestrator.graph` is the separate
+  planner macro invocation boundary (`name`/`tool` to `macro`); no event payload,
+  record, selector, or projection uses a historical pre-validator.
+- Strict event payloads forbid unknown top-level fields; strict typed-record
+  roots do the same. No event payload model or generated retention allowlist
+  exposes a top-level `extra` field.
+- `EdgeProjection`, `InputBindingProjection`, and `LeaseProjection` are
+  attribute-only models and define no mapping facade (`get`, `keys`, `items`,
+  `values`, `__getitem__`, `__iter__`, or `__contains__`).
+
+Records:
+- Output acceptance dispatches through the explicit 21-entry
+  `OUTPUT_RECORD_MODELS_BY_TYPE` discriminator map. Missing and unknown nonempty
+  discriminators are rejected; no generic output-record fallback survives.
+- Canonical record fields are parsed into typed record models before projection;
+  nested verification values and grade rows reject unknown fields.
+- `gap_plan`, `gap_classification`, and `classified_gap` are explicit current
+  discriminators in `GapClassificationRecord` and the output-record model map.
+  Their full record contracts require `record_kind`, `record_type`, producer,
+  port, `GapClassification` schema, and typed value. They are current dynamic
+  gap-planner record shapes, not selector aliases or selector normalization.
+  The canonical selector remains `record_type="gap_classification"`; current
+  `GapClassification` schema recognition only matches those typed records.
+
+File-state and gatekeeper:
+- Accepted/rejected file-state events use strict flat canonical file-state
+  records and require the exact `file_state` discriminator.
+- Gatekeeper verdict and cost models reject unknown, negative, fractional
+  integer, and wrong-type values. Summary retention preserves `consult_id`,
+  `model_id`, input/output/cache token counts, `item_count`, `cost_usd`, and
+  `wall_time_ms`; the reconstruction parity test confirms no canonical or cost
+  field is dropped.
+
+Allowlists and artifact boundary:
+- Immutable per-event specs exactly generate the sorted unique projection,
+  light, summary, and node-detail allowlists with 98, 138, 157, and 81 fields,
+  respectively. Every modeled event has a spec, retained keys are model-owned,
+  `extra` is absent, and the reducer AST guard has no uncovered or stale entry.
+- `StoredArtifactRef` is identity-only: `artifact_id`, `content_hash`,
+  `size_bytes`, `media_type`, `encoding`, and `storage_uri`. It is exported but
+  is not attached to `CheckResultValue.stdout`/`stderr` or any producer/storage
+  path.
+- W5.5 remains deferred atomically: no artifact file store, reference-field
+  cutover, persistence, hydration, garbage collection, event-aware SQL, or
+  check-output cutover was added. Current `stdout`/`stderr` complete-value and
+  truncation behavior remains unchanged. Complete nested `value` retention and
+  its read amplification are explicitly deferred to the W5.5 artifact cutover.
