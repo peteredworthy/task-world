@@ -20,6 +20,7 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, StepConfig, TaskConfig
+from orchestrator.artifacts import ArtifactGarbageCollector
 from orchestrator.db import (
     AttemptModel,
     RunModel,
@@ -316,6 +317,7 @@ class WorkflowService:
         signal_transport: SignalTransport | None = None,
         fan_out_policy: FanOutDelegationPolicy | None = None,
         event_store_v2: SqliteEventStore | None = None,
+        artifact_gc: ArtifactGarbageCollector | None = None,
     ) -> None:
         self._session = session
         self._repo = repo or RunRepository(session)
@@ -332,6 +334,7 @@ class WorkflowService:
         self._signal_transport = signal_transport
         self._fan_out_policy = fan_out_policy or FanOutDelegationPolicy()
         self._delegation_recorder = DelegationRecorder(self._clock)
+        self._artifact_gc = artifact_gc
 
     async def _update_parent_oversight_facts(
         self,
@@ -3744,6 +3747,14 @@ class WorkflowService:
         )
         self._event_emitter.notify_persisted(events[0])
         await commit_with_event_outbox(self._session)
+        if self._artifact_gc is None:
+            return
+        surviving_run_ids = list((await self._session.scalars(select(RunModel.id))).all())
+        graph_store = GraphEventStore(self._session)
+        surviving_events: list[Any] = []
+        for surviving_run_id in surviving_run_ids:
+            surviving_events.extend(await graph_store.read_run(surviving_run_id))
+        await self._artifact_gc.collect(surviving_events, self._clock.now())
 
     async def update_checklist_item(
         self,

@@ -1,8 +1,9 @@
 """Integration tests for WorkflowService."""
 
 import json
+import os
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,12 @@ from orchestrator.config import (
     RunStatus,
     TaskStatus,
     load_routine_from_path,
+)
+from orchestrator.artifacts import (
+    ArtifactGarbageCollectionError,
+    ArtifactGarbageCollector,
+    ArtifactNotFoundError,
+    FilesystemArtifactStore,
 )
 from orchestrator.db import (
     create_engine,
@@ -1050,6 +1057,58 @@ async def test_delete_run(service: WorkflowService, session: AsyncSession) -> No
     events = await store.get_stream("run-1")
     deleted_events = [event for event in events if event.event_type == "run_deleted"]
     assert len(deleted_events) == 1
+
+
+async def test_delete_run_sweeps_old_unreferenced_artifacts_after_tombstone(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    store = FilesystemArtifactStore(tmp_path / "artifacts")
+    ref = await store.put(b"orphan", media_type="text/plain")
+    blob = tmp_path / "artifacts" / "sha256" / ref.content_hash[7:9] / ref.content_hash[9:]
+    old_timestamp = (now - timedelta(days=2)).timestamp()
+    os.utime(blob, (old_timestamp, old_timestamp))
+    service = WorkflowService(
+        session,
+        clock=_FixedClock(now),
+        artifact_gc=ArtifactGarbageCollector(tmp_path / "artifacts"),
+    )
+    await service.create_run(_make_simple_run())
+
+    await service.delete_run("run-1")
+
+    with pytest.raises(ArtifactNotFoundError):
+        await store.read(ref)
+    events = await SqliteEventStore(session).get_stream("run-1")
+    assert [event.event_type for event in events].count("run_deleted") == 1
+
+
+async def test_delete_run_keeps_committed_tombstone_when_artifact_sweep_fails(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    root = tmp_path / "artifacts"
+    store = FilesystemArtifactStore(root)
+    ref = await store.put(b"orphan", media_type="text/plain")
+    blob = root / "sha256" / ref.content_hash[7:9] / ref.content_hash[9:]
+    old_timestamp = (now - timedelta(days=2)).timestamp()
+    os.utime(blob, (old_timestamp, old_timestamp))
+    blob.parent.chmod(0o500)
+    service = WorkflowService(
+        session,
+        clock=_FixedClock(now),
+        artifact_gc=ArtifactGarbageCollector(root),
+    )
+    await service.create_run(_make_simple_run())
+
+    try:
+        with pytest.raises(ArtifactGarbageCollectionError):
+            await service.delete_run("run-1")
+    finally:
+        blob.parent.chmod(0o700)
+
+    events = await SqliteEventStore(session).get_stream("run-1")
+    assert [event.event_type for event in events].count("run_deleted") == 1
 
 
 async def test_delete_run_not_found(service: WorkflowService) -> None:

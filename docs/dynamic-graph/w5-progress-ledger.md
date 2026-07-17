@@ -1013,3 +1013,31 @@ Commits and review:
   `Code quality: APPROVED`.
 - The reviewer noted no specified malformed/unknown text-encoding policy; this
   is not a Task 3 requirement or demonstrated defect.
+
+### W5.5 Task 4: Typed Artifact Mark-and-Sweep GC
+
+Status: implementation evidence recorded; the durable Task 4 queue checkbox
+remains unchecked for independent review.
+
+- **RED:** `uv run pytest tests/unit/test_artifact_gc.py -q` failed at collection
+  with `ModuleNotFoundError: No module named 'orchestrator.artifacts.gc'`.
+- **GREEN:** `uv run pytest tests/unit/test_artifact_gc.py tests/unit/test_command_handlers.py tests/integration/test_workflow_service.py -q`
+  passed **64 tests**. The focused artifact-GC suite itself passed **2 tests**.
+- **Retention:** typed recursive traversal recognizes only concrete
+  `StoredArtifactRef` Pydantic values, including a strict typed
+  `output_record_accepted` check-result payload; arbitrary mapping hash strings
+  are not marks. Surviving (not projected-deleted) run graph events provide the
+  retained set after the deletion tombstone has committed.
+- **Grace:** valid unmarked CAS blobs are removed only when their injected UTC
+  modification time is strictly older than the 86,400-second cutoff; a blob at
+  the exact cutoff and a retained old blob survive. Malformed paths and
+  non-regular files are ignored.
+- **Idempotence:** a second sweep returns no deleted hashes after the first
+  removes the old unmarked blob.
+- **Purge failure:** the integration suite makes a real temporary CAS directory
+  non-writable, receives `ArtifactGarbageCollectionError`, and verifies the
+  already committed `run_deleted` tombstone remains in the event stream.
+- **Static checks:** `uv run ruff check src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py`,
+  `uv run pyright src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py src/orchestrator/workflow/service.py`,
+  `uv run ruff format --check src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py`,
+  and `git diff --check` passed.
