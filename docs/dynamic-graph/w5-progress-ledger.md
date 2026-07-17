@@ -108,6 +108,19 @@ Final whole-branch approval:
   Pyright, formatting, and `git diff --check` passed.
 - Review-fix commits: `0770197e6`, `36129a3ae`, `22ab607ff`, and `ca61e0d8e`.
 
+Fresh approved-head verifier at
+`872263250eccb8db0e98492ed3f5f70768c0f6dc`:
+- `uv run pytest tests/ -k "graph or artifact" -q -n auto --dist worksteal`
+  - Result: 1,026 passed.
+- `uv run pytest tests/ -q -n auto --dist worksteal`
+  - Result: 4,824 passed, 3 skipped, and 3 existing warnings.
+- `uv run ruff check .`
+  - Result: passed.
+- `uv run pyright`
+  - Result: 0 errors and 0 warnings.
+- `git diff --check` and post-verification `git status --short`
+  - Result: clean.
+
 ## Historical Execution Evidence
 
 Unless a section explicitly says it is authoritative current state, every
