@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import asyncio
+import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,13 +12,14 @@ from httpx import ASGITransport, AsyncClient
 from orchestrator.api.app import create_app
 from orchestrator.api.auth import AuthConfig, create_token
 from orchestrator.artifacts import (
+    ArtifactGarbageCollectionError,
     ArtifactGarbageCollector,
     ArtifactNotFoundError,
     ArtifactRootLock,
     FilesystemArtifactStore,
     StoredArtifactRef,
 )
-from orchestrator.db import init_db
+from orchestrator.db import SqliteEventStore, init_db
 from orchestrator.config.global_config import GlobalConfig, PathsConfig
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
@@ -437,4 +439,43 @@ async def test_removed_linked_worktree_keeps_api_and_gc_on_main_project_cas(tmp_
             await store.read(orphan)
     finally:
         await client.aclose()
+        await app.state.engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_unavailable_provisioned_project_raises_after_durable_delete_tombstone(
+    tmp_path: Path,
+) -> None:
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    project = repos / "project"
+    project.mkdir()
+    _init_repo(project)
+    worktree = tmp_path / "worktrees" / "run"
+    worktree.parent.mkdir()
+    _git(["worktree", "add", "-b", "unavailable-run", str(worktree)], cwd=project)
+    app = create_app(
+        db_path=":memory:",
+        global_config=GlobalConfig(paths=PathsConfig(repos_dir=str(repos))),
+        artifact_project_root=project,
+    )
+    await init_db(app.state.engine)
+    try:
+        async with app.state.session_factory() as session:
+            service = await app.state.service_factory(session)
+            await service.create_run(
+                Run(id="unavailable-run", repo_name="project", worktree_path=str(worktree))
+            )
+            await session.commit()
+        _git(["worktree", "remove", "--force", str(worktree)], cwd=project)
+        shutil.rmtree(project)
+        async with app.state.session_factory() as session:
+            service = await app.state.service_factory(session)
+            with pytest.raises(
+                ArtifactGarbageCollectionError, match="cannot resolve artifact root"
+            ):
+                await service.delete_run("unavailable-run")
+            events = await SqliteEventStore(session).get_stream("unavailable-run")
+        assert [event.event_type for event in events].count("run_deleted") == 1
+    finally:
         await app.state.engine.dispose()

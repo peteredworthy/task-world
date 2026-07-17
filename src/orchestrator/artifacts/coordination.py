@@ -4,6 +4,7 @@ import asyncio
 import fcntl
 import hashlib
 import os
+import errno
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
@@ -31,22 +32,57 @@ class ArtifactRootLock:
             yield
 
     def _acquire(self) -> int:
-        metadata_parent = (
-            self._root.parent
-            if self._root.parent.name == ".orchestrator"
-            else self._root.parent / ".orchestrator"
-        )
-        metadata_parent.mkdir(parents=True, exist_ok=True)
-        metadata_parent.chmod(0o700)
-        if not metadata_parent.is_dir() or metadata_parent.is_symlink():
-            raise ValueError("artifact coordination root has no safe metadata directory")
-        identifier = hashlib.sha256(str(self._root.resolve()).encode()).hexdigest()
-        fd = os.open(
-            metadata_parent / f".artifact-coordination-{identifier}.lock",
-            os.O_CREAT | os.O_RDWR,
-            0o600,
-        )
-        os.chmod(metadata_parent / f".artifact-coordination-{identifier}.lock", 0o600)
+        if self._root.parent.name != ".orchestrator":
+            parent_fd = os.open(
+                self._root.parent.resolve(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            )
+            try:
+                identifier = hashlib.sha256(str(self._root.resolve()).encode()).hexdigest()
+                fd = os.open(
+                    f".artifact-coordination-{identifier}.lock",
+                    os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW,
+                    0o600,
+                    dir_fd=parent_fd,
+                )
+                os.fchmod(fd, 0o600)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+                return fd
+            finally:
+                os.close(parent_fd)
+        metadata_parent = self._root.parent
+        project = metadata_parent.parent
+        project_fd = os.open(project, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            try:
+                os.mkdir(metadata_parent.name, 0o700, dir_fd=project_fd)
+            except FileExistsError:
+                pass
+            try:
+                metadata_fd = os.open(
+                    metadata_parent.name,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=project_fd,
+                )
+            except OSError as exc:
+                if exc.errno in {errno.ELOOP, errno.ENOTDIR}:
+                    raise ValueError(
+                        "artifact coordination root has no safe metadata directory"
+                    ) from exc
+                raise
+        finally:
+            os.close(project_fd)
+        try:
+            os.fchmod(metadata_fd, 0o700)
+            identifier = hashlib.sha256(str(self._root.resolve()).encode()).hexdigest()
+            fd = os.open(
+                f".artifact-coordination-{identifier}.lock",
+                os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW,
+                0o600,
+                dir_fd=metadata_fd,
+            )
+        finally:
+            os.close(metadata_fd)
+        os.fchmod(fd, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX)
         return fd
 

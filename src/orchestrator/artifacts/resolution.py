@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from orchestrator.artifacts.gc import ArtifactGarbageCollector
+from orchestrator.artifacts.gc import ArtifactGarbageCollectionError, ArtifactGarbageCollector
 from orchestrator.artifacts.store import FilesystemArtifactStore
 from orchestrator.git import resolve_main_worktree
 from orchestrator.state import Run
@@ -69,8 +69,12 @@ class ProjectArtifactGarbageCollector:
     ) -> frozenset[str]:
         try:
             root = await self._roots.root_for(deleted_run)
-        except ArtifactRootResolutionError:
-            return frozenset()
+        except ArtifactRootResolutionError as exc:
+            if deleted_run.worktree_path is None:
+                return frozenset()
+            raise ArtifactGarbageCollectionError(
+                f"cannot resolve artifact root for deleted run {deleted_run.id}"
+            ) from exc
         same_project_runs = [
             run for run in surviving_runs if await self._roots.root_for(run) == root
         ]

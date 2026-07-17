@@ -259,6 +259,7 @@ async def test_failed_publication_releases_lock_and_orphan_is_eligible_for_sweep
 @pytest.mark.asyncio
 async def test_absent_root_uses_one_lock_through_publication_and_sweep(tmp_path: Path) -> None:
     root = tmp_path / "project" / ".orchestrator" / "artifacts"
+    root.parent.parent.mkdir()
     store = FilesystemArtifactStore(root)
     lock = ArtifactRootLock(root)
     now = datetime.now(UTC) + timedelta(days=1)
@@ -271,3 +272,25 @@ async def test_absent_root_uses_one_lock_through_publication_and_sweep(tmp_path:
         assert not sweep.done()
 
     assert await sweep == frozenset({ref.content_hash})
+
+
+@pytest.mark.asyncio
+async def test_lock_rejects_symlinked_metadata_directory_without_mutating_target(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    marker = outside / "marker"
+    marker.write_text("unchanged")
+    metadata = project / ".orchestrator"
+    metadata.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="metadata"):
+        async with ArtifactRootLock(metadata / "artifacts").publish():
+            pass
+
+    assert marker.read_text() == "unchanged"
+    assert outside.stat().st_mode & 0o777 == 0o755
+    assert list(outside.iterdir()) == [marker]

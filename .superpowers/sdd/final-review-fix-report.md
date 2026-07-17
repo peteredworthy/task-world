@@ -97,3 +97,16 @@ complete gate evidence:
 
 Hook-verified implementation commit: `36129a3ae Harden artifact root fallback
 and locking`. Final approval remains pending.
+
+## Third Final Review Fix
+
+RED: the symlinked metadata regression observed the outside directory mode
+changed from `0755` to `0700`; the old collector also reported success for an
+unresolvable deleted run. GREEN: descriptor-relative no-follow metadata setup
+leaves the outside target untouched, generic roots use a stable hashed parent
+lock, and an unavailable provisioned repository raises
+`ArtifactGarbageCollectionError` after its `run_deleted` tombstone commits.
+Focused tests: `20 passed in 6.57s`. Final gates: graph/artifact `1025 passed
+in 58.97s`; full backend `4823 passed, 3 skipped, 3 warnings in 103.99s`;
+Ruff, Pyright, format check, and `git diff --check` passed. Final approval
+remains pending; commit evidence follows.

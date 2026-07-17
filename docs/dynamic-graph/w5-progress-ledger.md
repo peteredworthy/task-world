@@ -78,6 +78,16 @@ focused suite (`10 passed in 3.86s`). Final gates: graph/artifact selection
 approval remains pending; commit evidence follows.
 Implementation commit: `36129a3ae Harden artifact root fallback and locking`.
 
+## Third Final Review Fix
+
+Status: implemented; final approval pending. Descriptor-relative no-follow lock
+metadata rejects symlinked `.orchestrator` directories without mutating outside
+targets; generic roots retain a stable hashed parent lock. Unavailable previously
+provisioned repositories now raise explicit artifact-GC failure after durable
+tombstone commit. Focused: `20 passed in 6.57s`; graph/artifact: `1025 passed in
+58.97s`; full: `4823 passed, 3 skipped, 3 warnings in 103.99s`; Ruff, Pyright,
+format check, and diff check passed. Commit evidence follows.
+
 ## Historical Execution Evidence
 
 Unless a section explicitly says it is authoritative current state, every
