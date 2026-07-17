@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.auth import AuthConfig
 from orchestrator.api.websocket import ConnectionManager
-from orchestrator.artifacts import ArtifactStore
+from orchestrator.artifacts import ArtifactGarbageCollector, ArtifactStore
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.db import (
@@ -53,6 +53,11 @@ def get_connection_manager(request: Request) -> ConnectionManager:
 def get_artifact_store(request: Request) -> ArtifactStore:
     """Get the application-composed artifact store for verified blob reads."""
     return request.app.state.artifact_store  # type: ignore[no-any-return]
+
+
+def get_artifact_garbage_collector(request: Request) -> ArtifactGarbageCollector:
+    """Get the composition-root-owned collector for the main artifact CAS."""
+    return request.app.state.artifact_gc  # type: ignore[no-any-return]
 
 
 async def get_session(request: Request) -> AsyncGenerator[AsyncSession, None]:
@@ -125,6 +130,7 @@ async def get_workflow_service(
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
     connection_manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     lock_manager: Annotated[Any, Depends(get_lock_manager)],
+    artifact_gc: Annotated[ArtifactGarbageCollector, Depends(get_artifact_garbage_collector)],
 ) -> WorkflowService:
     emitter = PersistentEventEmitter(store_v2)
 
@@ -151,6 +157,7 @@ async def get_workflow_service(
         env_lifecycle=env_lifecycle,
         signal_transport=signal_transport,
         event_store_v2=store_v2,
+        artifact_gc=artifact_gc,
     )
 
 

@@ -1037,6 +1037,9 @@ remains unchecked for independent review.
 - **Purge failure:** the integration suite makes a real temporary CAS directory
   non-writable, receives `ArtifactGarbageCollectionError`, and verifies the
   already committed `run_deleted` tombstone remains in the event stream.
+- **Composition:** `create_app` owns a collector rooted beside its existing
+  main-project artifact store, and the API dependency composition injects it
+  into `WorkflowService`; command handlers and reducers remain store-free.
 - **Static checks:** `uv run ruff check src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py`,
   `uv run pyright src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py src/orchestrator/workflow/service.py`,
   `uv run ruff format --check src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py`,
