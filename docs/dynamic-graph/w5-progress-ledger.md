@@ -1077,7 +1077,9 @@ Fresh verifier gate at `29b8206d741aac58aadc23c85ce2a99b2315a2d6`:
 
 ### W5.5 Task 5: Final Artifact Verification
 
-Status: final builder gates passed; commit evidence is pending this closeout commit.
+Status: implementation and acceptance evidence committed in `469c6358c`; Task 5
+is pending independent/controller review. The durable Task 5 queue checkbox
+remains unchecked until that review completes.
 
 - Existing focused coverage was first run without a manufactured RED:
   `uv run pytest tests/integration/test_check_output_artifacts.py tests/unit/test_artifact_gc.py -q`
