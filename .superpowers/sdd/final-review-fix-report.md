@@ -110,3 +110,6 @@ Focused tests: `20 passed in 6.57s`. Final gates: graph/artifact `1025 passed
 in 58.97s`; full backend `4823 passed, 3 skipped, 3 warnings in 103.99s`;
 Ruff, Pyright, format check, and `git diff --check` passed. Final approval
 remains pending; commit evidence follows.
+
+Hook-verified implementation commit: `22ab607ff Harden artifact GC failure and
+lock safety`.

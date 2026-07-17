@@ -87,6 +87,7 @@ provisioned repositories now raise explicit artifact-GC failure after durable
 tombstone commit. Focused: `20 passed in 6.57s`; graph/artifact: `1025 passed in
 58.97s`; full: `4823 passed, 3 skipped, 3 warnings in 103.99s`; Ruff, Pyright,
 format check, and diff check passed. Commit evidence follows.
+Implementation commit: `22ab607ff Harden artifact GC failure and lock safety`.
 
 ## Historical Execution Evidence
 
