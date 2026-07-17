@@ -9,6 +9,7 @@ from orchestrator.artifacts.models import StoredArtifactRef
 from orchestrator.artifacts.store import ArtifactStore, FilesystemArtifactStore
 from orchestrator.artifacts.gc import (
     ArtifactGarbageCollectionError,
+    ArtifactGarbageCollectionConfigurationError,
     ArtifactGarbageCollector,
     collect_artifact_refs,
     sweep_artifacts,
@@ -17,6 +18,7 @@ from orchestrator.artifacts.gc import (
 __all__ = [
     "ArtifactError",
     "ArtifactGarbageCollectionError",
+    "ArtifactGarbageCollectionConfigurationError",
     "ArtifactGarbageCollector",
     "ArtifactIntegrityError",
     "ArtifactNotFoundError",

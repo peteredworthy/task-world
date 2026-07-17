@@ -1040,6 +1040,12 @@ remains unchecked for independent review.
 - **Composition:** `create_app` owns a collector rooted beside its existing
   main-project artifact store, and the API dependency composition injects it
   into `WorkflowService`; command handlers and reducers remain store-free.
+- **Review fix:** real symlinked `sha256` and prefix-directory regressions
+  prove sweep never traverses outside its configured root; unknown and malformed
+  typed graph envelopes now fail before sweep; deletion without GC fails before
+  tombstone append; and a real retained run graph event preserves its old CAS
+  artifact while another run is deleted. Focused workflow/API/GC verification
+  passed 120 tests.
 - **Static checks:** `uv run ruff check src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py`,
   `uv run pyright src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py src/orchestrator/workflow/service.py`,
   `uv run ruff format --check src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py`,

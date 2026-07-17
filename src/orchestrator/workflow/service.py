@@ -20,7 +20,10 @@ from orchestrator.config.enums import (
 )
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, StepConfig, TaskConfig
-from orchestrator.artifacts import ArtifactGarbageCollector
+from orchestrator.artifacts import (
+    ArtifactGarbageCollectionConfigurationError,
+    ArtifactGarbageCollector,
+)
 from orchestrator.db import (
     AttemptModel,
     RunModel,
@@ -3739,6 +3742,10 @@ class WorkflowService:
 
     async def delete_run(self, run_id: str) -> None:
         """Delete a run."""
+        if self._artifact_gc is None:
+            raise ArtifactGarbageCollectionConfigurationError(
+                "Artifact garbage collection must be configured before deleting a run"
+            )
         await self._repo.get(run_id)
         events = await handle_delete_run(
             DeleteRunCommand(run_id=run_id),
@@ -3747,8 +3754,6 @@ class WorkflowService:
         )
         self._event_emitter.notify_persisted(events[0])
         await commit_with_event_outbox(self._session)
-        if self._artifact_gc is None:
-            return
         surviving_run_ids = list((await self._session.scalars(select(RunModel.id))).all())
         graph_store = GraphEventStore(self._session)
         surviving_events: list[Any] = []

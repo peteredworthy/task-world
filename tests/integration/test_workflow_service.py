@@ -22,11 +22,15 @@ from orchestrator.config import (
     load_routine_from_path,
 )
 from orchestrator.artifacts import (
+    ArtifactGarbageCollectionConfigurationError,
     ArtifactGarbageCollectionError,
     ArtifactGarbageCollector,
     ArtifactNotFoundError,
     FilesystemArtifactStore,
+    StoredArtifactRef,
 )
+from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.db import (
     create_engine,
     create_session_factory,
@@ -53,6 +57,7 @@ from orchestrator.workflow import (
     deserialize_event,
     handle_update_latest_attempt,
 )
+from tests.unit.graph_test_utils import canonical_event_payload
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -68,8 +73,8 @@ async def session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def service(session: AsyncSession) -> WorkflowService:
-    return WorkflowService(session)
+def service(session: AsyncSession, tmp_path: Path) -> WorkflowService:
+    return WorkflowService(session, artifact_gc=ArtifactGarbageCollector(tmp_path / "artifacts"))
 
 
 def _make_simple_run() -> Run:
@@ -130,6 +135,39 @@ def _embedded_simple_routine() -> dict[str, object]:
                 ],
             }
         ],
+    }
+
+
+def _check_result_payload(ref: StoredArtifactRef) -> dict[str, object]:
+    return {
+        "record_id": "check-1",
+        "record_kind": "output",
+        "record_type": "check_result",
+        "producer_node_id": "check-node",
+        "port": "check_result",
+        "schema": "CheckResult",
+        "candidate_id": "candidate-1",
+        "task_region_id": "region-1",
+        "attempt_number": 1,
+        "value": {
+            "status": "passed",
+            "classification": "passed",
+            "command_id": "check",
+            "command_text": "true",
+            "command": {"id": "check", "cmd": "true", "timeout_seconds": 1},
+            "worktree_path": "/tmp/worktree",
+            "base_snapshot_id": "snapshot-1",
+            "execution_id": "execution-1",
+            "duration_ms": 1,
+            "stdout_tail": "tail",
+            "stdout_ref": ref.model_dump(mode="json"),
+            "stderr_tail": "",
+            "stderr_ref": None,
+            "stdout_truncated": True,
+            "stderr_truncated": False,
+            "timeout_seconds": 1,
+            "environment_policy": {"cwd": "/tmp/worktree", "env": "inherited"},
+        },
     }
 
 
@@ -1057,6 +1095,55 @@ async def test_delete_run(service: WorkflowService, session: AsyncSession) -> No
     events = await store.get_stream("run-1")
     deleted_events = [event for event in events if event.event_type == "run_deleted"]
     assert len(deleted_events) == 1
+
+
+async def test_delete_run_without_gc_fails_before_appending_tombstone(
+    session: AsyncSession,
+) -> None:
+    service = WorkflowService(session)
+    await service.create_run(_make_simple_run())
+
+    with pytest.raises(ArtifactGarbageCollectionConfigurationError):
+        await service.delete_run("run-1")
+
+    assert not [
+        event
+        for event in await SqliteEventStore(session).get_stream("run-1")
+        if event.event_type == "run_deleted"
+    ]
+
+
+async def test_delete_run_preserves_old_artifact_referenced_by_retained_run(
+    session: AsyncSession, tmp_path: Path
+) -> None:
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    root = tmp_path / "artifacts"
+    store = FilesystemArtifactStore(root)
+    retained = await store.put(b"retained", media_type="text/plain")
+    blob = root / "sha256" / retained.content_hash[7:9] / retained.content_hash[9:]
+    old_timestamp = (now - timedelta(days=2)).timestamp()
+    os.utime(blob, (old_timestamp, old_timestamp))
+    service = WorkflowService(
+        session, clock=_FixedClock(now), artifact_gc=ArtifactGarbageCollector(root)
+    )
+    await service.create_run(_make_simple_run())
+    await service.create_run(_make_simple_run().model_copy(update={"id": "run-2"}))
+    event = EventEnvelope(
+        event_id="retained-output",
+        run_id="run-2",
+        position=1,
+        event_type="output_record_accepted",
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=now,
+        payload=canonical_event_payload("output_record_accepted", _check_result_payload(retained)),
+    )
+    await GraphEventStore(session).append_events("run-2", 0, [event])
+    await session.commit()
+
+    await service.delete_run("run-1")
+
+    assert await store.read(retained) == b"retained"
 
 
 async def test_delete_run_sweeps_old_unreferenced_artifacts_after_tombstone(

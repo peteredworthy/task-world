@@ -20,6 +20,10 @@ class ArtifactGarbageCollectionError(Exception):
     """Raised when post-tombstone artifact collection cannot complete."""
 
 
+class ArtifactGarbageCollectionConfigurationError(ArtifactGarbageCollectionError):
+    """Raised when deletion is requested without required GC coordination."""
+
+
 class ArtifactGarbageCollector:
     """Coordinates typed marking with sweeping a single injected artifact root."""
 
@@ -28,15 +32,15 @@ class ArtifactGarbageCollector:
         self._grace_seconds = grace_seconds
 
     async def collect(self, events: Iterable[Any], now: datetime) -> frozenset[str]:
-        retained_hashes = collect_artifact_refs(events)
         try:
+            retained_hashes = collect_artifact_refs(events)
             return await sweep_artifacts(
                 self._root,
                 now,
                 retained_hashes,
                 self._grace_seconds,
             )
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             raise ArtifactGarbageCollectionError("Artifact garbage collection failed") from exc
 
 
@@ -51,8 +55,11 @@ def collect_artifact_refs(events: Iterable[Any]) -> frozenset[str]:
 def _collect_from_value(value: Any, refs: set[str]) -> None:
     if isinstance(value, EventEnvelope):
         payload_model = EVENT_PAYLOAD_MODELS.get(value.event_type)
-        if payload_model is not None:
-            _collect_from_value(payload_model.model_validate(value.payload), refs)
+        if payload_model is None:
+            raise ArtifactGarbageCollectionError(
+                f"Unknown graph event type during artifact collection: {value.event_type}"
+            )
+        _collect_from_value(payload_model.model_validate(value.payload), refs)
         return
     if isinstance(value, StoredArtifactRef):
         refs.add(value.content_hash)
@@ -96,11 +103,11 @@ def _sweep_sync(
         raise ValueError("grace_seconds must be non-negative")
     cutoff = now.astimezone(UTC) - timedelta(seconds=grace_seconds)
     digest_root = root / "sha256"
-    if not digest_root.is_dir():
+    if not _is_regular_directory(digest_root):
         return frozenset()
     deleted: set[str] = set()
     for prefix in digest_root.iterdir():
-        if not prefix.is_dir() or re.fullmatch(r"[0-9a-f]{2}", prefix.name) is None:
+        if not _is_regular_directory(prefix) or re.fullmatch(r"[0-9a-f]{2}", prefix.name) is None:
             continue
         for blob in prefix.iterdir():
             digest = prefix.name + blob.name
@@ -122,3 +129,10 @@ def _sweep_sync(
                 continue
             deleted.add(content_hash)
     return frozenset(deleted)
+
+
+def _is_regular_directory(path: Path) -> bool:
+    try:
+        return stat.S_ISDIR(path.lstat().st_mode)
+    except FileNotFoundError:
+        return False
