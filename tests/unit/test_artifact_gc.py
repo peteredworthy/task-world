@@ -254,3 +254,20 @@ async def test_failed_publication_releases_lock_and_orphan_is_eligible_for_sweep
     assert await sweep_artifacts(root, now, frozenset(), grace_seconds=0) == frozenset(
         {ref.content_hash}
     )
+
+
+@pytest.mark.asyncio
+async def test_absent_root_uses_one_lock_through_publication_and_sweep(tmp_path: Path) -> None:
+    root = tmp_path / "project" / ".orchestrator" / "artifacts"
+    store = FilesystemArtifactStore(root)
+    lock = ArtifactRootLock(root)
+    now = datetime.now(UTC) + timedelta(days=1)
+
+    assert not root.exists()
+    async with lock.publish():
+        ref = await store.put(b"created after lock acquisition", media_type="text/plain")
+        sweep = asyncio.create_task(sweep_artifacts(root, now, frozenset(), grace_seconds=0))
+        await asyncio.sleep(0)
+        assert not sweep.done()
+
+    assert await sweep == frozenset({ref.content_hash})

@@ -31,17 +31,22 @@ class ArtifactRootLock:
             yield
 
     def _acquire(self) -> int:
-        ancestor = self._root
-        while not ancestor.exists():
-            ancestor = ancestor.parent
-        if not ancestor.is_dir():
-            raise ValueError("artifact coordination root has no safe parent directory")
+        metadata_parent = (
+            self._root.parent
+            if self._root.parent.name == ".orchestrator"
+            else self._root.parent / ".orchestrator"
+        )
+        metadata_parent.mkdir(parents=True, exist_ok=True)
+        metadata_parent.chmod(0o700)
+        if not metadata_parent.is_dir() or metadata_parent.is_symlink():
+            raise ValueError("artifact coordination root has no safe metadata directory")
         identifier = hashlib.sha256(str(self._root.resolve()).encode()).hexdigest()
         fd = os.open(
-            ancestor / f".artifact-coordination-{identifier}.lock",
+            metadata_parent / f".artifact-coordination-{identifier}.lock",
             os.O_CREAT | os.O_RDWR,
             0o600,
         )
+        os.chmod(metadata_parent / f".artifact-coordination-{identifier}.lock", 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX)
         return fd
 

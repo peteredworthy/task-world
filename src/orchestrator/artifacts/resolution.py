@@ -22,10 +22,13 @@ class ArtifactRootResolver:
         self._repos_root = repos_root
 
     async def root_for(self, run: Run) -> Path:
-        project_path = (
-            Path(run.worktree_path) if run.worktree_path is not None else self._repo_path_for(run)
-        )
-        main_worktree = await asyncio.to_thread(resolve_main_worktree, project_path)
+        main_worktree = None
+        if run.worktree_path is not None:
+            worktree_path = Path(run.worktree_path)
+            if worktree_path.exists():
+                main_worktree = await asyncio.to_thread(resolve_main_worktree, worktree_path)
+        if main_worktree is None:
+            main_worktree = await asyncio.to_thread(resolve_main_worktree, self._repo_path_for(run))
         if main_worktree is None:
             raise ArtifactRootResolutionError(
                 f"cannot resolve artifact project root for run {run.id}"
@@ -67,8 +70,6 @@ class ProjectArtifactGarbageCollector:
         try:
             root = await self._roots.root_for(deleted_run)
         except ArtifactRootResolutionError:
-            # A run deleted before worktree preparation has never had a project
-            # CAS target, so there is no root whose lifecycle can be swept.
             return frozenset()
         same_project_runs = [
             run for run in surviving_runs if await self._roots.root_for(run) == root

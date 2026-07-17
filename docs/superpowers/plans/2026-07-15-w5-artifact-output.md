@@ -183,15 +183,15 @@ git add src/orchestrator/graph/models.py src/orchestrator/graph_runtime \
 **Interfaces:**
 - Produces: bounded prompt hydration and authenticated ranged artifact reads.
 
-- [ ] **Step 1: Write RED tests**
+- [x] **Step 1: Write RED tests**
 
 Prompt tests assert tails are default and explicit hydration is bounded. API tests assert `offset >= 0`, `1 <= limit <= 1_048_576`, run authorization, hash/size verification before slicing, and explicit missing/integrity responses.
 
-- [ ] **Step 2: Implement injected hydration service**
+- [x] **Step 2: Implement injected hydration service**
 
 Do not read artifact paths directly from prompts or routers. Inject `ArtifactStore`; resolve a typed ref and return a bounded decoded excerpt.
 
-- [ ] **Step 3: Add ranged endpoint**
+- [x] **Step 3: Add ranged endpoint**
 
 ```text
 GET /api/runs/{run_id}/artifacts/{sha256_hex}?offset=0&limit=65536
@@ -199,7 +199,7 @@ GET /api/runs/{run_id}/artifacts/{sha256_hex}?offset=0&limit=65536
 
 Validate the hash as exactly 64 lowercase hex characters, authorize access through the run, read and verify the full blob, then return the requested byte range.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/test_artifact_prompt_hydration.py \
@@ -223,15 +223,15 @@ uv run pyright src/orchestrator/graph_runtime src/orchestrator/api tests
 **Interfaces:**
 - Produces: `collect_artifact_refs(events) -> frozenset[str]` and `sweep_artifacts(now, retained_hashes, grace_seconds=86400)`.
 
-- [ ] **Step 1: Write RED tests**
+- [x] **Step 1: Write RED tests**
 
 Use real event models and real temporary files. Assert retained references survive, unmarked files younger than 24 hours survive, older unmarked files are deleted, malformed paths are ignored safely, and repeated sweep is idempotent.
 
-- [ ] **Step 2: Implement typed mark traversal**
+- [x] **Step 2: Implement typed mark traversal**
 
 Traverse Pydantic models recursively and collect `StoredArtifactRef.content_hash`. Do not branch on event names and do not scan arbitrary JSON keys for strings that resemble hashes.
 
-- [ ] **Step 3: Integrate with run purge**
+- [x] **Step 3: Integrate with run purge**
 
 After `handle_delete_run` appends its tombstone, list graph events for runs not
 projected as deleted, mark their refs, and sweep old unmarked blobs. Inject the
@@ -239,7 +239,7 @@ collector through `WorkflowService`; do not construct a global store in the
 command module. Sweep failure is reported explicitly and does not roll back an
 already appended deletion tombstone.
 
-- [ ] **Step 4: Verify and commit**
+- [x] **Step 4: Verify and commit**
 
 ```bash
 uv run pytest tests/unit/test_artifact_gc.py -q

@@ -73,3 +73,27 @@ claimed.
 
 - `0770197e6 Fix artifact project-root lifecycle coordination` — implementation,
   regressions, documentation, and verification evidence.
+
+## Second Final Review Fix
+
+Status: implemented; final approval remains pending. RED:
+`uv run pytest tests/unit/test_artifact_gc.py::test_absent_root_uses_one_lock_through_publication_and_sweep -q`
+failed because publication and sweep selected different lock files when the CAS
+root appeared. GREEN: `uv run pytest tests/unit/test_artifact_gc.py tests/integration/test_artifact_api.py -q`
+reported `17 passed`. The lock now always uses the private `.orchestrator`
+metadata parent. Root resolution now retries persisted repository identity when a
+persisted worktree path is absent, removed, or unresolvable; Task 3 and Task 4
+plan checkboxes were reconciled. The real linked-worktree removal API/GC
+regression passed with the focused suite: `10 passed in 3.86s`. Commit and
+complete gate evidence:
+
+- `uv run pytest tests/ -k "graph or artifact" -q -n auto --dist worksteal`:
+  `1023 passed in 60.78s`.
+- `uv run pytest tests/ -q -n auto --dist worksteal`: `4821 passed, 3 skipped,
+  3 warnings in 104.90s` (existing `aiosqlite` datetime-adapter deprecations).
+- `uv run ruff check .`: passed; `uv run pyright`: `0 errors, 0 warnings`;
+  `uv run ruff format --check .`: `714 files already formatted`;
+  `git diff --check`: passed.
+
+Final approval remains pending; commit SHA is recorded after the hook-verified
+commit completes.

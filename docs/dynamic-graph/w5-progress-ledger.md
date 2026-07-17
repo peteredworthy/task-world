@@ -64,6 +64,19 @@ Status: implemented and verified locally; **final approval is not yet claimed**.
 - Remaining status: complete local implementation and verification only; no final
   approval statement.
 
+## Second Final Review Fix
+
+Status: implemented; final approval pending. The durable resolver falls back to
+the persisted repository identity after linked-worktree removal, and root locks
+use a stable private `.orchestrator` metadata parent even before CAS creation.
+RED: absent-root lock regression failed because publication and sweep used
+different paths. GREEN: `uv run pytest tests/unit/test_artifact_gc.py tests/integration/test_artifact_api.py -q` — `17 passed`.
+The real linked-worktree removal API/GC regression subsequently passed in the
+focused suite (`10 passed in 3.86s`). Final gates: graph/artifact selection
+`1023 passed in 60.78s`; full suite `4821 passed, 3 skipped, 3 warnings in
+104.90s`; Ruff, Pyright, format check, and `git diff --check` passed. Final
+approval remains pending; commit evidence follows.
+
 ## Historical Execution Evidence
 
 Unless a section explicitly says it is authoritative current state, every

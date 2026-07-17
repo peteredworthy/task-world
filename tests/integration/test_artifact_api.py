@@ -18,6 +18,7 @@ from orchestrator.artifacts import (
     StoredArtifactRef,
 )
 from orchestrator.db import init_db
+from orchestrator.config.global_config import GlobalConfig, PathsConfig
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state import Run
@@ -374,3 +375,66 @@ async def test_deduplicated_publication_blocks_gc_until_real_event_append(
 
     assert await collecting == frozenset()
     assert await store.read(ref) == b"deduplicated durable output"
+
+
+@pytest.mark.asyncio
+async def test_removed_linked_worktree_keeps_api_and_gc_on_main_project_cas(tmp_path: Path) -> None:
+    repos = tmp_path / "repos"
+    repos.mkdir()
+    project = repos / "project-b"
+    project.mkdir()
+    _init_repo(project)
+    worktree = tmp_path / "worktrees" / "run"
+    worktree.parent.mkdir()
+    _git(["worktree", "add", "-b", "artifact-run", str(worktree)], cwd=project)
+    secret = "removed-worktree-secret"
+    app = create_app(
+        db_path=":memory:",
+        auth_disabled=False,
+        jwt_secret=secret,
+        global_config=GlobalConfig(paths=PathsConfig(repos_dir=str(repos))),
+        artifact_project_root=project,
+    )
+    await init_db(app.state.engine)
+    store = FilesystemArtifactStore(project / ".orchestrator" / "artifacts")
+    retained = await store.put(b"retained", media_type="text/plain")
+    orphan = await store.put(b"orphan", media_type="text/plain")
+    orphan_path = (
+        project
+        / ".orchestrator"
+        / "artifacts"
+        / "sha256"
+        / orphan.content_hash[7:9]
+        / orphan.content_hash[9:]
+    )
+    old = (datetime.now(UTC) - timedelta(days=2)).timestamp()
+    os.utime(orphan_path, (old, old))
+    async with app.state.session_factory() as session:
+        service = await app.state.service_factory(session)
+        for run_id in ("delete-me", "retain-me"):
+            await service.create_run(
+                Run(id=run_id, repo_name="project-b", worktree_path=str(worktree))
+            )
+        await session.commit()
+    await _seed_reference(app, "retain-me", retained)
+    _git(["worktree", "remove", "--force", str(worktree)], cwd=project)
+    client = AsyncClient(transport=ASGITransport(app=app), base_url="http://test")
+    try:
+        response = await client.get(
+            f"/api/runs/retain-me/artifacts/{retained.content_hash.removeprefix('sha256:')}",
+            headers={
+                "Authorization": f"Bearer {create_token(AuthConfig(auth_disabled=False, jwt_secret=secret))}"
+            },
+        )
+        assert response.status_code == 206
+        assert response.content == b"retained"
+        async with app.state.session_factory() as session:
+            service = await app.state.service_factory(session)
+            await service.delete_run("delete-me")
+            await session.commit()
+        assert await store.read(retained) == b"retained"
+        with pytest.raises(ArtifactNotFoundError):
+            await store.read(orphan)
+    finally:
+        await client.aclose()
+        await app.state.engine.dispose()
