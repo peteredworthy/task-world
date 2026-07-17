@@ -13,20 +13,21 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.deps import (
-    get_artifact_store,
+    get_artifact_store_resolver,
     get_graph_store,
+    get_run_repository,
     get_session_factory,
     get_workflow_service,
 )
 from orchestrator.artifacts import (
     ArtifactIntegrityError,
     ArtifactNotFoundError,
-    ArtifactStore,
+    ArtifactStoreResolver,
     StoredArtifactRef,
 )
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import RunStatus
-from orchestrator.db import GraphOutboxModel
+from orchestrator.db import GraphOutboxModel, RunRepository
 from orchestrator.graph import (
     Actor,
     ActorKind,
@@ -1572,14 +1573,16 @@ async def get_run_artifact(
     offset: int = Query(default=0, ge=0),
     limit: int = Query(default=65_536, ge=1, le=1_048_576),
     graph_store: GraphEventStore = Depends(get_graph_store),
-    artifact_store: ArtifactStore = Depends(get_artifact_store),
+    repo: RunRepository = Depends(get_run_repository),
+    artifact_stores: ArtifactStoreResolver = Depends(get_artifact_store_resolver),
 ) -> Response:
     """Return an authorized byte range only after complete-blob verification."""
+    run = await repo.get(run_id)
     ref = _artifact_reference_for_run(await graph_store.read_run(run_id), sha256_hex)
     if ref is None:
         raise HTTPException(status_code=404, detail="Artifact reference not found for run")
     try:
-        content = await artifact_store.read(ref)
+        content = await (await artifact_stores.for_run(run)).read(ref)
     except ArtifactNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Artifact blob not found") from exc
     except ArtifactIntegrityError as exc:

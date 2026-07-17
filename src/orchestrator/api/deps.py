@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.auth import AuthConfig
 from orchestrator.api.websocket import ConnectionManager
-from orchestrator.artifacts import ArtifactGarbageCollector, ArtifactStore
+from orchestrator.artifacts import ArtifactStoreResolver, ProjectArtifactGarbageCollector
 from orchestrator.config.enums import RoutineSource
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.db import (
@@ -50,13 +50,13 @@ def get_connection_manager(request: Request) -> ConnectionManager:
     return request.app.state.connection_manager  # type: ignore[no-any-return]
 
 
-def get_artifact_store(request: Request) -> ArtifactStore:
-    """Get the application-composed artifact store for verified blob reads."""
-    return request.app.state.artifact_store  # type: ignore[no-any-return]
+def get_artifact_store_resolver(request: Request) -> ArtifactStoreResolver:
+    """Get the run-scoped artifact store resolver owned by the composition root."""
+    return request.app.state.artifact_store_resolver  # type: ignore[no-any-return]
 
 
-def get_artifact_garbage_collector(request: Request) -> ArtifactGarbageCollector:
-    """Get the composition-root-owned collector for the main artifact CAS."""
+def get_artifact_garbage_collector(request: Request) -> ProjectArtifactGarbageCollector:
+    """Get the composition-root-owned project-scoped GC coordinator."""
     return request.app.state.artifact_gc  # type: ignore[no-any-return]
 
 
@@ -130,7 +130,9 @@ async def get_workflow_service(
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
     connection_manager: Annotated[ConnectionManager, Depends(get_connection_manager)],
     lock_manager: Annotated[Any, Depends(get_lock_manager)],
-    artifact_gc: Annotated[ArtifactGarbageCollector, Depends(get_artifact_garbage_collector)],
+    artifact_gc: Annotated[
+        ProjectArtifactGarbageCollector, Depends(get_artifact_garbage_collector)
+    ],
 ) -> WorkflowService:
     emitter = PersistentEventEmitter(store_v2)
 
@@ -287,6 +289,7 @@ def make_service_factory(
     signal_transport_override: SignalTransport | None = None,
     global_config: GlobalConfig | None = None,
     env_lifecycle: EnvFileLifecycle | None = None,
+    artifact_gc: ProjectArtifactGarbageCollector | None = None,
 ) -> Callable[[AsyncSession], Awaitable[WorkflowService]]:
     """Return a WorkflowService factory for background tasks.
 
@@ -343,6 +346,7 @@ def make_service_factory(
             global_config=global_config,
             env_lifecycle=env_lifecycle,
             event_store_v2=store_v2,
+            artifact_gc=artifact_gc,
         )
 
     return _create
@@ -382,6 +386,7 @@ def make_graph_runner(
     session_factory: async_sessionmaker[AsyncSession],
     service_factory: Callable[[AsyncSession], Awaitable[WorkflowService]],
     connection_manager: ConnectionManager | None = None,
+    artifact_stores: ArtifactStoreResolver | None = None,
 ) -> Callable[[str], Awaitable[None]]:
     """Return a graph run driver callback for ``SignalConsumer``."""
     from orchestrator.runners import OutputBatcher
@@ -438,6 +443,7 @@ def make_graph_runner(
             service_factory,
             on_agent_output=on_agent_output,
             on_agent_usage=on_agent_usage,
+            artifact_stores=artifact_stores,
         )
         try:
             await driver.run(run_id)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from collections.abc import Callable
@@ -65,6 +66,11 @@ class AppendFailingStore:
         self._store = store
         self._session_factory = session_factory
         self.refs: list[StoredArtifactRef] = []
+
+    @asynccontextmanager
+    async def publication(self):
+        async with self._store.publication():
+            yield
 
     async def put(
         self,

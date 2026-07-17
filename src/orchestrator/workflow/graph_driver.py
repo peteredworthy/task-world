@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.artifacts import FilesystemArtifactStore
+from orchestrator.artifacts import ArtifactRootResolver, ArtifactStoreResolver
 
 from orchestrator.config.enums import AgentRunnerType, RunStatus
 from datetime import UTC, datetime
@@ -340,6 +340,7 @@ class GraphRunDriver:
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
         on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
+        artifact_stores: ArtifactStoreResolver | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._create_service = create_service
@@ -350,6 +351,7 @@ class GraphRunDriver:
         self._sleep = sleep
         self._on_agent_output = on_agent_output
         self._on_agent_usage = on_agent_usage
+        self._artifact_stores = artifact_stores or ArtifactStoreResolver(ArtifactRootResolver())
 
     async def run(self, run_id: str) -> GraphRunOutcome:
         run = await self._get_run(run_id)
@@ -464,14 +466,12 @@ class GraphRunDriver:
 
         main_worktree = await asyncio.to_thread(resolve_main_worktree, Path(run.worktree_path))
         if main_worktree is None:
-            raise ValueError("cannot resolve main project root for graph artifact storage")
+            raise ValueError("cannot resolve main project root for graph run")
         runtime_kwargs: dict[str, Any] = {
             "worktree_path": Path(run.worktree_path),
             "runner_type": run.agent_runner_type,
             "runner_config": run.agent_runner_config,
-            "artifact_store": FilesystemArtifactStore(
-                main_worktree / ".orchestrator" / "artifacts"
-            ),
+            "artifact_store": await self._artifact_stores.for_run(run),
         }
         if self._on_agent_output is not None:
             runtime_kwargs["on_agent_output"] = self._on_agent_output

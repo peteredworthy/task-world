@@ -338,8 +338,9 @@ class GraphDispatchExecutor(SideEffectExecutor):
     async def _run_check(self, context: GraphDispatchContext) -> None:
         try:
             await self._acknowledge_start(context)
-            record = await _execute_check_command(context, self._artifact_store)
-            await self._submit_check_result(context, record)
+            async with self._artifact_store.publication():
+                record = await _execute_check_command(context, self._artifact_store)
+                await self._submit_check_result(context, record)
         except Exception as exc:
             await self._agent_died(context, str(exc))
 

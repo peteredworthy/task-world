@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import os
-from datetime import UTC, datetime
+import asyncio
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -9,10 +10,18 @@ from httpx import ASGITransport, AsyncClient
 
 from orchestrator.api.app import create_app
 from orchestrator.api.auth import AuthConfig, create_token
-from orchestrator.artifacts import FilesystemArtifactStore, StoredArtifactRef
+from orchestrator.artifacts import (
+    ArtifactGarbageCollector,
+    ArtifactNotFoundError,
+    ArtifactRootLock,
+    FilesystemArtifactStore,
+    StoredArtifactRef,
+)
 from orchestrator.db import init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
+from orchestrator.state import Run
+from orchestrator.state import RunNotFoundError
 from tests.integration.git_helpers import _git, _init_repo
 from tests.unit.graph_test_utils import canonical_event_payload
 
@@ -63,6 +72,17 @@ async def _seed_reference(app: object, run_id: str, ref: StoredArtifactRef) -> N
     )
     session_factory = app.state.session_factory  # type: ignore[union-attr]
     async with session_factory() as session:
+        service = await app.state.service_factory(session)  # type: ignore[union-attr]
+        try:
+            await service.get_run(run_id)
+        except RunNotFoundError:
+            await service.create_run(
+                Run(
+                    id=run_id,
+                    repo_name="artifact-api",
+                    worktree_path=str(app.state.artifact_test_worktree),  # type: ignore[union-attr]
+                )
+            )
         await GraphEventStore(session).append_events(run_id, 0, [event])
         await session.commit()
 
@@ -72,10 +92,22 @@ async def artifact_client(
     tmp_path: Path,
 ) -> tuple[AsyncClient, object, FilesystemArtifactStore, str]:
     auth_config = AuthConfig(auth_disabled=False, jwt_secret="artifact-api-secret")
-    app = create_app(db_path=":memory:", auth_disabled=False, jwt_secret=auth_config.jwt_secret)
+    project = tmp_path / "project"
+    project.mkdir()
+    _init_repo(project)
+    worktree = tmp_path / "worktrees" / "artifact-api"
+    worktree.parent.mkdir()
+    _git(["worktree", "add", "-b", "artifact-api", str(worktree)], cwd=project)
+    app = create_app(
+        db_path=":memory:",
+        auth_disabled=False,
+        jwt_secret=auth_config.jwt_secret,
+        artifact_project_root=project,
+    )
+    app.state.artifact_test_worktree = worktree
+    app.state.artifact_test_project = project
     await init_db(app.state.engine)
-    store = FilesystemArtifactStore(tmp_path / "artifacts")
-    app.state.artifact_store = store
+    store = FilesystemArtifactStore(project / ".orchestrator" / "artifacts")
     transport = ASGITransport(app=app)  # type: ignore[arg-type]
     client = AsyncClient(transport=transport, base_url="http://test")
     try:
@@ -149,7 +181,7 @@ async def test_artifact_endpoint_reports_missing_and_integrity_failures(
     await _seed_reference(app, "run-corrupt", corrupt_ref)
     missing_digest = missing_ref.content_hash.removeprefix("sha256:")
     corrupt_digest = corrupt_ref.content_hash.removeprefix("sha256:")
-    artifact_root = tmp_path / "artifacts" / "sha256"
+    artifact_root = app.state.artifact_test_project / ".orchestrator" / "artifacts" / "sha256"  # type: ignore[union-attr]
     (artifact_root / missing_digest[:2] / missing_digest[2:]).unlink()
     (artifact_root / corrupt_digest[:2] / corrupt_digest[2:]).write_bytes(b"tampered")
     headers = {"Authorization": f"Bearer {token}"}
@@ -247,3 +279,98 @@ async def test_app_resolves_artifacts_at_main_project_root_from_linked_worktree_
         assert not (linked_worktree / ".orchestrator" / "artifacts").exists()
     finally:
         await app.state.engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_multi_project_artifact_read_and_delete_gc_use_the_run_project_root(
+    tmp_path: Path,
+) -> None:
+    project_a = tmp_path / "project-a"
+    project_b = tmp_path / "project-b"
+    project_a.mkdir()
+    project_b.mkdir()
+    _init_repo(project_a)
+    _init_repo(project_b)
+    run_worktree = tmp_path / "worktrees" / "project-b-run"
+    run_worktree.parent.mkdir()
+    _git(["worktree", "add", "-b", "project-b-run", str(run_worktree)], cwd=project_b)
+    auth_config = AuthConfig(auth_disabled=False, jwt_secret="multi-project-artifact-secret")
+    app = create_app(
+        db_path=":memory:",
+        auth_disabled=False,
+        jwt_secret=auth_config.jwt_secret,
+        artifact_project_root=project_a,
+    )
+    await init_db(app.state.engine)
+    project_b_store = FilesystemArtifactStore(project_b / ".orchestrator" / "artifacts")
+    project_a_store = FilesystemArtifactStore(project_a / ".orchestrator" / "artifacts")
+    ref = await project_b_store.put(b"project-b artifact", media_type="text/plain")
+    project_a_orphan = await project_a_store.put(b"project-a orphan", media_type="text/plain")
+    project_b_orphan = await project_b_store.put(b"project-b orphan", media_type="text/plain")
+    now = datetime.now(UTC)
+    for root, orphan in ((project_a, project_a_orphan), (project_b, project_b_orphan)):
+        blob = (
+            root
+            / ".orchestrator"
+            / "artifacts"
+            / "sha256"
+            / orphan.content_hash[7:9]
+            / orphan.content_hash[9:]
+        )
+        old = (now - timedelta(days=2)).timestamp()
+        os.utime(blob, (old, old))
+    async with app.state.session_factory() as session:
+        service = await app.state.service_factory(session)
+        await service.create_run(
+            Run(id="project-b-run", repo_name="project-b", worktree_path=str(run_worktree))
+        )
+        await session.commit()
+    await _seed_reference(app, "project-b-run", ref)
+    transport = ASGITransport(app=app)
+    client = AsyncClient(transport=transport, base_url="http://test")
+    try:
+        response = await client.get(
+            f"/api/runs/project-b-run/artifacts/{ref.content_hash.removeprefix('sha256:')}?offset=8&limit=1",
+            headers={"Authorization": f"Bearer {create_token(auth_config)}"},
+        )
+        assert response.status_code == 206
+        assert response.content == b"b"
+        async with app.state.session_factory() as session:
+            service = await app.state.service_factory(session)
+            await service.delete_run("project-b-run")
+            await session.commit()
+        assert await project_a_store.read(project_a_orphan) == b"project-a orphan"
+        with pytest.raises(ArtifactNotFoundError):
+            await project_b_store.read(project_b_orphan)
+    finally:
+        await client.aclose()
+        await app.state.engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_deduplicated_publication_blocks_gc_until_real_event_append(
+    artifact_client: tuple[AsyncClient, object, FilesystemArtifactStore, str],
+) -> None:
+    _, app, store, _ = artifact_client
+    root = app.state.artifact_test_project / ".orchestrator" / "artifacts"  # type: ignore[union-attr]
+    ref = await store.put(b"deduplicated durable output", media_type="text/plain")
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    blob = root / "sha256" / ref.content_hash[7:9] / ref.content_hash[9:]
+    old = (now - timedelta(days=2)).timestamp()
+    os.utime(blob, (old, old))
+
+    async def load_events() -> list[EventEnvelope]:
+        async with app.state.session_factory() as session:  # type: ignore[union-attr]
+            return await GraphEventStore(session).read_run("publication-run")
+
+    async with ArtifactRootLock(root).publish():
+        assert await store.put(b"deduplicated durable output", media_type="text/plain") == ref
+        collecting = asyncio.create_task(
+            ArtifactGarbageCollector(root, grace_seconds=0).collect_after_mark(load_events, now)
+        )
+        await asyncio.sleep(0)
+        assert not collecting.done()
+        await _seed_reference(app, "publication-run", ref)
+
+    assert await collecting == frozenset()
+    assert await store.read(ref) == b"deduplicated durable output"

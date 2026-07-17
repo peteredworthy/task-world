@@ -22,7 +22,12 @@ from orchestrator.api.auth import (
 )
 from orchestrator.api.errors import register_error_handlers
 from orchestrator.api.websocket import BatchingConnectionManager, ConnectionManager
-from orchestrator.artifacts import ArtifactGarbageCollector, FilesystemArtifactStore
+from orchestrator.artifacts import (
+    ArtifactRootResolver,
+    ArtifactStoreResolver,
+    FilesystemArtifactStore,
+    ProjectArtifactGarbageCollector,
+)
 from orchestrator.config.enums import RoutineSource, RunStatus
 from orchestrator.config.global_config import GlobalConfig, load_global_config
 from orchestrator.db import create_engine, create_session_factory, init_db
@@ -353,6 +358,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         signal_transport_override=getattr(app.state, "signal_transport", None),
         global_config=app.state.global_config,
         env_lifecycle=getattr(app.state, "env_lifecycle", None),
+        artifact_gc=app.state.artifact_gc,
     )
     app.state.service_factory = service_factory
 
@@ -509,6 +515,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             session_factory,
             service_factory,
             connection_manager=app.state.connection_manager,
+            artifact_stores=app.state.artifact_store_resolver,
         ),
         workflow_preparer=make_workflow_preparer(getattr(app.state, "runner_executor", None)),
     )
@@ -670,7 +677,9 @@ def create_app(
     if project_root is None:
         raise ValueError("artifact_project_root is required outside a git worktree")
     app.state.artifact_store = FilesystemArtifactStore(project_root / ".orchestrator" / "artifacts")
-    app.state.artifact_gc = ArtifactGarbageCollector(project_root / ".orchestrator" / "artifacts")
+    app.state.artifact_root_resolver = ArtifactRootResolver(global_cfg.paths.get_repos_path())
+    app.state.artifact_store_resolver = ArtifactStoreResolver(app.state.artifact_root_resolver)
+    app.state.artifact_gc = ProjectArtifactGarbageCollector(app.state.artifact_root_resolver)
 
     # WebSocket connection manager (with optional batching)
     if global_cfg.websocket.batching_enabled:
@@ -738,6 +747,7 @@ def create_app(
         lock_manager=app.state.lock_manager,
         global_config=global_cfg,
         env_lifecycle=app.state.env_lifecycle,
+        artifact_gc=app.state.artifact_gc,
     )
 
     # Agent executor for spawning managed agents (created here so it's available

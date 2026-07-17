@@ -5,7 +5,7 @@ from typing import Any
 from orchestrator.api.app import create_app
 from orchestrator.api.deps import (
     get_artifact_garbage_collector,
-    get_artifact_store,
+    get_artifact_store_resolver,
     get_codex_models_fn,
     get_connection_manager,
     get_runner_executor,
@@ -90,7 +90,7 @@ __all__ = [
     "build_graph_regions_response",
     "build_graph_topology_response",
     "get_codex_models_fn",
-    "get_artifact_store",
+    "get_artifact_store_resolver",
     "get_artifact_garbage_collector",
     "get_agent_runner_display_name",
     "get_agent_runner_icon",

@@ -1,3 +1,4 @@
+import asyncio
 import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 from orchestrator.artifacts import (
     ArtifactGarbageCollectionError,
+    ArtifactRootLock,
     FilesystemArtifactStore,
     StoredArtifactRef,
 )
@@ -201,3 +203,54 @@ async def test_collector_rejects_unknown_and_malformed_graph_events_before_sweep
         with pytest.raises(ArtifactGarbageCollectionError):
             await collector.collect([event], datetime(2026, 1, 2, tzinfo=UTC))
         assert blob.exists()
+
+
+@pytest.mark.asyncio
+async def test_sweep_waits_for_deduplicated_publication_before_deleting_old_blob(
+    tmp_path: Path,
+) -> None:
+    """The real filesystem lock spans put through durable event publication."""
+    root = tmp_path / "artifacts"
+    store = FilesystemArtifactStore(root)
+    ref = await store.put(b"deduplicated output", media_type="text/plain")
+    blob = root / "sha256" / ref.content_hash[7:9] / ref.content_hash[9:]
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    old_timestamp = (now - timedelta(days=2)).timestamp()
+    os.utime(blob, (old_timestamp, old_timestamp))
+    published: list[str] = []
+    lock = ArtifactRootLock(root)
+
+    async with lock.publish():
+        assert await store.put(b"deduplicated output", media_type="text/plain") == ref
+        sweep = asyncio.create_task(
+            sweep_artifacts(root, now, frozenset({ref.content_hash}), grace_seconds=0)
+        )
+        await asyncio.sleep(0)
+        assert not sweep.done()
+        published.append(ref.content_hash)
+
+    assert await sweep == frozenset()
+    assert published == [ref.content_hash]
+    assert await store.read(ref) == b"deduplicated output"
+
+
+@pytest.mark.asyncio
+async def test_failed_publication_releases_lock_and_orphan_is_eligible_for_sweep(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "artifacts"
+    store = FilesystemArtifactStore(root)
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    lock = ArtifactRootLock(root)
+
+    with pytest.raises(RuntimeError, match="append failed"):
+        async with lock.publish():
+            ref = await store.put(b"orphan after append failure", media_type="text/plain")
+            blob = root / "sha256" / ref.content_hash[7:9] / ref.content_hash[9:]
+            old_timestamp = (now - timedelta(days=2)).timestamp()
+            os.utime(blob, (old_timestamp, old_timestamp))
+            raise RuntimeError("append failed")
+
+    assert await sweep_artifacts(root, now, frozenset(), grace_seconds=0) == frozenset(
+        {ref.content_hash}
+    )

@@ -97,6 +97,8 @@ task-world/
 │   │   ├── models.py          # Stored artifact reference model export
 │   │   ├── store.py           # ArtifactStore protocol and filesystem CAS
 │   │   ├── gc.py              # Typed-reference mark-and-sweep collector
+│   │   ├── coordination.py    # Cross-process publish/sweep root locking
+│   │   ├── resolution.py      # Run-scoped main-CAS and project-GC composition
 │   │   └── errors.py          # Artifact storage errors
 │   │
 │   ├── db/                    # Persistence: ORM, repositories, event store

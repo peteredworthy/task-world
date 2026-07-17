@@ -22,7 +22,7 @@ from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import AutoVerifyConfig, RoutineConfig, StepConfig, TaskConfig
 from orchestrator.artifacts import (
     ArtifactGarbageCollectionConfigurationError,
-    ArtifactGarbageCollector,
+    ArtifactGarbageCollectionCoordinator,
 )
 from orchestrator.db import (
     AttemptModel,
@@ -320,7 +320,7 @@ class WorkflowService:
         signal_transport: SignalTransport | None = None,
         fan_out_policy: FanOutDelegationPolicy | None = None,
         event_store_v2: SqliteEventStore | None = None,
-        artifact_gc: ArtifactGarbageCollector | None = None,
+        artifact_gc: ArtifactGarbageCollectionCoordinator | None = None,
     ) -> None:
         self._session = session
         self._repo = repo or RunRepository(session)
@@ -3746,7 +3746,7 @@ class WorkflowService:
             raise ArtifactGarbageCollectionConfigurationError(
                 "Artifact garbage collection must be configured before deleting a run"
             )
-        await self._repo.get(run_id)
+        deleted_run = await self._repo.get(run_id)
         events = await handle_delete_run(
             DeleteRunCommand(run_id=run_id),
             self._store_v2,
@@ -3754,12 +3754,14 @@ class WorkflowService:
         )
         self._event_emitter.notify_persisted(events[0])
         await commit_with_event_outbox(self._session)
-        surviving_run_ids = list((await self._session.scalars(select(RunModel.id))).all())
+        surviving_runs = await self._repo.list_all()
         graph_store = GraphEventStore(self._session)
-        surviving_events: list[Any] = []
-        for surviving_run_id in surviving_run_ids:
-            surviving_events.extend(await graph_store.read_run(surviving_run_id))
-        await self._artifact_gc.collect(surviving_events, self._clock.now())
+        await self._artifact_gc.collect_after_delete(
+            deleted_run,
+            surviving_runs,
+            graph_store,
+            self._clock.now(),
+        )
 
     async def update_checklist_item(
         self,

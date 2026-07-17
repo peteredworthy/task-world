@@ -6,15 +6,18 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Protocol
+from typing import AsyncContextManager, Protocol
 
 from orchestrator.artifacts.errors import ArtifactIntegrityError, ArtifactNotFoundError
+from orchestrator.artifacts.coordination import ArtifactRootLock
 from orchestrator.artifacts.models import StoredArtifactRef
 
 _CONTENT_HASH_PATTERN = re.compile(r"^sha256:([0-9a-f]{64})$")
 
 
 class ArtifactStore(Protocol):
+    def publication(self) -> AsyncContextManager[None]: ...
+
     async def put(
         self, content: bytes, *, media_type: str, encoding: str | None = None
     ) -> StoredArtifactRef: ...
@@ -29,6 +32,10 @@ class FilesystemArtifactStore:
 
     def __init__(self, root: Path) -> None:
         self._root = root
+        self._lock = ArtifactRootLock(root)
+
+    def publication(self) -> AsyncContextManager[None]:
+        return self._lock.publish()
 
     async def put(
         self, content: bytes, *, media_type: str, encoding: str | None = None

@@ -1,295 +1,70 @@
 # Final Whole-Branch Review Fix Report
 
-## Status
-
-DONE
-
-Implementation commit: `e97c7a177` (`Harden typed payload contracts`).
-
-W5 remains closed. No W5.5 artifact persistence, hydration, garbage collection,
-or truncation-recovery work was added.
-
-## Finding Evidence
-
-### 1. Canonical Event Serialization
-
-- Removed `_RAW_EVENT_PAYLOAD_TYPES` and its original-input return branch.
-- Every modeled event now returns `model_dump(mode="json")`, with explicit
-  sparse or `exclude_none` policies only for documented wire shapes.
-- Made `EdgeProjection.required` a strict boolean.
-- Added producer/serializer/reducer coverage for canonical container conversion,
-  strict semantic boolean rejection, and lifecycle semantic parity.
-
-RED: canonical cleanup serialization retained a tuple, and edge `required="false"`
-was coerced. GREEN: `tests/unit/test_final_review_contracts.py` passes.
-
-### 2. Required Event Contracts
-
-- Required stable producer/reducer fields for run lifecycle, command rejection,
-  callback variants, runtime retry, heartbeat, agent death, dead input, appeal,
-  decision, and node lifecycle payloads.
-- Added callback `execution_id` at the producer boundary.
-- Kept genuine variants narrow: callback accepted/rejected/duplicate models own
-  their required reason/result fields; retry timing and optional lineage remain
-  optional only where producers vary.
-- Retained required lifecycle and decision identities in compact rows and taught
-  callback reduction to distinguish documented compact rows from full events.
-- Canonicalized sparse Python/YAML fixtures through the existing canonical test
-  payload builder or explicit payload fields.
-
-RED: 13 missing-critical-field cases accepted incomplete payloads. GREEN: the
-focused event/producer/corpus/compact/command/API batch passed `580` tests before
-the final two assertion-only fixture updates; the definitive full suite passed.
-
-### 3. Command Identity Constraints
-
-- Added shared strict `CommandIdentifier` (`min_length=1`, no whitespace,
-  strict string input).
-- Applied it to command context and command record/node/lease/execution,
-  idempotency, requirement, support, cleanup, patch, snapshot, and evaluation
-  identities, including schedule lease-map keys and values.
-- Strengthened API decision identifiers and nonempty decider strings.
-- Added a registry-complete 23-command matrix that rejects empty and
-  whitespace-only identity values wherever a command owns an identity field.
-
-RED: blank identities validated. GREEN: the matrix and all command/API tests
-pass.
-
-### 4. Redacted Validation Errors
-
-- Replaced direct `ValidationError` interpolation with bounded details from
-  `errors(include_input=False)`.
-- Retains only static `payload`, error type, and fixed message; caps errors at 8
-  and the reason at 1,000 characters.
-- Added a secret-like unknown-field regression proving the value is absent while
-  `unexpected_secret` and `extra_forbidden` remain visible.
-
-RED: `sk-super-secret-value` appeared in `command_rejected.reason`. GREEN: the
-redaction regression passes.
-
-### 5. Stored Artifact Consistency
-
-- Added an after-validator requiring the SHA-256 digest in `storage_uri` to equal
-  the `content_hash` digest.
-- Added mismatch rejection coverage.
-
-RED: mismatched valid-looking digests were accepted. GREEN: mismatch raises a
-`ValidationError` naming the digest invariant.
-
-### 6. Documentation And Plan
-
-- Updated the closed W5 specification, event inventory, projection-map
-  inventory, progress ledger, residual plan, and W5.5 artifact plan.
-- Recorded canonical dumping, required event cores, strict identifiers,
-  redacted errors, digest consistency, and generated retention counts
-  `105/144/160/92`.
-- Explicitly states that the correction does not reopen W5 or implement W5.5.
-
-### 7. Tests And Gates
-
-RED command:
-
-```text
-uv run pytest tests/unit/test_final_review_contracts.py -q
-# 18 failed, 1 passed
-```
-
-Focused GREEN:
-
-```text
-uv run pytest tests/unit/test_final_review_contracts.py -q
-# 19 passed
-
-uv run pytest tests/unit/*event_payloads.py tests/unit/test_final_review_contracts.py \
-  tests/unit/test_graph_event_registry.py tests/unit/test_fixture_corpus.py \
-  tests/unit/test_graph_payload_field_allowlists.py tests/unit/test_graph_projections.py \
-  tests/unit/test_graph_commands.py tests/unit/test_*command_payloads.py \
-  tests/integration/test_graph_api.py tests/integration/test_graph_decisions_api.py \
-  tests/integration/test_graph_event_store.py tests/integration/test_graph_read_models.py -q
-# 580 passed before two final assertion-only fixture updates
-```
-
-Definitive verification:
-
-```text
-uv run pytest -q
-# 4775 passed, 3 skipped, 3 warnings in 138.22s
-
-uv run ruff check .
-# All checks passed
-
-uv run ruff format --check .
-# 701 files already formatted
-
-uv run pyright
-# 0 errors, 0 warnings, 0 informations
-
-git diff --check
-# passed
-
-uv run pre-commit run --all-files
-# all hooks passed: Ruff, format, secrets, Pyright, pytest, module imports,
-# signal routing, enum drift, UI lint, UI typecheck
-```
-
-Compatibility searches found no `_RAW_EVENT_PAYLOAD_TYPES`, direct invalid
-command `ValidationError` interpolation, or stale `101/141/159/84` final counts.
-
-## Self-Review
-
-- Reviewed the complete production diff and fixture migration after full-suite
-  GREEN.
-- Confirmed current producers emit every newly required field.
-- Confirmed API subclasses preserve or strengthen domain identity constraints.
-- Confirmed the only compact callback exception is explicit: projection, light,
-  and node-detail rows omit callback bodies/idempotency state, while full and
-  summary-rebuild events retain the canonical contract.
-- Confirmed no mocks, suppressions, database deletion, compatibility adapters,
-  or W5.5 implementation were introduced.
-
-## Concerns
-
-No blocking concerns. The three full-suite warnings are the existing Python 3.12
-`aiosqlite` datetime-adapter deprecation warnings.
-
-## Last Fix Wave
-
-Status: **DONE**.
-
-Source implementation commit: `29c5264d9` (`Redact durable graph rejection
-reasons`). The documentation commit is the commit containing this appended
-closeout and intentionally does not self-reference its own hash.
-
-Changes:
-
-- Added graph-internal `_error_rendering.safe_exception_reason` and routed all
-  current graph `except ... as exc` durable rejection paths through it.
-- Pydantic errors use `errors(include_input=False)`, at most 8 entries and 1,000
-  characters, and retain only static `payload`, safe type, and fixed messages. This
-  additionally avoids Pydantic union messages that embed rejected discriminator
-  values even when `include_input=False` is used.
-- Arbitrary `TypeError`/`ValueError` patch, macro, selector, request-record,
-  seed, decision, and record paths emit fixed safe codes/messages.
-- `SubmitCallbackCommand.payload_hash` now uses strict nonblank
-  `CommandIdentifier`; `RecordDecisionCommand.decider` accepts `Actor` or strict
-  nonblank `ActorLabel`.
-- Added secret-bearing malformed nested callback-record and patch-op tests. Both
-  prove the secret is absent while safe static context/code/type remain.
-
-RED evidence:
-
-```text
-uv run pytest tests/unit/test_final_review_contracts.py \
-  tests/unit/test_callback_patch_command_payloads.py \
-  tests/unit/test_graph_commands.py -q
-# 5 failed, 206 passed
-# Failures: two blank payload hashes, identity matrix, callback secret leak,
-# patch secret leak.
-```
-
-GREEN evidence:
-
-```text
-uv run pytest tests/unit/test_graph_gatekeeper.py tests/unit/test_graph_macros.py \
-  tests/unit/test_graph_commands.py tests/unit/test_final_review_contracts.py \
-  tests/unit/test_callback_patch_command_payloads.py \
-  tests/integration/test_graph_api.py tests/integration/test_graph_decisions_api.py \
-  tests/integration/test_graph_fr07_acceptance.py -q
-# 305 passed in 5.01s
-
-uv run pytest -q
-# 4779 passed, 3 skipped, 3 warnings in 131.02s
-
-uv run ruff check .
-# All checks passed
-
-uv run ruff format --check .
-# 702 files already formatted
-
-uv run pyright
-# 0 errors, 0 warnings, 0 informations
-
-git diff --check
-# passed
-```
-
-Source commit hooks passed Ruff, format, secret detection, Pyright, pytest,
-module imports, signal routing, UI lint, and UI typecheck; enum drift skipped
-because no relevant files changed.
-
-Compatibility searches:
-
-```text
-rg '\{exc[!}:]|str\(exc\)|exc\.errors\(\)' src/orchestrator/graph
-# no matches
-
-rg 'reason["'"']?\s*[:=].*(\{exc\}|str\(exc\))|f["'"'][^"'"']*\{exc\}' \
-  src/orchestrator/graph
-# no matches
-
-rg 'payload_hash:\s*str|decider:\s*Actor\s*\|\s*str|_safe_validation_reason' \
-  src/orchestrator/graph
-# no matches
-```
-
-Generated retention remains `105/144/160/92`. No mocks, suppressions, database
-changes, hook bypasses, compatibility adapters, or W5.5 implementation were
-introduced. The only concerns are the three existing Python 3.12 `aiosqlite`
-datetime-adapter deprecation warnings.
-
-## Final Static-Location Security Correction
-
-Status: **DONE**.
-
-Source/tests commit: `b4da6182b` (`Remove validation locations from durable
-reasons`). The documentation commit is the commit containing this update.
-
-- Removed all use of arbitrary `ValidationError.loc` components from durable
-  rendering. Every validation detail now uses literal `payload`, a safe error
-  type, and a fixed message under caller-supplied static context/code.
-- Made `PatchOp` reject unknown operation fields while explicitly retaining the
-  existing v1 operation field set.
-- Added regressions with secret-like top-level command field names, nested
-  callback-record field names, and patch-operation field names. Every emitted
-  rejection omits both key and value while retaining `extra_forbidden` and its
-  static rejection code.
-
-RED:
-
-```text
-uv run pytest tests/unit/test_final_review_contracts.py \
-  tests/unit/test_graph_commands.py -q -k 'redact or redacts or redaction'
-# 3 failed, 2 passed
-```
-
-GREEN:
-
-```text
-uv run pytest tests/unit/test_final_review_contracts.py \
-  tests/unit/test_callback_patch_command_payloads.py \
-  tests/unit/test_graph_commands.py tests/unit/test_graph_gatekeeper.py \
-  tests/unit/test_graph_macros.py tests/integration/test_graph_api.py \
-  tests/integration/test_graph_decisions_api.py \
-  tests/integration/test_graph_fr07_acceptance.py -q
-# 307 passed in 5.87s
-
-uv run pytest tests/unit/test_graph_planner_session.py \
-  tests/integration/test_graph_parent_child_flow.py -q
-# 7 passed in 4.94s
-
-uv run ruff check .
-# All checks passed
-
-uv run ruff format --check .
-# 702 files already formatted
-
-uv run pyright
-# 0 errors, 0 warnings, 0 informations
-
-git diff --check
-# passed
-```
-
-The source commit hooks passed Ruff, format, secret detection, Pyright, full
-pytest, module imports, signal routing, UI lint, and UI typecheck. No blocking
-concerns remain; enum drift skipped because no relevant files changed.
+## Scope and design
+
+The review findings were corrected without changing reducers, projections, or
+command handlers. `ArtifactRootResolver` maps a persisted run worktree to its
+linked main checkout's `.orchestrator/artifacts` CAS. The resolver is composed
+into graph dispatch, authenticated artifact reads, deletion GC, and both request
+and factory-created `WorkflowService` paths. `ProjectArtifactGarbageCollector`
+loads and marks only surviving runs with the same resolved root before sweeping.
+
+`ArtifactRootLock` uses a root-identified advisory filesystem `flock`, with no
+process-global state. Check dispatch holds it across deduplicated `put()` and the
+durable check-result callback append. GC acquires it before loading events and
+until sweep completes. A completed append is included in marking; a failed append
+releases the lock and leaves the blob unmarked for normal grace-period collection.
+
+## RED evidence
+
+1. `uv run pytest tests/unit/test_artifact_gc.py -q`
+   - Result: collection error: `ImportError: cannot import name 'ArtifactRootLock'`.
+2. `uv run pytest tests/integration/test_artifact_api.py::test_multi_project_artifact_read_and_delete_gc_use_the_run_project_root -q`
+   - Result: failed `assert 404 == 206`; the server-composed project-A store did
+     not contain the project-B run reference.
+
+## GREEN evidence
+
+1. `uv run pytest tests/unit/test_artifact_gc.py tests/integration/test_artifact_api.py tests/integration/test_check_output_artifacts.py tests/integration/test_workflow_service.py -q`
+   - Result: `61 passed in 6.00s`.
+2. Targeted type check: `uv run pyright src/orchestrator/artifacts src/orchestrator/api/deps.py src/orchestrator/api/routers/graph.py src/orchestrator/workflow/service.py src/orchestrator/workflow/graph_driver.py`
+   - Result: `0 errors, 0 warnings, 0 informations`.
+
+## Concurrency ordering proof
+
+`test_sweep_waits_for_deduplicated_publication_before_deleting_old_blob` creates
+an old valid CAS blob, enters the real root lock, calls deduplicating `put()`, and
+starts a real sweep. The sweep task is incomplete while publication is held. The
+test records the reference as published, releases the lock, confirms the sweep
+retains it, and reads the final reference. The append-failure test raises inside
+the real publication context, then proves a grace-zero sweep deletes the released
+orphan.
+
+## Multi-project and factory evidence
+
+`test_multi_project_artifact_read_and_delete_gc_use_the_run_project_root` creates
+two real git repositories and a linked project-B worktree while the server is
+composed with project A. It seeds the canonical reference in project B, performs
+an authenticated range read through the API, then deletes through
+`app.state.service_factory`. The range returns project-B bytes; project-B's old
+orphan is swept and project-A's old orphan remains readable.
+
+## Files
+
+- `src/orchestrator/artifacts/{coordination,resolution,__init__,gc,store}.py`
+- `src/orchestrator/api/{app,deps}.py` and `api/routers/graph.py`
+- `src/orchestrator/workflow/{graph_driver,service}.py`
+- `tests/unit/test_artifact_gc.py`
+- `tests/integration/{test_artifact_api,test_check_output_artifacts}.py`
+- `docs/ARCHITECTURE.md` and `docs/dynamic-graph/w5-progress-ledger.md`
+
+## Self-review and concerns
+
+The publication lock serializes same-root output publication and GC; unrelated
+project roots use different lock files. The lock file uses the nearest existing
+ancestor so inline-only output does not materialize an artifact directory. Full
+repository verification completed: graph/artifact selection `1021 passed in
+58.46s`; full suite `4819 passed, 3 skipped, 3 warnings in 103.77s`; Ruff,
+Pyright, format check, and `git diff --check` passed. The warnings are existing
+Python 3.12 `aiosqlite` datetime-adapter deprecations. Final approval is not
+claimed.

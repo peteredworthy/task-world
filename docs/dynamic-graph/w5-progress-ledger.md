@@ -37,6 +37,33 @@ Generated retention is now 105/144/160/92 after retaining newly required reducer
 identities. Exact RED/GREEN and gate evidence is recorded in
 `.superpowers/sdd/final-review-fix-report.md`.
 
+## Final Whole-Branch Review Fix
+
+Status: implemented and verified locally; **final approval is not yet claimed**.
+
+- Design: `ArtifactRootResolver` resolves each run's linked worktree to its
+  owning main checkout. `ArtifactStoreResolver` serves authenticated range reads,
+  graph dispatch uses that same resolver, and `ProjectArtifactGarbageCollector`
+  marks only surviving runs that resolve to the deleted run's root. Request,
+  lifespan/background/MCP factory, and graph runner composition inject the same
+  resolver/coordinator.
+- Publication safety: `ArtifactRootLock` is an advisory filesystem `flock` held
+  from check-output externalization through durable callback append. GC acquires
+  the same lock before loading retained events; failed append releases it and
+  leaves a grace-eligible orphan.
+- RED evidence:
+  - `uv run pytest tests/unit/test_artifact_gc.py -q` — collection failed with
+    `ImportError: cannot import name 'ArtifactRootLock'`.
+  - `uv run pytest tests/integration/test_artifact_api.py::test_multi_project_artifact_read_and_delete_gc_use_the_run_project_root -q`
+    — failed `assert 404 == 206`, proving the server-rooted CAS was used instead
+    of the project-B run CAS.
+- GREEN evidence:
+  - `uv run pytest tests/unit/test_artifact_gc.py tests/integration/test_artifact_api.py tests/integration/test_check_output_artifacts.py tests/integration/test_workflow_service.py -q`
+    — `61 passed`.
+- Commits: pending final review-fix commit.
+- Remaining status: complete local implementation and verification only; no final
+  approval statement.
+
 ## Historical Execution Evidence
 
 Unless a section explicitly says it is authoritative current state, every

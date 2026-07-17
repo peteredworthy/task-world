@@ -5,14 +5,15 @@ import errno
 import os
 import re
 import stat
-from collections.abc import Iterable, Mapping
+from collections.abc import Awaitable, Callable, Iterable, Mapping
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Protocol, cast
 
 from pydantic import BaseModel
 
 from orchestrator.artifacts.models import StoredArtifactRef
+from orchestrator.artifacts.coordination import ArtifactRootLock
 from orchestrator.graph import EVENT_PAYLOAD_MODELS, EventEnvelope
 
 _DIGEST = re.compile(r"^[0-9a-f]{64}$")
@@ -26,6 +27,16 @@ class ArtifactGarbageCollectionConfigurationError(ArtifactGarbageCollectionError
     """Raised when deletion is requested without required GC coordination."""
 
 
+class ArtifactGarbageCollectionCoordinator(Protocol):
+    async def collect_after_delete(
+        self,
+        deleted_run: Any,
+        surviving_runs: list[Any],
+        graph_store: Any,
+        now: datetime,
+    ) -> frozenset[str]: ...
+
+
 class ArtifactGarbageCollector:
     """Coordinates typed marking with sweeping a single injected artifact root."""
 
@@ -36,14 +47,47 @@ class ArtifactGarbageCollector:
     async def collect(self, events: Iterable[Any], now: datetime) -> frozenset[str]:
         try:
             retained_hashes = collect_artifact_refs(events)
-            return await sweep_artifacts(
-                self._root,
-                now,
-                retained_hashes,
-                self._grace_seconds,
-            )
+            async with ArtifactRootLock(self._root).sweep():
+                return await self._sweep_retained(retained_hashes, now)
         except (OSError, ValueError) as exc:
             raise ArtifactGarbageCollectionError("Artifact garbage collection failed") from exc
+
+    async def collect_after_mark(
+        self,
+        load_events: Callable[[], Awaitable[Iterable[Any]]],
+        now: datetime,
+    ) -> frozenset[str]:
+        """Mark inside the root lock so publication cannot become a dangling ref."""
+        try:
+            async with ArtifactRootLock(self._root).sweep():
+                retained_hashes = collect_artifact_refs(await load_events())
+                return await self._sweep_retained(retained_hashes, now)
+        except (OSError, ValueError) as exc:
+            raise ArtifactGarbageCollectionError("Artifact garbage collection failed") from exc
+
+    async def _sweep_retained(
+        self, retained_hashes: frozenset[str], now: datetime
+    ) -> frozenset[str]:
+        return await asyncio.to_thread(
+            _sweep_sync, self._root, now, retained_hashes, self._grace_seconds
+        )
+
+    async def collect_after_delete(
+        self,
+        deleted_run: Any,
+        surviving_runs: list[Any],
+        graph_store: Any,
+        now: datetime,
+    ) -> frozenset[str]:
+        """Collect an explicitly configured single-project root."""
+
+        async def load_events() -> list[Any]:
+            events: list[Any] = []
+            for run in surviving_runs:
+                events.extend(await graph_store.read_run(run.id))
+            return events
+
+        return await self.collect_after_mark(load_events, now)
 
 
 def collect_artifact_refs(events: Iterable[Any]) -> frozenset[str]:
@@ -86,13 +130,10 @@ async def sweep_artifacts(
     grace_seconds: int = 86400,
 ) -> frozenset[str]:
     """Delete unmarked CAS blobs older than the exact grace period."""
-    return await asyncio.to_thread(
-        _sweep_sync,
-        root,
-        now,
-        retained_hashes,
-        grace_seconds,
-    )
+    if root.is_symlink() or (root.exists() and not root.is_dir()):
+        return frozenset()
+    async with ArtifactRootLock(root).sweep():
+        return await asyncio.to_thread(_sweep_sync, root, now, retained_hashes, grace_seconds)
 
 
 def _sweep_sync(
