@@ -294,3 +294,21 @@ async def test_lock_rejects_symlinked_metadata_directory_without_mutating_target
     assert marker.read_text() == "unchanged"
     assert outside.stat().st_mode & 0o777 == 0o755
     assert list(outside.iterdir()) == [marker]
+
+
+@pytest.mark.asyncio
+async def test_generic_lock_rejects_symlinked_parent_without_external_lock(tmp_path: Path) -> None:
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o755)
+    marker = outside / "marker"
+    marker.write_text("unchanged")
+    linked = tmp_path / "linked"
+    linked.symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="generic"):
+        async with ArtifactRootLock(linked / "artifacts").publish():
+            pass
+
+    assert marker.read_text() == "unchanged"
+    assert outside.stat().st_mode & 0o777 == 0o755
+    assert list(outside.iterdir()) == [marker]

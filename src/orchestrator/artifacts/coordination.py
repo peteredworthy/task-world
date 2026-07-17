@@ -33,9 +33,7 @@ class ArtifactRootLock:
 
     def _acquire(self) -> int:
         if self._root.parent.name != ".orchestrator":
-            parent_fd = os.open(
-                self._root.parent.resolve(), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-            )
+            parent_fd = _open_absolute_directory_no_follow(self._root.parent)
             try:
                 identifier = hashlib.sha256(str(self._root.resolve()).encode()).hexdigest()
                 fd = os.open(
@@ -92,3 +90,31 @@ class ArtifactRootLock:
             fcntl.flock(fd, fcntl.LOCK_UN)
         finally:
             os.close(fd)
+
+
+def _open_absolute_directory_no_follow(path: Path) -> int:
+    """Open every absolute directory component without resolving symlinks."""
+    absolute = path.absolute()
+    if absolute.parts[:2] == ("/", "tmp"):
+        try:
+            trusted_target = os.readlink("/tmp")
+        except OSError as exc:
+            raise ValueError("generic artifact lock parent is not a safe directory") from exc
+        if trusted_target != "private/tmp":
+            raise ValueError("generic artifact lock parent is not a safe directory")
+        absolute = Path("/private/tmp").joinpath(*absolute.parts[2:])
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for component in absolute.parts[1:]:
+            try:
+                next_fd = os.open(
+                    component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
+                )
+            except OSError as exc:
+                raise ValueError("generic artifact lock parent is not a safe directory") from exc
+            os.close(fd)
+            fd = next_fd
+        return fd
+    except BaseException:
+        os.close(fd)
+        raise

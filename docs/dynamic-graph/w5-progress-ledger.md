@@ -89,6 +89,15 @@ tombstone commit. Focused: `20 passed in 6.57s`; graph/artifact: `1025 passed in
 format check, and diff check passed. Commit evidence follows.
 Implementation commit: `22ab607ff Harden artifact GC failure and lock safety`.
 
+## Fourth Final Review Fix
+
+Status: implemented; final approval pending. Generic lock parents now traverse
+descriptor-relative with `O_NOFOLLOW`; the only macOS compatibility path accepts
+`/tmp` solely when its exact target is `private/tmp`. Focused: `12 passed in
+2.88s`; graph/artifact `1026 passed in 70.24s`; full `4824 passed, 3 skipped,
+3 warnings in 132.14s`; Ruff, Pyright, format, and diff checks passed. Commit
+evidence follows.
+
 ## Historical Execution Evidence
 
 Unless a section explicitly says it is authoritative current state, every

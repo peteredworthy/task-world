@@ -113,3 +113,13 @@ remains pending; commit evidence follows.
 
 Hook-verified implementation commit: `22ab607ff Harden artifact GC failure and
 lock safety`.
+
+## Fourth Final Review Fix
+
+Generic lock acquisition no longer resolves arbitrary parents. It traverses
+absolute directory components with descriptor-relative `O_NOFOLLOW`; the sole
+macOS compatibility exception accepts `/tmp` only when its exact link target is
+`private/tmp`. RED: malicious generic-parent test did not raise. GREEN focused:
+`12 passed in 2.88s`; graph/artifact `1026 passed in 70.24s`; full backend
+`4824 passed, 3 skipped, 3 warnings in 132.14s`; Ruff, Pyright, format check,
+and diff check passed. Final approval remains pending; commit evidence follows.
