@@ -1,6 +1,8 @@
 """Typed mark-and-sweep collection for filesystem artifact blobs."""
 
 import asyncio
+import errno
+import os
 import re
 import stat
 from collections.abc import Iterable, Mapping
@@ -102,37 +104,66 @@ def _sweep_sync(
     if grace_seconds < 0:
         raise ValueError("grace_seconds must be non-negative")
     cutoff = now.astimezone(UTC) - timedelta(seconds=grace_seconds)
-    digest_root = root / "sha256"
-    if not _is_regular_directory(digest_root):
+    root_fd = _open_directory(root)
+    if root_fd is None:
         return frozenset()
-    deleted: set[str] = set()
-    for prefix in digest_root.iterdir():
-        if not _is_regular_directory(prefix) or re.fullmatch(r"[0-9a-f]{2}", prefix.name) is None:
-            continue
-        for blob in prefix.iterdir():
-            digest = prefix.name + blob.name
-            if _DIGEST.fullmatch(digest) is None:
-                continue
-            try:
-                file_stat = blob.lstat()
-            except FileNotFoundError:
-                continue
-            if not stat.S_ISREG(file_stat.st_mode):
-                continue
-            content_hash = f"sha256:{digest}"
-            modified_at = datetime.fromtimestamp(file_stat.st_mtime, tz=UTC)
-            if content_hash in retained_hashes or modified_at >= cutoff:
-                continue
-            try:
-                blob.unlink()
-            except FileNotFoundError:
-                continue
-            deleted.add(content_hash)
-    return frozenset(deleted)
-
-
-def _is_regular_directory(path: Path) -> bool:
     try:
-        return stat.S_ISDIR(path.lstat().st_mode)
-    except FileNotFoundError:
-        return False
+        sha256_fd = _open_directory("sha256", parent_fd=root_fd)
+        if sha256_fd is None:
+            return frozenset()
+        try:
+            deleted: set[str] = set()
+            for prefix_name in os.listdir(sha256_fd):
+                if re.fullmatch(r"[0-9a-f]{2}", prefix_name) is None:
+                    continue
+                prefix_fd = _open_directory(prefix_name, parent_fd=sha256_fd)
+                if prefix_fd is None:
+                    continue
+                try:
+                    for blob_name in os.listdir(prefix_fd):
+                        digest = prefix_name + blob_name
+                        if _DIGEST.fullmatch(digest) is None:
+                            continue
+                        try:
+                            file_stat = os.stat(blob_name, dir_fd=prefix_fd, follow_symlinks=False)
+                        except FileNotFoundError:
+                            continue
+                        if not stat.S_ISREG(file_stat.st_mode):
+                            continue
+                        content_hash = f"sha256:{digest}"
+                        modified_at = datetime.fromtimestamp(file_stat.st_mtime, tz=UTC)
+                        if content_hash in retained_hashes or modified_at >= cutoff:
+                            continue
+                        try:
+                            os.unlink(blob_name, dir_fd=prefix_fd)
+                        except FileNotFoundError:
+                            continue
+                        deleted.add(content_hash)
+                finally:
+                    os.close(prefix_fd)
+            return frozenset(deleted)
+        finally:
+            os.close(sha256_fd)
+    finally:
+        os.close(root_fd)
+
+
+def _open_directory(path: str | Path, parent_fd: int | None = None) -> int | None:
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    try:
+        if parent_fd is None:
+            directory_fd = os.open(path, flags)
+        else:
+            directory_fd = os.open(path, flags, dir_fd=parent_fd)
+    except OSError as exc:
+        if exc.errno in {errno.ENOENT, errno.ENOTDIR, errno.ELOOP}:
+            return None
+        raise
+    try:
+        if not stat.S_ISDIR(os.fstat(directory_fd).st_mode):
+            os.close(directory_fd)
+            return None
+        return directory_fd
+    except BaseException:
+        os.close(directory_fd)
+        raise

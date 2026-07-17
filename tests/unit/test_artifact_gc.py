@@ -146,6 +146,25 @@ async def test_sweep_ignores_symlinked_sha256_root_and_prefix_directories(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_sweep_rejects_symlinked_or_non_directory_configured_root(tmp_path: Path) -> None:
+    now = datetime(2026, 1, 2, tzinfo=UTC)
+    outside = tmp_path / "outside"
+    blob = outside / "sha256" / "dd" / ("d" * 62)
+    blob.parent.mkdir(parents=True)
+    blob.write_bytes(b"outside")
+    old_timestamp = (now - timedelta(days=2)).timestamp()
+    os.utime(blob, (old_timestamp, old_timestamp))
+    symlink_root = tmp_path / "symlink-root"
+    symlink_root.symlink_to(outside, target_is_directory=True)
+    file_root = tmp_path / "file-root"
+    file_root.write_bytes(b"not a directory")
+
+    assert await sweep_artifacts(symlink_root, now, frozenset()) == frozenset()
+    assert await sweep_artifacts(file_root, now, frozenset()) == frozenset()
+    assert blob.exists()
+
+
+@pytest.mark.asyncio
 async def test_sweep_ignores_nonregular_entry_at_valid_cas_path(tmp_path: Path) -> None:
     root = tmp_path / "artifacts"
     candidate = root / "sha256" / "cc" / ("c" * 62)

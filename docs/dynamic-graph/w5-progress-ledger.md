@@ -1046,6 +1046,11 @@ remains unchecked for independent review.
   tombstone append; and a real retained run graph event preserves its old CAS
   artifact while another run is deleted. Focused workflow/API/GC verification
   passed 120 tests.
+- **Second review fix:** GC now opens the configured root, `sha256`, and prefix
+  directories with POSIX no-follow directory descriptors; listing, stat, and
+  unlink operations are descriptor-relative, so parent replacement cannot
+  redirect traversal. A real configured-root symlink/non-directory regression
+  preserves the outside CAS blob. Focused verification passed 121 tests.
 - **Static checks:** `uv run ruff check src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py`,
   `uv run pyright src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py src/orchestrator/workflow/service.py`,
   `uv run ruff format --check src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py`,
