@@ -39,7 +39,7 @@ identities. Exact RED/GREEN and gate evidence is recorded in
 
 ## Final Whole-Branch Review Fix
 
-Status: implemented and verified locally; **final approval is not yet claimed**.
+Status: **approved after four review-fix waves**.
 
 - Design: `ArtifactRootResolver` resolves each run's linked worktree to its
   owning main checkout. `ArtifactStoreResolver` serves authenticated range reads,
@@ -61,8 +61,8 @@ Status: implemented and verified locally; **final approval is not yet claimed**.
   - `uv run pytest tests/unit/test_artifact_gc.py tests/integration/test_artifact_api.py tests/integration/test_check_output_artifacts.py tests/integration/test_workflow_service.py -q`
     — `61 passed`.
 - Commits: `0770197e6 Fix artifact project-root lifecycle coordination`.
-- Remaining status: complete local implementation and verification only; no final
-  approval statement.
+- The first review-fix wave required three subsequent hardening waves recorded
+  below. Final approval evidence follows the fourth wave.
 
 ## Second Final Review Fix
 
@@ -98,6 +98,15 @@ descriptor-relative with `O_NOFOLLOW`; the only macOS compatibility path accepts
 3 warnings in 132.14s`; Ruff, Pyright, format, and diff checks passed. Commit
 evidence follows.
 Implementation commit: `ca61e0d8e Harden generic artifact lock traversal`.
+
+Final whole-branch approval:
+- Reviewed range: `67f628ae590f0fbbb6edae45c80344e1b67c5e63..b6de0e662`.
+- Result: no Critical, High, Medium, or Low findings;
+  `Final review: APPROVED`.
+- Final reviewed implementation gates: 1,026 graph/artifact tests passed;
+  4,824 backend tests passed with 3 skipped and 3 existing warnings; Ruff,
+  Pyright, formatting, and `git diff --check` passed.
+- Review-fix commits: `0770197e6`, `36129a3ae`, `22ab607ff`, and `ca61e0d8e`.
 
 ## Historical Execution Evidence
 
@@ -880,16 +889,12 @@ Final metrics recomputed from current source:
 | Total `payload.get(` diagnostic | n/a | 89 | n/a |
 | Graph `mode="before"` diagnostic | n/a | 0 | n/a |
 
-W5.5 deferral remains explicit and atomic. This closure does not claim durable
-stdout/stderr artifact persistence, reference-field cutover, bounded hydration,
-garbage collection, event-aware artifact SQL, or recovery of content beyond the
-current 20,000-character truncation. Those remain pending in
-`docs/superpowers/specs/2026-07-15-w5-artifact-output-design.md` and
-`docs/superpowers/plans/2026-07-15-w5-artifact-output.md`.
+The preceding W5 closeout deferred W5.5 atomically. That historical deferral is
+superseded by the completed W5.5 execution evidence below.
 
 ## W5.5
 
-Status: **all five implementation tasks complete; final whole-branch review pending**.
+Status: **complete; final whole-branch review approved**.
 
 Execution identity:
 - Seed branch: `main`.
