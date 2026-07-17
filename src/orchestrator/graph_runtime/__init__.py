@@ -38,7 +38,7 @@ from orchestrator.graph_runtime.horizon_templates import (
     instantiate_horizon_template,
 )
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, SideEffectExecutor
-from orchestrator.graph_runtime.prompts import hydrate_artifact_excerpt
+from orchestrator.graph_runtime.prompts import hydrate_artifact_excerpt, planner_evidence
 from orchestrator.graph_runtime.recovery import RecoveryReport, recover, reconcile_graph
 from orchestrator.graph_runtime.seeding import SeedRunResult, seed_run
 from orchestrator.graph_runtime.store import GraphEventStore
@@ -77,6 +77,7 @@ __all__ = [
     "hydrate_artifact_excerpt",
     "instantiate_horizon_template",
     "metadata_from_file_state_record",
+    "planner_evidence",
     "policy_with_pattern_library",
     "recover",
     "reconcile_graph",

@@ -991,3 +991,14 @@ unchecked):
   only under that checkout's `.orchestrator/artifacts`; EOF, past-EOF, and empty
   authorized blobs return verified `416` responses with `Content-Range: bytes
   */<length>`.
+
+Second-review evidence (awaiting independent review; durable queue checkbox
+remains unchecked):
+
+- RED: importing `planner_evidence` from the graph-runtime public API failed
+  during focused unit-test collection because the intended public symbol was not
+  exported.
+- GREEN: the focused suite passed after exporting that public prompt API. A new
+  real linked-worktree-CWD regression omits `artifact_project_root` and proves
+  implicit resolution stores the blob only at the main checkout's
+  `.orchestrator/artifacts` root.

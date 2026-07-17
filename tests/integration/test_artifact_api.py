@@ -218,3 +218,32 @@ async def test_app_composes_artifacts_at_injected_main_project_root_from_non_pro
         assert not (launch_directory / ".orchestrator" / "artifacts").exists()
     finally:
         await app.state.engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_app_resolves_artifacts_at_main_project_root_from_linked_worktree_cwd(
+    tmp_path: Path,
+) -> None:
+    main_project = tmp_path / "main-project"
+    main_project.mkdir()
+    _init_repo(main_project)
+    linked_worktree = tmp_path / "worktrees" / "artifact-api"
+    linked_worktree.parent.mkdir()
+    _git(["worktree", "add", "-b", "artifact-api", str(linked_worktree)], cwd=main_project)
+    original_cwd = Path.cwd()
+    os.chdir(linked_worktree)
+    try:
+        app = create_app(db_path=":memory:")
+    finally:
+        os.chdir(original_cwd)
+
+    try:
+        ref = await app.state.artifact_store.put(b"implicit-root-proof", media_type="text/plain")
+        digest = ref.content_hash.removeprefix("sha256:")
+
+        assert (
+            main_project / ".orchestrator" / "artifacts" / "sha256" / digest[:2] / digest[2:]
+        ).exists()
+        assert not (linked_worktree / ".orchestrator" / "artifacts").exists()
+    finally:
+        await app.state.engine.dispose()
