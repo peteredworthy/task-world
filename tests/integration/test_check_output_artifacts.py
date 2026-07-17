@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 from collections.abc import Callable
@@ -11,7 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.artifacts import ArtifactStore, FilesystemArtifactStore, StoredArtifactRef
 from orchestrator.db import create_engine, create_session_factory, init_db
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    project_node_states,
+    project_run_state,
+    project_task_states,
+)
 from orchestrator.graph_runtime import (
     CHECK_OUTPUT_TAIL_CHARS,
     GraphController,
@@ -316,6 +326,75 @@ async def test_large_check_output_is_written_before_bounded_event_append(tmp_pat
     stderr_ref = StoredArtifactRef.model_validate(value["stderr_ref"])
     assert await store.read(stdout_ref) == b"x" * 17_000
     assert await store.read(stderr_ref) == b"y" * 17_000
+
+
+@pytest.mark.asyncio
+async def test_two_mebibyte_outputs_replay_without_artifacts_and_keep_event_json_bounded(
+    tmp_path: Path,
+) -> None:
+    """The producer persists complete blobs while every replay remains store-free."""
+    artifact_root = tmp_path / "artifacts"
+    store = FilesystemArtifactStore(artifact_root)
+    output_size = 2 * 1024 * 1024
+    command = (
+        f"head -c {output_size} /dev/zero | tr '\\000' x; "
+        f"head -c {output_size} /dev/zero | tr '\\000' y >&2"
+    )
+
+    events = await _run_check(tmp_path, command, store)
+    value = _check_value(events)
+    stdout = b"x" * output_size
+    stderr = b"y" * output_size
+    stdout_ref = StoredArtifactRef.model_validate(value["stdout_ref"])
+    stderr_ref = StoredArtifactRef.model_validate(value["stderr_ref"])
+
+    assert value["stdout_tail"] == "x" * CHECK_OUTPUT_TAIL_CHARS
+    assert value["stderr_tail"] == "y" * CHECK_OUTPUT_TAIL_CHARS
+    assert len(value["stdout_tail"]) == CHECK_OUTPUT_TAIL_CHARS
+    assert len(value["stderr_tail"]) == CHECK_OUTPUT_TAIL_CHARS
+    assert await store.read(stdout_ref) == stdout
+    assert await store.read(stderr_ref) == stderr
+    assert stdout_ref.size_bytes == len(stdout)
+    assert stderr_ref.size_bytes == len(stderr)
+    assert stdout_ref.content_hash == f"sha256:{hashlib.sha256(stdout).hexdigest()}"
+    assert stderr_ref.content_hash == f"sha256:{hashlib.sha256(stderr).hexdigest()}"
+
+    engine = create_engine(tmp_path / "graph.db")
+    session_factory = create_session_factory(engine)
+    async with session_factory() as session:
+        persisted_json = await session.scalar(
+            text(
+                "SELECT payload FROM events_v2 "
+                "WHERE event_type = 'output_record_accepted' "
+                "AND json_extract(payload, '$.payload.record_type') = 'check_result'"
+            )
+        )
+    await engine.dispose()
+
+    assert isinstance(persisted_json, str)
+    persisted_event = json.loads(persisted_json)
+    persisted_value = persisted_event["payload"]["value"]
+    assert persisted_value["stdout_ref"] == stdout_ref.model_dump(mode="json")
+    assert persisted_value["stderr_ref"] == stderr_ref.model_dump(mode="json")
+    assert persisted_value["stdout_tail"] == "x" * CHECK_OUTPUT_TAIL_CHARS
+    assert persisted_value["stderr_tail"] == "y" * CHECK_OUTPUT_TAIL_CHARS
+    assert "x" * (CHECK_OUTPUT_TAIL_CHARS + 1) not in persisted_json
+    assert "y" * (CHECK_OUTPUT_TAIL_CHARS + 1) not in persisted_json
+    assert len(persisted_json.encode("utf-8")) < 32 * 1024
+
+    shutil.rmtree(artifact_root)
+    engine = create_engine(tmp_path / "graph.db")
+    session_factory = create_session_factory(engine)
+    async with session_factory() as session:
+        replay_store = GraphEventStore(session)
+        full_replay = await replay_store.read_run("check-output-artifacts")
+        compact_replay = await replay_store.read_run_projection("check-output-artifacts")
+    await engine.dispose()
+
+    assert not artifact_root.exists()
+    assert project_run_state(full_replay) == project_run_state(compact_replay)
+    assert project_node_states(full_replay) == project_node_states(compact_replay)
+    assert project_task_states(full_replay) == project_task_states(compact_replay)
 
 
 @pytest.mark.asyncio

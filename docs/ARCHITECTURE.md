@@ -96,6 +96,7 @@ task-world/
 │   ├── artifacts/             # Durable content-addressed artifact storage
 │   │   ├── models.py          # Stored artifact reference model export
 │   │   ├── store.py           # ArtifactStore protocol and filesystem CAS
+│   │   ├── gc.py              # Typed-reference mark-and-sweep collector
 │   │   └── errors.py          # Artifact storage errors
 │   │
 │   ├── db/                    # Persistence: ORM, repositories, event store

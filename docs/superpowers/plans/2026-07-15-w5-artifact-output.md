@@ -258,15 +258,15 @@ git commit -m "Garbage collect unreferenced artifacts"
 - Modify: `docs/dynamic-graph/w5-progress-ledger.md`
 - Modify: `docs/ARCHITECTURE.md`
 
-- [ ] **Step 1: Run replay-without-artifacts acceptance**
+- [x] **Step 1: Run replay-without-artifacts acceptance**
 
 Create a run with over-threshold stdout/stderr, remove the artifact directory, then run full and compact replay. Expected: projections match and no artifact read occurs.
 
-- [ ] **Step 2: Measure bounded persistence**
+- [x] **Step 2: Measure bounded persistence**
 
 Generate 2 MiB stdout and 2 MiB stderr. Assert the SQLite event JSON contains refs and 4,000-character tails and remains below 32 KiB excluding other metadata.
 
-- [ ] **Step 3: Run final gates**
+- [x] **Step 3: Run final gates**
 
 ```bash
 uv run pytest tests/ -q -n auto --dist worksteal
@@ -275,7 +275,7 @@ uv run pyright
 git diff --check
 ```
 
-- [ ] **Step 4: Record evidence and commit**
+- [x] **Step 4: Record evidence and commit**
 
 Record exact test counts, database row size, blob sizes/hashes, replay-without-artifacts result, and GC evidence.
 

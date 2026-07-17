@@ -1074,3 +1074,50 @@ Fresh verifier gate at `29b8206d741aac58aadc23c85ce2a99b2315a2d6`:
 - `git diff --check`
   - Result: passed, no output.
 - Post-verification `git status --short` was clean.
+
+### W5.5 Task 5: Final Artifact Verification
+
+Status: final builder gates passed; commit evidence is pending this closeout commit.
+
+- Existing focused coverage was first run without a manufactured RED:
+  `uv run pytest tests/integration/test_check_output_artifacts.py tests/unit/test_artifact_gc.py -q`
+  passed **13 tests**. It covered boundary externalization and GC but did not
+  reproducibly combine 2 MiB persistence with replay after artifact removal.
+- Added durable acceptance coverage in
+  `test_two_mebibyte_outputs_replay_without_artifacts_and_keep_event_json_bounded`.
+  Its first run passed immediately, as expected for verification of already
+  implemented behavior: `uv run pytest tests/integration/test_check_output_artifacts.py -q`
+  passed **8 tests**.
+- The acceptance command produces exactly **2,097,152 bytes (2 MiB)** each of
+  stdout (`x`) and stderr (`y`) through the real check-dispatch producer, real
+  temporary filesystem CAS, and real SQLite event store. Complete CAS blobs
+  were read and verified before removal:
+  - stdout: `sha256:6932fd31e5daf4739b9fa78ff777b2831b0995cc1d0b0093cac80601902013bc`
+    (2,097,152 bytes)
+  - stderr: `sha256:a817acf98d9f6ef7656e3d474dc68bf8b1f7526f598958bb65a72a8db8a74608`
+    (2,097,152 bytes)
+- Actual SQLite `events_v2.payload` JSON for the check-result row measured
+  **21,087 UTF-8 bytes** (the event JSON column only, excluding other SQLite
+  row metadata), below the **32,768-byte** bound. Parsed JSON contains both
+  typed refs and exactly 4,000-character stdout/stderr tails, and excludes any
+  4,001-character body substring.
+- Replay acceptance removes only the temporary test CAS root, then uses real
+  `GraphEventStore.read_run` and `read_run_projection` paths. Full and compact
+  replay have equal run state, node states, and task states with the artifact
+  directory absent; neither replay path receives or reads an artifact store.
+- GC evidence remains the Task 4 focused suite: typed references are retained;
+  old unmarked blobs are swept only after the 86,400-second grace period;
+  exact-cutoff, retained, malformed, non-regular, and symlink-traversal cases
+  survive; a second sweep is idempotent; and a collection failure leaves the
+  already-committed run-deletion tombstone intact.
+- Final builder gates at the Task 5 candidate:
+  - `uv run pytest tests/ -q -n auto --dist worksteal` — **4,815 passed, 3
+    skipped, 3 existing SQLite datetime-adapter warnings** in 108.59s.
+  - `uv run ruff check .` — all checks passed.
+  - `uv run pyright` — 0 errors, 0 warnings, 0 informations (with the available
+    version notice only).
+  - `git diff --check` — passed with no output.
+- Changed-file formatting gate:
+  `uv run ruff format --check tests/integration/test_check_output_artifacts.py`
+  reported 1 file already formatted. The durable Task 5 queue checkbox remains
+  unchecked for controller review; this closeout commit records the evidence.
