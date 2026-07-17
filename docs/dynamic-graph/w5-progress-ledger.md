@@ -76,6 +76,7 @@ focused suite (`10 passed in 3.86s`). Final gates: graph/artifact selection
 `1023 passed in 60.78s`; full suite `4821 passed, 3 skipped, 3 warnings in
 104.90s`; Ruff, Pyright, format check, and `git diff --check` passed. Final
 approval remains pending; commit evidence follows.
+Implementation commit: `36129a3ae Harden artifact root fallback and locking`.
 
 ## Historical Execution Evidence
 

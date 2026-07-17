@@ -95,5 +95,5 @@ complete gate evidence:
   `uv run ruff format --check .`: `714 files already formatted`;
   `git diff --check`: passed.
 
-Final approval remains pending; commit SHA is recorded after the hook-verified
-commit completes.
+Hook-verified implementation commit: `36129a3ae Harden artifact root fallback
+and locking`. Final approval remains pending.
