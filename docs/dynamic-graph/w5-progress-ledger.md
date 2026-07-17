@@ -840,7 +840,7 @@ Durable task queue:
 - [x] Task 1: filesystem artifact store.
 - [x] Task 2: atomic check-output externalization.
 - [x] Task 3: explicit prompt and API hydration.
-- [ ] Task 4: mark-and-sweep garbage collection.
+- [x] Task 4: mark-and-sweep garbage collection.
 - [ ] Task 5: final artifact verification and closeout.
 
 Evidence:
@@ -1016,8 +1016,7 @@ Commits and review:
 
 ### W5.5 Task 4: Typed Artifact Mark-and-Sweep GC
 
-Status: implementation evidence recorded; the durable Task 4 queue checkbox
-remains unchecked for independent review.
+Status: complete; independent task review and fresh verifier gate passed.
 
 - **RED:** `uv run pytest tests/unit/test_artifact_gc.py -q` failed at collection
   with `ModuleNotFoundError: No module named 'orchestrator.artifacts.gc'`.
@@ -1055,3 +1054,23 @@ remains unchecked for independent review.
   `uv run pyright src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py src/orchestrator/workflow/service.py`,
   `uv run ruff format --check src/orchestrator/artifacts tests/unit/test_artifact_gc.py tests/integration/test_workflow_service.py`,
   and `git diff --check` passed.
+
+Commits and independent review:
+- `0a80651a1` (`Garbage collect unreferenced artifacts`).
+- `c6b6d2c58` (`Wire artifact GC into API composition`).
+- `024849c4a` (`Harden artifact GC review findings`).
+- `29b8206d7` (`Harden artifact GC descriptor traversal`).
+- Review range: `226973adc..29b8206d7`.
+- Final result: no findings; `Spec compliance: PASS` and
+  `Code quality: APPROVED`.
+
+Fresh verifier gate at `29b8206d741aac58aadc23c85ce2a99b2315a2d6`:
+- `uv run pytest tests/ -k "graph or artifact" -q -n auto --dist worksteal`
+  - Result: 1,016 passed in 56.82s.
+- `uv run ruff check .`
+  - Result: passed.
+- `uv run pyright`
+  - Result: 0 errors, 0 warnings, 0 informations.
+- `git diff --check`
+  - Result: passed, no output.
+- Post-verification `git status --short` was clean.
