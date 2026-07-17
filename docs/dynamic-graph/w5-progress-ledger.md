@@ -839,7 +839,7 @@ Execution identity:
 Durable task queue:
 - [x] Task 1: filesystem artifact store.
 - [x] Task 2: atomic check-output externalization.
-- [ ] Task 3: explicit prompt and API hydration.
+- [x] Task 3: explicit prompt and API hydration.
 - [ ] Task 4: mark-and-sweep garbage collection.
 - [ ] Task 5: final artifact verification and closeout.
 
@@ -959,7 +959,10 @@ Fresh verifier gate at `a80131c40c1d93252113feb6ee33e3fc247c68b0`:
 
 ### Task 3: Explicit Prompt and API Hydration
 
-Implementation evidence (awaiting independent review; durable queue checkbox remains unchecked):
+Status: complete; independent task review passed specification and code-quality
+gates.
+
+Implementation evidence:
 
 - RED: `uv run pytest tests/unit/test_artifact_prompt_hydration.py tests/integration/test_artifact_api.py -q`
   failed as intended with 2 failed and 1 collection error: the explicit prompt
@@ -980,8 +983,7 @@ Implementation evidence (awaiting independent review; durable queue checkbox rem
   found`; a referenced tampered blob returns `409 Artifact blob failed integrity
   verification`. Both outcomes occur before slicing.
 
-Review-fix evidence (awaiting independent review; durable queue checkbox remains
-unchecked):
+Review-fix evidence:
 
 - RED: the two Task 3 test files produced 2 expected failures: `206` was
   incorrectly returned at EOF, and `create_app` lacked an injected main-project
@@ -992,8 +994,7 @@ unchecked):
   authorized blobs return verified `416` responses with `Content-Range: bytes
   */<length>`.
 
-Second-review evidence (awaiting independent review; durable queue checkbox
-remains unchecked):
+Second-review evidence:
 
 - RED: importing `planner_evidence` from the graph-runtime public API failed
   during focused unit-test collection because the intended public symbol was not
@@ -1002,3 +1003,13 @@ remains unchecked):
   real linked-worktree-CWD regression omits `artifact_project_root` and proves
   implicit resolution stores the blob only at the main checkout's
   `.orchestrator/artifacts` root.
+
+Commits and review:
+- `ab1da8c3a` (`Add bounded artifact hydration API`).
+- `664c15626` (`Fix artifact API review findings`).
+- `ae4049db1` (`Expose artifact prompt evidence API`).
+- Independent review range: `0f26c0f14..ae4049db1`.
+- Final result: no findings; `Spec compliance: PASS` and
+  `Code quality: APPROVED`.
+- The reviewer noted no specified malformed/unknown text-encoding policy; this
+  is not a Task 3 requirement or demonstrated defect.
