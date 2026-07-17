@@ -827,7 +827,7 @@ current 20,000-character truncation. Those remain pending in
 
 ## W5.5
 
-Status: **in progress**.
+Status: **all five implementation tasks complete; final whole-branch review pending**.
 
 Execution identity:
 - Seed branch: `main`.
@@ -841,7 +841,7 @@ Durable task queue:
 - [x] Task 2: atomic check-output externalization.
 - [x] Task 3: explicit prompt and API hydration.
 - [x] Task 4: mark-and-sweep garbage collection.
-- [ ] Task 5: final artifact verification and closeout.
+- [x] Task 5: final artifact verification and closeout.
 
 Evidence:
 - Setup: `uv sync` completed in the isolated worktree.
@@ -1077,9 +1077,7 @@ Fresh verifier gate at `29b8206d741aac58aadc23c85ce2a99b2315a2d6`:
 
 ### W5.5 Task 5: Final Artifact Verification
 
-Status: implementation and acceptance evidence committed in `469c6358c`; Task 5
-is pending independent/controller review. The durable Task 5 queue checkbox
-remains unchecked until that review completes.
+Status: complete; independent task review and fresh closeout verifier passed.
 
 - Existing focused coverage was first run without a manufactured RED:
   `uv run pytest tests/integration/test_check_output_artifacts.py tests/unit/test_artifact_gc.py -q`
@@ -1121,5 +1119,24 @@ remains unchecked until that review completes.
   - `git diff --check` — passed with no output.
 - Changed-file formatting gate:
   `uv run ruff format --check tests/integration/test_check_output_artifacts.py`
-  reported 1 file already formatted. The durable Task 5 queue checkbox remains
-  unchecked for controller review; this closeout commit records the evidence.
+  reported 1 file already formatted.
+
+Commits and independent review:
+- `469c6358c` (`Verify durable check output artifacts`).
+- `c2aca5d10` (`Clarify Task 5 review status`).
+- Review range: `ff1f7898f..c2aca5d10`.
+- Final result: no findings; `Spec compliance: PASS` and
+  `Code quality: APPROVED`.
+
+Fresh closeout verifier at `c2aca5d10cdf58840bac35d6d21688973e386f78`:
+- `uv run pytest tests/ -k "graph or artifact" -q -n auto --dist worksteal`
+  - Result: 1,017 passed in 58.24s.
+- `uv run pytest tests/ -q -n auto --dist worksteal`
+  - Result: 4,815 passed, 3 skipped, and 3 existing warnings in 99.78s.
+- `uv run ruff check .`
+  - Result: passed.
+- `uv run pyright`
+  - Result: 0 errors, 0 warnings, 0 informations.
+- `git diff --check`
+  - Result: passed, no output.
+- Post-verification `git status --short` was clean.
