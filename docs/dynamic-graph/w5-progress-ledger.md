@@ -97,6 +97,7 @@ descriptor-relative with `O_NOFOLLOW`; the only macOS compatibility path accepts
 2.88s`; graph/artifact `1026 passed in 70.24s`; full `4824 passed, 3 skipped,
 3 warnings in 132.14s`; Ruff, Pyright, format, and diff checks passed. Commit
 evidence follows.
+Implementation commit: `ca61e0d8e Harden generic artifact lock traversal`.
 
 ## Historical Execution Evidence
 

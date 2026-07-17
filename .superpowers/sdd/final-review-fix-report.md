@@ -123,3 +123,5 @@ macOS compatibility exception accepts `/tmp` only when its exact link target is
 `12 passed in 2.88s`; graph/artifact `1026 passed in 70.24s`; full backend
 `4824 passed, 3 skipped, 3 warnings in 132.14s`; Ruff, Pyright, format check,
 and diff check passed. Final approval remains pending; commit evidence follows.
+
+Hook-verified implementation commit: `ca61e0d8e Harden generic artifact lock traversal`.
