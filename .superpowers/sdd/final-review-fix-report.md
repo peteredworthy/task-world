@@ -68,3 +68,8 @@ repository verification completed: graph/artifact selection `1021 passed in
 Pyright, format check, and `git diff --check` passed. The warnings are existing
 Python 3.12 `aiosqlite` datetime-adapter deprecations. Final approval is not
 claimed.
+
+## Commits
+
+- `0770197e6 Fix artifact project-root lifecycle coordination` — implementation,
+  regressions, documentation, and verification evidence.

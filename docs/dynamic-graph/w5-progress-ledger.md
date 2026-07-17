@@ -60,7 +60,7 @@ Status: implemented and verified locally; **final approval is not yet claimed**.
 - GREEN evidence:
   - `uv run pytest tests/unit/test_artifact_gc.py tests/integration/test_artifact_api.py tests/integration/test_check_output_artifacts.py tests/integration/test_workflow_service.py -q`
     — `61 passed`.
-- Commits: pending final review-fix commit.
+- Commits: `0770197e6 Fix artifact project-root lifecycle coordination`.
 - Remaining status: complete local implementation and verification only; no final
   approval statement.
 
