@@ -1,11 +1,20 @@
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from orchestrator.artifacts import FilesystemArtifactStore
-from orchestrator.graph import StoredArtifactRef
-from orchestrator.graph_runtime import hydrate_artifact_excerpt
-from orchestrator.graph_runtime.prompts import _tail_only_prompt_record_payload
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    InputBindingProjection,
+    StoredArtifactRef,
+    initial_projection,
+)
+from orchestrator.graph_runtime import GraphDispatchContext, hydrate_artifact_excerpt
+from orchestrator.graph_runtime.prompts import planner_evidence
 
 
 @pytest.mark.asyncio
@@ -34,8 +43,19 @@ async def test_explicit_hydration_requires_a_typed_reference(tmp_path: Path) -> 
         await hydrate_artifact_excerpt(store, malformed_ref, max_chars=0)
 
 
-def test_default_prompt_payload_keeps_check_output_tails_without_references() -> None:
-    record = {
+def test_default_planner_evidence_keeps_check_output_tails_without_references() -> None:
+    projection = initial_projection()
+    projection["input_bindings"]["planner-1"] = {
+        "check_result": InputBindingProjection(
+            to_node_id="planner-1",
+            to_port="check_result",
+            record_ids=["check-1"],
+            bound_at_position=2,
+        )
+    }
+    record_payload: dict[str, Any] = {
+        "record_id": "check-1",
+        "record_kind": "output",
         "record_type": "check_result",
         "value": {
             "stdout_tail": "last stdout",
@@ -44,11 +64,33 @@ def test_default_prompt_payload_keeps_check_output_tails_without_references() ->
             "stderr_ref": {"content_hash": "sha256:" + "b" * 64},
         },
     }
+    event = EventEnvelope(
+        event_id="check-result-1",
+        run_id="run-1",
+        position=1,
+        event_type="output_record_accepted",
+        schema_version=1,
+        actor=Actor(kind=ActorKind.CONTROLLER),
+        timestamp=datetime(2026, 1, 1, tzinfo=UTC),
+        payload=record_payload,
+    )
+    context = GraphDispatchContext(
+        run_id="run-1",
+        node_id="planner-1",
+        node_kind="planner",
+        node_payload={"node_id": "planner-1", "kind": "planner"},
+        requirements=[],
+        worktree_path="/tmp/worktree",
+        lease_id="lease-1",
+        lease_generation=1,
+        execution_id="execution-1",
+        base_snapshot_id="snapshot-1",
+        dispatch_event_id="dispatch-1",
+        graph_projection=projection,
+        graph_events=[event],
+    )
 
-    prompt_payload = _tail_only_prompt_record_payload(record)
+    evidence = planner_evidence(context, projection, [event])
 
-    assert prompt_payload["value"] == {
-        "stdout_tail": "last stdout",
-        "stderr_tail": "last stderr",
-    }
-    assert record["value"]["stdout_ref"] is not None
+    value = evidence["bound_records"]["check_result"][0]["record_payload"]["value"]
+    assert value == {"stdout_tail": "last stdout", "stderr_tail": "last stderr"}

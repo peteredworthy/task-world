@@ -979,3 +979,15 @@ Implementation evidence (awaiting independent review; durable queue checkbox rem
 - Integrity evidence: a referenced deleted blob returns `404 Artifact blob not
   found`; a referenced tampered blob returns `409 Artifact blob failed integrity
   verification`. Both outcomes occur before slicing.
+
+Review-fix evidence (awaiting independent review; durable queue checkbox remains
+unchecked):
+
+- RED: the two Task 3 test files produced 2 expected failures: `206` was
+  incorrectly returned at EOF, and `create_app` lacked an injected main-project
+  artifact-root boundary.
+- GREEN: the same focused command passed 8 tests. A real linked-worktree test
+  starts from a non-project CWD, injects its main checkout, and proves CAS writes
+  only under that checkout's `.orchestrator/artifacts`; EOF, past-EOF, and empty
+  authorized blobs return verified `416` responses with `Content-Range: bytes
+  */<length>`.

@@ -30,6 +30,7 @@ from orchestrator.state.models import Run
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
 from orchestrator.envfiles.cleanup import EnvFileCleanup
+from orchestrator.git import resolve_main_worktree
 
 logger = logging.getLogger(__name__)
 
@@ -603,6 +604,7 @@ def create_app(
     jwt_secret: str | None = None,
     spawn_agents: bool | None = None,
     global_config: GlobalConfig | None = None,
+    artifact_project_root: Path | None = None,
 ) -> FastAPI:
     """Create and configure the FastAPI application.
 
@@ -617,6 +619,8 @@ def create_app(
             True for production, False when using in-memory SQLite (tests).
         global_config: Optional pre-built global configuration. Falls back to
             loading from ``~/.orchestrator/config.yaml``.
+        artifact_project_root: Main project checkout that owns graph artifacts.
+            When omitted, resolve it from the current linked worktree.
     """
     # Load global config for defaults
     global_cfg = global_config or load_global_config()
@@ -662,7 +666,10 @@ def create_app(
     app.state.session_factory = create_session_factory(engine)
     app.state.routine_dirs = routine_dirs or []
     app.state.global_config = global_cfg
-    app.state.artifact_store = FilesystemArtifactStore(Path.cwd() / ".orchestrator" / "artifacts")
+    project_root = artifact_project_root or resolve_main_worktree(Path.cwd())
+    if project_root is None:
+        raise ValueError("artifact_project_root is required outside a git worktree")
+    app.state.artifact_store = FilesystemArtifactStore(project_root / ".orchestrator" / "artifacts")
 
     # WebSocket connection manager (with optional batching)
     if global_cfg.websocket.batching_enabled:

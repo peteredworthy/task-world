@@ -1587,6 +1587,11 @@ async def get_run_artifact(
             status_code=409,
             detail="Artifact blob failed integrity verification",
         ) from exc
+    if offset >= len(content):
+        return Response(
+            status_code=416,
+            headers={"Content-Range": f"bytes */{len(content)}"},
+        )
     end = min(offset + limit, len(content))
     return Response(
         content=content[offset:end],

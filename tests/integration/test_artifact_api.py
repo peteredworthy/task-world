@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -12,6 +13,7 @@ from orchestrator.artifacts import FilesystemArtifactStore, StoredArtifactRef
 from orchestrator.db import init_db
 from orchestrator.graph import Actor, ActorKind, EventEnvelope
 from orchestrator.graph_runtime import GraphEventStore
+from tests.integration.git_helpers import _git, _init_repo
 from tests.unit.graph_test_utils import canonical_event_payload
 
 
@@ -159,3 +161,60 @@ async def test_artifact_endpoint_reports_missing_and_integrity_failures(
     assert missing.json() == {"detail": "Artifact blob not found"}
     assert corrupt.status_code == 409
     assert corrupt.json() == {"detail": "Artifact blob failed integrity verification"}
+
+
+@pytest.mark.asyncio
+async def test_artifact_endpoint_rejects_ranges_at_or_past_eof_after_verification(
+    artifact_client: tuple[AsyncClient, object, FilesystemArtifactStore, str],
+) -> None:
+    client, app, store, token = artifact_client
+    ref = await store.put(b"abcdefgh", media_type="text/plain", encoding="utf-8")
+    empty_ref = await store.put(b"", media_type="text/plain", encoding="utf-8")
+    await _seed_reference(app, "run-eof", ref)
+    await _seed_reference(app, "run-empty", empty_ref)
+    digest = ref.content_hash.removeprefix("sha256:")
+    empty_digest = empty_ref.content_hash.removeprefix("sha256:")
+    headers = {"Authorization": f"Bearer {token}"}
+
+    at_eof = await client.get(f"/api/runs/run-eof/artifacts/{digest}?offset=8", headers=headers)
+    past_eof = await client.get(f"/api/runs/run-eof/artifacts/{digest}?offset=9", headers=headers)
+    empty = await client.get(f"/api/runs/run-empty/artifacts/{empty_digest}", headers=headers)
+
+    assert at_eof.status_code == 416
+    assert at_eof.headers["content-range"] == "bytes */8"
+    assert past_eof.status_code == 416
+    assert past_eof.headers["content-range"] == "bytes */8"
+    assert empty.status_code == 416
+    assert empty.headers["content-range"] == "bytes */0"
+
+
+@pytest.mark.asyncio
+async def test_app_composes_artifacts_at_injected_main_project_root_from_non_project_cwd(
+    tmp_path: Path,
+) -> None:
+    main_project = tmp_path / "main-project"
+    main_project.mkdir()
+    _init_repo(main_project)
+    linked_worktree = tmp_path / "worktrees" / "artifact-api"
+    linked_worktree.parent.mkdir()
+    _git(["worktree", "add", "-b", "artifact-api", str(linked_worktree)], cwd=main_project)
+    launch_directory = tmp_path / "not-a-project"
+    launch_directory.mkdir()
+    original_cwd = Path.cwd()
+    os.chdir(launch_directory)
+    try:
+        app = create_app(db_path=":memory:", artifact_project_root=main_project)
+    finally:
+        os.chdir(original_cwd)
+
+    try:
+        ref = await app.state.artifact_store.put(b"root-proof", media_type="text/plain")
+        digest = ref.content_hash.removeprefix("sha256:")
+
+        assert (
+            main_project / ".orchestrator" / "artifacts" / "sha256" / digest[:2] / digest[2:]
+        ).exists()
+        assert not (linked_worktree / ".orchestrator" / "artifacts").exists()
+        assert not (launch_directory / ".orchestrator" / "artifacts").exists()
+    finally:
+        await app.state.engine.dispose()
