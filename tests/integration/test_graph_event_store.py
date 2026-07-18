@@ -411,9 +411,79 @@ async def test_idle_schedule_tick_does_not_duplicate_node_deferred(
         snapshot = await GraphEventStore(session).read_projection_snapshot(run_id)
 
     assert snapshot is not None
-    assert snapshot.scheduler["blocked"] == [
-        {"node_id": "worker-1", "reason": first_deferrals[0].payload["reason"]}
+    assert first_deferrals[0].payload["reason"] == "max_grants_reached"
+    assert snapshot.scheduler["blocked"] == []
+
+
+@pytest.mark.asyncio
+async def test_incremental_scheduler_snapshot_matches_canonical_rebuild_for_max_grants(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "store-scheduler-snapshot-parity"
+    events = [
+        _event(
+            "evt-worker-maxed",
+            run_id,
+            "node_created",
+            {"node_id": "worker-maxed", "kind": "worker", "state": "ready"},
+        ),
+        _event(
+            "evt-worker-maxed-deferred",
+            run_id,
+            "node_deferred",
+            {"node_id": "worker-maxed", "reason": "max_grants_reached"},
+        ),
+        _event(
+            "evt-worker-input",
+            run_id,
+            "node_created",
+            {"node_id": "worker-input", "kind": "worker", "state": "planned"},
+        ),
+        _event(
+            "evt-worker-input-deferred",
+            run_id,
+            "node_deferred",
+            {"node_id": "worker-input", "reason": "missing_required_input:candidate"},
+        ),
+        _event(
+            "evt-worker-resource",
+            run_id,
+            "node_created",
+            {"node_id": "worker-resource", "kind": "worker", "state": "ready"},
+        ),
+        _event(
+            "evt-worker-resource-deferred",
+            run_id,
+            "node_deferred",
+            {"node_id": "worker-resource", "reason": "resource_conflict:write:write"},
+        ),
     ]
+    expected = {
+        "ready": ["worker-maxed", "worker-resource"],
+        "blocked": [{"node_id": "worker-input", "reason": "missing_required_input:candidate"}],
+        "waiting_resources": [
+            {"node_id": "worker-resource", "reason": "resource_conflict:write:write"}
+        ],
+        "waiting_gates": [],
+    }
+
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            await store.append_events(run_id, 0, events)
+            incremental = await store.read_projection_snapshot(run_id)
+
+        assert incremental is not None
+        incremental_scheduler = dict(incremental.scheduler)
+
+        async with session.begin():
+            rebuilt = await store.rebuild_read_models(run_id)
+
+        assert rebuilt is not None
+        rebuilt_scheduler = dict(rebuilt.scheduler)
+
+    assert incremental_scheduler == expected
+    assert rebuilt_scheduler == expected
 
 
 @pytest.mark.asyncio

@@ -3353,9 +3353,9 @@ def project_scheduler_view(
     precondition such as a resource conflict.
     """
     proj = projection if projection is not None else _project(events)
-    node_states = project_node_states(events, projection=proj)
-    ready = sorted(project_ready_nodes(events, projection=proj))
-    latest_deferrals = _latest_node_deferrals(events)
+    node_states = project_node_states([], projection=proj)
+    ready = sorted(project_ready_nodes([], projection=proj))
+    latest_deferrals = proj["last_deferred_reasons"]
     view: SchedulerView = {
         "ready": ready,
         "blocked": [],
@@ -4057,18 +4057,6 @@ def _review_blocker(
     if reason is not None:
         return f"{node_id}: {reason}"
     return f"{node_id}: {state}"
-
-
-def _latest_node_deferrals(events: list[EventEnvelope]) -> dict[str, str]:
-    reasons: dict[str, str] = {}
-    for event in events:
-        if event.event_type != "node_deferred":
-            continue
-        payload = NodeDeferredPayload.model_validate(event.payload)
-        node_id = payload.node_id
-        reason = payload.reason
-        reasons[node_id] = reason
-    return reasons
 
 
 def _scheduler_bucket_for_reason(

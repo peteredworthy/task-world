@@ -11,7 +11,6 @@ from orchestrator.graph import (
     project_scheduler_view,
     projection_from_checkpoint,
 )
-from orchestrator.graph_runtime.store import _lease_view_from_projection
 
 
 def _event(event_type: str, payload: dict[str, Any], position: int) -> EventEnvelope:
@@ -147,7 +146,8 @@ def test_lease_view_reports_active_and_suspended() -> None:
     ]
 
 
-def test_snapshot_lease_view_filters_partial_leases_like_public_projector() -> None:
+def test_projection_lease_view_filters_partial_leases_like_event_replay() -> None:
+    events = [_event("lease_suspended", {"lease_id": "lease-suspended-without-grant"}, 1)]
     projection = projection_from_checkpoint(
         {
             "leases": {
@@ -161,5 +161,5 @@ def test_snapshot_lease_view_filters_partial_leases_like_public_projector() -> N
 
     expected = {"active": [], "suspended": []}
 
+    assert project_lease_view(events) == expected
     assert project_lease_view([], projection=projection) == expected
-    assert _lease_view_from_projection(projection) == expected

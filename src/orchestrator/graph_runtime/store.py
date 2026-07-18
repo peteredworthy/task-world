@@ -1161,13 +1161,11 @@ def _assign_projection_snapshot(
     row.task_states = dict(projection["task_states"])
     row.leases = project_leases([], projection=projection)
     row.ready_nodes = list(projection["ready_nodes"])
+    row.scheduler = dict(project_scheduler_view([], projection=projection))
+    row.lease_view = dict(project_lease_view([], projection=projection))
     if events is None:
-        row.scheduler = _scheduler_view_from_projection(projection)
-        row.lease_view = _lease_view_from_projection(projection)
         decisions = dict(project_decision_view_from_projection(projection))
     else:
-        row.scheduler = dict(project_scheduler_view(events))
-        row.lease_view = dict(project_lease_view(events))
         decisions = dict(project_decision_view(events))
     row.decisions = _decisions_with_projection_checkpoint(decisions, projection)
 
@@ -1228,42 +1226,6 @@ def _events_position(events: list[EventEnvelope]) -> int:
 
 def _is_terminal_run_state(run_state: str | None) -> bool:
     return run_state in {"completed", "failed", "cancelled"}
-
-
-def _scheduler_view_from_projection(projection: GraphProjection) -> dict[str, Any]:
-    view: dict[str, Any] = {
-        "ready": sorted(projection["ready_nodes"]),
-        "blocked": [],
-        "waiting_resources": [],
-        "waiting_gates": [],
-    }
-    for node_id, state in sorted(projection["node_states"].items()):
-        reason = projection.get("last_deferred_reasons", {}).get(node_id)
-        if state == "ready" and reason is None:
-            continue
-        if state not in {"planned", "blocked"}:
-            if state != "ready":
-                continue
-        if reason is None and state != "blocked":
-            continue
-        if reason is None:
-            reason = "blocked"
-        entry = {"node_id": node_id, "reason": reason}
-        if reason.startswith("resource_") or reason.startswith("invalid_claim:"):
-            view["waiting_resources"].append(entry)
-        elif (
-            reason.startswith("gate_")
-            or reason.startswith("waiting_gate")
-            or reason.startswith("authority_")
-        ):
-            view["waiting_gates"].append(entry)
-        else:
-            view["blocked"].append(entry)
-    return view
-
-
-def _lease_view_from_projection(projection: GraphProjection) -> dict[str, Any]:
-    return dict(project_lease_view([], projection=projection))
 
 
 def _add_node_detail_summaries(
