@@ -665,6 +665,31 @@ async def test_paused_retired_resume_skips_preparation_and_drains_later_cancel(
 
 
 @pytest.mark.asyncio
+async def test_stale_active_retired_resume_ignores_replacement_and_drains_cancel(
+    session_factory,
+) -> None:
+    service = RecordingWorkflowService()
+    service.run.status = "active"
+    service.run.agent_runner_type = AgentRunnerType.RETIRED
+    consumer = _consumer(session_factory, service)
+    resume_position = await _insert_signal_event(
+        session_factory, "run-1", WorkflowSignal.RESUME, {"agent_runner_type": "codex_server"}
+    )
+    cancel_position = await _insert_signal_event(
+        session_factory, "run-1", WorkflowSignal.CANCEL, {"reason": "later"}
+    )
+
+    await consumer._process_run("run-1")
+
+    assert "run-1" not in consumer._active_workflows
+    assert await _get_processed_positions(session_factory, "run-1") == {
+        resume_position,
+        cancel_position,
+    }
+    assert _calls(service, "apply_cancel_run") == [(("run-1",), {"reason": "later"})]
+
+
+@pytest.mark.asyncio
 async def test_activity_signals_delegate_to_active_workflow(session_factory) -> None:
     service = RecordingWorkflowService()
     consumer = _consumer(session_factory, service)

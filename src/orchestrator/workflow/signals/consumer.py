@@ -435,6 +435,7 @@ class SignalConsumer:
 
         ensure_executable_agent_runner(current_run.agent_runner_type, agent_runner_type)
         if self._status_value(getattr(current_run, "status", None)) == "active":
+            ensure_executable_agent_runner(current_run.agent_runner_type)
             logger.info(
                 "SignalConsumer: ignoring stale RESUME for already active run %s",
                 run_id,
