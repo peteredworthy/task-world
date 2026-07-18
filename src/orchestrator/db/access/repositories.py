@@ -17,6 +17,7 @@ from orchestrator.config.enums import (
     RunStatus,
     TaskStatus,
 )
+from orchestrator.config import normalize_persisted_agent_runner_type
 from orchestrator.db.orm.models import (
     AttemptModel,
     ClarificationRequestModel,
@@ -69,7 +70,7 @@ def _agent_runner_type(value: str | None) -> AgentRunnerType | None:
     if value is None or value in {"script", "user_managed"}:
         return None
     try:
-        return AgentRunnerType(value)
+        return normalize_persisted_agent_runner_type(value)
     except ValueError:
         logging.getLogger(__name__).warning(
             "Unknown persisted agent runner type %r; treating as unset", value

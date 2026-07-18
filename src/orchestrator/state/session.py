@@ -1,12 +1,14 @@
 """Session state manager with in-memory state and optional file persistence."""
 
 import json
+from copy import deepcopy
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import aiofiles
 
+from orchestrator.config import normalize_persisted_agent_runner_type
 from orchestrator.config.enums import ChecklistStatus
 from orchestrator.state.errors import (
     ChecklistItemNotFoundError,
@@ -111,8 +113,26 @@ class SessionStateManager:
         if not content.strip():
             return
 
-        data: dict[str, Any] = json.loads(content)
+        data: dict[str, Any] = deepcopy(json.loads(content))
         runs_data: dict[str, Any] = data.get("runs", {})
         self._runs = {
-            run_id: Run.model_validate(run_data) for run_id, run_data in runs_data.items()
+            run_id: Run.model_validate(_normalize_runner_types(run_data))
+            for run_id, run_data in runs_data.items()
         }
+
+
+def _normalize_runner_types(value: Any) -> Any:
+    """Return copied state data with historical runner fields normalized."""
+    if isinstance(value, list):
+        return [_normalize_runner_types(item) for item in cast(list[Any], value)]
+    if not isinstance(value, dict):
+        return value
+    mapping = cast(dict[str, Any], value)
+    normalized: dict[str, Any] = {}
+    for key, item in mapping.items():
+        if key == "agent_runner_type" and isinstance(item, str):
+            runner_type = normalize_persisted_agent_runner_type(item)
+            normalized[key] = runner_type.value if runner_type is not None else None
+        else:
+            normalized[key] = _normalize_runner_types(item)
+    return normalized

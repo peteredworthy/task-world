@@ -69,6 +69,7 @@ from orchestrator.workflow import (
     TestRunCompleted,
     TestRunStarted,
     WorkflowEvent,
+    deserialize_event,
 )
 
 NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
@@ -456,6 +457,26 @@ def test_agent_changed_event_enum_serialization() -> None:
     assert d["event_type"] == "agent_changed"
     assert d["old_agent"] == AgentRunnerType.CLI_SUBPROCESS.value
     assert d["new_agent"] == AgentRunnerType.RETIRED.value
+
+
+def test_deserialize_event_normalizes_only_historical_runner_keys() -> None:
+    payload = (
+        '{"run_id":"run-legacy","event_type":"agent_changed",'
+        '"timestamp":"2025-01-15T10:30:00Z","old_agent":"claude_sdk",'
+        '"new_agent":"claude_sdk","old_agent_runner_config":'
+        '{"note":"claude_sdk","nested":{"agent_runner_type":"claude_sdk"}},'
+        '"new_agent_runner_config":{"runner_type":"claude_sdk"}}'
+    )
+
+    event = deserialize_event("agent_changed", payload)
+
+    assert isinstance(event, AgentChangedEvent)
+    assert event.old_agent is AgentRunnerType.RETIRED
+    assert event.new_agent is AgentRunnerType.RETIRED
+    assert event.old_agent_runner_config["note"] == "claude_sdk"
+    assert event.old_agent_runner_config["nested"]["agent_runner_type"] == "retired"
+    assert event.new_agent_runner_config["runner_type"] == "retired"
+    assert "claude_sdk" in payload
 
 
 # ---------------------------------------------------------------------------

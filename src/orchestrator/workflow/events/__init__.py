@@ -1,5 +1,10 @@
 """Workflow event types and emitters."""
 
+import json
+from typing import Any, cast
+
+from orchestrator.config import normalize_persisted_agent_runner_type
+
 from orchestrator.workflow.events.types import (
     AgentChangedEvent,
     AgentDiedEvent,
@@ -137,7 +142,27 @@ def deserialize_event(event_type: str, payload: str) -> WorkflowEvent:
     cls = _EVENT_TYPE_MAP.get(event_type)
     if cls is None:
         raise ValueError(f"Unknown event type: {event_type!r}")
-    return cls.model_validate_json(payload)
+    return cls.model_validate(_normalize_historical_runner_types(json.loads(payload)))
+
+
+_RUNNER_TYPE_KEYS = frozenset({"runner_type", "agent_runner_type", "old_agent", "new_agent"})
+
+
+def _normalize_historical_runner_types(value: Any) -> Any:
+    """Map historical runner values only where JSON keys name runner fields."""
+    if isinstance(value, list):
+        return [_normalize_historical_runner_types(item) for item in cast(list[Any], value)]
+    if not isinstance(value, dict):
+        return value
+    mapping = cast(dict[str, Any], value)
+    normalized: dict[str, Any] = {}
+    for key, item in mapping.items():
+        if key in _RUNNER_TYPE_KEYS and isinstance(item, str):
+            runner_type = normalize_persisted_agent_runner_type(item)
+            normalized[key] = runner_type.value if runner_type is not None else None
+        else:
+            normalized[key] = _normalize_historical_runner_types(item)
+    return normalized
 
 
 __all__ = [

@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from orchestrator.config.enums import AgentRunnerType, RunStatus, TaskStatus
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import SqliteEventStore
-from orchestrator.db import RunModel, StepModel
+from orchestrator.db import EventV2Model, RunModel, StepModel
 from orchestrator.db import ProjectionRegistry, RunStateProjector, TaskStateProjector
 from orchestrator.workflow import (
     AgentChangedEvent,
@@ -798,3 +798,31 @@ async def test_deserialize_event_accepts_agent_changed_aliases(session: AsyncSes
     assert isinstance(legacy, AgentChangedEvent)
     assert current.event_type == "agent_changed"
     assert legacy.event_type == "agent_changed"
+
+
+async def test_historical_event_deserializes_without_rewriting_event_payload(
+    session: AsyncSession,
+) -> None:
+    payload = (
+        '{"run_id":"run-legacy","event_type":"agent_changed",'
+        '"timestamp":"2025-01-15T10:30:00Z","old_agent":"claude_sdk",'
+        '"new_agent":"claude_sdk"}'
+    )
+    session.add(
+        EventV2Model(
+            aggregate_id="run-legacy",
+            event_type="agent_changed",
+            payload=payload,
+            timestamp="2025-01-15T10:30:00Z",
+            version=1,
+        )
+    )
+    await session.flush()
+
+    stored = (await SqliteEventStore(session).get_all())[0]
+    event = deserialize_event(stored.event_type, stored.payload)
+
+    assert isinstance(event, AgentChangedEvent)
+    assert event.old_agent is AgentRunnerType.RETIRED
+    assert event.new_agent is AgentRunnerType.RETIRED
+    assert stored.payload == payload

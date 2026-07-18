@@ -1,9 +1,12 @@
 """Integration tests for session state persistence."""
 
+import json
+
 from pathlib import Path
 
 import pytest
 
+from orchestrator.config.enums import AgentRunnerType
 from orchestrator.state.models import Run, StepState
 from orchestrator.state.session import SessionStateManager
 
@@ -65,3 +68,47 @@ async def test_save_without_persist_path() -> None:
     manager = SessionStateManager()  # No persist path
     manager.add_run(Run(id="r1", repo_name="p1"))
     await manager.save()  # Should be a no-op, not raise
+
+
+async def test_load_normalizes_historical_claude_sdk_without_rewriting_snapshot(
+    persist_path: Path,
+) -> None:
+    raw_snapshot = {
+        "runs": {
+            "run-legacy": {
+                "id": "run-legacy",
+                "repo_name": "project",
+                "agent_runner_type": "claude_sdk",
+                "steps": [
+                    {
+                        "id": "step-1",
+                        "config_id": "S-01",
+                        "tasks": [
+                            {
+                                "id": "task-1",
+                                "config_id": "T-01",
+                                "attempts": [
+                                    {
+                                        "id": "attempt-1",
+                                        "attempt_num": 1,
+                                        "agent_runner_type": "claude_sdk",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
+    }
+    persist_path.parent.mkdir(parents=True)
+    persist_path.write_text(json.dumps(raw_snapshot, indent=2))
+    original_bytes = persist_path.read_bytes()
+
+    manager = SessionStateManager(persist_path)
+    await manager.load()
+
+    run = manager.get_run("run-legacy")
+    assert run.agent_runner_type is AgentRunnerType.RETIRED
+    assert run.steps[0].tasks[0].attempts[0].agent_runner_type is AgentRunnerType.RETIRED
+    assert persist_path.read_bytes() == original_bytes
