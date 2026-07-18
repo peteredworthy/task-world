@@ -5,9 +5,14 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from orchestrator.config.enums import AgentRunnerType
-from orchestrator.runners import ToolDetector, discover_agents
-from orchestrator.runners.agent_factory import clear_registry, get_registry
+from orchestrator.config import AgentRunnerType
+from orchestrator.runners import (
+    ClaudeCliQuotaAgent,
+    ToolDetector,
+    cli_config_for_command,
+    discover_agents,
+    get_registered_agent_runner_types,
+)
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
@@ -29,10 +34,23 @@ def test_claude_sdk_runtime_is_not_installed_registered_or_discoverable() -> Non
     ):
         assert not hasattr(runners, exported_name)
 
-    clear_registry()
     discover_agents()
-    factories = get_registry()
-    assert AgentRunnerType.RETIRED not in factories
+    registered_types = get_registered_agent_runner_types()
+    assert AgentRunnerType.RETIRED not in registered_types
+    assert {
+        AgentRunnerType.CLI_SUBPROCESS,
+        AgentRunnerType.CODEX_SERVER,
+        AgentRunnerType.OPENHANDS_LOCAL,
+        AgentRunnerType.OPENHANDS_DOCKER,
+    }.issubset(registered_types)
+
+    claude_config = cli_config_for_command("claude")
+    claude_model = next(field for field in claude_config if field.name == "model")
+    assert claude_model.field_type == "string"
+    assert claude_model.options is None
+    assert claude_model.default is None
+    assert ClaudeCliQuotaAgent.name == "claude"
+    assert callable(ClaudeCliQuotaAgent().get_quota)
 
     options = asyncio.run(ToolDetector().detect_all())
     assert all(option.agent_runner_type is not AgentRunnerType.RETIRED for option in options)

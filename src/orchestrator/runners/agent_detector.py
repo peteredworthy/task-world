@@ -21,6 +21,10 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from orchestrator.config.enums import AgentRunnerType
+from orchestrator.runners.agents.claude_cli.config import (
+    CLI_SUBPROCESS_CONFIG as _CLI_SUBPROCESS_CONFIG,
+    cli_config_for_command as _cli_config_for_command,
+)
 from orchestrator.runners.agents.codex.common import (
     fetch_codex_models,
     select_preferred_codex_model,
@@ -183,55 +187,6 @@ _OPENHANDS_DOCKER_CONFIG: list[AgentConfigField] = [
     ),
 ]
 
-_CLI_SUBPROCESS_CONFIG: list[AgentConfigField] = [
-    AgentConfigField(
-        name="command",
-        field_type="string",
-        description="CLI command to run (read-only, set by detection)",
-    ),
-    AgentConfigField(
-        name="model",
-        field_type="string",
-        description="Model to pass as --model flag",
-    ),
-    AgentConfigField(
-        name="callback_channel",
-        field_type="select",
-        default="rest",
-        description="How the subprocess calls back to the orchestrator",
-        options=["rest", "mcp"],
-    ),
-    AgentConfigField(
-        name="stdin_mode",
-        field_type="select",
-        default="close",
-        description="Whether to close stdin after sending the prompt",
-        options=["close", "open"],
-    ),
-    AgentConfigField(
-        name="args",
-        field_type="string",
-        description="Override CLI args list (JSON array). Replaces all defaults including -p and --output-format.",
-    ),
-    AgentConfigField(
-        name="max_turns",
-        field_type="number",
-        default=200,
-        description="Maximum Claude Code agentic turns per subprocess task",
-    ),
-    AgentConfigField(
-        name="bare",
-        field_type="boolean",
-        default=False,
-        description=(
-            "Run Claude with --bare to reduce startup context by skipping auto-memory, "
-            "CLAUDE.md discovery, hooks, plugins, LSP, background prefetches, and "
-            "keychain reads. Requires ANTHROPIC_API_KEY or an explicit apiKeyHelper; "
-            "Claude subscription OAuth/keychain auth is not available in bare mode."
-        ),
-    ),
-]
-
 _CODEX_SERVER_CONFIG: list[AgentConfigField] = [
     AgentConfigField(
         name="model",
@@ -317,17 +272,6 @@ def _codex_server_config_with_models(models: list[str]) -> list[AgentConfigField
                     }
                 )
             )
-        else:
-            config.append(cfg_field.model_copy())
-    return config
-
-
-def _cli_config_for_command(command: str) -> list[AgentConfigField]:
-    """Return CLI config schema with command default pinned to the selected tool."""
-    config: list[AgentConfigField] = []
-    for cfg_field in _CLI_SUBPROCESS_CONFIG:
-        if cfg_field.name == "command":
-            config.append(cfg_field.model_copy(update={"default": command}))
         else:
             config.append(cfg_field.model_copy())
     return config

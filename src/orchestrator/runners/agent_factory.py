@@ -71,6 +71,11 @@ def get_registry() -> dict[AgentRunnerType, AgentFactory]:
     return dict(_REGISTRY)
 
 
+def get_registered_agent_runner_types() -> frozenset[AgentRunnerType]:
+    """Return an immutable snapshot of registered runner types."""
+    return frozenset(_REGISTRY)
+
+
 def clear_registry() -> None:
     """Clear all registered factories (for testing)."""
     _REGISTRY.clear()

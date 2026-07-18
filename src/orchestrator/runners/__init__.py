@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.types import AgentMetadataCallback, BroadcastCallback
-from orchestrator.runners.agent_factory import create as create_agent_runner
+from orchestrator.runners.agent_factory import (
+    create as create_agent_runner,
+    get_registered_agent_runner_types,
+)
 
 # Agent discovery
 from orchestrator.runners.agents import discover as discover_agents
@@ -16,6 +19,7 @@ from orchestrator.runners.agents import discover as discover_agents
 # Concrete agent implementations
 from orchestrator.runners.agents.claude_cli.agent import CLIAgent, ClaudeCliQuotaAgent
 from orchestrator.runners.agents.claude_cli.factory import create_cli_agent
+from orchestrator.runners.agents.claude_cli.config import cli_config_for_command
 from orchestrator.runners.agents.mock.agent import MockAgent, MockBehavior
 from orchestrator.runners.agents.claude_cli.parser import (
     RATE_LIMIT_PATTERN,
@@ -214,12 +218,14 @@ __all__ = [
     "AgentMetadataCallback",
     "BroadcastCallback",
     "create_agent_runner",
+    "get_registered_agent_runner_types",
     # Discovery
     "discover_agents",
     # Agent classes
     "CLIAgent",
     "ClaudeCliQuotaAgent",
     "create_cli_agent",
+    "cli_config_for_command",
     "CodexServerAgent",
     "DockerOpenHandsAgent",
     "MockAgent",
