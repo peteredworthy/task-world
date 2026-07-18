@@ -200,6 +200,30 @@ describe('GraphPanel human-gate decisions', () => {
     expect(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
   });
 
+  it('renders review decision only for human approval gates', () => {
+    const decisionView = makeDecisionView();
+    decisionView.pending_gates.push({
+      node_id: 'automatic-policy-gate-1',
+      gate_type: 'automatic_policy',
+      prompt: 'Policy engine is evaluating this change.',
+    });
+    renderPanel(decisionView);
+
+    expect(screen.getAllByRole('button', { name: 'Review decision' })).toHaveLength(1);
+    expect(screen.getByText('automatic-policy-gate-1').closest('li')).not.toHaveTextContent('Review decision');
+  });
+
+  it('restores the pre-existing body overflow value after the modal closes', () => {
+    document.body.style.overflow = 'clip';
+    renderPanel();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review decision' }));
+    expect(document.body.style.overflow).toBe('hidden');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(document.body.style.overflow).toBe('clip');
+  });
+
   it('submits an approval with the typed human actor and omits a blank reason', async () => {
     const requests: Array<{ url: string; init?: RequestInit }> = [];
     globalThis.fetch = async (input, init) => {

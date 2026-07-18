@@ -483,6 +483,61 @@ async def test_record_approval_decision_is_durable_and_releases_waiting_successo
     assert graph.json()["leases"] == before_rejection["leases"]
 
 
+async def test_record_rejected_approval_is_durable_and_dead_inputs_successor(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-decisions-{uuid4().hex[:8]}"
+    await _seed_active_human_gate_graph_run(app, run_id)
+
+    response = await client.post(
+        f"/api/runs/{run_id}/graph/decisions",
+        json={
+            "decision_type": "approval",
+            "node_id": "human-gate-1",
+            "decision": "rejected",
+            "decider": {"kind": "human", "id": "alice", "role": "operator"},
+            "reason": "Reviewed output is unsafe.",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    event_types = [event["event_type"] for event in response.json()["events"]]
+    assert event_types[:3] == [
+        "approval_decision_recorded",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert "output_record_accepted" not in event_types
+    assert "input_bound" not in event_types
+    assert "node_ready" not in event_types
+
+    events = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
+    assert events.status_code == 200
+    recorded = next(
+        event for event in events.json() if event["event_type"] == "approval_decision_recorded"
+    )
+    assert recorded["payload"]["decision"] == "rejected"
+    assert recorded["payload"]["reason"] == "Reviewed output is unsafe."
+
+    graph = await client.get(f"/api/runs/{run_id}/graph")
+    assert graph.status_code == 200
+    assert graph.json()["node_states"]["human-gate-1"] == "failed"
+
+    scheduler = await client.get(f"/api/runs/{run_id}/graph/scheduler")
+    assert scheduler.status_code == 200
+    assert scheduler.json()["scheduler"]["ready"] == []
+    assert scheduler.json()["leases"]["active"] == []
+
+    blockers = await client.get(f"/api/runs/{run_id}/graph/final-blockers")
+    assert blockers.status_code == 200
+    final_blockers = blockers.json()["blockers"]
+    assert any(
+        blocker["kind"] == "dead_required_input" and blocker["node_id"] == "worker-successor"
+        for blocker in final_blockers
+    ), final_blockers
+
+
 async def test_record_decision_rejects_invalid_decision_at_api_boundary(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:

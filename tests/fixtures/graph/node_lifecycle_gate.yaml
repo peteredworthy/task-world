@@ -25,12 +25,12 @@
     - node_state_changed: {node_id: gate-3, new_state: completed}
   then_projection: {gate-3: completed}
 
-- name: gate_blocked_to_completed_rejected
+- name: gate_blocked_to_failed_rejected
   given_events:
     - node_created: {node_id: gate-4, kind: gate, state: blocked, task_region_id: task-gate-4}
   when_command:
     record_decision: {decision_type: approval, node_id: gate-4, decision: rejected, decider: {kind: human, id: reviewer-1}}
   then_events:
     - approval_decision_recorded: {decision_type: approval, node_id: gate-4, decision: rejected}
-    - node_state_changed: {node_id: gate-4, new_state: completed}
-  then_projection: {gate-4: completed}
+    - node_state_changed: {node_id: gate-4, new_state: failed}
+  then_projection: {gate-4: failed}

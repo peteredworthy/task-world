@@ -434,7 +434,7 @@ function DecisionsSection({ runId, view }: { runId: string; view: DecisionViewRe
                 <li key={gate.node_id} className="rounded border border-border/80 bg-bg-elevated px-2 py-1.5">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 break-all font-mono text-text-primary">{gate.node_id}</div>
-                    {gate.gate_type !== 'authority_request' && (
+                    {gate.gate_type === 'human_approval' && (
                       <button
                         type="button"
                         onClick={() => setSelectedGate(gate)}

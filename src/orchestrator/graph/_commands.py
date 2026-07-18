@@ -4265,6 +4265,27 @@ def _apply_record_decision(
         event_type = "authority_decision_recorded"
     else:
         event_type = "oversight_decision_recorded"
+    payload_model = {
+        "approval_decision_recorded": ApprovalDecisionRecordedPayload,
+        "authority_decision_recorded": AuthorityDecisionRecordedPayload,
+        "oversight_decision_recorded": OversightDecisionRecordedPayload,
+    }[event_type]
+    output = [
+        make_event(event_type, payload_model.model_validate(event_payload).model_dump(mode="json"))
+    ]
+    if decision_type == "approval" and payload.decision == "rejected":
+        output.append(
+            make_event(
+                "node_state_changed",
+                {
+                    "node_id": node_id,
+                    "new_state": "failed",
+                    "trigger": f"{event_type}_rejected",
+                },
+            )
+        )
+        output.extend(_release_active_node_leases(projection, node_id, make_event))
+        return output
     try:
         decision_record = _decision_output_record(projection, node_id, event_payload, decision_type)
     except ValueError as exc:
@@ -4279,14 +4300,6 @@ def _apply_record_decision(
                 ),
             )
         ]
-    payload_model = {
-        "approval_decision_recorded": ApprovalDecisionRecordedPayload,
-        "authority_decision_recorded": AuthorityDecisionRecordedPayload,
-        "oversight_decision_recorded": OversightDecisionRecordedPayload,
-    }[event_type]
-    output = [
-        make_event(event_type, payload_model.model_validate(event_payload).model_dump(mode="json"))
-    ]
     if decision_record is not None:
         output.append(make_event("output_record_accepted", decision_record))
         output.extend(

@@ -35,8 +35,9 @@ export function GraphDecisionModal({ runId, gate, onClose }: GraphDecisionModalP
   }, [isPending, onClose]);
 
   useEffect(() => {
+    const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = ''; };
+    return () => { document.body.style.overflow = previousOverflow; };
   }, []);
 
   useFocusTrap(dialogRef, true);
