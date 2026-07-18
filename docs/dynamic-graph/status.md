@@ -47,6 +47,40 @@ As of 2026-07-07, the implementation review follow-up has moved past the old
 | Codex cli_subprocess model routing | OPEN | `CLIAgent` constructs `codex --model MODEL exec ...` instead of `codex exec --model MODEL ...`. |
 | R01(a) July 4 supersession replay | OPEN | Focused supersession tests exist, but no real-store incident-shape replay jointly proves task acceptance, projection parity, empty final blockers, and completion. |
 
+## Task 8 Steps 1–2 — Focused Confirmed-Open Regression Evidence (2026-07-18)
+
+Step 1 was run at source `9c0a1ee8f16019df957a785c9b7e87242208f86a` using the
+exact commands in the Task 8 brief:
+
+```bash
+uv run pytest tests/integration/test_graph_read_models.py \
+  tests/unit/test_graph_scheduler_view.py tests/integration/test_graph_event_store.py \
+  tests/unit/test_cli_agent.py tests/unit/test_graph_commands.py \
+  tests/integration/test_graph_decisions_api.py tests/integration/test_cli_approve.py -q -n 0
+# 258 passed in 2.33s
+
+npm --prefix ui test -- src/components/__tests__/GraphPanel.decisions.test.tsx
+# Test Files: 1 passed (1); Tests: 5 passed (5)
+```
+
+The RED observations below are the source evidence recorded by Tasks 2–7; the
+GREEN counts are refreshed on the current source. “Source SHA” identifies the
+pre-fix baseline and the commit that supplied the green behavior. The incident
+fixture RED was a characterization failure (`node_unfulfilled` for a sparse
+classified-gap value), not a supersession-residue failure.
+
+| Surface | RED observation and baseline | GREEN command/count and source fix |
+| --- | --- | --- |
+| July 4 supersession incident replay | `1 failed` in the pre-fixture-canonicalization working tree; baseline source `61ed9f5abd55e6578b5928a6d562fec71b88fa08` | `uv run pytest tests/integration/test_graph_read_models.py::test_july_4_incident_replay_preserves_supersession_and_completion_parity -q -n 0` → `1 passed`; test evidence `6796b1a77e5c141eb030971459586ce2f0173fdd`, fixture/review fix `349f4a74808c8a880a4f9495cab4d5276380c105` |
+| Scheduler snapshot parity | `1 failed`: incremental snapshot incorrectly included ready `max_grants_reached` in `blocked`; baseline `349f4a74808c8a880a4f9495cab4d5276380c105` | `uv run pytest tests/unit/test_graph_scheduler_view.py tests/integration/test_graph_event_store.py -q -n 0` → `25 passed`; fix `c2aac1e9fd9f428eaccee324a714ba9a18c61018` |
+| Codex CLI argv | `2 failed, 37 passed`: `--model` appeared before `exec`; baseline `c2aac1e9fd9f428eaccee324a714ba9a18c61018` | `uv run pytest tests/unit/test_cli_agent.py -q -n 0` → `39 passed`; fix `852db41d80a1aed25ac1b8895de0382ae0f6ad77` |
+| Kernel/API human-gate approval | `2 failed`: worker-target approval was accepted and the typed human actor payload was rejected; baseline `852db41d80a1aed25ac1b8895de0382ae0f6ad77` | `uv run pytest tests/unit/test_graph_commands.py tests/integration/test_graph_decisions_api.py -q -n 0` → `183 passed`; fix `30d2b96c4846b810996fce0a4c186d7508c02c39` |
+| UI human-gate approval | Initial `3 failed` (no accessible `Review decision` action), then focus follow-up `1 failed, 4 passed`; baselines `30d2b96c4846b810996fce0a4c186d7508c02c39` and `aaa730922afa3ba21387bd447e0189db6054d3fc` | `npm --prefix ui test -- src/components/__tests__/GraphPanel.decisions.test.tsx` → `1 passed`, `5 passed`; fixes `aaa730922afa3ba21387bd447e0189db6054d3fc` and `64cd469f0f3f8d262cab846625f0db36f27f6c26` |
+| CLI human-gate approval | Import failure: `_graph_approval_payload` was absent; baseline `64cd469f0f3f8d262cab846625f0db36f27f6c26` | `uv run pytest tests/integration/test_cli_approve.py -q -n 0` → `4 passed`; fix `9c0a1ee8f16019df957a785c9b7e87242208f86a` |
+
+Step 3 was not run. A fresh full-suite verifier is intentionally deferred to the
+separate no-context verifier.
+
 ### Task 0 verifier evidence
 
 Verified SHA: `bdcc31528a63cd9cd52dbae7244e642b9abdcd82`

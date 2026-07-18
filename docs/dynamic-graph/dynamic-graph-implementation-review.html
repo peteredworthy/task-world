@@ -131,6 +131,25 @@
   <tr><td>R01(a) July 4 supersession replay</td><td><span class="badge high">OPEN</span></td><td>Focused supersession tests exist, but no real-store incident-shape replay jointly proves task acceptance, projection parity, empty final blockers, and completion.</td></tr>
 </table>
 
+<h2 id="task-8-regression-evidence">Task 8 Steps 1–2 — Focused Confirmed-Open Regression Evidence (2026-07-18)</h2>
+<p>At source <code>9c0a1ee8f16019df957a785c9b7e87242208f86a</code>, the exact
+focused Python command from the brief passed <strong>258 tests</strong>, and the
+exact UI command passed <strong>1 file / 5 tests</strong>. RED observations are
+the source evidence recorded by Tasks 2–7; GREEN counts were refreshed on this
+source. The incident RED was a sparse classified-gap fixture failure
+(<code>node_unfulfilled</code>), not supersession residue.</p>
+<table>
+  <tr><th>Surface</th><th>RED observation / baseline</th><th>GREEN count / source fix</th></tr>
+  <tr><td>July 4 supersession incident replay</td><td><code>1 failed</code> during fixture characterization; baseline <code>61ed9f5abd55e6578b5928a6d562fec71b88fa08</code></td><td><code>test_july_4_incident_replay_preserves_supersession_and_completion_parity</code>: <strong>1 passed</strong>; test <code>6796b1a77e5c141eb030971459586ce2f0173fdd</code>, fix <code>349f4a74808c8a880a4f9495cab4d5276380c105</code></td></tr>
+  <tr><td>Scheduler snapshot parity</td><td><code>1 failed</code>; ready <code>max_grants_reached</code> was incorrectly in <code>blocked</code>; baseline <code>349f4a74808c8a880a4f9495cab4d5276380c105</code></td><td>Scheduler/event-store focused pair: <strong>25 passed</strong>; fix <code>c2aac1e9fd9f428eaccee324a714ba9a18c61018</code></td></tr>
+  <tr><td>Codex CLI argv</td><td><code>2 failed, 37 passed</code>; <code>--model</code> preceded <code>exec</code>; baseline <code>c2aac1e9fd9f428eaccee324a714ba9a18c61018</code></td><td>Focused file: <strong>39 passed</strong>; fix <code>852db41d80a1aed25ac1b8895de0382ae0f6ad77</code></td></tr>
+  <tr><td>Kernel/API human-gate approval</td><td><code>2 failed</code>; non-gate approval was accepted and the human actor payload was rejected; baseline <code>852db41d80a1aed25ac1b8895de0382ae0f6ad77</code></td><td>Kernel/API pair: <strong>183 passed</strong>; fix <code>30d2b96c4846b810996fce0a4c186d7508c02c39</code></td></tr>
+  <tr><td>UI human-gate approval</td><td>Initial <code>3 failed</code>; focus follow-up <code>1 failed, 4 passed</code>; baselines <code>30d2b96c4846b810996fce0a4c186d7508c02c39</code> and <code>aaa730922afa3ba21387bd447e0189db6054d3fc</code></td><td>Exact UI command: <strong>1 file / 5 passed</strong>; fixes <code>aaa730922afa3ba21387bd447e0189db6054d3fc</code> and <code>64cd469f0f3f8d262cab846625f0db36f27f6c26</code></td></tr>
+  <tr><td>CLI human-gate approval</td><td>Import failure: <code>_graph_approval_payload</code> was absent; baseline <code>64cd469f0f3f8d262cab846625f0db36f27f6c26</code></td><td>Focused file: <strong>4 passed</strong>; fix <code>9c0a1ee8f16019df957a785c9b7e87242208f86a</code></td></tr>
+</table>
+<p>Step 3 was not run; the full-suite verifier is deferred to the separate
+no-context agent.</p>
+
 <h2 id="toc">Contents</h2>
 <div class="toc">
   <ol>
