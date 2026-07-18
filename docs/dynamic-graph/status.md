@@ -99,6 +99,31 @@ verifier source `200102e0e4f9ab3d0b727faabe9f032f125894df`. The final evidence
 commit SHA is intentionally not anticipated here; it must be obtained from
 `git rev-parse HEAD` after committing these tracked documents.
 
+### Superseding post-whole-branch-review verification
+
+The fresh post-review verifier report
+`.superpowers/sdd/post-review-final-verifier-report.md` supersedes the
+pre-final-review branch evidence above while preserving it as historical
+evidence. It verified exact source
+`b7e3b3f29f0d8e63d58ce2f1d0eb5b2d70cebb46`, whose final-review fix adds
+corrected rejected-gate semantics, exact human-gate eligibility, nested
+overflow restoration, and the corresponding fixture update.
+
+At that source, the full suite reported **4792 passed, 3 skipped, and 3
+deprecation warnings**; Ruff was clean; Pyright reported **0 errors, 0
+warnings, and 0 informations** plus the advisory `v1.1.408 -> v1.1.411` update
+notice; and `git diff --check` was clean. Generated enums were current,
+Alembic reported the single head `zg1h2i3j4k5l`, **4795 tests** collected, the
+targeted backend checks reported **20 passed**, and the UI GraphPanel decisions
+suite reported **7 passed**. The three warnings were the Python 3.12
+`aiosqlite/core.py:63` default-datetime-adapter deprecations named in the
+verifier report.
+
+The verifier's exact dirty state was only the untracked
+`docs/superpowers/plans/2026-07-18-migrate-claude-sdk-history.md`; there were no
+tracked dirty paths. The tested source is the SHA above, not the later
+docs-only evidence commit. This note does not anticipate that commit's SHA.
+
 ### Task 16 Step 5 — fresh Claude SDK removal verifier evidence
 
 The separate no-context verifier passed exact source
