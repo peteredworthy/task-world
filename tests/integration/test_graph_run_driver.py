@@ -17,6 +17,7 @@ from orchestrator.graph import (
     Actor,
     ActorKind,
     EventEnvelope,
+    project_graph_projection_snapshot,
     project_run_state,
     project_task_states,
 )
@@ -45,7 +46,6 @@ from orchestrator.workflow import WorkflowService
 from orchestrator.workflow.graph_driver import (
     GRAPH_OPERATOR_REOPEN_PAUSE_REASON,
     GraphRunDriver,
-    _snapshot_from_events,
 )
 
 
@@ -538,7 +538,7 @@ async def test_driver_dispatches_final_check_after_verifier_acceptance(
     driver = GraphRunDriver.__new__(GraphRunDriver)
 
     async def read_projection(target_run_id: str):
-        return _snapshot_from_events(await _events(session_factory, target_run_id))
+        return project_graph_projection_snapshot(await _events(session_factory, target_run_id))
 
     outcome = await driver.drive_to_quiescence(
         run_id,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field as dataclass_field
+from datetime import UTC, datetime
 from typing import Any, Iterable, Literal, TypedDict, cast
 
 from pydantic import ConfigDict, field_validator
@@ -376,6 +378,62 @@ class FinalInvariantBlocker(TypedDict, total=False):
     stderr_tail: str
     exit_code: int
     support_ids: list[str]
+
+
+TERMINAL_GRAPH_NODE_STATES = frozenset({"completed", "failed", "cancelled", "retired"})
+
+
+@dataclass(frozen=True)
+class GraphRunOutcome:
+    """Pure driver-facing classification of a graph projection."""
+
+    run_id: str
+    run_state: str | None
+    completed: bool
+    blocked_reason: str | None = None
+
+
+def _empty_str_dict() -> dict[str, str]:
+    return {}
+
+
+def _empty_environment_failures() -> dict[str, EnvironmentFailureProjection]:
+    return {}
+
+
+def _empty_int_dict() -> dict[str, int]:
+    return {}
+
+
+def _empty_str_list_dict() -> dict[str, list[str]]:
+    return {}
+
+
+@dataclass(frozen=True)
+class GraphProjectionSnapshot:
+    """Driver policy view derived solely from a graph event projection."""
+
+    run_state: str | None
+    ready_nodes: list[str]
+    active_leases: dict[str, dict[str, Any]]
+    schedulable_nodes: list[str]
+    task_states: dict[str, str]
+    node_states: dict[str, str] = dataclass_field(default_factory=_empty_str_dict)
+    failed_node_reasons: dict[str, str] = dataclass_field(default_factory=_empty_str_dict)
+    node_deferral_reasons: dict[str, str] = dataclass_field(default_factory=_empty_str_dict)
+    missing_input_sources: dict[str, list[str]] = dataclass_field(
+        default_factory=_empty_str_list_dict
+    )
+    environment_failures: dict[str, EnvironmentFailureProjection] = dataclass_field(
+        default_factory=_empty_environment_failures
+    )
+    node_max_attempts: dict[str, int] = dataclass_field(default_factory=_empty_int_dict)
+
+
+@dataclass(frozen=True)
+class ActiveLeaseWaitPlan:
+    execution_ids: set[str]
+    timeout_seconds: float | None
 
 
 class GraphPatchAttempt(TypedDict, total=False):
@@ -3832,6 +3890,233 @@ def build_projection(events: list[EventEnvelope]) -> GraphProjection:
     a full re-fold per view.
     """
     return _project(events)
+
+
+def project_graph_projection_snapshot(events: list[EventEnvelope]) -> GraphProjectionSnapshot:
+    """Build the pure policy view consumed by graph-run drivers."""
+    projection = build_projection(events)
+    leases = project_leases(events, projection=projection)
+    node_states = project_node_states(events, projection=projection)
+    active_leases = {
+        lease_id: lease for lease_id, lease in leases.items() if lease.get("state") == "active"
+    }
+    return GraphProjectionSnapshot(
+        run_state=project_run_state(events, projection=projection),
+        ready_nodes=project_ready_nodes(events, projection=projection),
+        active_leases=active_leases,
+        schedulable_nodes=[
+            node_id
+            for node_id, state in node_states.items()
+            if state in {"planned", "blocked", "ready"}
+        ],
+        task_states=project_task_states(events, projection=projection),
+        node_states=node_states,
+        failed_node_reasons=_project_failed_node_reasons(events),
+        node_deferral_reasons=_project_node_deferral_reasons(events),
+        missing_input_sources=_project_missing_input_sources(projection, events),
+        environment_failures={
+            task_region_id: failure.model_copy(deep=True)
+            for task_region_id, failure in projection["environment_failures"].items()
+        },
+        node_max_attempts=project_node_max_attempts(events),
+    )
+
+
+def project_node_max_attempts(events: list[EventEnvelope]) -> dict[str, int]:
+    """Return first-declared executable retry budgets keyed by node id."""
+    max_attempts: dict[str, int] = {}
+    for event in events:
+        if event.event_type != "node_created":
+            continue
+        node_id = event.payload.get("node_id")
+        if not isinstance(node_id, str) or node_id in max_attempts:
+            continue
+        value = event.payload.get("max_attempts")
+        if isinstance(value, int) and not isinstance(value, bool):
+            max_attempts[node_id] = value
+    return max_attempts
+
+
+def project_graph_completion_eligible(projection: GraphProjectionSnapshot) -> bool:
+    return (
+        projection.run_state == "active"
+        and bool(projection.task_states)
+        and all(state == "accepted" for state in projection.task_states.values())
+    )
+
+
+def project_graph_outcome(run_id: str, projection: GraphProjectionSnapshot) -> GraphRunOutcome:
+    if projection.run_state == "completed":
+        return GraphRunOutcome(run_id=run_id, run_state=projection.run_state, completed=True)
+    return GraphRunOutcome(
+        run_id=run_id,
+        run_state=projection.run_state,
+        completed=False,
+        blocked_reason=project_graph_blocked_reason(projection),
+    )
+
+
+def project_graph_blocked_reason(projection: GraphProjectionSnapshot) -> str:
+    if projection.run_state in {"paused", "pausing"}:
+        return "graph paused"
+    if projection.run_state in {"failed", "cancelled"}:
+        return f"graph {projection.run_state}"
+    if projection.run_state is None:
+        return "graph has not started"
+    if projection.ready_nodes:
+        return f"graph has ready node(s) not dispatched: {', '.join(sorted(projection.ready_nodes)[:3])}"
+    if projection.active_leases:
+        leased_nodes = sorted(
+            str(lease.get("node_id"))
+            for lease in projection.active_leases.values()
+            if lease.get("node_id") is not None
+        )
+        if leased_nodes:
+            return f"graph has active lease(s) without callback: {', '.join(leased_nodes[:3])}"
+    missing_input_nodes = _project_nonterminal_node_details(projection, require_missing_input=True)
+    if missing_input_nodes:
+        suffix = "" if len(missing_input_nodes) <= 3 else f" (+{len(missing_input_nodes) - 3} more)"
+        return (
+            "graph quiescent with non-terminal node(s): "
+            + ", ".join(missing_input_nodes[:3])
+            + suffix
+        )
+    failed_nodes = sorted(
+        node_id for node_id, state in projection.node_states.items() if state == "failed"
+    )
+    if failed_nodes:
+        details = [
+            f"{node_id}: {reason}"
+            if (reason := projection.failed_node_reasons.get(node_id))
+            else node_id
+            for node_id in failed_nodes[:3]
+        ]
+        suffix = "" if len(failed_nodes) <= 3 else f" (+{len(failed_nodes) - 3} more)"
+        return f"graph has failed node(s): {', '.join(details)}{suffix}"
+    nonterminal_nodes = _project_nonterminal_node_details(projection)
+    if nonterminal_nodes:
+        suffix = "" if len(nonterminal_nodes) <= 3 else f" (+{len(nonterminal_nodes) - 3} more)"
+        return (
+            f"graph quiescent with non-terminal node(s): {', '.join(nonterminal_nodes[:3])}{suffix}"
+        )
+    if projection.environment_failures:
+        details: list[str] = []
+        for task_region_id, failure in sorted(projection.environment_failures.items())[:3]:
+            label = failure.classification or "environment"
+            details.append(
+                f"{task_region_id}: {label}: {failure.reason}"
+                if failure.reason
+                else f"{task_region_id}: {label}"
+            )
+        suffix = (
+            ""
+            if len(projection.environment_failures) <= 3
+            else f" (+{len(projection.environment_failures) - 3} more)"
+        )
+        return f"graph needs human/operator help for check environment issue(s): {', '.join(details)}{suffix}"
+    blocked_tasks = sorted(
+        f"{task_id}={state}"
+        for task_id, state in projection.task_states.items()
+        if state != "accepted"
+    )
+    if blocked_tasks:
+        suffix = "" if len(blocked_tasks) <= 3 else f" (+{len(blocked_tasks) - 3} more)"
+        return f"graph quiescent with non-accepted task(s): {', '.join(blocked_tasks[:3])}{suffix}"
+    return "graph quiescent without completion"
+
+
+def project_active_lease_wait_plan(
+    projection: GraphProjectionSnapshot, now: datetime
+) -> ActiveLeaseWaitPlan:
+    execution_ids: set[str] = set()
+    timeouts: list[float] = []
+    for lease in projection.active_leases.values():
+        execution_id = lease.get("execution_id")
+        if isinstance(execution_id, str) and execution_id:
+            execution_ids.add(execution_id)
+        expires_at = lease.get("expires_at")
+        if not isinstance(expires_at, str):
+            continue
+        try:
+            expires_at_dt = datetime.fromisoformat(expires_at)
+        except ValueError:
+            continue
+        if expires_at_dt.tzinfo is None:
+            expires_at_dt = expires_at_dt.replace(tzinfo=UTC)
+        timeouts.append(max(0.0, (expires_at_dt - now).total_seconds()))
+    if not execution_ids:
+        return ActiveLeaseWaitPlan(execution_ids=set(), timeout_seconds=0.0)
+    if not timeouts:
+        return ActiveLeaseWaitPlan(execution_ids=execution_ids, timeout_seconds=None)
+    return ActiveLeaseWaitPlan(execution_ids=execution_ids, timeout_seconds=min(timeouts))
+
+
+def _project_failed_node_reasons(events: list[EventEnvelope]) -> dict[str, str]:
+    reasons: dict[str, str] = {}
+    for event in events:
+        node_id = event.payload.get("node_id")
+        if not isinstance(node_id, str):
+            continue
+        if event.event_type == "agent_died":
+            reason = event.payload.get("reason")
+        elif (
+            event.event_type == "node_state_changed" and event.payload.get("new_state") == "failed"
+        ):
+            reason = event.payload.get("reason")
+        else:
+            continue
+        if isinstance(reason, str):
+            reasons[node_id] = reason
+    return reasons
+
+
+def _project_node_deferral_reasons(events: list[EventEnvelope]) -> dict[str, str]:
+    return {
+        node_id: reason
+        for event in events
+        if event.event_type == "node_deferred"
+        and isinstance((node_id := event.payload.get("node_id")), str)
+        and isinstance((reason := event.payload.get("reason")), str)
+    }
+
+
+def _project_missing_input_sources(
+    projection: GraphProjection, events: list[EventEnvelope]
+) -> dict[str, list[str]]:
+    details: dict[str, list[str]] = {}
+    for node_id, reason in _project_node_deferral_reasons(events).items():
+        if not reason.startswith("missing_required_input:"):
+            continue
+        missing_port = reason.removeprefix("missing_required_input:")
+        sources = sorted(
+            f"{missing_port} from {edge.from_node_id}={projection['node_states'].get(edge.from_node_id, 'unknown')}"
+            for edge in projection["edges"].values()
+            if edge.to_node_id == node_id and edge.to_port == missing_port
+        )
+        if sources:
+            details[node_id] = sources
+    return details
+
+
+def _project_nonterminal_node_details(
+    projection: GraphProjectionSnapshot, *, require_missing_input: bool = False
+) -> list[str]:
+    details: list[str] = []
+    for node_id, state in projection.node_states.items():
+        if state in TERMINAL_GRAPH_NODE_STATES:
+            continue
+        reason = projection.node_deferral_reasons.get(node_id)
+        if require_missing_input and not (
+            isinstance(reason, str) and reason.startswith("missing_required_input:")
+        ):
+            continue
+        detail = f"{node_id}={state}"
+        if reason is not None:
+            detail = f"{detail}: {reason}"
+        if sources := projection.missing_input_sources.get(node_id):
+            detail = f"{detail} ({'; '.join(sources[:3])})"
+        details.append(detail)
+    return sorted(details)
 
 
 def _has_full_event_history(events: list[EventEnvelope]) -> bool:

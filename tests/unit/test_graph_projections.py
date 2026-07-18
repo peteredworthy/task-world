@@ -1,5 +1,6 @@
 """Unit tests for pure graph projections."""
 
+from datetime import datetime
 from pathlib import Path
 import random
 from typing import Any, cast
@@ -23,6 +24,8 @@ from orchestrator.graph import (
     FileStateRecord,
     FinalInvariantBlocker,
     GraphProjection,
+    GraphProjectionSnapshot,
+    GraphRunOutcome,
     GraphCommandContext,
     PatchCommandContext,
     InMemoryEventStore,
@@ -41,6 +44,11 @@ from orchestrator.graph import (
     build_projection,
     initial_projection,
     project_final_invariant_blockers,
+    project_active_lease_wait_plan,
+    project_graph_blocked_reason,
+    project_graph_completion_eligible,
+    project_graph_outcome,
+    project_graph_projection_snapshot,
     project_graph_patch_attempts,
     project_graph_topology,
     project_decision_view,
@@ -48,6 +56,7 @@ from orchestrator.graph import (
     project_lease_view,
     project_leases,
     project_node_states,
+    project_node_max_attempts,
     project_planner_freshness_packet,
     project_ready_nodes,
     projection_from_checkpoint,
@@ -4880,6 +4889,127 @@ def test_task_projection_invalid_test_block_exits_after_replacement_pass() -> No
     ]
 
     assert project_task_states(events) == {"task-1": "accepted"}
+
+
+def _policy_snapshot(**overrides: Any) -> GraphProjectionSnapshot:
+    values: dict[str, Any] = {
+        "run_state": "active",
+        "ready_nodes": [],
+        "active_leases": {},
+        "schedulable_nodes": [],
+        "task_states": {},
+    }
+    values.update(overrides)
+    return GraphProjectionSnapshot(**values)
+
+
+def test_graph_projection_snapshot_builds_driver_policy_views() -> None:
+    events = [
+        _event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "state": "ready", "max_attempts": 2},
+        ),
+        _event(
+            "node_created",
+            {"node_id": "worker-2", "kind": "worker", "state": "planned", "max_attempts": 4},
+        ),
+    ]
+
+    snapshot = project_graph_projection_snapshot(events)
+
+    assert snapshot.ready_nodes == ["worker-1"]
+    assert snapshot.schedulable_nodes == ["worker-1", "worker-2"]
+    assert snapshot.node_max_attempts == {"worker-1": 2, "worker-2": 4}
+    assert project_node_max_attempts(events) == snapshot.node_max_attempts
+
+
+def test_graph_outcome_policy_covers_completed_blocked_and_failed_runs() -> None:
+    completed = project_graph_outcome("run-completed", _policy_snapshot(run_state="completed"))
+    blocked = project_graph_outcome("run-blocked", _policy_snapshot())
+    failed = project_graph_outcome("run-failed", _policy_snapshot(run_state="failed"))
+
+    assert completed == GraphRunOutcome("run-completed", "completed", completed=True)
+    assert blocked.blocked_reason == "graph quiescent without completion"
+    assert failed.blocked_reason == "graph failed"
+
+
+def test_graph_blocker_policy_explains_ready_failed_missing_input_and_environment() -> None:
+    assert (
+        project_graph_blocked_reason(_policy_snapshot(ready_nodes=["planner-gap"]))
+        == "graph has ready node(s) not dispatched: planner-gap"
+    )
+    assert (
+        project_graph_blocked_reason(
+            _policy_snapshot(
+                node_states={"worker-1": "failed"},
+                failed_node_reasons={"worker-1": "runner rate limited"},
+            )
+        )
+        == "graph has failed node(s): worker-1: runner rate limited"
+    )
+    assert project_graph_blocked_reason(
+        _policy_snapshot(
+            node_states={"check-1": "planned"},
+            node_deferral_reasons={"check-1": "missing_required_input:evidence"},
+            missing_input_sources={"check-1": ["evidence from verifier-1=failed"]},
+        )
+    ) == (
+        "graph quiescent with non-terminal node(s): check-1=planned: "
+        "missing_required_input:evidence (evidence from verifier-1=failed)"
+    )
+    assert (
+        project_graph_blocked_reason(
+            _policy_snapshot(
+                environment_failures={
+                    "step/task": EnvironmentFailureProjection(
+                        position=1, classification="tool_unavailable", reason="missing tool"
+                    )
+                }
+            )
+        )
+        == "graph needs human/operator help for check environment issue(s): step/task: tool_unavailable: missing tool"
+    )
+
+
+def test_graph_completion_policy_requires_active_accepted_tasks() -> None:
+    assert (
+        project_graph_completion_eligible(_policy_snapshot(task_states={"step/task": "accepted"}))
+        is True
+    )
+    assert project_graph_completion_eligible(_policy_snapshot(task_states={})) is False
+    assert (
+        project_graph_completion_eligible(
+            _policy_snapshot(run_state="paused", task_states={"step/task": "accepted"})
+        )
+        is False
+    )
+
+
+def test_active_lease_wait_policy_uses_nearest_deadline_and_execution_ids() -> None:
+    now = datetime.fromisoformat("2026-06-27T19:30:00+00:00")
+    nearest = project_active_lease_wait_plan(
+        _policy_snapshot(
+            active_leases={
+                "expired": {"execution_id": "exec-1", "expires_at": "2026-06-27T19:29:59+00:00"},
+                "future": {"execution_id": "exec-2", "expires_at": "2026-06-27T19:30:10+00:00"},
+            }
+        ),
+        now,
+    )
+    missing_ids = project_active_lease_wait_plan(
+        _policy_snapshot(active_leases={"missing": {"expires_at": "2026-06-27T19:30:10+00:00"}}),
+        now,
+    )
+    no_expiry = project_active_lease_wait_plan(
+        _policy_snapshot(active_leases={"live": {"execution_id": "exec-live"}}), now
+    )
+
+    assert nearest.execution_ids == {"exec-1", "exec-2"}
+    assert nearest.timeout_seconds == 0.0
+    assert missing_ids.execution_ids == set()
+    assert missing_ids.timeout_seconds == 0.0
+    assert no_expiry.execution_ids == {"exec-live"}
+    assert no_expiry.timeout_seconds is None
 
 
 def test_fixture_corpus_then_projections_satisfied() -> None:

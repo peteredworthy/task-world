@@ -10,26 +10,27 @@ import pytest
 from sqlalchemy.exc import OperationalError
 
 from orchestrator.workflow.graph_driver import (
-    ActiveLeaseWaitPlan,
-    GraphProjectionSnapshot,
     GraphRunDriver,
     MAX_NODE_RECOVERIES_PER_DRIVE,
-    _active_lease_wait_plan,
     _drive_with_transient_retries,
     _graph_seed_run_config,
-    _node_max_attempts,
     _renew_running_expired_leases,
-    _snapshot_from_events,
-    classify_graph_outcome,
 )
 from orchestrator.graph import (
+    ActiveLeaseWaitPlan,
     Actor,
     ActorKind,
     EnvironmentFailureProjection,
     EventEnvelope,
     FakeClock,
     GraphCommandContext,
+    GraphProjectionSnapshot,
+    project_active_lease_wait_plan,
+    project_graph_outcome,
+    project_graph_projection_snapshot,
+    project_node_max_attempts,
 )
+from orchestrator.workflow import GraphRunOutcome as WorkflowGraphRunOutcome
 from tests.unit.graph_test_utils import canonical_event_payload
 
 
@@ -47,7 +48,7 @@ def _event(event_type: str, payload: dict[str, Any], position: int = -1) -> Even
 
 
 def test_snapshot_from_events_preserves_typed_environment_failures() -> None:
-    snapshot = _snapshot_from_events(
+    snapshot = project_graph_projection_snapshot(
         [
             _event(
                 "output_record_accepted",
@@ -69,6 +70,12 @@ def test_snapshot_from_events_preserves_typed_environment_failures() -> None:
     assert isinstance(failure, EnvironmentFailureProjection)
     assert failure.position == 12
     assert failure.reason == "check tool unavailable while running: check command"
+
+
+def test_workflow_graph_run_outcome_remains_the_public_graph_outcome() -> None:
+    from orchestrator.graph import GraphRunOutcome
+
+    assert WorkflowGraphRunOutcome is GraphRunOutcome
 
 
 class RecordingController:
@@ -386,7 +393,7 @@ async def _noop_sleep() -> None:
 def test_active_lease_wait_plan_uses_nearest_deadline() -> None:
     now = datetime.fromisoformat("2026-06-27T19:30:00+00:00")
 
-    wait_plan = _active_lease_wait_plan(
+    wait_plan = project_active_lease_wait_plan(
         GraphProjectionSnapshot(
             run_state="active",
             ready_nodes=[],
@@ -1095,7 +1102,7 @@ async def test_driver_stops_recovering_node_when_fresh_lease_ids_keep_orphaning(
 
 
 def test_node_max_attempts_matches_dispatch_first_node_created_lookup() -> None:
-    attempts = _node_max_attempts(
+    attempts = project_node_max_attempts(
         [
             _event(
                 "node_created",
@@ -1129,7 +1136,7 @@ def test_node_max_attempts_matches_dispatch_first_node_created_lookup() -> None:
 
 
 def test_outcome_classification() -> None:
-    completed = classify_graph_outcome(
+    completed = project_graph_outcome(
         "run-1",
         GraphProjectionSnapshot(
             run_state="completed",
@@ -1139,7 +1146,7 @@ def test_outcome_classification() -> None:
             task_states={},
         ),
     )
-    blocked = classify_graph_outcome(
+    blocked = project_graph_outcome(
         "run-2",
         GraphProjectionSnapshot(
             run_state="active",
@@ -1149,7 +1156,7 @@ def test_outcome_classification() -> None:
             task_states={},
         ),
     )
-    failed = classify_graph_outcome(
+    failed = project_graph_outcome(
         "run-3",
         GraphProjectionSnapshot(
             run_state="failed",
@@ -1167,7 +1174,7 @@ def test_outcome_classification() -> None:
     assert failed.completed is False
     assert failed.blocked_reason == "graph failed"
 
-    rate_limited = classify_graph_outcome(
+    rate_limited = project_graph_outcome(
         "run-4",
         GraphProjectionSnapshot(
             run_state="active",
@@ -1188,7 +1195,7 @@ def test_outcome_classification() -> None:
         "Agent runner 'cli_subprocess' hit rate limit (resets at 14:30)"
     )
 
-    ready_blocked = classify_graph_outcome(
+    ready_blocked = project_graph_outcome(
         "run-5",
         GraphProjectionSnapshot(
             run_state="active",
@@ -1202,7 +1209,7 @@ def test_outcome_classification() -> None:
     assert ready_blocked.completed is False
     assert ready_blocked.blocked_reason == "graph has ready node(s) not dispatched: planner-gap"
 
-    expired_lease_failed = classify_graph_outcome(
+    expired_lease_failed = project_graph_outcome(
         "run-6",
         GraphProjectionSnapshot(
             run_state="active",
@@ -1220,7 +1227,7 @@ def test_outcome_classification() -> None:
         "graph has failed node(s): verifier-1: lease_expired_without_callback"
     )
 
-    pending_task_blocked = classify_graph_outcome(
+    pending_task_blocked = project_graph_outcome(
         "run-7",
         GraphProjectionSnapshot(
             run_state="active",
@@ -1236,7 +1243,7 @@ def test_outcome_classification() -> None:
         "graph quiescent with non-accepted task(s): step/task-a=pending, step/task-b=in_progress"
     )
 
-    nonterminal_nodes_blocked = classify_graph_outcome(
+    nonterminal_nodes_blocked = project_graph_outcome(
         "run-8",
         GraphProjectionSnapshot(
             run_state="active",
@@ -1259,7 +1266,7 @@ def test_outcome_classification() -> None:
         "check-1=blocked, planner-1=planned, verifier-1=suspended (+1 more)"
     )
 
-    missing_input_blocked = classify_graph_outcome(
+    missing_input_blocked = project_graph_outcome(
         "run-missing-input",
         GraphProjectionSnapshot(
             run_state="active",
@@ -1282,7 +1289,7 @@ def test_outcome_classification() -> None:
         "(verification_evidence from verifier-primary=failed)"
     )
 
-    environment_blocked = classify_graph_outcome(
+    environment_blocked = project_graph_outcome(
         "run-9",
         GraphProjectionSnapshot(
             run_state="active",

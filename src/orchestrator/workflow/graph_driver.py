@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -24,11 +23,16 @@ from orchestrator.git import dirty_paths, find_leaked_paths, resolve_main_worktr
 from orchestrator.graph import (
     Actor,
     ActorKind,
-    EnvironmentFailureProjection,
     EventEnvelope,
+    GraphProjectionSnapshot,
+    GraphRunOutcome,
     GraphProjection,
     GraphCommandContext,
     build_projection,
+    project_active_lease_wait_plan,
+    project_graph_completion_eligible,
+    project_graph_outcome,
+    project_graph_projection_snapshot,
     project_leases,
     project_node_states,
     project_ready_nodes,
@@ -56,8 +60,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-TERMINAL_GRAPH_NODE_STATES = frozenset({"completed", "failed", "cancelled", "retired"})
-
 # How many times one drive_to_quiescence call will agent_died-recover the same
 # node before giving up and letting the run pause graph_blocked. Small on
 # purpose: a transient orphaning cause (e.g. a one-off rejected submit)
@@ -65,6 +67,7 @@ TERMINAL_GRAPH_NODE_STATES = frozenset({"completed", "failed", "cancelled", "ret
 # way every time — 3 attempts distinguishes the two without burning agent
 # spend on a node the kernel will not bound itself (no max_attempts).
 MAX_NODE_RECOVERIES_PER_DRIVE = 3
+TERMINAL_GRAPH_NODE_STATES = frozenset({"completed", "failed", "cancelled", "retired"})
 
 
 SUPPORTED_GRAPH_RUNNER_TYPES = frozenset(
@@ -171,54 +174,6 @@ async def apply_graph_cancel_until_terminal(
             return
 
     logger.warning("Graph cancel for %s stayed stale after retries", run_id)
-
-
-@dataclass(frozen=True)
-class GraphRunOutcome:
-    run_id: str
-    run_state: str | None
-    completed: bool
-    blocked_reason: str | None = None
-
-
-def _empty_str_dict() -> dict[str, str]:
-    return {}
-
-
-def _empty_environment_failures() -> dict[str, EnvironmentFailureProjection]:
-    return {}
-
-
-def _empty_int_dict() -> dict[str, int]:
-    return {}
-
-
-def _empty_str_list_dict() -> dict[str, list[str]]:
-    return {}
-
-
-@dataclass(frozen=True)
-class GraphProjectionSnapshot:
-    run_state: str | None
-    ready_nodes: list[str]
-    active_leases: dict[str, dict[str, Any]]
-    schedulable_nodes: list[str]
-    task_states: dict[str, str]
-    node_states: dict[str, str] = field(default_factory=_empty_str_dict)
-    failed_node_reasons: dict[str, str] = field(default_factory=_empty_str_dict)
-    node_deferral_reasons: dict[str, str] = field(default_factory=_empty_str_dict)
-    missing_input_sources: dict[str, list[str]] = field(default_factory=_empty_str_list_dict)
-    environment_failures: dict[str, EnvironmentFailureProjection] = field(
-        default_factory=_empty_environment_failures
-    )
-    # Each executable node's compiled retry budget (RoutineConfig retry.max_attempts,
-    # default 3), keyed by node_id. Needed so a driver-synthesized agent_died (see
-    # _recover_orphaned_active_leases) passes the same max_attempts the kernel's
-    # normal death path (graph_runtime.dispatch._agent_died) would have passed —
-    # without it, _apply_agent_died's v1 requeue-on-death policy never exhausts,
-    # and a chronically-orphaned node (new lease_id each retry) would defeat the
-    # per-lease_id dedup and retry forever.
-    node_max_attempts: dict[str, int] = field(default_factory=_empty_int_dict)
 
 
 async def _graph_seed_run_config(
@@ -649,7 +604,7 @@ class GraphRunDriver:
             # an operator action (or a failed bridge) halts the agent-dispatch
             # loop instead of retrying dead agents indefinitely.
             if should_continue is not None and not await should_continue():
-                return classify_graph_outcome(run_id, await read_projection(run_id))
+                return project_graph_outcome(run_id, await read_projection(run_id))
             await self._handle_command_at_head(
                 controller,
                 run_id,
@@ -670,7 +625,7 @@ class GraphRunDriver:
             await dispatcher.dispatch_pending(run_id=run_id)
             wait_projection = await read_projection(run_id)
             clock = getattr(self, "_clock", None) or getattr(controller, "_clock", SystemClock())
-            wait_plan = _active_lease_wait_plan(wait_projection, clock.now())
+            wait_plan = project_active_lease_wait_plan(wait_projection, clock.now())
             await executor.wait_for_all(
                 timeout_seconds=wait_plan.timeout_seconds,
                 active_execution_ids=wait_plan.execution_ids,
@@ -690,7 +645,7 @@ class GraphRunDriver:
                 and not projection.active_leases
                 and not projection.schedulable_nodes
             ):
-                if _should_complete_graph(projection):
+                if project_graph_completion_eligible(projection):
                     await self._handle_command_at_head(controller, run_id, "complete")
                     projection = await read_projection(run_id)
                 elif projection.run_state == "active":
@@ -707,7 +662,7 @@ class GraphRunDriver:
                     ):
                         previous_position = None
                         continue
-                return classify_graph_outcome(run_id, projection)
+                return project_graph_outcome(run_id, projection)
             # No-progress guard: compare the event-log head AFTER the loop has
             # finished its schedule/dispatch/wait/read/renew/quiescence pass.
             # wait_for_all() blocks while an agent is genuinely running, so
@@ -739,7 +694,7 @@ class GraphRunDriver:
                 ):
                     previous_position = None
                     continue
-                return classify_graph_outcome(run_id, projection)
+                return project_graph_outcome(run_id, projection)
             previous_position = position
 
     async def _bootstrap_graph_lifecycle(self, run_id: str) -> None:
@@ -788,7 +743,7 @@ class GraphRunDriver:
 
     async def _read_projection(self, run_id: str) -> GraphProjectionSnapshot:
         events = await self._read_events(run_id)
-        return _snapshot_from_events(events)
+        return project_graph_projection_snapshot(events)
 
     async def _read_events(self, run_id: str) -> list[EventEnvelope]:
         async with self._session_factory() as session:
@@ -839,46 +794,6 @@ class GraphRunDriver:
             run = await service.get_run(run_id)
             if run.status in (RunStatus.ACTIVE, RunStatus.STOPPING):
                 await service.apply_pause_run(run_id, reason=reason, error_detail=error_detail)
-
-
-@dataclass(frozen=True)
-class ActiveLeaseWaitPlan:
-    execution_ids: set[str]
-    timeout_seconds: float | None
-
-
-def _active_lease_wait_plan(
-    projection: GraphProjectionSnapshot,
-    now: datetime,
-) -> ActiveLeaseWaitPlan:
-    """Bound runner waiting by graph lease deadlines.
-
-    The graph kernel owns lease expiry during ``schedule_tick``. The driver
-    therefore must not wait indefinitely for runner tasks: once the nearest
-    active lease reaches its deadline, the loop needs to run another tick so
-    the kernel can emit ``lease_expired`` and any recovery/failure events.
-    """
-    execution_ids: set[str] = set()
-    timeouts: list[float] = []
-    for lease in projection.active_leases.values():
-        execution_id = lease.get("execution_id")
-        if isinstance(execution_id, str) and execution_id:
-            execution_ids.add(execution_id)
-        expires_at = lease.get("expires_at")
-        if not isinstance(expires_at, str):
-            continue
-        try:
-            expires_at_dt = datetime.fromisoformat(expires_at)
-        except ValueError:
-            continue
-        if expires_at_dt.tzinfo is None:
-            expires_at_dt = expires_at_dt.replace(tzinfo=UTC)
-        timeouts.append(max(0.0, (expires_at_dt - now).total_seconds()))
-    if not execution_ids:
-        return ActiveLeaseWaitPlan(execution_ids=set(), timeout_seconds=0.0)
-    if not timeouts:
-        return ActiveLeaseWaitPlan(execution_ids=execution_ids, timeout_seconds=None)
-    return ActiveLeaseWaitPlan(execution_ids=execution_ids, timeout_seconds=min(timeouts))
 
 
 async def _renew_running_expired_leases(
@@ -1283,3 +1198,8 @@ def _nonterminal_node_detail(
     if sources:
         detail = f"{detail} ({'; '.join(sources[:3])})"
     return detail
+
+
+# Temporary compatibility references for legacy private imports. New callers
+# must use the graph kernel policy APIs imported above.
+_legacy_policy_references = (_snapshot_from_events, _should_complete_graph, classify_graph_outcome)

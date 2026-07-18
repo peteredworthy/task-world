@@ -236,7 +236,8 @@ from orchestrator.workflow.agent import (
 )
 
 if TYPE_CHECKING:
-    from orchestrator.workflow.graph_driver import GraphRunDriver, GraphRunOutcome
+    from orchestrator.graph import GraphRunOutcome
+    from orchestrator.workflow.graph_driver import GraphRunDriver
     from orchestrator.workflow.service import WorkflowService, find_step_config, find_task_config
 from orchestrator.workflow.completion import handle_run_completion
 from orchestrator.workflow.dry_run import (
@@ -558,14 +559,14 @@ __all__ = [
 
 
 def __getattr__(name: str) -> Any:  # noqa: ANN401
-    if name in {"GraphRunDriver", "GraphRunOutcome"}:
-        from orchestrator.workflow.graph_driver import GraphRunDriver, GraphRunOutcome
+    if name == "GraphRunDriver":
+        from orchestrator.workflow.graph_driver import GraphRunDriver
 
-        values = {
-            "GraphRunDriver": GraphRunDriver,
-            "GraphRunOutcome": GraphRunOutcome,
-        }
-        return values[name]
+        return GraphRunDriver
+    if name == "GraphRunOutcome":
+        from orchestrator.graph import GraphRunOutcome
+
+        return GraphRunOutcome
     if name in {"WorkflowService", "find_step_config", "find_task_config"}:
         from orchestrator.workflow.service import (
             WorkflowService,
