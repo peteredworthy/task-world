@@ -28,6 +28,8 @@ import type {
   ProjectRoutinesListResponse,
   RecoverRequest,
   RecoverResponse,
+  RecordGraphDecisionRequest,
+  RecordGraphDecisionResponse,
   PromptResponse,
   RejectTaskRequest,
   RepoResponse,
@@ -533,6 +535,13 @@ export const api = {
 
   getRunGraphDecisions(runId: string): Promise<DecisionViewResponse> {
     return fetchApi('/api/runs/' + runId + '/graph/decisions');
+  },
+
+  recordRunGraphDecision(runId: string, data: RecordGraphDecisionRequest): Promise<RecordGraphDecisionResponse> {
+    return fetchApi('/api/runs/' + runId + '/graph/decisions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
   },
 
   getRunGraphFileState(runId: string): Promise<FileStateReportResponse> {

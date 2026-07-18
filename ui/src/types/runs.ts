@@ -269,6 +269,27 @@ export interface PendingGateDecision {
   node_id: string;
   gate_type: string;
   prompt: string | null;
+  options?: string[];
+  default_option?: string;
+  consequence_summary?: string;
+  expires_at?: string;
+  requested_authority?: string[];
+  target_node_id?: string;
+  target_region_id?: string;
+}
+
+export type GraphApprovalDecision = 'approved' | 'rejected';
+
+export interface RecordGraphDecisionRequest {
+  decision_type: 'approval';
+  node_id: string;
+  decision: GraphApprovalDecision;
+  decider: {
+    kind: 'human';
+    id: string;
+    role: 'operator';
+  };
+  reason?: string;
 }
 
 export interface AppealDecision {
@@ -286,6 +307,13 @@ export interface DecisionViewResponse {
     ready: boolean;
     blockers: string[];
   };
+}
+
+export interface RecordGraphDecisionResponse {
+  run_id: string;
+  graph_position: number;
+  events: GraphEventResponse[];
+  decision_view: DecisionViewResponse;
 }
 
 export interface NodeDetailResponse {

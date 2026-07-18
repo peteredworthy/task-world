@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useDecisionView, useFileStateReport, useGraphEvents, useGraphProjection, useSchedulerView } from '../hooks/useApi';
 import { FileStateViewer } from './FileStateViewer';
+import { GraphDecisionModal } from './GraphDecisionModal';
 import { NodeDetailPanel } from './NodeDetailPanel';
 import { SchedulerView } from './SchedulerView';
-import type { ActivityEvent, DecisionViewResponse, GraphEventResponse, GraphProjectionResponse, RunResponse, SchedulerViewResponse } from '../types';
+import type { ActivityEvent, DecisionViewResponse, GraphEventResponse, GraphProjectionResponse, PendingGateDecision, RunResponse, SchedulerViewResponse } from '../types';
 
 interface GraphPanelProps {
   runId: string;
@@ -413,8 +414,9 @@ function TaskStatesSection({ projection, run }: { projection: GraphProjectionRes
   );
 }
 
-function DecisionsSection({ view }: { view: DecisionViewResponse }) {
+function DecisionsSection({ runId, view }: { runId: string; view: DecisionViewResponse }) {
   const reviewLabel = view.review.ready ? 'Ready' : 'Blocked';
+  const [selectedGate, setSelectedGate] = useState<PendingGateDecision | null>(null);
   return (
     <section>
       <h3 className="mb-2 text-sm font-semibold text-text-primary">Decisions</h3>
@@ -430,8 +432,17 @@ function DecisionsSection({ view }: { view: DecisionViewResponse }) {
             <ul className="space-y-1">
               {view.pending_gates.map((gate) => (
                 <li key={gate.node_id} className="rounded border border-border/80 bg-bg-elevated px-2 py-1.5">
-                  <div className="break-all font-mono text-text-primary">
-                    {gate.node_id}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 break-all font-mono text-text-primary">{gate.node_id}</div>
+                    {gate.gate_type !== 'authority_request' && (
+                      <button
+                        type="button"
+                        onClick={() => setSelectedGate(gate)}
+                        className="shrink-0 text-xs font-medium text-accent-purple underline decoration-dotted hover:text-accent-purple/80"
+                      >
+                        Review decision
+                      </button>
+                    )}
                   </div>
                   <div className="mt-1 text-text-muted">{gate.gate_type}</div>
                   {gate.prompt && <div className="mt-1 text-text-secondary">{gate.prompt}</div>}
@@ -485,6 +496,7 @@ function DecisionsSection({ view }: { view: DecisionViewResponse }) {
           )}
         </div>
       </div>
+      {selectedGate && <GraphDecisionModal runId={runId} gate={selectedGate} onClose={() => setSelectedGate(null)} />}
     </section>
   );
 }
@@ -584,7 +596,7 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
           />
           <GraphActivitySection activityEvents={activityEvents} />
           {schedulerView && <SchedulerView view={schedulerView} />}
-          {decisionView && <DecisionsSection view={decisionView} />}
+          {decisionView && <DecisionsSection runId={runId} view={decisionView} />}
           {fileStateReport && <FileStateViewer report={fileStateReport} />}
           <NodeStatesTable
             projection={projection}

@@ -12,6 +12,7 @@ import type {
   SchedulerViewResponse,
   NodeDetailResponse,
   RunEvidenceDigestResponse,
+  RecordGraphDecisionRequest,
 } from '../types';
 
 const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'stopping']);
@@ -94,6 +95,21 @@ export function useDecisionView(runId: string | undefined) {
     queryFn: () => api.getRunGraphDecisions(runId!),
     enabled: !!runId,
     staleTime: 5000,
+  });
+}
+
+export function useRecordGraphDecision(runId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (data: RecordGraphDecisionRequest) => api.recordRunGraphDecision(runId, data),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['graphDecisions', runId] });
+      void queryClient.invalidateQueries({ queryKey: ['graphProjection', runId] });
+      void queryClient.invalidateQueries({ queryKey: ['graphScheduler', runId] });
+      void queryClient.invalidateQueries({ queryKey: ['graphEvents', runId] });
+      void queryClient.invalidateQueries({ queryKey: ['graphNodeDetail', runId] });
+      void queryClient.invalidateQueries({ queryKey: ['run', runId] });
+    },
   });
 }
 
