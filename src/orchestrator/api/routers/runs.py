@@ -466,7 +466,7 @@ def _build_run_from_request(
     )
 
     if request.agent_runner_type is not None:
-        run.agent_runner_type = AgentRunnerType(request.agent_runner_type)
+        run.agent_runner_type = request.agent_runner_type
 
     if request.agent_runner_config:
         if run.agent_runner_type is not None:
@@ -724,12 +724,7 @@ async def resume_run(
     if current_run.status == RunStatus.STOPPING:
         raise HTTPException(status_code=409, detail="Cannot resume a run in STOPPING state")
 
-    # Schema validator normalizes agent_runner_type to a valid lowercase value
-    agent_runner_type = (
-        AgentRunnerType(request.agent_runner_type)
-        if request and request.agent_runner_type
-        else None
-    )
+    agent_runner_type = request.agent_runner_type if request else None
     agent_runner_config = (
         request.agent_runner_config if request and request.agent_runner_config else None
     )
@@ -755,8 +750,7 @@ async def recover_run(
     run = await service.get_run(run_id)
     if run.status == RunStatus.STOPPING:
         raise HTTPException(status_code=409, detail="Cannot recover a run in STOPPING state")
-    # Schema validator normalizes agent_runner_type to a valid lowercase value
-    agent_runner_type = AgentRunnerType(body.agent_runner_type) if body.agent_runner_type else None
+    agent_runner_type = body.agent_runner_type
     agent_runner_config = body.agent_runner_config if body.agent_runner_config else None
     try:
         result = await service.recover_run(

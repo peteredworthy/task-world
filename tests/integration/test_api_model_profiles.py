@@ -66,6 +66,28 @@ class TestAgentRunnerModelDefaultEndpoints:
         assert response.status_code == 422
         assert "Valid options" in response.text
 
+    async def test_setting_model_defaults_rejects_path_body_runner_mismatch(
+        self, client: AsyncClient
+    ) -> None:
+        response = await client.put(
+            "/api/agent-runners/codex_server/model-profile-defaults",
+            json={"agent_runner_type": "cli_subprocess", "model_profile_defaults": {}},
+        )
+
+        assert response.status_code == 422
+        assert "must match" in response.json()["detail"]
+
+    @pytest.mark.parametrize("runner_type", [1, ["codex_server"]])
+    async def test_model_defaults_rejects_non_string_runner_type(
+        self, client: AsyncClient, runner_type: object
+    ) -> None:
+        response = await client.put(
+            "/api/agent-runners/codex_server/model-profile-defaults",
+            json={"agent_runner_type": runner_type, "model_profile_defaults": {}},
+        )
+
+        assert response.status_code == 422
+
     async def test_get_model_defaults_empty_for_unknown_runner(self, client: AsyncClient) -> None:
         response = await client.get("/api/agent-runners/cli_subprocess/model-profile-defaults")
         assert response.status_code == 200

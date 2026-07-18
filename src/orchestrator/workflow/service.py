@@ -292,7 +292,7 @@ def _is_graph_run(run: Run) -> bool:
     return getattr(run, "execution_mode", "legacy") == "graph"
 
 
-def _ensure_executable_agent_runner(
+def ensure_executable_agent_runner(
     current_agent_runner_type: AgentRunnerType | None,
     replacement_agent_runner_type: AgentRunnerType | None = None,
 ) -> None:
@@ -661,7 +661,7 @@ class WorkflowService:
         run = await self._repo.get(run_id)
         if run.status != RunStatus.DRAFT:
             raise InvalidTransitionError(run.status.value, "start_run (requires DRAFT)")
-        _ensure_executable_agent_runner(run.agent_runner_type)
+        ensure_executable_agent_runner(run.agent_runner_type)
         queue = self._get_signal_queue()
         await queue.enqueue(run_id, WorkflowSignal.RUN_START)
         await commit_with_event_outbox(self._session)
@@ -684,7 +684,7 @@ class WorkflowService:
 
         if run.status != RunStatus.DRAFT:
             raise InvalidTransitionError(run.status.value, RunStatus.ACTIVE.value)
-        _ensure_executable_agent_runner(run.agent_runner_type)
+        ensure_executable_agent_runner(run.agent_runner_type)
 
         now = self._clock.now()
         events = await handle_update_run_status(
@@ -1016,7 +1016,7 @@ class WorkflowService:
             run.status == RunStatus.FAILED and _is_graph_run(run)
         ):
             raise InvalidTransitionError(run.status.value, "active")
-        _ensure_executable_agent_runner(run.agent_runner_type, agent_runner_type)
+        ensure_executable_agent_runner(run.agent_runner_type, agent_runner_type)
         queue = self._get_signal_queue()
         payload: dict[str, Any] = {}
         if agent_runner_type is not None:
@@ -1050,7 +1050,7 @@ class WorkflowService:
             The updated run
         """
         run = await self._repo.get(run_id)
-        _ensure_executable_agent_runner(run.agent_runner_type, agent_runner_type)
+        ensure_executable_agent_runner(run.agent_runner_type, agent_runner_type)
 
         # Apply revert strategy if requested
         if resume_strategy == "revert":

@@ -6,26 +6,14 @@ from typing import Any, Literal
 from pydantic import Field, field_validator, model_validator
 
 from orchestrator.api.schemas.base import ApiModel
+from orchestrator.api.schemas.model_profiles import SelectableAgentRunnerType
 from orchestrator.api.schemas.tasks import ActionLogSchema, AttemptSchema, ModelTokenUsageSchema
 
-from orchestrator.config import AgentRunnerType, MergeStrategy, SELECTABLE_AGENT_RUNNER_VALUES
+from orchestrator.config import AgentRunnerType, MergeStrategy
 
 
-_VALID_AGENT_TYPES = sorted(SELECTABLE_AGENT_RUNNER_VALUES)
 _VALID_MERGE_STRATEGIES = [e.value for e in MergeStrategy]
 _VALID_EXECUTION_MODES = ["legacy", "graph"]
-
-
-def _validate_agent_runner_type(v: str | None) -> str | None:
-    """Validate and normalize agent_runner_type (case-insensitive)."""
-    if v is None:
-        return v
-    lowered = v.lower()
-    if lowered not in _VALID_AGENT_TYPES:
-        raise ValueError(
-            f"Invalid agent_runner_type '{v}'. Valid options: {', '.join(_VALID_AGENT_TYPES)}"
-        )
-    return lowered
 
 
 class EnvFileSpecSchema(ApiModel):
@@ -46,16 +34,11 @@ class CreateRunRequest(ApiModel):
     branch: str  # Source branch to base worktree on
     routine_embedded: dict[str, Any] | None = None
     config: dict[str, Any] = {}
-    agent_runner_type: str | None = None
+    agent_runner_type: SelectableAgentRunnerType | None = None
     agent_runner_config: dict[str, Any] = {}
     env_files: EnvFileRequestConfig | None = None
     merge_strategy: str | None = None
     execution_mode: str | None = None
-
-    @field_validator("agent_runner_type", mode="before")
-    @classmethod
-    def validate_agent_runner_type(cls, v: str | None) -> str | None:
-        return _validate_agent_runner_type(v)
 
     @field_validator("merge_strategy", mode="before")
     @classmethod
@@ -347,14 +330,9 @@ class BackwardTransitionRequest(ApiModel):
 class ResumeRunRequest(ApiModel):
     """Request to resume a paused run, optionally changing the agent."""
 
-    agent_runner_type: str | None = None
+    agent_runner_type: SelectableAgentRunnerType | None = None
     agent_runner_config: dict[str, Any] | None = None
     resume_strategy: str | None = None  # "continue" | "reset_worktree"
-
-    @field_validator("agent_runner_type", mode="before")
-    @classmethod
-    def validate_agent_runner_type(cls, v: str | None) -> str | None:
-        return _validate_agent_runner_type(v)
 
     @model_validator(mode="after")
     def validate_resume_strategy(self) -> "ResumeRunRequest":
@@ -369,16 +347,11 @@ class RecoverRequest(ApiModel):
 
     target_task_id: str
     additional_attempts: int = Field(default=1, ge=0)
-    agent_runner_type: str | None = None
+    agent_runner_type: SelectableAgentRunnerType | None = None
     agent_runner_config: dict[str, Any] | None = None
     preserve_checklist: bool = False
     guidance: str | None = None
     reset_branch: bool = True
-
-    @field_validator("agent_runner_type", mode="before")
-    @classmethod
-    def validate_agent_runner_type(cls, v: str | None) -> str | None:
-        return _validate_agent_runner_type(v)
 
 
 class RecoverResponse(ApiModel):

@@ -42,6 +42,7 @@ from orchestrator.api.schemas.review import (
     TestSummary as TestSummarySchema,
 )
 from orchestrator.config.enums import AgentRunnerType
+from orchestrator.workflow import RetiredAgentRunnerError
 from orchestrator.config.global_config import GlobalConfig
 from orchestrator.config.models import RoutineConfig
 from orchestrator.config.template_vars import resolve_plain_variables
@@ -777,22 +778,30 @@ async def agent_resolve_conflicts(
 
     # Resolve agent runner type and config from body or run defaults.
     # The request schema has already fenced explicit selections to active types.
-    agent_runner_type_str: str | None = body.agent_runner_type
+    agent_runner_type = body.agent_runner_type
     agent_runner_config_override: dict[str, Any] | None = body.agent_runner_config
 
-    agent_runner_type = (
-        AgentRunnerType(agent_runner_type_str) if agent_runner_type_str else run.agent_runner_type
-    )
-
-    agent_runner_config: dict[str, Any] = (
-        agent_runner_config_override or run.agent_runner_config or {}
-    )
+    if agent_runner_type is None:
+        agent_runner_type = run.agent_runner_type
+        if agent_runner_type == AgentRunnerType.RETIRED:
+            raise RetiredAgentRunnerError(agent_runner_type.value)
+        agent_runner_config = run.agent_runner_config or {}
+    else:
+        agent_runner_config = (
+            agent_runner_config_override
+            if agent_runner_config_override is not None
+            else {}
+            if run.agent_runner_type == AgentRunnerType.RETIRED
+            else run.agent_runner_config or {}
+        )
 
     job_id = str(uuid.uuid4())
 
     # Dispatch the agent in the background
-    if agent_runner_type is not None:
-        executor.spawn_for_run(run.id, agent_runner_type, agent_runner_config)
+    if agent_runner_type is None or not executor.spawn_for_run(
+        run.id, agent_runner_type, agent_runner_config
+    ):
+        raise HTTPException(status_code=409, detail="Unable to dispatch conflict-resolution agent")
 
     await _emit_committed(
         emitter,

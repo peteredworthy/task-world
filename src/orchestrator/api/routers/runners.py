@@ -98,6 +98,11 @@ async def set_agent_runner_model_profile_defaults(
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AgentRunnerModelProfileDefaultsSchema:
     """Set model defaults for each profile on an agent runner type."""
+    if body.agent_runner_type != runner_type:
+        raise HTTPException(
+            status_code=422,
+            detail="agent_runner_type in the request body must match the path runner_type",
+        )
     await session.execute(
         delete(AgentRunnerModelProfileDefaultModel).where(
             AgentRunnerModelProfileDefaultModel.runner_type == runner_type

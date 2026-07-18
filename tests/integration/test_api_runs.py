@@ -546,6 +546,28 @@ async def test_conflict_agent_override_rejects_non_selectable_runner_type(
     assert "Valid options" in response.text
 
 
+@pytest.mark.parametrize("runner_type", [1, ["codex_server"]])
+async def test_run_agent_runner_requests_reject_non_string_runner_type(
+    client: AsyncClient, repo_name: str, runner_type: object
+) -> None:
+    create_response = await client.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "repo_name": repo_name,
+            "branch": "main",
+            "agent_runner_type": runner_type,
+        },
+    )
+    conflict_response = await client.post(
+        "/api/runs/not-a-run/review/conflicts/agent-resolve",
+        json={"agent_runner_type": runner_type},
+    )
+
+    assert create_response.status_code == 422
+    assert conflict_response.status_code == 422
+
+
 async def _drive_run_to_failed(
     client: AsyncClient, drain: DrainFn, repo_name: str
 ) -> tuple[str, str]:
