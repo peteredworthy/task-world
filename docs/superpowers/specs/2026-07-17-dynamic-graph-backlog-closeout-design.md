@@ -4,8 +4,8 @@
 
 Close the post-W5.5 dynamic-graph backlog from fresh main without trusting stale
 status prose. Re-triage the four July 7 findings, regression-pin every confirmed
-bug before fixing it, complete the W8 residual, and leave the graph runner policy
-explicit and executable.
+bug before fixing it, complete the W8 residual, and remove the broken
+`claude_sdk` runner without making historical state unreadable.
 
 The work starts from `60ca04f96` on `codex/backlog-closeout` in
 `worktrees/backlog-closeout`. It does not merge to main or modify durable runtime
@@ -26,8 +26,9 @@ Fresh-main source inspection classifies all four Task 0 findings as `OPEN`:
    incident-shape replay through the real graph store that proves task states,
    final blockers, and completion-gate state are clean together.
 
-The `claude_sdk` graph-runner fence is already implemented and regression-tested.
-Task 2 therefore documents and retains the fence rather than duplicating it.
+The `claude_sdk` graph-runner fence is already implemented and regression-tested,
+but fence-off leaves a known-broken implementation and dependency in the product.
+Task 2 therefore chooses complete removal rather than retaining the fence.
 
 ## Delivery Strategy
 
@@ -41,7 +42,7 @@ The delivery units are:
 2. Canonical read-model consolidation.
 3. Pure driver-policy relocation.
 4. Graph export pruning and incident-guard retirement ledger.
-5. `claude_sdk` graph-runner decision record.
+5. `claude_sdk` runner removal and decision record.
 6. Final branch verification and durable evidence update.
 
 ## Regression Fixes
@@ -84,11 +85,13 @@ the complete argv rather than an internal fragment.
 
 ### July 4 Supersession Replay
 
-Replay the incident sequence shape through a real SQLite-backed
+Replay the documented incident sequence shape through a real SQLite-backed
 `GraphEventStore`: origin candidate, failed verifier, recovery/gap-planner
 continuation, corrective candidate that declares the origin-region
 supersession, passing corrective verification and file state, and final-gate
-evidence. Assert:
+evidence. This is a faithful minimal reconstruction from the incident report,
+not a byte-identical replay of a preserved production event export; the runtime
+journal is neither required nor accessed. Assert:
 
 - origin and corrective task regions both project as accepted;
 - compact, incremental-snapshot, and rebuilt projections agree;
@@ -161,20 +164,37 @@ The ledger must reconcile the review's July 7 conclusion that the remaining
 effectful guards are still load-bearing with the newly relocated pure policy.
 It does not treat event-triggered driving as a retirement prerequisite.
 
-## Claude SDK Decision
+## Claude SDK Decision And Removal
 
-Record `fence off` as the decision:
+Record `remove` as the decision. The in-process SDK's graph submit/grade path is
+broken by Stream-closed and cross-task cancel-scope failures, while
+`codex_server` is the proven graph path. Keeping the SDK for legacy runs would
+retain an untrusted implementation, dependency, configuration surface, and
+maintenance burden without product evidence that justifies them.
 
-- `claude_sdk` remains supported for non-graph runs;
-- `codex_server` remains the only supported graph runner;
-- graph runs using `claude_sdk` are refused before graph seeding with
-  `graph_runner_unsupported`; and
-- the historical Stream-closed/cancel-scope failure and existing regression
-  tests are the rationale and enforcement evidence.
+Remove:
 
-No inline SDK repair is attempted. Reconsideration requires a separate plan
-with a deterministic reproducer, SDK lifecycle analysis, callback transport
-tests, and graph-run product proof.
+- the `claude_sdk` runner implementation, factory, detector, model discovery,
+  configuration schema, and registry wiring;
+- the `CLAUDE_SDK` enum member and every executor, monitor, API, CLI, script,
+  prompt, and test branch that makes it selectable or executable;
+- public exports and SDK-specific prompt/tool tests; and
+- the `claude-agent-sdk` dependency and resulting lockfile entries.
+
+Historical data is a concrete compatibility requirement, not a reason to keep
+the runner. Introduce a non-selectable `retired` runner value for readback only,
+add an Alembic data migration that rewrites persisted `claude_sdk` runner fields
+to `retired`, and normalize legacy serialized run/event values at the state
+deserialization boundary. `retired` is never returned by runner discovery,
+accepted for new run selection, or dispatched. Attempts to resume a historical
+retired run fail with a clear unsupported-runner error and require explicit
+operator selection of a currently available runner.
+
+Removal tests prove that discovery/config APIs no longer expose Claude SDK, the
+dependency and imports are absent, historical values deserialize as `retired`,
+the migration preserves historical records, and retired runs cannot dispatch.
+Reintroducing an Anthropic SDK runner would be a new runner proposal requiring a
+deterministic lifecycle reproducer, callback transport tests, and product proof.
 
 ## Documentation And Evidence
 
@@ -214,6 +234,7 @@ This closeout does not:
 - convert the driver to event-triggered execution;
 - alter lease or run-lifecycle semantics;
 - perform wholesale legacy-engine retirement;
-- repair or remove `claude_sdk`;
+- preserve or repair `claude_sdk` behavior after its historical values are
+  retired;
 - introduce direct external imports from graph submodules; or
 - modify `orchestrator.db` or `.orchestrator/state/history.jsonl`.
