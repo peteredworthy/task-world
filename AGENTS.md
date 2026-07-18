@@ -103,8 +103,12 @@ Available runner types (`AgentRunnerType` enum in `src/orchestrator/config/enums
 | `openhands_docker` | OpenHands (Docker) | Isolated Docker container |
 | `cli_subprocess` | Claude CLI / Codex CLI | Subprocess via stdin/stdout |
 | `codex_server` | Codex Server (local) | Managed `codex app-server` process (stdio/JSON-RPC) |
-| `claude_sdk` | Claude SDK | In-process via Anthropic Python SDK |
-| `user_managed` | User Managed | External agent via REST or MCP; always available |
+| `retired` | Retired runner | Historical readback only; not selectable, discoverable, or dispatchable |
+
+The four selectable runner types are `openhands_local`, `openhands_docker`,
+`cli_subprocess`, and `codex_server`. Historical `claude_sdk` values normalize
+to `retired` at read boundaries. Codex Server is the supported replacement for
+former Claude SDK runs, and an operator must select it explicitly when resuming.
 
 All runners satisfy the `AgentRunner` protocol (`src/orchestrator/runners/interface.py`): `execute()`, `cancel()`, and optional `get_quota()`.
 

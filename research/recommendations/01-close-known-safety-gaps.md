@@ -87,3 +87,11 @@ the historical recommendation or diagnosis:
   `tests/integration/test_graph_read_models.py::test_july_4_incident_replay_preserves_supersession_and_completion_parity`
   jointly proves task acceptance, projection parity, empty final blockers, and
   completion through the real SQLite-backed store on all four projection paths.
+
+## Claude SDK supersession — 2026-07-18
+
+The cost-rate diagnosis above is retained as historical failure evidence, but
+its current-product action is superseded: the Claude SDK runner and its default
+model were removed. Historical runner values read back as `retired`; Codex
+Server is the supported replacement. Remaining unmatched-model accounting work
+applies only to the four selectable runner types.

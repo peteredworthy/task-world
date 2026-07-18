@@ -79,3 +79,11 @@ model is the largest piece (new query surface).
 
 R01c (loud-fail rates) first. Aligned with (not blocked by) remaining W5
 slices.
+
+## Claude SDK supersession — 2026-07-18
+
+The Claude SDK telemetry findings above remain historical evidence, but Phase 1
+item 2 is resolved by removal, not demotion: the runtime and dependency are
+gone, and `retired` exists only for historical readback. Cost capture work now
+targets `openhands_local`, `openhands_docker`, `cli_subprocess`, and
+`codex_server`; no new telemetry path should be built for retired records.

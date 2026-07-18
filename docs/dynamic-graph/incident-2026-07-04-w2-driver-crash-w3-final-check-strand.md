@@ -378,6 +378,12 @@ region citing the applied repair.
 
 ### New failure class C — claude_sdk runner cannot submit graph callbacks (W4)
 
+> **Superseded 2026-07-18:** The failure evidence below remains an immutable
+> incident fact, but the proposed repair work is closed by removal. The Claude
+> SDK runner and dependency were deleted; historical values read back as
+> non-selectable `retired`, and Codex Server is the supported replacement. See
+> `claude-sdk-runner-removal-decision.md`.
+
 After switching W4 to the `claude_sdk` runner, both verifier attempts finished
 the verification (PASS, full suite green) but every
 `mcp__orchestrator__grade`/`submit` call returned `Stream closed` while local
@@ -469,7 +475,8 @@ test: for each fixture run, `project_*` over light == over full.
   worker+verifier pairs in `region-w3-incremental-snapshots` and
   `region-w3-corrective` citing the two passed corrective candidates.
 - Both runs resumed on `codex_server` (gpt-5.5) — the runner with a proven
-  submit path; claude_sdk is unusable for graph runs until class C is fixed.
+  submit path; at incident time claude_sdk was unusable for graph runs. The
+  2026-07-18 removal decision supersedes repair of class C.
 
 ### Merge backlog landed (2026-07-05)
 

@@ -296,8 +296,8 @@ steps:
 
           IMPORTANT: If you remove instructions from the shared prompt that are needed
           by specific agents (e.g., git commit instructions), you MUST ensure those
-          instructions still exist in every agent's prompt path. Check cli.py,
-          claude_sdk.py, codex_server_common.py, and openhands_common.py builder prompts.
+          instructions still exist in every active agent's prompt path. Check cli.py,
+          codex_server_common.py, and openhands_common.py builder prompts.
 
           Write tests confirming:
           - Removed sections don't appear in generated prompts
@@ -310,7 +310,7 @@ steps:
             desc: Required sections (task context, requirements, callbacks) still present
             priority: critical
           - id: R3
-            desc: Git commit instructions exist in ALL agent builder prompt paths (cli.py, claude_sdk.py, codex_server_common.py, openhands_common.py)
+            desc: Git commit instructions exist in ALL active agent builder prompt paths (cli.py, codex_server_common.py, openhands_common.py)
             priority: critical
         auto_verify:
           items:
@@ -338,7 +338,6 @@ steps:
              - CLI (cli.py): git workflow, commit conventions
              - OpenHands (openhands.py): file re-reading avoidance, Docker awareness
              - Codex (codex_server.py): sandbox constraints, shorter responses
-             - Claude SDK (claude_sdk.py): tool usage patterns, sub-agent guidance
           3. Remove moved sections from shared prompt
           4. Add instructions to each agent's build_prompt() or prompt construction method
              Note: codex_server.py uses _build_prompt (with underscore prefix)
@@ -363,7 +362,7 @@ steps:
         auto_verify:
           items:
             - id: agents_import
-              cmd: uv run python -c "from orchestrator.runners.cli import CLIAgent; from orchestrator.runners.claude_sdk import ClaudeSdkAgent; print('runner imports ok')"
+              cmd: uv run python -c "from orchestrator.runners import CLIAgent, CodexServerAgent, OpenHandsAgent; print('runner imports ok')"
               must: true
             - id: tests_pass
               cmd: uv run pytest tests/ -x -q --tb=short -k "prompt or agent"

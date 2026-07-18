@@ -35,13 +35,13 @@ volume. Is the next step per-run DB files, a WAL-tuned single DB, or Postgres?
 volume; measure command latency and lock contention before choosing.
 [HUMAN] Pressure became a problem with the 28GB DB. keeping files out of it should give us enough headroom for now.
 
-## OQ-5: Repair or retire claude_sdk as a graph runner?
-Graph submit is broken ("Stream closed"), telemetry is degraded, clarification
-is a stub. Its unique value (in-process, OAuth reuse) may not justify the
-maintenance.
-**Settle by:** timebox one repair attempt against the current SDK version; if
-not fixed, gate it to legacy-carrier only and document.
-[HUMAN]Remove claude_sdk is was a mistake, it lacks any tool use.
+## OQ-5: Repair or retire claude_sdk as a graph runner? — CLOSED: REMOVE (2026-07-18)
+The runner was removed rather than repaired. Graph submit failed with `Stream
+closed`, telemetry was degraded, clarification was a stub, and the product
+assessment found that it lacked usable tool support. Codex Server is the
+replacement. Historical values normalize to readback-only `retired`, which is
+not selectable or dispatchable. See
+`docs/dynamic-graph/claude-sdk-runner-removal-decision.md`.
 
 ## OQ-6: What is the right horizon-planning effort calibration?
 Single-task routines already get minimal graphs, but there is no measured

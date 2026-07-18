@@ -8,7 +8,7 @@
 ## What the system is
 
 A self-hosted orchestrator (Python/FastAPI/SQLite + React UI) that coordinates
-LLM coding agents (Claude CLI/SDK, Codex server, OpenHands) through a **typed,
+LLM coding agents (Claude/Codex CLI, Codex Server, OpenHands) through a **typed,
 event-sourced, dynamically growing work graph**. Each run executes in an
 isolated git worktree. Tasks flow builder → verifier with fresh LLM context
 per phase; planners grow the graph at runtime via validated patches; a
@@ -73,7 +73,7 @@ telemetry, and unfinished consolidation, not in the core model.
 | Drive loop | Works, but accreted; W8 target |
 | Prompt assembly | Capped but untested; not cache-aware; hydration policies good bones |
 | Verification | Right topology, wrong default oracle mix |
-| Runners | codex_server solid; claude_sdk degraded (telemetry + graph submit broken) |
+| Runners | Four selectable types; Codex Server replaces removed Claude SDK runner |
 | Cost/observability | Good substrate (rate-embedded usage records), holed capture |
 | Legacy workflow engine | Live liability; shrink, don't extend |
 | UI/API readbacks | Rich, rebuildable read models |
@@ -89,3 +89,11 @@ deterministic completion facts, (c) adding the policy layer the dry-run
 modeling already identified as missing (retry/escalation/budget routing), and
 (d) instrumenting cost/outcomes well enough that future changes can be judged
 by evidence. See [../recommendations/README.md](../recommendations/README.md).
+
+## Runner disposition update — 2026-07-18
+
+The Claude SDK telemetry and prompt observations above are retained as the
+historical rationale for removal. Current selection is limited to
+`openhands_local`, `openhands_docker`, `cli_subprocess`, and `codex_server`.
+Historical SDK records normalize to `retired` for readback only and cannot be
+selected, discovered, or dispatched.

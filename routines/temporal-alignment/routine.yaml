@@ -335,7 +335,7 @@ steps:
     title: "M3: ActivityAdapter Protocol"
     step_context: |
       Define a clean start/cancel boundary for agent runners via ActivityAdapter protocol.
-      Implement the protocol for all four agent runners (CLI, ClaudeSdk, CodexServer,
+      Implement the protocol for the three active runner families (CLI, CodexServer,
       OpenHands). Wire task completion through ACTIVITY_COMPLETED and ACTIVITY_VERIFIED signals.
 
       CRITICAL INTEGRATION REQUIREMENT: Building the components (adapters, signal enqueue
@@ -348,9 +348,9 @@ steps:
       transition is performed by the signal handler, not the router.
     tasks:
       - id: "T-01"
-        title: "ActivityAdapter Protocol and All Four Runner Implementations"
+        title: "ActivityAdapter Protocol and Active Runner Implementations"
         task_context: |
-          Define the ActivityAdapter protocol and implement it for all four agent runners.
+          Define the ActivityAdapter protocol and implement it for all active runner families.
           Wire task completion signals through the signal queue.
 
           1. Create src/orchestrator/workflow/activity.py with:
@@ -360,19 +360,18 @@ steps:
              - ActivityContext: frozen dataclass with run_id, task_id, worktree_path, and
                other relevant fields the adapter needs to start the agent
              - BaseActivityAdapter: abstract base class (NOT the Protocol) that provides
-               shared implementation for all four concrete adapters:
+               shared implementation for all three concrete adapters:
                * _agent attribute (the wrapped runner)
                * _tasks: dict[str, asyncio.Task] for tracking running tasks
                * _build_execution_context(context: ActivityContext) -> ExecutionContext
                  (shared mapping logic — single implementation, not duplicated per adapter)
                * start() and cancel() default implementations using the above
                Runner-specific differences must be explicit overrides, not silent divergence
-               across four identical copies.
+               across three identical copies.
 
-          2. Implement all four concrete adapter classes in a submodule
+          2. Implement all three concrete adapter classes in a submodule
              (src/orchestrator/workflow/adapters/):
              - CLIActivityAdapter(BaseActivityAdapter)
-             - ClaudeSdkActivityAdapter(BaseActivityAdapter)
              - CodexServerActivityAdapter(BaseActivityAdapter)
              - OpenHandsActivityAdapter(BaseActivityAdapter)
              Each inherits start()/cancel()/_build_execution_context() from BaseActivityAdapter.
@@ -400,16 +399,16 @@ steps:
             desc: "ActivityAdapter (Protocol) and ActivityContext (frozen dataclass) importable from orchestrator.workflow.activity"
             priority: critical
           - id: "R2"
-            desc: "All four adapters importable: CLIActivityAdapter, ClaudeSdkActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter"
+            desc: "All active adapters importable: CLIActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter"
             priority: critical
           - id: "R3"
-            desc: "All four adapters have start() and cancel() methods matching the ActivityAdapter protocol"
+            desc: "All active adapters have start() and cancel() methods matching the ActivityAdapter protocol"
             priority: critical
           - id: "R4"
             desc: "All six M1 parity tests still pass after completion signal wiring"
             priority: critical
           - id: "R5"
-            desc: "BaseActivityAdapter exists and all four concrete adapters inherit from it; shared logic (_tasks dict, _build_execution_context, start/cancel) is in the base only, not duplicated in each adapter"
+            desc: "BaseActivityAdapter exists and all three concrete adapters inherit from it; shared logic (_tasks dict, _build_execution_context, start/cancel) is in the base only, not duplicated in each adapter"
             priority: critical
           - id: "R6"
             desc: "POST /tasks/{id}/submit enqueues ACTIVITY_COMPLETED via SignalQueue and no longer calls service.submit_for_verification() directly — the state transition (BUILDING→VERIFYING) is owned by the RunWorkflow signal handler, not the router"
@@ -426,16 +425,13 @@ steps:
               cmd: "uv run python -c \"from orchestrator.workflow.activity import BaseActivityAdapter; import inspect; assert inspect.isclass(BaseActivityAdapter); print('OK')\""
               must: true
             - id: "adapters_inherit_base"
-              cmd: "uv run python -c \"from orchestrator.workflow.activity import BaseActivityAdapter; from orchestrator.workflow.adapters import CLIActivityAdapter, ClaudeSdkActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter; assert issubclass(CLIActivityAdapter, BaseActivityAdapter); assert issubclass(ClaudeSdkActivityAdapter, BaseActivityAdapter); assert issubclass(CodexServerActivityAdapter, BaseActivityAdapter); assert issubclass(OpenHandsActivityAdapter, BaseActivityAdapter); print('OK')\""
+              cmd: "uv run python -c \"from orchestrator.workflow.activity import BaseActivityAdapter; from orchestrator.workflow.adapters import CLIActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter; assert issubclass(CLIActivityAdapter, BaseActivityAdapter); assert issubclass(CodexServerActivityAdapter, BaseActivityAdapter); assert issubclass(OpenHandsActivityAdapter, BaseActivityAdapter); print('OK')\""
               must: true
             - id: "shared_logic_in_base_not_duplicated"
-              cmd: "uv run python -c \"import inspect; from orchestrator.workflow.adapters import CLIActivityAdapter, ClaudeSdkActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter; adapters = [CLIActivityAdapter, ClaudeSdkActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter]; dupes = [cls.__name__ for cls in adapters if '_build_execution_context' in cls.__dict__ or '_tasks' in cls.__dict__]; assert not dupes, f'These adapters duplicate base class logic: {dupes}'; print('OK')\""
+              cmd: "uv run python -c \"import inspect; from orchestrator.workflow.adapters import CLIActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter; adapters = [CLIActivityAdapter, CodexServerActivityAdapter, OpenHandsActivityAdapter]; dupes = [cls.__name__ for cls in adapters if '_build_execution_context' in cls.__dict__ or '_tasks' in cls.__dict__]; assert not dupes, f'These adapters duplicate base class logic: {dupes}'; print('OK')\""
               must: true
             - id: "cli_adapter"
               cmd: "uv run python -c \"from orchestrator.workflow.adapters import CLIActivityAdapter; assert hasattr(CLIActivityAdapter, 'start'); assert hasattr(CLIActivityAdapter, 'cancel'); print('OK')\""
-              must: true
-            - id: "claude_sdk_adapter"
-              cmd: "uv run python -c \"from orchestrator.workflow.adapters import ClaudeSdkActivityAdapter; assert hasattr(ClaudeSdkActivityAdapter, 'start'); assert hasattr(ClaudeSdkActivityAdapter, 'cancel'); print('OK')\""
               must: true
             - id: "codex_adapter"
               cmd: "uv run python -c \"from orchestrator.workflow.adapters import CodexServerActivityAdapter; assert hasattr(CodexServerActivityAdapter, 'start'); assert hasattr(CodexServerActivityAdapter, 'cancel'); print('OK')\""

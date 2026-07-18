@@ -37,8 +37,12 @@ As of 2026-07-18, the implementation review follow-up has moved past the old
   retirement condition and disposition.
 - The graph driver still polls. No polling-to-event-triggered conversion is claimed,
   and event-triggered driving is explicitly not a guard-retirement prerequisite.
-- `claude_sdk` remains available for non-graph runs but is permanently gated off for
-  graph execution. `codex_server` is the only supported graph runner.
+- The Claude SDK runner was removed on 2026-07-18 after its graph callback
+  failures and missing tool support. The four selectable runner types are
+  `openhands_local`, `openhands_docker`, `cli_subprocess`, and `codex_server`.
+  Historical `claude_sdk` values read back as non-selectable `retired`; they
+  cannot be discovered or dispatched. `codex_server` is the supported graph
+  runner and replacement for explicitly resumed retired runs.
 
 ### Task 11 Steps 1–5 — W8 export and guard-ledger closeout (2026-07-18)
 

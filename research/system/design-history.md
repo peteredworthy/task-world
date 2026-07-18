@@ -69,8 +69,10 @@ allowlists still uncollapsed).
 2. **SQLite write-path contention** (`BUSY_SNAPSHOT`) — hardened via
    `BEGIN IMMEDIATE`, locked-retry, W3 snapshot+tail; residual risk remains.
 3. **Runtime-failed nodes reopen path** — partly wired (`5be3550cb`, `6f21bcf50`).
-4. **`claude_sdk` cannot submit graph callbacks** — gated off; `codex_server`
-   is the only reliable graph runner (P1 item 9).
+4. **`claude_sdk` could not submit graph callbacks** — historical incident
+   evidence that led first to gating (P1 item 9) and then removal on
+   2026-07-18. `codex_server` is its supported replacement; old values read as
+   non-dispatchable `retired`.
 5. **Event-loop starvation expiring live leases** — root cause was full-log
    JSON parse per command; W3/W5 targets; TTL widened 300→3600s as mitigation.
 6. Light-vs-full projection divergence (parity fixed for task state in
@@ -119,3 +121,10 @@ allowlists still uncollapsed).
 
 See also: [graph-kernel](graph-kernel.md) · [overview](overview.md) ·
 [../open-questions.md](../open-questions.md)
+
+## Runner disposition update — 2026-07-18
+
+This document's 2026-07-07 snapshot is superseded for runner availability.
+The current selectable types are `openhands_local`, `openhands_docker`,
+`cli_subprocess`, and `codex_server`. `retired` is a compatibility/readback
+state only; it is neither selectable nor dispatchable.

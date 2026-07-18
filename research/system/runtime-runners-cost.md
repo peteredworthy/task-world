@@ -130,5 +130,15 @@ partially realized as the static profile-defaults table.
 - Profile resolution as small pure functions with a single chokepoint — the
   right seam for routing work.
 
+## Runner disposition update — 2026-07-18
+
+The 2026-07-07 Claude SDK rows above are retained as failure evidence, not a
+current runner inventory. The SDK runtime and dependency were removed. The
+four selectable types are `openhands_local`, `openhands_docker`,
+`cli_subprocess`, and `codex_server`; `retired` is readback-only compatibility
+for historical `claude_sdk` values and cannot execute. Codex Server replaces
+the removed runner. Consequently, the SDK telemetry and prompt gaps require no
+repair; general unmatched-rate and cross-run rollup gaps remain.
+
 See also: [graph-kernel](graph-kernel.md) · [overview](overview.md) ·
 [../external/verification-evals-routing.md](../external/verification-evals-routing.md)

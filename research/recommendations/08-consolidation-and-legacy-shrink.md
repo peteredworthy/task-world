@@ -76,3 +76,11 @@ item 3 is an investigation then a series of small ports.
 
 After R01 (don't refactor the loop while a known kernel gap is open);
 independent of R02-R07 but sequenced last to avoid churn under the P1 work.
+
+## Claude SDK supersession — 2026-07-18
+
+The prompt triplication and undecided OQ-5 references above describe the
+2026-07-07 source snapshot. OQ-5 is now closed as **remove**: the SDK prompt,
+runner, detector, factory wiring, and dependency were deleted. Historical
+`claude_sdk` values are normalized to readback-only `retired`; Codex Server is
+the replacement. No SDK prompt consolidation work remains.

@@ -2,7 +2,7 @@
 
 ## Project
 
-Orchestrator coordinates LLM agents through structured workflows. Routine/Run model: git-versioned YAML templates define multi-step tasks, runs execute them via agent backend (OpenHands, CLI, Codex, SDK, user-managed). Builder/verifier cycle, fresh context per phase. Docs: `docs/intent/`, `docs/ARCHITECTURE.md`.
+Orchestrator coordinates LLM agents through structured workflows. Routine/Run model: git-versioned YAML templates define multi-step tasks, runs execute them via OpenHands, CLI, or Codex Server. Builder/verifier cycle, fresh context per phase. Docs: `docs/intent/`, `docs/ARCHITECTURE.md`.
 
 ## Working Directory Rules
 
@@ -35,7 +35,7 @@ Run → Agent Runner → worktree
   Pass: next task | Fail: back to Builder (attempt++)
 ```
 
-**Runners** (`AgentRunnerType`): `openhands_local`, `openhands_docker`, `cli_subprocess`, `codex_server`, `claude_sdk`, `user_managed`. Discovered via `src/orchestrator/runners/agent_detector.py`. All implement `execute()`, `cancel()`, `get_quota()`.
+**Runners** (`AgentRunnerType`): selectable `openhands_local`, `openhands_docker`, `cli_subprocess`, and `codex_server`; `retired` is readback-only and cannot be selected, discovered, or dispatched. Historical `claude_sdk` values normalize to `retired`; use Codex Server as the explicit replacement. Active runners are discovered via `src/orchestrator/runners/agent_detector.py` and implement `execute()`, `cancel()`, `get_quota()`.
 
 **Model Profiles**: `architect` (planning), `designer` (UX/API), `coder` (impl), `summarizer` (distill). Resolution: task → step → routine → system default. Logic: `src/orchestrator/runners/profile_resolution.py`.
 

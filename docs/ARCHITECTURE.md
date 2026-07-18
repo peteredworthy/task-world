@@ -168,10 +168,8 @@ task-world/
 │   │   ├── errors.py          # Runner-specific error types
 │   │   ├── agents/            # Concrete agent implementations
 │   │   │   ├── claude_cli/    # CLIAgent + ClaudeCliQuotaAgent (subprocess)
-│   │   │   ├── claude_sdk/    # ClaudeSDKAgent (in-process Anthropic SDK)
 │   │   │   ├── codex/         # CodexServerAgent (stdio/JSON-RPC)
 │   │   │   ├── openhands/     # OpenHandsAgent (local) + DockerOpenHandsAgent
-│   │   │   ├── user_managed/  # UserManagedAgent (waits for external REST/MCP callback)
 │   │   │   └── mock/          # Mock agent for testing
 │   │   ├── detection/         # Agent detection + config helpers (absorbed from flat runners/)
 │   │   │   ├── detector.py    # Legacy detector; wired to GET /api/agent-runners (TD-02)
@@ -493,7 +491,8 @@ Agent runners communicate completion back to the orchestrator through **async cl
 | `on_output(lines)` | Both | Emits `AgentOutputEvent` via `EventBroadcaster` |
 | `on_agent_metadata(metadata)` | Both | Persists PID and other agent metadata |
 
-External agents (REST/MCP) bypass the callback mechanism entirely — they call the orchestrator REST API directly (`POST /tasks/{id}/submit`, `PUT /tasks/{id}/checklist/{req}/grade`, etc.). The `UserManagedAgent` runner waits for an `asyncio.Event` set by `WorkflowService` when the external agent calls in.
+External clients may call the orchestrator REST/MCP APIs directly, but this is
+not an active agent-runner backend.
 
 ---
 
@@ -507,7 +506,7 @@ Each canonical module exposes its public surface via its `__init__.py`. **Never 
 
 ```python
 # ✓ correct — import from module top-level
-from orchestrator.runners import CLIAgent, ClaudeSDKAgent
+from orchestrator.runners import CLIAgent, CodexServerAgent
 
 # ✗ wrong — reaching into sub-packages
 from orchestrator.runners.agents.claude_cli.agent import CLIAgent
@@ -597,7 +596,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 |--------|------|-------------|
 | GET | `/health` | Health check |
 | GET | `/api/config` | Global configuration |
-| GET | `/api/agent-runners` | List available agent runner backends as `AgentRunnerOption[]`; includes OpenHands (local/Docker), CLI (claude/codex), Codex Server (local), Codex Server Remote, and User Managed |
+| GET | `/api/agent-runners` | List the four selectable backends as `AgentRunnerOption[]`: OpenHands local/Docker, CLI subprocess, and Codex Server |
 | GET | `/api/agent-runners/local-models` | Discover models from a local OpenAI-compatible LLM server |
 | GET | `/api/agent-runners/{type}/model-profile-defaults` | Get Agent Runner Model Defaults for a runner type |
 | PUT | `/api/agent-runners/{type}/model-profile-defaults` | Set Agent Runner Model Defaults for a runner type |
