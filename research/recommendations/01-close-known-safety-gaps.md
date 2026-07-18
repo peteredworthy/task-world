@@ -20,11 +20,10 @@
   replays the *full incident topology* (verifier fails → sibling region
   repairs cite the applied fix → task states, final blockers, and final gate
   all read clean).
-- Closure: the named regression now reconstructs the incident's event shape
-  through the real SQLite-backed `GraphEventStore` and proves the same outcome
-  from full events, compact projection events, the incremental checkpoint, and
-  a rebuilt checkpoint. It is a faithful minimal reconstruction, not a
-  byte-identical production export or runtime-journal replay.
+- Change: build that replay test from the incident's event shape using the
+  pure `scenario.py` harness; if it passes, update the incident doc's
+  "still-open" section; if it fails, the residue is now precisely
+  characterized.
 - Why P0: this incident family is the worst in the project's history, and
   the difference between "we think it's fixed" and "a named test pins it" is
   exactly the repo's own closure rule.
@@ -77,9 +76,9 @@ None. Everything else benefits from these landing first.
 
 ## Backlog closeout triage — 2026-07-17
 
-Fresh-main review confirms these four findings remain **OPEN**. This note
-records current implementation evidence without changing the historical
-recommendation or diagnosis:
+Fresh-main review confirms three findings remain **OPEN** and R01(a) is
+**CLOSED**. This note records current implementation evidence without changing
+the historical recommendation or diagnosis:
 
 - **Scheduler-view snapshot drift — OPEN.** `graph_runtime/store.py::_scheduler_view_from_projection` duplicates canonical scheduler policy and does not exclude ready `max_grants_reached` nodes.
 - **Graph human-gate approval path — OPEN.** `GraphPanel` only renders pending gates; `runs approve` only posts to the legacy step endpoint.

@@ -487,8 +487,9 @@ passed.
 
 ## Backlog closeout triage — 2026-07-17
 
-Fresh-main review keeps the following findings **OPEN**. The historical W2/W3
-diagnosis and recovery record above remains unchanged:
+Fresh-main review confirms three findings remain **OPEN** and R01(a) is
+**CLOSED**. The historical W2/W3 diagnosis and recovery record above remains
+unchanged:
 
 - **Scheduler-view snapshot drift — OPEN.** `graph_runtime/store.py::_scheduler_view_from_projection` duplicates canonical scheduler policy and does not exclude ready `max_grants_reached` nodes.
 - **Graph human-gate approval path — OPEN.** `GraphPanel` only renders pending gates; `runs approve` only posts to the legacy step endpoint.

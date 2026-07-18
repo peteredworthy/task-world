@@ -45,14 +45,6 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
-    payload = canonical_event_payload(event_type, payload)
-    if event_type == "output_record_accepted" and payload.get("record_type") == "classified_gap":
-        value = dict(payload["value"])
-        value.setdefault("milestone_kind", "gap_analysis")
-        value.setdefault("source", "incident_reconstruction")
-        value.setdefault("task_region_id", "origin")
-        value.setdefault("attempt_number", 1)
-        payload["value"] = value
     return EventEnvelope(
         event_id=event_id,
         run_id=run_id,
@@ -62,7 +54,7 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=payload,
+        payload=canonical_event_payload(event_type, payload),
     )
 
 
@@ -307,7 +299,13 @@ def _july_4_supersession_incident_events(run_id: str) -> list[EventEnvelope]:
                 "producer_node_id": "gap-planner-recovery",
                 "port": "classified_gap",
                 "schema": "GapClassification",
-                "value": {"classification": "corrective_work_required"},
+                "value": {
+                    "milestone_kind": "gap_analysis",
+                    "classification": "corrective_work_required",
+                    "source": "incident_reconstruction",
+                    "task_region_id": "origin",
+                    "attempt_number": 1,
+                },
             },
         ),
         _event(
