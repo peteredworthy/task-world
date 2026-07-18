@@ -3,7 +3,7 @@
 Addresses weakness **W8** (low) and improvement **#9** in
 `dynamic-graph-implementation-review.html` (re-assessed 2026-07-03).
 
-## Status — partially closed 2026-07-07
+## Status — closed 2026-07-18
 
 Closed:
 - `recovery.py` no-op deletion.
@@ -12,18 +12,26 @@ Closed:
   `schedule_tick` pass unless reconcile creates ready/schedulable work.
 - Future outbox backoff is honored by the driver before it classifies a run as
   blocked.
+- Pure projection-derived outcome, completion, retry-budget, and lease-wait policy
+  moved from the effectful driver into `graph/projections.py`; the temporary private
+  compatibility copies were then deleted.
+- Replaceable projection mirrors now delegate to canonical builders or carry
+  exhaustive field guards (`23fa05e80`).
+- The AST consumer guard reduced `orchestrator.graph.__all__` from **180** names at
+  source `2ccd20bce` to **165** names, retaining source and test consumers and
+  removing only the 15 zero-consumer re-exports it reported.
+- `guard-retirement-ledger.md` maps the retired, replaced, and load-bearing guards
+  to incidents, behavior, regressions, retirement conditions, and dispositions.
 
-Remaining:
-- `graph/__init__.py` is still a broad re-export surface, though reduced from the
-  original review's ~190-name surface to 175 lines.
-- The driver remains a polling coordinator. Full event-triggered driving is not part
-  of the closed W8 slice and should wait until the current safety guards have clear
-  kernel equivalents and retirement conditions.
-- A stopgap/retirement-condition ledger is still useful for driver/dispatch/recovery
-  guards that were added during incidents.
+The driver remains a polling coordinator. W8 did **not** convert polling to
+event-triggered driving, and event-triggered driving is not a prerequisite for
+retiring any incident guard.
 
 Evidence:
 - `0b725a463` (`refactor: drive graph progress by event position`)
+- `23fa05e8091b68f2696f5d60d6fd74ffc28b164f` (`refactor: consolidate graph projection mirrors`)
+- `f0b6c237dca0dd37caf715265ed004e61889c6aa` (`refactor: move graph outcome policy into kernel`)
+- `2ccd20bce78c8cb5620813c840bcff8b9d2bf304` (`fix: remove duplicate graph driver policy`; export-prune baseline)
 - `tests/unit/test_graph_driver_logic.py::test_driver_uses_event_position_to_detect_stuck_ready_node`
 - `tests/unit/test_graph_driver_logic.py::test_driver_returns_reconciled_quiescent_projection_without_second_schedule_tick`
 - `tests/unit/test_graph_driver_logic.py::test_driver_continues_when_reconcile_creates_schedulable_work`
@@ -39,16 +47,17 @@ any time.
   orphan recovery, pause classification, and worktree-contamination guards.
 - The original extra recovery tick and progress-signature concerns are closed.
 - `graph_runtime/recovery.py` no longer carries the self-cancelling assignment.
-- `graph/__init__.py` remains a broad package-level namespace, coupling consumers to
-  a large public surface.
+- `graph/__init__.py` now exactly matches the 165 package-level names consumed by
+  `src` and `tests`, enforced by `tests/unit/test_graph_public_exports.py`.
 
 ## Scope
 
 **Slice A — dead code and export prune:**
 1. Done: delete the `recovery.py` no-op.
-2. Remaining: prune `graph/__init__.py` to the names actually imported elsewhere
-   (`grep -rn "from orchestrator.graph import\|from ..graph import\|orchestrator\.graph\." src tests` to build the list).
-   Keep everything with an external consumer; delete the rest.
+2. Done: an AST scan covers `from orchestrator.graph import Name` and aliased
+   `import orchestrator.graph as alias; alias.Name` access under `src` and `tests`.
+   Its exact-set assertion retained all 165 current consumers and removed 15
+   zero-consumer re-exports without changing underlying symbols or consumer imports.
 
 **Slice B — loop simplification (after W2 + W3):**
 1. Done: with per-tick `node_deferred` gone (W3), replace the progress-signature comparison
@@ -77,7 +86,10 @@ passes after the `__init__` prune; no `ImportError` anywhere (`uv run pytest tes
 --collect-only -q` as a fast check). *Critical.*
 
 **R4 — Line-count outcome.** `drive_to_quiescence` body shrinks measurably (target:
-the three-reads-per-iteration pattern is gone). *Expected.*
+the three-reads-per-iteration pattern is gone). *Expected.* Pure driver policy was
+relocated to canonical kernel projections in `f0b6c237d`; duplicate private policy
+was deleted in `2ccd20bce`. The remaining reads serve distinct dispatch, wait,
+renewal, and quiescence safety boundaries.
 
 ## Constraints
 
@@ -96,3 +108,24 @@ uv run pytest tests/unit/test_graph_driver_logic.py \
 
 Slice A additionally: full-suite collection check. Slice B additionally: R2 test and
 the full graph suite (`uv run pytest tests -k graph -q`).
+
+## Closeout verification — source `2ccd20bce`, 2026-07-18
+
+```text
+uv run pytest tests/unit/test_graph_public_exports.py -q
+# 1 passed in 2.83s
+
+uv run pytest tests/ --collect-only -q
+# 4849 tests collected in 5.72s
+
+uv run pytest tests/unit/test_graph_public_exports.py tests/unit/test_graph_*.py tests/integration/test_graph_*.py -q
+# 911 passed in 112.74s
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+```
+
+The pre-prune RED was `180` exports versus `165` consumers, with 15 names only
+on the export side and none only on the consumer side. The post-prune guard is
+`165 == 165`. Test-only consumers deliberately remain public. Fresh-verifier
+execution and its SHA are Step 6 work and are not claimed here.

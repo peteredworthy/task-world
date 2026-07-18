@@ -22,7 +22,7 @@ validated closure snapshot is archived at
 
 ## Current Implementation Status
 
-As of 2026-07-07, the implementation review follow-up has moved past the old
+As of 2026-07-18, the implementation review follow-up has moved past the old
 "W6/W7/W8 not started" state:
 
 - W6 outbox hardening is closed for retry backoff, failed-row surfacing, operator
@@ -30,13 +30,49 @@ As of 2026-07-07, the implementation review follow-up has moved past the old
   performance improvement.
 - W7 glob overlap is closed: scheduler path claims now use segment-wise wildcard
   comparison instead of synthetic suffix probes.
-- W8 is partially closed: the recovery no-op is gone, progress detection uses event
-  positions, quiescent reconcile avoids the old extra schedule pass when it produces
-  no work, and the driver honors future outbox retry times. Remaining W8 follow-up is
-  to prune `graph/__init__.py` and document driver/runtime stopgap retirement
-  conditions.
+- W8 is closed: the recovery no-op and progress signature are gone, pure outcome
+  policy is kernel-owned, projection mirrors are consolidated/guarded, and an AST
+  guard reduced `graph/__init__.py` from 180 to the exact 165 names consumed by
+  `src` and `tests`. `guard-retirement-ledger.md` records every incident guard's
+  retirement condition and disposition.
+- The graph driver still polls. No polling-to-event-triggered conversion is claimed,
+  and event-triggered driving is explicitly not a guard-retirement prerequisite.
 - `claude_sdk` remains available for non-graph runs but is permanently gated off for
   graph execution. `codex_server` is the only supported graph runner.
+
+### Task 11 Steps 1–5 — W8 export and guard-ledger closeout (2026-07-18)
+
+The export audit ran against source
+`2ccd20bce78c8cb5620813c840bcff8b9d2bf304`. Its RED result was 180 public
+exports versus 165 AST consumers (15 export-only, zero consumer-only). The guard
+collects direct package imports and aliased module attribute access across both
+`src` and `tests`; therefore test-only consumers remain public. GREEN is an exact
+165-to-165 match. No consumer was rewritten to a graph submodule and no underlying
+symbol was deleted.
+
+Policy/mirror source evidence is
+`23fa05e8091b68f2696f5d60d6fd74ffc28b164f` (canonical projection mirrors),
+`f0b6c237dca0dd37caf715265ed004e61889c6aa` (pure outcome policy relocation),
+and `2ccd20bce78c8cb5620813c840bcff8b9d2bf304` (private duplicate removal).
+The durable disposition and incident mapping is in
+`docs/dynamic-graph/guard-retirement-ledger.md`.
+
+```bash
+uv run pytest tests/unit/test_graph_public_exports.py -q
+# 1 passed in 2.83s
+
+uv run pytest tests/ --collect-only -q
+# 4849 tests collected in 5.72s
+
+uv run pytest tests/unit/test_graph_public_exports.py tests/unit/test_graph_*.py tests/integration/test_graph_*.py -q
+# 911 passed in 112.74s
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+```
+
+This records Steps 1–5 only. No fresh Step 6 verifier run, count, or verifier SHA
+is claimed.
 
 ## Backlog Closeout Triage — 2026-07-17
 
