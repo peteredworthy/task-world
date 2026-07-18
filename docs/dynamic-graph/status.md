@@ -47,6 +47,29 @@ As of 2026-07-07, the implementation review follow-up has moved past the old
 | Codex cli_subprocess model routing | OPEN | `CLIAgent` constructs `codex --model MODEL exec ...` instead of `codex exec --model MODEL ...`. |
 | R01(a) July 4 supersession replay | OPEN | Focused supersession tests exist, but no real-store incident-shape replay jointly proves task acceptance, projection parity, empty final blockers, and completion. |
 
+### Task 0 verifier evidence
+
+Verified SHA: `bdcc31528a63cd9cd52dbae7244e642b9abdcd82`
+
+```bash
+uv run pytest tests/ -q -n auto --dist worksteal
+# 4824 passed, 3 skipped, 3 warnings in 95.74s (0:01:35)
+
+uv run ruff check .
+# All checks passed!
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+
+git diff --check
+# clean; no output
+```
+
+The three pytest warnings are the reported `aiosqlite` Python 3.12
+`DeprecationWarning` for the default datetime adapter. The verifier report
+records no Ruff warnings, the Pyright update notice is advisory, and the diff
+check is clean.
+
 ## Post-Closure Product Dogfood Outcome
 
 Dogfood run `784d9e7d-05f5-4d5e-8d74-6854cbf07c7a` was created through
