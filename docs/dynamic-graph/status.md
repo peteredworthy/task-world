@@ -74,7 +74,10 @@ The three warnings were Python 3.12 default-datetime-adapter
 `DeprecationWarning`s from `aiosqlite/core.py:63`. The Pyright update notice was
 advisory; the check reported zero errors, warnings, and informations. Generated
 enums were current, and Alembic reported the single head `zg1h2i3j4k5l`. The
-verifier's only dirty paths were the pre-existing SDD scratch files.
+verifier status showed modified `.superpowers/sdd/progress.md` and unrelated
+untracked
+`docs/superpowers/plans/2026-07-18-migrate-claude-sdk-history.md`; neither was
+part of verified source `200102e0e4f9ab3d0b727faabe9f032f125894df`.
 
 ### Task 11 Steps 1–5 — W8 export and guard-ledger closeout (2026-07-18)
 
