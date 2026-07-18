@@ -21,7 +21,6 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from orchestrator.config.enums import AgentRunnerType
-from orchestrator.runners.agents.claude_sdk.agent import fetch_claude_models
 from orchestrator.runners.agents.codex.common import (
     fetch_codex_models,
     select_preferred_codex_model,
@@ -269,38 +268,6 @@ _CODEX_SERVER_CONFIG: list[AgentConfigField] = [
     ),
 ]
 
-_CLAUDE_SDK_CONFIG: list[AgentConfigField] = [
-    AgentConfigField(
-        name="model",
-        field_type="string",
-        default="claude-sonnet-4-5",
-        description="Claude model to use (e.g. claude-sonnet-4-5, claude-opus-4-5)",
-    ),
-    AgentConfigField(
-        name="api_key",
-        field_type="secret",
-        description=(
-            "Anthropic API key (optional). Falls back to ANTHROPIC_API_KEY env var, "
-            "then the Claude CLI OAuth token from the macOS keychain (`claude auth login`)."
-        ),
-    ),
-    AgentConfigField(
-        name="auth_token",
-        field_type="secret",
-        description=(
-            "Anthropic OAuth bearer token (optional). Falls back to ANTHROPIC_AUTH_TOKEN env var, "
-            "then the Claude CLI OAuth token from the macOS keychain."
-        ),
-    ),
-    AgentConfigField(
-        name="max_turns",
-        field_type="number",
-        default=200,
-        description="Maximum agentic turns per run",
-    ),
-]
-
-
 # Mapping from AgentRunnerType to the set of valid config field names.
 # Used by the API layer to reject unknown agent_runner_config keys at creation time.
 AGENT_CONFIG_FIELDS: dict[AgentRunnerType, set[str]] = {
@@ -347,31 +314,6 @@ def _codex_server_config_with_models(models: list[str]) -> list[AgentConfigField
                         "field_type": "select",
                         "options": models,
                         "default": select_preferred_codex_model(models),
-                    }
-                )
-            )
-        else:
-            config.append(cfg_field.model_copy())
-    return config
-
-
-def _claude_sdk_config_with_models(models: list[str]) -> list[AgentConfigField]:
-    """Return the Claude SDK config schema with the model field populated.
-
-    When *models* is non-empty the model field is upgraded to a ``"select"``
-    with the discovered model IDs as options and the first entry as the
-    default.  When empty the field stays as a plain ``"string"`` with the
-    existing default, preserving the existing behaviour.
-    """
-    config: list[AgentConfigField] = []
-    for cfg_field in _CLAUDE_SDK_CONFIG:
-        if cfg_field.name == "model" and models:
-            config.append(
-                cfg_field.model_copy(
-                    update={
-                        "field_type": "select",
-                        "options": models,
-                        "default": models[0],
                     }
                 )
             )
@@ -665,10 +607,6 @@ class ToolDetector:
                 # Attempt to discover available models from the Codex API server.
                 models = fetch_codex_models()
                 config_schema = self._cli_config_for_codex(tool_name, models)
-            elif tool_name == "claude" and path is not None:
-                # Attempt to discover available models from the Anthropic API.
-                models = fetch_claude_models()
-                config_schema = self._cli_config_for_codex(tool_name, models)
             else:
                 config_schema = _cli_config_for_command(tool_name)
 
@@ -773,47 +711,3 @@ class ToolDetector:
             ),
             config_schema=_CODEX_SERVER_CONFIG,
         )
-
-    def _detect_claude_sdk(self) -> AgentRunnerOption:
-        """Check if the Claude Agent SDK is importable for in-process execution.
-
-        Availability requires the ``claude-agent-sdk`` package to be installed.
-        When available, ``fetch_claude_models()`` is called to discover the
-        models exposed by the Anthropic API.  If successful, the ``model``
-        config field is upgraded to a ``"select"`` with the available model IDs
-        and the first model set as the default value.  When model discovery
-        fails the field stays as a plain ``"string"``.
-        """
-        try:
-            import claude_agent_sdk  # noqa: F401  # pyright: ignore[reportUnusedImport]
-
-            models = fetch_claude_models()
-            config_schema = _claude_sdk_config_with_models(models)
-            return AgentRunnerOption(
-                agent_runner_type=AgentRunnerType.RETIRED,
-                name="Claude SDK",
-                title="Claude SDK Agent",
-                description=(
-                    "In-process Claude agent using the Claude Agent SDK. "
-                    "Runs locally with built-in tools (Read, Write, Edit, Bash, etc.) "
-                    "and orchestrator callbacks exposed via an in-process MCP server."
-                ),
-                available=True,
-                detail="claude-agent-sdk installed",
-                config_schema=config_schema,
-            )
-        except ImportError:
-            return AgentRunnerOption(
-                agent_runner_type=AgentRunnerType.RETIRED,
-                name="Claude SDK",
-                title="Claude SDK Agent",
-                description=(
-                    "In-process Claude agent using the Claude Agent SDK. "
-                    "Runs locally with built-in tools (Read, Write, Edit, Bash, etc.) "
-                    "and orchestrator callbacks exposed via an in-process MCP server."
-                ),
-                available=False,
-                detail="claude-agent-sdk not installed",
-                install_hint="Install with: uv add claude-agent-sdk",
-                config_schema=_CLAUDE_SDK_CONFIG,
-            )

@@ -216,7 +216,7 @@ class AgentRunnerMonitor:
             # checking therefore causes false "agent died" events that pause
             # the run mid-flight.
             #
-            # Like OPENHANDS_LOCAL / CLAUDE_SDK / CODEX_SERVER, the executor's
+            # Like OPENHANDS_LOCAL / CODEX_SERVER, the executor's
             # own try/except handles subprocess failures, so the health monitor
             # should not interfere during normal operation.  On startup recovery,
             # recover_active_runs_on_startup handles orphaned runs separately.
@@ -244,7 +244,7 @@ class AgentRunnerMonitor:
             # health checking therefore causes false "agent died" events that
             # pause the run mid-flight.
             #
-            # Like OPENHANDS_LOCAL / CLAUDE_SDK, the executor's own try/except
+            # Like OPENHANDS_LOCAL, the executor's own try/except
             # handles subprocess failures, so the health monitor should not
             # interfere during normal operation.  On startup recovery,
             # recover_active_runs_on_startup handles orphaned runs separately.

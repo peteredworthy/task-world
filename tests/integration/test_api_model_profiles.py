@@ -54,26 +54,26 @@ class TestAgentRunnerModelDefaultEndpoints:
 
     async def test_set_and_get_model_defaults_roundtrip(self, client: AsyncClient) -> None:
         payload = {
-            "agent_runner_type": "claude_sdk",
+            "agent_runner_type": "codex_server",
             "model_profile_defaults": {
-                "coder": "claude-sonnet-4-6",
-                "architect": "claude-opus-4-6",
+                "coder": "gpt-5.6-codex",
+                "architect": "gpt-5.6",
             },
         }
         put_resp = await client.put(
-            "/api/agent-runners/claude_sdk/model-profile-defaults", json=payload
+            "/api/agent-runners/codex_server/model-profile-defaults", json=payload
         )
         assert put_resp.status_code == 200
         put_data = put_resp.json()
-        assert put_data["agent_runner_type"] == "claude_sdk"
-        assert put_data["model_profile_defaults"]["coder"] == "claude-sonnet-4-6"
-        assert put_data["model_profile_defaults"]["architect"] == "claude-opus-4-6"
+        assert put_data["agent_runner_type"] == "codex_server"
+        assert put_data["model_profile_defaults"]["coder"] == "gpt-5.6-codex"
+        assert put_data["model_profile_defaults"]["architect"] == "gpt-5.6"
 
-        get_resp = await client.get("/api/agent-runners/claude_sdk/model-profile-defaults")
+        get_resp = await client.get("/api/agent-runners/codex_server/model-profile-defaults")
         assert get_resp.status_code == 200
         get_data = get_resp.json()
-        assert get_data["model_profile_defaults"]["coder"] == "claude-sonnet-4-6"
-        assert get_data["model_profile_defaults"]["architect"] == "claude-opus-4-6"
+        assert get_data["model_profile_defaults"]["coder"] == "gpt-5.6-codex"
+        assert get_data["model_profile_defaults"]["architect"] == "gpt-5.6"
 
     async def test_put_replaces_all_existing_model_defaults(self, client: AsyncClient) -> None:
         first = {
@@ -97,10 +97,10 @@ class TestAgentRunnerModelDefaultEndpoints:
 
     async def test_profiles_isolated_per_runner_type(self, client: AsyncClient) -> None:
         await client.put(
-            "/api/agent-runners/claude_sdk/model-profile-defaults",
+            "/api/agent-runners/codex_server/model-profile-defaults",
             json={
-                "agent_runner_type": "claude_sdk",
-                "model_profile_defaults": {"coder": "sdk-model"},
+                "agent_runner_type": "codex_server",
+                "model_profile_defaults": {"coder": "codex-model"},
             },
         )
         await client.put(
@@ -111,10 +111,10 @@ class TestAgentRunnerModelDefaultEndpoints:
             },
         )
 
-        sdk_resp = await client.get("/api/agent-runners/claude_sdk/model-profile-defaults")
+        codex_resp = await client.get("/api/agent-runners/codex_server/model-profile-defaults")
         cli_resp = await client.get("/api/agent-runners/cli_subprocess/model-profile-defaults")
 
-        assert sdk_resp.json()["model_profile_defaults"]["coder"] == "sdk-model"
+        assert codex_resp.json()["model_profile_defaults"]["coder"] == "codex-model"
         assert cli_resp.json()["model_profile_defaults"]["coder"] == "cli-model"
 
     async def test_put_empty_model_defaults_clears_all(self, client: AsyncClient) -> None:

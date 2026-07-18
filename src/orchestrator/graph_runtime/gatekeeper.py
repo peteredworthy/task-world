@@ -1,8 +1,7 @@
 """Runtime adapters for LLM-backed residue classification.
 
 This slice wires the protocol and event flow. ``ClaudeGatekeeperClassifier`` is
-left as an import-isolated production stub: the eventual implementation should
-follow ``orchestrator.runners.agents.claude_sdk`` credential conventions,
+left as an import-isolated production stub: an eventual implementation should
 prompt only with ``ResidueMetadata`` fields, parse a verdict per path, and
 return token/cost facts for the graph event stream.
 """

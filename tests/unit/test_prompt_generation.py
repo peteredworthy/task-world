@@ -2,7 +2,6 @@
 
 from typing import Literal
 
-from orchestrator.runners import build_claude_sdk_prompt
 from orchestrator.runners import build_codex_server_prompt
 from orchestrator.runners import build_openhands_prompt
 from orchestrator.runners import CLIAgent
@@ -679,15 +678,6 @@ def test_manual_git_commit_prohibition_in_cli_agent_prompt() -> None:
     assert "auto-commits uncommitted changes" in result
 
 
-def test_manual_git_commit_prohibition_in_claude_sdk_prompt() -> None:
-    """build_claude_sdk_prompt explicitly adds no-manual-commit instructions."""
-    shared_prompt = _shared_system_prompt()
-    context = _make_context(shared_prompt)
-    result = build_claude_sdk_prompt(context, is_verifier=False)
-    assert "Do not run `git commit` manually" in result
-    assert "auto-commits uncommitted changes" in result
-
-
 def test_manual_git_commit_prohibition_in_codex_server_prompt() -> None:
     """build_codex_server_prompt explicitly adds no-manual-commit instructions."""
     shared_prompt = _shared_system_prompt()
@@ -848,47 +838,6 @@ def test_codex_verifier_prompt_oversight_mode_avoids_code_review() -> None:
     assert "Review the code changes made by the builder" not in result
 
 
-def test_claude_sdk_prompt_includes_tool_usage_patterns() -> None:
-    """build_claude_sdk_prompt includes tool usage pattern instructions."""
-    context = _make_context("Some prompt")
-    result = build_claude_sdk_prompt(context, is_verifier=False)
-    assert "Tool Usage Patterns" in result
-    assert "update_checklist" in result
-
-
-def test_claude_sdk_prompt_includes_sub_agent_guidance() -> None:
-    """build_claude_sdk_prompt includes sub-agent guidance instructions."""
-    context = _make_context("Some prompt")
-    result = build_claude_sdk_prompt(context, is_verifier=False)
-    assert "Sub-Agent Guidance" in result
-
-
-def test_claude_sdk_prompt_includes_git_workflow() -> None:
-    """build_claude_sdk_prompt includes a Git Workflow section."""
-    context = _make_context("Some prompt")
-    result = build_claude_sdk_prompt(context, is_verifier=False)
-    assert "## Git Workflow" in result
-
-
-def test_claude_sdk_prompt_oversight_mode_blocks_implementation_work() -> None:
-    context = _make_context("Some prompt", work_mode="oversight")
-    result = build_claude_sdk_prompt(context, is_verifier=False)
-
-    assert "Perform only oversight/documentation/API operations" in result
-    assert "auto-commits allowed changes" in result
-    assert "Implement each requirement." not in result
-    assert "commit your changes to git" not in result
-
-
-def test_claude_sdk_verifier_prompt_oversight_mode_avoids_code_review() -> None:
-    context = _make_context("Some prompt", work_mode="oversight")
-    result = build_claude_sdk_prompt(context, is_verifier=True)
-
-    assert "reviewing oversight artifacts" in result
-    assert "Examine the oversight artifacts" in result
-    assert "reviewing code changes" not in result
-
-
 def test_agent_specific_sections_not_in_verifier_prompts() -> None:
     """Agent-specific builder sections should not appear in verifier prompts."""
     context = _make_context("Some prompt")
@@ -899,9 +848,6 @@ def test_agent_specific_sections_not_in_verifier_prompts() -> None:
     # OpenHands verifier should not have file re-reading avoidance
     oh_verifier = build_openhands_prompt(context, is_verifier=True)
     assert "File Exploration Guidelines" not in oh_verifier
-    # Claude SDK verifier should not have sub-agent guidance
-    sdk_verifier = build_claude_sdk_prompt(context, is_verifier=True)
-    assert "Sub-Agent Guidance" not in sdk_verifier
 
 
 # --- decisions= parameter in builder prompt ---
@@ -1044,7 +990,7 @@ def test_reviewing_code_section_removed_from_shared_verifier_prompt() -> None:
     """The 'Reviewing Code' git section must NOT appear in the shared verifier system prompt.
 
     Git review instructions are agent-specific (CLI/OpenHands have terminal
-    access; Codex and Claude SDK do not). The shared prompt should only contain
+    access; Codex does not). The shared prompt should only contain
     universal workflow instructions.
     """
     system = _shared_verifier_system_prompt()

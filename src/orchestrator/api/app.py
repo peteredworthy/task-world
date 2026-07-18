@@ -527,7 +527,6 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         from orchestrator.runners import (  # noqa: PLC0415
             ClaudeCliQuotaAgent,
-            ClaudeSDKAgent,
             CodexServerAgent,
             OpenHandsAgent,
         )
@@ -538,7 +537,6 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
                 OpenHandsAgent(),
                 CodexServerAgent(),
                 ClaudeCliQuotaAgent(),
-                ClaudeSDKAgent(),
             ]:
                 tool_detector.register_quota_agent(_agent)
     except Exception:

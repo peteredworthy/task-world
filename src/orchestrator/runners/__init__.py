@@ -16,12 +16,6 @@ from orchestrator.runners.agents import discover as discover_agents
 # Concrete agent implementations
 from orchestrator.runners.agents.claude_cli.agent import CLIAgent, ClaudeCliQuotaAgent
 from orchestrator.runners.agents.claude_cli.factory import create_cli_agent
-from orchestrator.runners.agents.claude_sdk.agent import (
-    ClaudeSDKAgent,
-    build_claude_sdk_prompt,
-    build_mcp_servers,
-    build_orchestrator_mcp_server,
-)
 from orchestrator.runners.agents.mock.agent import MockAgent, MockBehavior
 from orchestrator.runners.agents.claude_cli.parser import (
     RATE_LIMIT_PATTERN,
@@ -225,7 +219,6 @@ __all__ = [
     # Agent classes
     "CLIAgent",
     "ClaudeCliQuotaAgent",
-    "ClaudeSDKAgent",
     "create_cli_agent",
     "CodexServerAgent",
     "DockerOpenHandsAgent",
@@ -234,9 +227,6 @@ __all__ = [
     "OpenHandsAgent",
     "OpenHandsEventParser",
     "RealStdioTransport",
-    "build_claude_sdk_prompt",
-    "build_mcp_servers",
-    "build_orchestrator_mcp_server",
     # Parsers
     "ClaudeStreamParser",
     "CodexStreamParser",
