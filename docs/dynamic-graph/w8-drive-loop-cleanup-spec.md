@@ -109,7 +109,7 @@ uv run pytest tests/unit/test_graph_driver_logic.py \
 Slice A additionally: full-suite collection check. Slice B additionally: R2 test and
 the full graph suite (`uv run pytest tests -k graph -q`).
 
-## Closeout verification — source `2ccd20bce`, 2026-07-18
+## Closeout verification — baseline `2ccd20bce`, implementation `8ad825cf2`, 2026-07-18
 
 ```text
 uv run pytest tests/unit/test_graph_public_exports.py -q
@@ -128,4 +128,6 @@ uv run pyright
 The pre-prune RED was `180` exports versus `165` consumers, with 15 names only
 on the export side and none only on the consumer side. The post-prune guard is
 `165 == 165`. Test-only consumers deliberately remain public. Fresh-verifier
-execution and its SHA are Step 6 work and are not claimed here.
+execution and its SHA are Step 6 work and are not claimed here. The audit baseline
+was `2ccd20bce`; the GREEN collection, focused tests, and checks ran on the closeout
+implementation tree committed as `8ad825cf2`.

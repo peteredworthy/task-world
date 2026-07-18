@@ -42,7 +42,7 @@ As of 2026-07-18, the implementation review follow-up has moved past the old
 
 ### Task 11 Steps 1–5 — W8 export and guard-ledger closeout (2026-07-18)
 
-The export audit ran against source
+The export audit baseline was
 `2ccd20bce78c8cb5620813c840bcff8b9d2bf304`. Its RED result was 180 public
 exports versus 165 AST consumers (15 export-only, zero consumer-only). The guard
 collects direct package imports and aliased module attribute access across both
@@ -72,7 +72,9 @@ uv run pyright
 ```
 
 This records Steps 1–5 only. No fresh Step 6 verifier run, count, or verifier SHA
-is claimed.
+is claimed. The GREEN collection, focused tests, and checks above ran on the
+closeout implementation tree committed as
+`8ad825cf259f2fc7f42ec886616085cab08703ce`.
 
 ## Backlog Closeout Triage — 2026-07-17
 

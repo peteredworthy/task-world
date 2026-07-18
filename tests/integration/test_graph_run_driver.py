@@ -145,6 +145,20 @@ class GradingAgent(SubmitAgent):
         return ExecutionResult(success=True)
 
 
+class CrashingOutboxDispatcher(OutboxDispatcher):
+    entered = False
+
+    async def dispatch_pending(
+        self,
+        limit: int | None = None,
+        *,
+        run_id: str | None = None,
+    ) -> list[Any]:
+        del limit, run_id
+        self.entered = True
+        raise RuntimeError("drive loop escaped after entry")
+
+
 @pytest.fixture
 async def file_db(
     tmp_path: Path,
@@ -275,6 +289,7 @@ def _driver(
     repo: Path,
     agents: dict[str, AgentRunner],
     dispatch_order: list[str],
+    dispatcher_factory: Any = None,
 ) -> GraphRunDriver:
     clock = FixedClock()
     ids = SequentialIds()
@@ -310,6 +325,7 @@ def _driver(
         clock=clock,
         id_gen=ids,
         runtime_builder=runtime_builder,
+        dispatcher_factory=dispatcher_factory,
         sleep=advance_clock,
     )
 
@@ -593,6 +609,42 @@ async def test_driver_blocks_on_verifier_fail_without_completing(
     assert outcome.completed is False
     assert outcome.blocked_reason is not None
     assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
+
+
+@pytest.mark.asyncio
+async def test_driver_crash_bridge_persists_pause_and_reraises(
+    file_db: tuple[AsyncEngine, async_sessionmaker[AsyncSession]],
+    tmp_path: Path,
+) -> None:
+    _, session_factory = file_db
+    repo = tmp_path / "repo-crash-bridge"
+    _init_repo(repo)
+    run_id = "graph-driver-crash-bridge"
+    await _create_graph_run(session_factory, _routine(), run_id=run_id, repo=repo)
+    dispatcher: CrashingOutboxDispatcher | None = None
+
+    def dispatcher_factory(*args: Any) -> OutboxDispatcher:
+        nonlocal dispatcher
+        dispatcher = CrashingOutboxDispatcher(*args)
+        return dispatcher
+
+    driver = _driver(
+        session_factory,
+        repo=repo,
+        agents={"worker": SubmitAgent(), "verifier": GradingAgent("A")},
+        dispatch_order=[],
+        dispatcher_factory=dispatcher_factory,
+    )
+
+    with pytest.raises(RuntimeError, match="drive loop escaped after entry"):
+        await driver.run(run_id)
+
+    assert dispatcher is not None and dispatcher.entered is True
+    async with session_factory() as session:
+        crashed = await RunRepository(session).get(run_id)
+    assert crashed.status == RunStatus.PAUSED
+    assert crashed.pause_reason == "graph_driver_crashed"
+    assert crashed.last_error == "drive loop escaped after entry"
 
 
 @pytest.mark.asyncio
