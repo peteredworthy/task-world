@@ -350,6 +350,36 @@ def test_runs_create_explicit_legacy_opt_in(runner: CliRunner) -> None:
         assert data["execution_mode"] == "legacy"
 
 
+@pytest.mark.parametrize("runner_type", ["claude_sdk", "retired"])
+def test_runs_create_rejects_non_selectable_agent_runner(
+    runner: CliRunner, runner_type: str
+) -> None:
+    with runner.isolated_filesystem():
+        routines_dir = Path("routines")
+        routines_dir.mkdir()
+        _write_minimal_routine(routines_dir, "cli-retired-runner")
+
+        result = runner.invoke(
+            cli,
+            [
+                "--db",
+                "test.db",
+                "runs",
+                "create",
+                "cli-retired-runner",
+                "--repo",
+                "some-repo",
+                "--branch",
+                "main",
+                "--agent-runner",
+                runner_type,
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "Invalid agent runner type" in result.output
+
+
 def test_routines_list(runner: CliRunner, tmp_path: Path) -> None:
     """Test routines list command."""
     # Run the list command

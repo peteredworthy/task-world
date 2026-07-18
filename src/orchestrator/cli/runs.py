@@ -11,7 +11,12 @@ import click
 import httpx
 import websockets
 
-from orchestrator.config.enums import AgentRunnerType, RoutineSource, RunStatus
+from orchestrator.config import (
+    AgentRunnerType,
+    RoutineSource,
+    RunStatus,
+    is_selectable_agent_runner_type,
+)
 from orchestrator.config.global_config import load_global_config
 from orchestrator.db import create_engine, create_session_factory, init_db
 from orchestrator.db import RunRepository
@@ -209,10 +214,14 @@ def create_run(
             # Set agent if provided
             if agent:
                 try:
-                    run.agent_runner_type = AgentRunnerType(agent)
+                    selected_runner = AgentRunnerType(agent)
                 except ValueError:
                     click.echo(f"Error: Invalid agent runner type '{agent}'", err=True)
                     sys.exit(1)
+                if not is_selectable_agent_runner_type(selected_runner):
+                    click.echo(f"Error: Invalid agent runner type '{agent}'", err=True)
+                    sys.exit(1)
+                run.agent_runner_type = selected_runner
                 if agent_cfg:
                     run.agent_runner_config = agent_cfg
 
@@ -429,7 +438,9 @@ def resume_run(
         if agent:
             # Validate agent runner type
             try:
-                AgentRunnerType(agent)  # Validate it's a valid enum value
+                selected_runner = AgentRunnerType(agent)
+                if not is_selectable_agent_runner_type(selected_runner):
+                    raise ValueError(agent)
                 request_body["agent_runner_type"] = agent
             except ValueError:
                 click.echo(f"Error: Invalid agent runner type '{agent}'", err=True)

@@ -649,10 +649,10 @@ async def test_driver_crash_bridge_persists_pause_and_reraises(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("agent_runner_type", "expected_runner"),
+    ("agent_runner_type", "expected_runner", "expected_status"),
     [
-        (AgentRunnerType.CLI_SUBPROCESS, "cli_subprocess"),
-        (AgentRunnerType.RETIRED, "retired"),
+        (AgentRunnerType.CLI_SUBPROCESS, "cli_subprocess", RunStatus.PAUSED),
+        (AgentRunnerType.RETIRED, "retired", RunStatus.DRAFT),
     ],
 )
 async def test_driver_rejects_unsupported_graph_runner_before_seeding(
@@ -660,6 +660,7 @@ async def test_driver_rejects_unsupported_graph_runner_before_seeding(
     tmp_path: Path,
     agent_runner_type: AgentRunnerType,
     expected_runner: str,
+    expected_status: RunStatus,
 ) -> None:
     _, session_factory = file_db
     repo = tmp_path / f"repo-unsupported-runner-{expected_runner}"
@@ -688,7 +689,7 @@ async def test_driver_rejects_unsupported_graph_runner_before_seeding(
     assert f"unsupported runner '{expected_runner}'" in outcome.blocked_reason
     assert events == []
     assert dispatch_order == []
-    assert await _run_status(session_factory, run_id) == RunStatus.PAUSED
+    assert await _run_status(session_factory, run_id) == expected_status
 
 
 @pytest.mark.asyncio

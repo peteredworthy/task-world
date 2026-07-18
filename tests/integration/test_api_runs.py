@@ -27,7 +27,7 @@ from fastapi import FastAPI
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from orchestrator.config import RunStatus
+from orchestrator.config import AgentRunnerType, RunStatus
 from orchestrator.db import RunRepository
 from orchestrator.db import SqliteEventStore
 from orchestrator.db.access.mutations import save_run
@@ -334,6 +334,31 @@ async def test_start_run_invalid_state(
     assert response.status_code == 409
 
 
+async def test_start_retired_run_returns_clear_conflict(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any], repo_name: str
+) -> None:
+    client, _, _, _, app = _shared_app_fixture
+    created = await _create_run(client, repo_name)
+    run_id = created["id"]
+
+    async with app.state.session_factory() as session:
+        repository = RunRepository(session)
+        run = await repository.get(run_id)
+        run.agent_runner_type = AgentRunnerType.RETIRED
+        run.agent_runner_config = {"legacy_sdk_setting": "must-not-run"}
+        await save_run(repository.session, run)
+        await session.commit()
+
+    response = await client.post(f"/api/runs/{run_id}/start")
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "error": "retired_agent_runner",
+        "agent_runner_type": "retired",
+        "detail": "Run uses retired agent runner 'retired'. Select an active replacement runner before starting or resuming.",
+    }
+
+
 async def test_delete_run(
     _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any],
     repo_name: str,
@@ -456,6 +481,69 @@ async def test_resume_invalid_state(
     await drain(run_id)
     response = await client.post(f"/api/runs/{run_id}/resume")
     assert response.status_code == 409
+
+
+async def test_resume_retired_run_without_replacement_returns_clear_conflict(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any], repo_name: str
+) -> None:
+    client, _, _, _, app = _shared_app_fixture
+    created = await _create_run(client, repo_name)
+    run_id = created["id"]
+
+    async with app.state.session_factory() as session:
+        repository = RunRepository(session)
+        run = await repository.get(run_id)
+        run.status = RunStatus.PAUSED
+        run.agent_runner_type = AgentRunnerType.RETIRED
+        run.agent_runner_config = {"legacy_sdk_setting": "must-not-run"}
+        await save_run(repository.session, run)
+        await session.commit()
+
+    response = await client.post(f"/api/runs/{run_id}/resume")
+
+    assert response.status_code == 409
+    assert response.json()["error"] == "retired_agent_runner"
+
+
+async def test_resume_retired_run_with_active_replacement_clears_sdk_config(
+    _shared_app_fixture: tuple[AsyncClient, DrainFn, Path, Path, Any], repo_name: str
+) -> None:
+    client, drain, _, _, app = _shared_app_fixture
+    created = await _create_run(client, repo_name)
+    run_id = created["id"]
+
+    async with app.state.session_factory() as session:
+        repository = RunRepository(session)
+        run = await repository.get(run_id)
+        run.status = RunStatus.PAUSED
+        run.agent_runner_type = AgentRunnerType.RETIRED
+        run.agent_runner_config = {"legacy_sdk_setting": "must-not-run"}
+        await save_run(repository.session, run)
+        await session.commit()
+
+    response = await client.post(
+        f"/api/runs/{run_id}/resume", json={"agent_runner_type": "codex_server"}
+    )
+
+    assert response.status_code == 202
+    await drain(run_id)
+    data = (await client.get(f"/api/runs/{run_id}")).json()
+    assert data["status"] == "active"
+    assert data["agent_runner_type"] == "codex_server"
+    assert data["agent_runner_config"] == {}
+
+
+@pytest.mark.parametrize("runner_type", ["claude_sdk", "retired"])
+async def test_conflict_agent_override_rejects_non_selectable_runner_type(
+    client: AsyncClient, runner_type: str
+) -> None:
+    response = await client.post(
+        "/api/runs/not-a-run/review/conflicts/agent-resolve",
+        json={"agent_runner_type": runner_type},
+    )
+
+    assert response.status_code == 422
+    assert "Valid options" in response.text
 
 
 async def _drive_run_to_failed(

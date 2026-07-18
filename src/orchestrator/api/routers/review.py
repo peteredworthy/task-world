@@ -775,21 +775,14 @@ async def agent_resolve_conflicts(
     if not conflict_file_paths:
         raise HTTPException(status_code=409, detail="No merge conflicts to resolve")
 
-    # Resolve agent runner type and config from body or run defaults
+    # Resolve agent runner type and config from body or run defaults.
+    # The request schema has already fenced explicit selections to active types.
     agent_runner_type_str: str | None = body.agent_runner_type
     agent_runner_config_override: dict[str, Any] | None = body.agent_runner_config
 
-    agent_runner_type: AgentRunnerType | None
-    if agent_runner_type_str:
-        valid_agent_runner_types = [e.value for e in AgentRunnerType]
-        if agent_runner_type_str not in valid_agent_runner_types:
-            raise HTTPException(
-                status_code=422,
-                detail=f"Invalid agent_runner_type '{agent_runner_type_str}'. Valid options: {', '.join(valid_agent_runner_types)}",
-            )
-        agent_runner_type = AgentRunnerType(agent_runner_type_str)
-    else:
-        agent_runner_type = run.agent_runner_type
+    agent_runner_type = (
+        AgentRunnerType(agent_runner_type_str) if agent_runner_type_str else run.agent_runner_type
+    )
 
     agent_runner_config: dict[str, Any] = (
         agent_runner_config_override or run.agent_runner_config or {}

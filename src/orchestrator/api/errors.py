@@ -20,7 +20,7 @@ from orchestrator.state.errors import (
     StepNotFoundError,
     TaskNotFoundError,
 )
-from orchestrator.workflow import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow import GateBlockedError, InvalidTransitionError, RetiredAgentRunnerError
 from orchestrator.workflow.locks import TaskLockedError
 
 
@@ -134,6 +134,19 @@ def register_error_handlers(app: FastAPI) -> None:
                 "error": "gate_blocked",
                 "gate_name": exc.gate_name,
                 "blocking_items": exc.blocking_items,
+            },
+        )
+
+    @app.exception_handler(RetiredAgentRunnerError)
+    async def retired_agent_runner(  # type: ignore[reportUnusedFunction]
+        _request: Request, exc: RetiredAgentRunnerError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "error": "retired_agent_runner",
+                "agent_runner_type": exc.agent_runner_type,
+                "detail": str(exc),
             },
         )
 

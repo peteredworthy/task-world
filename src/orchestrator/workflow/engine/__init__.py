@@ -49,6 +49,7 @@ from orchestrator.workflow.engine.condition_evaluator import (
 from orchestrator.workflow.engine.errors import (
     GateBlockedError,
     InvalidTransitionError,
+    RetiredAgentRunnerError,
     WorkflowError,
 )
 
@@ -63,6 +64,7 @@ __all__ = [
     "GateResult",
     "GradeResult",
     "InvalidTransitionError",
+    "RetiredAgentRunnerError",
     "NoOpEmitter",
     "Parser",
     "StepOutcome",

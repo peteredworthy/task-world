@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel
 
+from orchestrator.api.schemas.model_profiles import SelectableAgentRunnerType
 from orchestrator.workflow import Gate as Gate, MergeReadiness as MergeReadiness
 
 
@@ -169,5 +170,5 @@ class RevertFileRequest(BaseModel):
 class AgentResolveConflictsRequest(BaseModel):
     """Request for agent-based conflict resolution."""
 
-    agent_runner_type: str | None = None
+    agent_runner_type: SelectableAgentRunnerType | None = None
     agent_runner_config: dict[str, Any] | None = None

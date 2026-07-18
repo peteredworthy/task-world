@@ -118,7 +118,11 @@ from orchestrator.workflow.agent.clarifications import (
 from orchestrator.workflow.engine import Clock, WorkflowEngine
 from orchestrator.workflow.agent.prompts import generate_builder_prompt, generate_recovery_prompt
 from orchestrator.workflow.agent.templates import resolve_template
-from orchestrator.workflow.engine.errors import GateBlockedError, InvalidTransitionError
+from orchestrator.workflow.engine.errors import (
+    GateBlockedError,
+    InvalidTransitionError,
+    RetiredAgentRunnerError,
+)
 from orchestrator.workflow.engine.gates import evaluate_checklist_gate
 from orchestrator.workflow.events.logger import PersistentEventEmitter
 from orchestrator.workflow import (
@@ -286,6 +290,20 @@ def _resolve_working_path(run: Run) -> Path | None:
 def _is_graph_run(run: Run) -> bool:
     """True for runs executed by the graph kernel (vs the legacy workflow)."""
     return getattr(run, "execution_mode", "legacy") == "graph"
+
+
+def _ensure_executable_agent_runner(
+    current_agent_runner_type: AgentRunnerType | None,
+    replacement_agent_runner_type: AgentRunnerType | None = None,
+) -> None:
+    """Reject retired execution unless an active replacement is explicit."""
+    if replacement_agent_runner_type == AgentRunnerType.RETIRED:
+        raise RetiredAgentRunnerError(replacement_agent_runner_type.value)
+    if (
+        current_agent_runner_type == AgentRunnerType.RETIRED
+        and replacement_agent_runner_type is None
+    ):
+        raise RetiredAgentRunnerError(current_agent_runner_type.value)
 
 
 class _ServiceClock:
@@ -643,6 +661,7 @@ class WorkflowService:
         run = await self._repo.get(run_id)
         if run.status != RunStatus.DRAFT:
             raise InvalidTransitionError(run.status.value, "start_run (requires DRAFT)")
+        _ensure_executable_agent_runner(run.agent_runner_type)
         queue = self._get_signal_queue()
         await queue.enqueue(run_id, WorkflowSignal.RUN_START)
         await commit_with_event_outbox(self._session)
@@ -665,6 +684,7 @@ class WorkflowService:
 
         if run.status != RunStatus.DRAFT:
             raise InvalidTransitionError(run.status.value, RunStatus.ACTIVE.value)
+        _ensure_executable_agent_runner(run.agent_runner_type)
 
         now = self._clock.now()
         events = await handle_update_run_status(
@@ -996,6 +1016,7 @@ class WorkflowService:
             run.status == RunStatus.FAILED and _is_graph_run(run)
         ):
             raise InvalidTransitionError(run.status.value, "active")
+        _ensure_executable_agent_runner(run.agent_runner_type, agent_runner_type)
         queue = self._get_signal_queue()
         payload: dict[str, Any] = {}
         if agent_runner_type is not None:
@@ -1029,6 +1050,7 @@ class WorkflowService:
             The updated run
         """
         run = await self._repo.get(run_id)
+        _ensure_executable_agent_runner(run.agent_runner_type, agent_runner_type)
 
         # Apply revert strategy if requested
         if resume_strategy == "revert":
@@ -1075,7 +1097,13 @@ class WorkflowService:
 
                 # Determine new agent runner type: use provided type or keep existing
                 new_agent = agent_runner_type if agent_runner_type is not None else old_agent
-                new_config = agent_runner_config if agent_runner_config is not None else old_config
+                new_config = (
+                    agent_runner_config
+                    if agent_runner_config is not None
+                    else {}
+                    if old_agent == AgentRunnerType.RETIRED
+                    else old_config
+                )
 
                 if (old_agent != new_agent or old_config != new_config) and new_agent is not None:
                     event = AgentChangedEvent(
@@ -1145,7 +1173,13 @@ class WorkflowService:
 
             # Determine new agent runner type: use provided type or keep existing
             new_agent = agent_runner_type if agent_runner_type is not None else old_agent
-            new_config = agent_runner_config if agent_runner_config is not None else old_config
+            new_config = (
+                agent_runner_config
+                if agent_runner_config is not None
+                else {}
+                if old_agent == AgentRunnerType.RETIRED
+                else old_config
+            )
 
             if (old_agent != new_agent or old_config != new_config) and new_agent is not None:
                 event = AgentChangedEvent(

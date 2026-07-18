@@ -45,6 +45,27 @@ class TestListModelProfiles:
 
 
 class TestAgentRunnerModelDefaultEndpoints:
+    @pytest.mark.parametrize("runner_type", ["claude_sdk", "retired"])
+    async def test_model_defaults_reject_non_selectable_runner_type(
+        self, client: AsyncClient, runner_type: str
+    ) -> None:
+        response = await client.get(f"/api/agent-runners/{runner_type}/model-profile-defaults")
+
+        assert response.status_code == 422
+        assert "Valid options" in response.text
+
+    @pytest.mark.parametrize("runner_type", ["claude_sdk", "retired"])
+    async def test_setting_model_defaults_rejects_non_selectable_runner_type(
+        self, client: AsyncClient, runner_type: str
+    ) -> None:
+        response = await client.put(
+            f"/api/agent-runners/{runner_type}/model-profile-defaults",
+            json={"agent_runner_type": runner_type, "model_profile_defaults": {}},
+        )
+
+        assert response.status_code == 422
+        assert "Valid options" in response.text
+
     async def test_get_model_defaults_empty_for_unknown_runner(self, client: AsyncClient) -> None:
         response = await client.get("/api/agent-runners/cli_subprocess/model-profile-defaults")
         assert response.status_code == 200

@@ -310,6 +310,15 @@ class GraphRunDriver:
                 completed=False,
                 blocked_reason="run is not graph execution_mode",
             )
+        if run.agent_runner_type == AgentRunnerType.RETIRED:
+            return GraphRunOutcome(
+                run_id=run_id,
+                run_state=None,
+                completed=False,
+                blocked_reason=(
+                    "Graph execution requires an active runner; unsupported runner 'retired'."
+                ),
+            )
         if run.status == RunStatus.DRAFT:
             await self._apply_start(run_id)
             run = await self._get_run(run_id)

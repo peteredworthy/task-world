@@ -10,7 +10,10 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.deps import get_session, get_tool_detector
-from orchestrator.api.schemas.model_profiles import AgentRunnerModelProfileDefaultsSchema
+from orchestrator.api.schemas.model_profiles import (
+    AgentRunnerModelProfileDefaultsSchema,
+    SelectableAgentRunnerType,
+)
 from orchestrator.config.enums import ModelProfile
 from orchestrator.db import AgentRunnerModelProfileDefaultModel
 from orchestrator.runners.agent_detector import ToolDetector
@@ -63,7 +66,7 @@ async def discover_local_models(
     response_model=AgentRunnerModelProfileDefaultsSchema,
 )
 async def get_agent_runner_model_profile_defaults(
-    runner_type: str,
+    runner_type: SelectableAgentRunnerType,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AgentRunnerModelProfileDefaultsSchema:
     """Get model defaults for each profile on an agent runner type."""
@@ -90,7 +93,7 @@ async def get_agent_runner_model_profile_defaults(
     response_model=AgentRunnerModelProfileDefaultsSchema,
 )
 async def set_agent_runner_model_profile_defaults(
-    runner_type: str,
+    runner_type: SelectableAgentRunnerType,
     body: AgentRunnerModelProfileDefaultsSchema,
     session: Annotated[AsyncSession, Depends(get_session)],
 ) -> AgentRunnerModelProfileDefaultsSchema:
