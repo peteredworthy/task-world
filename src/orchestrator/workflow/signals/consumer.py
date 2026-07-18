@@ -431,10 +431,10 @@ class SignalConsumer:
             resume_strategy = payload.get("resume_strategy")
 
         current_run = await service.get_run(run_id)
-        if self._status_value(getattr(current_run, "status", None)) == "active":
-            from orchestrator.workflow.service import ensure_executable_agent_runner
+        from orchestrator.workflow.service import ensure_executable_agent_runner
 
-            ensure_executable_agent_runner(current_run.agent_runner_type)
+        ensure_executable_agent_runner(current_run.agent_runner_type, agent_runner_type)
+        if self._status_value(getattr(current_run, "status", None)) == "active":
             logger.info(
                 "SignalConsumer: ignoring stale RESUME for already active run %s",
                 run_id,
