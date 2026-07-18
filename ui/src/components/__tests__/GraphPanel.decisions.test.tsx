@@ -154,6 +154,34 @@ function graphApiResponse(input: RequestInfo | URL, init?: RequestInit): Respons
 }
 
 describe('GraphPanel human-gate decisions', () => {
+  it('moves focus into the modal and restores it to the review trigger on close', () => {
+    renderPanel();
+    const trigger = screen.getByRole('button', { name: 'Review decision' });
+    trigger.focus();
+
+    fireEvent.click(trigger);
+
+    expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    expect(trigger).toHaveFocus();
+  });
+
+  it('keeps keyboard focus trapped within the modal', () => {
+    renderPanel();
+    fireEvent.click(screen.getByRole('button', { name: 'Review decision' }));
+    const close = screen.getByRole('button', { name: 'Close' });
+    const approve = screen.getByRole('button', { name: 'Approve' });
+
+    approve.focus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(close).toHaveFocus();
+
+    fireEvent.keyDown(document, { key: 'Tab', shiftKey: true });
+    expect(approve).toHaveFocus();
+  });
+
   it('keeps approve and reject actions in a modal and excludes authority requests', () => {
     renderPanel();
 

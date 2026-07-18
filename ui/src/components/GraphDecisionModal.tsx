@@ -12,10 +12,19 @@ interface GraphDecisionModalProps {
 
 export function GraphDecisionModal({ runId, gate, onClose }: GraphDecisionModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
   const mutation = useRecordGraphDecision(runId);
   const [note, setNote] = useState('');
   const [pendingDecision, setPendingDecision] = useState<GraphApprovalDecision | null>(null);
   const isPending = mutation.isPending;
+
+  useEffect(() => {
+    const trigger = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    return () => {
+      if (trigger?.isConnected) trigger.focus();
+    };
+  }, []);
 
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
@@ -69,6 +78,7 @@ export function GraphDecisionModal({ runId, gate, onClose }: GraphDecisionModalP
             <p className="mt-1 text-sm text-text-muted">Approve or reject this human gate after reviewing its consequences.</p>
           </div>
           <button
+            ref={closeButtonRef}
             type="button"
             aria-label="Close"
             disabled={isPending}
