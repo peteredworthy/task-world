@@ -134,6 +134,11 @@ def test_migration_retires_historical_claude_sdk_relational_values(tmp_path: Pat
             ("default-other", "cli_subprocess", "architect", "other-model"),
         )
         connection.execute(
+            "INSERT INTO agent_runner_model_profile_defaults (id, runner_type, profile, model) "
+            "VALUES (?, ?, ?, ?)",
+            ("default-sdk-noncollision", "claude_sdk", "designer", "legacy-designer-model"),
+        )
+        connection.execute(
             "INSERT INTO events_v2 (aggregate_id, event_type, payload, timestamp, version) "
             "VALUES (?, ?, ?, ?, ?)",
             ("run-1", "agent_changed", event_payload, "2025-01-01T00:00:00Z", 1),
@@ -161,6 +166,10 @@ def test_migration_retires_historical_claude_sdk_relational_values(tmp_path: Pat
             "other_default": connection.execute(
                 "SELECT id, runner_type, profile, model "
                 "FROM agent_runner_model_profile_defaults WHERE id = 'default-other'"
+            ).fetchone(),
+            "noncolliding_historical_default": connection.execute(
+                "SELECT id, runner_type, profile, model "
+                "FROM agent_runner_model_profile_defaults WHERE id = 'default-sdk-noncollision'"
             ).fetchone(),
         }
 
@@ -200,6 +209,7 @@ def test_migration_retires_historical_claude_sdk_relational_values(tmp_path: Pat
         ).fetchall() == [
             ("default-other", "cli_subprocess", "architect", "other-model"),
             ("default-retired", "retired", "coder", "current-model"),
+            ("default-sdk-noncollision", "retired", "designer", "legacy-designer-model"),
         ]
         assert (
             connection.execute(
@@ -207,5 +217,19 @@ def test_migration_retires_historical_claude_sdk_relational_values(tmp_path: Pat
                 "WHERE id = 'default-other'"
             ).fetchone()
             == before_upgrade["other_default"]
+        )
+        noncolliding_historical_default = connection.execute(
+            "SELECT id, runner_type, profile, model FROM agent_runner_model_profile_defaults "
+            "WHERE id = 'default-sdk-noncollision'"
+        ).fetchone()
+        assert noncolliding_historical_default is not None
+        assert (
+            noncolliding_historical_default[0]
+            == before_upgrade["noncolliding_historical_default"][0]
+        )
+        assert noncolliding_historical_default[1] == "retired"
+        assert (
+            noncolliding_historical_default[2:]
+            == before_upgrade["noncolliding_historical_default"][2:]
         )
         assert connection.execute("SELECT payload FROM events_v2").fetchone() == (event_payload,)
