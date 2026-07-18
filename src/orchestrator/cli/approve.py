@@ -13,6 +13,24 @@ from rich.prompt import Confirm, Prompt
 from rich.table import Table
 
 
+def _graph_approval_payload(
+    *,
+    node_id: str,
+    approved: bool,
+    decider_id: str,
+    reason: str | None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "decision_type": "approval",
+        "node_id": node_id,
+        "decision": "approved" if approved else "rejected",
+        "decider": {"kind": "human", "id": decider_id, "role": "operator"},
+    }
+    if reason:
+        payload["reason"] = reason
+    return payload
+
+
 @click.command("approve")
 @click.argument("run_id")
 @click.option("--url", default="http://localhost:8000", help="API server URL")
@@ -28,14 +46,16 @@ def approve_command(ctx: click.Context, run_id: str, url: str) -> None:
         as_json = ctx.obj["json"]
         console = Console()
 
-        # Get pending actions
-        api_url = f"{url.rstrip('/')}/api/runs/{run_id}/pending-actions"
-
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(api_url)
-                response.raise_for_status()
-                pending_actions = response.json()
+            transport = ctx.obj.get("http_transport")
+            async with httpx.AsyncClient(transport=transport) as client:
+                run_url = f"{url.rstrip('/')}/api/runs/{run_id}"
+                run_response = await client.get(run_url)
+                run_response.raise_for_status()
+                if run_response.json().get("execution_mode") == "graph":
+                    await _handle_graph_approvals(console, client, url, run_id, as_json)
+                else:
+                    await _handle_legacy_actions(console, client, url, run_id, as_json)
 
         except httpx.HTTPStatusError as e:
             if as_json:
@@ -50,6 +70,79 @@ def approve_command(ctx: click.Context, run_id: str, url: str) -> None:
                 click.echo(f"Error: {e}", err=True)
             sys.exit(1)
 
+    async def _handle_graph_approvals(
+        console: Console,
+        client: httpx.AsyncClient,
+        url: str,
+        run_id: str,
+        as_json: bool,
+    ) -> None:
+        api_url = f"{url.rstrip('/')}/api/runs/{run_id}/graph/decisions"
+        response = await client.get(api_url)
+        response.raise_for_status()
+        decision_view = response.json()
+        pending_gates = [
+            gate
+            for gate in decision_view.get("pending_gates", [])
+            if gate.get("gate_type") == "human_approval"
+        ]
+
+        if not pending_gates:
+            if as_json:
+                click.echo(json.dumps({"message": "No pending actions"}))
+            else:
+                console.print("[green]No pending actions for this run.[/green]")
+            return
+
+        if as_json:
+            click.echo(json.dumps(decision_view, indent=2))
+            return
+
+        console.print(
+            f"\n[bold blue]Found {len(pending_gates)} pending action(s) for run {run_id}[/bold blue]\n"
+        )
+
+        for i, gate in enumerate(pending_gates, 1):
+            node_id = gate["node_id"]
+            console.print(f"\n[bold]Action {i}/{len(pending_gates)}[/bold]")
+            console.print(Panel(gate.get("prompt") or "Review this human gate."))
+            consequence = gate.get("consequence_summary")
+            if consequence:
+                console.print(f"\n[bold]Consequence:[/bold]\n{consequence}")
+
+            approved = Confirm.ask("Approve this graph gate?", default=True)
+            decider_id = Prompt.ask("Your name", default="user")
+            reason = Prompt.ask("Reason (optional)", default="").strip()
+
+            submit_response = await client.post(
+                api_url,
+                json=_graph_approval_payload(
+                    node_id=node_id,
+                    approved=approved,
+                    decider_id=decider_id,
+                    reason=reason or None,
+                ),
+            )
+            submit_response.raise_for_status()
+            if approved:
+                console.print("[green]✓ Graph gate approved successfully![/green]")
+            else:
+                console.print("[yellow]Graph gate rejected[/yellow]")
+
+        console.print("\n[green]All pending actions processed![/green]\n")
+
+    async def _handle_legacy_actions(
+        console: Console,
+        client: httpx.AsyncClient,
+        url: str,
+        run_id: str,
+        as_json: bool,
+    ) -> None:
+        api_url = f"{url.rstrip('/')}/api/runs/{run_id}/pending-actions"
+        response = await client.get(api_url)
+        response.raise_for_status()
+        pending_actions = response.json()
+
         if not pending_actions:
             if as_json:
                 click.echo(json.dumps({"message": "No pending actions"}))
@@ -58,11 +151,9 @@ def approve_command(ctx: click.Context, run_id: str, url: str) -> None:
             return
 
         if as_json:
-            # In JSON mode, just output the actions
             click.echo(json.dumps(pending_actions, indent=2))
             return
 
-        # Interactive mode
         console.print(
             f"\n[bold blue]Found {len(pending_actions)} pending action(s) for run {run_id}[/bold blue]\n"
         )
