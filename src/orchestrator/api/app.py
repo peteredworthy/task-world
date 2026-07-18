@@ -124,7 +124,6 @@ async def _run_startup_recovery(app: FastAPI) -> None:
         _AT.OPENHANDS_LOCAL,
         _AT.OPENHANDS_DOCKER,
         _AT.CODEX_SERVER,
-        _AT.CLAUDE_SDK,
     )
 
     try:

@@ -69,7 +69,6 @@ async def _poll_and_spawn(
         AgentRunnerType.OPENHANDS_LOCAL,
         AgentRunnerType.OPENHANDS_DOCKER,
         AgentRunnerType.CODEX_SERVER,
-        AgentRunnerType.CLAUDE_SDK,
     }
 
     async with session_factory() as session:  # type: ignore[operator]

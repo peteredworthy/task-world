@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 # Agent interface and types
 from orchestrator.runners.interface import AgentRunner
+from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.types import AgentMetadataCallback, BroadcastCallback
 from orchestrator.runners.agent_factory import create as create_agent_runner
 
@@ -215,6 +216,7 @@ def __getattr__(name: str):  # type: ignore[misc]
 __all__ = [
     # Core
     "AgentRunner",
+    "AgentNotAvailableError",
     "AgentMetadataCallback",
     "BroadcastCallback",
     "create_agent_runner",

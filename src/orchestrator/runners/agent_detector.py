@@ -308,7 +308,6 @@ AGENT_CONFIG_FIELDS: dict[AgentRunnerType, set[str]] = {
     AgentRunnerType.OPENHANDS_DOCKER: {f.name for f in _OPENHANDS_DOCKER_CONFIG},
     AgentRunnerType.CLI_SUBPROCESS: {f.name for f in _CLI_SUBPROCESS_CONFIG},
     AgentRunnerType.CODEX_SERVER: {f.name for f in _CODEX_SERVER_CONFIG},
-    AgentRunnerType.CLAUDE_SDK: {f.name for f in _CLAUDE_SDK_CONFIG},
 }
 
 
@@ -529,7 +528,6 @@ class ToolDetector:
             options.append(await self._detect_openhands_docker())
             options.extend(self._detect_cli_tools())
             options.append(self._detect_codex_server())
-            options.append(self._detect_claude_sdk())
             self._detection_cache = options
             self._detection_cached_at = now
 
@@ -792,7 +790,7 @@ class ToolDetector:
             models = fetch_claude_models()
             config_schema = _claude_sdk_config_with_models(models)
             return AgentRunnerOption(
-                agent_runner_type=AgentRunnerType.CLAUDE_SDK,
+                agent_runner_type=AgentRunnerType.RETIRED,
                 name="Claude SDK",
                 title="Claude SDK Agent",
                 description=(
@@ -806,7 +804,7 @@ class ToolDetector:
             )
         except ImportError:
             return AgentRunnerOption(
-                agent_runner_type=AgentRunnerType.CLAUDE_SDK,
+                agent_runner_type=AgentRunnerType.RETIRED,
                 name="Claude SDK",
                 title="Claude SDK Agent",
                 description=(

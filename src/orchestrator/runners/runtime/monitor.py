@@ -250,10 +250,6 @@ class AgentRunnerMonitor:
             # recover_active_runs_on_startup handles orphaned runs separately.
             return True
 
-        elif run.agent_runner_type == AgentRunnerType.CLAUDE_SDK:
-            # In-process agent — same rationale as OPENHANDS_LOCAL
-            return True
-
         # Unknown agent runner type
         return False
 
@@ -293,7 +289,6 @@ class AgentRunnerMonitor:
         # periodic health monitor killing them prematurely).
         _IN_PROCESS_AGENT_TYPES = {
             AgentRunnerType.OPENHANDS_LOCAL,
-            AgentRunnerType.CLAUDE_SDK,
             AgentRunnerType.CODEX_SERVER,  # per-task subprocess; cannot survive restart
             AgentRunnerType.CLI_SUBPROCESS,  # per-task subprocess; cannot survive restart
         }

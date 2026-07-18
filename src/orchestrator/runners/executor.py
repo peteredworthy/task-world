@@ -646,7 +646,6 @@ class AgentRunnerExecutor:
             AgentRunnerType.OPENHANDS_LOCAL,
             AgentRunnerType.OPENHANDS_DOCKER,
             AgentRunnerType.CODEX_SERVER,
-            AgentRunnerType.CLAUDE_SDK,
         ):
             assert agent_runner_type is not None  # Type narrowing for pyright
             # Clear stale PID so the health monitor treats the agent as
@@ -1924,7 +1923,6 @@ class AgentRunnerExecutor:
             AgentRunnerType.OPENHANDS_LOCAL,
             AgentRunnerType.OPENHANDS_DOCKER,
             AgentRunnerType.CODEX_SERVER,
-            AgentRunnerType.CLAUDE_SDK,
         ):
             return False
 

@@ -433,7 +433,7 @@ def test_agent_changed_event_round_trip() -> None:
         event_type="agent_changed",
         timestamp=NOW,
         old_agent=AgentRunnerType.CLI_SUBPROCESS,
-        new_agent=AgentRunnerType.CLAUDE_SDK,
+        new_agent=AgentRunnerType.RETIRED,
         old_agent_runner_config={"model": "gpt-4"},
         new_agent_runner_config={"model": "claude-3"},
         reason="user_changed_on_resume",
@@ -441,7 +441,7 @@ def test_agent_changed_event_round_trip() -> None:
     rt = _round_trip(event, AgentChangedEvent)
     assert rt == event
     assert rt.old_agent == AgentRunnerType.CLI_SUBPROCESS
-    assert rt.new_agent == AgentRunnerType.CLAUDE_SDK
+    assert rt.new_agent == AgentRunnerType.RETIRED
 
 
 def test_agent_changed_event_enum_serialization() -> None:
@@ -449,13 +449,13 @@ def test_agent_changed_event_enum_serialization() -> None:
         run_id="run-1",
         timestamp=NOW,
         old_agent=AgentRunnerType.CLI_SUBPROCESS,
-        new_agent=AgentRunnerType.CLAUDE_SDK,
+        new_agent=AgentRunnerType.RETIRED,
     )
     assert event.event_type == "agent_changed"
     d = event.model_dump(mode="json")
     assert d["event_type"] == "agent_changed"
     assert d["old_agent"] == AgentRunnerType.CLI_SUBPROCESS.value
-    assert d["new_agent"] == AgentRunnerType.CLAUDE_SDK.value
+    assert d["new_agent"] == AgentRunnerType.RETIRED.value
 
 
 # ---------------------------------------------------------------------------

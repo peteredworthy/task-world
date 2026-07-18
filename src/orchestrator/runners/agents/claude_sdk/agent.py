@@ -472,7 +472,7 @@ class ClaudeSDKAgent:
     def info(self) -> AgentRunnerInfo:
         """Return static metadata for this agent instance."""
         return AgentRunnerInfo(
-            agent_runner_type=AgentRunnerType.CLAUDE_SDK,
+            agent_runner_type=AgentRunnerType.RETIRED,
             name="Claude SDK",
             version=None,
         )
@@ -521,20 +521,20 @@ class ClaudeSDKAgent:
         """
         if not _SDK_AVAILABLE:
             raise AgentNotAvailableError(
-                AgentRunnerType.CLAUDE_SDK.value,
+                AgentRunnerType.RETIRED.value,
                 "claude-agent-sdk package not installed. Install with: pip install claude-agent-sdk",
             )
 
         if not self._api_key and not self._auth_token:
             raise AgentNotAvailableError(
-                AgentRunnerType.CLAUDE_SDK.value,
+                AgentRunnerType.RETIRED.value,
                 "No Anthropic credentials found. Either set ANTHROPIC_API_KEY, "
                 "set ANTHROPIC_AUTH_TOKEN, or log in with the Claude CLI "
                 "(`claude auth login`) so the keychain token can be used.",
             )
 
         if self._cancelled:
-            raise AgentCancelledError(AgentRunnerType.CLAUDE_SDK.value)
+            raise AgentCancelledError(AgentRunnerType.RETIRED.value)
 
         start_ms = int(time.monotonic() * 1000)
         is_verifier = on_grade is not None
@@ -594,7 +594,7 @@ class ClaudeSDKAgent:
 
             async for msg in query_fn(prompt=full_prompt, options=options):
                 if self._cancelled:
-                    raise AgentCancelledError(AgentRunnerType.CLAUDE_SDK.value)
+                    raise AgentCancelledError(AgentRunnerType.RETIRED.value)
 
                 if isinstance(msg, AssistantMessage):
                     for block in msg.content:
@@ -614,7 +614,7 @@ class ClaudeSDKAgent:
 
                     if msg.is_error:
                         raise AgentExecutionError(
-                            AgentRunnerType.CLAUDE_SDK.value,
+                            AgentRunnerType.RETIRED.value,
                             f"Claude Agent SDK session failed: {msg.result or 'unknown error'}",
                         )
 
@@ -625,7 +625,7 @@ class ClaudeSDKAgent:
         except GateBlockedError:
             raise
         except asyncio.CancelledError:
-            raise AgentCancelledError(AgentRunnerType.CLAUDE_SDK.value)
+            raise AgentCancelledError(AgentRunnerType.RETIRED.value)
         except Exception as exc:
             duration_ms = int(time.monotonic() * 1000) - start_ms
             logger.debug(
@@ -640,7 +640,7 @@ class ClaudeSDKAgent:
                 if secret and secret in exc_msg:
                     exc_msg = exc_msg.replace(secret, "***")
             raise AgentExecutionError(
-                AgentRunnerType.CLAUDE_SDK.value,
+                AgentRunnerType.RETIRED.value,
                 f"Claude Agent SDK session failed after {duration_ms}ms: {exc_msg}",
             ) from exc
 

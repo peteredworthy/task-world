@@ -43,7 +43,7 @@ async def _create_run(
         "routine_id": "simple-routine",
         "repo_name": "proj-1",
         "branch": "main",
-        "agent_runner_type": "claude_sdk",
+        "agent_runner_type": "cli_subprocess",
     }
     if agent_runner_config is not None:
         body["agent_runner_config"] = agent_runner_config

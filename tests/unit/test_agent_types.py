@@ -95,9 +95,9 @@ def test_agent_info_no_version() -> None:
     assert info.version is None
 
 
-def test_agent_runner_type_claude_sdk_in_enum() -> None:
-    assert AgentRunnerType.CLAUDE_SDK == "claude_sdk"
-    assert AgentRunnerType.CLAUDE_SDK in AgentRunnerType
+def test_retired_agent_runner_type_is_in_enum() -> None:
+    assert AgentRunnerType.RETIRED == "retired"
+    assert AgentRunnerType.RETIRED in AgentRunnerType
 
 
 def test_agent_option() -> None:

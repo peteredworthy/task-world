@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Protocol
 
-from orchestrator.config.enums import AgentRunnerType
+from orchestrator.config import AgentRunnerType, is_selectable_agent_runner_type
 from orchestrator.runners.errors import AgentNotAvailableError
 
 if TYPE_CHECKING:
@@ -52,6 +52,11 @@ def create(
     **kwargs: Any,
 ) -> AgentRunner:
     """Create an agent instance via the registry."""
+    if not is_selectable_agent_runner_type(agent_runner_type):
+        raise AgentNotAvailableError(
+            agent_runner_type.value,
+            "Retired agent runners cannot be used for execution",
+        )
     factory = _REGISTRY.get(agent_runner_type)
     if factory is None:
         raise AgentNotAvailableError(

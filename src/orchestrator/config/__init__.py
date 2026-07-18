@@ -5,12 +5,17 @@ from orchestrator.config.enums import (
     ChecklistStatus,
     Complexity,
     GateType,
+    MergeStrategy,
     ModelProfile,
     Priority,
     RoutineSource,
     RunStatus,
+    SELECTABLE_AGENT_RUNNER_TYPES,
+    SELECTABLE_AGENT_RUNNER_VALUES,
     StepType,
     TaskStatus,
+    is_selectable_agent_runner_type,
+    normalize_persisted_agent_runner_type,
 )
 from orchestrator.config.global_config import ExecutionConfig, GlobalConfig, PathsConfig
 from orchestrator.config.models import (
@@ -55,6 +60,7 @@ __all__ = [
     "ExecutionConfig",
     "GateType",
     "GlobalConfig",
+    "MergeStrategy",
     "ModelProfile",
     "PathsConfig",
     "Priority",
@@ -72,6 +78,8 @@ __all__ = [
     "RoutineVersion",
     "RubricItemConfig",
     "RunStatus",
+    "SELECTABLE_AGENT_RUNNER_TYPES",
+    "SELECTABLE_AGENT_RUNNER_VALUES",
     "StepConfig",
     "StepTransitions",
     "StepType",
@@ -85,5 +93,7 @@ __all__ = [
     "find_git_root",
     "get_routine_from_repo",
     "get_routine_version",
+    "is_selectable_agent_runner_type",
     "load_routine_from_path",
+    "normalize_persisted_agent_runner_type",
 ]

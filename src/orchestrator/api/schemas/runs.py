@@ -8,10 +8,10 @@ from pydantic import Field, field_validator, model_validator
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.api.schemas.tasks import ActionLogSchema, AttemptSchema, ModelTokenUsageSchema
 
-from orchestrator.config.enums import AgentRunnerType, MergeStrategy
+from orchestrator.config import AgentRunnerType, MergeStrategy, SELECTABLE_AGENT_RUNNER_VALUES
 
 
-_VALID_AGENT_TYPES = [e.value for e in AgentRunnerType]
+_VALID_AGENT_TYPES = sorted(SELECTABLE_AGENT_RUNNER_VALUES)
 _VALID_MERGE_STRATEGIES = [e.value for e in MergeStrategy]
 _VALID_EXECUTION_MODES = ["legacy", "graph"]
 
@@ -456,7 +456,7 @@ def get_agent_runner_display_name(
         AgentRunnerType.OPENHANDS_DOCKER: "OpenHands Docker",
         AgentRunnerType.CLI_SUBPROCESS: "Claude CLI",
         AgentRunnerType.CODEX_SERVER: "Codex Server",
-        AgentRunnerType.CLAUDE_SDK: "Claude SDK",
+        AgentRunnerType.RETIRED: "Retired runner",
     }
     display_name = display_map.get(agent_runner_type, "Unknown Agent Runner")
     if agent_runner_type == AgentRunnerType.CLI_SUBPROCESS:
@@ -483,7 +483,6 @@ def get_agent_runner_icon(agent_runner_type: AgentRunnerType | None) -> str:
         AgentRunnerType.OPENHANDS_DOCKER: "docker",
         AgentRunnerType.CLI_SUBPROCESS: "cli",
         AgentRunnerType.CODEX_SERVER: "codex",
-        AgentRunnerType.CLAUDE_SDK: "claude",
     }
 
     return icon_map.get(agent_runner_type, "unknown")

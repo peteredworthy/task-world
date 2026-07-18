@@ -1,5 +1,7 @@
 """Unit tests for run API request schema field validators."""
 
+from collections.abc import Callable
+
 import pytest
 from pydantic import ValidationError
 
@@ -44,12 +46,24 @@ def test_uppercase_agent_runner_type_normalised() -> None:
     assert req.agent_runner_type == "codex_server"
 
 
-def test_mixed_case_agent_runner_type_normalised() -> None:
-    """Mixed-case agent_runner_type is normalised to lowercase."""
-    req = CreateRunRequest(
-        routine_id="r", repo_name="proj", branch="main", agent_runner_type="Claude_SDK"
-    )
-    assert req.agent_runner_type == "claude_sdk"
+@pytest.mark.parametrize("agent_runner_type", ["claude_sdk", "retired"])
+@pytest.mark.parametrize(
+    "build_request",
+    [
+        lambda value: CreateRunRequest(
+            routine_id="r", repo_name="proj", branch="main", agent_runner_type=value
+        ),
+        lambda value: ResumeRunRequest(agent_runner_type=value),
+        lambda value: RecoverRequest(target_task_id="T-01", agent_runner_type=value),
+    ],
+)
+def test_non_selectable_agent_runner_type_rejected(
+    agent_runner_type: str, build_request: Callable[[str], object]
+) -> None:
+    """Historical runner values cannot be selected for run execution."""
+    with pytest.raises(ValidationError) as exc_info:
+        build_request(agent_runner_type)
+    assert "Invalid agent_runner_type" in str(exc_info.value)
 
 
 def test_valid_lowercase_agent_runner_type_accepted() -> None:

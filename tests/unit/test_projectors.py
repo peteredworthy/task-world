@@ -186,7 +186,7 @@ async def test_agent_changed_updates_run_agent_fields(populated_session: AsyncSe
         run_id="r1",
         timestamp=NOW,
         old_agent=AgentRunnerType.CLI_SUBPROCESS,
-        new_agent=AgentRunnerType.CLAUDE_SDK,
+        new_agent=AgentRunnerType.RETIRED,
         old_agent_runner_config={"model": "gpt-5.3-codex"},
         new_agent_runner_config={"model": "claude-sonnet-4-6"},
     )
@@ -195,7 +195,7 @@ async def test_agent_changed_updates_run_agent_fields(populated_session: AsyncSe
     await populated_session.flush()
 
     run = await _get_run(populated_session, "r1")
-    assert run.runner_type == AgentRunnerType.CLAUDE_SDK.value
+    assert run.runner_type == AgentRunnerType.RETIRED.value
     assert run.runner_config == {"model": "claude-sonnet-4-6"}
 
 

@@ -652,7 +652,7 @@ async def test_driver_crash_bridge_persists_pause_and_reraises(
     ("agent_runner_type", "expected_runner"),
     [
         (AgentRunnerType.CLI_SUBPROCESS, "cli_subprocess"),
-        (AgentRunnerType.CLAUDE_SDK, "claude_sdk"),
+        (AgentRunnerType.RETIRED, "retired"),
     ],
 )
 async def test_driver_rejects_unsupported_graph_runner_before_seeding(

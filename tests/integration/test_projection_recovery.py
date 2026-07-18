@@ -749,7 +749,7 @@ async def test_rebuild_projects_agent_changed_event(session: AsyncSession) -> No
             run_id="run-agent",
             timestamp=NOW,
             old_agent=AgentRunnerType.CLI_SUBPROCESS,
-            new_agent=AgentRunnerType.CLAUDE_SDK,
+            new_agent=AgentRunnerType.RETIRED,
             old_agent_runner_config={"model": "gpt-5.3-codex"},
             new_agent_runner_config={"model": "claude-sonnet-4-6"},
         )
@@ -777,7 +777,7 @@ async def test_rebuild_projects_agent_changed_event(session: AsyncSession) -> No
     )
     row = result.fetchone()
     assert row is not None
-    assert row[0] == "claude_sdk"
+    assert row[0] == "retired"
     assert json.loads(row[1]) == {"model": "claude-sonnet-4-6"}
 
 
@@ -786,7 +786,7 @@ async def test_deserialize_event_accepts_agent_changed_aliases(session: AsyncSes
         run_id="run-agent-alias",
         timestamp=NOW,
         old_agent=AgentRunnerType.CLI_SUBPROCESS,
-        new_agent=AgentRunnerType.CLAUDE_SDK,
+        new_agent=AgentRunnerType.RETIRED,
         new_agent_runner_config={"model": "claude-sonnet-4-6"},
     )
     payload = event.model_dump_json()
