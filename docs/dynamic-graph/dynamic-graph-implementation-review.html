@@ -150,6 +150,27 @@ source. The incident RED was a sparse classified-gap fixture failure
 <p>Step 3 was not run; the full-suite verifier is deferred to the separate
 no-context agent.</p>
 
+<h3>Task 8 Step 3 completion note — 2026-07-18</h3>
+<p>The historical Steps 1–2 entry above is preserved, including its original
+deferred-verifier note. The separate fresh verifier completed Step 3 at source
+<code>6332be08655706af46a67a3290f745779a3dd93c</code> with the following exact
+results:</p>
+<div class="flow">uv run pytest tests/ -q -n auto --dist worksteal
+# 4835 passed, 3 skipped, 3 warnings in 103.35s (0:01:43)
+
+uv run ruff check .
+# All checks passed!
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+# update notice: v1.1.408 -&gt; v1.1.411
+
+git diff --check
+# clean; no output</div>
+<p>The three pytest warnings were existing Python 3.12
+<code>aiosqlite</code> default-datetime-adapter deprecations in projector tests;
+Pyright’s version update notice was advisory.</p>
+
 <h2 id="toc">Contents</h2>
 <div class="toc">
   <ol>
