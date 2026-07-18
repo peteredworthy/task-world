@@ -42,3 +42,28 @@ passed, 3 skipped, 3 warnings in 118.78s**; all three warnings were Python 3.12
 pyright` reported **0 errors, 0 warnings, 0 informations** plus the advisory
 `v1.1.408 -> v1.1.411` update notice; and `git diff --check` was clean. The
 verifier report lists only the pre-existing SDD scratch files as dirty.
+
+## Final branch evidence
+
+The fresh no-context Task 17 verifier, recorded at
+`.superpowers/sdd/task-17-verifier-report.md`, passed exact source and final
+evidence-commit predecessor `4da2e64e631b537b5bb69f4f2bb10c9db807316b`.
+The earlier W8 guard evidence remains source-bound to baseline
+`2ccd20bce78c8cb5620813c840bcff8b9d2bf304`, implementation
+`8ad825cf259f2fc7f42ec886616085cab08703ce`, and independent verifier source
+`2aa951c5c8217866afff8171668835f7c5334b9e`.
+
+At the final predecessor, the full suite reported **4791 passed, 3 skipped, 3
+warnings in 105.14s**; Ruff was clean; Pyright reported **0 errors, 0 warnings,
+0 informations** plus the advisory `v1.1.408 -> v1.1.411` update notice; and
+`git diff --check` was clean. Generated enums were current, Alembic head was
+`zg1h2i3j4k5l`, **4794 tests** collected, and the targeted public-export/removal
+checks reported **2 passed**. The warnings were the three Python 3.12
+`aiosqlite/core.py:63` default-datetime-adapter deprecations named in the
+verifier report.
+
+Exact verifier dirtiness was modified `.superpowers/sdd/progress.md` and
+untracked `docs/superpowers/plans/2026-07-18-migrate-claude-sdk-history.md`;
+neither was in the verified source. The SDD verifier report has no separate
+committed SHA, and this ledger does not invent the not-yet-created final
+evidence commit SHA.

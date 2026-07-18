@@ -44,6 +44,61 @@ As of 2026-07-18, the implementation review follow-up has moved past the old
   cannot be discovered or dispatched. `codex_server` is the supported graph
   runner and replacement for explicitly resumed retired runs.
 
+### Task 17 Steps 3–4 — final branch verification evidence
+
+The fresh no-context verifier identified by
+`.superpowers/sdd/task-17-verifier-report.md` passed exact source and final
+evidence-commit predecessor
+`4da2e64e631b537b5bb69f4f2bb10c9db807316b` on branch
+`codex/backlog-closeout`. The verifier report is SDD scratch, has no separate
+source commit SHA, and does not claim one.
+
+```bash
+uv run pytest tests/ -q -n auto --dist worksteal
+# 4791 passed, 3 skipped, 3 warnings in 105.14s (0:01:45)
+
+uv run ruff check .
+# All checks passed!
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+# advisory update notice: v1.1.408 -> v1.1.411
+
+git diff --check
+# clean; no output
+
+uv run python scripts/export_enums.py --check
+# generated-enums.ts is up to date
+
+uv run alembic -c alembic.ini heads
+# zg1h2i3j4k5l (head)
+
+uv run pytest tests/ --collect-only -q
+# 4794 tests collected in 4.28s
+
+uv run pytest tests/unit/test_graph_public_exports.py tests/integration/test_claude_sdk_removal.py -q
+# 2 passed in 4.35s
+```
+
+The three warnings were the Python 3.12 default-datetime-adapter
+`DeprecationWarning` from `aiosqlite/core.py:63` in the run-status recovery-pause
+projector test and the two clarification-response projector tests named in the
+verifier report. Pyright's version notice was advisory. The verifier's exact
+dirty paths were modified `.superpowers/sdd/progress.md` and untracked
+`docs/superpowers/plans/2026-07-18-migrate-claude-sdk-history.md`; neither path
+was in verified source `4da2e64e631b537b5bb69f4f2bb10c9db807316b`.
+
+The prior closeout source lineage remains explicit: W8 baseline
+`2ccd20bce78c8cb5620813c840bcff8b9d2bf304`, W8 implementation
+`8ad825cf259f2fc7f42ec886616085cab08703ce`, W8 verifier source
+`2aa951c5c8217866afff8171668835f7c5334b9e`, retired-history representation
+`fbf7c72fa9d6762e8d4bdc9a36bec31d8881cf6a`, migration
+`3a741da27a4638fba7ec80268a69efe7c4fccdff`, Claude SDK implementation removal
+`528b46baeab013cd7655bf3d29ab25645503a81e`, and the prior Claude removal
+verifier source `200102e0e4f9ab3d0b727faabe9f032f125894df`. The final evidence
+commit SHA is intentionally not anticipated here; it must be obtained from
+`git rev-parse HEAD` after committing these tracked documents.
+
 ### Task 16 Step 5 — fresh Claude SDK removal verifier evidence
 
 The separate no-context verifier passed exact source

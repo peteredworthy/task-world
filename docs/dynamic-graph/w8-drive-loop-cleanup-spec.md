@@ -155,3 +155,29 @@ The three warnings are the Python 3.12 `aiosqlite/core.py:63` default datetime
 adapter deprecations in the run-status recovery-pause and two clarification-response
 tests named in the verifier report. They do not change the PASS verdict. The
 verifier found only pre-existing SDD scratch changes in `git status`.
+
+## Final branch verifier — Task 17
+
+The fresh no-context verifier report
+`.superpowers/sdd/task-17-verifier-report.md` passed exact final predecessor
+`4da2e64e631b537b5bb69f4f2bb10c9db807316b`. This is later branch-wide
+verification of the already-recorded W8 baseline
+`2ccd20bce78c8cb5620813c840bcff8b9d2bf304`, implementation
+`8ad825cf259f2fc7f42ec886616085cab08703ce`, and independent verifier source
+`2aa951c5c8217866afff8171668835f7c5334b9e`; it does not replace or rewrite
+those source identities.
+
+The final full suite reported **4791 passed, 3 skipped, 3 warnings in 105.14s**;
+Ruff was clean; Pyright reported **0 errors, 0 warnings, 0 informations** plus
+the advisory `v1.1.408 -> v1.1.411` update notice; and `git diff --check` was
+clean. Generated enums were current, Alembic reported the single head
+`zg1h2i3j4k5l`, collection reported **4794 tests**, and the public-export plus
+Claude SDK removal checks reported **2 passed**. The three warnings were the
+same Python 3.12 `aiosqlite/core.py:63` default-datetime-adapter deprecations
+identified in the verifier report.
+
+The verifier's exact dirty paths were modified `.superpowers/sdd/progress.md`
+and untracked
+`docs/superpowers/plans/2026-07-18-migrate-claude-sdk-history.md`; neither was
+in verified source `4da2e64e631b537b5bb69f4f2bb10c9db807316b`. No final evidence commit
+SHA is claimed before the commit exists.

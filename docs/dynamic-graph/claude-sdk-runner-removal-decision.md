@@ -112,6 +112,54 @@ part of verified source `200102e0e4f9ab3d0b727faabe9f032f125894df`.
 This documentation records that independent evidence; it does not change the
 verified source SHA.
 
+## Final branch verifier evidence
+
+The fresh no-context verifier identified by
+`.superpowers/sdd/task-17-verifier-report.md` passed exact source and final
+evidence-commit predecessor
+`4da2e64e631b537b5bb69f4f2bb10c9db807316b`. The source lineage for this
+decision remains retired-history representation
+`fbf7c72fa9d6762e8d4bdc9a36bec31d8881cf6a`, relational migration
+`3a741da27a4638fba7ec80268a69efe7c4fccdff`, implementation removal
+`528b46baeab013cd7655bf3d29ab25645503a81e`, and prior independent verifier
+source `200102e0e4f9ab3d0b727faabe9f032f125894df`.
+
+```bash
+uv run pytest tests/ -q -n auto --dist worksteal
+# 4791 passed, 3 skipped, 3 warnings in 105.14s (0:01:45)
+
+uv run ruff check .
+# All checks passed!
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+# advisory update notice: v1.1.408 -> v1.1.411
+
+git diff --check
+# clean; no output
+
+uv run python scripts/export_enums.py --check
+# generated-enums.ts is up to date
+
+uv run alembic -c alembic.ini heads
+# zg1h2i3j4k5l (head)
+
+uv run pytest tests/ --collect-only -q
+# 4794 tests collected in 4.28s
+
+uv run pytest tests/unit/test_graph_public_exports.py tests/integration/test_claude_sdk_removal.py -q
+# 2 passed in 4.35s
+```
+
+The three warnings were the Python 3.12 default-datetime-adapter
+`DeprecationWarning`s from `aiosqlite/core.py:63` in the three projector tests
+named in the verifier report. The Pyright update notice was advisory. The
+verifier's exact dirty paths were modified `.superpowers/sdd/progress.md` and
+untracked `docs/superpowers/plans/2026-07-18-migrate-claude-sdk-history.md`;
+neither was in verified source `4da2e64e631b537b5bb69f4f2bb10c9db807316b`.
+The verifier report is SDD scratch with no separate source commit SHA, and no
+final evidence commit SHA is claimed before committing these documents.
+
 ## Reintroduction criteria
 
 An Anthropic SDK runner may return only as a new runner proposal, not by
