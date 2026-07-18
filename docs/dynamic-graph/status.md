@@ -78,8 +78,31 @@ classified-gap value), not a supersession-residue failure.
 | UI human-gate approval | Initial `3 failed` (no accessible `Review decision` action), then focus follow-up `1 failed, 4 passed`; baselines `30d2b96c4846b810996fce0a4c186d7508c02c39` and `aaa730922afa3ba21387bd447e0189db6054d3fc` | `npm --prefix ui test -- src/components/__tests__/GraphPanel.decisions.test.tsx` → `1 passed`, `5 passed`; fixes `aaa730922afa3ba21387bd447e0189db6054d3fc` and `64cd469f0f3f8d262cab846625f0db36f27f6c26` |
 | CLI human-gate approval | Import failure: `_graph_approval_payload` was absent; baseline `64cd469f0f3f8d262cab846625f0db36f27f6c26` | `uv run pytest tests/integration/test_cli_approve.py -q -n 0` → `4 passed`; fix `9c0a1ee8f16019df957a785c9b7e87242208f86a` |
 
-Step 3 was not run. A fresh full-suite verifier is intentionally deferred to the
-separate no-context verifier.
+### Task 8 Step 3 verifier evidence
+
+Verified SHA: `6332be08655706af46a67a3290f745779a3dd93c`
+
+The fresh no-context verifier reported:
+
+```bash
+uv run pytest tests/ -q -n auto --dist worksteal
+# 4835 passed, 3 skipped, 3 warnings in 103.35s (0:01:43)
+
+uv run ruff check .
+# All checks passed!
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+# update notice: v1.1.408 -> v1.1.411
+
+git diff --check
+# clean; no output
+```
+
+The three warnings are Python 3.12 `aiosqlite` default-datetime-adapter
+deprecations in the projector tests. The verifier's `git status --short` showed
+only the pre-existing `.superpowers/sdd/progress.md` and
+`.superpowers/sdd/task-2-report.md` changes; neither was staged.
 
 ### Task 0 verifier evidence
 
