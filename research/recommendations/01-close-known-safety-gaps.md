@@ -73,3 +73,14 @@
 ## Dependencies
 
 None. Everything else benefits from these landing first.
+
+## Backlog closeout triage — 2026-07-17
+
+Fresh-main review confirms these four findings remain **OPEN**. This note
+records current implementation evidence without changing the historical
+recommendation or diagnosis:
+
+- **Scheduler-view snapshot drift — OPEN.** `graph_runtime/store.py::_scheduler_view_from_projection` duplicates canonical scheduler policy and does not exclude ready `max_grants_reached` nodes.
+- **Graph human-gate approval path — OPEN.** `GraphPanel` only renders pending gates; `runs approve` only posts to the legacy step endpoint.
+- **Codex cli_subprocess model routing — OPEN.** `CLIAgent` constructs `codex --model MODEL exec ...` instead of `codex exec --model MODEL ...`.
+- **R01(a) July 4 supersession replay — OPEN.** Focused supersession tests exist, but no real-store incident-shape replay jointly proves task acceptance, projection parity, empty final blockers, and completion.

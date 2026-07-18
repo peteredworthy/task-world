@@ -121,6 +121,16 @@
   </table>
 </div>
 
+<h2 id="backlog-closeout-triage">Backlog Closeout Triage — 2026-07-17</h2>
+<p>The fresh-main triage confirms these four findings remain <strong>OPEN</strong>; the historical diagnosis and recommendations below are retained.</p>
+<table>
+  <tr><th>Finding</th><th>Status</th><th>Fresh-main evidence</th></tr>
+  <tr><td>Scheduler-view snapshot drift</td><td><span class="badge high">OPEN</span></td><td><code>graph_runtime/store.py::_scheduler_view_from_projection</code> duplicates canonical scheduler policy and does not exclude ready <code>max_grants_reached</code> nodes.</td></tr>
+  <tr><td>Graph human-gate approval path</td><td><span class="badge high">OPEN</span></td><td><code>GraphPanel</code> only renders pending gates; <code>runs approve</code> only posts to the legacy step endpoint.</td></tr>
+  <tr><td>Codex cli_subprocess model routing</td><td><span class="badge high">OPEN</span></td><td><code>CLIAgent</code> constructs <code>codex --model MODEL exec ...</code> instead of <code>codex exec --model MODEL ...</code>.</td></tr>
+  <tr><td>R01(a) July 4 supersession replay</td><td><span class="badge high">OPEN</span></td><td>Focused supersession tests exist, but no real-store incident-shape replay jointly proves task acceptance, projection parity, empty final blockers, and completion.</td></tr>
+</table>
+
 <h2 id="toc">Contents</h2>
 <div class="toc">
   <ol>

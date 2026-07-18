@@ -38,6 +38,15 @@ As of 2026-07-07, the implementation review follow-up has moved past the old
 - `claude_sdk` remains available for non-graph runs but is permanently gated off for
   graph execution. `codex_server` is the only supported graph runner.
 
+## Backlog Closeout Triage — 2026-07-17
+
+| Finding | Status | Fresh-main evidence |
+| --- | --- | --- |
+| Scheduler-view snapshot drift | OPEN | `graph_runtime/store.py::_scheduler_view_from_projection` duplicates canonical scheduler policy and does not exclude ready `max_grants_reached` nodes. |
+| Graph human-gate approval path | OPEN | `GraphPanel` only renders pending gates; `runs approve` only posts to the legacy step endpoint. |
+| Codex cli_subprocess model routing | OPEN | `CLIAgent` constructs `codex --model MODEL exec ...` instead of `codex exec --model MODEL ...`. |
+| R01(a) July 4 supersession replay | OPEN | Focused supersession tests exist, but no real-store incident-shape replay jointly proves task acceptance, projection parity, empty final blockers, and completion. |
+
 ## Post-Closure Product Dogfood Outcome
 
 Dogfood run `784d9e7d-05f5-4d5e-8d74-6854cbf07c7a` was created through

@@ -482,3 +482,15 @@ hardening layer landed in commits `36bf8b763`, `5be3550cb`, `6f21bcf50`,
 Verification after W4: `uv run pytest tests -q` → 4326 passed, 4 skipped;
 `uv run pytest tests -k graph -q` → 729 passed; `uv run ruff check .` →
 passed.
+
+---
+
+## Backlog closeout triage — 2026-07-17
+
+Fresh-main review keeps the following findings **OPEN**. The historical W2/W3
+diagnosis and recovery record above remains unchanged:
+
+- **Scheduler-view snapshot drift — OPEN.** `graph_runtime/store.py::_scheduler_view_from_projection` duplicates canonical scheduler policy and does not exclude ready `max_grants_reached` nodes.
+- **Graph human-gate approval path — OPEN.** `GraphPanel` only renders pending gates; `runs approve` only posts to the legacy step endpoint.
+- **Codex cli_subprocess model routing — OPEN.** `CLIAgent` constructs `codex --model MODEL exec ...` instead of `codex exec --model MODEL ...`.
+- **R01(a) July 4 supersession replay — OPEN.** Focused supersession tests exist, but no real-store incident-shape replay jointly proves task acceptance, projection parity, empty final blockers, and completion.
