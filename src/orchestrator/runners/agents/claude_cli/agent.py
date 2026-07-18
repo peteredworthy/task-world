@@ -275,9 +275,18 @@ class CLIAgent:
         max_commit_fix_attempts: int = 2,
     ) -> None:
         self._command = command
-        base_args = args or []
+        base_args = list(args or [])
         if model is not None:
-            base_args = ["--model", model, *base_args]
+            if Path(command).name == "codex" and "exec" in base_args:
+                exec_index = base_args.index("exec") + 1
+                base_args = [
+                    *base_args[:exec_index],
+                    "--model",
+                    model,
+                    *base_args[exec_index:],
+                ]
+            else:
+                base_args = ["--model", model, *base_args]
         self._args = base_args
         self._callback_channel = callback_channel
         self._phase = phase

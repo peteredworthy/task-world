@@ -90,6 +90,47 @@ def test_model_parameter_prepended() -> None:
     assert agent._args == ["--model", "claude-4", "-p"]  # pyright: ignore[reportPrivateUsage]
 
 
+def test_create_cli_agent_codex_default_args_put_model_after_exec() -> None:
+    agent = create_cli_agent({"command": "codex", "model": "gpt-5.2-codex"})
+
+    assert [agent._command, *agent._args] == [  # pyright: ignore[reportPrivateUsage]
+        "codex",
+        "exec",
+        "--model",
+        "gpt-5.2-codex",
+        "--full-auto",
+        "--json",
+    ]
+
+
+def test_codex_absolute_command_preserves_custom_args_after_exec() -> None:
+    agent = CLIAgent(
+        command="/usr/local/bin/codex",
+        args=["exec", "--dangerously-bypass-approvals-and-sandbox", "Do the thing"],
+        model="gpt-5.2-codex",
+    )
+
+    assert [agent._command, *agent._args] == [  # pyright: ignore[reportPrivateUsage]
+        "/usr/local/bin/codex",
+        "exec",
+        "--model",
+        "gpt-5.2-codex",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "Do the thing",
+    ]
+
+
+def test_claude_model_order_remains_unchanged() -> None:
+    agent = CLIAgent(command="claude", model="claude-4", args=["-p"])
+
+    assert [agent._command, *agent._args] == [  # pyright: ignore[reportPrivateUsage]
+        "claude",
+        "--model",
+        "claude-4",
+        "-p",
+    ]
+
+
 def test_model_parameter_no_args() -> None:
     """When model is set and args is empty, only --model flag is in args."""
     agent = CLIAgent(command="claude", model="gpt-5-mini")
