@@ -127,7 +127,31 @@ uv run pyright
 
 The pre-prune RED was `180` exports versus `165` consumers, with 15 names only
 on the export side and none only on the consumer side. The post-prune guard is
-`165 == 165`. Test-only consumers deliberately remain public. Fresh-verifier
-execution and its SHA are Step 6 work and are not claimed here. The audit baseline
-was `2ccd20bce`; the GREEN collection, focused tests, and checks ran on the closeout
-implementation tree committed as `8ad825cf2`.
+`165 == 165`. Test-only consumers deliberately remain public. At the time of this
+Steps 1–5 record, fresh-verifier execution and its SHA had not yet been claimed.
+The audit baseline was `2ccd20bce`; the GREEN collection, focused tests, and checks
+ran on the closeout implementation tree committed as `8ad825cf2`.
+
+## Step 6 independent verifier — complete
+
+Verified source: `2aa951c5c8217866afff8171668835f7c5334b9e`.
+
+```text
+uv run pytest tests/ -q -n auto --dist worksteal
+# 4847 passed, 3 skipped, 3 warnings in 118.78s (0:01:58)
+
+uv run ruff check .
+# All checks passed!
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+# advisory update notice: v1.1.408 -> v1.1.411
+
+git diff --check
+# clean; no output
+```
+
+The three warnings are the Python 3.12 `aiosqlite/core.py:63` default datetime
+adapter deprecations in the run-status recovery-pause and two clarification-response
+tests named in the verifier report. They do not change the PASS verdict. The
+verifier found only pre-existing SDD scratch changes in `git status`.

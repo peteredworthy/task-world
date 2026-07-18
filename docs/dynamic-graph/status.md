@@ -71,10 +71,38 @@ uv run pyright
 # 0 errors, 0 warnings, 0 informations
 ```
 
-This records Steps 1–5 only. No fresh Step 6 verifier run, count, or verifier SHA
-is claimed. The GREEN collection, focused tests, and checks above ran on the
+This section originally recorded Steps 1–5 only, before fresh Step 6 evidence was
+available. The GREEN collection, focused tests, and checks above ran on the
 closeout implementation tree committed as
 `8ad825cf259f2fc7f42ec886616085cab08703ce`.
+
+### Task 11 Step 6 — fresh verifier evidence
+
+The separate fresh verifier passed source
+`2aa951c5c8217866afff8171668835f7c5334b9e`:
+
+```bash
+uv run pytest tests/ -q -n auto --dist worksteal
+# 4847 passed, 3 skipped, 3 warnings in 118.78s (0:01:58)
+
+uv run ruff check .
+# All checks passed!
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+# update notice: v1.1.408 -> v1.1.411
+
+git diff --check
+# clean; no output
+```
+
+The three warnings are Python 3.12 `aiosqlite/core.py:63` default-datetime-adapter
+`DeprecationWarning`s in
+`test_run_status_changed_clears_completed_at_for_recovery_pause`,
+`test_clarification_responded_clears_pending`, and
+`test_clarification_responded_empty_answers_inserts_response_row`. The Pyright
+version notice is advisory; the verifier reported zero errors, warnings, and
+informations. Its only dirty paths were the pre-existing SDD scratch files.
 
 ## Backlog Closeout Triage — 2026-07-17
 

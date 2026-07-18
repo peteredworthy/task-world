@@ -32,3 +32,13 @@ Retirement requires source-bound replacement evidence and the incident-shaped
 regression named in the row. Polling versus event-triggered coordination is an
 orthogonal implementation choice: converting the driver to event-triggered
 driving neither permits guard deletion nor must happen before a guard can retire.
+
+## Independent verifier evidence
+
+Task 11 Step 6 passed at source
+`2aa951c5c8217866afff8171668835f7c5334b9e`: the full suite reported **4847
+passed, 3 skipped, 3 warnings in 118.78s**; all three warnings were Python 3.12
+`aiosqlite` default-datetime-adapter deprecations. `uv run ruff check .` was clean; `uv run
+pyright` reported **0 errors, 0 warnings, 0 informations** plus the advisory
+`v1.1.408 -> v1.1.411` update notice; and `git diff --check` was clean. The
+verifier report lists only the pre-existing SDD scratch files as dirty.
