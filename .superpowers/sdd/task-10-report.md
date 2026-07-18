@@ -28,3 +28,10 @@
 ## Concerns
 
 - The worktree contained pre-existing modifications to other `.superpowers/sdd` reports and progress tracking. They were not included in this task's commit.
+
+## Follow-up: Remove Duplicate Driver Policy
+
+- Removed the remaining duplicate snapshot, retry-limit, completion, outcome, blocker, and nonterminal-node policy implementations from `workflow/graph_driver.py`.
+- Removed the unused driver terminal-state constant, policy-only imports, and `_legacy_policy_references` tuple. Repository search found no concrete private-import callers requiring compatibility aliases.
+- The graph kernel remains the sole implementation authority for these policies.
+- Follow-up verification: focused Task 10 and brief-named graph-driver suites passed (`191 passed in 30.45s`); `uv run ruff check .`, `uv run pyright` (0 errors, 0 warnings), and `git diff --check` passed.
