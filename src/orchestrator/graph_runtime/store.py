@@ -30,6 +30,7 @@ from orchestrator.graph import (
     PROJECTION_SCHEMA_VERSION,
     SUMMARY_REBUILD_PAYLOAD_FIELDS,
     initial_projection,
+    build_projection,
     merge_bound_record_ids,
     project_decision_view,
     project_decision_view_from_projection,
@@ -1171,10 +1172,7 @@ def _assign_projection_snapshot(
 
 
 def _projection_from_events(events: list[EventEnvelope]) -> GraphProjection:
-    projection = initial_projection()
-    for event in events:
-        projection = reduce_event(projection, event)
-    return projection
+    return build_projection(events)
 
 
 def _projection_from_snapshot_row(

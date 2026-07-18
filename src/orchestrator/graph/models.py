@@ -1470,6 +1470,7 @@ class NodeCreationProjection(GraphBaseModel):
     command_definition_id: str | None = None
     hidden_oracle_command: str | None = None
     command_binding: str | None = None
+    max_attempts: StrictInt | None = None
 
 
 def _empty_candidate_changed_paths() -> list[str]:

@@ -17,8 +17,7 @@ from orchestrator.graph import (
     GraphProjection,
     validate_emitted_event_type,
     apply_command,
-    initial_projection,
-    reduce_event,
+    build_projection,
     serialize_event_payload,
 )
 from orchestrator.graph.commands import Clock, IdGenerator
@@ -239,10 +238,7 @@ class GraphController:
 
 
 def rebuild_projection(events: list[EventEnvelope]) -> GraphProjection:
-    projection = initial_projection()
-    for event in events:
-        projection = reduce_event(projection, event)
-    return projection
+    return build_projection(events)
 
 
 def _patch_base_graph_position(

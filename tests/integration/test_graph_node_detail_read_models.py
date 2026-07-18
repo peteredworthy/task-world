@@ -21,7 +21,7 @@ from orchestrator.db import (
     create_session_factory,
     init_db,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, build_projection, project_leases
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph_runtime.store import graph_aggregate_id
 
@@ -618,6 +618,57 @@ async def test_completed_sequential_leases_match_existing_summary_selection(
     assert old_response is not None
     assert new_response["active_lease"] == old_response.model_dump(mode="json")["active_lease"]
     assert new_response["active_lease"]["lease_id"] == "lease-1"
+
+
+@pytest.mark.asyncio
+async def test_incremental_rich_lease_summaries_match_rebuild_and_canonical_projection(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "node-detail-rich-lease-parity"
+    events = [
+        _event(
+            "evt-worker",
+            run_id,
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "state": "planned"},
+        ),
+        _event(
+            "evt-lease",
+            run_id,
+            "lease_granted",
+            {
+                "lease_id": "lease-1",
+                "node_id": "worker-1",
+                "generation": 3,
+                "execution_id": "exec-3",
+                "base_snapshot_id": "snapshot-1",
+                "expires_at": "2026-01-01T00:01:00+00:00",
+                "session_id": "session-1",
+                "task_region_id": "task-1",
+                "kind": "worker",
+                "resource_claims": [{"mode": "write", "scope": "repo", "paths": ["src/"]}],
+            },
+        ),
+    ]
+    async with session_factory() as session:
+        async with session.begin():
+            store = GraphEventStore(session)
+            await store.append_events(run_id, 0, events[:1])
+            await store.append_events(run_id, 1, events[1:])
+        incremental = await _stored_rows(session, run_id)
+        store = GraphEventStore(session)
+        await store.rebuild_node_detail_summaries(run_id)
+        rebuilt = await _stored_rows(session, run_id)
+
+    projection = build_projection(
+        [
+            event.model_copy(update={"position": index})
+            for index, event in enumerate(events, start=1)
+        ]
+    )
+
+    assert incremental == rebuilt
+    assert incremental[0]["leases"] == list(project_leases([], projection=projection).values())
 
 
 @pytest.mark.asyncio

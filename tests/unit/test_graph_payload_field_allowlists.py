@@ -513,3 +513,12 @@ def test_verdict_field_is_allowlisted_despite_being_invisible_to_ast_extraction(
     doesn't silently regress.
     """
     assert "verdict" in GRAPH_PROJECTION_PAYLOAD_FIELDS
+
+
+def test_node_created_retains_typed_retry_limit_for_all_projection_reads() -> None:
+    spec = EVENT_PAYLOAD_SPECS["node_created"]
+
+    assert "max_attempts" in spec.projection
+    assert "max_attempts" in spec.light
+    assert "max_attempts" in spec.summary
+    assert "max_attempts" in spec.node_detail

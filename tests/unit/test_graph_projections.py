@@ -38,6 +38,7 @@ from orchestrator.graph import (
     SupportEvidenceProjection,
     VerifierVerdictProjection,
     VerificationResultProjection,
+    build_projection,
     initial_projection,
     project_final_invariant_blockers,
     project_graph_patch_attempts,
@@ -61,6 +62,7 @@ from orchestrator.graph import (
     reduce_event,
     support_evidence_freshness_from_projection,
 )
+from orchestrator.graph import projections
 from tests.unit.graph_test_utils import apply_command, command_context
 from tests.unit.graph_test_utils import canonical_event_payload
 
@@ -1113,6 +1115,39 @@ def test_node_creation_projection_uses_typed_payload() -> None:
     ]
     assert projected.allowed_actions == ["submit_callback"]
     assert projected.preconditions == ["inputs_bound"]
+
+
+def test_node_creation_projection_retains_first_typed_retry_limit() -> None:
+    events = [
+        _event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "max_attempts": 2},
+        ).model_copy(update={"position": 1}),
+        _event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "max_attempts": 7},
+        ).model_copy(update={"position": 2}),
+        _event(
+            "node_created",
+            {"node_id": "worker-2", "kind": "worker", "max_attempts": True},
+        ).model_copy(update={"position": 3}),
+    ]
+
+    projection = build_projection(events)
+
+    assert projection["node_creation_payloads"]["worker-1"].max_attempts == 2
+    assert "worker-2" not in projection["node_creation_payloads"]
+
+
+def test_clone_projection_covers_initial_keys_without_nested_aliasing() -> None:
+    state = initial_projection()
+    state["node_output_ports"]["worker-1"] = {"candidate": ["record-1"]}
+
+    cloned = projections._clone_projection(state)
+
+    assert set(cloned) == set(initial_projection())
+    cloned["node_output_ports"]["worker-1"]["candidate"].append("record-2")
+    assert state["node_output_ports"]["worker-1"]["candidate"] == ["record-1"]
 
 
 def test_node_creation_projection_checkpoint_round_trips_typed_payload() -> None:

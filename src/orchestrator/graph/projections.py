@@ -119,7 +119,7 @@ _NODE_STATE_VALUES = {state.value for state in NodeState}
 _NODE_KIND_VALUES = {kind.value for kind in NodeKind}
 
 # Bump this whenever reduce_event semantics or GraphProjection shape changes.
-PROJECTION_SCHEMA_VERSION = 10
+PROJECTION_SCHEMA_VERSION = 11
 GRAPH_PROJECTION_PAYLOAD_FIELDS = _GENERATED_GRAPH_PROJECTION_PAYLOAD_FIELDS
 
 
@@ -1715,7 +1715,7 @@ def _pending_gate_decision_payload(
     return cast(PendingGateDecision, details.model_dump(mode="json"))
 
 
-def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
+def _clone_projection(state: GraphProjection) -> GraphProjection:
     next_state: GraphProjection = {
         "run_state": state["run_state"],
         "node_states": dict(state["node_states"]),
@@ -1921,6 +1921,11 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         },
         "cleanup_applied_ids": dict(state.get("cleanup_applied_ids", {})),
     }
+    return next_state
+
+
+def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjection:
+    next_state = _clone_projection(state)
 
     if event.event_type == "run_lifecycle_changed":
         lifecycle_payload = RunLifecycleChangedPayload.model_validate(event.payload)
@@ -1929,6 +1934,11 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         typed_node_payload = _node_created_payload_from_event(event)
         node_payload = _node_creation_from_event(event)
         if node_payload is not None and typed_node_payload is not None:
+            prior_payload = next_state["node_creation_payloads"].get(node_payload.node_id)
+            if prior_payload is not None and prior_payload.max_attempts is not None:
+                node_payload = node_payload.model_copy(
+                    update={"max_attempts": prior_payload.max_attempts}
+                )
             node_id = node_payload.node_id
             kind = node_payload.kind
             role = node_payload.role
