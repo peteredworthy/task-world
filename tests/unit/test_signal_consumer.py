@@ -619,14 +619,21 @@ async def test_stale_resume_for_active_retired_run_does_not_register_workflow(
     service.run.status = "active"
     service.run.agent_runner_type = AgentRunnerType.RETIRED
     consumer = _consumer(session_factory, service)
-    await _insert_signal_event(
+    retired_position = await _insert_signal_event(
         session_factory, "run-1", WorkflowSignal.RESUME, {"resume_strategy": "continue"}
+    )
+    cancel_position = await _insert_signal_event(
+        session_factory, "run-1", WorkflowSignal.CANCEL, {"reason": "later"}
     )
 
     await consumer._process_run("run-1")
 
     assert "run-1" not in consumer._active_workflows
-    assert await _get_processed_positions(session_factory, "run-1") == set()
+    assert await _get_processed_positions(session_factory, "run-1") == {
+        retired_position,
+        cancel_position,
+    }
+    assert _calls(service, "apply_cancel_run") == [(("run-1",), {"reason": "later"})]
 
 
 @pytest.mark.asyncio

@@ -295,7 +295,7 @@ class SignalConsumer:
         from orchestrator.workflow import SignalProcessed
 
         from orchestrator.state.errors import RunNotFoundError
-        from orchestrator.workflow import InvalidTransitionError
+        from orchestrator.workflow import InvalidTransitionError, RetiredAgentRunnerError
 
         enqueued_position, signal_type, payload = signal_data
 
@@ -310,13 +310,13 @@ class SignalConsumer:
                     enqueued_position=enqueued_position,
                 )
                 await store.append([processed_event])
-            except (InvalidTransitionError, RunNotFoundError):
+            except (InvalidTransitionError, RetiredAgentRunnerError, RunNotFoundError):
                 # Signal is stale — run already moved past this state.
                 # Rollback the failed attempt then mark processed so the
                 # signal is not retried indefinitely.
                 await rollback_with_event_outbox(session)
                 logger.warning(
-                    "SignalConsumer: stale %s for run %s (invalid transition) — discarding",
+                    "SignalConsumer: rejecting %s for run %s — discarding",
                     signal_type.value,
                     run_id,
                 )
@@ -381,6 +381,10 @@ class SignalConsumer:
         service: WorkflowService,
     ) -> None:
         """RUN_START: DRAFT → ACTIVE, create the selected run driver, register."""
+        from orchestrator.workflow.service import ensure_executable_agent_runner
+
+        current_run = await service.get_run(run_id)
+        ensure_executable_agent_runner(current_run.agent_runner_type)
         if self._workflow_preparer is not None:
             prepared = await self._workflow_preparer(run_id, payload)
             if not prepared:
