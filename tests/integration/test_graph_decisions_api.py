@@ -209,6 +209,76 @@ async def _seed_active_authority_graph_run(app: Any, run_id: str) -> None:
         await session.commit()
 
 
+async def _seed_active_human_gate_graph_run(app: Any, run_id: str) -> None:
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    await _save_run(session_factory, run_id, execution_mode="graph")
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "human-gate-1",
+                "kind": "human_gate",
+                "state": "running",
+                "gate_type": "human_approval",
+                "prompt": "Approve reviewed output?",
+            },
+        ),
+        _event(
+            "output_record_accepted",
+            {
+                "record_id": "decision-request-1",
+                "record_kind": "graph_record",
+                "record_type": "decision_request",
+                "producer_node_id": "human-gate-1",
+                "port": "decision_request",
+                "schema": "DecisionRequest",
+                "value": {
+                    "decision_type": "approval",
+                    "options": ["approved", "rejected"],
+                    "default_option": "rejected",
+                    "consequence_summary": "Release the successor when approved.",
+                },
+            },
+        ),
+        _event(
+            "lease_granted",
+            {
+                "lease_id": "lease-human-gate-1",
+                "node_id": "human-gate-1",
+                "generation": 1,
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "worker-successor",
+                "kind": "worker",
+                "role": "builder",
+                "state": "planned",
+            },
+        ),
+        _event(
+            "edge_created",
+            {
+                "edge_id": "edge-gate-successor",
+                "from_node_id": "human-gate-1",
+                "from_port": "decision_record",
+                "to_node_id": "worker-successor",
+                "to_port": "approval",
+                "required": True,
+                "accepted_record_selector": {
+                    "record_type": "decision_record",
+                    "schema": "DecisionRecord",
+                },
+            },
+        ),
+    ]
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+
+
 async def test_decisions_endpoint_reflects_seeded_gates_and_appeals(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:
@@ -343,6 +413,74 @@ async def test_record_authority_decision_binds_and_recomputes_active_scheduler(
     assert scheduler_body["scheduler"]["ready"] == ["worker-docs"]
     assert scheduler_body["scheduler"]["blocked"] == []
     assert scheduler_body["leases"]["active"] == []
+
+
+async def test_record_approval_decision_is_durable_and_releases_waiting_successor(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-decisions-{uuid4().hex[:8]}"
+    await _seed_active_human_gate_graph_run(app, run_id)
+
+    response = await client.post(
+        f"/api/runs/{run_id}/graph/decisions",
+        json={
+            "decision_type": "approval",
+            "node_id": "human-gate-1",
+            "decision": "approved",
+            "decider": {"kind": "human", "id": "alice", "role": "operator"},
+            "reason": "Reviewed output.",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    event_types = [event["event_type"] for event in body["events"]]
+    assert event_types[:5] == [
+        "approval_decision_recorded",
+        "output_record_accepted",
+        "input_bound",
+        "node_state_changed",
+        "lease_released",
+    ]
+    assert "node_ready" in event_types
+    assert body["decision_view"]["pending_gates"] == []
+
+    events = await client.get(f"/api/runs/{run_id}/graph/events?payload_mode=full")
+    assert events.status_code == 200
+    recorded = next(
+        event for event in events.json() if event["event_type"] == "approval_decision_recorded"
+    )
+    assert recorded["payload"]["decision"] == "approved"
+    assert recorded["payload"]["decider"] == {"kind": "human", "id": "alice"}
+    assert recorded["payload"]["reason"] == "Reviewed output."
+
+    readback = await client.get(f"/api/runs/{run_id}/graph/decisions")
+    assert readback.status_code == 200
+    assert readback.json()["pending_gates"] == []
+
+    scheduler = await client.get(f"/api/runs/{run_id}/graph/scheduler")
+    assert scheduler.status_code == 200
+    assert scheduler.json()["scheduler"]["ready"] == ["worker-successor"]
+    assert scheduler.json()["leases"]["active"] == []
+
+    before_rejection = (await client.get(f"/api/runs/{run_id}/graph")).json()
+    rejected = await client.post(
+        f"/api/runs/{run_id}/graph/decisions",
+        json={
+            "decision_type": "approval",
+            "node_id": "worker-successor",
+            "decision": "approved",
+            "decider": {"kind": "human", "id": "alice", "role": "operator"},
+        },
+    )
+    assert rejected.status_code == 409
+    assert "approval decisions require gate or human_gate target" in rejected.text
+
+    graph = await client.get(f"/api/runs/{run_id}/graph")
+    assert graph.status_code == 200
+    assert graph.json()["node_states"] == before_rejection["node_states"]
+    assert graph.json()["leases"] == before_rejection["leases"]
 
 
 async def test_record_decision_rejects_invalid_decision_at_api_boundary(

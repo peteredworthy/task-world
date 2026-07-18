@@ -4221,6 +4221,14 @@ def _apply_record_decision(
                 "authority decisions require authority_request target",
             )
         ]
+    if decision_type == "approval" and node_kind not in {"gate", "human_gate"}:
+        return [
+            _command_rejected(
+                make_event,
+                "record_decision",
+                "approval decisions require gate or human_gate target",
+            )
+        ]
 
     node_state = projection["node_states"].get(node_id)
     if node_state in {"completed", "failed", "cancelled", "retired"}:
@@ -4237,7 +4245,7 @@ def _apply_record_decision(
         "node_id": node_id,
         "decision": payload.decision,
         "decider": (
-            payload.decider.model_dump(mode="json")
+            payload.decider.model_dump(mode="json", include={"kind", "id"}, exclude_none=True)
             if isinstance(payload.decider, Actor)
             else payload.decider
         ),

@@ -8447,6 +8447,34 @@ def test_record_decision_rejects_authority_for_non_authority_target() -> None:
     }
 
 
+def test_record_decision_rejects_approval_for_non_gate_target() -> None:
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}, 0),
+        _event(
+            "node_created",
+            {"node_id": "worker-1", "kind": "worker", "state": "ready"},
+            1,
+        ),
+    ]
+
+    output = _apply(
+        events,
+        "record_decision",
+        {
+            "decision_type": "approval",
+            "node_id": "worker-1",
+            "decision": "approved",
+            "decider": {"kind": "human", "id": "alice"},
+        },
+    )
+
+    assert [event.event_type for event in output] == ["command_rejected"]
+    assert output[0].payload == {
+        "command_type": "record_decision",
+        "reason": "approval decisions require gate or human_gate target",
+    }
+
+
 def test_record_decision_rejects_missing_target() -> None:
     output = _apply([], "record_decision", {"decision_type": "approval"})
 
