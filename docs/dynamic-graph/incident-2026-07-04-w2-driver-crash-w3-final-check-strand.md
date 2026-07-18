@@ -493,4 +493,11 @@ diagnosis and recovery record above remains unchanged:
 - **Scheduler-view snapshot drift — OPEN.** `graph_runtime/store.py::_scheduler_view_from_projection` duplicates canonical scheduler policy and does not exclude ready `max_grants_reached` nodes.
 - **Graph human-gate approval path — OPEN.** `GraphPanel` only renders pending gates; `runs approve` only posts to the legacy step endpoint.
 - **Codex cli_subprocess model routing — OPEN.** `CLIAgent` constructs `codex --model MODEL exec ...` instead of `codex exec --model MODEL ...`.
-- **R01(a) July 4 supersession replay — OPEN.** Focused supersession tests exist, but no real-store incident-shape replay jointly proves task acceptance, projection parity, empty final blockers, and completion.
+- **R01(a) July 4 supersession replay — CLOSED.**
+  `tests/integration/test_graph_read_models.py::test_july_4_incident_replay_preserves_supersession_and_completion_parity`
+  replays a faithful minimal reconstruction through the real SQLite-backed
+  `GraphEventStore`. It proves accepted origin/corrective task states, a
+  completed final gate, no final blockers, and completed run state across full
+  events, compact projection events, the incremental checkpoint, and a rebuilt
+  checkpoint. This is not a byte-identical production export and does not read
+  or replay the runtime journal.

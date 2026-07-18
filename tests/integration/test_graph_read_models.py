@@ -16,7 +16,16 @@ from orchestrator.db import (
     create_session_factory,
     init_db,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope, project_task_states
+from orchestrator.graph import (
+    Actor,
+    ActorKind,
+    EventEnvelope,
+    GraphProjection,
+    project_final_invariant_blockers,
+    project_node_states,
+    project_run_state,
+    project_task_states,
+)
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.graph_runtime.store import graph_aggregate_id
 from tests.unit.graph_test_utils import canonical_event_payload
@@ -36,6 +45,14 @@ def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
 
 
 def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any]) -> EventEnvelope:
+    payload = canonical_event_payload(event_type, payload)
+    if event_type == "output_record_accepted" and payload.get("record_type") == "classified_gap":
+        value = dict(payload["value"])
+        value.setdefault("milestone_kind", "gap_analysis")
+        value.setdefault("source", "incident_reconstruction")
+        value.setdefault("task_region_id", "origin")
+        value.setdefault("attempt_number", 1)
+        payload["value"] = value
     return EventEnvelope(
         event_id=event_id,
         run_id=run_id,
@@ -45,7 +62,7 @@ def _event(event_id: str, run_id: str, event_type: str, payload: dict[str, Any])
         actor=Actor(kind=ActorKind.CONTROLLER),
         causation_id="test",
         timestamp=datetime(2026, 1, 1, tzinfo=UTC),
-        payload=canonical_event_payload(event_type, payload),
+        payload=payload,
     )
 
 
@@ -227,6 +244,176 @@ def _verification_payload(candidate_id: str, outcome: str) -> dict[str, Any]:
         "outcome": outcome,
         "evidence": [],
         "value": {"outcome": outcome, "grades": []},
+    }
+
+
+def _july_4_supersession_incident_events(run_id: str) -> list[EventEnvelope]:
+    return [
+        _event("incident-active", run_id, "run_lifecycle_changed", {"to_state": "active"}),
+        _event(
+            "incident-origin-worker",
+            run_id,
+            "node_created",
+            {
+                "node_id": "worker-origin",
+                "kind": "worker",
+                "role": "builder",
+                "state": "completed",
+                "task_region_id": "origin",
+            },
+        ),
+        _candidate_event("incident-origin-candidate", run_id, "origin", "candidate-origin"),
+        _event(
+            "incident-origin-verifier",
+            run_id,
+            "node_created",
+            {
+                "node_id": "verifier-origin",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "failed",
+                "task_region_id": "origin",
+            },
+        ),
+        _event(
+            "incident-origin-failed",
+            run_id,
+            "verification_failed",
+            {
+                **_verification_payload("candidate-origin", "failed"),
+                "node_id": "verifier-origin",
+                "verifier_node_id": "verifier-origin",
+            },
+        ),
+        _event(
+            "incident-gap-planner",
+            run_id,
+            "node_created",
+            {
+                "node_id": "gap-planner-recovery",
+                "kind": "gap_planner",
+                "role": "gap_planner",
+                "state": "completed",
+            },
+        ),
+        _event(
+            "incident-gap-classified",
+            run_id,
+            "output_record_accepted",
+            {
+                "record_id": "classified-gap-recovery",
+                "record_kind": "output",
+                "record_type": "classified_gap",
+                "producer_node_id": "gap-planner-recovery",
+                "port": "classified_gap",
+                "schema": "GapClassification",
+                "value": {"classification": "corrective_work_required"},
+            },
+        ),
+        _event(
+            "incident-corrective-worker",
+            run_id,
+            "node_created",
+            {
+                "node_id": "worker-corrective",
+                "kind": "worker",
+                "role": "fixer",
+                "state": "completed",
+                "task_region_id": "corrective",
+            },
+        ),
+        _event(
+            "incident-corrective-candidate",
+            run_id,
+            "output_record_accepted",
+            {
+                "task_region_id": "corrective",
+                "candidate_id": "candidate-corrective",
+                "attempt_number": 1,
+                "producer_node_id": "worker-corrective",
+                "record_id": "candidate-corrective",
+                "record_kind": "output",
+                "record_type": "candidate",
+                "port": "candidate",
+                "schema": "ImplementationCandidate",
+                "supersedes_task_region_id": "origin",
+                "value": {"summary": "repair origin candidate"},
+            },
+        ),
+        _event(
+            "incident-corrective-verifier",
+            run_id,
+            "node_created",
+            {
+                "node_id": "verifier-corrective",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "completed",
+                "task_region_id": "corrective",
+            },
+        ),
+        _event(
+            "incident-corrective-passed",
+            run_id,
+            "verification_passed",
+            {
+                **_verification_payload("candidate-corrective", "passed"),
+                "node_id": "verifier-corrective",
+                "verifier_node_id": "verifier-corrective",
+            },
+        ),
+        _file_state_event(
+            "incident-corrective-file-state",
+            run_id,
+            "corrective",
+            "candidate-corrective",
+        ),
+        _event(
+            "incident-final-gate",
+            run_id,
+            "node_created",
+            {
+                "node_id": "final-gate-incident",
+                "kind": "final_gate",
+                "role": "final_gate",
+                "state": "completed",
+            },
+        ),
+        _event(
+            "incident-completion-decision",
+            run_id,
+            "output_record_accepted",
+            {
+                "record_id": "completion-decision-incident",
+                "record_kind": "output",
+                "record_type": "completion_decision",
+                "producer_node_id": "final-gate-incident",
+                "port": "completion_decision",
+                "schema": "CompletionDecision",
+                "value": {"status": "passed", "blockers": []},
+                "provenance": {"source": "final_gate_evaluated"},
+            },
+        ),
+        _event(
+            "incident-completed",
+            run_id,
+            "run_lifecycle_changed",
+            {"from_state": "active", "to_state": "completed"},
+        ),
+    ]
+
+
+def _incident_projection_outcome(
+    events: list[EventEnvelope],
+    projection: GraphProjection | None = None,
+) -> dict[str, object]:
+    return {
+        "task_states": project_task_states(events, projection=projection),
+        "final_gate_state": project_node_states(events, projection=projection).get(
+            "final-gate-incident"
+        ),
+        "final_blockers": project_final_invariant_blockers(events, projection=projection),
+        "run_state": project_run_state(events, projection=projection),
     }
 
 
@@ -538,6 +725,45 @@ async def test_projection_read_model_preserves_corrective_supersession_task_stat
     assert snapshot_before_rebuild.task_states == expected_task_states
     assert rebuilt_snapshot is not None
     assert rebuilt_snapshot.task_states == expected_task_states
+
+
+@pytest.mark.asyncio
+async def test_july_4_incident_replay_preserves_supersession_and_completion_parity(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    run_id = "july-4-supersession-incident"
+    events = _july_4_supersession_incident_events(run_id)
+    expected = {
+        "task_states": {"corrective": "accepted", "origin": "accepted"},
+        "final_gate_state": "completed",
+        "final_blockers": [],
+        "run_state": "completed",
+    }
+
+    async with session_factory() as session:
+        async with session.begin():
+            await GraphEventStore(session).append_events(run_id, 0, events)
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        full_events = await store.read_run(run_id)
+        compact_events = await store.read_run_projection(run_id)
+        checkpoint = await store.read_projection_checkpoint(run_id)
+        await store.delete_read_models(run_id)
+        await session.commit()
+
+    async with session_factory() as session:
+        store = GraphEventStore(session)
+        await store.rebuild_read_models(run_id)
+        rebuilt_checkpoint = await store.read_projection_checkpoint(run_id)
+        await session.commit()
+
+    assert checkpoint is not None
+    assert rebuilt_checkpoint is not None
+    assert _incident_projection_outcome(full_events) == expected
+    assert _incident_projection_outcome(compact_events) == expected
+    assert _incident_projection_outcome([], checkpoint.projection) == expected
+    assert _incident_projection_outcome([], rebuilt_checkpoint.projection) == expected
 
 
 @pytest.mark.asyncio
