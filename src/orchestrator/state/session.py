@@ -116,23 +116,43 @@ class SessionStateManager:
         data: dict[str, Any] = deepcopy(json.loads(content))
         runs_data: dict[str, Any] = data.get("runs", {})
         self._runs = {
-            run_id: Run.model_validate(_normalize_runner_types(run_data))
+            run_id: Run.model_validate(_normalize_run_runner_types(run_data))
             for run_id, run_data in runs_data.items()
         }
 
 
-def _normalize_runner_types(value: Any) -> Any:
-    """Return copied state data with historical runner fields normalized."""
-    if isinstance(value, list):
-        return [_normalize_runner_types(item) for item in cast(list[Any], value)]
-    if not isinstance(value, dict):
-        return value
-    mapping = cast(dict[str, Any], value)
-    normalized: dict[str, Any] = {}
-    for key, item in mapping.items():
-        if key == "agent_runner_type" and isinstance(item, str):
-            runner_type = normalize_persisted_agent_runner_type(item)
-            normalized[key] = runner_type.value if runner_type is not None else None
-        else:
-            normalized[key] = _normalize_runner_types(item)
+def _normalize_run_runner_types(run_data: Any) -> Any:
+    """Normalize only the persisted run and attempt runner fields in a copied snapshot."""
+    if not isinstance(run_data, dict):
+        return run_data
+    normalized = cast(dict[str, Any], run_data)
+    if normalized.get("agent_runner_type") == "claude_sdk":
+        runner_type = normalize_persisted_agent_runner_type("claude_sdk")
+        normalized["agent_runner_type"] = (
+            runner_type.value if runner_type is not None else "claude_sdk"
+        )
+
+    steps = normalized.get("steps")
+    if not isinstance(steps, list):
+        return normalized
+    for step in cast(list[Any], steps):
+        if not isinstance(step, dict):
+            continue
+        tasks = cast(dict[str, Any], step).get("tasks")
+        if not isinstance(tasks, list):
+            continue
+        for task in cast(list[Any], tasks):
+            if not isinstance(task, dict):
+                continue
+            attempts = cast(dict[str, Any], task).get("attempts")
+            if not isinstance(attempts, list):
+                continue
+            for attempt in cast(list[Any], attempts):
+                if isinstance(attempt, dict):
+                    attempt_data = cast(dict[str, Any], attempt)
+                    if attempt_data.get("agent_runner_type") == "claude_sdk":
+                        runner_type = normalize_persisted_agent_runner_type("claude_sdk")
+                        attempt_data["agent_runner_type"] = (
+                            runner_type.value if runner_type is not None else "claude_sdk"
+                        )
     return normalized

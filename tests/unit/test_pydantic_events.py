@@ -479,6 +479,22 @@ def test_deserialize_event_normalizes_only_historical_runner_keys() -> None:
     assert "claude_sdk" in payload
 
 
+@pytest.mark.parametrize("runner_value", ["user_managed", "provider_specific"])
+def test_deserialize_event_preserves_non_historical_runner_values(runner_value: str) -> None:
+    payload = (
+        '{"run_id":"run-legacy","event_type":"attempt_updated",'
+        '"timestamp":"2025-01-15T10:30:00Z","task_id":"task-1",'
+        '"attempt_id":"attempt-1","agent_runner_type":"'
+        f'{runner_value}","agent_settings":{{"nested":{{"runner_type":"{runner_value}"}}}}}}'
+    )
+
+    event = deserialize_event("attempt_updated", payload)
+
+    assert isinstance(event, AttemptUpdated)
+    assert event.agent_runner_type == runner_value
+    assert event.agent_settings == {"nested": {"runner_type": runner_value}}
+
+
 # ---------------------------------------------------------------------------
 # AgentDiedEvent
 # ---------------------------------------------------------------------------

@@ -157,9 +157,9 @@ def _normalize_historical_runner_types(value: Any) -> Any:
     mapping = cast(dict[str, Any], value)
     normalized: dict[str, Any] = {}
     for key, item in mapping.items():
-        if key in _RUNNER_TYPE_KEYS and isinstance(item, str):
+        if key in _RUNNER_TYPE_KEYS and item == "claude_sdk":
             runner_type = normalize_persisted_agent_runner_type(item)
-            normalized[key] = runner_type.value if runner_type is not None else None
+            normalized[key] = runner_type.value if runner_type is not None else item
         else:
             normalized[key] = _normalize_historical_runner_types(item)
     return normalized

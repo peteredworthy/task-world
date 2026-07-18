@@ -73,10 +73,10 @@ def test_migration_retires_historical_claude_sdk_relational_values(tmp_path: Pat
             ("run-1", "repo", "draft", "claude_sdk", "{}", "{}", "2025-01-01", "2025-01-01"),
         )
         connection.execute(
-            "INSERT INTO attempts (id, task_id, attempt_num, runner_type, tokens_read, "
-            "tokens_write, tokens_cache, duration_ms, num_actions) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            ("attempt-1", "task-1", 1, "claude_sdk", 0, 0, 0, 0, 0),
+            "INSERT INTO attempts (id, task_id, attempt_num, runner_type, agent_model, "
+            "tokens_read, tokens_write, tokens_cache, duration_ms, num_actions) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("attempt-1", "task-1", 1, "claude_sdk", "legacy-model", 0, 0, 0, 0, 0),
         )
         connection.execute(
             "INSERT INTO cost_records (id, run_id, task_id, attempt_num, agent_runner_type, phase, "
@@ -129,28 +129,83 @@ def test_migration_retires_historical_claude_sdk_relational_values(tmp_path: Pat
             ("default-retired", "retired", "coder", "current-model"),
         )
         connection.execute(
+            "INSERT INTO agent_runner_model_profile_defaults (id, runner_type, profile, model) "
+            "VALUES (?, ?, ?, ?)",
+            ("default-other", "cli_subprocess", "architect", "other-model"),
+        )
+        connection.execute(
             "INSERT INTO events_v2 (aggregate_id, event_type, payload, timestamp, version) "
             "VALUES (?, ?, ?, ?, ?)",
             ("run-1", "agent_changed", event_payload, "2025-01-01T00:00:00Z", 1),
         )
         connection.commit()
 
+        before_upgrade = {
+            "run": connection.execute(
+                "SELECT id, repo_name, status, runner_config, config, runner_type "
+                "FROM runs WHERE id = 'run-1'"
+            ).fetchone(),
+            "attempt": connection.execute(
+                "SELECT id, task_id, attempt_num, agent_model, runner_type "
+                "FROM attempts WHERE id = 'attempt-1'"
+            ).fetchone(),
+            "cost": connection.execute(
+                "SELECT id, run_id, task_id, attempt_num, phase, mode_tag, model_name, "
+                "agent_runner_type FROM cost_records WHERE id = 'cost-1'"
+            ).fetchone(),
+            "artifact": connection.execute(
+                "SELECT id, run_id, task_id, attempt_num, phase, artifact_kind, prompt_text, "
+                "output_text, agent_runner_type FROM interaction_log_artifacts "
+                "WHERE id = 'artifact-1'"
+            ).fetchone(),
+            "other_default": connection.execute(
+                "SELECT id, runner_type, profile, model "
+                "FROM agent_runner_model_profile_defaults WHERE id = 'default-other'"
+            ).fetchone(),
+        }
+
     command.upgrade(config, "zg1h2i3j4k5l")
 
     with sqlite3.connect(database_path) as connection:
-        assert connection.execute("SELECT runner_type FROM runs WHERE id = 'run-1'").fetchone() == (
-            "retired",
+        run = connection.execute(
+            "SELECT id, repo_name, status, runner_config, config, runner_type "
+            "FROM runs WHERE id = 'run-1'"
+        ).fetchone()
+        attempt = connection.execute(
+            "SELECT id, task_id, attempt_num, agent_model, runner_type "
+            "FROM attempts WHERE id = 'attempt-1'"
+        ).fetchone()
+        cost = connection.execute(
+            "SELECT id, run_id, task_id, attempt_num, phase, mode_tag, model_name, "
+            "agent_runner_type FROM cost_records WHERE id = 'cost-1'"
+        ).fetchone()
+        artifact = connection.execute(
+            "SELECT id, run_id, task_id, attempt_num, phase, artifact_kind, prompt_text, "
+            "output_text, agent_runner_type FROM interaction_log_artifacts "
+            "WHERE id = 'artifact-1'"
+        ).fetchone()
+
+        assert run is not None
+        assert attempt is not None
+        assert cost is not None
+        assert artifact is not None
+        assert run[:-1] == before_upgrade["run"][:-1]
+        assert attempt[:-1] == before_upgrade["attempt"][:-1]
+        assert cost[:-1] == before_upgrade["cost"][:-1]
+        assert artifact[:-1] == before_upgrade["artifact"][:-1]
+        assert run[-1] == attempt[-1] == cost[-1] == artifact[-1] == "retired"
+        assert connection.execute(
+            "SELECT id, runner_type, profile, model FROM agent_runner_model_profile_defaults "
+            "ORDER BY id"
+        ).fetchall() == [
+            ("default-other", "cli_subprocess", "architect", "other-model"),
+            ("default-retired", "retired", "coder", "current-model"),
+        ]
+        assert (
+            connection.execute(
+                "SELECT id, runner_type, profile, model FROM agent_runner_model_profile_defaults "
+                "WHERE id = 'default-other'"
+            ).fetchone()
+            == before_upgrade["other_default"]
         )
-        assert connection.execute(
-            "SELECT runner_type FROM attempts WHERE id = 'attempt-1'"
-        ).fetchone() == ("retired",)
-        assert connection.execute(
-            "SELECT agent_runner_type FROM cost_records WHERE id = 'cost-1'"
-        ).fetchone() == ("retired",)
-        assert connection.execute(
-            "SELECT agent_runner_type FROM interaction_log_artifacts WHERE id = 'artifact-1'"
-        ).fetchone() == ("retired",)
-        assert connection.execute(
-            "SELECT id, runner_type, profile, model FROM agent_runner_model_profile_defaults"
-        ).fetchall() == [("default-retired", "retired", "coder", "current-model")]
         assert connection.execute("SELECT payload FROM events_v2").fetchone() == (event_payload,)

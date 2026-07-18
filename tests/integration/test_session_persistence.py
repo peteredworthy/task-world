@@ -79,6 +79,10 @@ async def test_load_normalizes_historical_claude_sdk_without_rewriting_snapshot(
                 "id": "run-legacy",
                 "repo_name": "project",
                 "agent_runner_type": "claude_sdk",
+                "config": {
+                    "agent_runner_type": "provider_specific",
+                    "nested": {"agent_runner_type": "user_managed"},
+                },
                 "steps": [
                     {
                         "id": "step-1",
@@ -92,6 +96,9 @@ async def test_load_normalizes_historical_claude_sdk_without_rewriting_snapshot(
                                         "id": "attempt-1",
                                         "attempt_num": 1,
                                         "agent_runner_type": "claude_sdk",
+                                        "agent_settings": {
+                                            "agent_runner_type": "provider_specific"
+                                        },
                                     }
                                 ],
                             }
@@ -111,4 +118,11 @@ async def test_load_normalizes_historical_claude_sdk_without_rewriting_snapshot(
     run = manager.get_run("run-legacy")
     assert run.agent_runner_type is AgentRunnerType.RETIRED
     assert run.steps[0].tasks[0].attempts[0].agent_runner_type is AgentRunnerType.RETIRED
+    assert run.config == {
+        "agent_runner_type": "provider_specific",
+        "nested": {"agent_runner_type": "user_managed"},
+    }
+    assert run.steps[0].tasks[0].attempts[0].agent_settings == {
+        "agent_runner_type": "provider_specific"
+    }
     assert persist_path.read_bytes() == original_bytes
