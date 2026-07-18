@@ -75,6 +75,40 @@ from `claude_sdk`, so reintroduction must not attempt to infer that provenance.
 - Codex Server owns the supported graph callback/tool path; no compatibility
   shim recreates the deleted SDK symbols.
 
+## Independent verifier evidence
+
+On 2026-07-18, the separate no-context verifier passed exact source
+`200102e0e4f9ab3d0b727faabe9f032f125894df`:
+
+```bash
+uv run pytest tests/ -q -n auto --dist worksteal
+# 4791 passed, 3 skipped, 3 warnings in 103.33s (0:01:43)
+
+uv run ruff check .
+# All checks passed!
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+# update notice: installed v1.1.408; v1.1.411 available
+
+git diff --check
+# clean; no output
+
+uv run python scripts/export_enums.py --check
+# OK: /Users/peter/code/task-world/worktrees/backlog-closeout/ui/src/types/generated-enums.ts is up to date.
+
+uv run alembic -c alembic.ini heads
+# zg1h2i3j4k5l (head)
+```
+
+The three warnings were Python 3.12 default-datetime-adapter
+`DeprecationWarning`s from `aiosqlite/core.py:63`. The Pyright update notice was
+advisory; the check itself reported zero errors, warnings, and informations.
+Generated enums were up to date, and Alembic reported the single head
+`zg1h2i3j4k5l`. The verifier's only dirty paths were the pre-existing SDD
+scratch files. This documentation records that independent evidence; it does
+not change the verified source SHA.
+
 ## Reintroduction criteria
 
 An Anthropic SDK runner may return only as a new runner proposal, not by

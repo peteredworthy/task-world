@@ -44,6 +44,38 @@ As of 2026-07-18, the implementation review follow-up has moved past the old
   cannot be discovered or dispatched. `codex_server` is the supported graph
   runner and replacement for explicitly resumed retired runs.
 
+### Task 16 Step 5 — fresh Claude SDK removal verifier evidence
+
+The separate no-context verifier passed exact source
+`200102e0e4f9ab3d0b727faabe9f032f125894df`:
+
+```bash
+uv run pytest tests/ -q -n auto --dist worksteal
+# 4791 passed, 3 skipped, 3 warnings in 103.33s (0:01:43)
+
+uv run ruff check .
+# All checks passed!
+
+uv run pyright
+# 0 errors, 0 warnings, 0 informations
+# update notice: installed v1.1.408; v1.1.411 available
+
+git diff --check
+# clean; no output
+
+uv run python scripts/export_enums.py --check
+# OK: /Users/peter/code/task-world/worktrees/backlog-closeout/ui/src/types/generated-enums.ts is up to date.
+
+uv run alembic -c alembic.ini heads
+# zg1h2i3j4k5l (head)
+```
+
+The three warnings were Python 3.12 default-datetime-adapter
+`DeprecationWarning`s from `aiosqlite/core.py:63`. The Pyright update notice was
+advisory; the check reported zero errors, warnings, and informations. Generated
+enums were current, and Alembic reported the single head `zg1h2i3j4k5l`. The
+verifier's only dirty paths were the pre-existing SDD scratch files.
+
 ### Task 11 Steps 1–5 — W8 export and guard-ledger closeout (2026-07-18)
 
 The export audit baseline was
