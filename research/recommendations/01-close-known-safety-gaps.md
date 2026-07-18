@@ -30,17 +30,22 @@
 
 ## (b) Make unmatched-model cost machine-visible; reconcile the rate table
 
-- Repo evidence: `runners/costs.py:73-95` + `model_costs.yaml` fall back to
-  an explicit zero-rate `unknown_model` entry. The *UI* shows "cost unknown",
-  but run totals and any future budget/rollup count the usage as **$0 with no
-  machine-readable flag**. The claude_sdk default model string
-  `claude-sonnet-4-5` (`agents/claude_sdk/agent.py:446`) matches nothing in
-  the YAML (nearest key: `claude-sonnet-4-6`) → the SDK default bills as
-  free in aggregates today.
+- Historical evidence (2026-07-07 source snapshot):
+  `runners/costs.py:73-95` + `model_costs.yaml` fell back to an explicit
+  zero-rate `unknown_model` entry. The *UI* showed "cost unknown", but run
+  totals and future budget/rollup calculations counted that usage as **$0
+  with no machine-readable flag**. The then-current Claude SDK default
+  `claude-sonnet-4-5` at the now-deleted
+  `runners/agents/claude_sdk/agent.py:446` did not match the nearest YAML key,
+  `claude-sonnet-4-6`, so SDK usage was aggregated as free at that time. This
+  remains removal rationale, not a current source path or active runner claim.
 - Change: (1) set `rate_missing=true` on the usage record and emit a warning
   event when the fallback fires; (2) reconcile the YAML with every default
-  model string the runners can emit; (3) unit test: every runner default
-  resolves to a nonzero rate.
+  model string selectable runners can emit; (3) unit test: enumerate only the
+  four selectable runners/defaults (`openhands_local`, `openhands_docker`,
+  `cli_subprocess`, `codex_server`) and require each to resolve to a nonzero
+  rate. Historical `retired` records are readback data, not a runner default
+  to validate.
 - Why P0: silently-$0 rows corrupt the cost data that R03/R04/R07 all
   depend on. Cheap to fix now, expensive to backfill later.
 

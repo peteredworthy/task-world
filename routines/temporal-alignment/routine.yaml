@@ -335,7 +335,7 @@ steps:
     title: "M3: ActivityAdapter Protocol"
     step_context: |
       Define a clean start/cancel boundary for agent runners via ActivityAdapter protocol.
-      Implement the protocol for the three active runner families (CLI, CodexServer,
+      Implement the protocol for the three active runner families (CLI, Codex Server,
       OpenHands). Wire task completion through ACTIVITY_COMPLETED and ACTIVITY_VERIFIED signals.
 
       CRITICAL INTEGRATION REQUIREMENT: Building the components (adapters, signal enqueue
@@ -456,8 +456,10 @@ steps:
                 same object as the Protocol. F: import fails.
             - id: "R2"
               text: |
-                R2 — A: all four adapter classes are importable from orchestrator.workflow.adapters
-                (or equivalent submodule). B: 3 of 4 present. F: 2 or fewer implemented.
+                R2 — A: exactly the three active adapter classes — CLIActivityAdapter,
+                CodexServerActivityAdapter, and OpenHandsActivityAdapter — are importable from
+                orchestrator.workflow.adapters (or equivalent submodule). B: 2 of 3 present.
+                F: 1 or fewer implemented.
             - id: "R3"
               text: |
                 R3 — A: each adapter has start() and cancel() with correct signatures matching
@@ -468,11 +470,12 @@ steps:
                 F: structural breakage affecting 3+ tests.
             - id: "R5"
               text: |
-                R5 — A: all four concrete adapters inherit from BaseActivityAdapter; shared logic
+                R5 — A: all three active concrete adapters (CLI, Codex Server, OpenHands) inherit
+                from BaseActivityAdapter; shared logic
                 (_tasks dict, _build_execution_context, start/cancel default implementations) is
                 defined once in the base and not duplicated in the concrete classes; runner-specific
-                differences are explicit overrides only. B: base class exists but 1-2 adapters
-                duplicate shared methods instead of inheriting. F: no base class, or all four
+                differences are explicit overrides only. B: base class exists but 1 adapter
+                duplicates shared methods instead of inheriting. F: no base class, or all three
                 adapters copy the same boilerplate (correct factoring was not achieved).
             - id: "R6"
               text: |

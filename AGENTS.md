@@ -4,7 +4,7 @@ This file provides guidance to coding agents working with code in this repositor
 
 ## Project Overview
 
-**Orchestrator** coordinates LLM-powered coding agents through structured workflows. It uses a **Routine/Run** model where git-versioned routine templates define multi-step tasks, and runs execute them with a user-selected agent (OpenHands, CLI subprocess, or external MCP). Each task goes through a builder/verifier cycle with fresh LLM context per phase.
+**Orchestrator** coordinates LLM-powered coding agents through structured workflows. It uses a **Routine/Run** model where git-versioned routine templates define multi-step tasks, and runs execute them with a user-selected active runner: OpenHands local/Docker, CLI subprocess, or Codex Server. External REST/MCP clients are interaction surfaces, not selectable agent-runner backends. Each task goes through a builder/verifier cycle with fresh LLM context per phase.
 
 Design documentation lives in `docs/intent/`. Implementation follows the phased plan in the slice documents. Phases 1-8 are implemented.
 
@@ -23,7 +23,7 @@ shims in sync with `vendor/superpowers/skills`.
 ## Run Execution Model (Worktrees + Agents)
 
 - Each run executes in its own git worktree under `worktrees/run-<run-id>/`.
-- The selected agent backend (OpenHands, Claude Code via CLI agent, Codex CLI agent, or external MCP/user-managed) operates inside that run worktree, not the main checkout.
+- The selected runner (OpenHands local/Docker, Claude or Codex via CLI subprocess, or Codex Server) operates inside that run worktree, not the main checkout. External REST/MCP clients can interact with runs but are not selectable backends.
 - Routine-declared orchestrator MCP access is scoped per task. Runners should use the scoped MCP config generated from `available_tools` instead of exposing the full `/mcp/sse` tool set by default.
 - Artifacts created by agents are written inside the run worktree first (for example `worktrees/run-<run-id>/docs/<feature>/...`).
 - Auto-verify and verification steps run against the run worktree path.
@@ -110,7 +110,7 @@ The four selectable runner types are `openhands_local`, `openhands_docker`,
 to `retired` at read boundaries. Codex Server is the supported replacement for
 former Claude SDK runs, and an operator must select it explicitly when resuming.
 
-All runners satisfy the `AgentRunner` protocol (`src/orchestrator/runners/interface.py`): `execute()`, `cancel()`, and optional `get_quota()`.
+All active/selectable runner implementations satisfy the `AgentRunner` protocol (`src/orchestrator/runners/interface.py`): `execute()`, `cancel()`, and optional `get_quota()`. `retired` is compatibility/readback state only and has no runner implementation.
 
 **API endpoints** (prefix `/api/agent-runners`):
 
