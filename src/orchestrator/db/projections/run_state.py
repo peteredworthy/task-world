@@ -103,6 +103,22 @@ def _merge_token_usage_by_model(
             merged_entry["cost_usd"] = previous.get("cost_usd", 0.0) + usage_dict.get(
                 "cost_usd", 0.0
             )
+            merged_entry["gen_ai_usage_reasoning_output_tokens"] = previous.get(
+                "gen_ai_usage_reasoning_output_tokens", 0
+            ) + usage_dict.get("gen_ai_usage_reasoning_output_tokens", 0)
+            merged_entry["rate_missing"] = bool(previous.get("rate_missing")) or bool(
+                usage_dict.get("rate_missing")
+            )
+            # Aggregate bridge facts retain ordered, de-duplicated reasons and sum latency.
+            merged_entry["gen_ai_response_finish_reasons"] = list(
+                dict.fromkeys(
+                    previous.get("gen_ai_response_finish_reasons", [])
+                    + usage_dict.get("gen_ai_response_finish_reasons", [])
+                )
+            )
+            merged_entry["latency_ms"] = previous.get("latency_ms", 0) + usage_dict.get(
+                "latency_ms", 0
+            )
             merged[idx_by_model[model_name]] = merged_entry
         else:
             idx_by_model[model_name] = len(merged)

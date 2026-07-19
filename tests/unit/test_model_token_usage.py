@@ -85,6 +85,48 @@ class TestModelTokenUsage:
 
         assert usage.gen_ai_response_finish_reasons == ["stop"]
 
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            lambda r: r.insert(0, "x"),
+            lambda r: r.pop(),
+            lambda r: r.remove("stop"),
+            lambda r: r.clear(),
+            lambda r: r.reverse(),
+            lambda r: r.sort(),
+            lambda r: r.__iadd__(["x"]),
+            lambda r: r.__imul__(2),
+        ],
+    )
+    def test_finish_reasons_reject_remaining_list_mutators(self, mutation) -> None:
+        with pytest.raises(TypeError):
+            mutation(
+                ModelTokenUsage(
+                    model="known", gen_ai_response_finish_reasons=["stop"]
+                ).gen_ai_response_finish_reasons
+            )
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "gen_ai_usage_input_tokens",
+            "gen_ai_usage_output_tokens",
+            "gen_ai_usage_cache_read_input_tokens",
+            "gen_ai_usage_cache_creation_input_tokens",
+            "gen_ai_usage_reasoning_output_tokens",
+            "latency_ms",
+            "cost_usd",
+        ],
+    )
+    def test_rejects_every_negative_canonical_numeric_field(self, field: str) -> None:
+        with pytest.raises(ValidationError):
+            ModelTokenUsage(model="known", **{field: -1})
+
+    @pytest.mark.parametrize("rate", [-1, float("inf"), float("nan")])
+    def test_rejects_invalid_legacy_rates_before_cost_construction(self, rate: float) -> None:
+        with pytest.raises(ValidationError):
+            ModelTokenUsage(model="known", input_tokens=1, cost_per_m_input=rate)
+
     def test_rejects_conflicting_canonical_and_legacy_values(self) -> None:
         with pytest.raises(ValidationError, match="conflicting"):
             ModelTokenUsage(
@@ -142,6 +184,16 @@ class TestExtractMetricsAndUsage:
         _metrics, usage = extract_metrics_and_usage(result)
 
         assert usage[0].gen_ai_usage_input_tokens == 60
+
+    def test_reasoning_observability_does_not_change_captured_cost(self, cost_file: Path) -> None:
+        result = ExecutionResult(
+            success=True,
+            action_log=ActionLog(agent_model="known", total_input_tokens=10, total_output_tokens=4),
+        )
+        base = extract_metrics_and_usage(result)[1][0]
+        observed_reasoning = base.model_copy(update={"gen_ai_usage_reasoning_output_tokens": 3})
+
+        assert observed_reasoning.cost_usd == base.cost_usd
 
     def test_same_model_executions_append_distinct_facts_and_propagate_rate_missing(
         self, cost_file: Path

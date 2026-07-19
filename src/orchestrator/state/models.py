@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 from enum import Enum
 from collections.abc import Iterable
+from math import isfinite
 from typing import Any, SupportsIndex, cast
 
 from pydantic import (
@@ -193,6 +194,30 @@ class _FrozenReasonList(list[str]):
     def extend(self, values: Iterable[str]) -> None:
         raise TypeError("finish reasons are immutable")
 
+    def insert(self, index: SupportsIndex, item: str) -> None:
+        raise TypeError("finish reasons are immutable")
+
+    def pop(self, index: SupportsIndex = -1) -> str:
+        raise TypeError("finish reasons are immutable")
+
+    def remove(self, value: str) -> None:
+        raise TypeError("finish reasons are immutable")
+
+    def clear(self) -> None:
+        raise TypeError("finish reasons are immutable")
+
+    def reverse(self) -> None:
+        raise TypeError("finish reasons are immutable")
+
+    def sort(self, *, key: Any = None, reverse: bool = False) -> None:
+        raise TypeError("finish reasons are immutable")
+
+    def __iadd__(self, value: Iterable[str]) -> "_FrozenReasonList":
+        raise TypeError("finish reasons are immutable")
+
+    def __imul__(self, value: SupportsIndex) -> "_FrozenReasonList":
+        raise TypeError("finish reasons are immutable")
+
 
 class ModelTokenUsage(BaseModel):
     """An immutable OTel usage fact for one execution and model.
@@ -218,9 +243,8 @@ class ModelTokenUsage(BaseModel):
 
     def __init__(self, **data: Any) -> None:
         """Accept Task 3's temporary legacy constructor payloads."""
-        has_captured_cost = "cost_usd" in data
         legacy_cost_rates: dict[str, float] = {
-            field: float(data.pop(field))
+            field: float(data[field])
             for field in (
                 "cost_per_m_cache_read",
                 "cost_per_m_cache_creation",
@@ -229,28 +253,26 @@ class ModelTokenUsage(BaseModel):
             )
             if field in data
         }
+        if legacy_cost_rates and "cost_usd" not in data:
+            input_tokens = int(data.get("gen_ai_usage_input_tokens", data.get("input_tokens", 0)))
+            cache_read = int(
+                data.get("gen_ai_usage_cache_read_input_tokens", data.get("cache_read_tokens", 0))
+            )
+            cache_creation = int(
+                data.get(
+                    "gen_ai_usage_cache_creation_input_tokens", data.get("cache_creation_tokens", 0)
+                )
+            )
+            data["cost_usd"] = (
+                cache_read * legacy_cost_rates.get("cost_per_m_cache_read", 0.0)
+                + cache_creation * legacy_cost_rates.get("cost_per_m_cache_creation", 0.0)
+                + (input_tokens - cache_read - cache_creation)
+                * legacy_cost_rates.get("cost_per_m_input", 0.0)
+                + int(data.get("gen_ai_usage_output_tokens", data.get("output_tokens", 0)))
+                * legacy_cost_rates.get("cost_per_m_output", 0.0)
+            ) / 1_000_000
         super().__init__(**data)
         object.__setattr__(self, "_legacy_cost_rates", legacy_cost_rates)
-        if legacy_cost_rates and not has_captured_cost:
-            uncached_input = (
-                self.gen_ai_usage_input_tokens
-                - self.gen_ai_usage_cache_read_input_tokens
-                - self.gen_ai_usage_cache_creation_input_tokens
-            )
-            object.__setattr__(
-                self,
-                "cost_usd",
-                (
-                    self.gen_ai_usage_cache_read_input_tokens
-                    * legacy_cost_rates.get("cost_per_m_cache_read", 0.0)
-                    + self.gen_ai_usage_cache_creation_input_tokens
-                    * legacy_cost_rates.get("cost_per_m_cache_creation", 0.0)
-                    + uncached_input * legacy_cost_rates.get("cost_per_m_input", 0.0)
-                    + self.gen_ai_usage_output_tokens
-                    * legacy_cost_rates.get("cost_per_m_output", 0.0)
-                )
-                / 1_000_000,
-            )
 
     @model_validator(mode="before")
     @classmethod
@@ -258,6 +280,18 @@ class ModelTokenUsage(BaseModel):
         if not isinstance(data, dict):
             return data
         translated: dict[str, Any] = dict(cast(dict[str, Any], data))
+        for field in (
+            "cost_per_m_cache_read",
+            "cost_per_m_cache_creation",
+            "cost_per_m_input",
+            "cost_per_m_output",
+        ):
+            if field in translated and (
+                not isinstance(translated[field], (int, float))
+                or not isfinite(translated[field])
+                or translated[field] < 0
+            ):
+                raise ValueError(f"{field} must be finite and nonnegative")
         for legacy, canonical in (
             ("input_tokens", "gen_ai_usage_input_tokens"),
             ("output_tokens", "gen_ai_usage_output_tokens"),

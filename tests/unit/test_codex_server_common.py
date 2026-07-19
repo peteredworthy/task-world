@@ -961,6 +961,7 @@ def test_build_execution_result_with_tokens() -> None:
     assert result.action_log.total_output_tokens == 200
     assert result.action_log.total_cache_read_tokens == 50
     assert result.action_log.total_duration_ms == 5000
+    assert result.action_log.input_tokens_include_cache is True
 
 
 def test_build_execution_result_defaults_to_zero_tokens() -> None:

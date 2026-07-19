@@ -70,6 +70,7 @@ def test_system_init():
     assert log.session_id == "sess_123"
     assert log.agent_model == "claude-sonnet-4-5-20250514"
     assert log.tools_available == ["bash", "read", "write"]
+    assert log.input_tokens_include_cache is False
 
 
 def test_assistant_text():

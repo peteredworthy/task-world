@@ -18,6 +18,7 @@ def test_thread_started():
     assert len(log.entries) == 1
     assert log.entries[0].kind == ActionEntryKind.SYSTEM_INIT
     assert log.entries[0].raw_type == "thread.started"
+    assert log.input_tokens_include_cache is True
 
 
 def test_message_created_assistant():

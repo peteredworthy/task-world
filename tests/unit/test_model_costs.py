@@ -6,8 +6,10 @@ from pathlib import Path
 
 import pytest
 import yaml
+from pydantic import ValidationError
 
 import orchestrator.runners.costs as costs_mod
+from orchestrator.runners import ModelCostResolution
 from orchestrator.runners.costs import load_cost_table, resolve_model_costs
 
 
@@ -25,6 +27,19 @@ def _load(tmp_path: Path, models: dict[str, dict[str, float]]) -> None:
 
 
 class TestResolveModelCosts:
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "cost_per_m_cache_read",
+            "cost_per_m_cache_creation",
+            "cost_per_m_input",
+            "cost_per_m_output",
+        ],
+    )
+    def test_rejects_every_negative_rate(self, field: str) -> None:
+        with pytest.raises(ValidationError):
+            ModelCostResolution(**{field: -1}, rate_missing=False)
+
     def test_exact_match_wins_over_prefixes(self, tmp_path: Path) -> None:
         _load(tmp_path, {"gpt-4o": {"input": 1}, "gpt-4o-mini": {"input": 2}})
 
