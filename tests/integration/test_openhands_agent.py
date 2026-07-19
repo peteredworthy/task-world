@@ -37,6 +37,10 @@ async def _noop_submit() -> None:
 # --- Error-path tests (SDK installed, no server needed) ---
 
 
+@pytest.mark.skipif(
+    not _SDK_AVAILABLE,
+    reason="OpenHands SDK is required to exercise the missing-API-key path",
+)
 async def test_openhands_missing_api_key_raises() -> None:
     """Missing API key raises AgentNotAvailableError."""
     # Temporarily remove OPENAI_API_KEY so the fallback in __init__ also

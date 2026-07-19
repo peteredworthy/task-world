@@ -48,6 +48,10 @@ async def test_docker_openhands_health_check_no_docker() -> None:
     assert await agent.check_health() is False
 
 
+@pytest.mark.skipif(
+    not _SDK_AVAILABLE,
+    reason="OpenHands SDK is required to exercise the missing-API-key path",
+)
 async def test_docker_openhands_missing_api_key() -> None:
     """execute() raises AgentNotAvailableError when API key is missing."""
     agent = DockerOpenHandsAgent(api_key="placeholder")
