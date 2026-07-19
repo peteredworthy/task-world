@@ -264,3 +264,47 @@ def test_cli_assert_clean_accepts_provider_boundary_extraction(tmp_path: Path) -
     result = _run_cli(tmp_path, "--assert-clean")
 
     assert result.returncode == 0
+
+
+def test_rebinding_and_conditional_ownership_are_diagnostic() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+usage = object()
+after = usage.input_tokens
+if enabled:
+    conditional = ModelTokenUsage(input_tokens=1)
+later = conditional.input_tokens
+"""
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+    assert "after = usage.input_tokens" in transformed
+    assert "later = conditional.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 2
+
+
+def test_same_line_owner_precedes_attribute() -> None:
+    source = "usage = ModelTokenUsage(input_tokens=1); total = usage.input_tokens\n"
+    assert "usage.gen_ai_usage_input_tokens" in transform_source(
+        source, path="src/orchestrator/state/models.py"
+    )
+
+
+def test_additional_repository_contracts_are_explicitly_proven() -> None:
+    source = """\
+class ExecutionMetrics: input_tokens: int
+class GatekeeperVerdictCommandRow: input_tokens: int
+class GatekeeperCostCommandRow: input_tokens: int
+class GatekeeperVerdictRow: input_tokens: int
+class GatekeeperCostRecordedPayload: input_tokens: int
+value = ExecutionMetrics(input_tokens=1).input_tokens
+"""
+    assert (
+        transform_source(source, path="src/orchestrator/state/models.py").count(
+            "gen_ai_usage_input_tokens"
+        )
+        == 6
+    )
+
+
+def test_unknown_parser_receiver_is_diagnostic() -> None:
+    source = 'raw = unknown.get("cache_read_tokens")\n'
+    assert diagnose_source(source, path="src/orchestrator/runners/agents/codex/parser.py")
