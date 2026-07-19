@@ -308,3 +308,90 @@ value = ExecutionMetrics(input_tokens=1).input_tokens
 def test_unknown_parser_receiver_is_diagnostic() -> None:
     source = 'raw = unknown.get("cache_read_tokens")\n'
     assert diagnose_source(source, path="src/orchestrator/runners/agents/codex/parser.py")
+
+
+def test_annassign_kills_a_preceding_telemetry_owner() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+usage: object = object()
+total = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+    assert "total = usage.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 1
+
+
+def test_match_case_telemetry_assignment_is_not_proven_after_the_match() -> None:
+    source = """\
+match event:
+    case {"usage": usage}:
+        usage = ModelTokenUsage(input_tokens=1)
+total = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+    assert "total = usage.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 1
+
+
+def test_proven_use_before_a_later_kill_is_still_rewritten() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+before = usage.input_tokens
+usage = object()
+after = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "before = usage.gen_ai_usage_input_tokens" in transformed
+    assert "after = usage.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 1
+
+
+def test_inner_scope_owner_is_unconditional_despite_outer_conditional() -> None:
+    source = """\
+if enabled:
+    def collect():
+        usage = ModelTokenUsage(input_tokens=1)
+        return usage.input_tokens
+
+    class Collector:
+        usage = ModelTokenUsage(input_tokens=1)
+        total = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "return usage.gen_ai_usage_input_tokens" in transformed
+    assert "total = usage.gen_ai_usage_input_tokens" in transformed
+    assert diagnose_source(source, path="src/orchestrator/state/models.py") == ()
+
+
+def test_provider_subscripts_require_an_explicit_provider_receiver() -> None:
+    source = 'unknown = unknown["cache_read_tokens"]\nknown = payload["cache_read_tokens"]\n'
+
+    assert (
+        transform_source(source, path="src/orchestrator/runners/agents/codex/parser.py") == source
+    )
+    diagnostics = diagnose_source(source, path="src/orchestrator/runners/agents/codex/parser.py")
+    assert len(diagnostics) == 1
+    assert "cache_read_tokens" in diagnostics[0]
+
+
+def test_remaining_explicit_accounting_contracts_are_proven() -> None:
+    source = """\
+class TurnMetricsSchema: input_tokens: int
+class ActionLogSchema: total_output_tokens: int
+class GatekeeperVerdict: cache_read_tokens: int
+class MockBehavior: tokens_write: int
+verdict = GatekeeperVerdict(cache_read_tokens=1)
+value = verdict.cache_read_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert transformed.count("gen_ai_usage_input_tokens") == 1
+    assert transformed.count("gen_ai_usage_output_tokens") == 2
+    assert transformed.count("gen_ai_usage_cache_read_input_tokens") == 3

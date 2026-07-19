@@ -12,6 +12,7 @@ import argparse
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 
 import libcst as cst
@@ -59,6 +60,8 @@ PROVIDER_BOUNDARY_PATH_PREFIXES = (
     "src/orchestrator/runners/agents/openhands/",
 )
 
+PROVIDER_RECEIVER_NAMES = frozenset({"payload", "response", "usage"})
+
 INTERNAL_TELEMETRY_TYPES = frozenset(
     {
         "ModelTokenUsage",
@@ -72,6 +75,10 @@ INTERNAL_TELEMETRY_TYPES = frozenset(
         "GatekeeperCostCommandRow",
         "GatekeeperVerdictRow",
         "GatekeeperCostRecordedPayload",
+        "TurnMetricsSchema",
+        "ActionLogSchema",
+        "GatekeeperVerdict",
+        "MockBehavior",
     }
 )
 
@@ -114,41 +121,59 @@ def _is_telemetry_validation(call: cst.Call) -> bool:
     )
 
 
+class _OwnershipEventKind(Enum):
+    TELEMETRY_OWNER = "telemetry_owner"
+    NON_TELEMETRY_KILL = "non_telemetry_kill"
+    UNCERTAIN_ASSIGNMENT = "uncertain_assignment"
+
+
+@dataclass(frozen=True)
+class _OwnershipEvent:
+    position: tuple[int, int]
+    kind: _OwnershipEventKind
+
+
 class _TelemetryOwnerCollector(cst.CSTVisitor):
     """Collect assignments that statically prove an expression is telemetry."""
 
     METADATA_DEPENDENCIES = (ParentNodeProvider, PositionProvider, ScopeProvider)
 
     def __init__(self) -> None:
-        self.owner_positions: dict[tuple[int, str], list[tuple[int, int]]] = {}
-        self.ambiguous_paths: set[tuple[int, str]] = set()
+        self.events: dict[tuple[int, str], list[_OwnershipEvent]] = {}
+
+    def _is_conditional(self, node: cst.CSTNode) -> bool:
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        while parent is not None:
+            if isinstance(parent, (cst.FunctionDef, cst.ClassDef, cst.Lambda)):
+                return False
+            if isinstance(
+                parent,
+                (cst.If, cst.For, cst.While, cst.Try, cst.With, cst.Match, cst.MatchCase),
+            ):
+                return True
+            parent = self.get_metadata(ParentNodeProvider, parent, None)
+        return False
 
     def _record(
         self, target: cst.BaseAssignTargetExpression, value: cst.BaseExpression, node: cst.CSTNode
     ) -> None:
-        if not isinstance(value, cst.Call) or not _is_telemetry_constructor(value):
-            return
         path = _expression_path(target)
         if path:
             key = (id(self.get_metadata(ScopeProvider, node)), path)
             position = self.get_metadata(PositionProvider, node).start
-            parent = self.get_metadata(ParentNodeProvider, node, None)
-            while parent is not None:
-                if isinstance(parent, (cst.If, cst.For, cst.While, cst.Try)):
-                    self.ambiguous_paths.add(key)
-                    break
-                parent = self.get_metadata(ParentNodeProvider, parent, None)
-            self.owner_positions.setdefault(key, []).append((position.line, position.column))
+            if self._is_conditional(node):
+                kind = _OwnershipEventKind.UNCERTAIN_ASSIGNMENT
+            elif isinstance(value, cst.Call) and _is_telemetry_constructor(value):
+                kind = _OwnershipEventKind.TELEMETRY_OWNER
+            else:
+                kind = _OwnershipEventKind.NON_TELEMETRY_KILL
+            self.events.setdefault(key, []).append(
+                _OwnershipEvent((position.line, position.column), kind)
+            )
 
     def visit_Assign(self, node: cst.Assign) -> None:
         for target in node.targets:
             if isinstance(target.target, (cst.Name, cst.Attribute)):
-                if not isinstance(node.value, cst.Call) or not _is_telemetry_constructor(
-                    node.value
-                ):
-                    path = _expression_path(target.target)
-                    if path:
-                        self.ambiguous_paths.add((id(self.get_metadata(ScopeProvider, node)), path))
                 self._record(target.target, node.value, node)
 
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
@@ -164,11 +189,9 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
     def __init__(
         self,
         *,
-        owner_positions: dict[tuple[int, str], list[tuple[int, int]]],
-        ambiguous_paths: set[tuple[int, str]],
+        events: dict[tuple[int, str], list[_OwnershipEvent]],
     ) -> None:
-        self.owner_positions = owner_positions
-        self.ambiguous_paths = ambiguous_paths
+        self.events = events
 
     def _is_owner(self, node: cst.CSTNode, path: str | None) -> bool:
         if path is None:
@@ -177,11 +200,16 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
         if scope is None:
             return False
         key = (id(scope), path)
-        if key in self.ambiguous_paths:
-            return False
         position = self.get_metadata(PositionProvider, node).start
-        return any(
-            owner < (position.line, position.column) for owner in self.owner_positions.get(key, [])
+        preceding_events = [
+            event
+            for event in self.events.get(key, [])
+            if event.position < (position.line, position.column)
+        ]
+        return (
+            bool(preceding_events)
+            and max(preceding_events, key=lambda event: event.position).kind
+            is _OwnershipEventKind.TELEMETRY_OWNER
         )
 
     def _is_class_field(self, node: cst.CSTNode) -> bool:
@@ -274,12 +302,10 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
     def __init__(
         self,
         path: str,
-        owner_positions: dict[tuple[int, str], list[tuple[int, int]]],
-        ambiguous_paths: set[tuple[int, str]],
+        events: dict[tuple[int, str], list[_OwnershipEvent]],
     ) -> None:
         self.path = path
-        self.owner_positions = owner_positions
-        self.ambiguous_paths = ambiguous_paths
+        self.events = events
         self.is_provider_boundary = _is_provider_boundary(path)
         self.diagnostics: list[str] = []
 
@@ -296,11 +322,16 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
         if scope is None:
             return False
         key = (id(scope), path)
-        if key in self.ambiguous_paths:
-            return False
         position = self.get_metadata(PositionProvider, node).start
-        return any(
-            owner < (position.line, position.column) for owner in self.owner_positions.get(key, [])
+        preceding_events = [
+            event
+            for event in self.events.get(key, [])
+            if event.position < (position.line, position.column)
+        ]
+        return (
+            bool(preceding_events)
+            and max(preceding_events, key=lambda event: event.position).kind
+            is _OwnershipEventKind.TELEMETRY_OWNER
         )
 
     def visit_Attribute(self, node: cst.Attribute) -> None:
@@ -357,16 +388,19 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
                 and isinstance(call.func, cst.Attribute)
                 and call.func.attr.value == "get"
                 and isinstance(call.func.value, cst.Name)
-                and call.func.value.value in {"payload", "response", "usage"}
+                and call.func.value.value in PROVIDER_RECEIVER_NAMES
             )
         elif isinstance(parent, cst.Index):
-            is_boundary_extraction = isinstance(
-                self.get_metadata(ParentNodeProvider, parent, None), cst.Subscript
+            subscript = self.get_metadata(ParentNodeProvider, parent, None)
+            if isinstance(subscript, cst.SubscriptElement):
+                subscript = self.get_metadata(ParentNodeProvider, subscript, None)
+            is_boundary_extraction = (
+                isinstance(subscript, cst.Subscript)
+                and isinstance(subscript.value, cst.Name)
+                and subscript.value.value in PROVIDER_RECEIVER_NAMES
             )
         if not (
-            self.is_provider_boundary
-            and value in PROVIDER_RAW_KEYS
-            and (is_boundary_extraction or isinstance(parent, cst.Index))
+            self.is_provider_boundary and value in PROVIDER_RAW_KEYS and is_boundary_extraction
         ):
             self._diagnose(node, value)
 
@@ -378,11 +412,7 @@ def transform_source(source: str, *, path: str) -> str:
     owners = _TelemetryOwnerCollector()
     wrapper = MetadataWrapper(module)
     wrapper.visit(owners)
-    return wrapper.visit(
-        _OtelVocabularyTransformer(
-            owner_positions=owners.owner_positions, ambiguous_paths=owners.ambiguous_paths
-        )
-    ).code
+    return wrapper.visit(_OtelVocabularyTransformer(events=owners.events)).code
 
 
 def diagnose_source(source: str, *, path: str) -> tuple[str, ...]:
@@ -391,7 +421,7 @@ def diagnose_source(source: str, *, path: str) -> tuple[str, ...]:
     owners = _TelemetryOwnerCollector()
     wrapper = MetadataWrapper(module)
     wrapper.visit(owners)
-    visitor = _AmbiguousDictionaryVisitor(path, owners.owner_positions, owners.ambiguous_paths)
+    visitor = _AmbiguousDictionaryVisitor(path, owners.events)
     wrapper.visit(visitor)
     return tuple(visitor.diagnostics)
 
