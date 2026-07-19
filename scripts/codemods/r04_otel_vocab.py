@@ -43,6 +43,11 @@ PROVIDER_RAW_KEYS = frozenset(
         "cacheReadInputTokens",
         "cacheCreationInputTokens",
         "reasoningOutputTokens",
+        "cache_read_input_tokens",
+        "cache_creation_input_tokens",
+        "cached_input_tokens",
+        "prompt_tokens",
+        "completion_tokens",
     }
 )
 
@@ -52,7 +57,16 @@ PROVIDER_BOUNDARY_PATH_PREFIXES = (
     "src/orchestrator/runners/agents/openhands/",
 )
 
-_TELEMETRY_VARIABLES = frozenset({"telemetry", "usage", "metrics", "token_usage"})
+INTERNAL_TELEMETRY_TYPES = frozenset({"ModelTokenUsage", "ModelTokenUsageSchema"})
+
+
+def _expression_path(node: cst.BaseExpression) -> str | None:
+    if isinstance(node, cst.Name):
+        return node.value
+    if isinstance(node, cst.Attribute):
+        parent = _expression_path(node.value)
+        return f"{parent}.{node.attr.value}" if parent else None
+    return None
 
 
 def _is_provider_boundary(path: str) -> bool:
@@ -64,25 +78,32 @@ def _is_telemetry_constructor(call: cst.Call) -> bool:
     if not m.matches(call.func, m.Name()):
         return False
     assert isinstance(call.func, cst.Name)
-    return call.func.value.endswith(("Usage", "Metrics", "Cost"))
+    return call.func.value in INTERNAL_TELEMETRY_TYPES
 
 
-def _is_telemetry_attribute(attribute: cst.Attribute) -> bool:
-    """Return whether an attribute receiver conventionally owns usage fields."""
-    return isinstance(attribute.value, cst.Name) and attribute.value.value in _TELEMETRY_VARIABLES
+def _is_telemetry_validation(call: cst.Call) -> bool:
+    return (
+        isinstance(call.func, cst.Attribute)
+        and isinstance(call.func.value, cst.Name)
+        and call.func.value.value in INTERNAL_TELEMETRY_TYPES
+        and call.func.attr.value == "model_validate"
+    )
 
 
-def _dict_is_telemetry_contract(node: cst.Dict) -> bool:
-    """Require multiple canonical candidates before changing string dictionary keys."""
-    keys = [
-        element.key.evaluated_value
-        for element in node.elements
-        if isinstance(element, cst.DictElement)
-        and isinstance(element.key, cst.SimpleString)
-        and isinstance(element.key.evaluated_value, str)
-        and element.key.evaluated_value in FIELD_RENAMES
-    ]
-    return len(keys) >= 2
+class _TelemetryOwnerCollector(cst.CSTVisitor):
+    """Collect assignments that statically prove an expression is telemetry."""
+
+    def __init__(self) -> None:
+        self.owner_paths: set[str] = set()
+
+    def visit_Assign(self, node: cst.Assign) -> None:
+        if not isinstance(node.value, cst.Call) or not _is_telemetry_constructor(node.value):
+            return
+        for target in node.targets:
+            if isinstance(target.target, (cst.Name, cst.Attribute)):
+                path = _expression_path(target.target)
+                if path:
+                    self.owner_paths.add(path)
 
 
 class _OtelVocabularyTransformer(cst.CSTTransformer):
@@ -90,8 +111,8 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
 
     METADATA_DEPENDENCIES = (ParentNodeProvider,)
 
-    def __init__(self, *, is_provider_boundary: bool) -> None:
-        self.is_provider_boundary = is_provider_boundary
+    def __init__(self, *, owner_paths: set[str]) -> None:
+        self.owner_paths = owner_paths
 
     def _is_class_field(self, node: cst.CSTNode) -> bool:
         parent = self.get_metadata(ParentNodeProvider, node, None)
@@ -99,7 +120,7 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
             if isinstance(parent, cst.FunctionDef):
                 return False
             if isinstance(parent, cst.ClassDef):
-                return True
+                return parent.name.value in INTERNAL_TELEMETRY_TYPES
             parent = self.get_metadata(ParentNodeProvider, parent, None)
         return False
 
@@ -121,7 +142,10 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
     def leave_Attribute(
         self, original_node: cst.Attribute, updated_node: cst.Attribute
     ) -> cst.Attribute:
-        if _is_telemetry_attribute(original_node) and updated_node.attr.value in FIELD_RENAMES:
+        if (
+            _expression_path(original_node.value) in self.owner_paths
+            and updated_node.attr.value in FIELD_RENAMES
+        ):
             return updated_node.with_changes(
                 attr=updated_node.attr.with_changes(value=FIELD_RENAMES[updated_node.attr.value])
             )
@@ -143,7 +167,10 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
         return updated_node
 
     def leave_Dict(self, original_node: cst.Dict, updated_node: cst.Dict) -> cst.Dict:
-        if self.is_provider_boundary or not _dict_is_telemetry_contract(original_node):
+        parent = self.get_metadata(ParentNodeProvider, original_node, None)
+        if isinstance(parent, cst.Arg):
+            parent = self.get_metadata(ParentNodeProvider, parent, None)
+        if not isinstance(parent, cst.Call) or not _is_telemetry_validation(parent):
             return updated_node
         elements: list[cst.BaseDictElement] = []
         for original_element, updated_element in zip(
@@ -171,42 +198,105 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
 
 
 class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
-    METADATA_DEPENDENCIES = (PositionProvider,)
+    METADATA_DEPENDENCIES = (ParentNodeProvider, PositionProvider)
 
-    def __init__(self, path: str) -> None:
+    def __init__(self, path: str, owner_paths: set[str]) -> None:
         self.path = path
+        self.owner_paths = owner_paths
         self.is_provider_boundary = _is_provider_boundary(path)
         self.diagnostics: list[str] = []
 
+    def _diagnose(self, node: cst.CSTNode, name: str) -> None:
+        position = self.get_metadata(PositionProvider, node).start
+        self.diagnostics.append(
+            f"{self.path}:{position.line}:{position.column}: ambiguous telemetry field {name!r}; left unchanged"
+        )
+
+    def visit_Attribute(self, node: cst.Attribute) -> None:
+        if (
+            node.attr.value in FIELD_RENAMES
+            and _expression_path(node.value) not in self.owner_paths
+        ):
+            self._diagnose(node.attr, node.attr.value)
+
+    def visit_Arg(self, node: cst.Arg) -> None:
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        if (
+            node.keyword is not None
+            and node.keyword.value in FIELD_RENAMES
+            and (not isinstance(parent, cst.Call) or not _is_telemetry_constructor(parent))
+        ):
+            self._diagnose(node.keyword, node.keyword.value)
+
+    def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
+        if not isinstance(node.target, cst.Name) or node.target.value not in FIELD_RENAMES:
+            return
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        while parent is not None and not isinstance(parent, (cst.ClassDef, cst.FunctionDef)):
+            parent = self.get_metadata(ParentNodeProvider, parent, None)
+        if (
+            not isinstance(parent, cst.ClassDef)
+            or parent.name.value not in INTERNAL_TELEMETRY_TYPES
+        ):
+            self._diagnose(node.target, node.target.value)
+
     def visit_Dict(self, node: cst.Dict) -> None:
-        if self.is_provider_boundary or _dict_is_telemetry_contract(node):
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        if isinstance(parent, cst.Arg):
+            parent = self.get_metadata(ParentNodeProvider, parent, None)
+        if isinstance(parent, cst.Call) and _is_telemetry_validation(parent):
             return
         for element in node.elements:
-            if (
-                isinstance(element, cst.DictElement)
-                and isinstance(element.key, cst.SimpleString)
-                and isinstance(element.key.evaluated_value, str)
-                and element.key.evaluated_value in FIELD_RENAMES
-            ):
-                position = self.get_metadata(PositionProvider, element.key).start
-                self.diagnostics.append(
-                    f"{self.path}:{position.line}:{position.column}: ambiguous telemetry dictionary key "
-                    f"{element.key.evaluated_value!r}; left unchanged"
-                )
+            if isinstance(element, cst.DictElement) and isinstance(element.key, cst.SimpleString):
+                value = element.key.evaluated_value
+                if isinstance(value, str) and value in FIELD_RENAMES:
+                    self._diagnose(element.key, value)
+
+    def visit_SimpleString(self, node: cst.SimpleString) -> None:
+        value = node.evaluated_value
+        if not isinstance(value, str) or value not in FIELD_RENAMES:
+            return
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        if isinstance(parent, cst.DictElement):
+            return
+        is_boundary_extraction = False
+        if isinstance(parent, cst.Arg):
+            call = self.get_metadata(ParentNodeProvider, parent, None)
+            is_boundary_extraction = (
+                isinstance(call, cst.Call)
+                and isinstance(call.func, cst.Attribute)
+                and call.func.attr.value == "get"
+            )
+        elif isinstance(parent, cst.Index):
+            is_boundary_extraction = isinstance(
+                self.get_metadata(ParentNodeProvider, parent, None), cst.Subscript
+            )
+        if not (
+            self.is_provider_boundary and is_boundary_extraction and value in PROVIDER_RAW_KEYS
+        ):
+            self._diagnose(node, value)
 
 
 def transform_source(source: str, *, path: str) -> str:
     """Return *source* with proven internal telemetry vocabulary renamed."""
-    wrapper = MetadataWrapper(cst.parse_module(source))
-    return wrapper.visit(
-        _OtelVocabularyTransformer(is_provider_boundary=_is_provider_boundary(path))
-    ).code
+    del path
+    module = cst.parse_module(source)
+    owners = _TelemetryOwnerCollector()
+    module.visit(owners)
+    return (
+        MetadataWrapper(module)
+        .visit(_OtelVocabularyTransformer(owner_paths=owners.owner_paths))
+        .code
+    )
 
 
 def diagnose_source(source: str, *, path: str) -> tuple[str, ...]:
     """Return deterministic diagnostics for dictionary keys requiring review."""
-    wrapper = MetadataWrapper(cst.parse_module(source))
-    visitor = _AmbiguousDictionaryVisitor(path)
+    module = cst.parse_module(source)
+    owners = _TelemetryOwnerCollector()
+    module.visit(owners)
+    wrapper = MetadataWrapper(module)
+    visitor = _AmbiguousDictionaryVisitor(path, owners.owner_paths)
     wrapper.visit(visitor)
     return tuple(visitor.diagnostics)
 
