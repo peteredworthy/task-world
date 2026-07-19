@@ -8,16 +8,18 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-import orchestrator.runners.costs as costs_mod
-from orchestrator.runners import ModelCostResolution
-from orchestrator.runners.costs import load_cost_table, resolve_model_costs
+from orchestrator.runners import ModelCostResolution, load_cost_table, resolve_model_costs
 
 
 @pytest.fixture(autouse=True)
 def _reset_cost_table():
-    costs_mod._cost_table = {}
+    from orchestrator.runners.costs import _cost_table
+
+    _cost_table.clear()
     yield
-    costs_mod._cost_table = {}
+    from orchestrator.runners.costs import _cost_table
+
+    _cost_table.clear()
 
 
 def _load(tmp_path: Path, models: dict[str, dict[str, float]]) -> None:

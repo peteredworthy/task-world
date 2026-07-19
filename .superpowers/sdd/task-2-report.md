@@ -217,3 +217,55 @@ enum-drift...............................................................Passed
 ui-lint..................................................................Passed
 ui-typecheck.............................................................Passed
 ```
+
+## Narrow transitional bridge follow-up
+
+### RED
+
+```text
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py -q -n 0
+2 failed, 43 passed in 0.98s
+```
+
+Without legacy rate keys, the bridge validated an all-default rate model and
+entered its `int()`-based legacy cost calculation. The new regressions showed a
+malformed canonical token count escaping as raw `ValueError` and an explosive
+canonical numeric reaching that legacy arithmetic instead of Pydantic
+validation.
+
+### GREEN
+
+```text
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py tests/unit/test_cost.py -q -n 0
+51 passed in 2.07s
+```
+
+The bridge now validates/stores rates and computes a legacy-derived cost only
+when at least one legacy rate key is supplied. Canonical construction therefore
+reaches normal Pydantic validation without legacy conversion or arithmetic.
+`test_model_costs.py` imports all public cost symbols through
+`orchestrator.runners`; its only private cost-table access is local to the
+reset fixture.
+
+The first repository-wide hook run exposed an existing xdist interaction:
+Alembic migration setup disabled the bootstrap logger with `fileConfig`'s
+default `disable_existing_loggers=True`, causing an existing warning-capture
+test to fail only after file-backed migration tests. The migration setup now
+preserves existing loggers; the bootstrap regression passes in the focused and
+full hook runs.
+
+### Final mandatory hook verification — narrow bridge follow-up
+
+```text
+$ uv run pre-commit run --all-files
+ruff (legacy alias)......................................................Passed
+ruff format..............................................................Passed
+Detect hardcoded secrets.................................................Passed
+pyright..................................................................Passed
+pytest...................................................................Passed
+module-imports...........................................................Passed
+signal-routing...........................................................Passed
+enum-drift...............................................................Passed
+ui-lint..................................................................Passed
+ui-typecheck.............................................................Passed
+```

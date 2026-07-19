@@ -149,6 +149,18 @@ class TestModelTokenUsage:
                 cost_per_m_input=ExplosiveNumeric(),
             )
 
+    def test_malformed_canonical_numeric_uses_pydantic_validation(self) -> None:
+        with pytest.raises(ValidationError):
+            ModelTokenUsage(model="known", gen_ai_usage_input_tokens="not-a-token-count")
+
+    def test_canonical_numeric_never_enters_legacy_cost_arithmetic(self) -> None:
+        class ExplosiveNumeric:
+            def __int__(self) -> int:
+                raise AssertionError("canonical value reached legacy cost arithmetic")
+
+        with pytest.raises(ValidationError):
+            ModelTokenUsage(model="known", gen_ai_usage_input_tokens=ExplosiveNumeric())
+
     def test_rejects_overflowing_derived_legacy_cost(self) -> None:
         with pytest.raises(ValidationError):
             ModelTokenUsage(model="known", input_tokens=10**308, cost_per_m_input=10**308)

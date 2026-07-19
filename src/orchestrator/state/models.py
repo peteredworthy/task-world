@@ -260,8 +260,10 @@ class ModelTokenUsage(BaseModel):
             "cost_per_m_output",
         )
         legacy_rate_data = {field: data[field] for field in rate_fields if field in data}
-        legacy_cost_rates = _LegacyCostRates.model_validate(legacy_rate_data).model_dump()
-        if legacy_cost_rates and "cost_usd" not in data:
+        legacy_cost_rates: dict[str, float] = {}
+        if legacy_rate_data:
+            legacy_cost_rates = _LegacyCostRates.model_validate(legacy_rate_data).model_dump()
+        if legacy_rate_data and "cost_usd" not in data:
             input_tokens = int(data.get("gen_ai_usage_input_tokens", data.get("input_tokens", 0)))
             cache_read = int(
                 data.get("gen_ai_usage_cache_read_input_tokens", data.get("cache_read_tokens", 0))
