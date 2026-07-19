@@ -2,9 +2,17 @@
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import (
+    AliasChoices,
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    computed_field,
+    model_validator,
+)
 
 from orchestrator.config.models import EnvFileSpec
 from orchestrator.config.enums import (
@@ -167,33 +175,128 @@ class ChecklistItem(BaseModel):
 
 
 class ModelTokenUsage(BaseModel):
-    """Token usage and cost rates for a single model within an attempt.
+    """An immutable OTel usage fact for one execution and model.
 
-    Cost rates (USD per 1M tokens) are embedded at execution time
-    so historical costs remain accurate even after price changes.
+    Cache components are included in ``gen_ai_usage_input_tokens``. Reasoning
+    remains observable as a separate output component but is not an additional
+    billable output quantity.
     """
 
-    model: str  # e.g. "claude-sonnet-4-6", "claude-haiku-4-5-20251001"
+    model_config = ConfigDict(frozen=True)
 
-    # Token counts
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
+    model: str
+    gen_ai_usage_input_tokens: int = Field(default=0, ge=0)
+    gen_ai_usage_output_tokens: int = Field(default=0, ge=0)
+    gen_ai_usage_cache_read_input_tokens: int = Field(default=0, ge=0)
+    gen_ai_usage_cache_creation_input_tokens: int = Field(default=0, ge=0)
+    gen_ai_usage_reasoning_output_tokens: int = Field(default=0, ge=0)
+    gen_ai_response_finish_reasons: list[str] = Field(default_factory=list)
+    latency_ms: int = Field(default=0, ge=0)
+    rate_missing: bool = False
+    _legacy_cost_rates: dict[str, float] = PrivateAttr(default_factory=lambda: dict[str, float]())
 
-    # Cost rates (USD per 1M tokens)
-    cost_per_m_cache_read: float = 0.0
-    cost_per_m_cache_creation: float = 0.0
-    cost_per_m_input: float = 0.0
-    cost_per_m_output: float = 0.0
+    def __init__(self, **data: Any) -> None:
+        """Accept Task 3's temporary legacy constructor payloads."""
+        legacy_cost_rates: dict[str, float] = {
+            field: float(data.pop(field))
+            for field in (
+                "cost_per_m_cache_read",
+                "cost_per_m_cache_creation",
+                "cost_per_m_input",
+                "cost_per_m_output",
+            )
+            if field in data
+        }
+        super().__init__(**data)
+        object.__setattr__(self, "_legacy_cost_rates", legacy_cost_rates)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _translate_legacy_token_fields(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        translated: dict[str, Any] = dict(cast(dict[str, Any], data))
+        for legacy, canonical in (
+            ("input_tokens", "gen_ai_usage_input_tokens"),
+            ("output_tokens", "gen_ai_usage_output_tokens"),
+            ("cache_read_tokens", "gen_ai_usage_cache_read_input_tokens"),
+            ("cache_creation_tokens", "gen_ai_usage_cache_creation_input_tokens"),
+        ):
+            if legacy in translated:
+                translated[canonical] = translated[legacy]
+        return translated
+
+    @model_validator(mode="after")
+    def _cache_components_are_part_of_input(self) -> "ModelTokenUsage":
+        cache_tokens = (
+            self.gen_ai_usage_cache_read_input_tokens
+            + self.gen_ai_usage_cache_creation_input_tokens
+        )
+        if cache_tokens > self.gen_ai_usage_input_tokens:
+            raise ValueError("cache input components cannot exceed input tokens")
+        return self
+
+    # Transitional Task 2 bridge. Task 3 migrates remaining old-field readers.
+    @computed_field
+    @property
+    def cache_read_tokens(self) -> int:
+        return self.gen_ai_usage_cache_read_input_tokens
+
+    @computed_field
+    @property
+    def cache_creation_tokens(self) -> int:
+        return self.gen_ai_usage_cache_creation_input_tokens
+
+    @computed_field
+    @property
+    def input_tokens(self) -> int:
+        return self.gen_ai_usage_input_tokens
+
+    @computed_field
+    @property
+    def output_tokens(self) -> int:
+        return self.gen_ai_usage_output_tokens
+
+    def _cost_rate(self, field: str) -> float:
+        if field in self._legacy_cost_rates:
+            return self._legacy_cost_rates[field]
+        from orchestrator.runners.costs import resolve_model_costs
+
+        return float(getattr(resolve_model_costs(self.model), field))
+
+    @computed_field
+    @property
+    def cost_per_m_cache_read(self) -> float:
+        return self._cost_rate("cost_per_m_cache_read")
+
+    @computed_field
+    @property
+    def cost_per_m_cache_creation(self) -> float:
+        return self._cost_rate("cost_per_m_cache_creation")
+
+    @computed_field
+    @property
+    def cost_per_m_input(self) -> float:
+        return self._cost_rate("cost_per_m_input")
+
+    @computed_field
+    @property
+    def cost_per_m_output(self) -> float:
+        return self._cost_rate("cost_per_m_output")
 
     @property
     def total_cost_usd(self) -> float:
+        """Temporarily price this fact for legacy readers without double billing reasoning."""
+        billable_input = (
+            self.gen_ai_usage_input_tokens
+            - self.gen_ai_usage_cache_read_input_tokens
+            - self.gen_ai_usage_cache_creation_input_tokens
+        )
         return (
-            self.cache_read_tokens * self.cost_per_m_cache_read
-            + self.cache_creation_tokens * self.cost_per_m_cache_creation
-            + self.input_tokens * self.cost_per_m_input
-            + self.output_tokens * self.cost_per_m_output
+            self.gen_ai_usage_cache_read_input_tokens * self.cost_per_m_cache_read
+            + self.gen_ai_usage_cache_creation_input_tokens * self.cost_per_m_cache_creation
+            + billable_input * self.cost_per_m_input
+            + self.gen_ai_usage_output_tokens * self.cost_per_m_output
         ) / 1_000_000
 
 

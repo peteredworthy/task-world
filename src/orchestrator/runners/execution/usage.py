@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from orchestrator.runners.costs import get_model_costs
+from orchestrator.runners.costs import resolve_model_costs
 from orchestrator.runners.types import ExecutionMetrics
 from orchestrator.state.models import ModelTokenUsage
 
@@ -48,47 +48,41 @@ def extract_metrics_and_usage(
 
         if computed_input or computed_output:
             # Parent model
-            parent_costs = get_model_costs(al.agent_model)
+            parent_costs = resolve_model_costs(al.agent_model)
             usage_by_model.append(
                 ModelTokenUsage(
                     model=al.agent_model or "unknown",
-                    cache_read_tokens=computed_cache_read,
-                    cache_creation_tokens=computed_cache_creation,
-                    input_tokens=computed_input,
-                    output_tokens=computed_output,
-                    cost_per_m_cache_read=parent_costs["cost_per_m_cache_read"],
-                    cost_per_m_cache_creation=parent_costs["cost_per_m_cache_creation"],
-                    cost_per_m_input=parent_costs["cost_per_m_input"],
-                    cost_per_m_output=parent_costs["cost_per_m_output"],
+                    gen_ai_usage_cache_read_input_tokens=computed_cache_read,
+                    gen_ai_usage_cache_creation_input_tokens=computed_cache_creation,
+                    gen_ai_usage_input_tokens=computed_input,
+                    gen_ai_usage_output_tokens=computed_output,
+                    rate_missing=parent_costs.rate_missing,
                 )
             )
 
-            # Sub-agent models (group by model name and sum)
-            sa_by_model: dict[str, ModelTokenUsage] = {}
+            # Each sub-agent execution produces its own immutable usage fact.
             for sa in al.sub_agents:
                 model = sa.model or "unknown"
-                if model not in sa_by_model:
-                    sa_costs = get_model_costs(model)
-                    sa_by_model[model] = ModelTokenUsage(
+                sa_costs = resolve_model_costs(model)
+                usage_by_model.append(
+                    ModelTokenUsage(
                         model=model,
-                        cost_per_m_cache_read=sa_costs["cost_per_m_cache_read"],
-                        cost_per_m_cache_creation=sa_costs["cost_per_m_cache_creation"],
-                        cost_per_m_input=sa_costs["cost_per_m_input"],
-                        cost_per_m_output=sa_costs["cost_per_m_output"],
+                        gen_ai_usage_cache_read_input_tokens=sa.total_cache_read_tokens,
+                        gen_ai_usage_cache_creation_input_tokens=sa.total_cache_creation_tokens,
+                        gen_ai_usage_input_tokens=sa.total_input_tokens,
+                        gen_ai_usage_output_tokens=sa.total_output_tokens,
+                        rate_missing=sa_costs.rate_missing,
                     )
-                entry = sa_by_model[model]
-                entry.cache_read_tokens += sa.total_cache_read_tokens
-                entry.cache_creation_tokens += sa.total_cache_creation_tokens
-                entry.input_tokens += sa.total_input_tokens
-                entry.output_tokens += sa.total_output_tokens
-            usage_by_model.extend(sa_by_model.values())
+                )
 
             # Build legacy flat metrics from the full per-model breakdown
             metrics = ExecutionMetrics(
-                tokens_read=sum(u.input_tokens for u in usage_by_model),
-                tokens_write=sum(u.output_tokens for u in usage_by_model),
+                tokens_read=sum(u.gen_ai_usage_input_tokens for u in usage_by_model),
+                tokens_write=sum(u.gen_ai_usage_output_tokens for u in usage_by_model),
                 tokens_cache=sum(
-                    u.cache_read_tokens + u.cache_creation_tokens for u in usage_by_model
+                    u.gen_ai_usage_cache_read_input_tokens
+                    + u.gen_ai_usage_cache_creation_input_tokens
+                    for u in usage_by_model
                 ),
                 duration_ms=al.total_duration_ms,
                 num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),

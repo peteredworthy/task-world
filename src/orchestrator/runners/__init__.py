@@ -101,7 +101,12 @@ from orchestrator.runners.profiles.resolution import get_agent_system_prompt, re
 from orchestrator.runners.profiles.service import seed_default_agents
 
 # Cost rates
-from orchestrator.runners.costs import get_model_costs, load_cost_table
+from orchestrator.runners.costs import (
+    ModelCostResolution,
+    get_model_costs,
+    load_cost_table,
+    resolve_model_costs,
+)
 
 # Execution infrastructure
 from orchestrator.runners.execution import (
@@ -293,8 +298,10 @@ __all__ = [
     "resolve_agent_name",
     "seed_default_agents",
     # Costs
+    "ModelCostResolution",
     "get_model_costs",
     "load_cost_table",
+    "resolve_model_costs",
     # Execution
     "AgentRunnerExecutor",
     "AttemptStore",

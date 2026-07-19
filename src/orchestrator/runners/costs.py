@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,16 @@ _ZERO_COSTS: dict[str, float] = {
     "cost_per_m_input": 0.0,
     "cost_per_m_output": 0.0,
 }
+
+
+class ModelCostResolution(BaseModel):
+    """The pricing lookup result for a model at the time it is resolved."""
+
+    cost_per_m_cache_read: float = Field(ge=0)
+    cost_per_m_cache_creation: float = Field(ge=0)
+    cost_per_m_input: float = Field(ge=0)
+    cost_per_m_output: float = Field(ge=0)
+    rate_missing: bool
 
 
 def _find_cost_file() -> Path | None:
@@ -70,26 +81,35 @@ def load_cost_table(path: Path | None = None) -> None:
     logger.debug("Loaded cost rates for %d models from %s", len(table), path)
 
 
-def get_model_costs(model_name: str | None) -> dict[str, float]:
-    """Return cost-rate kwargs for a model name.
+def resolve_model_costs(model_name: str | None) -> ModelCostResolution:
+    """Resolve rates and whether the model lookup itself succeeded.
 
-    Returns zero costs for unknown models (frontend shows "cost unknown").
-    Tries prefix matching for versioned model names.
+    A matched entry may intentionally contain zero rates, so ``rate_missing``
+    is determined only by matching the model name, never by inspecting rates.
     """
     if not _cost_table:
         load_cost_table()
 
     if model_name is None:
-        return dict(_ZERO_COSTS)
+        return ModelCostResolution(**_ZERO_COSTS, rate_missing=True)
 
     # Exact match
     if model_name in _cost_table:
-        return dict(_cost_table[model_name])
+        return ModelCostResolution(**_cost_table[model_name], rate_missing=False)
 
     # Prefix match (e.g. "claude-sonnet-4-6-20250514" → "claude-sonnet-4-6")
     # Also handles the reverse: alias "claude-haiku-4-5" → key "claude-haiku-4-5-20251001"
     for key in _cost_table:
         if model_name.startswith(key) or key.startswith(model_name):
-            return dict(_cost_table[key])
+            return ModelCostResolution(**_cost_table[key], rate_missing=False)
 
-    return dict(_ZERO_COSTS)
+    return ModelCostResolution(**_ZERO_COSTS, rate_missing=True)
+
+
+def get_model_costs(model_name: str | None) -> dict[str, float]:
+    """Return legacy rate kwargs.
+
+    Transitional bridge for untouched callers; Task 3 must use
+    :func:`resolve_model_costs` so it retains ``rate_missing``.
+    """
+    return resolve_model_costs(model_name).model_dump(exclude={"rate_missing"})
