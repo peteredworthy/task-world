@@ -142,6 +142,33 @@ def _binding_targets(
         yield from _binding_targets(target.value)
 
 
+def _match_binding_targets(pattern: cst.BaseMatchPattern) -> Iterable[cst.Name]:
+    if isinstance(pattern, cst.MatchAs):
+        if pattern.pattern is not None:
+            yield from _match_binding_targets(pattern.pattern)
+        if pattern.name is not None:
+            yield pattern.name
+    elif isinstance(pattern, cst.MatchStar):
+        if pattern.name is not None:
+            yield pattern.name
+    elif isinstance(pattern, cst.MatchMapping):
+        for element in pattern.elements:
+            yield from _match_binding_targets(element.pattern)
+        if pattern.rest is not None:
+            yield pattern.rest
+    elif isinstance(pattern, cst.MatchSequence):
+        for nested_pattern in pattern.patterns:
+            yield from _match_binding_targets(nested_pattern)
+    elif isinstance(pattern, cst.MatchOr):
+        for element in pattern.patterns:
+            yield from _match_binding_targets(element.pattern)
+    elif isinstance(pattern, cst.MatchClass):
+        for nested_pattern in pattern.patterns:
+            yield from _match_binding_targets(nested_pattern)
+        for keyword_pattern in pattern.kwds:
+            yield from _match_binding_targets(keyword_pattern.pattern)
+
+
 class _OwnershipEventKind(Enum):
     TELEMETRY_OWNER = "telemetry_owner"
     NON_TELEMETRY_KILL = "non_telemetry_kill"
@@ -220,9 +247,7 @@ class _TelemetryOwnerCollector(cst.CSTVisitor):
             self._record_targets(node.target, node, self._assignment_kind(node, node.value))
 
     def visit_For(self, node: cst.For) -> None:
-        self._record_targets(
-            node.target, node, _OwnershipEventKind.UNCERTAIN_ASSIGNMENT, node.target
-        )
+        self._record_targets(node.target, node, _OwnershipEventKind.UNCERTAIN_ASSIGNMENT, node.iter)
 
     def visit_With(self, node: cst.With) -> None:
         for item in node.items:
@@ -236,6 +261,22 @@ class _TelemetryOwnerCollector(cst.CSTVisitor):
 
     def visit_NamedExpr(self, node: cst.NamedExpr) -> None:
         self._record_targets(node.target, node, _OwnershipEventKind.UNCERTAIN_ASSIGNMENT)
+
+    def visit_AugAssign(self, node: cst.AugAssign) -> None:
+        self._record_targets(node.target, node, _OwnershipEventKind.UNCERTAIN_ASSIGNMENT)
+
+    def visit_ExceptHandler(self, node: cst.ExceptHandler) -> None:
+        if node.name is not None:
+            self._record_targets(
+                node.name.name,
+                node,
+                _OwnershipEventKind.UNCERTAIN_ASSIGNMENT,
+                node.name,
+            )
+
+    def visit_MatchCase(self, node: cst.MatchCase) -> None:
+        for target in _match_binding_targets(node.pattern):
+            self._record(target, node, _OwnershipEventKind.UNCERTAIN_ASSIGNMENT, node.pattern)
 
 
 class _OtelVocabularyTransformer(cst.CSTTransformer):

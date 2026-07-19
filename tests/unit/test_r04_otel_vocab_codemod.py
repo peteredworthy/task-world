@@ -450,3 +450,95 @@ after_named_expression = usage.input_tokens
     assert "after_with = usage.input_tokens" in transformed
     assert "after_named_expression = usage.input_tokens" in transformed
     assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 5
+
+
+def test_match_mapping_pattern_binding_invalidates_a_stale_owner() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+match provider:
+    case {"usage": usage}:
+        inside_case = usage.input_tokens
+after_case = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "inside_case = usage.input_tokens" in transformed
+    assert "after_case = usage.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 2
+
+
+def test_nested_match_sequence_star_and_or_bindings_invalidate_a_stale_owner() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+match provider:
+    case {"outer": [*usage]} | [*usage]:
+        inside_case = usage.input_tokens
+after_case = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "inside_case = usage.input_tokens" in transformed
+    assert "after_case = usage.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 2
+
+
+def test_for_target_uncertainty_starts_after_iterable_evaluation() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+for usage in [usage.input_tokens]:
+    inside_loop = usage.input_tokens
+after_loop = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "[usage.gen_ai_usage_input_tokens]" in transformed
+    assert "inside_loop = usage.input_tokens" in transformed
+    assert "after_loop = usage.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 2
+
+
+def test_augassign_invalidates_a_stale_owner_after_its_evaluation() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+usage += replacement
+after_augassign = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "after_augassign = usage.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 1
+
+
+def test_exception_alias_invalidates_a_stale_owner_in_and_after_handler() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+try:
+    raise Error()
+except Error as usage:
+    inside_handler = usage.input_tokens
+after_handler = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "inside_handler = usage.input_tokens" in transformed
+    assert "after_handler = usage.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 2
+
+
+def test_comprehension_binding_is_diagnostic_without_killing_outer_owner() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+values = [usage.input_tokens for usage in providers]
+after_comprehension = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "[usage.input_tokens for usage in providers]" in transformed
+    assert "after_comprehension = usage.gen_ai_usage_input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 1
