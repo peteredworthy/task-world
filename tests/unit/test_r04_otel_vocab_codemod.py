@@ -143,6 +143,85 @@ not_raw = {"input_tokens": 1}
     assert "input_tokens" in diagnostics[0]
 
 
+def test_owner_proof_does_not_leak_across_scopes_or_before_assignment() -> None:
+    source = """\
+def first():
+    usage = ModelTokenUsage(input_tokens=1)
+    return usage.input_tokens
+
+def second(usage):
+    return usage.input_tokens
+
+def third():
+    before = usage.input_tokens
+    usage = ModelTokenUsage(input_tokens=1)
+    return before
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "return usage.gen_ai_usage_input_tokens" in transformed
+    assert transformed.count("usage.input_tokens") == 2
+    diagnostics = diagnose_source(source, path="src/orchestrator/state/models.py")
+    assert len(diagnostics) == 2
+
+
+def test_explicit_repository_contracts_are_proven_without_suffix_matching() -> None:
+    source = """\
+class TurnMetrics:
+    input_tokens: int
+class SubAgentLog:
+    output_tokens: int
+class ActionLog:
+    cache_read_tokens: int
+class AttemptMetrics:
+    tokens_read: int
+
+turn = TurnMetrics(input_tokens=1)
+log = SubAgentLog(output_tokens=2)
+action = ActionLog(cache_read_tokens=3)
+attempt = AttemptMetrics(tokens_read=4)
+total = turn.input_tokens + log.output_tokens + action.cache_read_tokens + attempt.tokens_read
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "gen_ai_usage_input_tokens: int" in transformed
+    assert "TurnMetrics(gen_ai_usage_input_tokens=1)" in transformed
+    assert "turn.gen_ai_usage_input_tokens" in transformed
+    assert "attempt.gen_ai_usage_input_tokens" in transformed
+
+
+def test_annotated_telemetry_assignment_proves_later_attribute() -> None:
+    source = """\
+usage: ModelTokenUsage = ModelTokenUsage(input_tokens=1)
+total = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "usage.gen_ai_usage_input_tokens" in transformed
+    assert diagnose_source(source, path="src/orchestrator/state/models.py") == ()
+
+
+def test_provider_cache_read_tokens_is_preserved_at_parser_boundary() -> None:
+    source = 'a = payload.get("cache_read_tokens")\nb = payload["cache_read_tokens"]\n'
+
+    assert (
+        transform_source(source, path="src/orchestrator/runners/agents/codex/parser.py") == source
+    )
+    assert diagnose_source(source, path="src/orchestrator/runners/agents/codex/parser.py") == ()
+
+
+def test_telemetry_dictionary_preserves_prefixed_and_triple_quoted_literals() -> None:
+    source = '''payload = ModelTokenUsage.model_validate({r"input_tokens": 1, """output_tokens""": 2})\n'''
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert 'r"gen_ai_usage_input_tokens"' in transformed
+    assert '"""gen_ai_usage_output_tokens"""' in transformed
+
+
 def _run_cli(root: Path, mode: str) -> subprocess.CompletedProcess[str]:
     environment = os.environ | {"PYTHONPATH": str(Path(__file__).parents[2])}
     return subprocess.run(
