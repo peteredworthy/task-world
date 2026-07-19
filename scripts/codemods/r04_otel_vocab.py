@@ -121,6 +121,27 @@ def _is_telemetry_validation(call: cst.Call) -> bool:
     )
 
 
+def _is_telemetry_result(expression: cst.BaseExpression) -> bool:
+    return isinstance(expression, cst.Call) and (
+        _is_telemetry_constructor(expression) or _is_telemetry_validation(expression)
+    )
+
+
+def _binding_targets(
+    target: cst.BaseAssignTargetExpression,
+) -> Iterable[cst.BaseAssignTargetExpression]:
+    if isinstance(target, (cst.Name, cst.Attribute)):
+        yield target
+    elif isinstance(target, (cst.Tuple, cst.List)):
+        for element in target.elements:
+            if isinstance(element, cst.Element):
+                yield from _binding_targets(element.value)
+            elif isinstance(element, cst.StarredElement):
+                yield from _binding_targets(element.value)
+    elif isinstance(target, cst.StarredElement):
+        yield from _binding_targets(target.value)
+
+
 class _OwnershipEventKind(Enum):
     TELEMETRY_OWNER = "telemetry_owner"
     NON_TELEMETRY_KILL = "non_telemetry_kill"
@@ -155,30 +176,66 @@ class _TelemetryOwnerCollector(cst.CSTVisitor):
         return False
 
     def _record(
-        self, target: cst.BaseAssignTargetExpression, value: cst.BaseExpression, node: cst.CSTNode
+        self,
+        target: cst.BaseAssignTargetExpression,
+        node: cst.CSTNode,
+        kind: _OwnershipEventKind,
+        activation_node: cst.CSTNode | None = None,
     ) -> None:
         path = _expression_path(target)
         if path:
             key = (id(self.get_metadata(ScopeProvider, node)), path)
-            position = self.get_metadata(PositionProvider, node).start
-            if self._is_conditional(node):
-                kind = _OwnershipEventKind.UNCERTAIN_ASSIGNMENT
-            elif isinstance(value, cst.Call) and _is_telemetry_constructor(value):
-                kind = _OwnershipEventKind.TELEMETRY_OWNER
-            else:
-                kind = _OwnershipEventKind.NON_TELEMETRY_KILL
+            position = self.get_metadata(PositionProvider, activation_node or node).end
             self.events.setdefault(key, []).append(
                 _OwnershipEvent((position.line, position.column), kind)
             )
 
+    def _record_targets(
+        self,
+        target: cst.BaseAssignTargetExpression,
+        node: cst.CSTNode,
+        kind: _OwnershipEventKind,
+        activation_node: cst.CSTNode | None = None,
+    ) -> None:
+        for binding_target in _binding_targets(target):
+            self._record(binding_target, node, kind, activation_node)
+
+    def _assignment_kind(self, node: cst.CSTNode, value: cst.BaseExpression) -> _OwnershipEventKind:
+        if self._is_conditional(node):
+            return _OwnershipEventKind.UNCERTAIN_ASSIGNMENT
+        if _is_telemetry_result(value):
+            return _OwnershipEventKind.TELEMETRY_OWNER
+        return _OwnershipEventKind.NON_TELEMETRY_KILL
+
     def visit_Assign(self, node: cst.Assign) -> None:
         for target in node.targets:
+            kind = self._assignment_kind(node, node.value)
             if isinstance(target.target, (cst.Name, cst.Attribute)):
-                self._record(target.target, node.value, node)
+                self._record_targets(target.target, node, kind)
+            else:
+                self._record_targets(target.target, node, _OwnershipEventKind.NON_TELEMETRY_KILL)
 
     def visit_AnnAssign(self, node: cst.AnnAssign) -> None:
-        if node.value is not None and isinstance(node.target, (cst.Name, cst.Attribute)):
-            self._record(node.target, node.value, node)
+        if node.value is not None:
+            self._record_targets(node.target, node, self._assignment_kind(node, node.value))
+
+    def visit_For(self, node: cst.For) -> None:
+        self._record_targets(
+            node.target, node, _OwnershipEventKind.UNCERTAIN_ASSIGNMENT, node.target
+        )
+
+    def visit_With(self, node: cst.With) -> None:
+        for item in node.items:
+            if item.asname is not None:
+                self._record_targets(
+                    item.asname.name,
+                    node,
+                    _OwnershipEventKind.UNCERTAIN_ASSIGNMENT,
+                    item.asname,
+                )
+
+    def visit_NamedExpr(self, node: cst.NamedExpr) -> None:
+        self._record_targets(node.target, node, _OwnershipEventKind.UNCERTAIN_ASSIGNMENT)
 
 
 class _OtelVocabularyTransformer(cst.CSTTransformer):
@@ -194,6 +251,8 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
         self.events = events
 
     def _is_owner(self, node: cst.CSTNode, path: str | None) -> bool:
+        if isinstance(node, cst.Attribute) and _is_telemetry_result(node.value):
+            return True
         if path is None:
             return False
         scope = self.get_metadata(ScopeProvider, node, None)
@@ -316,6 +375,8 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
         )
 
     def _is_owner(self, node: cst.CSTNode, path: str | None) -> bool:
+        if isinstance(node, cst.Attribute) and _is_telemetry_result(node.value):
+            return True
         if path is None:
             return False
         scope = self.get_metadata(ScopeProvider, node, None)

@@ -301,8 +301,13 @@ value = ExecutionMetrics(input_tokens=1).input_tokens
         transform_source(source, path="src/orchestrator/state/models.py").count(
             "gen_ai_usage_input_tokens"
         )
-        == 6
+        == 7
     )
+    assert (
+        "ExecutionMetrics(gen_ai_usage_input_tokens=1).gen_ai_usage_input_tokens"
+        in transform_source(source, path="src/orchestrator/state/models.py")
+    )
+    assert diagnose_source(source, path="src/orchestrator/state/models.py") == ()
 
 
 def test_unknown_parser_receiver_is_diagnostic() -> None:
@@ -395,3 +400,53 @@ value = verdict.cache_read_tokens
     assert transformed.count("gen_ai_usage_input_tokens") == 1
     assert transformed.count("gen_ai_usage_output_tokens") == 2
     assert transformed.count("gen_ai_usage_cache_read_input_tokens") == 3
+
+
+def test_assignment_owner_activates_after_its_rhs_is_evaluated() -> None:
+    source = """\
+usage = provider
+usage = ModelTokenUsage(input_tokens=usage.input_tokens)
+later = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "input_tokens=usage.input_tokens" in transformed
+    assert "later = usage.gen_ai_usage_input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 1
+
+
+def test_tuple_rebinding_kills_a_telemetry_owner() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+usage, [*others] = providers
+later = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "later = usage.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 1
+
+
+def test_binding_control_targets_invalidate_a_stale_owner() -> None:
+    source = """\
+usage = ModelTokenUsage(input_tokens=1)
+for usage in providers:
+    during_for = usage.input_tokens
+after_for = usage.input_tokens
+with provider as usage:
+    during_with = usage.input_tokens
+after_with = usage.input_tokens
+marker = (usage := provider)
+after_named_expression = usage.input_tokens
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/state/models.py")
+
+    assert "during_for = usage.input_tokens" in transformed
+    assert "after_for = usage.input_tokens" in transformed
+    assert "during_with = usage.input_tokens" in transformed
+    assert "after_with = usage.input_tokens" in transformed
+    assert "after_named_expression = usage.input_tokens" in transformed
+    assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 5
