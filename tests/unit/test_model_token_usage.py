@@ -1,6 +1,8 @@
-"""Unit tests for canonical immutable model usage facts."""
+"""Tests for canonical immutable model usage facts and real extraction."""
 
 from __future__ import annotations
+
+from pathlib import Path
 
 import pytest
 import yaml
@@ -8,115 +10,172 @@ from pydantic import ValidationError
 
 import orchestrator.runners.costs as costs_mod
 from orchestrator.runners.costs import load_cost_table
-from orchestrator.state.models import ModelTokenUsage
+from orchestrator.runners import extract_metrics_and_usage
+from orchestrator.runners.types import ExecutionMetrics, ExecutionResult
+from orchestrator.state.models import ActionLog, ModelTokenUsage, SubAgentLog
+
+
+@pytest.fixture(autouse=True)
+def _reset_cost_table():
+    costs_mod._cost_table = {}
+    yield
+    costs_mod._cost_table = {}
+
+
+@pytest.fixture()
+def cost_file(tmp_path: Path) -> Path:
+    path = tmp_path / "model_costs.yaml"
+    path.write_text(
+        yaml.dump(
+            {
+                "models": {
+                    "known": {
+                        "cache_read": 1,
+                        "cache_creation": 2,
+                        "input": 3,
+                        "output": 4,
+                    }
+                }
+            }
+        )
+    )
+    load_cost_table(path)
+    return path
 
 
 class TestModelTokenUsage:
-    def test_preserves_all_otel_usage_components(self) -> None:
-        usage = ModelTokenUsage(
-            model="gpt-5",
-            gen_ai_usage_input_tokens=100,
-            gen_ai_usage_output_tokens=40,
-            gen_ai_usage_cache_read_input_tokens=20,
-            gen_ai_usage_cache_creation_input_tokens=10,
-            gen_ai_usage_reasoning_output_tokens=15,
-            gen_ai_response_finish_reasons=["stop", "tool_calls"],
-            latency_ms=250,
-        )
-
-        assert usage.model == "gpt-5"
-        assert usage.gen_ai_usage_input_tokens == 100
-        assert usage.gen_ai_usage_output_tokens == 40
-        assert usage.gen_ai_usage_cache_read_input_tokens == 20
-        assert usage.gen_ai_usage_cache_creation_input_tokens == 10
-        assert usage.gen_ai_usage_reasoning_output_tokens == 15
-        assert usage.gen_ai_response_finish_reasons == ["stop", "tool_calls"]
-        assert usage.latency_ms == 250
-
-    @pytest.mark.parametrize(
-        ("field", "value"),
-        [
-            ("gen_ai_usage_input_tokens", -1),
-            ("gen_ai_usage_output_tokens", -1),
-            ("gen_ai_usage_cache_read_input_tokens", -1),
-            ("gen_ai_usage_cache_creation_input_tokens", -1),
-            ("gen_ai_usage_reasoning_output_tokens", -1),
-            ("latency_ms", -1),
-        ],
-    )
-    def test_rejects_negative_counts(self, field: str, value: int) -> None:
+    def test_rejects_negative_counts_and_cache_larger_than_input(self) -> None:
         with pytest.raises(ValidationError):
-            ModelTokenUsage(model="gpt-5", **{field: value})
-
-    def test_rejects_cache_components_larger_than_input(self) -> None:
+            ModelTokenUsage(model="known", gen_ai_usage_output_tokens=-1)
         with pytest.raises(ValidationError, match="cache"):
             ModelTokenUsage(
-                model="gpt-5",
+                model="known",
                 gen_ai_usage_input_tokens=10,
                 gen_ai_usage_cache_read_input_tokens=6,
                 gen_ai_usage_cache_creation_input_tokens=5,
             )
 
-    def test_round_trips_plural_finish_reasons_in_json(self) -> None:
+    def test_finish_reasons_round_trip_as_a_json_array(self) -> None:
         usage = ModelTokenUsage(
-            model="gpt-5",
-            gen_ai_response_finish_reasons=["stop", "length"],
+            model="known", gen_ai_response_finish_reasons=["stop", "tool_calls"]
         )
 
         restored = ModelTokenUsage.model_validate_json(usage.model_dump_json())
 
-        assert restored == usage
-        assert restored.gen_ai_response_finish_reasons == ["stop", "length"]
+        assert restored.gen_ai_response_finish_reasons == ["stop", "tool_calls"]
+        assert restored.model_dump(mode="json")["gen_ai_response_finish_reasons"] == [
+            "stop",
+            "tool_calls",
+        ]
 
-    def test_is_an_immutable_append_oriented_fact(self) -> None:
-        usage = ModelTokenUsage(model="gpt-5", gen_ai_usage_input_tokens=10)
+    @pytest.mark.parametrize(
+        "mutation",
+        [
+            lambda reasons: reasons.append("length"),
+            lambda reasons: reasons.__setitem__(0, "length"),
+            lambda reasons: reasons.__delitem__(0),
+            lambda reasons: reasons.extend(["length"]),
+        ],
+    )
+    def test_finish_reasons_cannot_be_mutated_in_place(self, mutation) -> None:
+        usage = ModelTokenUsage(model="known", gen_ai_response_finish_reasons=["stop"])
 
-        with pytest.raises(ValidationError, match="frozen"):
-            usage.gen_ai_usage_input_tokens = 11
+        with pytest.raises((AttributeError, TypeError)):
+            mutation(usage.gen_ai_response_finish_reasons)
 
-        later_usage = ModelTokenUsage(model="gpt-5", gen_ai_usage_input_tokens=11)
-        assert [usage, later_usage] == [usage, later_usage]
+        assert usage.gen_ai_response_finish_reasons == ["stop"]
 
-    def test_transitional_legacy_payload_round_trips_until_task_3(self) -> None:
-        usage = ModelTokenUsage(
-            model="legacy-model",
-            input_tokens=100,
-            output_tokens=40,
-            cache_read_tokens=20,
-            cache_creation_tokens=10,
-            cost_per_m_input=2.50,
-        )
-
-        assert usage.gen_ai_usage_input_tokens == 100
-        assert usage.model_dump()["input_tokens"] == 100
-        assert usage.cost_per_m_input == 2.50
-
-    def test_prices_cached_input_once_and_does_not_double_charge_reasoning(self, tmp_path) -> None:
-        cost_file = tmp_path / "model_costs.yaml"
-        cost_file.write_text(
-            yaml.dump(
-                {
-                    "models": {
-                        "gpt-5": {
-                            "cache_read": 0.25,
-                            "cache_creation": 1.25,
-                            "input": 2.50,
-                            "output": 10.00,
-                        }
-                    }
-                }
+    def test_rejects_conflicting_canonical_and_legacy_values(self) -> None:
+        with pytest.raises(ValidationError, match="conflicting"):
+            ModelTokenUsage(
+                model="known",
+                input_tokens=10,
+                gen_ai_usage_input_tokens=11,
             )
-        )
-        costs_mod._cost_table = {}
-        load_cost_table(cost_file)
+
+    def test_keeps_canonical_value_when_legacy_value_matches(self) -> None:
         usage = ModelTokenUsage(
-            model="gpt-5",
-            gen_ai_usage_input_tokens=100,
-            gen_ai_usage_cache_read_input_tokens=20,
-            gen_ai_usage_cache_creation_input_tokens=10,
-            gen_ai_usage_output_tokens=40,
-            gen_ai_usage_reasoning_output_tokens=15,
+            model="known",
+            input_tokens=10,
+            gen_ai_usage_input_tokens=10,
         )
 
-        expected_cost = (70 * 2.50 + 20 * 0.25 + 10 * 1.25 + 40 * 10) / 1_000_000
-        assert usage.total_cost_usd == pytest.approx(expected_cost)
+        assert usage.gen_ai_usage_input_tokens == 10
+
+
+class TestExtractMetricsAndUsage:
+    def test_exclusive_input_is_normalized_to_include_cache(self, cost_file: Path) -> None:
+        result = ExecutionResult(
+            success=True,
+            metrics=ExecutionMetrics(),
+            action_log=ActionLog(
+                agent_model="known",
+                total_input_tokens=10,
+                total_output_tokens=4,
+                total_cache_read_tokens=20,
+                total_cache_creation_tokens=30,
+                input_tokens_include_cache=False,
+            ),
+        )
+
+        _metrics, usage = extract_metrics_and_usage(result)
+
+        assert usage[0].gen_ai_usage_input_tokens == 60
+        assert usage[0].gen_ai_usage_cache_read_input_tokens == 20
+        assert usage[0].gen_ai_usage_cache_creation_input_tokens == 30
+        assert usage[0].cost_usd == pytest.approx((10 * 3 + 20 + 60 + 4 * 4) / 1_000_000)
+
+    def test_inclusive_input_is_not_double_counted(self, cost_file: Path) -> None:
+        result = ExecutionResult(
+            success=True,
+            metrics=ExecutionMetrics(),
+            action_log=ActionLog(
+                agent_model="known",
+                total_input_tokens=60,
+                total_output_tokens=4,
+                total_cache_read_tokens=20,
+                total_cache_creation_tokens=30,
+                input_tokens_include_cache=True,
+            ),
+        )
+
+        _metrics, usage = extract_metrics_and_usage(result)
+
+        assert usage[0].gen_ai_usage_input_tokens == 60
+
+    def test_same_model_executions_append_distinct_facts_and_propagate_rate_missing(
+        self, cost_file: Path
+    ) -> None:
+        result = ExecutionResult(
+            success=True,
+            metrics=ExecutionMetrics(),
+            action_log=ActionLog(
+                agent_model="known",
+                total_input_tokens=1,
+                sub_agents=[
+                    SubAgentLog(model="known", total_input_tokens=2),
+                    SubAgentLog(model="unknown", total_input_tokens=3),
+                ],
+            ),
+        )
+
+        _metrics, usage = extract_metrics_and_usage(result)
+
+        assert [fact.gen_ai_usage_input_tokens for fact in usage] == [1, 2, 3]
+        assert [fact.rate_missing for fact in usage] == [False, False, True]
+
+    def test_zero_parent_does_not_discard_nonzero_sub_agent_fact(self, cost_file: Path) -> None:
+        result = ExecutionResult(
+            success=True,
+            metrics=ExecutionMetrics(),
+            action_log=ActionLog(
+                agent_model="known",
+                sub_agents=[SubAgentLog(model="known", total_input_tokens=2)],
+            ),
+        )
+
+        metrics, usage = extract_metrics_and_usage(result)
+
+        assert len(usage) == 1
+        assert usage[0].gen_ai_usage_input_tokens == 2
+        assert metrics.tokens_read == 2

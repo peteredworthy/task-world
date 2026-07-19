@@ -7,6 +7,7 @@ from orchestrator.state.errors import (
     TaskNotFoundError,
 )
 from orchestrator.state.models import (
+    ActionLog,
     Attempt,
     AttemptMetrics,
     ChecklistItem,
@@ -14,6 +15,7 @@ from orchestrator.state.models import (
     Run,
     StepState,
     TaskState,
+    SubAgentLog,
     TransitionTracker,
 )
 from orchestrator.state.factory import create_run_from_routine
@@ -21,6 +23,7 @@ from orchestrator.state.session import SessionStateManager
 
 __all__ = [
     "Attempt",
+    "ActionLog",
     "AttemptMetrics",
     "ChecklistItem",
     "ChecklistItemNotFoundError",
@@ -29,6 +32,7 @@ __all__ = [
     "RunNotFoundError",
     "SessionStateManager",
     "StateError",
+    "SubAgentLog",
     "StepState",
     "TaskNotFoundError",
     "TaskState",

@@ -38,6 +38,24 @@ class ModelCostResolution(BaseModel):
     rate_missing: bool
 
 
+def calculate_model_usage_cost(
+    *,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_input_tokens: int,
+    cache_creation_input_tokens: int,
+    resolution: ModelCostResolution,
+) -> float:
+    """Price canonical, cache-inclusive usage from one resolved rate snapshot."""
+    uncached_input = input_tokens - cache_read_input_tokens - cache_creation_input_tokens
+    return (
+        cache_read_input_tokens * resolution.cost_per_m_cache_read
+        + cache_creation_input_tokens * resolution.cost_per_m_cache_creation
+        + uncached_input * resolution.cost_per_m_input
+        + output_tokens * resolution.cost_per_m_output
+    ) / 1_000_000
+
+
 def _find_cost_file() -> Path | None:
     """Locate model_costs.yaml, walking up from this file's directory."""
     # Try project root (3 levels up from src/orchestrator/runners/)
@@ -97,11 +115,14 @@ def resolve_model_costs(model_name: str | None) -> ModelCostResolution:
     if model_name in _cost_table:
         return ModelCostResolution(**_cost_table[model_name], rate_missing=False)
 
-    # Prefix match (e.g. "claude-sonnet-4-6-20250514" → "claude-sonnet-4-6")
-    # Also handles the reverse: alias "claude-haiku-4-5" → key "claude-haiku-4-5-20251001"
-    for key in _cost_table:
-        if model_name.startswith(key) or key.startswith(model_name):
-            return ModelCostResolution(**_cost_table[key], rate_missing=False)
+    matches = [
+        key
+        for key in _cost_table
+        if model_name.startswith(f"{key}-") or key.startswith(f"{model_name}-")
+    ]
+    if matches:
+        key = max(matches, key=lambda candidate: (len(candidate), candidate))
+        return ModelCostResolution(**_cost_table[key], rate_missing=False)
 
     return ModelCostResolution(**_ZERO_COSTS, rate_missing=True)
 

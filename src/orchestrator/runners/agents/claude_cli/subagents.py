@@ -278,6 +278,7 @@ def load_sub_agents(working_dir: str, session_id: str) -> list[SubAgentLog]:
                 total_output_tokens=totals["output_tokens"],
                 total_cache_read_tokens=totals["cache_read_tokens"],
                 total_cache_creation_tokens=totals["cache_creation_tokens"],
+                input_tokens_include_cache=False,
                 entries=entries,
             )
         )

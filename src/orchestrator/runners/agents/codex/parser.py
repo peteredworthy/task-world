@@ -84,6 +84,7 @@ class CodexStreamParser:
             total_turns=sum(1 for e in self._entries if e.kind == ActionEntryKind.ASSISTANT_TEXT),
             total_input_tokens=self._total_input_tokens,
             total_output_tokens=self._total_output_tokens,
+            input_tokens_include_cache=True,
         )
 
     def parse_jsonrpc_message(self, message: dict[str, Any]) -> None:

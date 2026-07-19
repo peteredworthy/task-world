@@ -87,16 +87,23 @@ def _merge_token_usage_by_model(
         model_name = usage_dict["model"]
         if model_name in idx_by_model:
             previous = merged[idx_by_model[model_name]]
-            merged[idx_by_model[model_name]] = {
-                **previous,
-                "input_tokens": previous.get("input_tokens", 0) + usage_dict.get("input_tokens", 0),
-                "output_tokens": previous.get("output_tokens", 0)
-                + usage_dict.get("output_tokens", 0),
-                "cache_read_tokens": previous.get("cache_read_tokens", 0)
-                + usage_dict.get("cache_read_tokens", 0),
-                "cache_creation_tokens": previous.get("cache_creation_tokens", 0)
-                + usage_dict.get("cache_creation_tokens", 0),
-            }
+            merged_entry = {**previous}
+            for canonical, legacy in (
+                ("gen_ai_usage_input_tokens", "input_tokens"),
+                ("gen_ai_usage_output_tokens", "output_tokens"),
+                ("gen_ai_usage_cache_read_input_tokens", "cache_read_tokens"),
+                ("gen_ai_usage_cache_creation_input_tokens", "cache_creation_tokens"),
+            ):
+                total = previous.get(canonical, previous.get(legacy, 0)) + usage_dict.get(
+                    canonical, usage_dict.get(legacy, 0)
+                )
+                merged_entry[canonical] = total
+                # Transitional bridge: keep legacy readers synchronized until Task 3 removal.
+                merged_entry[legacy] = total
+            merged_entry["cost_usd"] = previous.get("cost_usd", 0.0) + usage_dict.get(
+                "cost_usd", 0.0
+            )
+            merged[idx_by_model[model_name]] = merged_entry
         else:
             idx_by_model[model_name] = len(merged)
             merged.append(usage_dict)

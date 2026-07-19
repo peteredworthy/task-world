@@ -10,9 +10,61 @@ from __future__ import annotations
 
 from typing import Any
 
-from orchestrator.runners.costs import resolve_model_costs
+from orchestrator.runners.costs import calculate_model_usage_cost, resolve_model_costs
 from orchestrator.runners.types import ExecutionMetrics
-from orchestrator.state.models import ModelTokenUsage
+from orchestrator.state import ActionLog, ModelTokenUsage
+
+
+def _canonical_input_tokens(
+    input_tokens: int,
+    cache_read_tokens: int,
+    cache_creation_tokens: int,
+    *,
+    includes_cache: bool,
+) -> int:
+    """Normalize provider usage to cache-inclusive OTel input tokens."""
+    if includes_cache:
+        return input_tokens
+    return input_tokens + cache_read_tokens + cache_creation_tokens
+
+
+def _usage_fact(
+    *,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int,
+    cache_creation_tokens: int,
+    input_tokens_include_cache: bool,
+) -> ModelTokenUsage:
+    """Build one immutable execution x model fact from one pricing resolution."""
+    canonical_input = _canonical_input_tokens(
+        input_tokens,
+        cache_read_tokens,
+        cache_creation_tokens,
+        includes_cache=input_tokens_include_cache,
+    )
+    resolution = resolve_model_costs(model)
+    return ModelTokenUsage(
+        model=model,
+        gen_ai_usage_input_tokens=canonical_input,
+        gen_ai_usage_output_tokens=output_tokens,
+        gen_ai_usage_cache_read_input_tokens=cache_read_tokens,
+        gen_ai_usage_cache_creation_input_tokens=cache_creation_tokens,
+        rate_missing=resolution.rate_missing,
+        cost_usd=calculate_model_usage_cost(
+            input_tokens=canonical_input,
+            output_tokens=output_tokens,
+            cache_read_input_tokens=cache_read_tokens,
+            cache_creation_input_tokens=cache_creation_tokens,
+            resolution=resolution,
+        ),
+        # Transitional legacy read bridge; Task 3 removes these inputs.
+        cost_per_m_cache_read=resolution.cost_per_m_cache_read,
+        cost_per_m_cache_creation=resolution.cost_per_m_cache_creation,
+        cost_per_m_input=resolution.cost_per_m_input,
+        cost_per_m_output=resolution.cost_per_m_output,
+    )
 
 
 def extract_metrics_and_usage(
@@ -20,12 +72,10 @@ def extract_metrics_and_usage(
 ) -> tuple[ExecutionMetrics, list[ModelTokenUsage]]:
     """Extract ExecutionMetrics and per-model token usage from an execution result.
 
-    Builds a ModelTokenUsage entry for the parent model and each distinct
-    sub-agent model, with cost rates looked up from model_costs.yaml. Falls back
-    to per-turn metrics when the action-log aggregate was not populated.
+    Builds append-only ModelTokenUsage facts for parent and sub-agent executions.
+    Provider parser semantics identify whether their raw input already includes
+    cache components; raw wire fields remain unchanged at parser boundaries.
     """
-    from orchestrator.state.models import ActionLog
-
     metrics = result.metrics
     usage_by_model: list[ModelTokenUsage] = []
 
@@ -46,36 +96,39 @@ def extract_metrics_and_usage(
                     computed_cache_read += entry.metrics.cache_read_tokens
                     computed_cache_creation += entry.metrics.cache_creation_tokens
 
-        if computed_input or computed_output:
-            # Parent model
-            parent_costs = resolve_model_costs(al.agent_model)
+        if computed_input or computed_output or computed_cache_read or computed_cache_creation:
             usage_by_model.append(
-                ModelTokenUsage(
+                _usage_fact(
                     model=al.agent_model or "unknown",
-                    gen_ai_usage_cache_read_input_tokens=computed_cache_read,
-                    gen_ai_usage_cache_creation_input_tokens=computed_cache_creation,
-                    gen_ai_usage_input_tokens=computed_input,
-                    gen_ai_usage_output_tokens=computed_output,
-                    rate_missing=parent_costs.rate_missing,
+                    input_tokens=computed_input,
+                    output_tokens=computed_output,
+                    cache_read_tokens=computed_cache_read,
+                    cache_creation_tokens=computed_cache_creation,
+                    input_tokens_include_cache=al.input_tokens_include_cache,
                 )
             )
 
-            # Each sub-agent execution produces its own immutable usage fact.
-            for sa in al.sub_agents:
-                model = sa.model or "unknown"
-                sa_costs = resolve_model_costs(model)
-                usage_by_model.append(
-                    ModelTokenUsage(
-                        model=model,
-                        gen_ai_usage_cache_read_input_tokens=sa.total_cache_read_tokens,
-                        gen_ai_usage_cache_creation_input_tokens=sa.total_cache_creation_tokens,
-                        gen_ai_usage_input_tokens=sa.total_input_tokens,
-                        gen_ai_usage_output_tokens=sa.total_output_tokens,
-                        rate_missing=sa_costs.rate_missing,
-                    )
+        for sa in al.sub_agents:
+            if not (
+                sa.total_input_tokens
+                or sa.total_output_tokens
+                or sa.total_cache_read_tokens
+                or sa.total_cache_creation_tokens
+            ):
+                continue
+            usage_by_model.append(
+                _usage_fact(
+                    model=sa.model or "unknown",
+                    input_tokens=sa.total_input_tokens,
+                    output_tokens=sa.total_output_tokens,
+                    cache_read_tokens=sa.total_cache_read_tokens,
+                    cache_creation_tokens=sa.total_cache_creation_tokens,
+                    input_tokens_include_cache=sa.input_tokens_include_cache,
                 )
+            )
 
-            # Build legacy flat metrics from the full per-model breakdown
+        if usage_by_model:
+            # Build legacy flat metrics from the full per-model breakdown.
             metrics = ExecutionMetrics(
                 tokens_read=sum(u.gen_ai_usage_input_tokens for u in usage_by_model),
                 tokens_write=sum(u.gen_ai_usage_output_tokens for u in usage_by_model),

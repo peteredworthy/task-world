@@ -118,6 +118,7 @@ class ClaudeStreamParser:
             total_output_tokens=self._total_output_tokens,
             total_cache_read_tokens=self._total_cache_read,
             total_cache_creation_tokens=self._total_cache_creation,
+            input_tokens_include_cache=False,
             rate_limit_hit=self._rate_limit_hit,
             rate_limit_resets_at=self._rate_limit_resets_at,
             exit_subtype=self._exit_subtype,

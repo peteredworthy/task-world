@@ -2,7 +2,8 @@
 
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, cast
+from collections.abc import Iterable
+from typing import Any, SupportsIndex, cast
 
 from pydantic import (
     AliasChoices,
@@ -117,6 +118,7 @@ class SubAgentLog(BaseModel):
     total_output_tokens: int = 0
     total_cache_read_tokens: int = 0
     total_cache_creation_tokens: int = 0
+    input_tokens_include_cache: bool = True
 
     # Structured tool calls (Read/Bash/Glob/Grep) so we know what was explored
     entries: list[ActionLogEntry] = []
@@ -143,6 +145,8 @@ class ActionLog(BaseModel):
     total_output_tokens: int = 0
     total_cache_read_tokens: int = 0
     total_cache_creation_tokens: int = 0
+    # Provider-semantic marker: false means input excludes cache components.
+    input_tokens_include_cache: bool = True
 
     # Sub-agent sessions spawned via the Agent tool (separate billing, not in totals above)
     sub_agents: list[SubAgentLog] = []
@@ -174,6 +178,22 @@ class ChecklistItem(BaseModel):
     grade_reason: str | None = None
 
 
+class _FrozenReasonList(list[str]):
+    """List-shaped JSON boundary value that rejects in-place mutation."""
+
+    def __setitem__(self, key: SupportsIndex | slice, value: str | Iterable[str]) -> None:
+        raise TypeError("finish reasons are immutable")
+
+    def __delitem__(self, key: SupportsIndex | slice) -> None:
+        raise TypeError("finish reasons are immutable")
+
+    def append(self, item: str) -> None:
+        raise TypeError("finish reasons are immutable")
+
+    def extend(self, values: Iterable[str]) -> None:
+        raise TypeError("finish reasons are immutable")
+
+
 class ModelTokenUsage(BaseModel):
     """An immutable OTel usage fact for one execution and model.
 
@@ -191,12 +211,14 @@ class ModelTokenUsage(BaseModel):
     gen_ai_usage_cache_creation_input_tokens: int = Field(default=0, ge=0)
     gen_ai_usage_reasoning_output_tokens: int = Field(default=0, ge=0)
     gen_ai_response_finish_reasons: list[str] = Field(default_factory=list)
+    cost_usd: float = Field(default=0, ge=0)
     latency_ms: int = Field(default=0, ge=0)
     rate_missing: bool = False
     _legacy_cost_rates: dict[str, float] = PrivateAttr(default_factory=lambda: dict[str, float]())
 
     def __init__(self, **data: Any) -> None:
         """Accept Task 3's temporary legacy constructor payloads."""
+        has_captured_cost = "cost_usd" in data
         legacy_cost_rates: dict[str, float] = {
             field: float(data.pop(field))
             for field in (
@@ -209,6 +231,26 @@ class ModelTokenUsage(BaseModel):
         }
         super().__init__(**data)
         object.__setattr__(self, "_legacy_cost_rates", legacy_cost_rates)
+        if legacy_cost_rates and not has_captured_cost:
+            uncached_input = (
+                self.gen_ai_usage_input_tokens
+                - self.gen_ai_usage_cache_read_input_tokens
+                - self.gen_ai_usage_cache_creation_input_tokens
+            )
+            object.__setattr__(
+                self,
+                "cost_usd",
+                (
+                    self.gen_ai_usage_cache_read_input_tokens
+                    * legacy_cost_rates.get("cost_per_m_cache_read", 0.0)
+                    + self.gen_ai_usage_cache_creation_input_tokens
+                    * legacy_cost_rates.get("cost_per_m_cache_creation", 0.0)
+                    + uncached_input * legacy_cost_rates.get("cost_per_m_input", 0.0)
+                    + self.gen_ai_usage_output_tokens
+                    * legacy_cost_rates.get("cost_per_m_output", 0.0)
+                )
+                / 1_000_000,
+            )
 
     @model_validator(mode="before")
     @classmethod
@@ -222,7 +264,10 @@ class ModelTokenUsage(BaseModel):
             ("cache_read_tokens", "gen_ai_usage_cache_read_input_tokens"),
             ("cache_creation_tokens", "gen_ai_usage_cache_creation_input_tokens"),
         ):
-            if legacy in translated:
+            if legacy in translated and canonical in translated:
+                if translated[legacy] != translated[canonical]:
+                    raise ValueError(f"conflicting {legacy} and {canonical} values")
+            elif legacy in translated:
                 translated[canonical] = translated[legacy]
         return translated
 
@@ -234,6 +279,11 @@ class ModelTokenUsage(BaseModel):
         )
         if cache_tokens > self.gen_ai_usage_input_tokens:
             raise ValueError("cache input components cannot exceed input tokens")
+        object.__setattr__(
+            self,
+            "gen_ai_response_finish_reasons",
+            _FrozenReasonList(self.gen_ai_response_finish_reasons),
+        )
         return self
 
     # Transitional Task 2 bridge. Task 3 migrates remaining old-field readers.
@@ -258,11 +308,7 @@ class ModelTokenUsage(BaseModel):
         return self.gen_ai_usage_output_tokens
 
     def _cost_rate(self, field: str) -> float:
-        if field in self._legacy_cost_rates:
-            return self._legacy_cost_rates[field]
-        from orchestrator.runners.costs import resolve_model_costs
-
-        return float(getattr(resolve_model_costs(self.model), field))
+        return self._legacy_cost_rates.get(field, 0.0)
 
     @computed_field
     @property
@@ -286,18 +332,8 @@ class ModelTokenUsage(BaseModel):
 
     @property
     def total_cost_usd(self) -> float:
-        """Temporarily price this fact for legacy readers without double billing reasoning."""
-        billable_input = (
-            self.gen_ai_usage_input_tokens
-            - self.gen_ai_usage_cache_read_input_tokens
-            - self.gen_ai_usage_cache_creation_input_tokens
-        )
-        return (
-            self.gen_ai_usage_cache_read_input_tokens * self.cost_per_m_cache_read
-            + self.gen_ai_usage_cache_creation_input_tokens * self.cost_per_m_cache_creation
-            + billable_input * self.cost_per_m_input
-            + self.gen_ai_usage_output_tokens * self.cost_per_m_output
-        ) / 1_000_000
+        """Temporary legacy accessor for the cost captured at execution time."""
+        return self.cost_usd
 
 
 class AttemptMetrics(BaseModel):

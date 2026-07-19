@@ -1128,6 +1128,7 @@ def build_execution_result(
             total_input_tokens=tokens_read,
             total_output_tokens=tokens_write,
             total_cache_read_tokens=tokens_cache,
+            input_tokens_include_cache=True,
         ),
     )
 
