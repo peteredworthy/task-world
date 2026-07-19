@@ -1,122 +1,219 @@
-# W5.5 Task 2 Report
+# Task 2 — Canonical OTel Usage Facts and Cost Resolution
 
-## Status
+## Scope delivered
 
-Implemented atomic check-output externalization on `codex/w5-artifact-output`.
-The durable Task 2 queue checkbox remains unchecked for controller review; all
-Task 2 plan step checkboxes are checked.
+- Replaced `ModelTokenUsage`'s mutable, rate-embedded representation with the canonical OTel fields: model, input/output/cache/reasoning usage, plural finish reasons, latency, and explicit `rate_missing`.
+- Made usage facts frozen and validated every count as nonnegative. A model-level validation rejects cache-read plus cache-creation values greater than input.
+- Added `ModelCostResolution` and `resolve_model_costs`. Exact and prefix matches set `rate_missing=False`, including deliberately zero-priced entries; an absent lookup sets it to `True`.
+- Updated extraction to append frozen per-execution model facts rather than mutating grouped facts, and copied the resolver's lookup state into each fact.
+- Preserved correct cost semantics in the temporary legacy cost accessor: cache components are removed from normal input billing, charged at their own rates, and observable reasoning tokens are not charged a second time.
 
-## Files changed
+## TDD evidence
 
-- Canonical contracts and readers: `src/orchestrator/graph/models.py`,
-  `src/orchestrator/graph/projections.py`,
-  `src/orchestrator/api/routers/runs.py`.
-- Producer and composition: `src/orchestrator/graph_runtime/dispatch.py`,
-  `src/orchestrator/graph_runtime/__init__.py`,
-  `src/orchestrator/workflow/graph_driver.py`.
-- New producer/failure integration coverage:
-  `tests/integration/test_check_output_artifacts.py`.
-- Existing model, projection, dispatch, driver, callback, fixture, and E2E tests
-  were migrated to canonical `stdout_tail`/`stderr_tail` fields and explicit
-  artifact-store injection.
-- Tracking: `docs/superpowers/plans/2026-07-15-w5-artifact-output.md` and
-  `docs/dynamic-graph/w5-progress-ledger.md`.
-
-## RED evidence
-
-Command:
+### Required initial RED command
 
 ```text
-uv run pytest tests/unit/test_graph_models.py -k check_output_artifact tests/integration/test_check_output_artifacts.py -q
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py tests/unit/test_cost.py -q -n 0
+ERROR collecting tests/unit/test_model_costs.py
+ImportError: cannot import name 'resolve_model_costs' from 'orchestrator.runners.costs'
+1 error in 2.04s
 ```
 
-Exact result: `1 failed, 1 error in 2.70s`.
+This failed for the intended missing resolver interface before production implementation.
 
-- The model test failed with six validation errors: existing `stdout` and
-  `stderr` were required, while `stdout_tail`, `stdout_ref`, `stderr_tail`, and
-  `stderr_ref` were forbidden extras.
-- Integration collection errored with
-  `ImportError: cannot import name 'CHECK_OUTPUT_TAIL_CHARS' from 'orchestrator.graph_runtime'`.
-- This was the expected missing canonical fields, externalization API, and
-  artifact-store dispatch integration—not a test typo or setup failure.
+### Additional RED for temporary cost compatibility semantics
 
-## GREEN evidence
+After adding the cache/reasoning pricing test and temporarily removing the property under test:
 
-- Required focused command:
-  `249 passed in 19.23s`.
-- Full suite:
-  `4792 passed, 3 skipped, 3 warnings in 102.45s`; warnings are the existing
-  Python 3.12 aiosqlite datetime-adapter deprecations.
-- `uv run ruff check .`: `All checks passed!`
-- `uv run pyright`: `0 errors, 0 warnings, 0 informations` plus the tool's
-  available-version notice.
-- `uv run ruff format --check .`: `708 files already formatted`.
-- `git diff --check`: exit 0 with no output.
-- Commit hooks on the implementation commit passed Ruff, Ruff format, secret
-  detection, Pyright, pytest, module imports, signal routing, UI lint, and UI
-  typecheck; enum drift had no applicable files.
+```text
+FAILED TestModelTokenUsage.test_prices_cached_input_once_and_does_not_double_charge_reasoning
+AttributeError: 'ModelTokenUsage' object has no attribute 'total_cost_usd'
+1 failed, 20 passed in 2.08s
+```
 
-## Ordering and failure evidence
+### Required GREEN command
 
-- Sub-threshold stdout/stderr remain complete in tails and create no artifact
-  root or reference.
-- Over-threshold tests execute real shell checks producing 17,000 bytes on each
-  stream. The real temporary `FilesystemArtifactStore` reads back every byte,
-  while durable callback events expose 4,000-character tails and typed refs.
-- A real filesystem failure (store root occupied by a file) occurs before the
-  callback and leaves no accepted callback/check-result event.
-- An integration store writes through to the real filesystem CAS and then uses
-  a real SQLite trigger to reject event insertion. The callback append fails,
-  but the resulting orphan remains readable and integrity checked.
-- Externalization runs before `_submit_check_result`; stdout is written before
-  stderr, and any failed write prevents event append. Append failures do not
-  remove already durable blobs.
+```text
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py tests/unit/test_cost.py -q -n 0
+22 passed in 2.04s
+```
 
-## Self-review
+### Broader verification
 
-- Confirmed canonical `CheckResultValue` removes `stdout` and `stderr`, forbids
-  them as extras, and enforces `*_truncated == (*_ref is not None)`.
-- Confirmed byte threshold is exactly 16,384 UTF-8 bytes and tails are exactly
-  the final 4,000 Unicode characters.
-- Confirmed reducers, projections, blockers, activity summaries, command
-  handlers, and prompt paths receive no store and perform no hydration.
-- Confirmed production `GraphRunDriver` resolves the main git worktree and
-  injects a side-effect-free store rooted at its `.orchestrator/artifacts`, not
-  at the run worktree.
-- Searched graph and graph-runtime production code for old quoted `stdout` and
-  `stderr` canonical keys; none remain.
-- Reviewed the complete diff and found no compatibility aliases or unrelated
-  behavior additions.
+```text
+$ uv run pytest tests/unit -q -n 0
+3460 passed, 1 skipped, 3 warnings in 76.20s
 
-## Commits
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py tests/unit/test_cost.py tests/integration/test_attempt_store_event_sourcing.py -q -n 0
+25 passed in 0.68s
+```
 
-- `0c8b26a1b` — `Externalize large check output artifacts`
-- Ledger/report tracking commit: recorded after creation; see final response.
+The first all-files pre-commit run exposed a legacy aggregation boundary that was not part of Task 2's target surfaces. The bridge now translates old serialized token keys before canonical validation; the directly reproducing integration test passes.
 
-## Concerns
+Final mandatory hook verification:
 
-None. Task 3 remains responsible for explicit bounded hydration and artifact
-read APIs; Task 2 intentionally leaves reducers and ordinary prompts tail-only.
+```text
+$ uv run pre-commit run --all-files
+ruff (legacy alias) Passed
+ruff format Passed
+Detect hardcoded secrets Passed
+pyright Passed
+pytest Passed
+module-imports Passed
+signal-routing Passed
+enum-drift Passed
+ui-lint Passed
+ui-typecheck Passed
+```
 
-## Boundary Coverage Review Fix
+## Transitional bridge — mandatory Task 3 removal
 
-- Added real producer-path regressions proving exactly 16,384 UTF-8 bytes stay
-  inline without creating a blob/reference, while 16,385 bytes produce a typed
-  reference whose real temporary filesystem blob contains the complete output.
-- Added a 16,385-byte multibyte case (`16,381` ASCII characters plus one
-  four-byte emoji) proving thresholding uses UTF-8 bytes while the retained tail
-  is the final 4,000 Unicode characters (`3,999` ASCII characters plus the
-  emoji), not the final 4,000 bytes.
-- `uv run pytest tests/integration/test_check_output_artifacts.py -q`
-  - Result: `7 passed in 4.68s`.
-- `uv run pytest tests/integration/test_check_output_artifacts.py tests/unit/test_graph_models.py -k 'check_output_artifact or test_exact_byte_threshold or test_one_byte_above_threshold or test_multibyte_output' -q`
-  - Result: `8 passed in 4.82s`.
-- `uv run ruff check tests/integration/test_check_output_artifacts.py tests/unit/test_graph_models.py`
-  - Result: `All checks passed!`.
-- `uv run pyright tests/integration/test_check_output_artifacts.py tests/unit/test_graph_models.py`
-  - Result: `0 errors, 0 warnings, 0 informations` (plus the available-version notice).
-- `uv run ruff format --check tests/integration/test_check_output_artifacts.py tests/unit/test_graph_models.py`
-  - Result: `2 files already formatted`.
-- `git diff --check`
-  - Result: passed with no output.
-- Review-fix commit: `ae3b35f60` (`Cover check output artifact boundaries`).
+The full repository still contains untouched readers, constructors, serialized payload aggregation, and presenters using pre-OTel names and embedded rates. To keep the suite committable before Task 3's repository-wide codemod application, `ModelTokenUsage` temporarily provides:
+
+- legacy constructor-key translation;
+- computed legacy serialization/read fields (`input_tokens`, cache fields, and `cost_per_m_*`); and
+- `get_model_costs`, a legacy dict wrapper around `resolve_model_costs`.
+
+These bridges are explicitly marked in production code. Task 3 **must migrate all callers and remove them**, leaving persisted facts with only canonical OTel fields and consuming `ModelCostResolution.rate_missing` directly.
+
+## Notes
+
+Provider parser wire keys were not renamed or normalized in this task; Task 2 only defines the canonical fact and its extraction boundary, preserving the requested parser-boundary ownership for the later application task.
+
+## Review-fix follow-up
+
+### RED
+
+```text
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py tests/unit/test_cost.py -q -n 0
+8 failed, 14 passed in 2.15s
+```
+
+The failures demonstrated mutable finish-reason lists, conflicting canonical and
+legacy values being silently overwritten, exclusive cache input rejected before
+normalization, zero-parent sub-agent loss, and first-prefix rather than longest
+prefix resolution.
+
+### GREEN
+
+```text
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py tests/unit/test_token_fallback_from_entries.py tests/integration/test_attempt_store_event_sourcing.py -q -n 0
+27 passed in 0.68s
+
+$ uv run pytest tests/integration/test_api_runs.py::test_get_run_returns_token_usage_by_model_with_all_fields tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py -q -n 0
+17 passed in 0.80s
+
+$ uv run pre-commit run --all-files
+all hooks passed (ruff, format, gitleaks, pyright, pytest, module-imports,
+signal-routing, enum-drift, ui lint, ui typecheck)
+```
+
+### Review fixes
+
+- `ActionLog` and `SubAgentLog` now carry explicit input-includes-cache
+  semantics. Claude parser paths mark exclusive raw provider input; Codex paths
+  mark inclusive input. Extraction normalizes only exclusive inputs while
+  retaining parser wire names.
+- Finish reasons remain list-shaped at the public/JSON boundary but are held by
+  a mutation-rejecting list implementation internally.
+- Cost resolution performs exact lookup before deterministic longest,
+  delimiter-valid forward/reverse prefix matching.
+- Extraction resolves rates once, calculates `cost_usd` from that same
+  resolution, and stores the result on the immutable fact. State has no runners
+  import or dynamic rate lookup.
+- Mixed canonical/legacy input rejects conflicting values. The narrow legacy
+  serializer remains only to keep untouched aggregation/read paths committable;
+  its projector keeps both forms synchronized.
+
+### Mandatory Task 3 removal list
+
+Remove all of the following after callers use canonical fields: legacy
+constructor translation, computed `input_tokens`/cache/count and
+`cost_per_m_*` fields, legacy-rate private storage and legacy-cost initialization,
+duplicated bridge serialization, projector synchronization of legacy names, and
+`get_model_costs`. Keep `cost_usd`, `rate_missing`, immutable reasons, and
+canonical extraction facts.
+
+## Final invariant follow-up
+
+RED evidence:
+
+```text
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py -q -n 0
+11 failed, 28 passed in 0.99s
+```
+
+The failures covered remaining list mutators and invalid negative/non-finite
+legacy rates.
+
+GREEN evidence:
+
+```text
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py tests/unit/test_claude_parser.py tests/unit/test_codex_parser.py tests/unit/test_codex_server_common.py tests/unit/test_cost.py -q -n 0
+196 passed in 2.65s
+
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py tests/unit/test_cost.py -q -n 0
+45 passed in 2.09s
+```
+
+The bridge projection additionally sums reasoning output and latency, ORs
+`rate_missing`, and retains ordered de-duplicated finish reasons. These bridge
+aggregation rules are removed with the other Task 3 bridge items.
+
+## Transitional boundary follow-up
+
+RED: `uv run pytest tests/unit/test_model_token_usage.py -q -n 0` produced two failures for nonnumeric legacy rates and overflow-derived cost.
+
+GREEN: `uv run pytest tests/unit/test_model_token_usage.py -q -n 0` produced `33 passed in 0.81s` after rate boundary validation and finite `cost_usd` enforcement.
+
+## Remaining review checklist follow-up
+
+### RED
+
+```text
+$ uv run pytest tests/unit/test_model_token_usage.py tests/integration/test_attempt_store_event_sourcing.py -q -n 0
+ImportError: cannot import name 'ExecutionMetrics' from 'orchestrator.runners'
+2 errors in 0.32s
+```
+
+The public runner boundary was absent. Source review also found the legacy-rate
+constructor substituted `0.0` for non-`int`/`float` values before Pydantic
+validation; a strict typed rate snapshot now validates all four rates before
+any float conversion or cost arithmetic. The focused `ExplosiveNumeric` test
+would raise if either operation were attempted.
+
+The existing event-sourced merge implementation already satisfied the newly
+added complete aggregation assertion, so no artificial RED was manufactured:
+the test covers canonical/legacy count synchronization, reasoning and latency
+sums, cost sum, `rate_missing` OR behavior, and ordered de-duplicated reasons.
+
+### GREEN
+
+```text
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py tests/unit/test_cost.py -q -n 0
+49 passed in 2.06s
+
+$ uv run pytest tests/unit/test_model_token_usage.py tests/unit/test_model_costs.py tests/unit/test_cost.py tests/unit/test_claude_parser.py tests/unit/test_codex_parser.py tests/unit/test_codex_server_common.py tests/integration/test_attempt_store_event_sourcing.py -q -n 0
+203 passed in 1.15s
+```
+
+The Claude sub-agent regression constructs a real `tmp_path` Claude projects
+tree and JSONL log, calls `load_sub_agents`, verifies its exclusive-input
+marker, then places the returned log in real `ActionLog`/`ExecutionResult`
+objects and confirms cache components are added exactly once during extraction.
+
+### Final mandatory hook verification
+
+```text
+$ uv run pre-commit run --all-files
+ruff (legacy alias)......................................................Passed
+ruff format..............................................................Passed
+Detect hardcoded secrets.................................................Passed
+pyright..................................................................Passed
+pytest...................................................................Passed
+module-imports...........................................................Passed
+signal-routing...........................................................Passed
+enum-drift...............................................................Passed
+ui-lint..................................................................Passed
+ui-typecheck.............................................................Passed
+```

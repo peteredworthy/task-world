@@ -21,9 +21,8 @@ from orchestrator.db import (
     create_session_factory,
     init_db,
 )
-from orchestrator.runners import AttemptStore
-from orchestrator.runners.types import ExecutionMetrics
-from orchestrator.state.models import (
+from orchestrator.runners import AttemptStore, ExecutionMetrics
+from orchestrator.state import (
     ActionLog,
     ChecklistItem,
     ModelTokenUsage,
@@ -191,13 +190,36 @@ async def test_attempt_store_merges_token_usage_and_agent_metadata_via_events(
         "attempt-store-run",
         "attempt-store-task",
         ExecutionMetrics(tokens_read=1),
-        token_usage_by_model=[ModelTokenUsage(model="gpt-test", input_tokens=2, output_tokens=3)],
+        token_usage_by_model=[
+            ModelTokenUsage(
+                model="gpt-test",
+                input_tokens=2,
+                output_tokens=3,
+                cache_read_tokens=1,
+                gen_ai_usage_reasoning_output_tokens=5,
+                gen_ai_response_finish_reasons=["stop", "length"],
+                latency_ms=11,
+                cost_usd=0.1,
+            )
+        ],
     )
     await store.store_attempt_metrics(
         "attempt-store-run",
         "attempt-store-task",
         ExecutionMetrics(tokens_read=4),
-        token_usage_by_model=[ModelTokenUsage(model="gpt-test", input_tokens=5, output_tokens=7)],
+        token_usage_by_model=[
+            ModelTokenUsage(
+                model="gpt-test",
+                input_tokens=5,
+                output_tokens=7,
+                cache_creation_tokens=2,
+                gen_ai_usage_reasoning_output_tokens=7,
+                gen_ai_response_finish_reasons=["length", "tool_calls"],
+                latency_ms=13,
+                cost_usd=0.2,
+                rate_missing=True,
+            )
+        ],
     )
     await store.persist_agent_metadata("attempt-store-run", {"pid": 1234})
 
@@ -210,6 +232,15 @@ async def test_attempt_store_merges_token_usage_and_agent_metadata_via_events(
         assert usage.model == "gpt-test"
         assert usage.input_tokens == 7
         assert usage.output_tokens == 10
+        assert usage.gen_ai_usage_input_tokens == usage.input_tokens == 7
+        assert usage.gen_ai_usage_output_tokens == usage.output_tokens == 10
+        assert usage.gen_ai_usage_cache_read_input_tokens == usage.cache_read_tokens == 1
+        assert usage.gen_ai_usage_cache_creation_input_tokens == usage.cache_creation_tokens == 2
+        assert usage.gen_ai_usage_reasoning_output_tokens == 12
+        assert usage.latency_ms == 24
+        assert usage.cost_usd == pytest.approx(0.3)
+        assert usage.rate_missing is True
+        assert usage.gen_ai_response_finish_reasons == ["stop", "length", "tool_calls"]
 
         result = await session.execute(
             select(EventV2Model)

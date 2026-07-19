@@ -214,7 +214,12 @@ def _parse_subagent_jsonl(
     return model, entries, totals
 
 
-def load_sub_agents(working_dir: str, session_id: str) -> list[SubAgentLog]:
+def load_sub_agents(
+    working_dir: str,
+    session_id: str,
+    *,
+    projects_dir: Path | None = None,
+) -> list[SubAgentLog]:
     """Load all sub-agent sessions for a given parent session.
 
     Args:
@@ -223,6 +228,9 @@ def load_sub_agents(working_dir: str, session_id: str) -> list[SubAgentLog]:
         session_id: The parent session ID from the ``system.init`` event. The
             sub-agents directory lives at:
             ``~/.claude/projects/{slug}/{session_id}/subagents/``
+        projects_dir: Optional Claude projects root. Production uses the real
+            ``~/.claude/projects`` location; callers can supply another real
+            filesystem root when replaying a captured session.
 
     Returns:
         List of SubAgentLog instances, one per sub-agent JSONL file found.
@@ -232,7 +240,8 @@ def load_sub_agents(working_dir: str, session_id: str) -> list[SubAgentLog]:
         return []
 
     slug = _working_dir_to_project_slug(working_dir)
-    subagents_dir = _CLAUDE_PROJECTS_DIR / slug / session_id / "subagents"
+    root = projects_dir if projects_dir is not None else _CLAUDE_PROJECTS_DIR
+    subagents_dir = root / slug / session_id / "subagents"
 
     if not subagents_dir.is_dir():
         return []

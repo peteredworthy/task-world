@@ -8,18 +8,25 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-import orchestrator.runners.costs as costs_mod
-from orchestrator.runners.costs import load_cost_table
-from orchestrator.runners import extract_metrics_and_usage
-from orchestrator.runners.types import ExecutionMetrics, ExecutionResult
-from orchestrator.state.models import ActionLog, ModelTokenUsage, SubAgentLog
+from orchestrator.runners import (
+    ExecutionMetrics,
+    ExecutionResult,
+    extract_metrics_and_usage,
+    load_cost_table,
+    load_sub_agents,
+)
+from orchestrator.state import ActionLog, ModelTokenUsage, SubAgentLog
 
 
 @pytest.fixture(autouse=True)
 def _reset_cost_table():
-    costs_mod._cost_table = {}
+    from orchestrator.runners.costs import _cost_table
+
+    _cost_table.clear()
     yield
-    costs_mod._cost_table = {}
+    from orchestrator.runners.costs import _cost_table
+
+    _cost_table.clear()
 
 
 @pytest.fixture()
@@ -126,6 +133,21 @@ class TestModelTokenUsage:
     def test_rejects_invalid_legacy_rates_before_cost_construction(self, rate: float) -> None:
         with pytest.raises(ValidationError):
             ModelTokenUsage(model="known", input_tokens=1, cost_per_m_input=rate)
+
+    def test_rejects_numeric_like_legacy_rate_before_float_conversion_or_arithmetic(self) -> None:
+        class ExplosiveNumeric:
+            def __float__(self) -> float:
+                raise AssertionError("legacy rate reached float conversion")
+
+            def __rmul__(self, _: object) -> float:
+                raise AssertionError("legacy rate reached cost arithmetic")
+
+        with pytest.raises(ValidationError):
+            ModelTokenUsage(
+                model="known",
+                input_tokens=1,
+                cost_per_m_input=ExplosiveNumeric(),
+            )
 
     def test_rejects_overflowing_derived_legacy_cost(self) -> None:
         with pytest.raises(ValidationError):
@@ -235,3 +257,36 @@ class TestExtractMetricsAndUsage:
         assert len(usage) == 1
         assert usage[0].gen_ai_usage_input_tokens == 2
         assert metrics.tokens_read == 2
+
+    def test_claude_sub_agent_exclusive_input_adds_cache_exactly_once(
+        self, tmp_path: Path, cost_file: Path
+    ) -> None:
+        working_dir = str(tmp_path / "workspace")
+        session_id = "parent-session"
+        projects_dir = tmp_path / "projects"
+        slug = working_dir.replace("/", "-")
+        subagents_dir = projects_dir / slug / session_id / "subagents"
+        subagents_dir.mkdir(parents=True)
+        (subagents_dir / "worker.jsonl").write_text(
+            '{"type":"assistant","message":{"id":"turn-1","model":"known",'
+            '"usage":{"input_tokens":10,"output_tokens":4,'
+            '"cache_read_input_tokens":2,"cache_creation_input_tokens":3},'
+            '"content":[{"type":"text","text":"done"}]}}\n'
+        )
+
+        sub_agents = load_sub_agents(working_dir, session_id, projects_dir=projects_dir)
+
+        assert len(sub_agents) == 1
+        assert sub_agents[0].input_tokens_include_cache is False
+        result = ExecutionResult(
+            success=True,
+            metrics=ExecutionMetrics(),
+            action_log=ActionLog(sub_agents=sub_agents),
+        )
+
+        metrics, usage = extract_metrics_and_usage(result)
+
+        assert usage[0].gen_ai_usage_input_tokens == 15
+        assert usage[0].gen_ai_usage_cache_read_input_tokens == 2
+        assert usage[0].gen_ai_usage_cache_creation_input_tokens == 3
+        assert metrics.tokens_read == 15

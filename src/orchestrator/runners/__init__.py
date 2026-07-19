@@ -7,7 +7,12 @@ from typing import TYPE_CHECKING
 # Agent interface and types
 from orchestrator.runners.interface import AgentRunner
 from orchestrator.runners.errors import AgentNotAvailableError
-from orchestrator.runners.types import AgentMetadataCallback, BroadcastCallback
+from orchestrator.runners.types import (
+    AgentMetadataCallback,
+    BroadcastCallback,
+    ExecutionMetrics,
+    ExecutionResult,
+)
 from orchestrator.runners.agent_factory import (
     create as create_agent_runner,
     get_registered_agent_runner_types,
@@ -27,6 +32,7 @@ from orchestrator.runners.agents.claude_cli.parser import (
     ClaudeStreamParser,
     parse_reset_time,
 )
+from orchestrator.runners.agents.claude_cli.subagents import load_sub_agents
 from orchestrator.runners.agents.codex.parser import CodexStreamParser
 
 # OpenHands agent and helpers
@@ -223,6 +229,8 @@ __all__ = [
     "AgentNotAvailableError",
     "AgentMetadataCallback",
     "BroadcastCallback",
+    "ExecutionMetrics",
+    "ExecutionResult",
     "create_agent_runner",
     "get_registered_agent_runner_types",
     # Discovery
@@ -245,6 +253,7 @@ __all__ = [
     "RATE_LIMIT_PATTERN",
     "RATE_LIMIT_RESET_PATTERN",
     "parse_reset_time",
+    "load_sub_agents",
     # OpenHands common
     "CallbackRegistry",
     "DEFAULT_OPENHANDS_TOOLS",
