@@ -1,8 +1,6 @@
-"""Per-model cost rate lookup.
+"""Canonical model-cost resolution and pure usage pricing.
 
-Loads ``model_costs.yaml`` from the project root and provides
-``get_model_costs(model_name)`` which returns the cost-rate kwargs
-suitable for constructing a ``ModelTokenUsage`` instance.
+``get_model_costs`` is a temporary Task 3 compatibility bridge for legacy callers.
 """
 
 from __future__ import annotations

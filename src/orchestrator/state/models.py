@@ -236,7 +236,7 @@ class ModelTokenUsage(BaseModel):
     gen_ai_usage_cache_creation_input_tokens: int = Field(default=0, ge=0)
     gen_ai_usage_reasoning_output_tokens: int = Field(default=0, ge=0)
     gen_ai_response_finish_reasons: list[str] = Field(default_factory=list)
-    cost_usd: float = Field(default=0, ge=0)
+    cost_usd: float = Field(default=0, ge=0, allow_inf_nan=False)
     latency_ms: int = Field(default=0, ge=0)
     rate_missing: bool = False
     _legacy_cost_rates: dict[str, float] = PrivateAttr(default_factory=lambda: dict[str, float]())
@@ -244,7 +244,7 @@ class ModelTokenUsage(BaseModel):
     def __init__(self, **data: Any) -> None:
         """Accept Task 3's temporary legacy constructor payloads."""
         legacy_cost_rates: dict[str, float] = {
-            field: float(data[field])
+            field: float(data[field]) if isinstance(data[field], (int, float)) else 0.0
             for field in (
                 "cost_per_m_cache_read",
                 "cost_per_m_cache_creation",

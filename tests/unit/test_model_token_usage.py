@@ -122,10 +122,14 @@ class TestModelTokenUsage:
         with pytest.raises(ValidationError):
             ModelTokenUsage(model="known", **{field: -1})
 
-    @pytest.mark.parametrize("rate", [-1, float("inf"), float("nan")])
+    @pytest.mark.parametrize("rate", [-1, float("inf"), float("nan"), "not-a-rate"])
     def test_rejects_invalid_legacy_rates_before_cost_construction(self, rate: float) -> None:
         with pytest.raises(ValidationError):
             ModelTokenUsage(model="known", input_tokens=1, cost_per_m_input=rate)
+
+    def test_rejects_overflowing_derived_legacy_cost(self) -> None:
+        with pytest.raises(ValidationError):
+            ModelTokenUsage(model="known", input_tokens=10**308, cost_per_m_input=10**308)
 
     def test_rejects_conflicting_canonical_and_legacy_values(self) -> None:
         with pytest.raises(ValidationError, match="conflicting"):
