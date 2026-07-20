@@ -13,8 +13,6 @@ _CHECKPOINT_REPOSITORY = "Checkpoint" + "Repository"
     "name",
     [
         _EVENT_MODEL,
-        "save_run",
-        "update_latest_attempt",
         "update_parent_oversight_facts",
         _REPLAY_CHECKPOINT_MODEL,
         _CHECKPOINT_REPOSITORY,
@@ -31,8 +29,6 @@ def test_legacy_interfaces_are_not_public_db_exports(name: str) -> None:
     "name",
     [
         _EVENT_MODEL,
-        "save_run",
-        "update_latest_attempt",
         "update_parent_oversight_facts",
         _REPLAY_CHECKPOINT_MODEL,
         _CHECKPOINT_REPOSITORY,
@@ -42,6 +38,14 @@ def test_legacy_interfaces_are_not_importable_from_db(name: str) -> None:
     statement = f"from {'orchestrator'}.db import {name}"
     with pytest.raises(ImportError):
         exec(statement, {})
+
+
+@pytest.mark.parametrize("name", ["save_run", "update_latest_attempt"])
+def test_usage_persistence_interfaces_are_public_db_exports(name: str) -> None:
+    assert name in db.__all__
+    assert callable(getattr(db, name))
+
+    exec(f"from {'orchestrator'}.db import {name}", {})
 
 
 @pytest.mark.parametrize(

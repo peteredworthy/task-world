@@ -91,6 +91,8 @@ if TYPE_CHECKING:
         delete_run,
         merge_token_usage_into_run,
         persist_clarification_response,
+        save_run,
+        update_latest_attempt,
     )
 
 
@@ -112,6 +114,14 @@ def __getattr__(name: str):
         from orchestrator.db.access.mutations import merge_token_usage_into_run
 
         return merge_token_usage_into_run
+    elif name == "save_run":
+        from orchestrator.db.access.mutations import save_run
+
+        return save_run
+    elif name == "update_latest_attempt":
+        from orchestrator.db.access.mutations import update_latest_attempt
+
+        return update_latest_attempt
     elif name == "create_clarification_request":
         from orchestrator.db.access.mutations import create_clarification_request
 
@@ -195,6 +205,7 @@ __all__ = [
     "delete_run",
     "merge_token_usage_into_run",
     "persist_clarification_response",
+    "save_run",
     "SqliteEventStore",
     "StoredEvent",
     "create_wired_event_store_v2",
@@ -207,6 +218,7 @@ __all__ = [
     "RunLifecycleProjector",
     "RunStateProjector",
     "TaskStateProjector",
+    "update_latest_attempt",
     "merge_token_usage_by_model",
     "clear_event_outbox",
     "commit_with_event_outbox",

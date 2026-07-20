@@ -96,3 +96,25 @@ uv run pyright
 uv run pre-commit run --all-files
 # all hooks passed, including pytest, module-imports, signal-routing, and UI checks
 ```
+
+## Public persistence API follow-up
+
+- `orchestrator.db` now publicly exports the reviewed persistence operations
+  `save_run` and `update_latest_attempt` through its lazy public interface.
+- The public database API contract now asserts that both functions are included in
+  `__all__`, resolve as callables, and are importable from `orchestrator.db`.
+- Repository and usage-aggregation tests import the reviewed database symbols from
+  `orchestrator.db` and state symbols from `orchestrator.state`; they no longer reach
+  into private `db.access` or `state` submodules.
+
+```text
+uv run pytest tests/integration/test_repositories.py tests/unit/test_repositories.py \
+  tests/unit/test_run_aggregation.py -q -n 0
+50 passed in 1.34s
+
+uv run python scripts/check_module_imports.py
+# clean (no output)
+
+uv run pyright
+0 errors, 0 warnings, 0 informations
+```

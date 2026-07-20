@@ -23,9 +23,9 @@ from orchestrator.db import (
     StepModel,
     TaskModel,
     merge_token_usage_by_model,
+    update_latest_attempt,
 )
-from orchestrator.db.access.mutations import update_latest_attempt
-from orchestrator.state.models import ModelTokenUsage, AttemptMetrics
+from orchestrator.state import AttemptMetrics, ModelTokenUsage
 
 
 def _legacy_usage_snapshot(value: object) -> object:
