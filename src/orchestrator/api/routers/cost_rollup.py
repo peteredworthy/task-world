@@ -13,7 +13,7 @@ from sqlalchemy import literal, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.api.deps import get_session
-from orchestrator.api.presenters import compute_cost_rollup
+from orchestrator.api.presenters import CostRollupCardinalityError, compute_cost_rollup
 from orchestrator.api.schemas.cost_rollup import (
     CostRollupDimension,
     CostRollupFact,
@@ -23,7 +23,7 @@ from orchestrator.api.schemas.cost_rollup import (
     SelectableRunnerTypeFilter,
 )
 from orchestrator.db import EventV2Model, RunModel
-from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX
+from orchestrator.graph_runtime import graph_aggregate_id
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -44,7 +44,7 @@ async def load_cost_rollup_facts(
         select(RunModel.id, EventV2Model.timestamp, EventV2Model.payload)
         .join(
             EventV2Model,
-            EventV2Model.aggregate_id == (literal(GRAPH_AGGREGATE_PREFIX) + RunModel.id),
+            EventV2Model.aggregate_id == (literal(graph_aggregate_id("")) + RunModel.id),
         )
         .where(EventV2Model.event_type == "node_usage_recorded")
         .order_by(EventV2Model.position)
@@ -90,5 +90,7 @@ async def get_cost_rollup(
         raise HTTPException(status_code=422, detail=jsonable_encoder(error.errors())) from error
     try:
         return compute_cost_rollup(await load_cost_rollup_facts(session, filters), tuple(group_by))
+    except CostRollupCardinalityError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

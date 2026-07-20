@@ -229,9 +229,9 @@ async def test_phase_handler_records_cost_and_interaction_logs_for_each_agent_ex
         assert artifact_by_phase["verifying"].output_text == "verifier output"
 
         run_state = await RunRepository(session).get("cost-run")
-        assert run_state.total_tokens_read == 0
-        assert run_state.total_tokens_write == 0
-        assert run_state.total_tokens_cache == 0
+        assert run_state.total_tokens_read == 130
+        assert run_state.total_tokens_write == 50
+        assert run_state.total_tokens_cache == 10
 
 
 async def test_phase_handler_records_recovering_cost_and_interaction_log_prompt(

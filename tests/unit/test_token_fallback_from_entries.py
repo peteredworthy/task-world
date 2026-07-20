@@ -126,10 +126,17 @@ class TestExtractMetricsAndUsage:
 
     def test_returns_empty_when_no_action_log(self) -> None:
         result = _make_result(action_log=None)
+        result.metrics.gen_ai_usage_input_tokens = 12
+        result.metrics.gen_ai_usage_output_tokens = 4
+        result.metrics.duration_ms = 99
+        result.model = "known-model"
         metrics, usage = PhaseHandler._extract_metrics_and_usage(result)
 
-        assert usage == []
-        assert metrics.gen_ai_usage_input_tokens == 0
+        assert len(usage) == 1
+        assert usage[0].model == "known-model"
+        assert usage[0].gen_ai_usage_input_tokens == 12
+        assert usage[0].latency_ms == 99
+        assert usage[0].rate_missing is True
 
     def test_returns_empty_when_aggregate_zero_and_no_entry_metrics(self) -> None:
         """No usage extracted when aggregate is 0 and entries have no metrics either."""
@@ -143,6 +150,17 @@ class TestExtractMetricsAndUsage:
 
         assert usage == []
         assert metrics.gen_ai_usage_input_tokens == 0
+
+    def test_uses_measured_result_duration_not_action_log_total(self) -> None:
+        al = _make_action_log(entries=[_make_entry(10, 2)], total_input=10, total_output=2)
+        al.total_duration_ms = 9_999
+        result = _make_result(al)
+        result.metrics.duration_ms = 123
+
+        metrics, usage = PhaseHandler._extract_metrics_and_usage(result)
+
+        assert usage[0].latency_ms == 123
+        assert metrics.duration_ms == 123
 
     def test_real_world_1_9m_tokens_scenario(self) -> None:
         """Simulate the 1.9M-displayed-tokens scenario: aggregate=0, entries have data."""

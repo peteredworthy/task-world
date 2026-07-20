@@ -16,6 +16,15 @@ EventOutboxObserver = Callable[[list["StoredEvent"]], Awaitable[None]]
 _SESSION_KEY = "orchestrator_event_outbox"
 
 
+class CommittedSecondaryOutputError(RuntimeError):
+    """A secondary sink failed after the authoritative transaction committed."""
+
+    def __init__(self, batches: list["EventOutboxBatch"], cause: Exception) -> None:
+        super().__init__(f"committed secondary output failed: {cause}")
+        self.batches = batches
+        self.__cause__ = cause
+
+
 @dataclass(frozen=True)
 class EventOutboxBatch:
     """A post-commit observer invocation queued on a SQLAlchemy session."""
@@ -60,9 +69,23 @@ async def rollback_with_event_outbox(session: "AsyncSession") -> None:
 async def flush_event_outbox(session: "AsyncSession") -> None:
     """Flush queued secondary event outputs in FIFO order."""
     batches = _get_batches(session)
-    for batch in batches:
-        await batch.observer(batch.events)
+    for index, batch in enumerate(batches):
+        try:
+            await batch.observer(batch.events)
+        except Exception as exc:
+            # Preserve the exact committed batch and every later batch. This is
+            # deliberately independent of graph command idempotency.
+            raise CommittedSecondaryOutputError(batches[index:], exc) from exc
     clear_event_outbox(session)
+
+
+async def retry_committed_secondary_output(error: CommittedSecondaryOutputError) -> None:
+    """Retry precisely the post-commit batches retained by an observer failure."""
+    for index, batch in enumerate(error.batches):
+        try:
+            await batch.observer(batch.events)
+        except Exception as exc:
+            raise CommittedSecondaryOutputError(error.batches[index:], exc) from exc
 
 
 def clear_event_outbox(session: "AsyncSession") -> None:

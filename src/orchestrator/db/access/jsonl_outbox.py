@@ -175,6 +175,15 @@ def _write_events_under_lock(
             lines = "\n".join(json.dumps(_to_record(event)) for event in new_events) + "\n"
             _append_lines(path, lines, rotation_operations)
             active_positions.update(event.position for event in new_events)
+            # Rotation is a postcondition of every durable append.  A batch
+            # larger than the limit is archived as one segment and leaves a
+            # fresh active file for the next writer.
+            if _should_rotate(path, max_bytes):
+                _rotate(path, rotation_operations)
+                path.touch()
+                rotation_operations.fsync_active(path)
+                rotation_operations.fsync_parent(path)
+                active_positions = set()
         return active_positions
 
 

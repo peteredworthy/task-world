@@ -431,7 +431,7 @@ def test_otel_usage_cutover_migrates_persisted_usage_facts_and_event_snapshots(
 
     expected_usage = {
         "model": "legacy-model",
-        "gen_ai_usage_input_tokens": 11,
+        "gen_ai_usage_input_tokens": 47,
         "gen_ai_usage_output_tokens": 13,
         "gen_ai_usage_cache_read_input_tokens": 17,
         "gen_ai_usage_cache_creation_input_tokens": 19,
@@ -483,7 +483,7 @@ def test_otel_usage_cutover_migrates_persisted_usage_facts_and_event_snapshots(
             "SELECT gen_ai_usage_input_tokens, gen_ai_usage_output_tokens, "
             "gen_ai_usage_cache_read_input_tokens, gen_ai_usage_cache_creation_input_tokens "
             "FROM cost_records"
-        ).fetchone() == (11, 13, 17, 19)
+        ).fetchone() == (47, 13, 17, 19)
         attempt_updated = json.loads(
             connection.execute(
                 "SELECT payload FROM events_v2 WHERE event_type = 'attempt_updated'"

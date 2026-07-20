@@ -70,6 +70,7 @@ router = APIRouter(prefix="/api/runs", tags=["graph"])
 
 _NODE_DETAIL_MAX_TEXT_CHARS = 1_000_000
 _NODE_DETAIL_MAX_LIST_ITEMS = 200
+_GRAPH_HEALTH_MAX_DETAILS = 20
 _GRAPH_IDENTIFIER_PATTERN = r"^[A-Za-z0-9_.:-]+$"
 
 GraphIdentifier = Annotated[
@@ -317,6 +318,7 @@ class GraphHealthResponse(ApiModel):
     verifier: GraphHealthVerifierResponse
     pending_gates: list[GraphHealthPendingGateResponse]
     review_blockers: list[str]
+    detail_meta: dict[str, dict[str, int | bool]]
 
 
 def _empty_dict_items() -> list[dict[str, Any]]:
@@ -908,6 +910,7 @@ def build_graph_health_response(
             verifier=GraphHealthVerifierResponse(passed=0, failed=0, recent=[]),
             pending_gates=[],
             review_blockers=[],
+            detail_meta={},
         )
 
     projection = build_projection(events)
@@ -955,23 +958,37 @@ def build_graph_health_response(
         pending_gates=len(pending_gates),
     )
     run_state = project_run_state(events, projection=projection)
+    detail_lists: dict[str, list[Any]] = {
+        "failed_nodes": failed_nodes,
+        "expired_leases": expired_leases,
+        "blockers": blockers,
+        "recent_patch_decisions": patches,
+        "verifier_recent": verifier_recent,
+        "pending_gates": pending_gates,
+        "review_blockers": review_blockers,
+    }
+    detail_meta = {
+        name: {"total": len(rows), "truncated": len(rows) > _GRAPH_HEALTH_MAX_DETAILS}
+        for name, rows in detail_lists.items()
+    }
     return GraphHealthResponse(
         run_id=run_id,
         event_count=max(event.position for event in events),
         run_state=run_state,
         status="blocked" if blockers or failed_nodes or pending_gates else (run_state or "unknown"),
         counts=counts,
-        failed_nodes=failed_nodes,
-        expired_leases=expired_leases,
-        blockers=blockers,
-        recent_patch_decisions=patches[-20:],
+        failed_nodes=failed_nodes[:_GRAPH_HEALTH_MAX_DETAILS],
+        expired_leases=expired_leases[:_GRAPH_HEALTH_MAX_DETAILS],
+        blockers=blockers[:_GRAPH_HEALTH_MAX_DETAILS],
+        recent_patch_decisions=patches[-_GRAPH_HEALTH_MAX_DETAILS:],
         verifier=GraphHealthVerifierResponse(
             passed=counts.verifier_passed,
             failed=counts.verifier_failed,
-            recent=verifier_recent[-20:],
+            recent=verifier_recent[-_GRAPH_HEALTH_MAX_DETAILS:],
         ),
-        pending_gates=pending_gates,
-        review_blockers=review_blockers,
+        pending_gates=pending_gates[:_GRAPH_HEALTH_MAX_DETAILS],
+        review_blockers=review_blockers[:_GRAPH_HEALTH_MAX_DETAILS],
+        detail_meta=detail_meta,
     )
 
 
@@ -1018,7 +1035,7 @@ def _expired_lease_rows(
 
 
 def _health_patch_decisions(events: list[EventEnvelope]) -> list[GraphHealthPatchDecisionResponse]:
-    rows: list[GraphHealthPatchDecisionResponse] = []
+    by_patch: dict[str, GraphHealthPatchDecisionResponse] = {}
     for event in events:
         if event.event_type not in {"graph_patch_accepted", "graph_patch_rejected"}:
             continue
@@ -1027,20 +1044,18 @@ def _health_patch_decisions(events: list[EventEnvelope]) -> list[GraphHealthPatc
             continue
         accepted = event.event_type == "graph_patch_accepted"
         reason = event.payload.get("reason")
-        rows.append(
-            GraphHealthPatchDecisionResponse(
-                patch_id=patch_id,
-                decision="accepted" if accepted else "rejected",
-                reason=reason if isinstance(reason, str) else None,
-            )
+        by_patch[patch_id] = GraphHealthPatchDecisionResponse(
+            patch_id=patch_id,
+            decision="accepted" if accepted else "rejected",
+            reason=reason if isinstance(reason, str) else None,
         )
-    return rows
+    return list(by_patch.values())
 
 
 def _health_verifier_results(
     events: list[EventEnvelope],
 ) -> list[GraphHealthVerifierResultResponse]:
-    rows: list[GraphHealthVerifierResultResponse] = []
+    by_verifier_candidate: dict[tuple[str, str], GraphHealthVerifierResultResponse] = {}
     for event in events:
         if event.event_type not in {"verification_passed", "verification_failed"}:
             continue
@@ -1049,14 +1064,12 @@ def _health_verifier_results(
             event.payload.get("candidate_id"),
         )
         if isinstance(node_id, str) and isinstance(candidate_id, str):
-            rows.append(
-                GraphHealthVerifierResultResponse(
-                    node_id=node_id,
-                    candidate_id=candidate_id,
-                    verdict="passed" if event.event_type == "verification_passed" else "failed",
-                )
+            by_verifier_candidate[(node_id, candidate_id)] = GraphHealthVerifierResultResponse(
+                node_id=node_id,
+                candidate_id=candidate_id,
+                verdict="passed" if event.event_type == "verification_passed" else "failed",
             )
-    return rows
+    return list(by_verifier_candidate.values())
 
 
 def build_decision_view_response(

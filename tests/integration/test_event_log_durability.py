@@ -25,6 +25,7 @@ from orchestrator.config.enums import (
 )
 from orchestrator.db import (
     AttemptModel,
+    CommittedSecondaryOutputError,
     EventV2Model,
     JsonlOutboxObserver,
     ProjectionRegistry,
@@ -1095,7 +1096,7 @@ async def test_journal_failure_is_secondary_sink_post_commit(
 
         # secondary sink / post_commit boundary: journal failure happens after
         # database commit, so the accepted events_v2 row remains authoritative.
-        with pytest.raises((FileExistsError, NotADirectoryError)):
+        with pytest.raises(CommittedSecondaryOutputError):
             await commit_with_event_outbox(session)
 
     async with factory() as session:

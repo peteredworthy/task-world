@@ -41,6 +41,27 @@ def _rewrite_usage_entries(value: Any, key_map: Mapping[str, str]) -> Any:
         if "model" not in rewritten:
             rewritten_entries.append(rewritten)
             continue
+        legacy_input_is_exclusive = (
+            key_map is _LEGACY_TO_CANONICAL
+            and "input_tokens" in rewritten
+            and "gen_ai_usage_input_tokens" not in rewritten
+        )
+        canonical_input_is_inclusive = (
+            key_map is _CANONICAL_TO_LEGACY and "gen_ai_usage_input_tokens" in rewritten
+        )
+        if canonical_input_is_inclusive:
+            canonical_input = rewritten["gen_ai_usage_input_tokens"]
+            cache_read = rewritten.get("gen_ai_usage_cache_read_input_tokens", 0)
+            cache_creation = rewritten.get("gen_ai_usage_cache_creation_input_tokens", 0)
+            if not all(
+                isinstance(value, int | float)
+                for value in (canonical_input, cache_read, cache_creation)
+            ):
+                raise ValueError("usage migration input/cache values must be numeric")
+            exclusive_input = canonical_input - cache_read - cache_creation
+            if exclusive_input < 0:
+                raise ValueError("usage migration input underflow after subtracting cache")
+            rewritten["gen_ai_usage_input_tokens"] = exclusive_input
         for source, target in key_map.items():
             if (
                 source in rewritten
@@ -51,6 +72,10 @@ def _rewrite_usage_entries(value: Any, key_map: Mapping[str, str]) -> Any:
             if target not in rewritten and source in rewritten:
                 rewritten[target] = rewritten[source]
             rewritten.pop(source, None)
+        if legacy_input_is_exclusive:
+            rewritten["gen_ai_usage_input_tokens"] += rewritten.get(
+                "gen_ai_usage_cache_read_input_tokens", 0
+            ) + rewritten.get("gen_ai_usage_cache_creation_input_tokens", 0)
         rewritten_entries.append(rewritten)
     return rewritten_entries
 
@@ -123,12 +148,13 @@ def _usage_totals(raw_value: Any) -> tuple[int, int, int]:
             and isinstance(cast(dict[str, Any], entry).get(key, 0), int | float)
         )
 
-    return (
-        total("gen_ai_usage_input_tokens"),
-        total("gen_ai_usage_output_tokens"),
-        total("gen_ai_usage_cache_read_input_tokens")
-        + total("gen_ai_usage_cache_creation_input_tokens"),
+    cache_tokens = total("gen_ai_usage_cache_read_input_tokens") + total(
+        "gen_ai_usage_cache_creation_input_tokens"
     )
+    input_tokens = total("gen_ai_usage_input_tokens") - cache_tokens
+    if input_tokens < 0:
+        raise ValueError("usage migration input underflow after subtracting cache")
+    return (input_tokens, total("gen_ai_usage_output_tokens"), cache_tokens)
 
 
 def _restore_flat_totals(table: str, columns: tuple[str, str, str]) -> None:
@@ -159,6 +185,15 @@ def upgrade() -> None:
         _rewrite_json_column(table, "token_usage_by_model", _LEGACY_TO_CANONICAL)
     _rewrite_event_payloads(_LEGACY_TO_CANONICAL)
 
+    # Legacy flat input excluded cache components.  The OTel field is
+    # cache-inclusive, so migrate the stored scalar facts with the same rule.
+    connection = op.get_bind()
+    connection.execute(
+        sa.text(
+            "UPDATE cost_records SET input_tokens = input_tokens + cache_read_tokens + cache_write_tokens"
+        )
+    )
+
     with op.batch_alter_table("runs") as batch_op:
         batch_op.drop_column("total_tokens_read")
         batch_op.drop_column("total_tokens_write")
@@ -179,6 +214,21 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    connection = op.get_bind()
+    invalid = connection.execute(
+        sa.text(
+            "SELECT COUNT(*) FROM cost_records WHERE gen_ai_usage_input_tokens "
+            "< gen_ai_usage_cache_read_input_tokens + gen_ai_usage_cache_creation_input_tokens"
+        )
+    ).scalar_one()
+    if invalid:
+        raise ValueError("usage migration input underflow after subtracting cache")
+    connection.execute(
+        sa.text(
+            "UPDATE cost_records SET gen_ai_usage_input_tokens = gen_ai_usage_input_tokens "
+            "- gen_ai_usage_cache_read_input_tokens - gen_ai_usage_cache_creation_input_tokens"
+        )
+    )
     with op.batch_alter_table("cost_records") as batch_op:
         batch_op.alter_column("gen_ai_usage_input_tokens", new_column_name="input_tokens")
         batch_op.alter_column("gen_ai_usage_output_tokens", new_column_name="output_tokens")

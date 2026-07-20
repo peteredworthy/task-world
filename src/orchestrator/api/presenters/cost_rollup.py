@@ -13,6 +13,10 @@ from orchestrator.api.schemas.cost_rollup import (
 )
 
 
+class CostRollupCardinalityError(ValueError):
+    """Requested dimensions exceed the bounded rollup response cardinality."""
+
+
 def _dimension_value(fact: CostRollupFact, dimension: CostRollupDimension) -> str | None:
     if dimension == "day":
         return fact.timestamp.astimezone(timezone.utc).date().isoformat()
@@ -40,7 +44,9 @@ def compute_cost_rollup(
         key = tuple(_dimension_value(fact, dimension) for dimension in group_by)
         if key not in grouped:
             if len(grouped) >= max_rows:
-                raise ValueError(f"cost rollup exceeds maximum of {max_rows} groups")
+                raise CostRollupCardinalityError(
+                    f"cost rollup exceeds maximum of {max_rows} groups; narrow dimensions or filters"
+                )
             grouped[key] = []
         grouped[key].append(fact)
 

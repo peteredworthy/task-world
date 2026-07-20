@@ -125,3 +125,31 @@ macOS compatibility exception accepts `/tmp` only when its exact link target is
 and diff check passed. Final approval remains pending; commit evidence follows.
 
 Hook-verified implementation commit: `ca61e0d8e Harden generic artifact lock traversal`.
+
+## R04 Final Review Remediation Wave
+
+This coordinated follow-up preserves untagged historical usage during graph
+read-model rebuilds, subtracting only tagged graph index-zero latency/actions
+before replay. Graph facts now retain their provenance through repository
+round-trips. The R04 migration treats legacy input as cache-exclusive in JSON
+facts, event snapshots, and cost-record columns; downgrade validates cache
+underflow before restoring the exclusive representation.
+
+Runner metrics without an action log produce one unknown-rate usage fact (with
+the available result model when present), and legacy metrics reconstruction now
+keeps the measured result duration. JSONL rotation is post-append, so a single
+oversized append archives itself and leaves an empty active segment. A committed
+secondary-output failure retains the exact observer batches and the graph
+controller retries them without rerunning a graph command.
+
+Graph health details have bounded response lists plus per-list total/truncated
+metadata, and patch/verifier retry histories are reduced to their current
+identity state. Cost-rollup cardinality has a dedicated 400 error with a
+narrowing hint; ordinary invalid/duplicate dimensions remain 422. The rollup
+router now consumes the public graph-runtime aggregate helper.
+
+Focused evidence: graph usage/replay, migration, rotation, usage extraction,
+graph API, and cost-rollup suites: `95 passed`. UI: `450 passed`. Ruff and
+Pyright pass. A full backend run was started but exceeded the harness's
+120-second command timeout after reporting two transient failures; its
+last-failed rerun was green (`27 passed`).

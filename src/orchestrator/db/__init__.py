@@ -49,11 +49,13 @@ from orchestrator.db.access.jsonl_outbox import (
 from orchestrator.db.access.event_outbox import (
     EventOutboxBatch,
     EventOutboxObserver,
+    CommittedSecondaryOutputError,
     clear_event_outbox,
     commit_with_event_outbox,
     flush_event_outbox,
     queue_event_outbox,
     rollback_with_event_outbox,
+    retry_committed_secondary_output,
 )
 
 # Backup utilities
@@ -216,6 +218,7 @@ __all__ = [
     "ConcurrencyConflictError",
     "EventOutboxBatch",
     "EventOutboxObserver",
+    "CommittedSecondaryOutputError",
     "RetryWithBackoff",
     "is_retriable_sqlite_write_conflict",
     "ProjectionRegistry",
@@ -229,6 +232,7 @@ __all__ = [
     "flush_event_outbox",
     "queue_event_outbox",
     "rollback_with_event_outbox",
+    "retry_committed_secondary_output",
     # JSONL outbox
     "JsonlOutboxObserver",
     "RotationOperations",

@@ -102,12 +102,27 @@ async def test_rotation_archives_exact_position_range_without_overwriting(tmp_pa
     archive = tmp_path / "history.10-10.jsonl"
     assert archive.exists()
     assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [10]
-    assert [json.loads(line)["position"] for line in path.read_text().splitlines()] == [11]
+    assert [
+        json.loads(line)["position"]
+        for line in (tmp_path / "history.11-11.jsonl").read_text().splitlines()
+    ] == [11]
+    assert path.read_text() == ""
 
     path.write_text(json.dumps({"position": 10}) + "\n")
     with pytest.raises(FileExistsError):
         await JsonlOutboxObserver(path, max_bytes=1)([_event(12)])
     assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [10]
+
+
+async def test_append_that_crosses_limit_rotates_in_same_call(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+
+    await JsonlOutboxObserver(path, max_bytes=1)([_event(10)])
+
+    archive = tmp_path / "history.10-10.jsonl"
+    assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [10]
+    assert path.exists()
+    assert path.read_text() == ""
 
 
 async def test_rotation_syncs_active_then_links_fsyncs_unlinks_and_fsyncs_parent(
@@ -194,8 +209,8 @@ async def test_restart_deduplicates_archived_positions_with_bounded_active_state
     restarted = JsonlOutboxObserver(path, max_bytes=1)
     await restarted([_event(1), _event(2), _event(3)])
 
-    assert [segment.first_position for segment in discover_journal_segments(path)] == [1, 2]
-    assert restarted._written == {3}
+    assert [segment.first_position for segment in discover_journal_segments(path)] == [1, 2, 3]
+    assert restarted._written == set()
 
 
 async def test_rotation_failure_propagates(tmp_path: Path) -> None:

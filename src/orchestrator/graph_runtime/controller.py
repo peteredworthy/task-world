@@ -24,7 +24,12 @@ from orchestrator.graph import (
     serialize_event_payload,
 )
 from orchestrator.state import ModelTokenUsage
-from orchestrator.db import commit_with_event_outbox, is_retriable_sqlite_write_conflict
+from orchestrator.db import (
+    CommittedSecondaryOutputError,
+    commit_with_event_outbox,
+    is_retriable_sqlite_write_conflict,
+    retry_committed_secondary_output,
+)
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime.errors import StaleProjectionError
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, append_outbox_rows
@@ -169,7 +174,13 @@ class GraphController:
                 # Graph events queue the same post-commit JSONL observer used
                 # by workflow events. A secondary journal failure propagates
                 # only after the authoritative graph transaction is committed.
-                await commit_with_event_outbox(session)
+                try:
+                    await commit_with_event_outbox(session)
+                except CommittedSecondaryOutputError as exc:
+                    # The graph command is already durable. Retry its exact
+                    # observer batch, rather than reapplying the command or
+                    # letting dispatch translate a journal fault to agent death.
+                    await retry_committed_secondary_output(exc)
             except Exception:
                 await session.rollback()
                 raise

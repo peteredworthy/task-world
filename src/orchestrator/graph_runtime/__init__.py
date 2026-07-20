@@ -41,7 +41,7 @@ from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, Side
 from orchestrator.graph_runtime.prompts import hydrate_artifact_excerpt, planner_evidence
 from orchestrator.graph_runtime.recovery import RecoveryReport, recover, reconcile_graph
 from orchestrator.graph_runtime.seeding import SeedRunResult, seed_run
-from orchestrator.graph_runtime.store import GraphEventStore
+from orchestrator.graph_runtime.store import GraphEventStore, graph_aggregate_id
 
 __all__ = [
     "GraphCommandResult",
@@ -52,6 +52,7 @@ __all__ = [
     "GraphDispatchContext",
     "GraphDispatchExecutor",
     "GraphEventStore",
+    "graph_aggregate_id",
     "GraphRuntimeError",
     "HORIZON_REGION_PURPOSES",
     "CompromisedFileStateError",

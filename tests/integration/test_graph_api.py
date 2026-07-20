@@ -586,6 +586,7 @@ async def test_graph_health_returns_an_empty_bounded_snapshot_for_a_saved_run(
         "verifier": {"passed": 0, "failed": 0, "recent": []},
         "pending_gates": [],
         "review_blockers": [],
+        "detail_meta": {},
     }
 
 

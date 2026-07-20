@@ -973,9 +973,32 @@ class GraphEventStore:
         run_model = await self._session.get(RunModel, run_id)
         if run_model is None:
             return
-        run_model.token_usage_by_model = []
-        run_model.total_duration_ms = 0
-        run_model.total_num_actions = 0
+        existing = list(run_model.token_usage_by_model or [])
+        graph_entries = [
+            entry for entry in existing if isinstance(entry.get("graph_usage_key"), str)
+        ]
+        legacy_entries = [
+            entry for entry in existing if not isinstance(entry.get("graph_usage_key"), str)
+        ]
+        graph_index_zero = [
+            entry
+            for entry in graph_entries
+            if str(entry["graph_usage_key"]).rsplit(":", 1)[-1] == "0"
+        ]
+        # Runs predating R04 may contain untagged usage and rollup totals.  Only
+        # tagged graph facts are disposable; remove their contribution before
+        # replaying, leaving the historical baseline intact.
+        run_model.token_usage_by_model = legacy_entries
+        run_model.total_duration_ms = max(
+            0,
+            (run_model.total_duration_ms or 0)
+            - sum(int(entry.get("latency_ms", 0)) for entry in graph_index_zero),
+        )
+        run_model.total_num_actions = max(
+            0,
+            (run_model.total_num_actions or 0)
+            - sum(int(entry.get("graph_usage_num_actions", 0)) for entry in graph_index_zero),
+        )
         await self.apply_run_usage_events(run_id, events, run_model=run_model)
 
     async def apply_run_usage_events(
@@ -1013,7 +1036,10 @@ class GraphEventStore:
                 latency_ms=usage.latency_ms,
                 rate_missing=usage.rate_missing,
             ).model_dump(mode="json")
-            existing.append({"graph_usage_key": usage.usage_key, **usage_record})
+            graph_entry: dict[str, object] = {"graph_usage_key": usage.usage_key, **usage_record}
+            if usage.usage_index == 0:
+                graph_entry["graph_usage_num_actions"] = usage.num_actions
+            existing.append(graph_entry)
             recorded_keys.add(usage.usage_key)
             if usage.usage_index == 0:
                 model.total_duration_ms = (model.total_duration_ms or 0) + usage.latency_ms

@@ -116,7 +116,7 @@ async def test_controller_persists_usage_event_and_replays_run_usage_read_model(
 
 
 @pytest.mark.asyncio
-async def test_rebuild_replaces_stale_run_usage_with_empty_graph_usage(
+async def test_rebuild_preserves_untagged_historical_usage_when_graph_usage_is_empty(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
     context = _context()
@@ -146,9 +146,49 @@ async def test_rebuild_replaces_stale_run_usage_with_empty_graph_usage(
         run = await session.get(RunModel, context.run_id)
 
     assert run is not None
-    assert run.token_usage_by_model == []
-    assert run.total_duration_ms == 0
-    assert run.total_num_actions == 0
+    assert run.token_usage_by_model == [{"model": "stale"}]
+    assert run.total_duration_ms == 999
+    assert run.total_num_actions == 88
+
+
+@pytest.mark.asyncio
+async def test_rebuild_replaces_only_graph_usage_and_preserves_legacy_baseline(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    context = _context()
+    graph_usage = ModelTokenUsage(model="graph-model", latency_ms=50).model_dump(mode="json")
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                RunModel(
+                    id=context.run_id,
+                    repo_name="usage-repo",
+                    status="active",
+                    execution_mode="graph",
+                    total_duration_ms=150,
+                    total_num_actions=6,
+                    token_usage_by_model=[
+                        {"model": "legacy", "input_tokens": 7},
+                        {"graph_usage_key": "execution-1:0", **graph_usage},
+                    ],
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+                )
+            )
+            await GraphEventStore(session).append_events(
+                context.run_id,
+                0,
+                [_event("node-1", "node_created", {"node_id": "worker-1", "kind": "worker"})],
+            )
+            await GraphEventStore(session).rebuild_read_models(context.run_id)
+
+    async with session_factory() as session:
+        run = await session.get(RunModel, context.run_id)
+
+    assert run is not None
+    assert run.token_usage_by_model == [{"model": "legacy", "input_tokens": 7}]
+    assert run.total_duration_ms == 100
+    assert run.total_num_actions == 6
 
 
 @pytest.mark.asyncio

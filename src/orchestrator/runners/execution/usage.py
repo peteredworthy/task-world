@@ -148,14 +148,22 @@ def extract_metrics_and_usage(
                     + u.gen_ai_usage_cache_creation_input_tokens
                     for u in usage_by_model
                 ),
-                duration_ms=al.total_duration_ms,
+                # The runner's measured execution interval is authoritative;
+                # action-log totals describe a different aggregation boundary.
+                duration_ms=metrics.duration_ms,
                 num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
             )
 
-    elif reasoning_output_tokens or finish_reasons:
+    elif (
+        metrics.gen_ai_usage_input_tokens
+        or metrics.gen_ai_usage_output_tokens
+        or metrics.gen_ai_usage_cache_read_input_tokens
+        or reasoning_output_tokens
+        or finish_reasons
+    ):
         usage_by_model.append(
             _usage_fact(
-                model="unknown",
+                model=getattr(result, "model", None) or "unknown",
                 input_tokens=metrics.gen_ai_usage_input_tokens,
                 output_tokens=metrics.gen_ai_usage_output_tokens,
                 cache_read_tokens=metrics.gen_ai_usage_cache_read_input_tokens,
