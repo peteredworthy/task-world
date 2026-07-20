@@ -507,11 +507,21 @@ def run_to_model(run: Run) -> RunModel:
         total_duration_ms=run.total_duration_ms,
         total_num_actions=run.total_num_actions,
         token_usage_by_model=(
-            [u.model_dump(mode="json") for u in run.token_usage_by_model]
+            [_usage_to_persistence(u) for u in run.token_usage_by_model]
             if run.token_usage_by_model
             else None
         ),
     )
+
+
+def _usage_to_persistence(usage: ModelTokenUsage) -> dict[str, Any]:
+    """Serialize public usage plus internal graph provenance when present."""
+    record = usage.model_dump(mode="json")
+    if usage.graph_usage_key is not None:
+        record["graph_usage_key"] = usage.graph_usage_key
+    if usage.graph_usage_num_actions is not None:
+        record["graph_usage_num_actions"] = usage.graph_usage_num_actions
+    return record
 
 
 class RunRepository:

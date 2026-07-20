@@ -274,10 +274,11 @@ export interface GraphHealthResponse {
   failed_nodes: Array<{ node_id: string; reason: string }>;
   expired_leases: Array<{ lease_id: string; node_id: string; reason: string }>;
   blockers: Array<{ node_id: string; kind: string; reason: string }>;
-  recent_patch_decisions: Array<{ patch_id: string; decision: string; reason?: string }>;
+  recent_patch_decisions: Array<{ patch_id: string; decision: string; reason?: string | null }>;
   verifier: { passed: number; failed: number; recent: Array<{ node_id: string; candidate_id: string; verdict: string }> };
   pending_gates: Array<{ node_id: string; gate_type: string }>;
   review_blockers: string[];
+  detail_meta: Record<string, { total: number; truncated: boolean }>;
 }
 
 export interface PendingGateDecision {

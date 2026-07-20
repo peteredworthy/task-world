@@ -12,6 +12,7 @@ from orchestrator.graph_runtime.dispatch import (
     reconcile_runtime,
 )
 from orchestrator.graph_runtime.errors import (
+    CommittedJournalDeliveryError,
     CompromisedFileStateError,
     GraphRuntimeError,
     OutboxAppendError,
@@ -56,6 +57,7 @@ __all__ = [
     "GraphRuntimeError",
     "HORIZON_REGION_PURPOSES",
     "CompromisedFileStateError",
+    "CommittedJournalDeliveryError",
     "CleanupApplication",
     "FileStateBoundaryResult",
     "ClaudeGatekeeperClassifier",

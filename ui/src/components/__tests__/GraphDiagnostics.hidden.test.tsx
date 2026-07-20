@@ -339,6 +339,15 @@ function makeHealth(runId: string): GraphHealthResponse {
     },
     pending_gates: [{ node_id: 'gate-human', gate_type: 'human_approval' }],
     review_blockers: ['review-final: final invariant missing verification_evidence'],
+    detail_meta: {
+      failed_nodes: { total: 1, truncated: false },
+      expired_leases: { total: 3, truncated: true },
+      blockers: { total: 1, truncated: false },
+      recent_patch_decisions: { total: 2, truncated: false },
+      verifier_recent: { total: 1, truncated: false },
+      pending_gates: { total: 1, truncated: false },
+      review_blockers: { total: 1, truncated: false },
+    },
   };
 }
 

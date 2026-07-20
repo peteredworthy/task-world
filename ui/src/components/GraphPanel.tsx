@@ -62,7 +62,8 @@ function GraphSummaryMetric({ label, value }: { label: string; value: number | s
 function GraphHealth({ health }: { health: GraphHealthResponse }) {
   const counts = health.counts ?? {};
   const verifier = health.verifier ?? { passed: 0, failed: 0 };
-  return <section className="space-y-2 text-xs"><h3 className="text-sm font-semibold text-text-primary">Graph health</h3><div className="grid grid-cols-2 gap-2"><GraphSummaryMetric label="Expired leases" value={counts.expired_leases ?? 0} /><GraphSummaryMetric label="Final blockers" value={counts.final_blockers ?? 0} /><GraphSummaryMetric label="Verifier pass/fail" value={`${verifier.passed}/${verifier.failed}`} /></div>{(health.expired_leases ?? []).map((lease) => <div key={lease.lease_id}>{lease.reason}</div>)}</section>;
+  const expiredMeta = health.detail_meta?.expired_leases;
+  return <section className="space-y-2 text-xs"><h3 className="text-sm font-semibold text-text-primary">Graph health</h3><div className="grid grid-cols-2 gap-2"><GraphSummaryMetric label="Expired leases" value={counts.expired_leases ?? 0} /><GraphSummaryMetric label="Final blockers" value={counts.final_blockers ?? 0} /><GraphSummaryMetric label="Verifier pass/fail" value={`${verifier.passed}/${verifier.failed}`} /></div>{expiredMeta?.truncated && <p className="text-text-muted">Showing {health.expired_leases.length} of {expiredMeta.total} expired leases</p>}{(health.expired_leases ?? []).map((lease) => <div key={lease.lease_id}>{lease.reason}</div>)}</section>;
 }
 
 function graphActivityKind(event: ActivityEvent): 'patch' | 'verifier' | 'blocker' | null {

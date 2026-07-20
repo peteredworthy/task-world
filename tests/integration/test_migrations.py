@@ -645,3 +645,43 @@ def test_otel_usage_cutover_equal_collisions_collapse_and_differing_collisions_r
                 "SELECT token_usage_by_model FROM runs WHERE id = 'conflict-run'"
             ).fetchone()[0]
         ) == [differing_collision]
+
+
+def test_otel_usage_cutover_rejects_equal_input_collision_when_cache_is_present(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "otel-usage-cache-collision.db"
+    config = _alembic_config(database_path)
+    command.upgrade(config, "zg1h2i3j4k5l")
+    ambiguous = {
+        "model": "ambiguous-model",
+        "input_tokens": 11,
+        "gen_ai_usage_input_tokens": 11,
+        "cache_read_tokens": 2,
+    }
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            "INSERT INTO runs (id, repo_name, status, runner_config, config, created_at, updated_at, "
+            "token_usage_by_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "ambiguous-run",
+                "repo",
+                "draft",
+                "{}",
+                "{}",
+                "2025-01-01",
+                "2025-01-01",
+                json.dumps([ambiguous]),
+            ),
+        )
+        connection.commit()
+
+    with pytest.raises(ValueError, match="ambiguous"):
+        command.upgrade(config, "r04a1b2c3d4e")
+
+    with sqlite3.connect(database_path) as connection:
+        assert json.loads(
+            connection.execute(
+                "SELECT token_usage_by_model FROM runs WHERE id = 'ambiguous-run'"
+            ).fetchone()[0]
+        ) == [ambiguous]

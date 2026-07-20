@@ -43,6 +43,7 @@ from orchestrator.db.access.jsonl_outbox import (
     SystemRotationOperations,
     JournalSegment,
     discover_journal_segments,
+    drain_committed_events_to_journal,
     resolve_default_journal_path,
     resolve_default_journal_path_from_session,
 )
@@ -239,6 +240,7 @@ __all__ = [
     "SystemRotationOperations",
     "JournalSegment",
     "discover_journal_segments",
+    "drain_committed_events_to_journal",
     "resolve_default_journal_path",
     "resolve_default_journal_path_from_session",
     # backup

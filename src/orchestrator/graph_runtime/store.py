@@ -1035,10 +1035,13 @@ class GraphEventStore:
                 cost_usd=usage.cost_usd,
                 latency_ms=usage.latency_ms,
                 rate_missing=usage.rate_missing,
+                graph_usage_key=usage.usage_key,
+                graph_usage_num_actions=usage.num_actions if usage.usage_index == 0 else None,
             ).model_dump(mode="json")
-            graph_entry: dict[str, object] = {"graph_usage_key": usage.usage_key, **usage_record}
+            usage_record["graph_usage_key"] = usage.usage_key
             if usage.usage_index == 0:
-                graph_entry["graph_usage_num_actions"] = usage.num_actions
+                usage_record["graph_usage_num_actions"] = usage.num_actions
+            graph_entry: dict[str, object] = usage_record
             existing.append(graph_entry)
             recorded_keys.add(usage.usage_key)
             if usage.usage_index == 0:

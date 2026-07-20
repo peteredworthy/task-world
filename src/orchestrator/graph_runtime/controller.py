@@ -31,7 +31,7 @@ from orchestrator.db import (
     retry_committed_secondary_output,
 )
 from orchestrator.graph.commands import Clock, IdGenerator
-from orchestrator.graph_runtime.errors import StaleProjectionError
+from orchestrator.graph_runtime.errors import CommittedJournalDeliveryError, StaleProjectionError
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, append_outbox_rows
 from orchestrator.graph_runtime.store import GraphEventStore
 
@@ -180,7 +180,12 @@ class GraphController:
                     # The graph command is already durable. Retry its exact
                     # observer batch, rather than reapplying the command or
                     # letting dispatch translate a journal fault to agent death.
-                    await retry_committed_secondary_output(exc)
+                    try:
+                        await retry_committed_secondary_output(exc)
+                    except CommittedSecondaryOutputError as retry_error:
+                        raise CommittedJournalDeliveryError(
+                            "committed graph events await durable journal drain"
+                        ) from retry_error
             except Exception:
                 await session.rollback()
                 raise

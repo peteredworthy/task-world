@@ -41,6 +41,21 @@ def _rewrite_usage_entries(value: Any, key_map: Mapping[str, str]) -> Any:
         if "model" not in rewritten:
             rewritten_entries.append(rewritten)
             continue
+        if (
+            key_map is _LEGACY_TO_CANONICAL
+            and rewritten.get("input_tokens") == rewritten.get("gen_ai_usage_input_tokens")
+            and "input_tokens" in rewritten
+            and any(
+                key in rewritten
+                for key in (
+                    "cache_read_tokens",
+                    "cache_creation_tokens",
+                    "gen_ai_usage_cache_read_input_tokens",
+                    "gen_ai_usage_cache_creation_input_tokens",
+                )
+            )
+        ):
+            raise ValueError("usage migration ambiguous equal input collision with cache")
         legacy_input_is_exclusive = (
             key_map is _LEGACY_TO_CANONICAL
             and "input_tokens" in rewritten

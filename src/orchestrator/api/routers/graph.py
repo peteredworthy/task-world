@@ -1019,10 +1019,28 @@ def _health_pending_gates(rows: list[PendingGateDecision]) -> list[GraphHealthPe
 def _expired_lease_rows(
     leases: dict[str, dict[str, Any]], failed_reasons: dict[str, str]
 ) -> list[GraphHealthExpiredLeaseResponse]:
+    latest_by_node_execution: dict[tuple[str, str | None], dict[str, Any]] = {}
+    for lease in leases.values():
+        node_id = lease.get("node_id")
+        if not isinstance(node_id, str):
+            continue
+        key = (
+            node_id,
+            lease.get("execution_id") if isinstance(lease.get("execution_id"), str) else None,
+        )
+        prior = latest_by_node_execution.get(key)
+        if prior is None or int(lease.get("generation") or 0) > int(prior.get("generation") or 0):
+            latest_by_node_execution[key] = lease
     rows: list[GraphHealthExpiredLeaseResponse] = []
     for lease_id, lease in sorted(leases.items()):
         node_id = lease.get("node_id")
         if lease.get("state") != "expired" or not isinstance(node_id, str):
+            continue
+        key = (
+            node_id,
+            lease.get("execution_id") if isinstance(lease.get("execution_id"), str) else None,
+        )
+        if latest_by_node_execution.get(key) is not lease:
             continue
         rows.append(
             GraphHealthExpiredLeaseResponse(

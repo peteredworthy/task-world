@@ -9,6 +9,10 @@ class StaleProjectionError(GraphRuntimeError):
     """Raised when a command appends against a stale run-local position."""
 
 
+class CommittedJournalDeliveryError(GraphRuntimeError):
+    """Graph events committed but their journal secondary output still failed."""
+
+
 class OutboxAppendError(GraphRuntimeError):
     """Raised when side-effect intent cannot be written atomically."""
 

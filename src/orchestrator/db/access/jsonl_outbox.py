@@ -121,6 +121,32 @@ class JsonlOutboxObserver:
             )
 
 
+async def drain_committed_events_to_journal(
+    session: "AsyncSession",
+    path: Path,
+    *,
+    batch_size: int = 200,
+    max_bytes: int = 64 * 1024 * 1024,
+) -> int:
+    """Write committed DB events absent from the journal in bounded batches.
+
+    The event table is authoritative after a post-commit observer failure, so
+    this intentionally reconstructs retry work after a process boundary rather
+    than relying on the failed observer's in-memory batch.
+    """
+    if batch_size < 1:
+        raise ValueError("batch_size must be positive")
+    from orchestrator.db.access.event_store_v2 import SqliteEventStore
+
+    existing = _journal_positions(path)
+    events = await SqliteEventStore(session).get_all()
+    missing = [event for event in events if event.position not in existing]
+    observer = JsonlOutboxObserver(path, max_bytes=max_bytes)
+    for start in range(0, len(missing), batch_size):
+        await observer(missing[start : start + batch_size])
+    return len(missing)
+
+
 def _to_record(e: StoredEvent) -> dict[str, object]:
     return {
         "position": e.position,
@@ -321,4 +347,11 @@ def _read_positions(path: Path) -> set[int]:
                     positions.add(position)
     except FileNotFoundError:
         pass
+    return positions
+
+
+def _journal_positions(path: Path) -> set[int]:
+    positions = _read_positions(path)
+    for segment in discover_journal_segments(path):
+        positions.update(_read_positions(segment.path))
     return positions

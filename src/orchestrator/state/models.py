@@ -230,6 +230,10 @@ class ModelTokenUsage(BaseModel):
     cost_usd: float = Field(default=0, ge=0, allow_inf_nan=False)
     latency_ms: int = Field(default=0, ge=0)
     rate_missing: bool = False
+    # Persistence-only provenance for graph usage facts. Public API presenters
+    # construct explicit schemas and intentionally do not expose these fields.
+    graph_usage_key: str | None = Field(default=None, exclude=True)
+    graph_usage_num_actions: int | None = Field(default=None, ge=0, exclude=True)
 
     @model_validator(mode="after")
     def _cache_components_are_part_of_input(self) -> "ModelTokenUsage":
