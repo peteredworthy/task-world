@@ -2,21 +2,26 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import pytest
 
 from orchestrator.runners import (
     ClaudeStreamParser,
+    ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
     MockAgent,
     MockBehavior,
+    OpenHandsAgent,
+    DockerOpenHandsAgent,
     extract_metrics_and_usage,
     extract_turn_finish_reasons,
 )
 from orchestrator.runners import PhaseHandler
 from orchestrator.graph_runtime import GraphDispatchContext, GraphDispatchExecutor
+from orchestrator.state import ActionLog, SubAgentLog
 
 
 class _MonotonicSequence:
@@ -56,8 +61,6 @@ class _GraphLatencyExecutor(GraphDispatchExecutor):
         self.death_reasons.append(reason)
 
     def _execution_context(self, context: GraphDispatchContext, **kwargs: Any) -> Any:
-        from orchestrator.runners.types import ExecutionContext
-
         return ExecutionContext(
             run_id=context.run_id,
             task_id=context.node_id,
@@ -105,16 +108,19 @@ async def test_graph_dispatch_measures_only_agent_execute_with_injected_monotoni
     assert agent.result.metrics.duration_ms == 125
 
 
-def test_codex_terminal_statuses_are_preserved_as_finish_reasons() -> None:
+def test_codex_terminal_statuses_map_to_normalized_finish_reasons() -> None:
     assert extract_turn_finish_reasons(
         {"method": "turn/completed", "params": {"turn": {"status": "completed"}}}
-    ) == ["completed"]
+    ) == ["stop"]
     assert extract_turn_finish_reasons(
         {"method": "turn/completed", "params": {"turn": {"status": "interrupted"}}}
-    ) == ["interrupted"]
+    ) == ["cancelled"]
     assert extract_turn_finish_reasons(
         {"method": "turn/completed", "params": {"turn": {"status": "systemError"}}}
-    ) == ["systemError"]
+    ) == ["error"]
+    assert extract_turn_finish_reasons(
+        {"method": "turn/completed", "params": {"turn": {"status": "failed"}}}
+    ) == ["error"]
 
 
 def test_codex_reasoning_is_captured_once_in_usage_fact() -> None:
@@ -122,7 +128,7 @@ def test_codex_reasoning_is_captured_once_in_usage_fact() -> None:
         success=True,
         metrics=ExecutionMetrics(gen_ai_usage_output_tokens=120),
         gen_ai_usage_reasoning_output_tokens=20,
-        gen_ai_response_finish_reasons=["completed"],
+        gen_ai_response_finish_reasons=["stop"],
     )
 
     _metrics, usage = extract_metrics_and_usage(result)
@@ -130,7 +136,45 @@ def test_codex_reasoning_is_captured_once_in_usage_fact() -> None:
     assert len(usage) == 1
     assert usage[0].gen_ai_usage_output_tokens == 120
     assert usage[0].gen_ai_usage_reasoning_output_tokens == 20
-    assert list(usage[0].gen_ai_response_finish_reasons) == ["completed"]
+    assert list(usage[0].gen_ai_response_finish_reasons) == ["stop"]
+
+
+def test_usage_facts_replicate_execution_latency_to_parent_and_subagents() -> None:
+    result = ExecutionResult(
+        success=True,
+        metrics=ExecutionMetrics(duration_ms=321),
+        action_log=ActionLog(
+            agent_model="parent",
+            gen_ai_usage_input_tokens=10,
+            sub_agents=[
+                SubAgentLog(model="child-a", gen_ai_usage_input_tokens=20),
+                SubAgentLog(model="child-b", gen_ai_usage_output_tokens=30),
+            ],
+        ),
+    )
+
+    _metrics, usage = extract_metrics_and_usage(result)
+
+    assert [item.model for item in usage] == ["parent", "child-a", "child-b"]
+    assert [item.latency_ms for item in usage] == [321, 321, 321]
+
+
+def test_usage_facts_replicate_latency_when_only_subagents_have_usage() -> None:
+    result = ExecutionResult(
+        success=True,
+        metrics=ExecutionMetrics(duration_ms=654),
+        action_log=ActionLog(
+            sub_agents=[
+                SubAgentLog(model="child-a", gen_ai_usage_input_tokens=20),
+                SubAgentLog(model="child-b", gen_ai_usage_output_tokens=30),
+            ]
+        ),
+    )
+
+    _metrics, usage = extract_metrics_and_usage(result)
+
+    assert [item.model for item in usage] == ["child-a", "child-b"]
+    assert [item.latency_ms for item in usage] == [654, 654]
 
 
 def test_claude_result_stop_reason_is_preserved() -> None:
@@ -176,8 +220,6 @@ async def test_mock_agent_returns_usage_metadata() -> None:
     async def submit() -> None:
         return None
 
-    from orchestrator.runners.types import ExecutionContext
-
     result = await agent.execute(
         ExecutionContext(
             run_id="run", task_id="task", working_dir="/tmp", prompt="p", requirements=[]
@@ -188,3 +230,66 @@ async def test_mock_agent_returns_usage_metadata() -> None:
 
     assert result.gen_ai_usage_reasoning_output_tokens == 7
     assert result.gen_ai_response_finish_reasons == ["mock_complete"]
+
+
+async def _noop_checklist(_id: str, _status: Any, _note: str | None) -> None:
+    return None
+
+
+async def _noop_submit() -> None:
+    return None
+
+
+_OPENHANDS_LOCAL_URL = os.getenv("OPENHANDS_TEST_LOCAL_BASE_URL")
+
+
+@pytest.mark.skipif(
+    not _OPENHANDS_LOCAL_URL,
+    reason="requires an explicitly configured local OpenAI-compatible OpenHands test runtime",
+)
+@pytest.mark.asyncio
+async def test_openhands_local_execute_returns_empty_finish_reasons_without_external_provider() -> (
+    None
+):
+    agent = OpenHandsAgent(
+        api_key="",
+        llm_config={"base_url": _OPENHANDS_LOCAL_URL},
+        max_iterations=1,
+    )
+    result = await agent.execute(
+        ExecutionContext(
+            run_id="run", task_id="task", working_dir="/tmp", prompt="Stop.", requirements=[]
+        ),
+        _noop_checklist,
+        _noop_submit,
+    )
+
+    assert result.gen_ai_response_finish_reasons == []
+
+
+_OPENHANDS_DOCKER_URL = os.getenv("OPENHANDS_TEST_DOCKER_BASE_URL")
+_OPENHANDS_DOCKER_KEY = os.getenv("OPENHANDS_TEST_DOCKER_API_KEY")
+
+
+@pytest.mark.skipif(
+    not (_OPENHANDS_DOCKER_URL and _OPENHANDS_DOCKER_KEY),
+    reason="requires an explicitly configured local Docker OpenHands test runtime",
+)
+@pytest.mark.asyncio
+async def test_openhands_docker_execute_returns_empty_finish_reasons_without_external_provider() -> (
+    None
+):
+    agent = DockerOpenHandsAgent(
+        api_key=_OPENHANDS_DOCKER_KEY,
+        llm_config={"base_url": _OPENHANDS_DOCKER_URL},
+        max_iterations=1,
+    )
+    result = await agent.execute(
+        ExecutionContext(
+            run_id="run", task_id="task", working_dir="/tmp", prompt="Stop.", requirements=[]
+        ),
+        _noop_checklist,
+        _noop_submit,
+    )
+
+    assert result.gen_ai_response_finish_reasons == []

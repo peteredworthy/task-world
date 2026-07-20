@@ -686,9 +686,18 @@ def is_terminal_notification(notification: dict[str, Any]) -> tuple[bool, str]:
 
 
 def extract_turn_finish_reasons(notification: dict[str, Any]) -> list[str]:
-    """Return the raw Codex terminal status as its response finish reason."""
+    """Map a Codex terminal status to the normalized response finish reason."""
     terminal, status = is_terminal_notification(notification)
-    return [status] if terminal and status else []
+    if not terminal:
+        return []
+    finish_reason_by_status = {
+        "completed": "stop",
+        "interrupted": "cancelled",
+        "systemError": "error",
+        "failed": "error",
+    }
+    finish_reason = finish_reason_by_status.get(status)
+    return [finish_reason] if finish_reason is not None else []
 
 
 def extract_token_usage_update(notification: dict[str, Any]) -> dict[str, int] | None:

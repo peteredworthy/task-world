@@ -10,6 +10,7 @@ from orchestrator.runners.errors import AgentNotAvailableError
 from orchestrator.runners.types import (
     AgentMetadataCallback,
     BroadcastCallback,
+    ExecutionContext,
     ExecutionMetrics,
     ExecutionResult,
 )
@@ -229,6 +230,7 @@ __all__ = [
     "AgentNotAvailableError",
     "AgentMetadataCallback",
     "BroadcastCallback",
+    "ExecutionContext",
     "ExecutionMetrics",
     "ExecutionResult",
     "create_agent_runner",

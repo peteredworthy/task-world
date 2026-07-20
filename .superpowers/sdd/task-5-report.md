@@ -49,3 +49,47 @@ uv run pytest tests/unit/test_runner_usage_metadata.py tests/unit/test_codex_ser
 
 The pre-existing `.superpowers/sdd/progress.md` modification was left out of
 the task commit.
+
+---
+
+# Task 5 Metadata Semantics Follow-up
+
+## Fixed
+
+- Codex terminal statuses now normalize to OTel finish reasons: `completed` →
+  `stop`, `interrupted` → `cancelled`, and `systemError`/`failed` → `error`.
+- Every usage fact emitted by a single execution—including parent, each
+  sub-agent, and sub-agent-only executions—receives the same execution-boundary
+  latency.
+- Codex server execution coverage verifies the injected transport runner path:
+  mapped finish reason, separate reasoning component, and a single
+  reasoning-inclusive output total.
+- Exported `ExecutionContext` from `orchestrator.runners` so new runner-path
+  tests use the public package boundary.
+- Added OpenHands local and Docker execution-path tests gated on explicitly
+  configured local (no external provider) runtimes. They verify the adapter
+  leaves unsupported finish reasons empty when those real runtimes are enabled.
+
+## TDD Evidence
+
+RED:
+
+```text
+uv run pytest tests/unit/test_runner_usage_metadata.py tests/unit/test_codex_server_token_capture.py tests/unit/test_codex_server_common.py -q -n 0
+4 failed
+```
+
+The failures showed unnormalized Codex statuses and zero latency on sub-agent
+facts, including a sub-agent-only execution.
+
+GREEN:
+
+```text
+uv run pytest tests/unit/test_runner_usage_metadata.py tests/unit/test_codex_server_token_capture.py tests/unit/test_codex_server_common.py -q -n 0
+129 passed, 2 skipped
+```
+
+The two skips require opt-in local OpenHands/Docker runtimes through
+`OPENHANDS_TEST_LOCAL_BASE_URL` and
+`OPENHANDS_TEST_DOCKER_BASE_URL`/`OPENHANDS_TEST_DOCKER_API_KEY`; no external
+provider is contacted.

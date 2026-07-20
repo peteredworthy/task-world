@@ -128,6 +128,10 @@ async def test_session_accumulates_token_usage() -> None:
     # Reasoning folded into output: 450 + 120 = 570
     assert result.action_log.gen_ai_usage_output_tokens == 570
     assert result.action_log.gen_ai_usage_cache_read_input_tokens == 1200
+    assert result.gen_ai_response_finish_reasons == ["stop"]
+    assert result.gen_ai_usage_reasoning_output_tokens == 120
+    assert result.metrics.gen_ai_usage_output_tokens == 570
+    assert result.output_lines == ["Working on it..."]
     # All values are nonzero
     assert result.action_log.gen_ai_usage_input_tokens > 0
     assert result.action_log.gen_ai_usage_output_tokens > 0

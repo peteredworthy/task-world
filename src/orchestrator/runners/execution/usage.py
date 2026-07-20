@@ -132,6 +132,7 @@ def extract_metrics_and_usage(
                     cache_read_tokens=sa.gen_ai_usage_cache_read_input_tokens,
                     cache_creation_tokens=sa.gen_ai_usage_cache_creation_input_tokens,
                     input_tokens_include_cache=sa.input_tokens_include_cache,
+                    latency_ms=metrics.duration_ms,
                 )
             )
 
