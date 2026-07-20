@@ -923,7 +923,7 @@ def build_graph_health_response(
         GraphHealthFailedNodeResponse(node_id=node_id, reason=reason)
         for node_id, reason in sorted(failed_reasons.items())
     ]
-    expired_leases = _expired_lease_rows(leases, failed_reasons)
+    expired_leases = build_expired_lease_rows(leases, failed_reasons)
     blockers = [
         GraphHealthBlockerResponse(
             node_id=str(blocker.get("node_id", "run")),
@@ -1016,31 +1016,23 @@ def _health_pending_gates(rows: list[PendingGateDecision]) -> list[GraphHealthPe
     ]
 
 
-def _expired_lease_rows(
+def build_expired_lease_rows(
     leases: dict[str, dict[str, Any]], failed_reasons: dict[str, str]
 ) -> list[GraphHealthExpiredLeaseResponse]:
-    latest_by_node_execution: dict[tuple[str, str | None], dict[str, Any]] = {}
+    latest_by_node: dict[str, dict[str, Any]] = {}
     for lease in leases.values():
         node_id = lease.get("node_id")
         if not isinstance(node_id, str):
             continue
-        key = (
-            node_id,
-            lease.get("execution_id") if isinstance(lease.get("execution_id"), str) else None,
-        )
-        prior = latest_by_node_execution.get(key)
+        prior = latest_by_node.get(node_id)
         if prior is None or int(lease.get("generation") or 0) > int(prior.get("generation") or 0):
-            latest_by_node_execution[key] = lease
+            latest_by_node[node_id] = lease
     rows: list[GraphHealthExpiredLeaseResponse] = []
     for lease_id, lease in sorted(leases.items()):
         node_id = lease.get("node_id")
         if lease.get("state") != "expired" or not isinstance(node_id, str):
             continue
-        key = (
-            node_id,
-            lease.get("execution_id") if isinstance(lease.get("execution_id"), str) else None,
-        )
-        if latest_by_node_execution.get(key) is not lease:
+        if latest_by_node.get(node_id) is not lease:
             continue
         rows.append(
             GraphHealthExpiredLeaseResponse(

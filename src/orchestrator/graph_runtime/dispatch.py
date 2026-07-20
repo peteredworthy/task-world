@@ -38,7 +38,6 @@ from orchestrator.graph import (
 from orchestrator.graph_runtime import prompts as _prompts
 from orchestrator.graph_runtime.controller import GraphController, rebuild_projection
 from orchestrator.graph_runtime.errors import (
-    CommittedJournalDeliveryError,
     CompromisedFileStateError,
     StaleProjectionError,
 )
@@ -351,8 +350,6 @@ class GraphDispatchExecutor(SideEffectExecutor):
                     logger.exception("graph usage observer failed")
             if not submitted_callback:
                 await self._agent_died(context, "agent exited without submit")
-        except CommittedJournalDeliveryError:
-            logger.exception("graph usage committed but journal delivery awaits drain")
         except Exception as exc:
             await self._agent_died(context, str(exc))
 

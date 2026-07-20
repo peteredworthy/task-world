@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
@@ -31,7 +32,7 @@ from orchestrator.db import (
     retry_committed_secondary_output,
 )
 from orchestrator.graph.commands import Clock, IdGenerator
-from orchestrator.graph_runtime.errors import CommittedJournalDeliveryError, StaleProjectionError
+from orchestrator.graph_runtime.errors import StaleProjectionError
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, append_outbox_rows
 from orchestrator.graph_runtime.store import GraphEventStore
 
@@ -47,6 +48,7 @@ class GraphCommandResult:
 
 
 MAX_NODE_USAGE_WRITE_RETRIES = 5
+logger = logging.getLogger(__name__)
 
 
 class GraphController:
@@ -183,9 +185,13 @@ class GraphController:
                     try:
                         await retry_committed_secondary_output(exc)
                     except CommittedSecondaryOutputError as retry_error:
-                        raise CommittedJournalDeliveryError(
-                            "committed graph events await durable journal drain"
-                        ) from retry_error
+                        # The authoritative DB rows are the durable reconciliation
+                        # debt. Do not turn a secondary output failure into an
+                        # agent failure after the graph command has committed.
+                        logger.exception(
+                            "committed graph events await startup journal reconciliation",
+                            exc_info=retry_error,
+                        )
             except Exception:
                 await session.rollback()
                 raise

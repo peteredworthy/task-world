@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, TextIO, cast
 
 from orchestrator.db.access.event_store_v2 import StoredEvent
+from orchestrator.db.access.event_outbox import EventOutboxObserver
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -127,6 +128,7 @@ async def drain_committed_events_to_journal(
     *,
     batch_size: int = 200,
     max_bytes: int = 64 * 1024 * 1024,
+    observer: EventOutboxObserver | None = None,
 ) -> int:
     """Write committed DB events absent from the journal in bounded batches.
 
@@ -138,13 +140,19 @@ async def drain_committed_events_to_journal(
         raise ValueError("batch_size must be positive")
     from orchestrator.db.access.event_store_v2 import SqliteEventStore
 
-    existing = _journal_positions(path)
-    events = await SqliteEventStore(session).get_all()
-    missing = [event for event in events if event.position not in existing]
-    observer = JsonlOutboxObserver(path, max_bytes=max_bytes)
-    for start in range(0, len(missing), batch_size):
-        await observer(missing[start : start + batch_size])
-    return len(missing)
+    journal_observer = observer or JsonlOutboxObserver(path, max_bytes=max_bytes)
+    store = SqliteEventStore(session)
+    cursor = 0
+    observed = 0
+    while True:
+        page = await store.get_page_after_position(cursor, limit=batch_size)
+        if not page:
+            return observed
+        # The observer checks active and archive candidates exactly under the
+        # journal lock, so no journal-position set is retained in memory.
+        await journal_observer(page)
+        observed += len(page)
+        cursor = page[-1].position
 
 
 def _to_record(e: StoredEvent) -> dict[str, object]:
@@ -347,11 +355,4 @@ def _read_positions(path: Path) -> set[int]:
                     positions.add(position)
     except FileNotFoundError:
         pass
-    return positions
-
-
-def _journal_positions(path: Path) -> set[int]:
-    positions = _read_positions(path)
-    for segment in discover_journal_segments(path):
-        positions.update(_read_positions(segment.path))
     return positions

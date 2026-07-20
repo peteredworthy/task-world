@@ -348,7 +348,11 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _boot_registry.register(RunLifecycleProjector())
         await bootstrap_from_jsonl(_boot_session, _journal_path, _boot_registry)
         if _journal_path is not None:
-            await drain_committed_events_to_journal(_boot_session, _journal_path)
+            await drain_committed_events_to_journal(
+                _boot_session,
+                _journal_path,
+                max_bytes=app.state.global_config.journal.max_bytes,
+            )
         await _boot_session.commit()
 
     # Build and store the shared WorkflowService factory for background tasks

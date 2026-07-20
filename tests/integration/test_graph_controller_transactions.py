@@ -1,4 +1,5 @@
 from pathlib import Path
+import os
 import sqlite3
 
 import pytest
@@ -150,4 +151,39 @@ async def test_handle_command_raises_stale_projection_error_when_position_moves_
     with pytest.raises(StaleProjectionError):
         await controller.handle_command(run_id, position, "start")
 
+    await engine.dispose()
+
+
+async def test_committed_command_returns_when_journal_retry_also_fails(tmp_path: Path) -> None:
+    """A failed secondary journal sink cannot turn a committed command into a failure."""
+    db_path = tmp_path / "graph-controller-journal-failure.db"
+    engine = create_engine(db_path)
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+    journal_parent = tmp_path / "journal-parent-file"
+    journal_parent.write_text("not a directory")
+    previous_path = os.environ.get("ORCHESTRATOR_EVENT_JOURNAL_PATH")
+    os.environ["ORCHESTRATOR_EVENT_JOURNAL_PATH"] = str(journal_parent / "history.jsonl")
+    try:
+        controller = GraphController(
+            session_factory,
+            FakeClock(),
+            SequentialIdGenerator(),
+            auto_dispatch=False,
+        )
+
+        result = await controller.handle_command("run-journal-failure", 0, "accept_run")
+    finally:
+        if previous_path is None:
+            del os.environ["ORCHESTRATOR_EVENT_JOURNAL_PATH"]
+        else:
+            os.environ["ORCHESTRATOR_EVENT_JOURNAL_PATH"] = previous_path
+
+    assert result.projection_position == 1
+    assert (
+        await GraphController(
+            session_factory, FakeClock(), SequentialIdGenerator(), auto_dispatch=False
+        ).current_position("run-journal-failure")
+        == 1
+    )
     await engine.dispose()

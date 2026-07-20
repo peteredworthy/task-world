@@ -111,6 +111,31 @@ async def test_save_and_get_simple_run(repo: RunRepository) -> None:
     assert loaded.steps[0].tasks[0].checklist[0].status == ChecklistStatus.OPEN
 
 
+async def test_run_usage_provenance_survives_get_save_and_rebuild(repo: RunRepository) -> None:
+    run = _make_simple_run("run-usage-provenance")
+    run.total_duration_ms = 321
+    run.total_num_actions = 7
+    run.token_usage_by_model = [
+        ModelTokenUsage(
+            model="model-1",
+            gen_ai_usage_input_tokens=100,
+            gen_ai_usage_output_tokens=25,
+            gen_ai_usage_cache_read_input_tokens=10,
+            graph_usage_key="node-1:execution-1:model-1",
+            graph_usage_num_actions=7,
+        )
+    ]
+    await save_run(repo.session, run)
+
+    loaded = await repo.get(run.id)
+    await save_run(repo.session, loaded)
+    rebuilt = await repo.get(run.id)
+
+    assert rebuilt.total_duration_ms == 321
+    assert rebuilt.total_num_actions == 7
+    assert rebuilt.token_usage_by_model == run.token_usage_by_model
+
+
 async def test_save_and_get_complex_run(repo: RunRepository) -> None:
     """Test a run with attempts, metrics, and grades."""
     now = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)

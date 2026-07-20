@@ -39,6 +39,7 @@ from orchestrator.db import (
     create_engine,
     create_session_factory,
     create_wired_event_store_v2,
+    drain_committed_events_to_journal,
     init_db,
 )
 from orchestrator.state.models import ChecklistItem, Run, StepState, TaskState
@@ -1112,4 +1113,40 @@ async def test_journal_failure_is_secondary_sink_post_commit(
     assert event_rows[0].version == 1
     assert run_count == 1
     assert not bad_journal_path.exists()
+    await engine.dispose()
+
+
+async def test_journal_drain_reads_events_in_bounded_global_position_pages(tmp_path: Path) -> None:
+    """Startup recovery must stream DB events rather than materializing the event table."""
+    db_path = tmp_path / "paged-drain" / "orchestrator.db"
+    db_path.parent.mkdir()
+    engine = create_engine(db_path)
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    journal_path = tmp_path / "paged-drain" / "history.jsonl"
+
+    async with factory() as session:
+        for position in range(1, 6):
+            session.add(
+                EventV2Model(
+                    aggregate_id=f"run-{position}",
+                    version=1,
+                    event_type="run_created",
+                    payload=json.dumps({"position": position}),
+                    timestamp="2026-07-20T00:00:00+00:00",
+                )
+            )
+        await session.commit()
+        observed = await drain_committed_events_to_journal(
+            session, journal_path, batch_size=2, max_bytes=10_000
+        )
+
+    assert observed == 5
+    assert [json.loads(line)["position"] for line in journal_path.read_text().splitlines()] == [
+        1,
+        2,
+        3,
+        4,
+        5,
+    ]
     await engine.dispose()

@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, AsyncSession
 
-from orchestrator.api import append_requeue_audit_event
+from orchestrator.api import append_requeue_audit_event, build_expired_lease_rows
 from orchestrator.config import RunStatus
 from orchestrator.config.models import RoutineConfig
 from orchestrator.db import (
@@ -32,6 +32,39 @@ from orchestrator.graph_runtime import (
     seed_run,
 )
 from tests.unit.graph_test_utils import canonical_event_payload
+
+
+def test_expired_lease_health_uses_latest_generation_for_each_node() -> None:
+    leases = {
+        "expired-old": {
+            "node_id": "node-1",
+            "execution_id": "execution-old",
+            "generation": 1,
+            "state": "expired",
+        },
+        "active-new": {
+            "node_id": "node-1",
+            "execution_id": "execution-new",
+            "generation": 2,
+            "state": "active",
+        },
+        "expired-current": {
+            "node_id": "node-2",
+            "execution_id": "execution-current",
+            "generation": 3,
+            "state": "expired",
+        },
+    }
+
+    rows = build_expired_lease_rows(leases, {"node-2": "lease_expired_without_callback"})
+
+    assert [row.model_dump() for row in rows] == [
+        {
+            "lease_id": "expired-current",
+            "node_id": "node-2",
+            "reason": "lease_expired_without_callback",
+        }
+    ]
 
 
 def _routine() -> RoutineConfig:
