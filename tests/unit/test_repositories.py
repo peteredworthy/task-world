@@ -188,8 +188,8 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
                                 completed_at=now,
                                 outcome="revision_needed",
                                 metrics=AttemptMetrics(
-                                    tokens_read=500,
-                                    tokens_write=200,
+                                    gen_ai_usage_input_tokens=500,
+                                    gen_ai_usage_output_tokens=200,
                                     duration_ms=10000,
                                 ),
                             ),
@@ -200,8 +200,8 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
                                 completed_at=now,
                                 outcome="passed",
                                 metrics=AttemptMetrics(
-                                    tokens_read=300,
-                                    tokens_write=100,
+                                    gen_ai_usage_input_tokens=300,
+                                    gen_ai_usage_output_tokens=100,
                                     duration_ms=5000,
                                 ),
                             ),
@@ -237,7 +237,7 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
 
     assert len(task.attempts) == 2
     assert task.attempts[0].outcome == "revision_needed"
-    assert task.attempts[0].metrics.tokens_read == 500
+    assert task.attempts[0].metrics.gen_ai_usage_input_tokens == 500
     assert task.attempts[1].outcome == "passed"
     assert task.attempts[1].metrics.duration_ms == 5000
 

@@ -426,9 +426,9 @@ def make_graph_runner(
                 return
             merge_token_usage_into_run(
                 run_model,
-                tokens_read=metrics.tokens_read,
-                tokens_write=metrics.tokens_write,
-                tokens_cache=metrics.tokens_cache,
+                gen_ai_usage_input_tokens=metrics.gen_ai_usage_input_tokens,
+                gen_ai_usage_output_tokens=metrics.gen_ai_usage_output_tokens,
+                gen_ai_usage_cache_read_input_tokens=metrics.gen_ai_usage_cache_read_input_tokens,
                 duration_ms=metrics.duration_ms,
                 num_actions=metrics.num_actions,
                 token_usage_by_model=usage_by_model,

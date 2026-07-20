@@ -1556,9 +1556,9 @@ def test_attempt_updated_round_trip() -> None:
         auto_verify_results=[{"id": "output_exists", "passed": True, "output": "ok"}],
         action_log={"session_id": "session-1"},
         token_usage_by_model=[{"model": "gpt-test", "input_tokens": 3}],
-        tokens_read=100,
-        tokens_write=50,
-        tokens_cache=10,
+        gen_ai_usage_input_tokens=100,
+        gen_ai_usage_output_tokens=50,
+        gen_ai_usage_cache_read_input_tokens=10,
         duration_ms=1500,
         num_actions=5,
         new_task_status=TaskStatus.COMPLETED,
@@ -1575,7 +1575,7 @@ def test_attempt_updated_round_trip() -> None:
     assert rt.auto_verify_results == [{"id": "output_exists", "passed": True, "output": "ok"}]
     assert rt.action_log == {"session_id": "session-1"}
     assert rt.token_usage_by_model == [{"model": "gpt-test", "input_tokens": 3}]
-    assert rt.tokens_read == 100
+    assert rt.gen_ai_usage_input_tokens == 100
     assert rt.new_task_status == TaskStatus.COMPLETED
     assert rt.apply_to_run_totals is False
 

@@ -90,8 +90,8 @@ def test_assistant_text():
     assert entry.kind == ActionEntryKind.ASSISTANT_TEXT
     assert entry.text == "Hello, world!"
     assert entry.metrics is not None
-    assert entry.metrics.input_tokens == 100
-    assert entry.metrics.output_tokens == 50
+    assert entry.metrics.gen_ai_usage_input_tokens == 100
+    assert entry.metrics.gen_ai_usage_output_tokens == 50
 
     # Readable text should include the message
     assert "Hello, world!" in parser.get_readable_text()
@@ -196,8 +196,8 @@ def test_result_event():
     assert entry.kind == ActionEntryKind.RESULT
     assert entry.text == "Task completed!"
     assert log.total_cost_usd == 0.05
-    assert log.total_input_tokens == 1000
-    assert log.total_output_tokens == 500
+    assert log.gen_ai_usage_input_tokens == 1000
+    assert log.gen_ai_usage_output_tokens == 500
     assert log.total_duration_ms == 30000
     assert log.total_turns == 3
 

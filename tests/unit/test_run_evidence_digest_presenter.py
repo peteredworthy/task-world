@@ -75,10 +75,10 @@ def _run_with_metrics() -> tuple[Any, str, str]:
     attempt.token_usage_by_model = [
         ModelTokenUsage(
             model="gpt-4o",
-            input_tokens=10,
-            output_tokens=20,
-            cache_read_tokens=3,
-            cache_creation_tokens=2,
+            gen_ai_usage_input_tokens=10,
+            gen_ai_usage_output_tokens=20,
+            gen_ai_usage_cache_read_input_tokens=3,
+            gen_ai_usage_cache_creation_input_tokens=2,
             cost_per_m_input=1.0,
             cost_per_m_output=2.0,
             cost_per_m_cache_read=3.0,

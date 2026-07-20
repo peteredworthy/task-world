@@ -39,15 +39,15 @@ export interface StepSummary {
 
 export interface ModelTokenUsage {
   model: string;
-  cache_read_tokens: number;
-  cache_creation_tokens: number;
-  input_tokens: number;
-  output_tokens: number;
-  cost_per_m_cache_read: number;
-  cost_per_m_cache_creation: number;
-  cost_per_m_input: number;
-  cost_per_m_output: number;
-  total_cost_usd: number;
+  gen_ai_usage_cache_read_input_tokens: number;
+  gen_ai_usage_cache_creation_input_tokens: number;
+  gen_ai_usage_input_tokens: number;
+  gen_ai_usage_output_tokens: number;
+  gen_ai_usage_reasoning_output_tokens: number;
+  gen_ai_response_finish_reasons: string[];
+  cost_usd: number;
+  latency_ms: number;
+  rate_missing: boolean;
 }
 
 export interface EnvFileSpec {

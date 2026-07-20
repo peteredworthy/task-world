@@ -69,9 +69,9 @@ class InitialAttemptForRunCreate(BaseModel):
     agent_settings: dict[str, Any] | None = None
     start_commit: str | None = None
     end_commit: str | None = None
-    tokens_read: int = 0
-    tokens_write: int = 0
-    tokens_cache: int = 0
+    gen_ai_usage_input_tokens: int = 0
+    gen_ai_usage_output_tokens: int = 0
+    gen_ai_usage_cache_read_input_tokens: int = 0
     duration_ms: int = 0
     num_actions: int = 0
 
@@ -346,9 +346,10 @@ def expand_run_snapshot_for_projection(event: RunCreated) -> "list[WorkflowEvent
                             token_usage_by_model=attempt.get("token_usage_by_model"),
                             completed_at=attempt.get("completed_at"),
                             paused_at=attempt.get("paused_at"),
-                            tokens_read=metrics.get("tokens_read") or None,
-                            tokens_write=metrics.get("tokens_write") or None,
-                            tokens_cache=metrics.get("tokens_cache") or None,
+                            gen_ai_usage_input_tokens=metrics.get("tokens_read") or None,
+                            gen_ai_usage_output_tokens=metrics.get("tokens_write") or None,
+                            gen_ai_usage_cache_read_input_tokens=metrics.get("tokens_cache")
+                            or None,
                             duration_ms=metrics.get("duration_ms") or None,
                             num_actions=metrics.get("num_actions") or None,
                             agent_runner_type=attempt.get("agent_runner_type"),
@@ -446,9 +447,9 @@ def build_create_run_command(run: Run, *, project_path: str = "") -> CreateRunCo
                             agent_settings=attempt.agent_settings or None,
                             start_commit=attempt.start_commit,
                             end_commit=attempt.end_commit,
-                            tokens_read=attempt.metrics.tokens_read,
-                            tokens_write=attempt.metrics.tokens_write,
-                            tokens_cache=attempt.metrics.tokens_cache,
+                            gen_ai_usage_input_tokens=attempt.metrics.gen_ai_usage_input_tokens,
+                            gen_ai_usage_output_tokens=attempt.metrics.gen_ai_usage_output_tokens,
+                            gen_ai_usage_cache_read_input_tokens=attempt.metrics.gen_ai_usage_cache_read_input_tokens,
                             duration_ms=attempt.metrics.duration_ms,
                             num_actions=attempt.metrics.num_actions,
                         )
@@ -642,9 +643,9 @@ async def handle_create_run(
                 or attempt.agent_settings is not None
                 or attempt.start_commit is not None
                 or attempt.end_commit is not None
-                or attempt.tokens_read
-                or attempt.tokens_write
-                or attempt.tokens_cache
+                or attempt.gen_ai_usage_input_tokens
+                or attempt.gen_ai_usage_output_tokens
+                or attempt.gen_ai_usage_cache_read_input_tokens
                 or attempt.duration_ms
                 or attempt.num_actions
                 or task.status != TaskStatus.BUILDING
@@ -668,9 +669,10 @@ async def handle_create_run(
                         token_usage_by_model=attempt.token_usage_by_model,
                         completed_at=attempt.completed_at,
                         paused_at=attempt.paused_at,
-                        tokens_read=attempt.tokens_read or None,
-                        tokens_write=attempt.tokens_write or None,
-                        tokens_cache=attempt.tokens_cache or None,
+                        gen_ai_usage_input_tokens=attempt.gen_ai_usage_input_tokens or None,
+                        gen_ai_usage_output_tokens=attempt.gen_ai_usage_output_tokens or None,
+                        gen_ai_usage_cache_read_input_tokens=attempt.gen_ai_usage_cache_read_input_tokens
+                        or None,
                         duration_ms=attempt.duration_ms or None,
                         num_actions=attempt.num_actions or None,
                         agent_runner_type=attempt.runner_type,

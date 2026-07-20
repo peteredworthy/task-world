@@ -420,16 +420,16 @@ def test_build_metrics_delegates_to_common() -> None:
 
     m = agent._build_metrics(
         duration_ms=500,
-        tokens_read=100,
-        tokens_write=50,
-        tokens_cache=10,
+        gen_ai_usage_input_tokens=100,
+        gen_ai_usage_output_tokens=50,
+        gen_ai_usage_cache_read_input_tokens=10,
         num_actions=3,
     )
     assert isinstance(m, ExecutionMetrics)
     assert m.duration_ms == 500
-    assert m.tokens_read == 100
-    assert m.tokens_write == 50
-    assert m.tokens_cache == 10
+    assert m.gen_ai_usage_input_tokens == 100
+    assert m.gen_ai_usage_output_tokens == 50
+    assert m.gen_ai_usage_cache_read_input_tokens == 10
     assert m.num_actions == 3
 
 

@@ -325,9 +325,9 @@ async def test_empty_db_rebuild(
                         "cache_creation_tokens": 0,
                     }
                 ],
-                tokens_read=11,
-                tokens_write=7,
-                tokens_cache=0,
+                gen_ai_usage_input_tokens=11,
+                gen_ai_usage_output_tokens=7,
+                gen_ai_usage_cache_read_input_tokens=0,
                 duration_ms=1234,
                 num_actions=2,
                 agent_runner_type="cli_subprocess",

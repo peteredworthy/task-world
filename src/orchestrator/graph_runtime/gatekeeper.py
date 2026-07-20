@@ -39,9 +39,9 @@ class GatekeeperVerdict:
     confidence: float
     rationale: str
     model_id: str
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
+    gen_ai_usage_input_tokens: int = 0
+    gen_ai_usage_output_tokens: int = 0
+    gen_ai_usage_cache_read_input_tokens: int = 0
     cache_write_tokens: int = 0
     cost_usd: float = 0.0
     wall_time_ms: int = 0
@@ -53,9 +53,9 @@ class GatekeeperVerdict:
             "confidence": self.confidence,
             "rationale": self.rationale,
             "model_id": self.model_id,
-            "input_tokens": self.input_tokens,
-            "output_tokens": self.output_tokens,
-            "cache_read_tokens": self.cache_read_tokens,
+            "gen_ai_usage_input_tokens": self.gen_ai_usage_input_tokens,
+            "gen_ai_usage_output_tokens": self.gen_ai_usage_output_tokens,
+            "gen_ai_usage_cache_read_input_tokens": self.gen_ai_usage_cache_read_input_tokens,
             "cache_write_tokens": self.cache_write_tokens,
             "cost_usd": self.cost_usd,
             "wall_time_ms": self.wall_time_ms,

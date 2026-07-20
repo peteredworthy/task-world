@@ -117,18 +117,18 @@ async def test_mock_agent_metrics() -> None:
         pass
 
     behavior = MockBehavior(
-        tokens_read=500,
-        tokens_write=200,
-        tokens_cache=50,
+        gen_ai_usage_input_tokens=500,
+        gen_ai_usage_output_tokens=200,
+        gen_ai_usage_cache_read_input_tokens=50,
         duration_ms=3000,
         should_submit=False,
     )
     agent = MockAgent(behavior)
     result = await agent.execute(_make_context(), on_update, on_submit)
 
-    assert result.metrics.tokens_read == 500
-    assert result.metrics.tokens_write == 200
-    assert result.metrics.tokens_cache == 50
+    assert result.metrics.gen_ai_usage_input_tokens == 500
+    assert result.metrics.gen_ai_usage_output_tokens == 200
+    assert result.metrics.gen_ai_usage_cache_read_input_tokens == 50
     assert result.metrics.duration_ms == 3000
 
 
@@ -149,4 +149,4 @@ async def test_mock_agent_default_behavior() -> None:
 
     assert result.success is True
     assert submitted is True
-    assert result.metrics.tokens_read == 100  # defaults
+    assert result.metrics.gen_ai_usage_input_tokens == 100  # defaults

@@ -222,15 +222,15 @@ async def get_task(
                 token_usage_by_model=[
                     ModelTokenUsageSchema(
                         model=u.model,
-                        cache_read_tokens=u.cache_read_tokens,
-                        cache_creation_tokens=u.cache_creation_tokens,
-                        input_tokens=u.input_tokens,
-                        output_tokens=u.output_tokens,
-                        cost_per_m_cache_read=u.cost_per_m_cache_read,
-                        cost_per_m_cache_creation=u.cost_per_m_cache_creation,
-                        cost_per_m_input=u.cost_per_m_input,
-                        cost_per_m_output=u.cost_per_m_output,
-                        total_cost_usd=round(u.total_cost_usd, 6),
+                        gen_ai_usage_cache_read_input_tokens=u.gen_ai_usage_cache_read_input_tokens,
+                        gen_ai_usage_cache_creation_input_tokens=u.gen_ai_usage_cache_creation_input_tokens,
+                        gen_ai_usage_input_tokens=u.gen_ai_usage_input_tokens,
+                        gen_ai_usage_output_tokens=u.gen_ai_usage_output_tokens,
+                        gen_ai_usage_reasoning_output_tokens=u.gen_ai_usage_reasoning_output_tokens,
+                        gen_ai_response_finish_reasons=list(u.gen_ai_response_finish_reasons),
+                        cost_usd=round(u.cost_usd, 6),
+                        latency_ms=u.latency_ms,
+                        rate_missing=u.rate_missing,
                     )
                     for u in att.token_usage_by_model
                 ],
@@ -841,10 +841,10 @@ async def get_attempt_logs(
                     if e.tool_result
                     else None,
                     metrics=TurnMetricsSchema(
-                        input_tokens=e.metrics.input_tokens,
-                        output_tokens=e.metrics.output_tokens,
-                        cache_read_tokens=e.metrics.cache_read_tokens,
-                        cache_creation_tokens=e.metrics.cache_creation_tokens,
+                        gen_ai_usage_input_tokens=e.metrics.gen_ai_usage_input_tokens,
+                        gen_ai_usage_output_tokens=e.metrics.gen_ai_usage_output_tokens,
+                        gen_ai_usage_cache_read_input_tokens=e.metrics.gen_ai_usage_cache_read_input_tokens,
+                        gen_ai_usage_cache_creation_input_tokens=e.metrics.gen_ai_usage_cache_creation_input_tokens,
                         cost_usd=e.metrics.cost_usd,
                     )
                     if e.metrics
@@ -859,10 +859,10 @@ async def get_attempt_logs(
             total_turns=al.total_turns,
             total_cost_usd=al.total_cost_usd,
             total_duration_ms=al.total_duration_ms,
-            total_input_tokens=al.total_input_tokens,
-            total_output_tokens=al.total_output_tokens,
-            total_cache_read_tokens=al.total_cache_read_tokens,
-            total_cache_creation_tokens=al.total_cache_creation_tokens,
+            gen_ai_usage_input_tokens=al.gen_ai_usage_input_tokens,
+            gen_ai_usage_output_tokens=al.gen_ai_usage_output_tokens,
+            gen_ai_usage_cache_read_input_tokens=al.gen_ai_usage_cache_read_input_tokens,
+            gen_ai_usage_cache_creation_input_tokens=al.gen_ai_usage_cache_creation_input_tokens,
         )
 
     return AgentLogsResponse(

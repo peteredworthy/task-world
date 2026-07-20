@@ -59,11 +59,6 @@ def _usage_fact(
             cache_creation_input_tokens=cache_creation_tokens,
             resolution=resolution,
         ),
-        # Transitional legacy read bridge; Task 3 removes these inputs.
-        cost_per_m_cache_read=resolution.cost_per_m_cache_read,
-        cost_per_m_cache_creation=resolution.cost_per_m_cache_creation,
-        cost_per_m_input=resolution.cost_per_m_input,
-        cost_per_m_output=resolution.cost_per_m_output,
     )
 
 
@@ -81,20 +76,22 @@ def extract_metrics_and_usage(
 
     if result.action_log is not None:
         al: ActionLog = result.action_log
-        computed_input = al.total_input_tokens
-        computed_output = al.total_output_tokens
-        computed_cache_read = al.total_cache_read_tokens
-        computed_cache_creation = al.total_cache_creation_tokens
+        computed_input = al.gen_ai_usage_input_tokens
+        computed_output = al.gen_ai_usage_output_tokens
+        computed_cache_read = al.gen_ai_usage_cache_read_input_tokens
+        computed_cache_creation = al.gen_ai_usage_cache_creation_input_tokens
 
         if not computed_input and not computed_output:
             # Aggregate wasn't populated (e.g. result event reported zero);
             # recover from per-entry turn metrics instead.
             for entry in al.entries:
                 if entry.metrics is not None:
-                    computed_input += entry.metrics.input_tokens
-                    computed_output += entry.metrics.output_tokens
-                    computed_cache_read += entry.metrics.cache_read_tokens
-                    computed_cache_creation += entry.metrics.cache_creation_tokens
+                    computed_input += entry.metrics.gen_ai_usage_input_tokens
+                    computed_output += entry.metrics.gen_ai_usage_output_tokens
+                    computed_cache_read += entry.metrics.gen_ai_usage_cache_read_input_tokens
+                    computed_cache_creation += (
+                        entry.metrics.gen_ai_usage_cache_creation_input_tokens
+                    )
 
         if computed_input or computed_output or computed_cache_read or computed_cache_creation:
             usage_by_model.append(
@@ -110,19 +107,19 @@ def extract_metrics_and_usage(
 
         for sa in al.sub_agents:
             if not (
-                sa.total_input_tokens
-                or sa.total_output_tokens
-                or sa.total_cache_read_tokens
-                or sa.total_cache_creation_tokens
+                sa.gen_ai_usage_input_tokens
+                or sa.gen_ai_usage_output_tokens
+                or sa.gen_ai_usage_cache_read_input_tokens
+                or sa.gen_ai_usage_cache_creation_input_tokens
             ):
                 continue
             usage_by_model.append(
                 _usage_fact(
                     model=sa.model or "unknown",
-                    input_tokens=sa.total_input_tokens,
-                    output_tokens=sa.total_output_tokens,
-                    cache_read_tokens=sa.total_cache_read_tokens,
-                    cache_creation_tokens=sa.total_cache_creation_tokens,
+                    input_tokens=sa.gen_ai_usage_input_tokens,
+                    output_tokens=sa.gen_ai_usage_output_tokens,
+                    cache_read_tokens=sa.gen_ai_usage_cache_read_input_tokens,
+                    cache_creation_tokens=sa.gen_ai_usage_cache_creation_input_tokens,
                     input_tokens_include_cache=sa.input_tokens_include_cache,
                 )
             )
@@ -130,9 +127,11 @@ def extract_metrics_and_usage(
         if usage_by_model:
             # Build legacy flat metrics from the full per-model breakdown.
             metrics = ExecutionMetrics(
-                tokens_read=sum(u.gen_ai_usage_input_tokens for u in usage_by_model),
-                tokens_write=sum(u.gen_ai_usage_output_tokens for u in usage_by_model),
-                tokens_cache=sum(
+                gen_ai_usage_input_tokens=sum(u.gen_ai_usage_input_tokens for u in usage_by_model),
+                gen_ai_usage_output_tokens=sum(
+                    u.gen_ai_usage_output_tokens for u in usage_by_model
+                ),
+                gen_ai_usage_cache_read_input_tokens=sum(
                     u.gen_ai_usage_cache_read_input_tokens
                     + u.gen_ai_usage_cache_creation_input_tokens
                     for u in usage_by_model

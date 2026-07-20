@@ -51,10 +51,10 @@ class ClaudeStreamParser:
         self._session_id: str | None = None
         self._model: str | None = None
         self._tools: list[str] = []
-        self._total_input_tokens = 0
-        self._total_output_tokens = 0
-        self._total_cache_read = 0
-        self._total_cache_creation = 0
+        self._gen_ai_usage_input_tokens = 0
+        self._gen_ai_usage_output_tokens = 0
+        self._gen_ai_usage_cache_read_input_tokens = 0
+        self._gen_ai_usage_cache_creation_input_tokens = 0
         self._total_cost = 0.0
         self._total_duration_ms = 0
         self._num_turns = 0
@@ -114,10 +114,12 @@ class ClaudeStreamParser:
             total_turns=num_turns,
             total_cost_usd=self._total_cost,
             total_duration_ms=self._total_duration_ms,
-            total_input_tokens=self._total_input_tokens,
-            total_output_tokens=self._total_output_tokens,
-            total_cache_read_tokens=self._total_cache_read,
-            total_cache_creation_tokens=self._total_cache_creation,
+            gen_ai_usage_input_tokens=self._gen_ai_usage_input_tokens,
+            gen_ai_usage_output_tokens=self._gen_ai_usage_output_tokens,
+            gen_ai_usage_cache_read_input_tokens=self._gen_ai_usage_cache_read_input_tokens,
+            gen_ai_usage_cache_creation_input_tokens=(
+                self._gen_ai_usage_cache_creation_input_tokens
+            ),
             input_tokens_include_cache=False,
             rate_limit_hit=self._rate_limit_hit,
             rate_limit_resets_at=self._rate_limit_resets_at,
@@ -157,10 +159,12 @@ class ClaudeStreamParser:
         turn_metrics = None
         if usage:
             turn_metrics = TurnMetrics(
-                input_tokens=usage.get("input_tokens", 0),
-                output_tokens=usage.get("output_tokens", 0),
-                cache_read_tokens=usage.get("cache_read_input_tokens", 0),
-                cache_creation_tokens=usage.get("cache_creation_input_tokens", 0),
+                gen_ai_usage_input_tokens=usage.get("input_tokens", 0),
+                gen_ai_usage_output_tokens=usage.get("output_tokens", 0),
+                gen_ai_usage_cache_read_input_tokens=usage.get("cache_read_input_tokens", 0),
+                gen_ai_usage_cache_creation_input_tokens=usage.get(
+                    "cache_creation_input_tokens", 0
+                ),
             )
             # Each API call emits one assistant event per content block, all
             # carrying the same usage figures. Only accumulate once per unique
@@ -170,10 +174,14 @@ class ClaudeStreamParser:
             # result event (e.g. interrupted runs).
             message_id: str | None = message.get("id")
             if message_id is None or message_id not in self._seen_message_ids:
-                self._total_input_tokens += turn_metrics.input_tokens
-                self._total_output_tokens += turn_metrics.output_tokens
-                self._total_cache_read += turn_metrics.cache_read_tokens
-                self._total_cache_creation += turn_metrics.cache_creation_tokens
+                self._gen_ai_usage_input_tokens += turn_metrics.gen_ai_usage_input_tokens
+                self._gen_ai_usage_output_tokens += turn_metrics.gen_ai_usage_output_tokens
+                self._gen_ai_usage_cache_read_input_tokens += (
+                    turn_metrics.gen_ai_usage_cache_read_input_tokens
+                )
+                self._gen_ai_usage_cache_creation_input_tokens += (
+                    turn_metrics.gen_ai_usage_cache_creation_input_tokens
+                )
             if message_id:
                 self._seen_message_ids.add(message_id)
 
@@ -321,16 +329,16 @@ class ClaudeStreamParser:
             ev_cr = int(usage.get("cache_read_input_tokens", 0))
             ev_cc = int(usage.get("cache_creation_input_tokens", 0))
             turn_metrics = TurnMetrics(
-                input_tokens=ev_inp,
-                output_tokens=ev_out,
-                cache_read_tokens=ev_cr,
-                cache_creation_tokens=ev_cc,
+                gen_ai_usage_input_tokens=ev_inp,
+                gen_ai_usage_output_tokens=ev_out,
+                gen_ai_usage_cache_read_input_tokens=ev_cr,
+                gen_ai_usage_cache_creation_input_tokens=ev_cc,
                 cost_usd=cost,
             )
-            self._total_input_tokens = ev_inp
-            self._total_output_tokens = ev_out
-            self._total_cache_read = ev_cr
-            self._total_cache_creation = ev_cc
+            self._gen_ai_usage_input_tokens = ev_inp
+            self._gen_ai_usage_output_tokens = ev_out
+            self._gen_ai_usage_cache_read_input_tokens = ev_cr
+            self._gen_ai_usage_cache_creation_input_tokens = ev_cc
         # total_cost_usd and duration_ms from the result event are session totals.
         if cost > 0:
             self._total_cost = cost

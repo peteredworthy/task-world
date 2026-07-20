@@ -1290,14 +1290,10 @@ async def test_get_run_returns_token_usage_by_model_with_all_fields(
     # Inject per-model token data
     usage_record = {
         "model": "claude-sonnet-4-6",
-        "cache_read_tokens": 500_000,
-        "cache_creation_tokens": 200_000,
-        "input_tokens": 1_000_000,
-        "output_tokens": 100_000,
-        "cost_per_m_cache_read": 0.30,
-        "cost_per_m_cache_creation": 3.75,
-        "cost_per_m_input": 3.00,
-        "cost_per_m_output": 15.00,
+        "gen_ai_usage_cache_read_input_tokens": 500_000,
+        "gen_ai_usage_cache_creation_input_tokens": 200_000,
+        "gen_ai_usage_input_tokens": 1_000_000,
+        "gen_ai_usage_output_tokens": 100_000,
     }
     await _inject_run_token_usage(client, run_id, [usage_record])
 
@@ -1311,16 +1307,12 @@ async def test_get_run_returns_token_usage_by_model_with_all_fields(
 
     entry = usage_list[0]
     assert entry["model"] == "claude-sonnet-4-6"
-    assert entry["cache_read_tokens"] == 500_000
-    assert entry["cache_creation_tokens"] == 200_000
-    assert entry["input_tokens"] == 1_000_000
-    assert entry["output_tokens"] == 100_000
-    assert entry["cost_per_m_cache_read"] == pytest.approx(0.30)
-    assert entry["cost_per_m_cache_creation"] == pytest.approx(3.75)
-    assert entry["cost_per_m_input"] == pytest.approx(3.00)
-    assert entry["cost_per_m_output"] == pytest.approx(15.00)
-    assert "total_cost_usd" in entry
-    assert entry["total_cost_usd"] > 0
+    assert entry["gen_ai_usage_cache_read_input_tokens"] == 500_000
+    assert entry["gen_ai_usage_cache_creation_input_tokens"] == 200_000
+    assert entry["gen_ai_usage_input_tokens"] == 1_000_000
+    assert entry["gen_ai_usage_output_tokens"] == 100_000
+    assert entry["cost_usd"] == pytest.approx(0.0)
+    assert entry["rate_missing"] is False
 
 
 async def test_get_run_empty_token_usage_returns_empty_list_and_no_crash(
@@ -1366,32 +1358,26 @@ async def test_get_run_empty_token_usage_returns_empty_list_and_no_crash(
 async def test_get_run_estimated_cost_equals_sum_of_per_model_costs(
     client: AsyncClient, repo_name: str
 ) -> None:
-    """R8: estimated_cost_usd equals the sum of per-model total_cost_usd values."""
+    """R8: estimated_cost_usd equals the sum of canonical per-model costs."""
     data = await _create_run(client, repo_name)
     run_id = data["id"]
 
     usage_records = [
         {
             "model": "claude-sonnet-4-6",
-            "cache_read_tokens": 0,
-            "cache_creation_tokens": 0,
-            "input_tokens": 1_000_000,
-            "output_tokens": 100_000,
-            "cost_per_m_cache_read": 0.30,
-            "cost_per_m_cache_creation": 3.75,
-            "cost_per_m_input": 3.00,
-            "cost_per_m_output": 15.00,
+            "gen_ai_usage_cache_read_input_tokens": 0,
+            "gen_ai_usage_cache_creation_input_tokens": 0,
+            "gen_ai_usage_input_tokens": 1_000_000,
+            "gen_ai_usage_output_tokens": 100_000,
+            "cost_usd": 4.5,
         },
         {
             "model": "claude-haiku-4-5",
-            "cache_read_tokens": 0,
-            "cache_creation_tokens": 0,
-            "input_tokens": 500_000,
-            "output_tokens": 50_000,
-            "cost_per_m_cache_read": 0.08,
-            "cost_per_m_cache_creation": 1.00,
-            "cost_per_m_input": 0.80,
-            "cost_per_m_output": 4.00,
+            "gen_ai_usage_cache_read_input_tokens": 0,
+            "gen_ai_usage_cache_creation_input_tokens": 0,
+            "gen_ai_usage_input_tokens": 500_000,
+            "gen_ai_usage_output_tokens": 50_000,
+            "cost_usd": 0.6,
         },
     ]
     await _inject_run_token_usage(client, run_id, usage_records)
@@ -1403,9 +1389,9 @@ async def test_get_run_estimated_cost_equals_sum_of_per_model_costs(
     usage_list = body["token_usage_by_model"]
     assert len(usage_list) == 2
 
-    expected_total = sum(entry["total_cost_usd"] for entry in usage_list)
+    expected_total = sum(entry["cost_usd"] for entry in usage_list)
     assert body["estimated_cost_usd"] == pytest.approx(expected_total, rel=1e-5)
-    assert body["cost_disclaimer"] == "Per-model cost from embedded rates."
+    assert body["cost_disclaimer"] == "Per-model cost captured at execution time."
 
 
 # --- Agent error handler tests ---

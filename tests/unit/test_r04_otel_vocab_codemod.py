@@ -266,6 +266,61 @@ def test_cli_assert_clean_accepts_provider_boundary_extraction(tmp_path: Path) -
     assert result.returncode == 0
 
 
+def test_merge_boundary_uses_canonical_metric_keywords() -> None:
+    source = """\
+merge_token_usage_into_run(
+    run,
+    tokens_read=metrics.tokens_read,
+    tokens_write=metrics.tokens_write,
+    tokens_cache=metrics.tokens_cache,
+)
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/api/deps.py")
+
+    assert "gen_ai_usage_input_tokens=metrics.gen_ai_usage_input_tokens" in transformed
+    assert "gen_ai_usage_output_tokens=metrics.gen_ai_usage_output_tokens" in transformed
+    assert (
+        "gen_ai_usage_cache_read_input_tokens=metrics.gen_ai_usage_cache_read_input_tokens"
+        in transformed
+    )
+    assert diagnose_source(source, path="src/orchestrator/api/deps.py") == ()
+
+
+def test_codemod_fixture_literals_are_an_explicit_clean_boundary() -> None:
+    source = 'expected = "input_tokens"\n'
+
+    assert diagnose_source(source, path="tests/unit/test_r04_otel_vocab_codemod.py") == ()
+
+
+def test_task_four_migration_history_is_an_explicit_clean_boundary() -> None:
+    source = 'table = sa.Column("tokens_read", sa.Integer())\n'
+
+    assert (
+        diagnose_source(
+            source,
+            path="src/orchestrator/db/migrations/versions/5a37eef8e789_initial_schema.py",
+        )
+        == ()
+    )
+
+
+def test_explicit_workflow_event_contract_is_renamed() -> None:
+    source = """\
+class AttemptUpdated:
+    tokens_read: int | None = None
+
+event = AttemptUpdated(tokens_read=1)
+total = event.tokens_read
+"""
+
+    transformed = transform_source(source, path="src/orchestrator/workflow/events/types.py")
+
+    assert "gen_ai_usage_input_tokens: int | None = None" in transformed
+    assert "AttemptUpdated(gen_ai_usage_input_tokens=1)" in transformed
+    assert "event.gen_ai_usage_input_tokens" in transformed
+
+
 def test_rebinding_and_conditional_ownership_are_diagnostic() -> None:
     source = """\
 usage = ModelTokenUsage(input_tokens=1)
@@ -542,3 +597,163 @@ after_comprehension = usage.input_tokens
     assert "[usage.input_tokens for usage in providers]" in transformed
     assert "after_comprehension = usage.gen_ai_usage_input_tokens" in transformed
     assert len(diagnose_source(source, path="src/orchestrator/state/models.py")) == 1
+
+
+def test_codex_internal_accumulator_proof_renames_only_internal_counter_keys() -> None:
+    source = """\
+def extract_turn_usage(payload):
+    result = {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0}
+    result["tokens_read"] = payload.get("input_tokens", 0)
+    return result
+"""
+
+    transformed = transform_source(
+        source,
+        path="src/orchestrator/runners/agents/codex/common.py",
+    )
+
+    assert '"gen_ai_usage_input_tokens": 0' in transformed
+    assert 'result["gen_ai_usage_input_tokens"]' in transformed
+    assert 'payload.get("input_tokens", 0)' in transformed
+    assert diagnose_source(source, path="src/orchestrator/runners/agents/codex/common.py") == ()
+
+
+def test_internal_execution_and_workflow_calls_are_proven_by_explicit_callees() -> None:
+    source = """\
+def _append_attempt_update(tokens_read, tokens_write, tokens_cache):
+    return AttemptUpdated(
+        tokens_read=tokens_read,
+        tokens_write=tokens_write,
+        tokens_cache=tokens_cache,
+    )
+
+event = _append_attempt_update(
+    tokens_read=1,
+    tokens_write=2,
+    tokens_cache=3,
+)
+"""
+
+    transformed = transform_source(
+        source,
+        path="src/orchestrator/runners/execution/attempt_store.py",
+    )
+
+    assert "def _append_attempt_update(gen_ai_usage_input_tokens" in transformed
+    assert "gen_ai_usage_input_tokens=1" in transformed
+    assert "gen_ai_usage_output_tokens=2" in transformed
+    assert "gen_ai_usage_cache_read_input_tokens=3" in transformed
+
+
+def test_explicit_script_report_proof_renames_internal_report_rows_not_sql_literals() -> None:
+    source = """\
+def run_metrics(run):
+    return {"tokens_read": run.get("total_tokens_read", 0)}
+
+def _fetch_aggregates(conn):
+    return conn.execute("SELECT input_tokens FROM cost_records")
+"""
+
+    transformed = transform_source(source, path="scripts/compare_carriers.py")
+
+    assert '"gen_ai_usage_input_tokens": run.get("total_tokens_read", 0)' in transformed
+    assert '"SELECT input_tokens FROM cost_records"' in transformed
+    assert diagnose_source(source, path="scripts/compare_carriers.py") == ()
+
+
+def test_openhands_provider_cache_attribute_is_an_explicit_raw_boundary() -> None:
+    source = """\
+def extract_metrics(metrics):
+    total_cache = metrics.accumulated_token_usage.cache_read_tokens
+    return ExecutionMetrics(tokens_cache=total_cache)
+"""
+
+    transformed = transform_source(
+        source,
+        path="src/orchestrator/runners/agents/openhands/common.py",
+    )
+
+    assert "accumulated_token_usage.cache_read_tokens" in transformed
+    assert "ExecutionMetrics(gen_ai_usage_cache_read_input_tokens=total_cache)" in transformed
+    assert diagnose_source(source, path="src/orchestrator/runners/agents/openhands/common.py") == ()
+
+
+def test_codemod_legacy_vocabulary_tables_are_an_explicit_self_boundary() -> None:
+    source = 'FIELD_RENAMES = {"input_tokens": "gen_ai_usage_input_tokens"}\n'
+
+    assert diagnose_source(source, path="scripts/codemods/r04_otel_vocab.py") == ()
+
+
+def test_codex_nested_provider_key_candidates_are_a_raw_boundary() -> None:
+    source = """\
+def extract_token_usage_update(payload):
+    def _find_usage(obj):
+        return "input_tokens" in obj
+    for key in ("inputTokens", "input_tokens"):
+        value = payload.get(key)
+"""
+
+    assert diagnose_source(source, path="src/orchestrator/runners/agents/codex/common.py") == ()
+
+
+def test_explicit_test_internal_metric_context_is_mechanically_renamed() -> None:
+    source = """\
+async def test_attempt_store_writes_metrics():
+    assert attempt.metrics.tokens_read == 1
+"""
+
+    transformed = transform_source(
+        source,
+        path="tests/integration/test_attempt_store_event_sourcing.py",
+    )
+
+    assert "attempt.metrics.gen_ai_usage_input_tokens" in transformed
+    assert (
+        diagnose_source(source, path="tests/integration/test_attempt_store_event_sourcing.py") == ()
+    )
+
+
+def test_provider_raw_input_fixture_has_a_narrow_test_boundary() -> None:
+    source = """\
+def _result_event():
+    return {"usage": {"input_tokens": 1, "output_tokens": 2}}
+"""
+
+    assert diagnose_source(source, path="tests/unit/test_claude_parser.py") == ()
+
+
+def test_task_four_persisted_event_fixture_has_a_narrow_test_boundary() -> None:
+    source = """\
+async def test_create_run_replays_initial_attempt_gap_fields():
+    payload = {"tokens_read": 1, "tokens_write": 2}
+"""
+
+    assert diagnose_source(source, path="tests/unit/test_command_handlers.py") == ()
+
+
+def test_current_event_assertion_uses_a_proven_internal_payload_receiver() -> None:
+    source = """\
+def test_attempt_store_appends_events_and_projects_attempt_and_run_totals():
+    assert payload.get("tokens_read") == 1
+"""
+
+    transformed = transform_source(
+        source,
+        path="tests/integration/test_attempt_store_event_sourcing.py",
+    )
+
+    assert 'payload.get("gen_ai_usage_input_tokens")' in transformed
+
+
+def test_provider_fixture_preserves_raw_input_but_renames_proven_result_mapping() -> None:
+    source = """\
+def test_extract_turn_usage_without_usage_field():
+    msg = {"usage": {"input_tokens": 1}}
+    assert result == {"tokens_read": 1, "tokens_write": 2}
+"""
+
+    transformed = transform_source(source, path="tests/unit/test_codex_server_common.py")
+
+    assert '"usage": {"input_tokens": 1}' in transformed
+    assert '"gen_ai_usage_input_tokens": 1' in transformed
+    assert '"gen_ai_usage_output_tokens": 2' in transformed

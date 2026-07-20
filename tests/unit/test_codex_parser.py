@@ -40,7 +40,7 @@ def test_message_created_assistant():
     assert entry.kind == ActionEntryKind.ASSISTANT_TEXT
     assert entry.text == "Here is the plan."
     assert entry.metrics is not None
-    assert entry.metrics.input_tokens == 200
+    assert entry.metrics.gen_ai_usage_input_tokens == 200
 
     assert "Here is the plan." in parser.get_readable_text()
 

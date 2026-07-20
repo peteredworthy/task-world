@@ -24,7 +24,9 @@ def test_action_log_entry_serialization_roundtrip():
             arguments={"command": "ls -la"},
             summary="bash: ls -la",
         ),
-        metrics=TurnMetrics(input_tokens=100, output_tokens=50, cost_usd=0.01),
+        metrics=TurnMetrics(
+            gen_ai_usage_input_tokens=100, gen_ai_usage_output_tokens=50, cost_usd=0.01
+        ),
         raw_type="assistant.tool_use",
     )
 
@@ -39,7 +41,7 @@ def test_action_log_entry_serialization_roundtrip():
     assert restored.tool_use.arguments == {"command": "ls -la"}
     assert restored.tool_use.summary == "bash: ls -la"
     assert restored.metrics is not None
-    assert restored.metrics.input_tokens == 100
+    assert restored.metrics.gen_ai_usage_input_tokens == 100
     assert restored.metrics.cost_usd == 0.01
 
 
@@ -82,8 +84,8 @@ def test_action_log_full_roundtrip():
                 kind=ActionEntryKind.RESULT,
                 text="Done!",
                 metrics=TurnMetrics(
-                    input_tokens=500,
-                    output_tokens=200,
+                    gen_ai_usage_input_tokens=500,
+                    gen_ai_usage_output_tokens=200,
                     cost_usd=0.05,
                 ),
             ),
@@ -93,8 +95,8 @@ def test_action_log_full_roundtrip():
         tools_available=["bash", "read", "write"],
         total_turns=2,
         total_cost_usd=0.05,
-        total_input_tokens=500,
-        total_output_tokens=200,
+        gen_ai_usage_input_tokens=500,
+        gen_ai_usage_output_tokens=200,
     )
 
     data = log.model_dump(mode="json")

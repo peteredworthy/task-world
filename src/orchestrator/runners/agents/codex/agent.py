@@ -828,18 +828,22 @@ class CodexServerAgent:
         result = build_execution_result(
             output_lines,
             duration_ms,
-            tokens_read=turn_usage.get("tokens_read", 0),
-            tokens_write=turn_usage.get("tokens_write", 0),
-            tokens_cache=turn_usage.get("tokens_cache", 0),
+            gen_ai_usage_input_tokens=turn_usage.get("gen_ai_usage_input_tokens", 0),
+            gen_ai_usage_output_tokens=turn_usage.get("gen_ai_usage_output_tokens", 0),
+            gen_ai_usage_cache_read_input_tokens=turn_usage.get(
+                "gen_ai_usage_cache_read_input_tokens", 0
+            ),
             num_actions=num_actions,
             agent_model=model,
         )
         action_log = parser.finalize()
         action_log.agent_model = model
         action_log.total_duration_ms = duration_ms
-        action_log.total_input_tokens = turn_usage.get("tokens_read", 0)
-        action_log.total_output_tokens = turn_usage.get("tokens_write", 0)
-        action_log.total_cache_read_tokens = turn_usage.get("tokens_cache", 0)
+        action_log.gen_ai_usage_input_tokens = turn_usage.get("gen_ai_usage_input_tokens", 0)
+        action_log.gen_ai_usage_output_tokens = turn_usage.get("gen_ai_usage_output_tokens", 0)
+        action_log.gen_ai_usage_cache_read_input_tokens = turn_usage.get(
+            "gen_ai_usage_cache_read_input_tokens", 0
+        )
         result.action_log = action_log
         return result
 
@@ -880,17 +884,17 @@ class CodexServerAgent:
     def _build_metrics(
         self,
         duration_ms: int,
-        tokens_read: int = 0,
-        tokens_write: int = 0,
-        tokens_cache: int = 0,
+        gen_ai_usage_input_tokens: int = 0,
+        gen_ai_usage_output_tokens: int = 0,
+        gen_ai_usage_cache_read_input_tokens: int = 0,
         num_actions: int = 0,
     ) -> object:
         """Build normalized ``ExecutionMetrics`` from raw session counters."""
         return normalize_codex_metrics(
             duration_ms=duration_ms,
-            tokens_read=tokens_read,
-            tokens_write=tokens_write,
-            tokens_cache=tokens_cache,
+            gen_ai_usage_input_tokens=gen_ai_usage_input_tokens,
+            gen_ai_usage_output_tokens=gen_ai_usage_output_tokens,
+            gen_ai_usage_cache_read_input_tokens=gen_ai_usage_cache_read_input_tokens,
             num_actions=num_actions,
         )
 

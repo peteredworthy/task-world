@@ -71,29 +71,53 @@ def compute_run_totals_from_attempts(
                         existing = merged_usage[model]
                         merged_usage[model] = ModelTokenUsage(
                             model=model,
-                            cache_read_tokens=existing.cache_read_tokens + usage.cache_read_tokens,
-                            cache_creation_tokens=existing.cache_creation_tokens
-                            + usage.cache_creation_tokens,
-                            input_tokens=existing.input_tokens + usage.input_tokens,
-                            output_tokens=existing.output_tokens + usage.output_tokens,
-                            cost_per_m_cache_read=existing.cost_per_m_cache_read
-                            or usage.cost_per_m_cache_read,
-                            cost_per_m_cache_creation=existing.cost_per_m_cache_creation
-                            or usage.cost_per_m_cache_creation,
-                            cost_per_m_input=existing.cost_per_m_input or usage.cost_per_m_input,
-                            cost_per_m_output=existing.cost_per_m_output or usage.cost_per_m_output,
+                            gen_ai_usage_cache_read_input_tokens=(
+                                existing.gen_ai_usage_cache_read_input_tokens
+                                + usage.gen_ai_usage_cache_read_input_tokens
+                            ),
+                            gen_ai_usage_cache_creation_input_tokens=(
+                                existing.gen_ai_usage_cache_creation_input_tokens
+                                + usage.gen_ai_usage_cache_creation_input_tokens
+                            ),
+                            gen_ai_usage_input_tokens=(
+                                existing.gen_ai_usage_input_tokens + usage.gen_ai_usage_input_tokens
+                            ),
+                            gen_ai_usage_output_tokens=(
+                                existing.gen_ai_usage_output_tokens
+                                + usage.gen_ai_usage_output_tokens
+                            ),
+                            gen_ai_usage_reasoning_output_tokens=(
+                                existing.gen_ai_usage_reasoning_output_tokens
+                                + usage.gen_ai_usage_reasoning_output_tokens
+                            ),
+                            gen_ai_response_finish_reasons=list(
+                                dict.fromkeys(
+                                    existing.gen_ai_response_finish_reasons
+                                    + usage.gen_ai_response_finish_reasons
+                                )
+                            ),
+                            cost_usd=existing.cost_usd + usage.cost_usd,
+                            latency_ms=existing.latency_ms + usage.latency_ms,
+                            rate_missing=existing.rate_missing or usage.rate_missing,
                         )
                     else:
                         merged_usage[model] = ModelTokenUsage(
                             model=model,
-                            cache_read_tokens=usage.cache_read_tokens,
-                            cache_creation_tokens=usage.cache_creation_tokens,
-                            input_tokens=usage.input_tokens,
-                            output_tokens=usage.output_tokens,
-                            cost_per_m_cache_read=usage.cost_per_m_cache_read,
-                            cost_per_m_cache_creation=usage.cost_per_m_cache_creation,
-                            cost_per_m_input=usage.cost_per_m_input,
-                            cost_per_m_output=usage.cost_per_m_output,
+                            gen_ai_usage_cache_read_input_tokens=usage.gen_ai_usage_cache_read_input_tokens,
+                            gen_ai_usage_cache_creation_input_tokens=(
+                                usage.gen_ai_usage_cache_creation_input_tokens
+                            ),
+                            gen_ai_usage_input_tokens=usage.gen_ai_usage_input_tokens,
+                            gen_ai_usage_output_tokens=usage.gen_ai_usage_output_tokens,
+                            gen_ai_usage_reasoning_output_tokens=(
+                                usage.gen_ai_usage_reasoning_output_tokens
+                            ),
+                            gen_ai_response_finish_reasons=list(
+                                usage.gen_ai_response_finish_reasons
+                            ),
+                            cost_usd=usage.cost_usd,
+                            latency_ms=usage.latency_ms,
+                            rate_missing=usage.rate_missing,
                         )
 
                 if attempt.action_log is not None:
@@ -101,18 +125,22 @@ def compute_run_totals_from_attempts(
                     duration_ms += al.total_duration_ms
                     num_actions += sum(1 for e in al.entries if e.kind.value == "tool_use")
                     if not has_per_model_data:
-                        al_input = al.total_input_tokens
-                        al_output = al.total_output_tokens
-                        al_cache_read = al.total_cache_read_tokens
-                        al_cache_creation = al.total_cache_creation_tokens
+                        al_input = al.gen_ai_usage_input_tokens
+                        al_output = al.gen_ai_usage_output_tokens
+                        al_cache_read = al.gen_ai_usage_cache_read_input_tokens
+                        al_cache_creation = al.gen_ai_usage_cache_creation_input_tokens
                         if not al_input and not al_output:
                             # Aggregate wasn't populated; recover from per-entry metrics.
                             for entry in al.entries:
                                 if entry.metrics is not None:
-                                    al_input += entry.metrics.input_tokens
-                                    al_output += entry.metrics.output_tokens
-                                    al_cache_read += entry.metrics.cache_read_tokens
-                                    al_cache_creation += entry.metrics.cache_creation_tokens
+                                    al_input += entry.metrics.gen_ai_usage_input_tokens
+                                    al_output += entry.metrics.gen_ai_usage_output_tokens
+                                    al_cache_read += (
+                                        entry.metrics.gen_ai_usage_cache_read_input_tokens
+                                    )
+                                    al_cache_creation += (
+                                        entry.metrics.gen_ai_usage_cache_creation_input_tokens
+                                    )
                         tokens_read_fallback += al_input
                         tokens_write_fallback += al_output
                         tokens_cache_fallback += al_cache_read + al_cache_creation
@@ -120,15 +148,20 @@ def compute_run_totals_from_attempts(
                     duration_ms += attempt.metrics.duration_ms
                     num_actions += attempt.metrics.num_actions
                     if not has_per_model_data:
-                        tokens_read_fallback += attempt.metrics.tokens_read
-                        tokens_write_fallback += attempt.metrics.tokens_write
-                        tokens_cache_fallback += attempt.metrics.tokens_cache
+                        tokens_read_fallback += attempt.metrics.gen_ai_usage_input_tokens
+                        tokens_write_fallback += attempt.metrics.gen_ai_usage_output_tokens
+                        tokens_cache_fallback += (
+                            attempt.metrics.gen_ai_usage_cache_read_input_tokens
+                        )
 
     usage_list = list(merged_usage.values())
     if usage_list:
-        tokens_read = sum(u.input_tokens for u in usage_list)
-        tokens_write = sum(u.output_tokens for u in usage_list)
-        tokens_cache = sum(u.cache_read_tokens + u.cache_creation_tokens for u in usage_list)
+        tokens_read = sum(u.gen_ai_usage_input_tokens for u in usage_list)
+        tokens_write = sum(u.gen_ai_usage_output_tokens for u in usage_list)
+        tokens_cache = sum(
+            u.gen_ai_usage_cache_read_input_tokens + u.gen_ai_usage_cache_creation_input_tokens
+            for u in usage_list
+        )
     else:
         tokens_read = tokens_read_fallback
         tokens_write = tokens_write_fallback
@@ -159,10 +192,10 @@ def compute_run_metrics(run: Run) -> RunMetricSummary:
     estimated_cost_usd = None
     cost_disclaimer = None
     if usage:
-        computed_cost = round(sum(item.total_cost_usd for item in usage), 6)
+        computed_cost = round(sum(item.cost_usd for item in usage), 6)
         if computed_cost > 0:
             estimated_cost_usd = computed_cost
-            cost_disclaimer = "Per-model cost from embedded rates."
+            cost_disclaimer = "Per-model cost captured at execution time."
 
     if estimated_cost_usd is None:
         actual_cost_usd = 0.0
@@ -213,15 +246,15 @@ def compute_run_metrics(run: Run) -> RunMetricSummary:
 def token_usage_to_schema(usage: Any) -> ModelTokenUsageSchema:
     return ModelTokenUsageSchema(
         model=usage.model,
-        cache_read_tokens=usage.cache_read_tokens,
-        cache_creation_tokens=usage.cache_creation_tokens,
-        input_tokens=usage.input_tokens,
-        output_tokens=usage.output_tokens,
-        cost_per_m_cache_read=usage.cost_per_m_cache_read,
-        cost_per_m_cache_creation=usage.cost_per_m_cache_creation,
-        cost_per_m_input=usage.cost_per_m_input,
-        cost_per_m_output=usage.cost_per_m_output,
-        total_cost_usd=round(usage.total_cost_usd, 6),
+        gen_ai_usage_cache_read_input_tokens=usage.gen_ai_usage_cache_read_input_tokens,
+        gen_ai_usage_cache_creation_input_tokens=usage.gen_ai_usage_cache_creation_input_tokens,
+        gen_ai_usage_input_tokens=usage.gen_ai_usage_input_tokens,
+        gen_ai_usage_output_tokens=usage.gen_ai_usage_output_tokens,
+        gen_ai_usage_reasoning_output_tokens=usage.gen_ai_usage_reasoning_output_tokens,
+        gen_ai_response_finish_reasons=list(usage.gen_ai_response_finish_reasons),
+        cost_usd=round(usage.cost_usd, 6),
+        latency_ms=usage.latency_ms,
+        rate_missing=usage.rate_missing,
     )
 
 
@@ -254,10 +287,10 @@ def action_log_to_schema(action_log: Any | None) -> ActionLogSchema | None:
                 if entry.tool_result
                 else None,
                 metrics=TurnMetricsSchema(
-                    input_tokens=entry.metrics.input_tokens,
-                    output_tokens=entry.metrics.output_tokens,
-                    cache_read_tokens=entry.metrics.cache_read_tokens,
-                    cache_creation_tokens=entry.metrics.cache_creation_tokens,
+                    gen_ai_usage_input_tokens=entry.metrics.gen_ai_usage_input_tokens,
+                    gen_ai_usage_output_tokens=entry.metrics.gen_ai_usage_output_tokens,
+                    gen_ai_usage_cache_read_input_tokens=entry.metrics.gen_ai_usage_cache_read_input_tokens,
+                    gen_ai_usage_cache_creation_input_tokens=entry.metrics.gen_ai_usage_cache_creation_input_tokens,
                     cost_usd=entry.metrics.cost_usd,
                 )
                 if entry.metrics
@@ -272,10 +305,10 @@ def action_log_to_schema(action_log: Any | None) -> ActionLogSchema | None:
         total_turns=action_log.total_turns,
         total_cost_usd=action_log.total_cost_usd,
         total_duration_ms=action_log.total_duration_ms,
-        total_input_tokens=action_log.total_input_tokens,
-        total_output_tokens=action_log.total_output_tokens,
-        total_cache_read_tokens=action_log.total_cache_read_tokens,
-        total_cache_creation_tokens=action_log.total_cache_creation_tokens,
+        gen_ai_usage_input_tokens=action_log.gen_ai_usage_input_tokens,
+        gen_ai_usage_output_tokens=action_log.gen_ai_usage_output_tokens,
+        gen_ai_usage_cache_read_input_tokens=action_log.gen_ai_usage_cache_read_input_tokens,
+        gen_ai_usage_cache_creation_input_tokens=action_log.gen_ai_usage_cache_creation_input_tokens,
     )
 
 

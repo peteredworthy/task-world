@@ -503,8 +503,8 @@ def _secret_verdict(path: str) -> dict[str, object]:
         "confidence": 0.99,
         "rationale": "secret fixture",
         "model_id": "test-gatekeeper",
-        "input_tokens": 1,
-        "output_tokens": 1,
+        "gen_ai_usage_input_tokens": 1,
+        "gen_ai_usage_output_tokens": 1,
         "cost_usd": 0.001,
         "wall_time_ms": 1,
     }

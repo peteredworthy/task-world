@@ -24,9 +24,9 @@ def _row(**kw: object) -> dict[str, object]:
         "agent_dispatches": 0,
         "attempts": 0,
         "retries": 0,
-        "tokens_read": 0,
-        "tokens_write": 0,
-        "tokens_cache": 0,
+        "gen_ai_usage_input_tokens": 0,
+        "gen_ai_usage_output_tokens": 0,
+        "gen_ai_usage_cache_read_input_tokens": 0,
         "tool_calls": 0,
         "cost_usd": 0.0,
         "planner_patches": 0,
@@ -55,6 +55,14 @@ def _run_metrics_with_fake_get(run_id: str, fake_get) -> dict[str, object]:
     return compare_carriers.run_metrics(run_id, fetcher=fake_get)
 
 
+def test_row_fixture_does_not_translate_retired_metric_keywords() -> None:
+    retired_keyword = "_".join(("tokens", "read"))
+    row = _row(**{retired_keyword: 7})
+
+    assert row["gen_ai_usage_input_tokens"] == 0
+    assert row["tokens_read"] == 7
+
+
 def test_aggregate_counts_completion_and_grades() -> None:
     rows = [
         _row(status="completed", grades=["A", "A"]),
@@ -73,9 +81,9 @@ def test_aggregate_averages_tokens_tools_cost_and_dynamic_counts() -> None:
             agent_dispatches=1,
             attempts=2,
             retries=1,
-            tokens_write=1000,
-            tokens_read=50,
-            tokens_cache=400,
+            gen_ai_usage_output_tokens=1000,
+            gen_ai_usage_input_tokens=50,
+            gen_ai_usage_cache_read_input_tokens=400,
             tool_calls=10,
             cost_usd=0.10,
             planner_patches=1,
@@ -87,9 +95,9 @@ def test_aggregate_averages_tokens_tools_cost_and_dynamic_counts() -> None:
             agent_dispatches=2,
             attempts=1,
             retries=0,
-            tokens_write=1500,
-            tokens_read=70,
-            tokens_cache=600,
+            gen_ai_usage_output_tokens=1500,
+            gen_ai_usage_input_tokens=70,
+            gen_ai_usage_cache_read_input_tokens=600,
             tool_calls=20,
             cost_usd=0.30,
             planner_patches=2,

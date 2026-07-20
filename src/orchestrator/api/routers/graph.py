@@ -1070,12 +1070,18 @@ def _file_state_boundary_response(
 
     counts: dict[str, int] = {}
     captured_paths: list[FileStatePathResponse] = []
+    verdicts_by_path = {verdict.path: verdict for verdict in gatekeeper_verdicts.get(record_id, [])}
     for entry in _record_path_entries(record):
         path = _path_text(entry)
         if path is None:
             continue
         residue = residue_by_path.get((record_id, path), {})
-        classification = residue.get("classification", entry.get("classification"))
+        gatekeeper_verdict = verdicts_by_path.get(path)
+        classification = (
+            gatekeeper_verdict.classification
+            if gatekeeper_verdict is not None and gatekeeper_verdict.classification is not None
+            else residue.get("classification", entry.get("classification"))
+        )
         if isinstance(classification, str):
             counts[classification] = counts.get(classification, 0) + 1
         captured_paths.append(
@@ -1086,7 +1092,12 @@ def _file_state_boundary_response(
                 source=cast(str | None, residue.get("source", entry.get("source"))),
                 matched_rule=cast(
                     str | None,
-                    residue.get("matched_rule", entry.get("matched_rule")),
+                    (
+                        f"gatekeeper:{gatekeeper_verdict.model_id}"
+                        if gatekeeper_verdict is not None
+                        and gatekeeper_verdict.model_id is not None
+                        else residue.get("matched_rule", entry.get("matched_rule"))
+                    ),
                 ),
                 needs_gatekeeper=residue.get("needs_gatekeeper", entry.get("needs_gatekeeper"))
                 is True,

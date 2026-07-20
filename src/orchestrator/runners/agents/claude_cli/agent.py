@@ -965,13 +965,17 @@ class CLIAgent:
                     if sub_agents:
                         action_log.sub_agents = sub_agents
                         for sa in sub_agents:
-                            action_log.sub_agent_total_input_tokens += sa.total_input_tokens
-                            action_log.sub_agent_total_output_tokens += sa.total_output_tokens
-                            action_log.sub_agent_total_cache_read_tokens += (
-                                sa.total_cache_read_tokens
+                            action_log.sub_agent_gen_ai_usage_input_tokens += (
+                                sa.gen_ai_usage_input_tokens
                             )
-                            action_log.sub_agent_total_cache_creation_tokens += (
-                                sa.total_cache_creation_tokens
+                            action_log.sub_agent_gen_ai_usage_output_tokens += (
+                                sa.gen_ai_usage_output_tokens
+                            )
+                            action_log.sub_agent_gen_ai_usage_cache_read_input_tokens += (
+                                sa.gen_ai_usage_cache_read_input_tokens
+                            )
+                            action_log.sub_agent_gen_ai_usage_cache_creation_input_tokens += (
+                                sa.gen_ai_usage_cache_creation_input_tokens
                             )
 
             # Detect rate-limit: the CLI returned a limit message instead of

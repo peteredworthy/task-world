@@ -39,8 +39,8 @@ class CodexStreamParser:
         self._entries: list[ActionLogEntry] = []
         self._seq = 0
         self._readable_parts: list[str] = []
-        self._total_input_tokens = 0
-        self._total_output_tokens = 0
+        self._gen_ai_usage_input_tokens = 0
+        self._gen_ai_usage_output_tokens = 0
         self._pending_assistant_parts: list[str] = []
 
     def parse_line(self, line: str) -> None:
@@ -82,8 +82,8 @@ class CodexStreamParser:
         return ActionLog(
             entries=self._entries,
             total_turns=sum(1 for e in self._entries if e.kind == ActionEntryKind.ASSISTANT_TEXT),
-            total_input_tokens=self._total_input_tokens,
-            total_output_tokens=self._total_output_tokens,
+            gen_ai_usage_input_tokens=self._gen_ai_usage_input_tokens,
+            gen_ai_usage_output_tokens=self._gen_ai_usage_output_tokens,
             input_tokens_include_cache=True,
         )
 
@@ -184,13 +184,13 @@ class CodexStreamParser:
             return None
         usage_dict = cast(dict[str, Any], usage)
         return {
-            "input_tokens": int(
+            "gen_ai_usage_input_tokens": int(
                 usage_dict.get("inputTokens")
                 or usage_dict.get("input_tokens")
                 or usage_dict.get("prompt_tokens")
                 or 0
             ),
-            "output_tokens": int(
+            "gen_ai_usage_output_tokens": int(
                 usage_dict.get("outputTokens")
                 or usage_dict.get("output_tokens")
                 or usage_dict.get("completion_tokens")
@@ -229,11 +229,11 @@ class CodexStreamParser:
         turn_metrics = None
         if usage:
             turn_metrics = TurnMetrics(
-                input_tokens=usage.get("input_tokens", 0),
-                output_tokens=usage.get("output_tokens", 0),
+                gen_ai_usage_input_tokens=usage.get("input_tokens", 0),
+                gen_ai_usage_output_tokens=usage.get("output_tokens", 0),
             )
-            self._total_input_tokens += turn_metrics.input_tokens
-            self._total_output_tokens += turn_metrics.output_tokens
+            self._gen_ai_usage_input_tokens += turn_metrics.gen_ai_usage_input_tokens
+            self._gen_ai_usage_output_tokens += turn_metrics.gen_ai_usage_output_tokens
 
         self._entries.append(
             ActionLogEntry(
@@ -459,8 +459,8 @@ class CodexStreamParser:
         turn_metrics = None
         if usage:
             turn_metrics = TurnMetrics(
-                input_tokens=usage.get("input_tokens", 0),
-                output_tokens=usage.get("output_tokens", 0),
+                gen_ai_usage_input_tokens=usage.get("input_tokens", 0),
+                gen_ai_usage_output_tokens=usage.get("output_tokens", 0),
             )
 
         self._entries.append(

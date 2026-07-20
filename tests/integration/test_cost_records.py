@@ -125,9 +125,9 @@ async def test_phase_handler_records_cost_and_interaction_logs_for_each_agent_ex
         builder = MockAgent(
             MockBehavior(
                 complete_requirements=["R1"],
-                tokens_read=100,
-                tokens_write=40,
-                tokens_cache=7,
+                gen_ai_usage_input_tokens=100,
+                gen_ai_usage_output_tokens=40,
+                gen_ai_usage_cache_read_input_tokens=7,
                 duration_ms=1200,
                 output_lines=["builder output"],
             )
@@ -155,9 +155,9 @@ async def test_phase_handler_records_cost_and_interaction_logs_for_each_agent_ex
         assert task.status == TaskStatus.VERIFYING
         verifier = MockAgent(
             MockBehavior(
-                tokens_read=30,
-                tokens_write=10,
-                tokens_cache=3,
+                gen_ai_usage_input_tokens=30,
+                gen_ai_usage_output_tokens=10,
+                gen_ai_usage_cache_read_input_tokens=3,
                 duration_ms=800,
                 output_lines=["verifier output"],
             )
@@ -260,9 +260,9 @@ async def test_phase_handler_records_recovering_cost_and_interaction_log_prompt(
 
         recovery_agent = MockAgent(
             MockBehavior(
-                tokens_read=55,
-                tokens_write=21,
-                tokens_cache=8,
+                gen_ai_usage_input_tokens=55,
+                gen_ai_usage_output_tokens=21,
+                gen_ai_usage_cache_read_input_tokens=8,
                 duration_ms=900,
                 output_lines=["recovery output"],
             )
@@ -331,17 +331,17 @@ async def test_phase_handler_persists_per_model_cost_usage(
         agent = MockAgent(
             MockBehavior(
                 complete_requirements=["R1"],
-                tokens_read=1,
-                tokens_write=1,
-                tokens_cache=1,
+                gen_ai_usage_input_tokens=1,
+                gen_ai_usage_output_tokens=1,
+                gen_ai_usage_cache_read_input_tokens=1,
                 duration_ms=1,
                 output_lines=["builder output with usage"],
                 action_log=ActionLog(
                     agent_model="gpt-4o",
-                    total_input_tokens=1_000,
-                    total_output_tokens=500,
-                    total_cache_read_tokens=100,
-                    total_cache_creation_tokens=200,
+                    gen_ai_usage_input_tokens=1_000,
+                    gen_ai_usage_output_tokens=500,
+                    gen_ai_usage_cache_read_input_tokens=100,
+                    gen_ai_usage_cache_creation_input_tokens=200,
                     total_duration_ms=1_234,
                 ),
             )
@@ -378,7 +378,7 @@ async def test_phase_handler_persists_per_model_cost_usage(
         assert cost_row.cost_usd > 0
         assert cost_row.token_usage_by_model is not None
         assert cost_row.token_usage_by_model[0]["model"] == "gpt-4o"
-        assert cost_row.token_usage_by_model[0]["cache_creation_tokens"] == 200
+        assert cost_row.token_usage_by_model[0]["gen_ai_usage_cache_creation_input_tokens"] == 200
 
         run_state = await RunRepository(session).get("cost-run")
         assert run_state.total_tokens_read == 1_000

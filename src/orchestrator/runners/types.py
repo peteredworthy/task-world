@@ -59,9 +59,9 @@ Returns:
 class ExecutionMetrics(BaseModel):
     """Metrics collected during agent execution."""
 
-    tokens_read: int = 0
-    tokens_write: int = 0
-    tokens_cache: int = 0
+    gen_ai_usage_input_tokens: int = 0
+    gen_ai_usage_output_tokens: int = 0
+    gen_ai_usage_cache_read_input_tokens: int = 0
     duration_ms: int = 0
     num_actions: int = 0
 

@@ -110,7 +110,6 @@ from orchestrator.runners.profiles.service import seed_default_agents
 from orchestrator.runners.costs import (
     ModelCostResolution,
     calculate_model_usage_cost,
-    get_model_costs,
     load_cost_table,
     resolve_model_costs,
 )
@@ -310,7 +309,6 @@ __all__ = [
     # Costs
     "ModelCostResolution",
     "calculate_model_usage_cost",
-    "get_model_costs",
     "load_cost_table",
     "resolve_model_costs",
     # Execution

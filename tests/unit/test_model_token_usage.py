@@ -129,26 +129,6 @@ class TestModelTokenUsage:
         with pytest.raises(ValidationError):
             ModelTokenUsage(model="known", **{field: -1})
 
-    @pytest.mark.parametrize("rate", [-1, float("inf"), float("nan"), "not-a-rate"])
-    def test_rejects_invalid_legacy_rates_before_cost_construction(self, rate: float) -> None:
-        with pytest.raises(ValidationError):
-            ModelTokenUsage(model="known", input_tokens=1, cost_per_m_input=rate)
-
-    def test_rejects_numeric_like_legacy_rate_before_float_conversion_or_arithmetic(self) -> None:
-        class ExplosiveNumeric:
-            def __float__(self) -> float:
-                raise AssertionError("legacy rate reached float conversion")
-
-            def __rmul__(self, _: object) -> float:
-                raise AssertionError("legacy rate reached cost arithmetic")
-
-        with pytest.raises(ValidationError):
-            ModelTokenUsage(
-                model="known",
-                input_tokens=1,
-                cost_per_m_input=ExplosiveNumeric(),
-            )
-
     def test_malformed_canonical_numeric_uses_pydantic_validation(self) -> None:
         with pytest.raises(ValidationError):
             ModelTokenUsage(model="known", gen_ai_usage_input_tokens="not-a-token-count")
@@ -161,27 +141,6 @@ class TestModelTokenUsage:
         with pytest.raises(ValidationError):
             ModelTokenUsage(model="known", gen_ai_usage_input_tokens=ExplosiveNumeric())
 
-    def test_rejects_overflowing_derived_legacy_cost(self) -> None:
-        with pytest.raises(ValidationError):
-            ModelTokenUsage(model="known", input_tokens=10**308, cost_per_m_input=10**308)
-
-    def test_rejects_conflicting_canonical_and_legacy_values(self) -> None:
-        with pytest.raises(ValidationError, match="conflicting"):
-            ModelTokenUsage(
-                model="known",
-                input_tokens=10,
-                gen_ai_usage_input_tokens=11,
-            )
-
-    def test_keeps_canonical_value_when_legacy_value_matches(self) -> None:
-        usage = ModelTokenUsage(
-            model="known",
-            input_tokens=10,
-            gen_ai_usage_input_tokens=10,
-        )
-
-        assert usage.gen_ai_usage_input_tokens == 10
-
 
 class TestExtractMetricsAndUsage:
     def test_exclusive_input_is_normalized_to_include_cache(self, cost_file: Path) -> None:
@@ -190,10 +149,10 @@ class TestExtractMetricsAndUsage:
             metrics=ExecutionMetrics(),
             action_log=ActionLog(
                 agent_model="known",
-                total_input_tokens=10,
-                total_output_tokens=4,
-                total_cache_read_tokens=20,
-                total_cache_creation_tokens=30,
+                gen_ai_usage_input_tokens=10,
+                gen_ai_usage_output_tokens=4,
+                gen_ai_usage_cache_read_input_tokens=20,
+                gen_ai_usage_cache_creation_input_tokens=30,
                 input_tokens_include_cache=False,
             ),
         )
@@ -211,10 +170,10 @@ class TestExtractMetricsAndUsage:
             metrics=ExecutionMetrics(),
             action_log=ActionLog(
                 agent_model="known",
-                total_input_tokens=60,
-                total_output_tokens=4,
-                total_cache_read_tokens=20,
-                total_cache_creation_tokens=30,
+                gen_ai_usage_input_tokens=60,
+                gen_ai_usage_output_tokens=4,
+                gen_ai_usage_cache_read_input_tokens=20,
+                gen_ai_usage_cache_creation_input_tokens=30,
                 input_tokens_include_cache=True,
             ),
         )
@@ -226,7 +185,9 @@ class TestExtractMetricsAndUsage:
     def test_reasoning_observability_does_not_change_captured_cost(self, cost_file: Path) -> None:
         result = ExecutionResult(
             success=True,
-            action_log=ActionLog(agent_model="known", total_input_tokens=10, total_output_tokens=4),
+            action_log=ActionLog(
+                agent_model="known", gen_ai_usage_input_tokens=10, gen_ai_usage_output_tokens=4
+            ),
         )
         base = extract_metrics_and_usage(result)[1][0]
         observed_reasoning = base.model_copy(update={"gen_ai_usage_reasoning_output_tokens": 3})
@@ -241,10 +202,10 @@ class TestExtractMetricsAndUsage:
             metrics=ExecutionMetrics(),
             action_log=ActionLog(
                 agent_model="known",
-                total_input_tokens=1,
+                gen_ai_usage_input_tokens=1,
                 sub_agents=[
-                    SubAgentLog(model="known", total_input_tokens=2),
-                    SubAgentLog(model="unknown", total_input_tokens=3),
+                    SubAgentLog(model="known", gen_ai_usage_input_tokens=2),
+                    SubAgentLog(model="unknown", gen_ai_usage_input_tokens=3),
                 ],
             ),
         )
@@ -260,7 +221,7 @@ class TestExtractMetricsAndUsage:
             metrics=ExecutionMetrics(),
             action_log=ActionLog(
                 agent_model="known",
-                sub_agents=[SubAgentLog(model="known", total_input_tokens=2)],
+                sub_agents=[SubAgentLog(model="known", gen_ai_usage_input_tokens=2)],
             ),
         )
 
@@ -268,7 +229,7 @@ class TestExtractMetricsAndUsage:
 
         assert len(usage) == 1
         assert usage[0].gen_ai_usage_input_tokens == 2
-        assert metrics.tokens_read == 2
+        assert metrics.gen_ai_usage_input_tokens == 2
 
     def test_claude_sub_agent_exclusive_input_adds_cache_exactly_once(
         self, tmp_path: Path, cost_file: Path
@@ -301,4 +262,4 @@ class TestExtractMetricsAndUsage:
         assert usage[0].gen_ai_usage_input_tokens == 15
         assert usage[0].gen_ai_usage_cache_read_input_tokens == 2
         assert usage[0].gen_ai_usage_cache_creation_input_tokens == 3
-        assert metrics.tokens_read == 15
+        assert metrics.gen_ai_usage_input_tokens == 15

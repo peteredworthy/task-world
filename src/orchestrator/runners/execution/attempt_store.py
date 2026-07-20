@@ -74,9 +74,9 @@ class AttemptStore:
         action_log: Any = None,
         builder_prompt: str | None = None,
         verifier_prompt: str | None = None,
-        tokens_read: int | None = None,
-        tokens_write: int | None = None,
-        tokens_cache: int | None = None,
+        gen_ai_usage_input_tokens: int | None = None,
+        gen_ai_usage_output_tokens: int | None = None,
+        gen_ai_usage_cache_read_input_tokens: int | None = None,
         duration_ms: int | None = None,
         num_actions: int | None = None,
         token_usage_by_model: list[dict[str, Any]] | None = None,
@@ -98,9 +98,9 @@ class AttemptStore:
                     action_log=self._json_value(action_log) if action_log is not None else None,
                     builder_prompt=builder_prompt,
                     verifier_prompt=verifier_prompt,
-                    tokens_read=tokens_read,
-                    tokens_write=tokens_write,
-                    tokens_cache=tokens_cache,
+                    gen_ai_usage_input_tokens=gen_ai_usage_input_tokens,
+                    gen_ai_usage_output_tokens=gen_ai_usage_output_tokens,
+                    gen_ai_usage_cache_read_input_tokens=gen_ai_usage_cache_read_input_tokens,
                     duration_ms=duration_ms,
                     num_actions=num_actions,
                     token_usage_by_model=token_usage_by_model,
@@ -236,9 +236,9 @@ class AttemptStore:
                     session,
                     run_id=run_id,
                     task_id=task_id,
-                    tokens_read=metrics.tokens_read,
-                    tokens_write=metrics.tokens_write,
-                    tokens_cache=metrics.tokens_cache,
+                    gen_ai_usage_input_tokens=metrics.gen_ai_usage_input_tokens,
+                    gen_ai_usage_output_tokens=metrics.gen_ai_usage_output_tokens,
+                    gen_ai_usage_cache_read_input_tokens=metrics.gen_ai_usage_cache_read_input_tokens,
                     duration_ms=metrics.duration_ms,
                     num_actions=metrics.num_actions,
                     token_usage_by_model=self._dump_token_usage(token_usage_by_model),
@@ -354,10 +354,12 @@ class AttemptStore:
         merged.total_turns += second.total_turns
         merged.total_cost_usd += second.total_cost_usd
         merged.total_duration_ms += second.total_duration_ms
-        merged.total_input_tokens += second.total_input_tokens
-        merged.total_output_tokens += second.total_output_tokens
-        merged.total_cache_read_tokens += second.total_cache_read_tokens
-        merged.total_cache_creation_tokens += second.total_cache_creation_tokens
+        merged.gen_ai_usage_input_tokens += second.gen_ai_usage_input_tokens
+        merged.gen_ai_usage_output_tokens += second.gen_ai_usage_output_tokens
+        merged.gen_ai_usage_cache_read_input_tokens += second.gen_ai_usage_cache_read_input_tokens
+        merged.gen_ai_usage_cache_creation_input_tokens += (
+            second.gen_ai_usage_cache_creation_input_tokens
+        )
         return merged
 
     async def _upsert_interaction_log_artifact(
@@ -427,15 +429,17 @@ class AttemptStore:
 
         usage = token_usage_by_model or []
         if usage:
-            input_tokens = sum(item.input_tokens for item in usage)
-            output_tokens = sum(item.output_tokens for item in usage)
-            cache_read_tokens = sum(item.cache_read_tokens for item in usage)
-            cache_write_tokens = sum(item.cache_creation_tokens for item in usage)
-            cost_usd = sum(item.total_cost_usd for item in usage)
+            input_tokens = sum(item.gen_ai_usage_input_tokens for item in usage)
+            output_tokens = sum(item.gen_ai_usage_output_tokens for item in usage)
+            cache_read_tokens = sum(item.gen_ai_usage_cache_read_input_tokens for item in usage)
+            cache_write_tokens = sum(
+                item.gen_ai_usage_cache_creation_input_tokens for item in usage
+            )
+            cost_usd = sum(item.cost_usd for item in usage)
         else:
-            input_tokens = metrics.tokens_read
-            output_tokens = metrics.tokens_write
-            cache_read_tokens = metrics.tokens_cache
+            input_tokens = metrics.gen_ai_usage_input_tokens
+            output_tokens = metrics.gen_ai_usage_output_tokens
+            cache_read_tokens = metrics.gen_ai_usage_cache_read_input_tokens
             cache_write_tokens = 0
             cost_usd = 0.0
 

@@ -77,10 +77,10 @@ async def _save_run(
         attempt.token_usage_by_model = [
             ModelTokenUsage(
                 model="gpt-4o",
-                input_tokens=11,
-                output_tokens=22,
-                cache_read_tokens=3,
-                cache_creation_tokens=4,
+                gen_ai_usage_input_tokens=11,
+                gen_ai_usage_output_tokens=22,
+                gen_ai_usage_cache_read_input_tokens=3,
+                gen_ai_usage_cache_creation_input_tokens=4,
                 cost_per_m_input=1.0,
                 cost_per_m_output=2.0,
                 cost_per_m_cache_read=3.0,

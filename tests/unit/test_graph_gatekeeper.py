@@ -50,16 +50,16 @@ def test_record_gatekeeper_verdicts_accepts_and_resolves_residue() -> None:
 @pytest.mark.parametrize(
     ("location", "field", "value"),
     [
-        ("verdict", "input_tokens", -1),
-        ("verdict", "input_tokens", 1.5),
-        ("verdict", "input_tokens", "1"),
+        ("verdict", "gen_ai_usage_input_tokens", -1),
+        ("verdict", "gen_ai_usage_input_tokens", 1.5),
+        ("verdict", "gen_ai_usage_input_tokens", "1"),
         ("verdict", "wall_time_ms", 1.5),
         ("verdict", "cost_usd", -1.0),
         ("verdict", "cost_usd", "1.0"),
         ("verdict", "unknown_cost", 1),
-        ("cost", "output_tokens", -1),
-        ("cost", "output_tokens", 1.5),
-        ("cost", "output_tokens", "1"),
+        ("cost", "gen_ai_usage_output_tokens", -1),
+        ("cost", "gen_ai_usage_output_tokens", 1.5),
+        ("cost", "gen_ai_usage_output_tokens", "1"),
         ("cost", "wall_time_ms", 1.5),
         ("cost", "cost_usd", -1.0),
         ("cost", "cost_usd", "1.0"),
@@ -166,9 +166,9 @@ def test_record_gatekeeper_verdicts_allows_only_nested_accounting_overrides() ->
     events = [_file_state_event("file-state-1", "tmp.out")]
     accounting = {
         "model_id": "cost-model",
-        "input_tokens": 20,
-        "output_tokens": 10,
-        "cache_read_tokens": 5,
+        "gen_ai_usage_input_tokens": 20,
+        "gen_ai_usage_output_tokens": 10,
+        "gen_ai_usage_cache_read_input_tokens": 5,
         "cache_write_tokens": 2,
         "cost_usd": 0.25,
         "wall_time_ms": 40,
@@ -531,11 +531,11 @@ def test_project_gatekeeper_report_hit_rate_and_growth() -> None:
     assert report["hit_rate"] == 0.5
     assert report["pattern_library_size"] == 1
     assert [entry["size"] for entry in report["pattern_library_size_over_time"]] == [0, 1, 1]
-    assert report["input_tokens"] == 11
-    assert report["output_tokens"] == 3
+    assert report["gen_ai_usage_input_tokens"] == 11
+    assert report["gen_ai_usage_output_tokens"] == 3
     assert report["cost_usd"] == 0.001
     assert report["models"]["claude-test"]["consults"] == 1
-    assert report["models"]["claude-test"]["input_tokens"] == 11
+    assert report["models"]["claude-test"]["gen_ai_usage_input_tokens"] == 11
     assert report["models"]["claude-test"]["executions"] == ["exec-1"]
 
 
@@ -610,9 +610,9 @@ def _cost_event(record_id: str, *, position: int) -> EventEnvelope:
             "execution_id": "exec-1",
             "consult_id": "consult-1",
             "model_id": "claude-test",
-            "input_tokens": 11,
-            "output_tokens": 3,
-            "cache_read_tokens": 0,
+            "gen_ai_usage_input_tokens": 11,
+            "gen_ai_usage_output_tokens": 3,
+            "gen_ai_usage_cache_read_input_tokens": 0,
             "cache_write_tokens": 0,
             "cost_usd": 0.001,
             "wall_time_ms": 12,
@@ -629,8 +629,8 @@ def _verdict(path: str, classification: str) -> dict[str, Any]:
         "confidence": 0.9,
         "rationale": "metadata shape matches",
         "model_id": "claude-test",
-        "input_tokens": 11,
-        "output_tokens": 3,
+        "gen_ai_usage_input_tokens": 11,
+        "gen_ai_usage_output_tokens": 3,
         "cost_usd": 0.001,
         "wall_time_ms": 12,
     }

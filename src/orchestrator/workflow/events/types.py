@@ -593,9 +593,9 @@ class AttemptUpdated(WorkflowEvent):
     auto_verify_results: list[dict[str, Any]] | None = None
     action_log: Any | None = None
     token_usage_by_model: list[dict[str, Any]] | None = None
-    tokens_read: int | None = None
-    tokens_write: int | None = None
-    tokens_cache: int | None = None
+    gen_ai_usage_input_tokens: int | None = None
+    gen_ai_usage_output_tokens: int | None = None
+    gen_ai_usage_cache_read_input_tokens: int | None = None
     duration_ms: int | None = None
     num_actions: int | None = None
     agent_runner_type: AgentRunnerType | str | None = None

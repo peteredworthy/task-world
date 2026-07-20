@@ -55,7 +55,7 @@ def test_file_state_rejected_accepts_only_canonical_record_fields_and_reason() -
 def test_gatekeeper_cost_rejects_unknown_and_negative_values() -> None:
     with pytest.raises(ValidationError):
         GatekeeperCostRecordedPayload.model_validate(
-            {"execution_id": "e-1", "input_tokens": -1, "legacy_cost": 1}
+            {"execution_id": "e-1", "gen_ai_usage_input_tokens": -1, "legacy_cost": 1}
         )
 
 
@@ -82,9 +82,9 @@ async def test_gatekeeper_cost_fields_survive_summary_reconstruction() -> None:
         "file_state_record_id": "file-state-1",
         "consult_id": "consult-1",
         "model_id": "model-1",
-        "input_tokens": 11,
-        "output_tokens": 7,
-        "cache_read_tokens": 5,
+        "gen_ai_usage_input_tokens": 11,
+        "gen_ai_usage_output_tokens": 7,
+        "gen_ai_usage_cache_read_input_tokens": 5,
         "cache_write_tokens": 3,
         "item_count": 2,
         "cost_usd": 0.125,

@@ -860,9 +860,9 @@ async def test_execute_extracts_usage_from_turn_completed() -> None:
         on_submit=_noop_submit,
     )
 
-    assert result.metrics.tokens_read == 5000
-    assert result.metrics.tokens_write == 1200
-    assert result.metrics.tokens_cache == 300
+    assert result.metrics.gen_ai_usage_input_tokens == 5000
+    assert result.metrics.gen_ai_usage_output_tokens == 1200
+    assert result.metrics.gen_ai_usage_cache_read_input_tokens == 300
 
 
 async def test_execute_zero_usage_when_no_usage_field() -> None:
@@ -876,9 +876,9 @@ async def test_execute_zero_usage_when_no_usage_field() -> None:
         on_submit=_noop_submit,
     )
 
-    assert result.metrics.tokens_read == 0
-    assert result.metrics.tokens_write == 0
-    assert result.metrics.tokens_cache == 0
+    assert result.metrics.gen_ai_usage_input_tokens == 0
+    assert result.metrics.gen_ai_usage_output_tokens == 0
+    assert result.metrics.gen_ai_usage_cache_read_input_tokens == 0
 
 
 # ---------------------------------------------------------------------------
@@ -965,9 +965,9 @@ async def test_execute_combined_metrics() -> None:
 
     # Verify metrics: 2 item/completed (non-agentMessage) + 2 tool/call dispatches = 4
     assert result.metrics.num_actions == 4
-    assert result.metrics.tokens_read == 10000
-    assert result.metrics.tokens_write == 2500
-    assert result.metrics.tokens_cache == 1000
+    assert result.metrics.gen_ai_usage_input_tokens == 10000
+    assert result.metrics.gen_ai_usage_output_tokens == 2500
+    assert result.metrics.gen_ai_usage_cache_read_input_tokens == 1000
     assert result.metrics.duration_ms >= 0
 
 
@@ -1066,5 +1066,5 @@ async def test_execute_builds_structured_action_log_from_notifications() -> None
     assert entries[3].tool_use.tool_name == "update_checklist"
     assert entries[4].tool_result is not None
     assert entries[4].tool_result.success is True
-    assert result.action_log.total_input_tokens == 120
-    assert result.action_log.total_output_tokens == 40
+    assert result.action_log.gen_ai_usage_input_tokens == 120
+    assert result.action_log.gen_ai_usage_output_tokens == 40

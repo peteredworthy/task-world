@@ -488,12 +488,18 @@ class TaskStateProjector:
                         attempt.action_log_json = event.action_log
                     if event.token_usage_by_model is not None:
                         attempt.token_usage_by_model = event.token_usage_by_model
-                    if event.tokens_read is not None:
-                        attempt.tokens_read = (attempt.tokens_read or 0) + event.tokens_read
-                    if event.tokens_write is not None:
-                        attempt.tokens_write = (attempt.tokens_write or 0) + event.tokens_write
-                    if event.tokens_cache is not None:
-                        attempt.tokens_cache = (attempt.tokens_cache or 0) + event.tokens_cache
+                    if event.gen_ai_usage_input_tokens is not None:
+                        attempt.tokens_read = (
+                            attempt.tokens_read or 0
+                        ) + event.gen_ai_usage_input_tokens
+                    if event.gen_ai_usage_output_tokens is not None:
+                        attempt.tokens_write = (
+                            attempt.tokens_write or 0
+                        ) + event.gen_ai_usage_output_tokens
+                    if event.gen_ai_usage_cache_read_input_tokens is not None:
+                        attempt.tokens_cache = (
+                            attempt.tokens_cache or 0
+                        ) + event.gen_ai_usage_cache_read_input_tokens
                     if event.duration_ms is not None:
                         attempt.duration_ms = (attempt.duration_ms or 0) + event.duration_ms
                     if event.num_actions is not None:

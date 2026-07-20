@@ -749,9 +749,9 @@ def extract_token_usage_update(notification: dict[str, Any]) -> dict[str, int] |
         return None
 
     result: dict[str, int] = {
-        "tokens_read": 0,
-        "tokens_write": 0,
-        "tokens_cache": 0,
+        "gen_ai_usage_input_tokens": 0,
+        "gen_ai_usage_output_tokens": 0,
+        "gen_ai_usage_cache_read_input_tokens": 0,
         "tokens_reasoning": 0,
     }
 
@@ -759,34 +759,36 @@ def extract_token_usage_update(notification: dict[str, Any]) -> dict[str, int] |
     for key in ("inputTokens", "input_tokens"):
         val = usage.get(key)
         if val is not None:
-            result["tokens_read"] = int(val)
+            result["gen_ai_usage_input_tokens"] = int(val)
             break
 
     # Cache tokens
     for key in ("cachedInputTokens", "cached_input_tokens", "cache_read_input_tokens"):
         val = usage.get(key)
         if val is not None:
-            result["tokens_cache"] = int(val)
+            result["gen_ai_usage_cache_read_input_tokens"] = int(val)
             break
 
     # Output tokens (base)
-    output_tokens = 0
+    gen_ai_usage_output_tokens = 0
     for key in ("outputTokens", "output_tokens"):
         val = usage.get(key)
         if val is not None:
-            output_tokens = int(val)
+            gen_ai_usage_output_tokens = int(val)
             break
 
     # Reasoning output tokens (folded into write for billing, but also surfaced separately)
-    reasoning_tokens = 0
+    gen_ai_usage_reasoning_output_tokens = 0
     for key in ("reasoningOutputTokens", "reasoning_output_tokens"):
         val = usage.get(key)
         if val is not None:
-            reasoning_tokens = int(val)
+            gen_ai_usage_reasoning_output_tokens = int(val)
             break
 
-    result["tokens_reasoning"] = reasoning_tokens
-    result["tokens_write"] = output_tokens + reasoning_tokens
+    result["tokens_reasoning"] = gen_ai_usage_reasoning_output_tokens
+    result["gen_ai_usage_output_tokens"] = (
+        gen_ai_usage_output_tokens + gen_ai_usage_reasoning_output_tokens
+    )
 
     return result
 
@@ -809,7 +811,12 @@ def extract_turn_usage(notification: dict[str, Any]) -> dict[str, int]:
         Dict with keys ``tokens_read``, ``tokens_write``, ``tokens_cache``,
         ``tokens_reasoning``. All values default to 0 when usage data is absent.
     """
-    result = {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0, "tokens_reasoning": 0}
+    result = {
+        "gen_ai_usage_input_tokens": 0,
+        "gen_ai_usage_output_tokens": 0,
+        "gen_ai_usage_cache_read_input_tokens": 0,
+        "tokens_reasoning": 0,
+    }
 
     if notification.get("method") != "turn/completed":
         return result
@@ -831,33 +838,35 @@ def extract_turn_usage(notification: dict[str, Any]) -> dict[str, int]:
     for key in ("inputTokens", "input_tokens", "prompt_tokens"):
         val = usage.get(key)
         if val is not None:
-            result["tokens_read"] = int(val)
+            result["gen_ai_usage_input_tokens"] = int(val)
             break
 
     # Output/completion tokens — camelCase (protocol) then snake_case (fallback)
-    output_tokens = 0
+    gen_ai_usage_output_tokens = 0
     for key in ("outputTokens", "output_tokens", "completion_tokens"):
         val = usage.get(key)
         if val is not None:
-            output_tokens = int(val)
+            gen_ai_usage_output_tokens = int(val)
             break
 
     # Reasoning output tokens (folded into write for billing, but also surfaced separately)
-    reasoning_tokens = 0
+    gen_ai_usage_reasoning_output_tokens = 0
     for key in ("reasoningOutputTokens", "reasoning_output_tokens"):
         val = usage.get(key)
         if val is not None:
-            reasoning_tokens = int(val)
+            gen_ai_usage_reasoning_output_tokens = int(val)
             break
 
-    result["tokens_reasoning"] = reasoning_tokens
-    result["tokens_write"] = output_tokens + reasoning_tokens
+    result["tokens_reasoning"] = gen_ai_usage_reasoning_output_tokens
+    result["gen_ai_usage_output_tokens"] = (
+        gen_ai_usage_output_tokens + gen_ai_usage_reasoning_output_tokens
+    )
 
     # Cache tokens — camelCase (protocol) then snake_case (fallback)
     for key in ("cacheReadTokens", "cache_read_tokens", "cached_tokens", "cache_read_input_tokens"):
         val = usage.get(key)
         if val is not None:
-            result["tokens_cache"] = int(val)
+            result["gen_ai_usage_cache_read_input_tokens"] = int(val)
             break
 
     return result
@@ -1051,9 +1060,9 @@ def build_codex_server_prompt(context: ExecutionContext, is_verifier: bool = Fal
 
 def normalize_codex_metrics(
     duration_ms: int = 0,
-    tokens_read: int = 0,
-    tokens_write: int = 0,
-    tokens_cache: int = 0,
+    gen_ai_usage_input_tokens: int = 0,
+    gen_ai_usage_output_tokens: int = 0,
+    gen_ai_usage_cache_read_input_tokens: int = 0,
     num_actions: int = 0,
 ) -> ExecutionMetrics:
     """Build a normalized ``ExecutionMetrics`` from Codex server session data.
@@ -1069,9 +1078,9 @@ def normalize_codex_metrics(
         Populated ``ExecutionMetrics`` instance.
     """
     return ExecutionMetrics(
-        tokens_read=tokens_read,
-        tokens_write=tokens_write,
-        tokens_cache=tokens_cache,
+        gen_ai_usage_input_tokens=gen_ai_usage_input_tokens,
+        gen_ai_usage_output_tokens=gen_ai_usage_output_tokens,
+        gen_ai_usage_cache_read_input_tokens=gen_ai_usage_cache_read_input_tokens,
         duration_ms=duration_ms,
         num_actions=num_actions,
     )
@@ -1085,9 +1094,9 @@ def normalize_codex_metrics(
 def build_execution_result(
     output_lines: list[str],
     duration_ms: int,
-    tokens_read: int = 0,
-    tokens_write: int = 0,
-    tokens_cache: int = 0,
+    gen_ai_usage_input_tokens: int = 0,
+    gen_ai_usage_output_tokens: int = 0,
+    gen_ai_usage_cache_read_input_tokens: int = 0,
     num_actions: int = 0,
     agent_model: str | None = None,
 ) -> ExecutionResult:
@@ -1116,18 +1125,18 @@ def build_execution_result(
         success=True,
         metrics=normalize_codex_metrics(
             duration_ms=duration_ms,
-            tokens_read=tokens_read,
-            tokens_write=tokens_write,
-            tokens_cache=tokens_cache,
+            gen_ai_usage_input_tokens=gen_ai_usage_input_tokens,
+            gen_ai_usage_output_tokens=gen_ai_usage_output_tokens,
+            gen_ai_usage_cache_read_input_tokens=gen_ai_usage_cache_read_input_tokens,
             num_actions=num_actions,
         ),
         output_lines=final_lines,
         action_log=ActionLog(
             agent_model=agent_model,
             total_duration_ms=duration_ms,
-            total_input_tokens=tokens_read,
-            total_output_tokens=tokens_write,
-            total_cache_read_tokens=tokens_cache,
+            gen_ai_usage_input_tokens=gen_ai_usage_input_tokens,
+            gen_ai_usage_output_tokens=gen_ai_usage_output_tokens,
+            gen_ai_usage_cache_read_input_tokens=gen_ai_usage_cache_read_input_tokens,
             input_tokens_include_cache=True,
         ),
     )

@@ -63,14 +63,14 @@ def _parse_subagent_jsonl(
 
     Returns:
         (model, entries, totals) where totals is a dict with keys
-        input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens.
+        canonical OTel usage field names.
     """
     entries: list[ActionLogEntry] = []
     totals: dict[str, int] = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_creation_tokens": 0,
+        "gen_ai_usage_input_tokens": 0,
+        "gen_ai_usage_output_tokens": 0,
+        "gen_ai_usage_cache_read_input_tokens": 0,
+        "gen_ai_usage_cache_creation_input_tokens": 0,
     }
     model: str | None = None
     seq = 0
@@ -110,17 +110,25 @@ def _parse_subagent_jsonl(
             turn_metrics: TurnMetrics | None = None
             if usage:
                 turn_metrics = TurnMetrics(
-                    input_tokens=int(usage.get("input_tokens") or 0),
-                    output_tokens=int(usage.get("output_tokens") or 0),
-                    cache_read_tokens=int(usage.get("cache_read_input_tokens") or 0),
-                    cache_creation_tokens=int(usage.get("cache_creation_input_tokens") or 0),
+                    gen_ai_usage_input_tokens=int(usage.get("input_tokens") or 0),
+                    gen_ai_usage_output_tokens=int(usage.get("output_tokens") or 0),
+                    gen_ai_usage_cache_read_input_tokens=int(
+                        usage.get("cache_read_input_tokens") or 0
+                    ),
+                    gen_ai_usage_cache_creation_input_tokens=int(
+                        usage.get("cache_creation_input_tokens") or 0
+                    ),
                 )
                 message_id: str | None = message.get("id")
                 if message_id is None or message_id not in seen_message_ids:
-                    totals["input_tokens"] += turn_metrics.input_tokens
-                    totals["output_tokens"] += turn_metrics.output_tokens
-                    totals["cache_read_tokens"] += turn_metrics.cache_read_tokens
-                    totals["cache_creation_tokens"] += turn_metrics.cache_creation_tokens
+                    totals["gen_ai_usage_input_tokens"] += turn_metrics.gen_ai_usage_input_tokens
+                    totals["gen_ai_usage_output_tokens"] += turn_metrics.gen_ai_usage_output_tokens
+                    totals["gen_ai_usage_cache_read_input_tokens"] += (
+                        turn_metrics.gen_ai_usage_cache_read_input_tokens
+                    )
+                    totals["gen_ai_usage_cache_creation_input_tokens"] += (
+                        turn_metrics.gen_ai_usage_cache_creation_input_tokens
+                    )
                 if message_id:
                     seen_message_ids.add(message_id)
 
@@ -283,10 +291,12 @@ def load_sub_agents(
                 subagent_type=subagent_type,
                 description=description,
                 model=model,
-                total_input_tokens=totals["input_tokens"],
-                total_output_tokens=totals["output_tokens"],
-                total_cache_read_tokens=totals["cache_read_tokens"],
-                total_cache_creation_tokens=totals["cache_creation_tokens"],
+                gen_ai_usage_input_tokens=totals["gen_ai_usage_input_tokens"],
+                gen_ai_usage_output_tokens=totals["gen_ai_usage_output_tokens"],
+                gen_ai_usage_cache_read_input_tokens=totals["gen_ai_usage_cache_read_input_tokens"],
+                gen_ai_usage_cache_creation_input_tokens=(
+                    totals["gen_ai_usage_cache_creation_input_tokens"]
+                ),
                 input_tokens_include_cache=False,
                 entries=entries,
             )

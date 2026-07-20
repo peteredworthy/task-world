@@ -675,9 +675,9 @@ async def test_canonical_projection_snapshot_matches_after_events_v2_rebuild(
                         "cache_creation_tokens": 1,
                     }
                 ],
-                tokens_read=10,
-                tokens_write=5,
-                tokens_cache=3,
+                gen_ai_usage_input_tokens=10,
+                gen_ai_usage_output_tokens=5,
+                gen_ai_usage_cache_read_input_tokens=3,
                 duration_ms=123,
                 num_actions=1,
                 agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,

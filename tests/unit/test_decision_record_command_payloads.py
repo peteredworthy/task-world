@@ -57,7 +57,7 @@ def test_raise_appeal_requires_node_id() -> None:
 def test_gatekeeper_row_rejects_coerced_token_counts(value: object) -> None:
     with pytest.raises(ValidationError):
         GatekeeperVerdictCommandRow.model_validate(
-            {"path": "secret.txt", "classification": "secret", "input_tokens": value}
+            {"path": "secret.txt", "classification": "secret", "gen_ai_usage_input_tokens": value}
         )
 
 

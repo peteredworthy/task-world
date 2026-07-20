@@ -46,10 +46,10 @@ class ToolResultDetailSchema(ApiModel):
 
 
 class TurnMetricsSchema(ApiModel):
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
+    gen_ai_usage_input_tokens: int = 0
+    gen_ai_usage_output_tokens: int = 0
+    gen_ai_usage_cache_read_input_tokens: int = 0
+    gen_ai_usage_cache_creation_input_tokens: int = 0
     cost_usd: float = 0.0
 
 
@@ -72,10 +72,10 @@ class ActionLogSchema(ApiModel):
     total_turns: int = 0
     total_cost_usd: float = 0.0
     total_duration_ms: int = 0
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
-    total_cache_read_tokens: int = 0
-    total_cache_creation_tokens: int = 0
+    gen_ai_usage_input_tokens: int = 0
+    gen_ai_usage_output_tokens: int = 0
+    gen_ai_usage_cache_read_input_tokens: int = 0
+    gen_ai_usage_cache_creation_input_tokens: int = 0
 
 
 # --- Per-model token usage schema ---
@@ -83,15 +83,15 @@ class ActionLogSchema(ApiModel):
 
 class ModelTokenUsageSchema(ApiModel):
     model: str
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cost_per_m_cache_read: float = 0.0
-    cost_per_m_cache_creation: float = 0.0
-    cost_per_m_input: float = 0.0
-    cost_per_m_output: float = 0.0
-    total_cost_usd: float = 0.0
+    gen_ai_usage_cache_read_input_tokens: int = 0
+    gen_ai_usage_cache_creation_input_tokens: int = 0
+    gen_ai_usage_input_tokens: int = 0
+    gen_ai_usage_output_tokens: int = 0
+    gen_ai_usage_reasoning_output_tokens: int = 0
+    gen_ai_response_finish_reasons: list[str] = []
+    cost_usd: float = 0.0
+    latency_ms: int = 0
+    rate_missing: bool = False
 
 
 # --- Attempt and Task schemas ---

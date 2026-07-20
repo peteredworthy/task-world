@@ -34,9 +34,9 @@ class MockBehavior:
         fail_requirements: Requirement IDs to mark as BLOCKED.
         should_submit: Whether to call on_submit after checklist updates.
         should_fail: Whether execute() raises AgentExecutionError.
-        tokens_read: Simulated tokens read.
-        tokens_write: Simulated tokens written.
-        tokens_cache: Simulated cache tokens.
+        gen_ai_usage_input_tokens: Simulated input tokens.
+        gen_ai_usage_output_tokens: Simulated output tokens.
+        gen_ai_usage_cache_read_input_tokens: Simulated cache-read input tokens.
         duration_ms: Simulated duration in milliseconds.
     """
 
@@ -44,9 +44,9 @@ class MockBehavior:
     fail_requirements: list[str] = field(default_factory=lambda: [])
     should_submit: bool = True
     should_fail: bool = False
-    tokens_read: int = 100
-    tokens_write: int = 50
-    tokens_cache: int = 0
+    gen_ai_usage_input_tokens: int = 100
+    gen_ai_usage_output_tokens: int = 50
+    gen_ai_usage_cache_read_input_tokens: int = 0
     duration_ms: int = 1000
     output_lines: list[str] = field(default_factory=_empty_output_lines)
     action_log: Any = None
@@ -109,9 +109,11 @@ class MockAgent:
         return ExecutionResult(
             success=True,
             metrics=ExecutionMetrics(
-                tokens_read=self._behavior.tokens_read,
-                tokens_write=self._behavior.tokens_write,
-                tokens_cache=self._behavior.tokens_cache,
+                gen_ai_usage_input_tokens=self._behavior.gen_ai_usage_input_tokens,
+                gen_ai_usage_output_tokens=self._behavior.gen_ai_usage_output_tokens,
+                gen_ai_usage_cache_read_input_tokens=(
+                    self._behavior.gen_ai_usage_cache_read_input_tokens
+                ),
                 duration_ms=self._behavior.duration_ms,
             ),
             output_lines=list(self._behavior.output_lines),

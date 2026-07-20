@@ -87,8 +87,8 @@ class RecordingClassifier:
                 confidence=0.92,
                 rationale="metadata-only fake verdict",
                 model_id="fake-small-model",
-                input_tokens=7,
-                output_tokens=2,
+                gen_ai_usage_input_tokens=7,
+                gen_ai_usage_output_tokens=2,
                 cost_usd=0.0001,
                 wall_time_ms=5,
             )

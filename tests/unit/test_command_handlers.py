@@ -434,15 +434,15 @@ async def test_create_run_snapshot_only_stores_one_event_but_projects_children(
 def test_build_create_run_command_preserves_initial_attempt_replay_fields() -> None:
     usage = ModelTokenUsage(
         model="gpt-test",
-        input_tokens=3,
-        output_tokens=5,
+        gen_ai_usage_input_tokens=3,
+        gen_ai_usage_output_tokens=5,
         cost_per_m_input=1.25,
         cost_per_m_output=10.0,
     )
     run_usage = ModelTokenUsage(
         model="gpt-run",
-        input_tokens=30,
-        output_tokens=50,
+        gen_ai_usage_input_tokens=30,
+        gen_ai_usage_output_tokens=50,
         cost_per_m_input=1.5,
         cost_per_m_output=12.0,
     )
@@ -575,9 +575,9 @@ async def test_create_run_replays_initial_attempt_gap_fields(
                                     "output_tokens": 5,
                                 }
                             ],
-                            tokens_read=10,
-                            tokens_write=4,
-                            tokens_cache=2,
+                            gen_ai_usage_input_tokens=10,
+                            gen_ai_usage_output_tokens=4,
+                            gen_ai_usage_cache_read_input_tokens=2,
                             duration_ms=150,
                             num_actions=3,
                         )
@@ -597,9 +597,9 @@ async def test_create_run_replays_initial_attempt_gap_fields(
             "auto_verify_results": [{"id": "output_exists", "passed": False, "output": "missing"}],
             "action_log": {"session_id": "session-1", "entries": []},
             "token_usage_by_model": [{"model": "gpt-test", "input_tokens": 3, "output_tokens": 5}],
-            "tokens_read": 10,
-            "tokens_write": 4,
-            "tokens_cache": 2,
+            "gen_ai_usage_input_tokens": 10,
+            "gen_ai_usage_output_tokens": 4,
+            "gen_ai_usage_cache_read_input_tokens": 2,
             "duration_ms": 150,
             "num_actions": 3,
             "apply_to_run_totals": False,
@@ -1293,9 +1293,9 @@ async def test_update_latest_attempt_projects_attempt_and_task_status(
             auto_verify_results=[{"id": "output_exists", "passed": False, "output": "missing"}],
             action_log={"session_id": "session-1", "entries": []},
             token_usage_by_model=[{"model": "gpt-test", "input_tokens": 3}],
-            tokens_read=10,
-            tokens_write=4,
-            tokens_cache=2,
+            gen_ai_usage_input_tokens=10,
+            gen_ai_usage_output_tokens=4,
+            gen_ai_usage_cache_read_input_tokens=2,
             duration_ms=150,
             num_actions=3,
             new_task_status=TaskStatus.FAILED,
@@ -1388,8 +1388,8 @@ async def test_update_latest_attempt_appends_output_and_accumulates_metrics(
             task_id="task-1",
             attempt_id="attempt-1",
             output_lines=["first"],
-            tokens_read=1,
-            tokens_write=2,
+            gen_ai_usage_input_tokens=1,
+            gen_ai_usage_output_tokens=2,
         ),
     )
     await _run_handler(
@@ -1400,8 +1400,8 @@ async def test_update_latest_attempt_appends_output_and_accumulates_metrics(
             task_id="task-1",
             attempt_id="attempt-1",
             output_lines=["second"],
-            tokens_read=3,
-            tokens_write=4,
+            gen_ai_usage_input_tokens=3,
+            gen_ai_usage_output_tokens=4,
             new_task_status=TaskStatus.VERIFYING,
         ),
     )

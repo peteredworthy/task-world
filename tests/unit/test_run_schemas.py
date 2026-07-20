@@ -149,11 +149,11 @@ def test_get_agent_runner_icon_none() -> None:
 
 
 def test_action_log_schemas_include_cache_creation_tokens() -> None:
-    metrics = TurnMetricsSchema(cache_creation_tokens=11)
-    action_log = ActionLogSchema(total_cache_creation_tokens=22)
+    metrics = TurnMetricsSchema(gen_ai_usage_cache_creation_input_tokens=11)
+    action_log = ActionLogSchema(gen_ai_usage_cache_creation_input_tokens=22)
 
-    assert metrics.cache_creation_tokens == 11
-    assert action_log.total_cache_creation_tokens == 22
+    assert metrics.gen_ai_usage_cache_creation_input_tokens == 11
+    assert action_log.gen_ai_usage_cache_creation_input_tokens == 22
 
 
 def test_run_trace_response_includes_attempt_metadata_and_action_log() -> None:
@@ -165,20 +165,20 @@ def test_run_trace_response_includes_attempt_metadata_and_action_log() -> None:
         verifier_comment="Looks good",
         outcome="passed",
         metrics=AttemptMetrics(
-            tokens_read=100,
-            tokens_write=20,
-            tokens_cache=5,
+            gen_ai_usage_input_tokens=100,
+            gen_ai_usage_output_tokens=20,
+            gen_ai_usage_cache_read_input_tokens=5,
             duration_ms=1234,
             num_actions=2,
         ),
         token_usage_by_model=[
             ModelTokenUsage(
                 model="test-model",
-                input_tokens=100,
-                output_tokens=20,
-                cache_read_tokens=5,
-                cache_creation_tokens=7,
-                cost_per_m_input=1.0,
+                gen_ai_usage_input_tokens=100,
+                gen_ai_usage_output_tokens=20,
+                gen_ai_usage_cache_read_input_tokens=5,
+                gen_ai_usage_cache_creation_input_tokens=7,
+                cost_usd=0.0001,
             )
         ],
         action_log=ActionLog(
@@ -188,20 +188,20 @@ def test_run_trace_response_includes_attempt_metadata_and_action_log() -> None:
                     kind=ActionEntryKind.ASSISTANT_TEXT,
                     text="done",
                     metrics=TurnMetrics(
-                        input_tokens=100,
-                        output_tokens=20,
-                        cache_read_tokens=5,
-                        cache_creation_tokens=7,
+                        gen_ai_usage_input_tokens=100,
+                        gen_ai_usage_output_tokens=20,
+                        gen_ai_usage_cache_read_input_tokens=5,
+                        gen_ai_usage_cache_creation_input_tokens=7,
                         cost_usd=0.01,
                     ),
                 )
             ],
             agent_model="test-model",
             total_turns=1,
-            total_input_tokens=100,
-            total_output_tokens=20,
-            total_cache_read_tokens=5,
-            total_cache_creation_tokens=7,
+            gen_ai_usage_input_tokens=100,
+            gen_ai_usage_output_tokens=20,
+            gen_ai_usage_cache_read_input_tokens=5,
+            gen_ai_usage_cache_creation_input_tokens=7,
         ),
     )
     task = TaskState(
@@ -234,11 +234,11 @@ def test_run_trace_response_includes_attempt_metadata_and_action_log() -> None:
         token_usage_by_model=[
             ModelTokenUsage(
                 model="test-model",
-                input_tokens=100,
-                output_tokens=20,
-                cache_read_tokens=5,
-                cache_creation_tokens=7,
-                cost_per_m_input=1.0,
+                gen_ai_usage_input_tokens=100,
+                gen_ai_usage_output_tokens=20,
+                gen_ai_usage_cache_read_input_tokens=5,
+                gen_ai_usage_cache_creation_input_tokens=7,
+                cost_usd=0.0001,
             )
         ],
     )
@@ -246,7 +246,7 @@ def test_run_trace_response_includes_attempt_metadata_and_action_log() -> None:
     trace = run_to_trace_response(run)
 
     assert trace.run_id == "run-1"
-    assert trace.token_usage_by_model[0].cache_creation_tokens == 7
+    assert trace.token_usage_by_model[0].gen_ai_usage_cache_creation_input_tokens == 7
     assert len(trace.attempts) == 1
     trace_attempt = trace.attempts[0]
     assert trace_attempt.step_id == "step-1"
@@ -256,8 +256,10 @@ def test_run_trace_response_includes_attempt_metadata_and_action_log() -> None:
     assert trace_attempt.phases[0].action_sequence_start == 1
     assert trace_attempt.phases[1].note == "Looks good"
     assert trace_attempt.attempt.metrics["num_actions"] == 2
-    assert trace_attempt.attempt.token_usage_by_model[0].cache_creation_tokens == 7
+    assert (
+        trace_attempt.attempt.token_usage_by_model[0].gen_ai_usage_cache_creation_input_tokens == 7
+    )
     assert trace_attempt.action_log is not None
-    assert trace_attempt.action_log.total_cache_creation_tokens == 7
+    assert trace_attempt.action_log.gen_ai_usage_cache_creation_input_tokens == 7
     assert trace_attempt.action_log.entries[0].metrics is not None
-    assert trace_attempt.action_log.entries[0].metrics.cache_creation_tokens == 7
+    assert trace_attempt.action_log.entries[0].metrics.gen_ai_usage_cache_creation_input_tokens == 7

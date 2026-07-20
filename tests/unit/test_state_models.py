@@ -57,12 +57,12 @@ def test_attempt_metrics() -> None:
     attempt = Attempt(
         attempt_num=1,
         metrics=AttemptMetrics(
-            tokens_read=1000,
-            tokens_write=500,
+            gen_ai_usage_input_tokens=1000,
+            gen_ai_usage_output_tokens=500,
             duration_ms=5000,
         ),
     )
-    assert attempt.metrics.tokens_read == 1000
+    assert attempt.metrics.gen_ai_usage_input_tokens == 1000
     assert attempt.metrics.duration_ms == 5000
 
 

@@ -71,9 +71,9 @@ class UpdateLatestAttemptCommand(BaseModel):
     auto_verify_results: list[dict[str, Any]] | None = None
     action_log: Any | None = None
     token_usage_by_model: list[dict[str, Any]] | None = None
-    tokens_read: int | None = None
-    tokens_write: int | None = None
-    tokens_cache: int | None = None
+    gen_ai_usage_input_tokens: int | None = None
+    gen_ai_usage_output_tokens: int | None = None
+    gen_ai_usage_cache_read_input_tokens: int | None = None
     duration_ms: int | None = None
     num_actions: int | None = None
     agent_runner_type: str | None = None
@@ -106,9 +106,9 @@ async def handle_update_latest_attempt(
         auto_verify_results=cmd.auto_verify_results,
         action_log=cmd.action_log,
         token_usage_by_model=cmd.token_usage_by_model,
-        tokens_read=cmd.tokens_read,
-        tokens_write=cmd.tokens_write,
-        tokens_cache=cmd.tokens_cache,
+        gen_ai_usage_input_tokens=cmd.gen_ai_usage_input_tokens,
+        gen_ai_usage_output_tokens=cmd.gen_ai_usage_output_tokens,
+        gen_ai_usage_cache_read_input_tokens=cmd.gen_ai_usage_cache_read_input_tokens,
         duration_ms=cmd.duration_ms,
         num_actions=cmd.num_actions,
         agent_runner_type=cmd.agent_runner_type,

@@ -384,12 +384,18 @@ class RunStateProjector:
                 if not event.apply_to_run_totals:
                     return
                 values: dict[str, Any] = {}
-                if event.tokens_read is not None:
-                    values["total_tokens_read"] = RunModel.total_tokens_read + event.tokens_read
-                if event.tokens_write is not None:
-                    values["total_tokens_write"] = RunModel.total_tokens_write + event.tokens_write
-                if event.tokens_cache is not None:
-                    values["total_tokens_cache"] = RunModel.total_tokens_cache + event.tokens_cache
+                if event.gen_ai_usage_input_tokens is not None:
+                    values["total_tokens_read"] = (
+                        RunModel.total_tokens_read + event.gen_ai_usage_input_tokens
+                    )
+                if event.gen_ai_usage_output_tokens is not None:
+                    values["total_tokens_write"] = (
+                        RunModel.total_tokens_write + event.gen_ai_usage_output_tokens
+                    )
+                if event.gen_ai_usage_cache_read_input_tokens is not None:
+                    values["total_tokens_cache"] = (
+                        RunModel.total_tokens_cache + event.gen_ai_usage_cache_read_input_tokens
+                    )
                 if event.duration_ms is not None:
                     values["total_duration_ms"] = RunModel.total_duration_ms + event.duration_ms
                 if event.num_actions is not None:

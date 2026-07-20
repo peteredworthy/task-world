@@ -3,17 +3,9 @@
 from datetime import datetime, timezone
 from enum import Enum
 from collections.abc import Iterable
-from typing import Any, SupportsIndex, cast
+from typing import Any, SupportsIndex
 
-from pydantic import (
-    AliasChoices,
-    BaseModel,
-    ConfigDict,
-    Field,
-    PrivateAttr,
-    computed_field,
-    model_validator,
-)
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 from orchestrator.config.models import EnvFileSpec
 from orchestrator.config.enums import (
@@ -69,10 +61,10 @@ class ToolResultDetail(BaseModel):
 class TurnMetrics(BaseModel):
     """Per-turn token/cost metrics."""
 
-    input_tokens: int = 0
-    output_tokens: int = 0
-    cache_read_tokens: int = 0
-    cache_creation_tokens: int = 0
+    gen_ai_usage_input_tokens: int = 0
+    gen_ai_usage_output_tokens: int = 0
+    gen_ai_usage_cache_read_input_tokens: int = 0
+    gen_ai_usage_cache_creation_input_tokens: int = 0
     cost_usd: float = 0.0
 
 
@@ -114,10 +106,10 @@ class SubAgentLog(BaseModel):
     model: str | None = None
 
     # Per-turn token totals (summed across all turns; no ``result`` event)
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
-    total_cache_read_tokens: int = 0
-    total_cache_creation_tokens: int = 0
+    gen_ai_usage_input_tokens: int = 0
+    gen_ai_usage_output_tokens: int = 0
+    gen_ai_usage_cache_read_input_tokens: int = 0
+    gen_ai_usage_cache_creation_input_tokens: int = 0
     input_tokens_include_cache: bool = True
 
     # Structured tool calls (Read/Bash/Glob/Grep) so we know what was explored
@@ -141,10 +133,10 @@ class ActionLog(BaseModel):
     total_turns: int = 0
     total_cost_usd: float = 0.0
     total_duration_ms: int = 0
-    total_input_tokens: int = 0
-    total_output_tokens: int = 0
-    total_cache_read_tokens: int = 0
-    total_cache_creation_tokens: int = 0
+    gen_ai_usage_input_tokens: int = 0
+    gen_ai_usage_output_tokens: int = 0
+    gen_ai_usage_cache_read_input_tokens: int = 0
+    gen_ai_usage_cache_creation_input_tokens: int = 0
     # Provider-semantic marker: false means input excludes cache components.
     input_tokens_include_cache: bool = True
 
@@ -152,10 +144,10 @@ class ActionLog(BaseModel):
     sub_agents: list[SubAgentLog] = []
 
     # Sub-agent aggregate totals (separate from parent for cost accounting)
-    sub_agent_total_input_tokens: int = 0
-    sub_agent_total_output_tokens: int = 0
-    sub_agent_total_cache_read_tokens: int = 0
-    sub_agent_total_cache_creation_tokens: int = 0
+    sub_agent_gen_ai_usage_input_tokens: int = 0
+    sub_agent_gen_ai_usage_output_tokens: int = 0
+    sub_agent_gen_ai_usage_cache_read_input_tokens: int = 0
+    sub_agent_gen_ai_usage_cache_creation_input_tokens: int = 0
 
     # Rate-limit detection (set by parser when Claude CLI returns limit message)
     rate_limit_hit: bool = False
@@ -218,17 +210,6 @@ class _FrozenReasonList(list[str]):
         raise TypeError("finish reasons are immutable")
 
 
-class _LegacyCostRates(BaseModel):
-    """Validated transitional rate snapshot used only by legacy constructors."""
-
-    model_config = ConfigDict(strict=True)
-
-    cost_per_m_cache_read: float = Field(default=0.0, ge=0, allow_inf_nan=False)
-    cost_per_m_cache_creation: float = Field(default=0.0, ge=0, allow_inf_nan=False)
-    cost_per_m_input: float = Field(default=0.0, ge=0, allow_inf_nan=False)
-    cost_per_m_output: float = Field(default=0.0, ge=0, allow_inf_nan=False)
-
-
 class ModelTokenUsage(BaseModel):
     """An immutable OTel usage fact for one execution and model.
 
@@ -249,59 +230,6 @@ class ModelTokenUsage(BaseModel):
     cost_usd: float = Field(default=0, ge=0, allow_inf_nan=False)
     latency_ms: int = Field(default=0, ge=0)
     rate_missing: bool = False
-    _legacy_cost_rates: dict[str, float] = PrivateAttr(default_factory=lambda: dict[str, float]())
-
-    def __init__(self, **data: Any) -> None:
-        """Accept Task 3's temporary legacy constructor payloads."""
-        rate_fields = (
-            "cost_per_m_cache_read",
-            "cost_per_m_cache_creation",
-            "cost_per_m_input",
-            "cost_per_m_output",
-        )
-        legacy_rate_data = {field: data[field] for field in rate_fields if field in data}
-        legacy_cost_rates: dict[str, float] = {}
-        if legacy_rate_data:
-            legacy_cost_rates = _LegacyCostRates.model_validate(legacy_rate_data).model_dump()
-        if legacy_rate_data and "cost_usd" not in data:
-            input_tokens = int(data.get("gen_ai_usage_input_tokens", data.get("input_tokens", 0)))
-            cache_read = int(
-                data.get("gen_ai_usage_cache_read_input_tokens", data.get("cache_read_tokens", 0))
-            )
-            cache_creation = int(
-                data.get(
-                    "gen_ai_usage_cache_creation_input_tokens", data.get("cache_creation_tokens", 0)
-                )
-            )
-            data["cost_usd"] = (
-                cache_read * legacy_cost_rates.get("cost_per_m_cache_read", 0.0)
-                + cache_creation * legacy_cost_rates.get("cost_per_m_cache_creation", 0.0)
-                + (input_tokens - cache_read - cache_creation)
-                * legacy_cost_rates.get("cost_per_m_input", 0.0)
-                + int(data.get("gen_ai_usage_output_tokens", data.get("output_tokens", 0)))
-                * legacy_cost_rates.get("cost_per_m_output", 0.0)
-            ) / 1_000_000
-        super().__init__(**data)
-        object.__setattr__(self, "_legacy_cost_rates", legacy_cost_rates)
-
-    @model_validator(mode="before")
-    @classmethod
-    def _translate_legacy_token_fields(cls, data: Any) -> Any:
-        if not isinstance(data, dict):
-            return data
-        translated: dict[str, Any] = dict(cast(dict[str, Any], data))
-        for legacy, canonical in (
-            ("input_tokens", "gen_ai_usage_input_tokens"),
-            ("output_tokens", "gen_ai_usage_output_tokens"),
-            ("cache_read_tokens", "gen_ai_usage_cache_read_input_tokens"),
-            ("cache_creation_tokens", "gen_ai_usage_cache_creation_input_tokens"),
-        ):
-            if legacy in translated and canonical in translated:
-                if translated[legacy] != translated[canonical]:
-                    raise ValueError(f"conflicting {legacy} and {canonical} values")
-            elif legacy in translated:
-                translated[canonical] = translated[legacy]
-        return translated
 
     @model_validator(mode="after")
     def _cache_components_are_part_of_input(self) -> "ModelTokenUsage":
@@ -318,62 +246,13 @@ class ModelTokenUsage(BaseModel):
         )
         return self
 
-    # Transitional Task 2 bridge. Task 3 migrates remaining old-field readers.
-    @computed_field
-    @property
-    def cache_read_tokens(self) -> int:
-        return self.gen_ai_usage_cache_read_input_tokens
-
-    @computed_field
-    @property
-    def cache_creation_tokens(self) -> int:
-        return self.gen_ai_usage_cache_creation_input_tokens
-
-    @computed_field
-    @property
-    def input_tokens(self) -> int:
-        return self.gen_ai_usage_input_tokens
-
-    @computed_field
-    @property
-    def output_tokens(self) -> int:
-        return self.gen_ai_usage_output_tokens
-
-    def _cost_rate(self, field: str) -> float:
-        return self._legacy_cost_rates.get(field, 0.0)
-
-    @computed_field
-    @property
-    def cost_per_m_cache_read(self) -> float:
-        return self._cost_rate("cost_per_m_cache_read")
-
-    @computed_field
-    @property
-    def cost_per_m_cache_creation(self) -> float:
-        return self._cost_rate("cost_per_m_cache_creation")
-
-    @computed_field
-    @property
-    def cost_per_m_input(self) -> float:
-        return self._cost_rate("cost_per_m_input")
-
-    @computed_field
-    @property
-    def cost_per_m_output(self) -> float:
-        return self._cost_rate("cost_per_m_output")
-
-    @property
-    def total_cost_usd(self) -> float:
-        """Temporary legacy accessor for the cost captured at execution time."""
-        return self.cost_usd
-
 
 class AttemptMetrics(BaseModel):
     """Metrics for a single attempt."""
 
-    tokens_read: int = 0
-    tokens_write: int = 0
-    tokens_cache: int = 0
+    gen_ai_usage_input_tokens: int = 0
+    gen_ai_usage_output_tokens: int = 0
+    gen_ai_usage_cache_read_input_tokens: int = 0
     duration_ms: int = 0
     num_actions: int = 0
 

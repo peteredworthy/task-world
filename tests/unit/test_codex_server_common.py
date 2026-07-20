@@ -379,9 +379,9 @@ def test_normalize_mixed_types() -> None:
 
 def test_normalize_metrics_defaults() -> None:
     metrics = normalize_codex_metrics()
-    assert metrics.tokens_read == 0
-    assert metrics.tokens_write == 0
-    assert metrics.tokens_cache == 0
+    assert metrics.gen_ai_usage_input_tokens == 0
+    assert metrics.gen_ai_usage_output_tokens == 0
+    assert metrics.gen_ai_usage_cache_read_input_tokens == 0
     assert metrics.duration_ms == 0
     assert metrics.num_actions == 0
 
@@ -389,15 +389,15 @@ def test_normalize_metrics_defaults() -> None:
 def test_normalize_metrics_values_round_trip() -> None:
     metrics = normalize_codex_metrics(
         duration_ms=1234,
-        tokens_read=500,
-        tokens_write=200,
-        tokens_cache=100,
+        gen_ai_usage_input_tokens=500,
+        gen_ai_usage_output_tokens=200,
+        gen_ai_usage_cache_read_input_tokens=100,
         num_actions=7,
     )
     assert metrics.duration_ms == 1234
-    assert metrics.tokens_read == 500
-    assert metrics.tokens_write == 200
-    assert metrics.tokens_cache == 100
+    assert metrics.gen_ai_usage_input_tokens == 500
+    assert metrics.gen_ai_usage_output_tokens == 200
+    assert metrics.gen_ai_usage_cache_read_input_tokens == 100
     assert metrics.num_actions == 7
 
 
@@ -853,9 +853,9 @@ def test_extract_turn_usage_with_input_output_tokens() -> None:
     }
     result = extract_turn_usage(msg)
     assert result == {
-        "tokens_read": 1500,
-        "tokens_write": 300,
-        "tokens_cache": 50,
+        "gen_ai_usage_input_tokens": 1500,
+        "gen_ai_usage_output_tokens": 300,
+        "gen_ai_usage_cache_read_input_tokens": 50,
         "tokens_reasoning": 0,
     }
 
@@ -877,9 +877,9 @@ def test_extract_turn_usage_with_prompt_completion_tokens() -> None:
     }
     result = extract_turn_usage(msg)
     assert result == {
-        "tokens_read": 2000,
-        "tokens_write": 400,
-        "tokens_cache": 100,
+        "gen_ai_usage_input_tokens": 2000,
+        "gen_ai_usage_output_tokens": 400,
+        "gen_ai_usage_cache_read_input_tokens": 100,
         "tokens_reasoning": 0,
     }
 
@@ -891,7 +891,12 @@ def test_extract_turn_usage_without_usage_field() -> None:
         "params": {"turn": {"status": "completed"}},
     }
     result = extract_turn_usage(msg)
-    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0, "tokens_reasoning": 0}
+    assert result == {
+        "gen_ai_usage_input_tokens": 0,
+        "gen_ai_usage_output_tokens": 0,
+        "gen_ai_usage_cache_read_input_tokens": 0,
+        "tokens_reasoning": 0,
+    }
 
 
 def test_extract_turn_usage_non_terminal_notification() -> None:
@@ -901,7 +906,12 @@ def test_extract_turn_usage_non_terminal_notification() -> None:
         "params": {"delta": "hello"},
     }
     result = extract_turn_usage(msg)
-    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0, "tokens_reasoning": 0}
+    assert result == {
+        "gen_ai_usage_input_tokens": 0,
+        "gen_ai_usage_output_tokens": 0,
+        "gen_ai_usage_cache_read_input_tokens": 0,
+        "tokens_reasoning": 0,
+    }
 
 
 def test_extract_turn_usage_empty_usage_dict() -> None:
@@ -911,7 +921,12 @@ def test_extract_turn_usage_empty_usage_dict() -> None:
         "params": {"turn": {"status": "completed", "usage": {}}},
     }
     result = extract_turn_usage(msg)
-    assert result == {"tokens_read": 0, "tokens_write": 0, "tokens_cache": 0, "tokens_reasoning": 0}
+    assert result == {
+        "gen_ai_usage_input_tokens": 0,
+        "gen_ai_usage_output_tokens": 0,
+        "gen_ai_usage_cache_read_input_tokens": 0,
+        "tokens_reasoning": 0,
+    }
 
 
 def test_extract_turn_usage_cache_read_input_tokens() -> None:
@@ -930,7 +945,7 @@ def test_extract_turn_usage_cache_read_input_tokens() -> None:
         },
     }
     result = extract_turn_usage(msg)
-    assert result["tokens_cache"] == 200
+    assert result["gen_ai_usage_cache_read_input_tokens"] == 200
 
 
 # ---------------------------------------------------------------------------
@@ -943,23 +958,23 @@ def test_build_execution_result_with_tokens() -> None:
     result = build_execution_result(
         ["hello\n", "world\n"],
         duration_ms=5000,
-        tokens_read=1000,
-        tokens_write=200,
-        tokens_cache=50,
+        gen_ai_usage_input_tokens=1000,
+        gen_ai_usage_output_tokens=200,
+        gen_ai_usage_cache_read_input_tokens=50,
         num_actions=3,
         agent_model="gpt-5.4",
     )
     assert result.success is True
-    assert result.metrics.tokens_read == 1000
-    assert result.metrics.tokens_write == 200
-    assert result.metrics.tokens_cache == 50
+    assert result.metrics.gen_ai_usage_input_tokens == 1000
+    assert result.metrics.gen_ai_usage_output_tokens == 200
+    assert result.metrics.gen_ai_usage_cache_read_input_tokens == 50
     assert result.metrics.num_actions == 3
     assert result.metrics.duration_ms == 5000
     assert result.action_log is not None
     assert result.action_log.agent_model == "gpt-5.4"
-    assert result.action_log.total_input_tokens == 1000
-    assert result.action_log.total_output_tokens == 200
-    assert result.action_log.total_cache_read_tokens == 50
+    assert result.action_log.gen_ai_usage_input_tokens == 1000
+    assert result.action_log.gen_ai_usage_output_tokens == 200
+    assert result.action_log.gen_ai_usage_cache_read_input_tokens == 50
     assert result.action_log.total_duration_ms == 5000
     assert result.action_log.input_tokens_include_cache is True
 
@@ -967,13 +982,13 @@ def test_build_execution_result_with_tokens() -> None:
 def test_build_execution_result_defaults_to_zero_tokens() -> None:
     """build_execution_result defaults token counts to 0 for backward compat."""
     result = build_execution_result(["test\n"], duration_ms=100)
-    assert result.metrics.tokens_read == 0
-    assert result.metrics.tokens_write == 0
-    assert result.metrics.tokens_cache == 0
+    assert result.metrics.gen_ai_usage_input_tokens == 0
+    assert result.metrics.gen_ai_usage_output_tokens == 0
+    assert result.metrics.gen_ai_usage_cache_read_input_tokens == 0
     assert result.metrics.num_actions == 0
     assert result.action_log is not None
-    assert result.action_log.total_input_tokens == 0
-    assert result.action_log.total_output_tokens == 0
+    assert result.action_log.gen_ai_usage_input_tokens == 0
+    assert result.action_log.gen_ai_usage_output_tokens == 0
 
 
 # ---------------------------------------------------------------------------
@@ -1101,10 +1116,10 @@ def test_extract_token_usage_update_total_cumulative() -> None:
     assert result is not None
     # From total_token_usage: inputTokens=2500, cachedInputTokens=1200,
     # outputTokens=450, reasoningOutputTokens=120
-    assert result["tokens_read"] == 2500
-    assert result["tokens_cache"] == 1200
+    assert result["gen_ai_usage_input_tokens"] == 2500
+    assert result["gen_ai_usage_cache_read_input_tokens"] == 1200
     # Reasoning folded into write: 450 + 120 = 570
-    assert result["tokens_write"] == 570
+    assert result["gen_ai_usage_output_tokens"] == 570
     assert result["tokens_reasoning"] == 120
 
 
@@ -1124,9 +1139,9 @@ def test_extract_token_usage_update_camel_and_snake() -> None:
     }
     result = extract_token_usage_update(msg_camel)
     assert result is not None
-    assert result["tokens_read"] == 1000
-    assert result["tokens_cache"] == 200
-    assert result["tokens_write"] == 200  # 150 + 50
+    assert result["gen_ai_usage_input_tokens"] == 1000
+    assert result["gen_ai_usage_cache_read_input_tokens"] == 200
+    assert result["gen_ai_usage_output_tokens"] == 200  # 150 + 50
     assert result["tokens_reasoning"] == 50
 
     # Test snake_case
@@ -1143,9 +1158,9 @@ def test_extract_token_usage_update_camel_and_snake() -> None:
     }
     result = extract_token_usage_update(msg_snake)
     assert result is not None
-    assert result["tokens_read"] == 800
-    assert result["tokens_cache"] == 100
-    assert result["tokens_write"] == 150  # 120 + 30
+    assert result["gen_ai_usage_input_tokens"] == 800
+    assert result["gen_ai_usage_cache_read_input_tokens"] == 100
+    assert result["gen_ai_usage_output_tokens"] == 150  # 120 + 30
     assert result["tokens_reasoning"] == 30
 
 
@@ -1182,7 +1197,7 @@ def test_extract_turn_usage_reasoning_folded() -> None:
     }
     result = extract_turn_usage(msg)
     # Reasoning folded into write: 100 + 25 = 125
-    assert result["tokens_read"] == 500
-    assert result["tokens_write"] == 125
+    assert result["gen_ai_usage_input_tokens"] == 500
+    assert result["gen_ai_usage_output_tokens"] == 125
     assert result["tokens_reasoning"] == 25
-    assert result["tokens_cache"] == 50
+    assert result["gen_ai_usage_cache_read_input_tokens"] == 50

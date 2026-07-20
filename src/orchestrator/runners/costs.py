@@ -1,7 +1,4 @@
-"""Canonical model-cost resolution and pure usage pricing.
-
-``get_model_costs`` is a temporary Task 3 compatibility bridge for legacy callers.
-"""
+"""Canonical model-cost resolution and pure usage pricing."""
 
 from __future__ import annotations
 
@@ -123,12 +120,3 @@ def resolve_model_costs(model_name: str | None) -> ModelCostResolution:
         return ModelCostResolution(**_cost_table[key], rate_missing=False)
 
     return ModelCostResolution(**_ZERO_COSTS, rate_missing=True)
-
-
-def get_model_costs(model_name: str | None) -> dict[str, float]:
-    """Return legacy rate kwargs.
-
-    Transitional bridge for untouched callers; Task 3 must use
-    :func:`resolve_model_costs` so it retains ``rate_missing``.
-    """
-    return resolve_model_costs(model_name).model_dump(exclude={"rate_missing"})

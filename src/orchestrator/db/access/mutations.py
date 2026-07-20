@@ -48,9 +48,9 @@ async def delete_run(session: AsyncSession, run_id: str) -> None:
 def merge_token_usage_into_run(
     run_model: Any,
     *,
-    tokens_read: int | None = None,
-    tokens_write: int | None = None,
-    tokens_cache: int | None = None,
+    gen_ai_usage_input_tokens: int | None = None,
+    gen_ai_usage_output_tokens: int | None = None,
+    gen_ai_usage_cache_read_input_tokens: int | None = None,
     duration_ms: int | None = None,
     num_actions: int | None = None,
     token_usage_by_model: Any = None,
@@ -65,12 +65,16 @@ def merge_token_usage_into_run(
     """
     if run_model is None:
         return
-    if tokens_read is not None:
-        run_model.total_tokens_read = (run_model.total_tokens_read or 0) + tokens_read
-    if tokens_write is not None:
-        run_model.total_tokens_write = (run_model.total_tokens_write or 0) + tokens_write
-    if tokens_cache is not None:
-        run_model.total_tokens_cache = (run_model.total_tokens_cache or 0) + tokens_cache
+    if gen_ai_usage_input_tokens is not None:
+        run_model.total_tokens_read = (run_model.total_tokens_read or 0) + gen_ai_usage_input_tokens
+    if gen_ai_usage_output_tokens is not None:
+        run_model.total_tokens_write = (
+            run_model.total_tokens_write or 0
+        ) + gen_ai_usage_output_tokens
+    if gen_ai_usage_cache_read_input_tokens is not None:
+        run_model.total_tokens_cache = (
+            run_model.total_tokens_cache or 0
+        ) + gen_ai_usage_cache_read_input_tokens
     if duration_ms is not None:
         run_model.total_duration_ms = (run_model.total_duration_ms or 0) + duration_ms
     if num_actions is not None:
@@ -89,13 +93,32 @@ def merge_token_usage_into_run(
                 prev = merged[idx_by_model[model_name]]
                 merged[idx_by_model[model_name]] = {
                     **prev,
-                    "input_tokens": prev.get("input_tokens", 0) + usage_dict.get("input_tokens", 0),
-                    "output_tokens": prev.get("output_tokens", 0)
-                    + usage_dict.get("output_tokens", 0),
-                    "cache_read_tokens": prev.get("cache_read_tokens", 0)
-                    + usage_dict.get("cache_read_tokens", 0),
-                    "cache_creation_tokens": prev.get("cache_creation_tokens", 0)
-                    + usage_dict.get("cache_creation_tokens", 0),
+                    "gen_ai_usage_input_tokens": prev.get("gen_ai_usage_input_tokens", 0)
+                    + usage_dict.get("gen_ai_usage_input_tokens", 0),
+                    "gen_ai_usage_output_tokens": prev.get("gen_ai_usage_output_tokens", 0)
+                    + usage_dict.get("gen_ai_usage_output_tokens", 0),
+                    "gen_ai_usage_cache_read_input_tokens": prev.get(
+                        "gen_ai_usage_cache_read_input_tokens", 0
+                    )
+                    + usage_dict.get("gen_ai_usage_cache_read_input_tokens", 0),
+                    "gen_ai_usage_cache_creation_input_tokens": prev.get(
+                        "gen_ai_usage_cache_creation_input_tokens", 0
+                    )
+                    + usage_dict.get("gen_ai_usage_cache_creation_input_tokens", 0),
+                    "gen_ai_usage_reasoning_output_tokens": prev.get(
+                        "gen_ai_usage_reasoning_output_tokens", 0
+                    )
+                    + usage_dict.get("gen_ai_usage_reasoning_output_tokens", 0),
+                    "gen_ai_response_finish_reasons": list(
+                        dict.fromkeys(
+                            prev.get("gen_ai_response_finish_reasons", [])
+                            + usage_dict.get("gen_ai_response_finish_reasons", [])
+                        )
+                    ),
+                    "cost_usd": prev.get("cost_usd", 0) + usage_dict.get("cost_usd", 0),
+                    "latency_ms": prev.get("latency_ms", 0) + usage_dict.get("latency_ms", 0),
+                    "rate_missing": prev.get("rate_missing", False)
+                    or usage_dict.get("rate_missing", False),
                 }
             else:
                 merged.append(usage_dict)
@@ -177,9 +200,11 @@ async def update_latest_attempt(
     effective_duration_ms = duration_ms
     effective_num_actions = num_actions
     if metrics is not None:
-        effective_tokens_read = (effective_tokens_read or 0) + metrics.tokens_read
-        effective_tokens_write = (effective_tokens_write or 0) + metrics.tokens_write
-        effective_tokens_cache = (effective_tokens_cache or 0) + metrics.tokens_cache
+        effective_tokens_read = (effective_tokens_read or 0) + metrics.gen_ai_usage_input_tokens
+        effective_tokens_write = (effective_tokens_write or 0) + metrics.gen_ai_usage_output_tokens
+        effective_tokens_cache = (
+            effective_tokens_cache or 0
+        ) + metrics.gen_ai_usage_cache_read_input_tokens
         effective_duration_ms = (effective_duration_ms or 0) + metrics.duration_ms
         effective_num_actions = (effective_num_actions or 0) + metrics.num_actions
 
@@ -197,9 +222,9 @@ async def update_latest_attempt(
     run_model = attempt.task.step.run if attempt.task and attempt.task.step else None
     merge_token_usage_into_run(
         run_model,
-        tokens_read=effective_tokens_read,
-        tokens_write=effective_tokens_write,
-        tokens_cache=effective_tokens_cache,
+        gen_ai_usage_input_tokens=effective_tokens_read,
+        gen_ai_usage_output_tokens=effective_tokens_write,
+        gen_ai_usage_cache_read_input_tokens=effective_tokens_cache,
         duration_ms=effective_duration_ms,
         num_actions=effective_num_actions,
         token_usage_by_model=token_usage_by_model,

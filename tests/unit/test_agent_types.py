@@ -55,9 +55,9 @@ def test_execution_context_api_base_url_defaults_to_none() -> None:
 
 def test_execution_metrics_defaults() -> None:
     metrics = ExecutionMetrics()
-    assert metrics.tokens_read == 0
-    assert metrics.tokens_write == 0
-    assert metrics.tokens_cache == 0
+    assert metrics.gen_ai_usage_input_tokens == 0
+    assert metrics.gen_ai_usage_output_tokens == 0
+    assert metrics.gen_ai_usage_cache_read_input_tokens == 0
     assert metrics.duration_ms == 0
 
 
@@ -65,18 +65,20 @@ def test_execution_result_success() -> None:
     result = ExecutionResult(success=True)
     assert result.success is True
     assert result.error is None
-    assert result.metrics.tokens_read == 0
+    assert result.metrics.gen_ai_usage_input_tokens == 0
 
 
 def test_execution_result_failure() -> None:
     result = ExecutionResult(
         success=False,
         error="Something went wrong",
-        metrics=ExecutionMetrics(tokens_read=100, tokens_write=50, duration_ms=5000),
+        metrics=ExecutionMetrics(
+            gen_ai_usage_input_tokens=100, gen_ai_usage_output_tokens=50, duration_ms=5000
+        ),
     )
     assert result.success is False
     assert result.error == "Something went wrong"
-    assert result.metrics.tokens_read == 100
+    assert result.metrics.gen_ai_usage_input_tokens == 100
 
 
 def test_agent_info() -> None:

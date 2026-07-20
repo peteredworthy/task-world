@@ -85,8 +85,8 @@ def test_cleanup_command_producers_match_typed_payload_json() -> None:
                     "confidence": 0.9,
                     "rationale": "metadata shape matches",
                     "model_id": "gatekeeper-test",
-                    "input_tokens": 11,
-                    "output_tokens": 3,
+                    "gen_ai_usage_input_tokens": 11,
+                    "gen_ai_usage_output_tokens": 3,
                     "cost_usd": 0.001,
                     "wall_time_ms": 12,
                 }

@@ -35,10 +35,10 @@ def _make_entry(
     return ActionLogEntry(
         kind=kind,
         metrics=TurnMetrics(
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read,
-            cache_creation_tokens=cache_creation,
+            gen_ai_usage_input_tokens=input_tokens,
+            gen_ai_usage_output_tokens=output_tokens,
+            gen_ai_usage_cache_read_input_tokens=cache_read,
+            gen_ai_usage_cache_creation_input_tokens=cache_creation,
         ),
     )
 
@@ -59,10 +59,10 @@ def _make_action_log(
     return ActionLog(
         entries=entries,
         agent_model=agent_model,
-        total_input_tokens=total_input,
-        total_output_tokens=total_output,
-        total_cache_read_tokens=total_cache_read,
-        total_cache_creation_tokens=total_cache_creation,
+        gen_ai_usage_input_tokens=total_input,
+        gen_ai_usage_output_tokens=total_output,
+        gen_ai_usage_cache_read_input_tokens=total_cache_read,
+        gen_ai_usage_cache_creation_input_tokens=total_cache_creation,
     )
 
 
@@ -92,10 +92,10 @@ class TestExtractMetricsAndUsage:
         metrics, usage = PhaseHandler._extract_metrics_and_usage(result)
 
         assert len(usage) == 1
-        assert usage[0].input_tokens == 1000
-        assert usage[0].output_tokens == 500
-        assert metrics.tokens_read == 1000
-        assert metrics.tokens_write == 500
+        assert usage[0].gen_ai_usage_input_tokens == 1000
+        assert usage[0].gen_ai_usage_output_tokens == 500
+        assert metrics.gen_ai_usage_input_tokens == 1000
+        assert metrics.gen_ai_usage_output_tokens == 500
 
     def test_falls_back_to_per_entry_when_aggregate_is_zero(self) -> None:
         """When aggregates are zero but entries have metrics, sum entries instead."""
@@ -112,20 +112,20 @@ class TestExtractMetricsAndUsage:
         metrics, usage = PhaseHandler._extract_metrics_and_usage(result)
 
         assert len(usage) == 1
-        assert usage[0].input_tokens == 800
-        assert usage[0].output_tokens == 350
-        assert usage[0].cache_read_tokens == 100
-        assert usage[0].cache_creation_tokens == 50
-        assert metrics.tokens_read == 800
-        assert metrics.tokens_write == 350
-        assert metrics.tokens_cache == 150  # cache_read + cache_creation
+        assert usage[0].gen_ai_usage_input_tokens == 800
+        assert usage[0].gen_ai_usage_output_tokens == 350
+        assert usage[0].gen_ai_usage_cache_read_input_tokens == 100
+        assert usage[0].gen_ai_usage_cache_creation_input_tokens == 50
+        assert metrics.gen_ai_usage_input_tokens == 800
+        assert metrics.gen_ai_usage_output_tokens == 350
+        assert metrics.gen_ai_usage_cache_read_input_tokens == 150  # cache_read + cache_creation
 
     def test_returns_empty_when_no_action_log(self) -> None:
         result = _make_result(action_log=None)
         metrics, usage = PhaseHandler._extract_metrics_and_usage(result)
 
         assert usage == []
-        assert metrics.tokens_read == 0
+        assert metrics.gen_ai_usage_input_tokens == 0
 
     def test_returns_empty_when_aggregate_zero_and_no_entry_metrics(self) -> None:
         """No usage extracted when aggregate is 0 and entries have no metrics either."""
@@ -138,7 +138,7 @@ class TestExtractMetricsAndUsage:
         metrics, usage = PhaseHandler._extract_metrics_and_usage(result)
 
         assert usage == []
-        assert metrics.tokens_read == 0
+        assert metrics.gen_ai_usage_input_tokens == 0
 
     def test_real_world_1_9m_tokens_scenario(self) -> None:
         """Simulate the 1.9M-displayed-tokens scenario: aggregate=0, entries have data."""
@@ -152,11 +152,11 @@ class TestExtractMetricsAndUsage:
         metrics, usage = PhaseHandler._extract_metrics_and_usage(result)
 
         assert len(usage) == 1
-        assert usage[0].input_tokens == 1_900_000
-        assert usage[0].output_tokens == 43_000
-        assert usage[0].cache_read_tokens == 500_000
-        assert metrics.tokens_read == 1_900_000
-        assert metrics.tokens_write == 43_000
+        assert usage[0].gen_ai_usage_input_tokens == 1_900_000
+        assert usage[0].gen_ai_usage_output_tokens == 43_000
+        assert usage[0].gen_ai_usage_cache_read_input_tokens == 500_000
+        assert metrics.gen_ai_usage_input_tokens == 1_900_000
+        assert metrics.gen_ai_usage_output_tokens == 43_000
 
 
 # ---------------------------------------------------------------------------

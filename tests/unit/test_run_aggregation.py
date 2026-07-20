@@ -97,10 +97,9 @@ async def test_two_different_models_both_appear_in_run(session: AsyncSession) ->
         token_usage_by_model=[
             ModelTokenUsage(
                 model="claude-sonnet-4-6",
-                input_tokens=1_000,
-                output_tokens=100,
-                cost_per_m_input=3.0,
-                cost_per_m_output=15.0,
+                gen_ai_usage_input_tokens=1_000,
+                gen_ai_usage_output_tokens=100,
+                cost_usd=0.0045,
             )
         ],
     )
@@ -112,10 +111,9 @@ async def test_two_different_models_both_appear_in_run(session: AsyncSession) ->
         token_usage_by_model=[
             ModelTokenUsage(
                 model="claude-haiku-4-5",
-                input_tokens=2_000,
-                output_tokens=200,
-                cost_per_m_input=0.8,
-                cost_per_m_output=4.0,
+                gen_ai_usage_input_tokens=2_000,
+                gen_ai_usage_output_tokens=200,
+                cost_usd=0.0024,
             )
         ],
     )
@@ -130,10 +128,10 @@ async def test_two_different_models_both_appear_in_run(session: AsyncSession) ->
 
     assert "claude-sonnet-4-6" in usage_by_model, "Sonnet should appear in run totals"
     assert "claude-haiku-4-5" in usage_by_model, "Haiku should appear in run totals"
-    assert usage_by_model["claude-sonnet-4-6"]["input_tokens"] == 1_000
-    assert usage_by_model["claude-sonnet-4-6"]["output_tokens"] == 100
-    assert usage_by_model["claude-haiku-4-5"]["input_tokens"] == 2_000
-    assert usage_by_model["claude-haiku-4-5"]["output_tokens"] == 200
+    assert usage_by_model["claude-sonnet-4-6"]["gen_ai_usage_input_tokens"] == 1_000
+    assert usage_by_model["claude-sonnet-4-6"]["gen_ai_usage_output_tokens"] == 100
+    assert usage_by_model["claude-haiku-4-5"]["gen_ai_usage_input_tokens"] == 2_000
+    assert usage_by_model["claude-haiku-4-5"]["gen_ai_usage_output_tokens"] == 200
 
 
 # ---------------------------------------------------------------------------
@@ -157,10 +155,9 @@ async def test_same_model_tokens_are_summed_rates_preserved(session: AsyncSessio
         token_usage_by_model=[
             ModelTokenUsage(
                 model="claude-sonnet-4-6",
-                input_tokens=1_000,
-                output_tokens=100,
-                cost_per_m_input=3.0,
-                cost_per_m_output=15.0,
+                gen_ai_usage_input_tokens=1_000,
+                gen_ai_usage_output_tokens=100,
+                cost_usd=0.0045,
             )
         ],
     )
@@ -172,10 +169,9 @@ async def test_same_model_tokens_are_summed_rates_preserved(session: AsyncSessio
         token_usage_by_model=[
             ModelTokenUsage(
                 model="claude-sonnet-4-6",
-                input_tokens=500,
-                output_tokens=50,
-                cost_per_m_input=3.0,
-                cost_per_m_output=15.0,
+                gen_ai_usage_input_tokens=500,
+                gen_ai_usage_output_tokens=50,
+                cost_usd=0.00225,
             )
         ],
     )
@@ -190,11 +186,9 @@ async def test_same_model_tokens_are_summed_rates_preserved(session: AsyncSessio
     assert "claude-sonnet-4-6" in usage_by_model
     entry = usage_by_model["claude-sonnet-4-6"]
     # Tokens must be summed
-    assert entry["input_tokens"] == 1_500, "input_tokens should be 1000 + 500"
-    assert entry["output_tokens"] == 150, "output_tokens should be 100 + 50"
-    # Rates must come from the first occurrence (not overwritten)
-    assert entry["cost_per_m_input"] == pytest.approx(3.0)
-    assert entry["cost_per_m_output"] == pytest.approx(15.0)
+    assert entry["gen_ai_usage_input_tokens"] == 1_500
+    assert entry["gen_ai_usage_output_tokens"] == 150
+    assert entry["cost_usd"] == pytest.approx(0.00675)
 
 
 # ---------------------------------------------------------------------------
@@ -292,25 +286,23 @@ async def test_run_legacy_fields_match_per_model_sum(session: AsyncSession) -> N
 
     # Pass both metrics AND token_usage_by_model with consistent data
     metrics = AttemptMetrics(
-        tokens_read=sonnet_input + haiku_input,
-        tokens_write=sonnet_output + haiku_output,
-        tokens_cache=sonnet_cache,
+        gen_ai_usage_input_tokens=sonnet_input + haiku_input,
+        gen_ai_usage_output_tokens=sonnet_output + haiku_output,
+        gen_ai_usage_cache_read_input_tokens=sonnet_cache,
     )
     usage = [
         ModelTokenUsage(
             model="claude-sonnet-4-6",
-            input_tokens=sonnet_input,
-            output_tokens=sonnet_output,
-            cache_read_tokens=sonnet_cache,
-            cost_per_m_input=3.0,
-            cost_per_m_output=15.0,
+            gen_ai_usage_input_tokens=sonnet_input,
+            gen_ai_usage_output_tokens=sonnet_output,
+            gen_ai_usage_cache_read_input_tokens=sonnet_cache,
+            cost_usd=4.5,
         ),
         ModelTokenUsage(
             model="claude-haiku-4-5",
-            input_tokens=haiku_input,
-            output_tokens=haiku_output,
-            cost_per_m_input=0.8,
-            cost_per_m_output=4.0,
+            gen_ai_usage_input_tokens=haiku_input,
+            gen_ai_usage_output_tokens=haiku_output,
+            cost_usd=0.6,
         ),
     ]
     await update_latest_attempt(repo.session, task_id, metrics=metrics, token_usage_by_model=usage)
@@ -321,9 +313,9 @@ async def test_run_legacy_fields_match_per_model_sum(session: AsyncSession) -> N
 
     # Compute expected legacy totals from per-model breakdown
     by_model = run_model.token_usage_by_model or []
-    total_input = sum(u["input_tokens"] for u in by_model)
-    total_output = sum(u["output_tokens"] for u in by_model)
-    total_cache = sum(u["cache_read_tokens"] for u in by_model)
+    total_input = sum(u["gen_ai_usage_input_tokens"] for u in by_model)
+    total_output = sum(u["gen_ai_usage_output_tokens"] for u in by_model)
+    total_cache = sum(u["gen_ai_usage_cache_read_input_tokens"] for u in by_model)
 
     # Legacy fields should match sums of per-model data
     assert run_model.total_tokens_read == total_input, (

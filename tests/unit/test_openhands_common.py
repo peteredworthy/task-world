@@ -98,9 +98,9 @@ def test_extract_metrics_with_stats() -> None:
         conversation_stats = FakeStats()
 
     result = extract_metrics(FakeConversation())
-    assert result.tokens_read == 1000
-    assert result.tokens_write == 500
-    assert result.tokens_cache == 200
+    assert result.gen_ai_usage_input_tokens == 1000
+    assert result.gen_ai_usage_output_tokens == 500
+    assert result.gen_ai_usage_cache_read_input_tokens == 200
 
 
 def test_extract_metrics_multiple_models() -> None:
@@ -126,9 +126,9 @@ def test_extract_metrics_multiple_models() -> None:
         conversation_stats = FakeStats()
 
     result = extract_metrics(FakeConversation())
-    assert result.tokens_read == 300
-    assert result.tokens_write == 150
-    assert result.tokens_cache == 30
+    assert result.gen_ai_usage_input_tokens == 300
+    assert result.gen_ai_usage_output_tokens == 150
+    assert result.gen_ai_usage_cache_read_input_tokens == 30
 
 
 def test_extract_metrics_none_token_usage() -> None:

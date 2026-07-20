@@ -310,9 +310,9 @@ def extract_metrics(conversation: Any, duration_ms: int = 0) -> ExecutionMetrics
             pass  # Action counting is best-effort
 
         return ExecutionMetrics(
-            tokens_read=total_read,
-            tokens_write=total_write,
-            tokens_cache=total_cache,
+            gen_ai_usage_input_tokens=total_read,
+            gen_ai_usage_output_tokens=total_write,
+            gen_ai_usage_cache_read_input_tokens=total_cache,
             duration_ms=duration_ms,
             num_actions=num_actions,
         )

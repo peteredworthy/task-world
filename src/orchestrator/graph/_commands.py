@@ -4419,9 +4419,9 @@ def _apply_record_gatekeeper_verdicts(
             confidence=verdict.confidence,
             rationale=verdict.rationale,
             model_id=verdict.model_id or payload.model_id or "unknown",
-            input_tokens=verdict.input_tokens,
-            output_tokens=verdict.output_tokens,
-            cache_read_tokens=verdict.cache_read_tokens,
+            gen_ai_usage_input_tokens=verdict.gen_ai_usage_input_tokens,
+            gen_ai_usage_output_tokens=verdict.gen_ai_usage_output_tokens,
+            gen_ai_usage_cache_read_input_tokens=verdict.gen_ai_usage_cache_read_input_tokens,
             cache_write_tokens=verdict.cache_write_tokens,
             cost_usd=verdict.cost_usd,
             wall_time_ms=verdict.wall_time_ms,
@@ -4700,9 +4700,13 @@ def _gatekeeper_cost_payload(
         "execution_id": execution_id,
         "consult_id": consult_id,
         "model_id": model_ids[0] if len(model_ids) == 1 else "mixed",
-        "input_tokens": sum(verdict.input_tokens for verdict in verdicts),
-        "output_tokens": sum(verdict.output_tokens for verdict in verdicts),
-        "cache_read_tokens": sum(verdict.cache_read_tokens for verdict in verdicts),
+        "gen_ai_usage_input_tokens": sum(verdict.gen_ai_usage_input_tokens for verdict in verdicts),
+        "gen_ai_usage_output_tokens": sum(
+            verdict.gen_ai_usage_output_tokens for verdict in verdicts
+        ),
+        "gen_ai_usage_cache_read_input_tokens": sum(
+            verdict.gen_ai_usage_cache_read_input_tokens for verdict in verdicts
+        ),
         "cache_write_tokens": sum(verdict.cache_write_tokens for verdict in verdicts),
         "cost_usd": sum(verdict.cost_usd for verdict in verdicts),
         "wall_time_ms": sum(verdict.wall_time_ms for verdict in verdicts),
@@ -4713,9 +4717,9 @@ def _gatekeeper_cost_payload(
             key: value
             for key, value in {
                 "model_id": cost.model_id,
-                "input_tokens": cost.input_tokens,
-                "output_tokens": cost.output_tokens,
-                "cache_read_tokens": cost.cache_read_tokens,
+                "gen_ai_usage_input_tokens": cost.gen_ai_usage_input_tokens,
+                "gen_ai_usage_output_tokens": cost.gen_ai_usage_output_tokens,
+                "gen_ai_usage_cache_read_input_tokens": cost.gen_ai_usage_cache_read_input_tokens,
                 "cache_write_tokens": cost.cache_write_tokens,
                 "cost_usd": cost.cost_usd,
                 "wall_time_ms": cost.wall_time_ms,

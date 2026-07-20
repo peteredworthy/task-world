@@ -507,7 +507,10 @@ class _UsageFixtureAgent:
         return ExecutionResult(
             success=True,
             metrics=ExecutionMetrics(
-                tokens_read=11, tokens_write=22, tokens_cache=33, num_actions=4
+                gen_ai_usage_input_tokens=11,
+                gen_ai_usage_output_tokens=22,
+                gen_ai_usage_cache_read_input_tokens=33,
+                num_actions=4,
             ),
         )
 
@@ -546,5 +549,5 @@ async def test_graph_dispatch_surfaces_agent_usage(
     await _schedule_dispatch_and_wait(controller, dispatcher, executor, run_id)
 
     assert len(captured) == 1
-    assert captured[0].metrics.tokens_write == 22
+    assert captured[0].metrics.gen_ai_usage_output_tokens == 22
     assert captured[0].metrics.num_actions == 4

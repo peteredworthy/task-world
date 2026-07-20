@@ -45,10 +45,10 @@ export interface ToolResultDetail {
 }
 
 export interface TurnMetrics {
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_creation_tokens: number;
+  gen_ai_usage_input_tokens: number;
+  gen_ai_usage_output_tokens: number;
+  gen_ai_usage_cache_read_input_tokens: number;
+  gen_ai_usage_cache_creation_input_tokens: number;
   cost_usd: number;
 }
 
@@ -71,10 +71,10 @@ export interface ActionLog {
   total_turns: number;
   total_cost_usd: number;
   total_duration_ms: number;
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_cache_read_tokens: number;
-  total_cache_creation_tokens: number;
+  gen_ai_usage_input_tokens: number;
+  gen_ai_usage_output_tokens: number;
+  gen_ai_usage_cache_read_input_tokens: number;
+  gen_ai_usage_cache_creation_input_tokens: number;
 }
 
 // --- Attempt and Task types ---

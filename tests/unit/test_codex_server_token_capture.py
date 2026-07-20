@@ -124,14 +124,14 @@ async def test_session_accumulates_token_usage() -> None:
 
     # Assert final action_log totals equal the cumulative usage (second update)
     assert result.action_log is not None
-    assert result.action_log.total_input_tokens == 2500
+    assert result.action_log.gen_ai_usage_input_tokens == 2500
     # Reasoning folded into output: 450 + 120 = 570
-    assert result.action_log.total_output_tokens == 570
-    assert result.action_log.total_cache_read_tokens == 1200
+    assert result.action_log.gen_ai_usage_output_tokens == 570
+    assert result.action_log.gen_ai_usage_cache_read_input_tokens == 1200
     # All values are nonzero
-    assert result.action_log.total_input_tokens > 0
-    assert result.action_log.total_output_tokens > 0
-    assert result.action_log.total_cache_read_tokens > 0
+    assert result.action_log.gen_ai_usage_input_tokens > 0
+    assert result.action_log.gen_ai_usage_output_tokens > 0
+    assert result.action_log.gen_ai_usage_cache_read_input_tokens > 0
 
 
 # ---------------------------------------------------------------------------
@@ -147,9 +147,9 @@ def test_extract_metrics_and_usage_nonzero_for_codex() -> None:
     result = build_execution_result(
         output_lines=["hello\n", "world\n"],
         duration_ms=5000,
-        tokens_read=2500,
-        tokens_write=570,  # 450 + 120 reasoning
-        tokens_cache=1200,
+        gen_ai_usage_input_tokens=2500,
+        gen_ai_usage_output_tokens=570,  # 450 + 120 reasoning
+        gen_ai_usage_cache_read_input_tokens=1200,
         num_actions=3,
         agent_model="gpt-5.3-codex",
     )
@@ -157,18 +157,18 @@ def test_extract_metrics_and_usage_nonzero_for_codex() -> None:
     metrics, usage_list = extract_metrics_and_usage(result)
 
     # Metrics should reflect the totals
-    assert metrics.tokens_read == 2500
-    assert metrics.tokens_write == 570
-    assert metrics.tokens_cache == 1200
+    assert metrics.gen_ai_usage_input_tokens == 2500
+    assert metrics.gen_ai_usage_output_tokens == 570
+    assert metrics.gen_ai_usage_cache_read_input_tokens == 1200
 
     # Should have one ModelTokenUsage entry for the codex model
     assert len(usage_list) == 1
     usage = usage_list[0]
     assert usage.model == "gpt-5.3-codex"
-    assert usage.input_tokens == 2500
-    assert usage.output_tokens == 570
-    assert usage.cache_read_tokens == 1200
+    assert usage.gen_ai_usage_input_tokens == 2500
+    assert usage.gen_ai_usage_output_tokens == 570
+    assert usage.gen_ai_usage_cache_read_input_tokens == 1200
     # All nonzero
-    assert usage.input_tokens > 0
-    assert usage.output_tokens > 0
-    assert usage.cache_read_tokens > 0
+    assert usage.gen_ai_usage_input_tokens > 0
+    assert usage.gen_ai_usage_output_tokens > 0
+    assert usage.gen_ai_usage_cache_read_input_tokens > 0
