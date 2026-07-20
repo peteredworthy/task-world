@@ -201,7 +201,7 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
 
     assert loaded.status == RunStatus.ACTIVE
     assert loaded.routine_sha == "abc123"
-    assert loaded.total_tokens_read == 0
+    assert loaded.total_tokens_read == 800
 
     task = loaded.steps[0].tasks[0]
     assert task.status == TaskStatus.COMPLETED

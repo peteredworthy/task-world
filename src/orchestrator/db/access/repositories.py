@@ -67,6 +67,21 @@ def _usage_metrics(entries: list[dict[str, Any]] | None) -> tuple[int, int, int]
     )
 
 
+def _run_usage_metrics(model: RunModel) -> tuple[int, int, int]:
+    """Use run facts when present, otherwise derive totals from attempt facts."""
+    if model.token_usage_by_model:
+        return _usage_metrics(model.token_usage_by_model)
+    return _usage_metrics(
+        [
+            entry
+            for step in model.steps
+            for task in step.tasks
+            for attempt in task.attempts
+            for entry in (attempt.token_usage_by_model or [])
+        ]
+    )
+
+
 @dataclass(frozen=True)
 class RunLivenessRecord:
     """Minimal run data needed for agent liveness recovery."""
@@ -299,9 +314,7 @@ def run_model_to_domain(
         for spec in env_specs_data
     ]
 
-    total_tokens_read, total_tokens_write, total_tokens_cache = _usage_metrics(
-        model.token_usage_by_model
-    )
+    total_tokens_read, total_tokens_write, total_tokens_cache = _run_usage_metrics(model)
     return Run(
         id=model.id,
         repo_name=model.repo_name,

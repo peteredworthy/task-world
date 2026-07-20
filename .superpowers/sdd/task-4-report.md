@@ -56,6 +56,12 @@ including its full pytest run. Stale tests now construct immutable canonical usa
 where derived token behavior matters and otherwise no longer construct or assert the
 removed persistence fields.
 
+Review follow-up: migration rewriting is now scoped to the three persisted
+`token_usage_by_model` columns and the explicit event payload paths
+`telemetry`, `run_snapshot`, and `attempt_snapshot`; unrelated provider-wire
+dictionaries are asserted unchanged. Repository totals fall back to persisted
+attempt usage facts only when run facts are absent.
+
 ## Broader-suite note
 
 `uv run pytest tests/unit tests/integration -q -n 0` was started and exceeded the

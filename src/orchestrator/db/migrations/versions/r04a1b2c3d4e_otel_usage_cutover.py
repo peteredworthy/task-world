@@ -29,23 +29,30 @@ _LEGACY_TO_CANONICAL = {
 _CANONICAL_TO_LEGACY = {value: key for key, value in _LEGACY_TO_CANONICAL.items()}
 
 
-def _rewrite_usage_value(value: Any, key_map: Mapping[str, str]) -> Any:
-    if isinstance(value, list):
-        return [_rewrite_usage_value(item, key_map) for item in cast(list[Any], value)]
-    if not isinstance(value, dict):
+def _rewrite_usage_entries(value: Any, key_map: Mapping[str, str]) -> Any:
+    if not isinstance(value, list):
         return value
-
-    source = cast(dict[str, Any], value)
-    rewritten: dict[str, Any] = {
-        key: _rewrite_usage_value(item, key_map) for key, item in source.items()
-    }
-    if "model" not in rewritten:
-        return rewritten
-    for source, target in key_map.items():
-        if target not in rewritten and source in rewritten:
-            rewritten[target] = rewritten[source]
-        rewritten.pop(source, None)
-    return rewritten
+    rewritten_entries: list[Any] = []
+    for entry in cast(list[Any], value):
+        if not isinstance(entry, dict):
+            rewritten_entries.append(entry)
+            continue
+        rewritten = dict(cast(dict[str, Any], entry))
+        if "model" not in rewritten:
+            rewritten_entries.append(rewritten)
+            continue
+        for source, target in key_map.items():
+            if (
+                source in rewritten
+                and target in rewritten
+                and rewritten[source] != rewritten[target]
+            ):
+                raise ValueError(f"usage migration collision for {source} and {target}")
+            if target not in rewritten and source in rewritten:
+                rewritten[target] = rewritten[source]
+            rewritten.pop(source, None)
+        rewritten_entries.append(rewritten)
+    return rewritten_entries
 
 
 def _rewrite_json_column(table: str, column: str, key_map: Mapping[str, str]) -> None:
@@ -55,10 +62,35 @@ def _rewrite_json_column(table: str, column: str, key_map: Mapping[str, str]) ->
     )
     for rowid, raw_value in rows:
         value = json.loads(raw_value) if isinstance(raw_value, str) else raw_value
-        rewritten = _rewrite_usage_value(value, key_map)
+        rewritten = _rewrite_usage_entries(value, key_map)
         connection.execute(
             sa.text(f"UPDATE {table} SET {column} = :value WHERE rowid = :rowid"),
             {"value": json.dumps(rewritten), "rowid": rowid},
+        )
+
+
+def _rewrite_event_payloads(key_map: Mapping[str, str]) -> None:
+    connection = op.get_bind()
+    rows = connection.execute(sa.text("SELECT rowid, payload FROM events_v2"))
+    for rowid, raw_payload in rows:
+        payload = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
+        if not isinstance(payload, dict):
+            continue
+        rewritten = dict(cast(dict[str, Any], payload))
+        for path in (("telemetry",), ("run_snapshot",), ("attempt_snapshot",)):
+            container: dict[str, Any] | None = rewritten
+            for key in path:
+                if container is None:
+                    break
+                candidate = container.get(key)
+                container = cast(dict[str, Any], candidate) if isinstance(candidate, dict) else None
+            if isinstance(container, dict) and "token_usage_by_model" in container:
+                container["token_usage_by_model"] = _rewrite_usage_entries(
+                    container["token_usage_by_model"], key_map
+                )
+        connection.execute(
+            sa.text("UPDATE events_v2 SET payload = :payload WHERE rowid = :rowid"),
+            {"payload": json.dumps(rewritten), "rowid": rowid},
         )
 
 
@@ -110,7 +142,7 @@ def _restore_flat_totals(table: str, columns: tuple[str, str, str]) -> None:
 def upgrade() -> None:
     for table in ("runs", "attempts", "cost_records"):
         _rewrite_json_column(table, "token_usage_by_model", _LEGACY_TO_CANONICAL)
-    _rewrite_json_column("events_v2", "payload", _LEGACY_TO_CANONICAL)
+    _rewrite_event_payloads(_LEGACY_TO_CANONICAL)
 
     with op.batch_alter_table("runs") as batch_op:
         batch_op.drop_column("total_tokens_read")
@@ -166,4 +198,4 @@ def downgrade() -> None:
     _restore_flat_totals("attempts", ("tokens_read", "tokens_write", "tokens_cache"))
     for table in ("runs", "attempts", "cost_records"):
         _rewrite_json_column(table, "token_usage_by_model", _CANONICAL_TO_LEGACY)
-    _rewrite_json_column("events_v2", "payload", _CANONICAL_TO_LEGACY)
+    _rewrite_event_payloads(_CANONICAL_TO_LEGACY)

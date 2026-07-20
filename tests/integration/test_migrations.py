@@ -258,6 +258,7 @@ def test_otel_usage_cutover_migrates_persisted_usage_facts_and_event_snapshots(
         "telemetry": {"token_usage_by_model": [legacy_usage]},
         "run_snapshot": {"token_usage_by_model": [legacy_usage]},
         "attempt_snapshot": {"token_usage_by_model": [legacy_usage]},
+        "provider_wire": {"model": "wire-model", "input_tokens": 999, "output_tokens": 888},
     }
     with sqlite3.connect(database_path) as connection:
         connection.execute("PRAGMA foreign_keys = OFF")
@@ -356,6 +357,11 @@ def test_otel_usage_cutover_migrates_persisted_usage_facts_and_event_snapshots(
         assert payload["telemetry"]["token_usage_by_model"] == [expected_usage]
         assert payload["run_snapshot"]["token_usage_by_model"] == [expected_usage]
         assert payload["attempt_snapshot"]["token_usage_by_model"] == [expected_usage]
+        assert payload["provider_wire"] == {
+            "model": "wire-model",
+            "input_tokens": 999,
+            "output_tokens": 888,
+        }
         assert connection.execute(
             "SELECT gen_ai_usage_input_tokens, gen_ai_usage_output_tokens, "
             "gen_ai_usage_cache_read_input_tokens, gen_ai_usage_cache_creation_input_tokens "
