@@ -307,6 +307,24 @@ def test_task_four_migration_history_is_an_explicit_clean_boundary() -> None:
     )
 
 
+def test_task_four_migration_fixture_requires_historical_wrappers() -> None:
+    historical_source = """\
+def _legacy_usage_snapshot(value):
+    return value
+
+historical = _legacy_usage_snapshot({"input_tokens": 1})
+"""
+    live_source = """\
+def _legacy_usage_snapshot(value):
+    return value
+
+live = {"input_tokens": 1}
+"""
+
+    assert diagnose_source(historical_source, path="tests/integration/test_migrations.py") == ()
+    assert diagnose_source(live_source, path="tests/integration/test_migrations.py")
+
+
 def test_explicit_workflow_event_contract_is_renamed() -> None:
     source = """\
 class AttemptUpdated:

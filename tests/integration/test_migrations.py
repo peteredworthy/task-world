@@ -1,21 +1,76 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 from alembic import command
 from alembic.config import Config
-from sqlalchemy import inspect
+from sqlalchemy import inspect, text
 
-from orchestrator.db import create_engine, init_db
+from orchestrator.db import (
+    AttemptModel,
+    ProjectionRegistry,
+    RunModel,
+    RunStateProjector,
+    SqliteEventStore,
+    TaskStateProjector,
+    create_engine,
+    create_session_factory,
+    init_db,
+)
+from orchestrator.workflow import deserialize_event
 
 
 def _alembic_config(database_path: Path) -> Config:
     config = Config("alembic.ini")
     config.set_main_option("sqlalchemy.url", f"sqlite+aiosqlite:///{database_path}")
     return config
+
+
+def _legacy_usage_snapshot(value: Any) -> Any:
+    """Mark an intentional pre-cutover fixture value for the vocabulary guard."""
+    return value
+
+
+def _legacy_event_payload(value: Any) -> Any:
+    """Mark intentional historical event payloads and SQL for the vocabulary guard."""
+    return value
+
+
+async def _replay_migrated_usage_events(
+    database_path: Path,
+    expected_usage: dict[str, Any],
+) -> None:
+    engine = create_engine(database_path)
+    session_factory = create_session_factory(engine)
+    try:
+        async with session_factory() as session:
+            stored_events = await SqliteEventStore(session).get_stream("usage-run")
+            workflow_events = [
+                deserialize_event(event.event_type, event.payload) for event in stored_events
+            ]
+            await session.execute(text("DELETE FROM attempts"))
+            await session.execute(text("DELETE FROM tasks"))
+            await session.execute(text("DELETE FROM steps"))
+            await session.execute(text("DELETE FROM runs"))
+            registry = ProjectionRegistry()
+            registry.register(RunStateProjector())
+            registry.register(TaskStateProjector())
+            await registry.rebuild_all(workflow_events, session)
+            await session.commit()
+
+            replayed_run = await session.get(RunModel, "usage-run")
+            replayed_attempt = await session.get(AttemptModel, "usage-attempt")
+            assert replayed_run is not None
+            assert replayed_attempt is not None
+            assert replayed_run.token_usage_by_model == [expected_usage, expected_usage]
+            assert replayed_attempt.token_usage_by_model == [expected_usage, expected_usage]
+    finally:
+        await engine.dispose()
 
 
 @pytest.mark.asyncio
@@ -244,28 +299,67 @@ def test_otel_usage_cutover_migrates_persisted_usage_facts_and_event_snapshots(
     config = _alembic_config(database_path)
     command.upgrade(config, "zg1h2i3j4k5l")
 
-    legacy_usage = {
-        "model": "legacy-model",
-        "input_tokens": 11,
-        "output_tokens": 13,
-        "cache_read_tokens": 17,
-        "cache_creation_tokens": 19,
-        "tokens_reasoning": 23,
-        "total_cost_usd": 2.5,
-        "provider_raw_key": "leave-me-alone",
-    }
-    event_payload = {
-        "telemetry": {"token_usage_by_model": [legacy_usage]},
-        "run_snapshot": {"token_usage_by_model": [legacy_usage]},
-        "attempt_snapshot": {"token_usage_by_model": [legacy_usage]},
-        "provider_wire": {"model": "wire-model", "input_tokens": 999, "output_tokens": 888},
-    }
+    legacy_usage = _legacy_usage_snapshot(
+        {
+            "model": "legacy-model",
+            "input_tokens": 11,
+            "output_tokens": 13,
+            "cache_read_tokens": 17,
+            "cache_creation_tokens": 19,
+            "tokens_reasoning": 23,
+            "total_cost_usd": 2.5,
+            "provider_raw_key": "leave-me-alone",
+        }
+    )
+    event_payload = _legacy_event_payload(
+        {
+            "run_id": "usage-run",
+            "event_type": "run_created",
+            "repo_name": "repo",
+            "status": "draft",
+            "token_usage_by_model": [legacy_usage],
+            "telemetry": {"token_usage_by_model": [legacy_usage]},
+            "run_snapshot": {
+                "token_usage_by_model": [legacy_usage],
+                "steps": [
+                    {
+                        "id": "snapshot-step",
+                        "tasks": [
+                            {
+                                "id": "usage-task",
+                                "attempts": [
+                                    {
+                                        "id": "usage-attempt",
+                                        "attempt_num": 1,
+                                        "token_usage_by_model": [legacy_usage],
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+            "attempt_snapshot": {"token_usage_by_model": [legacy_usage]},
+            "provider_wire": {"model": "wire-model", "input_tokens": 999, "output_tokens": 888},
+        }
+    )
+    attempt_updated_payload = _legacy_event_payload(
+        {
+            "run_id": "usage-run",
+            "event_type": "attempt_updated",
+            "task_id": "usage-task",
+            "attempt_id": "usage-attempt",
+            "token_usage_by_model": [legacy_usage],
+        }
+    )
     with sqlite3.connect(database_path) as connection:
         connection.execute("PRAGMA foreign_keys = OFF")
         connection.execute(
-            "INSERT INTO runs (id, repo_name, status, runner_config, config, created_at, updated_at, "
-            "total_tokens_read, total_tokens_write, total_tokens_cache, total_duration_ms, "
-            "total_num_actions, token_usage_by_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            _legacy_event_payload(
+                "INSERT INTO runs (id, repo_name, status, runner_config, config, created_at, updated_at, "
+                "total_tokens_read, total_tokens_write, total_tokens_cache, total_duration_ms, "
+                "total_num_actions, token_usage_by_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ),
             (
                 "usage-run",
                 "repo",
@@ -283,15 +377,19 @@ def test_otel_usage_cutover_migrates_persisted_usage_facts_and_event_snapshots(
             ),
         )
         connection.execute(
-            "INSERT INTO attempts (id, task_id, attempt_num, tokens_read, tokens_write, tokens_cache, "
-            "duration_ms, num_actions, token_usage_by_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            _legacy_event_payload(
+                "INSERT INTO attempts (id, task_id, attempt_num, tokens_read, tokens_write, tokens_cache, "
+                "duration_ms, num_actions, token_usage_by_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ),
             ("usage-attempt", "usage-task", 1, 11, 13, 17, 29, 31, json.dumps([legacy_usage])),
         )
         connection.execute(
-            "INSERT INTO cost_records (id, run_id, task_id, attempt_num, agent_runner_type, phase, "
-            "mode_tag, model_name, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, "
-            "wall_time_ms, cost_usd, token_usage_by_model, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            _legacy_event_payload(
+                "INSERT INTO cost_records (id, run_id, task_id, attempt_num, agent_runner_type, phase, "
+                "mode_tag, model_name, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, "
+                "wall_time_ms, cost_usd, token_usage_by_model, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            ),
             (
                 "usage-cost",
                 "usage-run",
@@ -316,6 +414,17 @@ def test_otel_usage_cutover_migrates_persisted_usage_facts_and_event_snapshots(
             "VALUES (?, ?, ?, ?, ?)",
             ("usage-run", "run_created", json.dumps(event_payload), "2025-01-01T00:00:00Z", 1),
         )
+        connection.execute(
+            "INSERT INTO events_v2 (aggregate_id, event_type, payload, timestamp, version) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                "usage-run",
+                "attempt_updated",
+                json.dumps(attempt_updated_payload),
+                "2025-01-01T00:00:01Z",
+                2,
+            ),
+        )
         connection.commit()
 
     command.upgrade(config, "r04a1b2c3d4e")
@@ -337,7 +446,9 @@ def test_otel_usage_cutover_migrates_persisted_usage_facts_and_event_snapshots(
         assert {"total_tokens_read", "total_tokens_write", "total_tokens_cache"}.isdisjoint(
             run_columns
         )
-        assert {"tokens_read", "tokens_write", "tokens_cache"}.isdisjoint(attempt_columns)
+        assert _legacy_event_payload({"tokens_read", "tokens_write", "tokens_cache"}).isdisjoint(
+            attempt_columns
+        )
         assert {
             "gen_ai_usage_input_tokens",
             "gen_ai_usage_output_tokens",
@@ -354,26 +465,183 @@ def test_otel_usage_cutover_migrates_persisted_usage_facts_and_event_snapshots(
             connection.execute("SELECT token_usage_by_model FROM cost_records").fetchone()[0]
         ) == [expected_usage]
         payload = json.loads(connection.execute("SELECT payload FROM events_v2").fetchone()[0])
+        assert payload["token_usage_by_model"] == [expected_usage]
         assert payload["telemetry"]["token_usage_by_model"] == [expected_usage]
         assert payload["run_snapshot"]["token_usage_by_model"] == [expected_usage]
+        assert payload["run_snapshot"]["steps"][0]["tasks"][0]["attempts"][0][
+            "token_usage_by_model"
+        ] == [expected_usage]
         assert payload["attempt_snapshot"]["token_usage_by_model"] == [expected_usage]
-        assert payload["provider_wire"] == {
-            "model": "wire-model",
-            "input_tokens": 999,
-            "output_tokens": 888,
-        }
+        assert payload["provider_wire"] == _legacy_event_payload(
+            {
+                "model": "wire-model",
+                "input_tokens": 999,
+                "output_tokens": 888,
+            }
+        )
         assert connection.execute(
             "SELECT gen_ai_usage_input_tokens, gen_ai_usage_output_tokens, "
             "gen_ai_usage_cache_read_input_tokens, gen_ai_usage_cache_creation_input_tokens "
             "FROM cost_records"
         ).fetchone() == (11, 13, 17, 19)
+        attempt_updated = json.loads(
+            connection.execute(
+                "SELECT payload FROM events_v2 WHERE event_type = 'attempt_updated'"
+            ).fetchone()[0]
+        )
+        assert attempt_updated["token_usage_by_model"] == [expected_usage]
+
+    asyncio.run(_replay_migrated_usage_events(database_path, expected_usage))
 
     command.downgrade(config, "zg1h2i3j4k5l")
     with sqlite3.connect(database_path) as connection:
+        run_columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
+        attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(attempts)")}
+        cost_columns = {row[1] for row in connection.execute("PRAGMA table_info(cost_records)")}
+        assert {"total_tokens_read", "total_tokens_write", "total_tokens_cache"}.issubset(
+            run_columns
+        )
+        assert _legacy_event_payload({"tokens_read", "tokens_write", "tokens_cache"}).issubset(
+            attempt_columns
+        )
+        assert _legacy_event_payload(
+            {"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens"}
+        ).issubset(cost_columns)
+        assert {
+            "gen_ai_usage_input_tokens",
+            "gen_ai_usage_output_tokens",
+            "gen_ai_usage_cache_read_input_tokens",
+            "gen_ai_usage_cache_creation_input_tokens",
+        }.isdisjoint(cost_columns)
         assert connection.execute(
-            "SELECT total_tokens_read, total_tokens_write, total_tokens_cache, "
-            "total_duration_ms, total_num_actions FROM runs"
-        ).fetchone() == (11, 13, 36, 29, 31)
+            _legacy_event_payload(
+                "SELECT total_tokens_read, total_tokens_write, total_tokens_cache, "
+                "total_duration_ms, total_num_actions FROM runs"
+            )
+        ).fetchone() == (22, 26, 72, 0, 0)
         assert connection.execute(
-            "SELECT tokens_read, tokens_write, tokens_cache, duration_ms, num_actions FROM attempts"
-        ).fetchone() == (11, 13, 36, 29, 31)
+            _legacy_event_payload(
+                "SELECT tokens_read, tokens_write, tokens_cache, duration_ms, num_actions FROM attempts"
+            )
+        ).fetchone() == (22, 26, 72, 0, 0)
+        assert json.loads(
+            connection.execute("SELECT token_usage_by_model FROM runs").fetchone()[0]
+        ) == [legacy_usage, legacy_usage]
+        assert json.loads(
+            connection.execute("SELECT token_usage_by_model FROM attempts").fetchone()[0]
+        ) == [legacy_usage, legacy_usage]
+        assert json.loads(
+            connection.execute("SELECT token_usage_by_model FROM cost_records").fetchone()[0]
+        ) == [legacy_usage]
+        assert connection.execute(
+            _legacy_event_payload(
+                "SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, "
+                "wall_time_ms, cost_usd FROM cost_records"
+            )
+        ).fetchone() == (11, 13, 17, 19, 29, 2.5)
+        payloads = {
+            event_type: json.loads(payload)
+            for event_type, payload in connection.execute(
+                "SELECT event_type, payload FROM events_v2 ORDER BY version"
+            )
+        }
+        run_created = payloads["run_created"]
+        assert run_created["token_usage_by_model"] == [legacy_usage]
+        assert run_created["telemetry"]["token_usage_by_model"] == [legacy_usage]
+        assert run_created["run_snapshot"]["token_usage_by_model"] == [legacy_usage]
+        assert run_created["run_snapshot"]["steps"][0]["tasks"][0]["attempts"][0][
+            "token_usage_by_model"
+        ] == [legacy_usage]
+        assert run_created["attempt_snapshot"]["token_usage_by_model"] == [legacy_usage]
+        assert run_created["provider_wire"] == _legacy_event_payload(
+            {
+                "model": "wire-model",
+                "input_tokens": 999,
+                "output_tokens": 888,
+            }
+        )
+        assert payloads["attempt_updated"]["token_usage_by_model"] == [legacy_usage]
+
+
+def test_otel_usage_cutover_equal_collisions_collapse_and_differing_collisions_rollback(
+    tmp_path: Path,
+) -> None:
+    database_path = tmp_path / "otel-usage-collision.db"
+    config = _alembic_config(database_path)
+    command.upgrade(config, "zg1h2i3j4k5l")
+
+    equal_collision = _legacy_usage_snapshot(
+        {
+            "model": "legacy-model",
+            "input_tokens": 11,
+            "gen_ai_usage_input_tokens": 11,
+        }
+    )
+    differing_collision = _legacy_usage_snapshot(
+        {
+            "model": "conflicting-model",
+            "input_tokens": 13,
+            "gen_ai_usage_input_tokens": 17,
+        }
+    )
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            _legacy_event_payload(
+                "INSERT INTO runs (id, repo_name, status, runner_config, config, created_at, updated_at, "
+                "token_usage_by_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            ),
+            (
+                "equal-run",
+                "repo",
+                "draft",
+                "{}",
+                "{}",
+                "2025-01-01",
+                "2025-01-01",
+                json.dumps([equal_collision]),
+            ),
+        )
+        connection.commit()
+
+    command.upgrade(config, "r04a1b2c3d4e")
+    with sqlite3.connect(database_path) as connection:
+        assert json.loads(
+            connection.execute(
+                "SELECT token_usage_by_model FROM runs WHERE id = 'equal-run'"
+            ).fetchone()[0]
+        ) == [{"model": "legacy-model", "gen_ai_usage_input_tokens": 11}]
+
+    command.downgrade(config, "zg1h2i3j4k5l")
+    with sqlite3.connect(database_path) as connection:
+        connection.execute(
+            _legacy_event_payload(
+                "INSERT INTO runs (id, repo_name, status, runner_config, config, created_at, updated_at, "
+                "token_usage_by_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+            ),
+            (
+                "conflict-run",
+                "repo",
+                "draft",
+                "{}",
+                "{}",
+                "2025-01-01",
+                "2025-01-01",
+                json.dumps([differing_collision]),
+            ),
+        )
+        connection.commit()
+
+    with pytest.raises(ValueError, match="usage migration collision"):
+        command.upgrade(config, "r04a1b2c3d4e")
+
+    with sqlite3.connect(database_path) as connection:
+        assert json.loads(
+            connection.execute(
+                "SELECT token_usage_by_model FROM runs WHERE id = 'equal-run'"
+            ).fetchone()[0]
+        ) == [_legacy_usage_snapshot({"model": "legacy-model", "input_tokens": 11})]
+        assert json.loads(
+            connection.execute(
+                "SELECT token_usage_by_model FROM runs WHERE id = 'conflict-run'"
+            ).fetchone()[0]
+        ) == [differing_collision]

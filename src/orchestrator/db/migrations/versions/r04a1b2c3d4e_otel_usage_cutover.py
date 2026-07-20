@@ -69,6 +69,24 @@ def _rewrite_json_column(table: str, column: str, key_map: Mapping[str, str]) ->
         )
 
 
+def _rewrite_usage_structure(value: Any, key_map: Mapping[str, str]) -> Any:
+    """Rewrite every usage list inside a recognized event telemetry structure."""
+    if isinstance(value, list):
+        return [_rewrite_usage_structure(item, key_map) for item in cast(list[Any], value)]
+    if not isinstance(value, dict):
+        return value
+
+    rewritten = dict(cast(dict[str, Any], value))
+    if "token_usage_by_model" in rewritten:
+        rewritten["token_usage_by_model"] = _rewrite_usage_entries(
+            rewritten["token_usage_by_model"], key_map
+        )
+    for key, nested_value in rewritten.items():
+        if key != "token_usage_by_model":
+            rewritten[key] = _rewrite_usage_structure(nested_value, key_map)
+    return rewritten
+
+
 def _rewrite_event_payloads(key_map: Mapping[str, str]) -> None:
     connection = op.get_bind()
     rows = connection.execute(sa.text("SELECT rowid, payload FROM events_v2"))
@@ -77,17 +95,14 @@ def _rewrite_event_payloads(key_map: Mapping[str, str]) -> None:
         if not isinstance(payload, dict):
             continue
         rewritten = dict(cast(dict[str, Any], payload))
-        for path in (("telemetry",), ("run_snapshot",), ("attempt_snapshot",)):
-            container: dict[str, Any] | None = rewritten
-            for key in path:
-                if container is None:
-                    break
-                candidate = container.get(key)
-                container = cast(dict[str, Any], candidate) if isinstance(candidate, dict) else None
-            if isinstance(container, dict) and "token_usage_by_model" in container:
-                container["token_usage_by_model"] = _rewrite_usage_entries(
-                    container["token_usage_by_model"], key_map
-                )
+        if "token_usage_by_model" in rewritten:
+            rewritten["token_usage_by_model"] = _rewrite_usage_entries(
+                rewritten["token_usage_by_model"], key_map
+            )
+        for key in ("telemetry", "run_snapshot", "attempt_snapshot"):
+            container = rewritten.get(key)
+            if isinstance(container, dict | list):
+                rewritten[key] = _rewrite_usage_structure(container, key_map)
         connection.execute(
             sa.text("UPDATE events_v2 SET payload = :payload WHERE rowid = :rowid"),
             {"payload": json.dumps(rewritten), "rowid": rowid},
