@@ -8,6 +8,8 @@ from orchestrator.state.errors import (
 )
 from orchestrator.state.models import (
     ActionLog,
+    ActionLogEntry,
+    ActionEntryKind,
     Attempt,
     AttemptMetrics,
     ChecklistItem,
@@ -24,6 +26,8 @@ from orchestrator.state.session import SessionStateManager
 __all__ = [
     "Attempt",
     "ActionLog",
+    "ActionLogEntry",
+    "ActionEntryKind",
     "AttemptMetrics",
     "ChecklistItem",
     "ChecklistItemNotFoundError",

@@ -333,12 +333,12 @@ class GraphDispatchExecutor(SideEffectExecutor):
             result.metrics.duration_ms = int((self._monotonic() - started) * 1000)
             from orchestrator.runners import extract_metrics_and_usage
 
-            _, usage_by_model = extract_metrics_and_usage(result)
+            metrics, usage_by_model = extract_metrics_and_usage(result)
             if usage_by_model:
                 await self._controller.record_node_usage(
                     context,
                     usage_by_model,
-                    num_actions=result.metrics.num_actions,
+                    num_actions=metrics.num_actions,
                 )
             if self._on_agent_usage is not None:
                 try:

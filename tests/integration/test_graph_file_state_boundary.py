@@ -6,12 +6,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from orchestrator.artifacts import FilesystemArtifactStore
 from orchestrator.config.enums import AgentRunnerType
 from orchestrator.config.models import RoutineConfig
-from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.db import RunModel, create_engine, create_session_factory, init_db
 from orchestrator.git import restore
 from orchestrator.graph import project_leases, project_node_states, project_residue_report
 from orchestrator.graph_runtime import (
@@ -35,6 +36,7 @@ from orchestrator.runners.types import (
     LogLineCallback,
     SubmitCallback,
 )
+from orchestrator.state import ActionEntryKind, ActionLog, ActionLogEntry
 
 
 class FixedClock:
@@ -510,7 +512,16 @@ class _UsageFixtureAgent:
                 gen_ai_usage_input_tokens=11,
                 gen_ai_usage_output_tokens=22,
                 gen_ai_usage_cache_read_input_tokens=33,
-                num_actions=4,
+                num_actions=0,
+            ),
+            action_log=ActionLog(
+                agent_model="usage-model",
+                gen_ai_usage_input_tokens=11,
+                gen_ai_usage_output_tokens=22,
+                entries=[
+                    ActionLogEntry(kind=ActionEntryKind.TOOL_USE),
+                    ActionLogEntry(kind=ActionEntryKind.TOOL_USE),
+                ],
             ),
         )
 
@@ -530,6 +541,18 @@ async def test_graph_dispatch_surfaces_agent_usage(
     repo = tmp_path / "repo-usage"
     _init_repo(repo)
     run_id = "graph-usage"
+    async with session_factory() as session:
+        async with session.begin():
+            session.add(
+                RunModel(
+                    id=run_id,
+                    repo_name="graph-usage-repo",
+                    status="active",
+                    execution_mode="graph",
+                    created_at=datetime(2026, 1, 1, tzinfo=UTC),
+                    updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+                )
+            )
     controller = await _seed_active_run(session_factory, run_id)
 
     captured: list[ExecutionResult] = []
@@ -550,4 +573,14 @@ async def test_graph_dispatch_surfaces_agent_usage(
 
     assert len(captured) == 1
     assert captured[0].metrics.gen_ai_usage_output_tokens == 22
-    assert captured[0].metrics.num_actions == 4
+    assert captured[0].metrics.num_actions == 0
+    events = await _read_events(session_factory, run_id)
+    usage_event = next(event for event in events if event.event_type == "node_usage_recorded")
+    projection = await controller.read_projection(run_id)
+    async with session_factory() as session:
+        run = (await session.execute(select(RunModel).where(RunModel.id == run_id))).scalar_one()
+
+    assert usage_event.payload["usage_index"] == 0
+    assert usage_event.payload["num_actions"] == 2
+    assert projection["num_actions_by_node_kind"] == {"worker": 2}
+    assert run.total_num_actions == 2
