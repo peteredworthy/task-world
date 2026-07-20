@@ -344,6 +344,27 @@ Each task goes through:
 3. **Verifier Phase** - Agent grades each requirement (fresh LLM context)
 4. **Pass/Fail** - Either proceed to next task or retry with revision
 
+### Cost and Token Telemetry
+
+`ModelTokenUsage` is a frozen, append-oriented **execution × model** fact; it
+is not a provider-call trace because the current runners cannot reliably retain
+provider-call identity. Its canonical OpenTelemetry GenAI fields are
+`gen_ai_usage_input_tokens`, `gen_ai_usage_output_tokens`,
+`gen_ai_usage_cache_read_input_tokens`,
+`gen_ai_usage_cache_creation_input_tokens`,
+`gen_ai_usage_reasoning_output_tokens`, and
+`gen_ai_response_finish_reasons`. Cache token components are included in input;
+reasoning tokens remain observable but are not charged a second time. Each fact
+also preserves `cost_usd`, `latency_ms`, and `rate_missing` at execution time.
+
+Phase 1 persists graph `node_usage_recorded` facts idempotently and exposes only
+their graph rollup through `GET /api/runs/cost-rollup`. Provider-billed built-in
+runner defaults must resolve to a matched, nonzero rate in `model_costs.yaml`.
+Local/no-provider-cost models must instead be represented by an explicit
+zero-rate table entry; a missing rate is surfaced as `rate_missing=true`, never
+silently classified as local. Budget blocking, alert thresholds, and
+per-profile effort configuration remain Phase-2 work.
+
 ### Graph Planning and Legacy Delegation
 
 Graph-mode runs are the default execution carrier. `GraphRunDriver` seeds a

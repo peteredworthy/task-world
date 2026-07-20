@@ -134,7 +134,11 @@ from orchestrator.runners.health_check import (
 )
 
 # Detection
-from orchestrator.runners.agent_detector import AGENT_CONFIG_FIELDS, ToolDetector
+from orchestrator.runners.agent_detector import (
+    AGENT_CONFIG_FIELDS,
+    ToolDetector,
+    get_builtin_config_schema,
+)
 from orchestrator.runners.detection.config_utils import coerce_llm_config
 from orchestrator.runners.detection.profile_resolution import resolve_model_for_profile
 
@@ -332,6 +336,7 @@ __all__ = [
     # Detection
     "AGENT_CONFIG_FIELDS",
     "ToolDetector",
+    "get_builtin_config_schema",
     "coerce_llm_config",
     "resolve_model_for_profile",
     # Runtime

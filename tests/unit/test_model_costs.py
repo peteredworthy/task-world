@@ -8,7 +8,13 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from orchestrator.runners import ModelCostResolution, load_cost_table, resolve_model_costs
+from orchestrator.config.enums import SELECTABLE_AGENT_RUNNER_TYPES
+from orchestrator.runners import (
+    ModelCostResolution,
+    get_builtin_config_schema,
+    load_cost_table,
+    resolve_model_costs,
+)
 
 
 @pytest.fixture(autouse=True)
@@ -29,6 +35,32 @@ def _load(tmp_path: Path, models: dict[str, dict[str, float]]) -> None:
 
 
 class TestResolveModelCosts:
+    def test_runner_defaults_have_explicit_cost_classification(self) -> None:
+        """Reconcile built-in provider defaults from runner config schemas."""
+        load_cost_table(Path("model_costs.yaml"))
+
+        default_models = {
+            runner_type: next(
+                (
+                    field.default
+                    for field in get_builtin_config_schema(runner_type)
+                    if field.name == "model" and isinstance(field.default, str)
+                ),
+                None,
+            )
+            for runner_type in SELECTABLE_AGENT_RUNNER_TYPES
+        }
+
+        assert set(default_models) == SELECTABLE_AGENT_RUNNER_TYPES
+        for runner_type, model in default_models.items():
+            if model is None:
+                continue
+
+            resolution = resolve_model_costs(model)
+            assert resolution.rate_missing is False, f"{runner_type.value}: {model}"
+            assert resolution.cost_per_m_input > 0, f"{runner_type.value}: {model}"
+            assert resolution.cost_per_m_output > 0, f"{runner_type.value}: {model}"
+
     @pytest.mark.parametrize(
         "field",
         [

@@ -223,6 +223,24 @@ _CODEX_SERVER_CONFIG: list[AgentConfigField] = [
     ),
 ]
 
+
+_BUILTIN_CONFIG_SCHEMAS: dict[AgentRunnerType, list[AgentConfigField]] = {
+    AgentRunnerType.OPENHANDS_LOCAL: _OPENHANDS_LOCAL_CONFIG,
+    AgentRunnerType.OPENHANDS_DOCKER: _OPENHANDS_DOCKER_CONFIG,
+    AgentRunnerType.CLI_SUBPROCESS: _CLI_SUBPROCESS_CONFIG,
+    AgentRunnerType.CODEX_SERVER: _CODEX_SERVER_CONFIG,
+}
+
+
+def get_builtin_config_schema(agent_runner_type: AgentRunnerType) -> list[AgentConfigField]:
+    """Return a copy of a selectable runner's built-in configuration schema.
+
+    Runtime detection can enrich schemas with discovered models. This stable
+    baseline exposes only defaults baked into the runner configuration.
+    """
+    return [field.model_copy() for field in _BUILTIN_CONFIG_SCHEMAS.get(agent_runner_type, [])]
+
+
 # Mapping from AgentRunnerType to the set of valid config field names.
 # Used by the API layer to reject unknown agent_runner_config keys at creation time.
 AGENT_CONFIG_FIELDS: dict[AgentRunnerType, set[str]] = {

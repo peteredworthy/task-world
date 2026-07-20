@@ -29,6 +29,11 @@ models:
     cache_creation: 0.15
     input: 0.15
     output: 0.60
+  gpt-5-mini:
+    cache_read: 0.025
+    cache_creation: 0.25
+    input: 0.25
+    output: 2.00
   unknown_model:
     cache_read: 0
     cache_creation: 0

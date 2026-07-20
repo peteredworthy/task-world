@@ -87,3 +87,35 @@ item 2 is resolved by removal, not demotion: the runtime and dependency are
 gone, and `retired` exists only for historical readback. Cost capture work now
 targets `openhands_local`, `openhands_docker`, `cli_subprocess`, and
 `codex_server`; no new telemetry path should be built for retired records.
+
+## Phase 1 completion evidence — 2026-07-20
+
+Phase 1 is complete for the graph execution carrier:
+
+- `ModelTokenUsage` is an immutable execution × model fact with canonical OTel
+  fields: `gen_ai_usage_input_tokens`, `gen_ai_usage_output_tokens`,
+  `gen_ai_usage_cache_read_input_tokens`,
+  `gen_ai_usage_cache_creation_input_tokens`,
+  `gen_ai_usage_reasoning_output_tokens`, and plural
+  `gen_ai_response_finish_reasons`. Cache components remain part of input and
+  reasoning is observable without a second output charge. `cost_usd`,
+  `latency_ms`, and `rate_missing` are captured with the fact.
+- Graph usage is persisted as idempotent `node_usage_recorded` events. The
+  read surface is `GET /api/runs/cost-rollup`; its Phase-1 scope is explicitly
+  graph-only, uses UTC event days and half-open time bounds, and does not merge
+  legacy attempt/run totals.
+- The journal rotates into position-ranged archive segments. Bootstrap and
+  restore replay archived segments plus the active journal in position order,
+  so rotation is not retention or a recovery downgrade. The active path can be
+  relocated with `ORCHESTRATOR_EVENT_JOURNAL_PATH`.
+- Runner-default reconciliation reads the selectable runners' built-in config
+  schemas. Provider-billed defaults (currently `gpt-5-mini` for both
+  OpenHands runners) have matched nonzero input/output rates in
+  `model_costs.yaml`; intentional local/no-provider-cost models require an
+  explicit zero-rate entry. An unmatched name remains `rate_missing=true`.
+
+Phase 2 depends on these immutable graph facts and the graph rollup: add
+per-run/per-node token and dollar limits at the dispatch chokepoint, emit the
+80% alert and reject dispatch at 100%, then add provider-aware per-profile
+effort settings. It must not infer a zero cost from an unmatched model or use
+legacy totals as the graph budget authority.
