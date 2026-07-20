@@ -14,6 +14,7 @@ from orchestrator.db import (
     ProjectionRegistry,
     bootstrap_from_jsonl,
     commit_with_event_outbox,
+    create_backup,
     create_engine,
     create_session_factory,
     init_db,
@@ -70,6 +71,40 @@ def test_backup_scans_all_archives_and_active_for_maximum_position(tmp_path: Pat
     active.write_text(json.dumps({"sequence_number": 10}) + "\n")
 
     assert scan_max_sequence(active) == 12
+
+
+async def test_backup_scans_archives_when_the_active_journal_is_missing(tmp_path: Path) -> None:
+    db_path = tmp_path / "orchestrator.db"
+    db_path.write_text("sqlite placeholder")
+    journal = tmp_path / "history.jsonl"
+    (tmp_path / "history.40-42.jsonl").write_text(json.dumps({"position": 42}) + "\n")
+
+    metadata = await create_backup(db_path, tmp_path / "backups", journal)
+
+    assert metadata.journal_sequence_marker == 42
+
+
+async def test_bootstrap_skips_structurally_malformed_json_records(
+    session: AsyncSession, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    active = tmp_path / "history.jsonl"
+    active.write_text(
+        "\n".join(
+            [
+                json.dumps(["not", "a record"]),
+                json.dumps(
+                    {"position": "bad", "aggregate_id": 2, "event_type": [], "timestamp": 3}
+                ),
+                json.dumps(_record(4)),
+            ]
+        )
+        + "\n"
+    )
+
+    await bootstrap_from_jsonl(session, active, ProjectionRegistry())
+
+    assert (await session.execute(text("SELECT position FROM events_v2"))).scalars().all() == [4]
+    assert "skipping malformed journal record" in caplog.text
 
 
 async def test_graph_events_reach_the_committed_jsonl_journal(tmp_path: Path) -> None:

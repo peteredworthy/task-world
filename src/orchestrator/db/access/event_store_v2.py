@@ -217,6 +217,7 @@ def create_wired_event_store_v2(
     session: "AsyncSession",
     *,
     include_outbox: bool = True,
+    journal_max_bytes: int = 64 * 1024 * 1024,
 ) -> SqliteEventStore:
     """Create a SqliteEventStore with outbox and projection listeners attached."""
     from orchestrator.db.access.jsonl_outbox import (
@@ -233,7 +234,7 @@ def create_wired_event_store_v2(
     store = SqliteEventStore(session)
     journal_path = resolve_default_journal_path_from_session(session)
     if include_outbox and journal_path is not None:
-        store.add_listener(JsonlOutboxObserver(journal_path))
+        store.add_listener(JsonlOutboxObserver(journal_path, max_bytes=journal_max_bytes))
 
     registry = ProjectionRegistry()
     registry.register(RunStateProjector())

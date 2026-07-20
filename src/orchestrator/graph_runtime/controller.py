@@ -55,12 +55,14 @@ class GraphController:
         *,
         dispatcher: OutboxDispatcher | None = None,
         auto_dispatch: bool = True,
+        journal_max_bytes: int = 64 * 1024 * 1024,
     ) -> None:
         self._session_factory = session_factory
         self._clock = clock
         self._id_gen = id_gen
         self._dispatcher = dispatcher
         self._auto_dispatch = auto_dispatch
+        self._journal_max_bytes = journal_max_bytes
 
     async def handle_command(
         self,
@@ -149,7 +151,7 @@ class GraphController:
         async with self._session_factory() as session:
             await session.execute(text("BEGIN IMMEDIATE"))
             try:
-                store = GraphEventStore(session)
+                store = GraphEventStore(session, journal_max_bytes=self._journal_max_bytes)
                 head_position = await store.current_position(run_id)
                 if head_position != expected_position:
                     msg = (

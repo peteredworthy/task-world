@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, TextIO, cast
 
 from orchestrator.db.access.event_store_v2 import StoredEvent
 
@@ -109,34 +110,12 @@ class JsonlOutboxObserver:
 
     async def __call__(self, events: list[StoredEvent]) -> None:
         async with self._lock:
-            await asyncio.to_thread(self._path.parent.mkdir, parents=True, exist_ok=True)
-            self._written.update(await asyncio.to_thread(_read_positions, self._path))
-            archived_ranges = await asyncio.to_thread(discover_journal_segments, self._path)
-
-            if await asyncio.to_thread(_should_rotate, self._path, self._max_bytes):
-                await asyncio.to_thread(_rotate, self._path)
-                self._written.clear()
-                archived_ranges = await asyncio.to_thread(discover_journal_segments, self._path)
-
-            batch_positions: set[int] = set()
-            new_events: list[StoredEvent] = []
-            for event in events:
-                if (
-                    event.position in self._written
-                    or event.position in batch_positions
-                    or _position_in_archives(event.position, archived_ranges)
-                ):
-                    continue
-                batch_positions.add(event.position)
-                new_events.append(event)
-
-            if not new_events:
-                return
-
-            lines = "\n".join(json.dumps(_to_record(e)) for e in new_events) + "\n"
-            await asyncio.to_thread(_append_lines, self._path, lines)
-            for e in new_events:
-                self._written.add(e.position)
+            self._written = await asyncio.to_thread(
+                _write_events_under_lock,
+                self._path,
+                self._max_bytes,
+                events,
+            )
 
 
 def _to_record(e: StoredEvent) -> dict[str, object]:
@@ -154,6 +133,56 @@ def _append_lines(path: Path, lines: str) -> None:
         f.write(lines)
         f.flush()
         os.fsync(f.fileno())
+
+
+def _write_events_under_lock(
+    path: Path,
+    max_bytes: int,
+    events: list[StoredEvent],
+) -> set[int]:
+    """Serialize the complete journal read/rotate/write transaction by path."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _advisory_lock(path):
+        active_positions = _read_positions(path)
+        archive_segments = discover_journal_segments(path)
+        if _should_rotate(path, max_bytes):
+            _rotate(path)
+            active_positions: set[int] = set()
+            archive_segments = discover_journal_segments(path)
+
+        batch_positions: set[int] = set()
+        new_events: list[StoredEvent] = []
+        for event in events:
+            if (
+                event.position in active_positions
+                or event.position in batch_positions
+                or _position_in_archives(event.position, archive_segments)
+            ):
+                continue
+            batch_positions.add(event.position)
+            new_events.append(event)
+        if new_events:
+            lines = "\n".join(json.dumps(_to_record(event)) for event in new_events) + "\n"
+            _append_lines(path, lines)
+            active_positions.update(event.position for event in new_events)
+        return active_positions
+
+
+class _advisory_lock:
+    """A process-safe lock file held for one complete journal mutation."""
+
+    def __init__(self, journal_path: Path) -> None:
+        self._path = journal_path.with_name(f"{journal_path.name}.lock")
+        self._file: TextIO | None = None
+
+    def __enter__(self) -> None:
+        self._file = open(self._path, "a+")
+        fcntl.flock(self._file.fileno(), fcntl.LOCK_EX)
+
+    def __exit__(self, *_: object) -> None:
+        if self._file is not None:
+            fcntl.flock(self._file.fileno(), fcntl.LOCK_UN)
+            self._file.close()
 
 
 def _should_rotate(path: Path, max_bytes: int) -> bool:
@@ -185,8 +214,30 @@ def _fsync_directory(path: Path) -> None:
 
 
 def _position_in_archives(position: int, segments: list[JournalSegment]) -> bool:
-    """Check compact archive ranges rather than retaining their positions in RAM."""
-    return any(segment.first_position <= position <= segment.last_position for segment in segments)
+    """Use ranges as an index, then confirm candidates by streaming the archive."""
+    return any(
+        segment.first_position <= position <= segment.last_position
+        and _archive_contains_position(segment.path, position)
+        for segment in segments
+    )
+
+
+def _archive_contains_position(path: Path, position: int) -> bool:
+    try:
+        with open(path) as file:
+            for line in file:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if (
+                    isinstance(record, dict)
+                    and cast("dict[str, object]", record).get("position") == position
+                ):
+                    return True
+    except FileNotFoundError:
+        return False
+    return False
 
 
 def _read_positions(path: Path) -> set[int]:

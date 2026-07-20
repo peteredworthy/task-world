@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
-from typing import Annotated, Any, TYPE_CHECKING
+from typing import Annotated, Any, TYPE_CHECKING, cast
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -81,7 +81,10 @@ async def get_signal_transport(
     override: SignalTransport | None = getattr(request.app.state, "signal_transport", None)
     if override is not None:
         return override
-    store = create_wired_event_store_v2(session)
+    store = create_wired_event_store_v2(
+        session,
+        journal_max_bytes=request.app.state.global_config.journal.max_bytes,
+    )
     projector = RunLifecycleProjector()
     return EventSignalTransport(store, projector)
 
@@ -94,16 +97,29 @@ async def get_run_repository(
 
 async def get_event_store_v2(
     session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request = cast(Request, None),
 ) -> SqliteEventStore:
-    return create_wired_event_store_v2(session)
+    max_bytes = 64 * 1024 * 1024
+    app = getattr(request, "app", None)
+    if app is not None:
+        max_bytes = app.state.global_config.journal.max_bytes
+    return create_wired_event_store_v2(
+        session,
+        journal_max_bytes=max_bytes,
+    )
 
 
 async def get_graph_store(
     session: Annotated[AsyncSession, Depends(get_session)],
+    request: Request = cast(Request, None),
 ) -> GraphEventStore:
     from orchestrator.graph_runtime.store import GraphEventStore
 
-    return GraphEventStore(session)
+    max_bytes = 64 * 1024 * 1024
+    app = getattr(request, "app", None)
+    if app is not None:
+        max_bytes = app.state.global_config.journal.max_bytes
+    return GraphEventStore(session, journal_max_bytes=max_bytes)
 
 
 def get_env_lifecycle(request: Request) -> EnvFileLifecycle | None:

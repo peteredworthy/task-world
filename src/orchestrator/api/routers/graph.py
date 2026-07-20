@@ -27,7 +27,7 @@ from orchestrator.artifacts import (
 )
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.config import RunStatus
-from orchestrator.db import GraphOutboxModel, RunRepository
+from orchestrator.db import GraphOutboxModel, RunRepository, flush_event_outbox
 from orchestrator.graph import (
     Actor,
     ActorKind,
@@ -1818,6 +1818,10 @@ async def requeue_failed_outbox_row(
                     payload=audit_payload,
                 ),
             )
+
+        # ``session.begin`` committed before this boundary; the queued JSONL
+        # observer must now run just as it does for all other graph writes.
+        await flush_event_outbox(session)
 
     return RequeueOutboxResponse(
         run_id=run_id,

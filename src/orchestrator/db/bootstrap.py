@@ -50,26 +50,35 @@ def _parse_jsonl_record(
     timestamp = record.get("timestamp")
     payload = record.get("payload")
 
-    if not event_type or not timestamp or payload is None:
+    if not isinstance(event_type, str) or not event_type or not isinstance(timestamp, str):
+        return None
+    if not isinstance(payload, dict):
         return None
 
     if "aggregate_id" in record:
         # Outbox format — payload is already the full model-dumped dict
         position: int | None = record.get("position")
-        aggregate_id: str = record["aggregate_id"]
-        payload_json = json.dumps(payload) if isinstance(payload, dict) else str(payload)
+        aggregate_id = record["aggregate_id"]
+        if type(position) is not int or not isinstance(aggregate_id, str) or not aggregate_id:
+            return None
+        payload_json = json.dumps(payload)
     elif "run_id" in record:
         # Legacy format — reconstruct a full payload that WorkflowEvent.model_validate_json
         # can parse by merging the top-level run_id/event_type/timestamp into the payload dict
         position = record.get("sequence_number")
         aggregate_id = record["run_id"]
+        if (
+            (position is not None and type(position) is not int)
+            or not isinstance(aggregate_id, str)
+            or not aggregate_id
+        ):
+            return None
         full_payload: dict[str, Any] = {
             "run_id": aggregate_id,
             "event_type": event_type,
             "timestamp": timestamp,
         }
-        if isinstance(payload, dict):
-            full_payload.update(cast(dict[str, Any], payload))
+        full_payload.update(cast(dict[str, Any], payload))
         payload_json = json.dumps(full_payload)
     else:
         return None
@@ -89,11 +98,18 @@ async def _read_jsonl_records(path: Path) -> list[dict[str, Any]]:
                     if not line:
                         continue
                     try:
-                        records.append(json.loads(line))
+                        raw_record = json.loads(line)
                     except json.JSONDecodeError:
                         logger.warning(
                             "bootstrap_from_jsonl: skipping malformed JSONL line in %s", path
                         )
+                        continue
+                    if not isinstance(raw_record, dict):
+                        logger.warning(
+                            "bootstrap_from_jsonl: skipping malformed journal record in %s", path
+                        )
+                        continue
+                    records.append(cast("dict[str, Any]", raw_record))
         except OSError as exc:
             logger.warning("bootstrap_from_jsonl: failed to read journal file %s: %s", path, exc)
         return records
@@ -151,6 +167,8 @@ async def bootstrap_from_jsonl(
         result = _parse_jsonl_record(raw)
         if result is not None:
             parsed.append(result)
+        else:
+            logger.warning("bootstrap_from_jsonl: skipping malformed journal record in %s", path)
 
     if not parsed:
         logger.warning("bootstrap_from_jsonl: no valid records found in %s", path)

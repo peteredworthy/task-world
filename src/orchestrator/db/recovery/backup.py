@@ -66,7 +66,7 @@ async def create_backup(
 
     # Read max sequence from journal
     journal_sequence_marker = -1
-    if journal_path and journal_path.exists():
+    if journal_path:
         journal_sequence_marker = scan_max_sequence(journal_path)
 
     metadata = BackupMetadata(

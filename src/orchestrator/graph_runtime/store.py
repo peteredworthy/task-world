@@ -317,8 +317,9 @@ class GraphEventStore:
     controller's transaction boundary.
     """
 
-    def __init__(self, session: AsyncSession) -> None:
+    def __init__(self, session: AsyncSession, *, journal_max_bytes: int = 64 * 1024 * 1024) -> None:
         self._session = session
+        self._journal_max_bytes = journal_max_bytes
 
     async def append_events(
         self,
@@ -370,7 +371,7 @@ class GraphEventStore:
         if journal_path is not None:
             queue_event_outbox(
                 self._session,
-                JsonlOutboxObserver(journal_path),
+                JsonlOutboxObserver(journal_path, max_bytes=self._journal_max_bytes),
                 [
                     StoredEvent(
                         position=row.position,
