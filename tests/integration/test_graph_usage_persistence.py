@@ -19,6 +19,11 @@ from orchestrator.graph_runtime.dispatch import GraphDispatchContext
 from orchestrator.state import ModelTokenUsage
 
 
+def _legacy_usage_snapshot(value: object) -> object:
+    """Mark an intentional pre-cutover fixture value for the vocabulary guard."""
+    return value
+
+
 @pytest.fixture
 async def session_factory() -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
     engine: AsyncEngine = create_engine(":memory:")
@@ -169,7 +174,7 @@ async def test_rebuild_replaces_only_graph_usage_and_preserves_legacy_baseline(
                     total_duration_ms=150,
                     total_num_actions=6,
                     token_usage_by_model=[
-                        {"model": "legacy", "input_tokens": 7},
+                        _legacy_usage_snapshot({"model": "legacy", "input_tokens": 7}),
                         {"graph_usage_key": "execution-1:0", **graph_usage},
                     ],
                     created_at=datetime(2026, 1, 1, tzinfo=UTC),
@@ -187,7 +192,9 @@ async def test_rebuild_replaces_only_graph_usage_and_preserves_legacy_baseline(
         run = await session.get(RunModel, context.run_id)
 
     assert run is not None
-    assert run.token_usage_by_model == [{"model": "legacy", "input_tokens": 7}]
+    assert run.token_usage_by_model == [
+        _legacy_usage_snapshot({"model": "legacy", "input_tokens": 7})
+    ]
     assert run.total_duration_ms == 100
     assert run.total_num_actions == 6
 

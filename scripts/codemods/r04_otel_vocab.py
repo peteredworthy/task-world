@@ -201,6 +201,7 @@ HISTORICAL_PERSISTENCE_FIXTURE_PATHS = frozenset(
         "tests/integration/test_event_log_durability.py",
         "tests/integration/test_event_sourced_workflow.py",
         "tests/integration/test_graph_file_state_report_api.py",
+        "tests/integration/test_graph_usage_persistence.py",
         "tests/integration/test_migrations.py",
         "tests/unit/test_command_handlers.py",
         "tests/unit/test_compare_carriers.py",

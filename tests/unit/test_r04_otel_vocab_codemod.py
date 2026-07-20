@@ -851,6 +851,21 @@ def test_snapshot():
     assert "input_tokens" in diagnostics[0]
 
 
+def test_graph_usage_fixture_helper_marks_only_wrapped_historical_mapping() -> None:
+    source = """\
+def _legacy_usage_snapshot(value):
+    return value
+
+historical = _legacy_usage_snapshot({"input_tokens": 1})
+live = {"input_tokens": 1}
+"""
+
+    diagnostics = diagnose_source(source, path="tests/integration/test_graph_usage_persistence.py")
+
+    assert len(diagnostics) == 1
+    assert "input_tokens" in diagnostics[0]
+
+
 def test_historical_fixture_wrapper_is_idempotent() -> None:
     source = """\
 def _legacy_usage_snapshot(value: object) -> object:
