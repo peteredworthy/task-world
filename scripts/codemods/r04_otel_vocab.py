@@ -98,8 +98,6 @@ INTERNAL_METRIC_CALLS = frozenset({"merge_token_usage_into_run"})
 INTENTIONAL_LITERAL_PATHS = frozenset(
     {
         "tests/unit/test_r04_otel_vocab_codemod.py",
-        # This report deliberately names the immutable cost_records SQL columns.
-        "scripts/cost_report.py",
     }
 )
 MIGRATION_HISTORY_PATH_PREFIX = "src/orchestrator/db/migrations/versions/"
@@ -120,7 +118,6 @@ INTERNAL_TELEMETRY_PATHS = frozenset(
         "src/orchestrator/runners/costs.py",
         "src/orchestrator/runners/types.py",
         "scripts/compare_carriers.py",
-        "scripts/cost_report.py",
     }
 )
 
@@ -855,7 +852,11 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
         self.diagnostics: list[str] = []
 
     def _diagnose(self, node: cst.CSTNode, name: str) -> None:
-        if self.is_literal_boundary or self._is_historical_persistence_expression(node):
+        if (
+            self.is_literal_boundary
+            or self._is_historical_persistence_expression(node)
+            or self._is_cost_report_storage_expression(node)
+        ):
             return
         position = self.get_metadata(PositionProvider, node).start
         self.diagnostics.append(
@@ -931,6 +932,43 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
             node,
             lambda child, default: self.get_metadata(ParentNodeProvider, child, default),
         ) in RAW_STORAGE_LITERAL_CONTEXTS.get(self.path, frozenset())
+
+    def _is_cost_report_storage_expression(self, node: cst.CSTNode) -> bool:
+        if self.path != "scripts/cost_report.py":
+            return False
+        enclosing_function = _enclosing_function_name(
+            node,
+            lambda child, default: self.get_metadata(ParentNodeProvider, child, default),
+        )
+        if enclosing_function == "_fetch_aggregates":
+            return (
+                isinstance(node, cst.SimpleString)
+                and isinstance(node.evaluated_value, str)
+                and "cost_records" in node.evaluated_value
+            )
+        if enclosing_function != "_format_table":
+            parent = self.get_metadata(ParentNodeProvider, node, None)
+            while parent is not None and not isinstance(parent, cst.Assign):
+                parent = self.get_metadata(ParentNodeProvider, parent, None)
+            return (
+                isinstance(node, cst.SimpleString)
+                and isinstance(parent, cst.Assign)
+                and len(parent.targets) == 1
+                and isinstance(parent.targets[0].target, cst.Name)
+                and parent.targets[0].target.value == "METRIC_COLUMNS"
+            )
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        if isinstance(parent, cst.DictElement):
+            return True
+        if not isinstance(parent, cst.Index):
+            return False
+        element = self.get_metadata(ParentNodeProvider, parent, None)
+        subscript = self.get_metadata(ParentNodeProvider, element, None)
+        return (
+            isinstance(subscript, cst.Subscript)
+            and isinstance(subscript.value, cst.Name)
+            and subscript.value.value == "row"
+        )
 
     def _is_provider_fixture_raw_dictionary(self, node: cst.Dict) -> bool:
         """Recognize only nested provider usage dictionary fixture shapes."""
@@ -1102,7 +1140,7 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
             and (
                 not isinstance(parent, cst.Call)
                 or (
-                    not _is_telemetry_constructor(parent)
+                    (self.path == "scripts/cost_report.py" or not _is_telemetry_constructor(parent))
                     and _expression_path(parent.func) not in INTERNAL_METRIC_CALLS
                     and (
                         not self._is_flat_metric_context(node)

@@ -663,6 +663,43 @@ def _fetch_aggregates(conn):
     assert diagnose_source(source, path="scripts/compare_carriers.py") == ()
 
 
+def test_cost_report_allows_only_physical_cost_record_columns() -> None:
+    source = """\
+METRIC_COLUMNS = ["input_tokens", "output_tokens"]
+
+def _fetch_aggregates(conn):
+    return conn.execute("SELECT input_tokens, output_tokens FROM cost_records")
+
+def _format_table(row):
+    return {"input_tokens": row["input_tokens"], "output_tokens": row["output_tokens"]}
+"""
+
+    assert diagnose_source(source, path="scripts/cost_report.py") == ()
+
+
+def test_cost_report_diagnoses_live_legacy_telemetry_shapes() -> None:
+    source = """\
+def unrelated(usage):
+    attribute = usage.input_tokens
+    constructor = AttemptMetrics(input_tokens=1)
+    mapping = usage["input_tokens"]
+"""
+
+    diagnostics = diagnose_source(source, path="scripts/cost_report.py")
+
+    assert len(diagnostics) == 3
+    assert all("input_tokens" in diagnostic for diagnostic in diagnostics)
+
+
+def test_cost_report_does_not_exempt_non_sql_literals_in_storage_function() -> None:
+    source = """\
+def _fetch_aggregates():
+    return "input_tokens"
+"""
+
+    assert diagnose_source(source, path="scripts/cost_report.py")
+
+
 def test_openhands_provider_cache_attribute_is_an_explicit_raw_boundary() -> None:
     source = """\
 def extract_metrics(metrics):
