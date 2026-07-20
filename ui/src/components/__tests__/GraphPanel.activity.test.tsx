@@ -444,7 +444,7 @@ describe('GraphPanel activity', () => {
     expect(screen.getByText('Suspended leases')).toBeInTheDocument();
     expect(screen.getByText('Patches accepted')).toBeInTheDocument();
     expect(screen.getByText('Patches rejected')).toBeInTheDocument();
-    expect(screen.getByText('Verifier pass/fail')).toBeInTheDocument();
+    expect(screen.getByText('Activity verifier pass/fail')).toBeInTheDocument();
     expect(screen.getByText('Activity blockers')).toBeInTheDocument();
     expect(screen.getByText('0/1')).toBeInTheDocument();
 

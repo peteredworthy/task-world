@@ -19,6 +19,7 @@ import type {
   DecisionViewResponse,
   FileStateReportResponse,
   GraphProjectionResponse,
+  GraphHealthResponse,
   SchedulerViewResponse,
   NodeDetailResponse,
   GlobalConfig,
@@ -531,6 +532,10 @@ export const api = {
 
   getRunGraphScheduler(runId: string): Promise<SchedulerViewResponse> {
     return fetchApi('/api/runs/' + runId + '/graph/scheduler');
+  },
+
+  getRunGraphHealth(runId: string): Promise<GraphHealthResponse> {
+    return fetchApi('/api/runs/' + runId + '/graph/health');
   },
 
   getRunGraphDecisions(runId: string): Promise<DecisionViewResponse> {

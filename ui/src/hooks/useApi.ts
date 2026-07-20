@@ -10,6 +10,7 @@ import type {
   GraphEventResponse,
   FileStateReportResponse,
   SchedulerViewResponse,
+  GraphHealthResponse,
   NodeDetailResponse,
   RunEvidenceDigestResponse,
   RecordGraphDecisionRequest,
@@ -84,6 +85,15 @@ export function useSchedulerView(runId: string | undefined) {
   return useQuery<SchedulerViewResponse>({
     queryKey: ['graphScheduler', runId],
     queryFn: () => api.getRunGraphScheduler(runId!),
+    enabled: !!runId,
+    staleTime: 5000,
+  });
+}
+
+export function useGraphHealth(runId: string | undefined) {
+  return useQuery<GraphHealthResponse>({
+    queryKey: ['graphHealth', runId],
+    queryFn: () => api.getRunGraphHealth(runId!),
     enabled: !!runId,
     staleTime: 5000,
   });

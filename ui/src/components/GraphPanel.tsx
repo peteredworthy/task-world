@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useDecisionView, useFileStateReport, useGraphEvents, useGraphProjection, useSchedulerView } from '../hooks/useApi';
+import { useDecisionView, useFileStateReport, useGraphEvents, useGraphHealth, useGraphProjection, useSchedulerView } from '../hooks/useApi';
 import { FileStateViewer } from './FileStateViewer';
 import { GraphDecisionModal } from './GraphDecisionModal';
 import { NodeDetailPanel } from './NodeDetailPanel';
 import { SchedulerView } from './SchedulerView';
-import type { ActivityEvent, DecisionViewResponse, GraphEventResponse, GraphProjectionResponse, PendingGateDecision, RunResponse, SchedulerViewResponse } from '../types';
+import type { ActivityEvent, DecisionViewResponse, GraphEventResponse, GraphHealthResponse, GraphProjectionResponse, PendingGateDecision, RunResponse, SchedulerViewResponse } from '../types';
 
 interface GraphPanelProps {
   runId: string;
@@ -57,6 +57,12 @@ function GraphSummaryMetric({ label, value }: { label: string; value: number | s
       <div className="mt-0.5 text-sm font-semibold text-text-primary">{value}</div>
     </div>
   );
+}
+
+function GraphHealth({ health }: { health: GraphHealthResponse }) {
+  const counts = health.counts ?? {};
+  const verifier = health.verifier ?? { passed: 0, failed: 0 };
+  return <section className="space-y-2 text-xs"><h3 className="text-sm font-semibold text-text-primary">Graph health</h3><div className="grid grid-cols-2 gap-2"><GraphSummaryMetric label="Expired leases" value={counts.expired_leases ?? 0} /><GraphSummaryMetric label="Final blockers" value={counts.final_blockers ?? 0} /><GraphSummaryMetric label="Verifier pass/fail" value={`${verifier.passed}/${verifier.failed}`} /></div>{(health.expired_leases ?? []).map((lease) => <div key={lease.lease_id}>{lease.reason}</div>)}</section>;
 }
 
 function graphActivityKind(event: ActivityEvent): 'patch' | 'verifier' | 'blocker' | null {
@@ -115,7 +121,7 @@ function OperatorSummary({
         <GraphSummaryMetric label="Review blockers" value={decisionView?.review.blockers.length ?? 0} />
         <GraphSummaryMetric label="Patches accepted" value={activityCounts.patchesAccepted} />
         <GraphSummaryMetric label="Patches rejected" value={activityCounts.patchesRejected} />
-        <GraphSummaryMetric label="Verifier pass/fail" value={`${activityCounts.verifierPassed}/${activityCounts.verifierFailed}`} />
+        <GraphSummaryMetric label="Activity verifier pass/fail" value={`${activityCounts.verifierPassed}/${activityCounts.verifierFailed}`} />
         <GraphSummaryMetric label="Activity blockers" value={activityCounts.blockers} />
       </div>
     </section>
@@ -541,6 +547,7 @@ function EventModal({
 export function GraphPanel({ runId, run, open, onClose, activityEvents = [], initialNodeId = null }: GraphPanelProps) {
   const { data: projection } = useGraphProjection(runId);
   const { data: schedulerView } = useSchedulerView(runId);
+  const { data: health } = useGraphHealth(runId);
   const { data: decisionView } = useDecisionView(runId);
   const { data: fileStateReport } = useFileStateReport(runId);
   const { data: events = [] } = useGraphEvents(runId);
@@ -588,6 +595,7 @@ export function GraphPanel({ runId, run, open, onClose, activityEvents = [], ini
         </div>
 
         <div className="mt-4 space-y-4">
+          {health && <GraphHealth health={health} />}
           <OperatorSummary
             projection={projection}
             schedulerView={schedulerView}

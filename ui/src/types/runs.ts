@@ -265,6 +265,21 @@ export interface SchedulerViewResponse {
   };
 }
 
+export interface GraphHealthResponse {
+  run_id: string;
+  event_count: number;
+  run_state: string | null;
+  status: string;
+  counts: Record<string, number>;
+  failed_nodes: Array<{ node_id: string; reason: string }>;
+  expired_leases: Array<{ lease_id: string; node_id: string; reason: string }>;
+  blockers: Array<{ node_id: string; kind: string; reason: string }>;
+  recent_patch_decisions: Array<{ patch_id: string; decision: string; reason?: string }>;
+  verifier: { passed: number; failed: number; recent: Array<{ node_id: string; candidate_id: string; verdict: string }> };
+  pending_gates: Array<{ node_id: string; gate_type: string }>;
+  review_blockers: string[];
+}
+
 export interface PendingGateDecision {
   node_id: string;
   gate_type: string;

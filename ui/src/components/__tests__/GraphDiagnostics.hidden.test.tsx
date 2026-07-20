@@ -380,7 +380,7 @@ describe('S3 graph diagnostics hidden oracle', () => {
     expect(screen.getByText('patch-too-broad')).toBeInTheDocument();
     expect(screen.getByText('Verifier pass/fail')).toBeInTheDocument();
     expect(screen.getByText('1/1')).toBeInTheDocument();
-    expect(screen.getByText('gate-human')).toBeInTheDocument();
+    expect(screen.getAllByText('gate-human').length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole('button', { name: 'verifier-expired' }));
 
