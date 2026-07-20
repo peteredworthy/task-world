@@ -18,6 +18,10 @@ from orchestrator.db import (
     GraphNodeDetailSummaryCheckpointModel,
     GraphNodeDetailSummaryModel,
     GraphProjectionSnapshotModel,
+    JsonlOutboxObserver,
+    StoredEvent,
+    queue_event_outbox,
+    resolve_default_journal_path_from_session,
 )
 from orchestrator.graph import (
     Actor,
@@ -362,6 +366,23 @@ class GraphEventStore:
         except IntegrityError as exc:
             msg = f"stale graph projection for run {run_id}"
             raise StaleProjectionError(msg) from exc
+        journal_path = resolve_default_journal_path_from_session(self._session)
+        if journal_path is not None:
+            queue_event_outbox(
+                self._session,
+                JsonlOutboxObserver(journal_path),
+                [
+                    StoredEvent(
+                        position=row.position,
+                        aggregate_id=row.aggregate_id,
+                        event_type=row.event_type,
+                        payload=row.payload,
+                        timestamp=row.timestamp,
+                        version=row.version,
+                    )
+                    for row in rows
+                ],
+            )
         await self.append_event_summaries(run_id, stored_events)
         await self.append_node_detail_summaries(
             run_id,

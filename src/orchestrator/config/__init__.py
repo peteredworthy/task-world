@@ -17,7 +17,12 @@ from orchestrator.config.enums import (
     is_selectable_agent_runner_type,
     normalize_persisted_agent_runner_type,
 )
-from orchestrator.config.global_config import ExecutionConfig, GlobalConfig, PathsConfig
+from orchestrator.config.global_config import (
+    ExecutionConfig,
+    GlobalConfig,
+    JournalConfig,
+    PathsConfig,
+)
 from orchestrator.config.models import (
     AutoVerifyConfig,
     AutoVerifyItemConfig,
@@ -60,6 +65,7 @@ __all__ = [
     "ExecutionConfig",
     "GateType",
     "GlobalConfig",
+    "JournalConfig",
     "MergeStrategy",
     "ModelProfile",
     "PathsConfig",

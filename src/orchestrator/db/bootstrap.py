@@ -19,6 +19,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from orchestrator.db.orm.models import EventV2Model, ProjectionCheckpointModel
+from orchestrator.db.access.jsonl_outbox import discover_journal_segments
 from orchestrator.time_utils import format_utc_datetime
 from orchestrator.workflow import WorkflowEvent, deserialize_event
 
@@ -128,12 +129,18 @@ async def bootstrap_from_jsonl(
         return
 
     path = Path(journal_path)
-    if not path.exists():
+    paths = [segment.path for segment in discover_journal_segments(path)]
+    if path.exists():
+        paths.append(path)
+    if not paths:
         logger.warning("bootstrap_from_jsonl: journal file %s not found, skipping bootstrap", path)
         return
 
-    # Read raw JSONL records
-    raw_records = await _read_jsonl_records(path)
+    # Archive names are ordered ranges, but individual records are sorted below
+    # too, so recovery remains correct after a manually reordered segment.
+    raw_records: list[dict[str, Any]] = []
+    for segment_path in paths:
+        raw_records.extend(await _read_jsonl_records(segment_path))
     if not raw_records:
         logger.info("bootstrap_from_jsonl: journal file is empty, nothing to bootstrap")
         return
@@ -163,10 +170,16 @@ async def bootstrap_from_jsonl(
         next_pos += 1
 
     all_records.sort(key=lambda x: x[0])
+    deduplicated: list[tuple[int, str, str, str, str]] = []
+    seen_positions: set[int] = set()
+    for record in all_records:
+        if record[0] not in seen_positions:
+            deduplicated.append(record)
+            seen_positions.add(record[0])
 
     # Insert into events_v2 with per-aggregate version counter
     versions: dict[str, int] = {}
-    for position, aggregate_id, event_type, timestamp, payload_json in all_records:
+    for position, aggregate_id, event_type, timestamp, payload_json in deduplicated:
         versions[aggregate_id] = versions.get(aggregate_id, 0) + 1
         version = versions[aggregate_id]
 

@@ -24,7 +24,7 @@ from orchestrator.graph import (
     serialize_event_payload,
 )
 from orchestrator.state import ModelTokenUsage
-from orchestrator.db import is_retriable_sqlite_write_conflict
+from orchestrator.db import commit_with_event_outbox, is_retriable_sqlite_write_conflict
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime.errors import StaleProjectionError
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, append_outbox_rows
@@ -164,7 +164,10 @@ class GraphController:
                     planned_events,
                 )
                 outbox_items = await append_outbox_rows(session, stored_events, self._clock)
-                await session.commit()
+                # Graph events queue the same post-commit JSONL observer used
+                # by workflow events. A secondary journal failure propagates
+                # only after the authoritative graph transaction is committed.
+                await commit_with_event_outbox(session)
             except Exception:
                 await session.rollback()
                 raise

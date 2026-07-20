@@ -5,11 +5,31 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
+import logging
+
 import yaml
+from pydantic import field_validator
 
 from pydantic import BaseModel
 
 from orchestrator.config.models import NudgerConfig as AgentNudgerConfig
+
+logger = logging.getLogger(__name__)
+
+
+class JournalConfig(BaseModel):
+    """Durability settings for the rotating JSONL event journal."""
+
+    max_bytes: int = 64 * 1024 * 1024
+
+    @field_validator("max_bytes")
+    @classmethod
+    def enforce_minimum_size(cls, value: int) -> int:
+        minimum = 1024 * 1024
+        if value < minimum:
+            logger.warning("journal.max_bytes below 1 MiB; using 1 MiB instead")
+            return minimum
+        return value
 
 
 class ServerConfig(BaseModel):
@@ -109,6 +129,7 @@ class GlobalConfig(BaseModel):
     dashboard: DashboardConfig = DashboardConfig()
     nudger: NudgerConfig = NudgerConfig()
     websocket: WebSocketConfig = WebSocketConfig()
+    journal: JournalConfig = JournalConfig()
     paths: PathsConfig = PathsConfig()
 
 

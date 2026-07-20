@@ -7,6 +7,9 @@ import shutil
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
+
+from orchestrator.db.access.jsonl_outbox import discover_journal_segments
 
 
 @dataclass
@@ -138,21 +141,25 @@ async def restore_backup(
 
 
 def scan_max_sequence(journal_path: Path) -> int:
-    """Scan journal file for highest sequence_number."""
+    """Scan active and archived journal segments for the highest position."""
     max_seq = -1
-    try:
-        with open(journal_path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                    seq = entry.get("sequence_number", 0)
-                    if seq > max_seq:
+    paths = [segment.path for segment in discover_journal_segments(journal_path)]
+    if journal_path.exists():
+        paths.append(journal_path)
+    for path in paths:
+        try:
+            with open(path) as f:
+                for line in f:
+                    try:
+                        entry = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(entry, dict):
+                        continue
+                    record = cast("dict[str, object]", entry)
+                    seq = record.get("position", record.get("sequence_number", -1))
+                    if type(seq) is int and seq > max_seq:
                         max_seq = seq
-                except json.JSONDecodeError:
-                    continue
-    except OSError:
-        pass
+        except OSError:
+            continue
     return max_seq
