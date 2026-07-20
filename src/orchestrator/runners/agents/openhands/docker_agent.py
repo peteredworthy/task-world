@@ -40,6 +40,7 @@ from orchestrator.runners.agents.openhands.common import (
     SubmitExecutor,
     UpdateChecklistExecutor,
     ValidateRoutineExecutor,
+    build_openhands_execution_result,
     build_openhands_prompt,
     extract_metrics,
 )
@@ -48,6 +49,7 @@ from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     EscalationCallback,
     ExecutionContext,
+    ExecutionMetrics,
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
@@ -522,6 +524,15 @@ class DockerOpenHandsAgent:
             version=None,
         )
 
+    @staticmethod
+    def build_execution_result(
+        metrics: ExecutionMetrics,
+        output_lines: list[str] | None = None,
+        action_log: Any = None,
+    ) -> ExecutionResult:
+        """Construct the Docker adapter's metadata-neutral execution result."""
+        return build_openhands_execution_result(metrics, output_lines, action_log)
+
     async def check_health(self) -> bool:
         """Check if the Docker daemon is running."""
         if shutil.which("docker") is None:
@@ -699,7 +710,7 @@ class DockerOpenHandsAgent:
             except Exception:
                 pass  # Action log is best-effort
 
-            return ExecutionResult(success=True, metrics=metrics, action_log=action_log)
+            return self.build_execution_result(metrics, action_log=action_log)
 
         except AgentCancelledError:
             raise

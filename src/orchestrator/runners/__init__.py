@@ -48,6 +48,7 @@ from orchestrator.runners.agents.openhands.common import (
     UpdateChecklistExecutor,
     ValidateRoutineExecutor,
     build_openhands_prompt,
+    build_openhands_execution_result,
     extract_metrics,
     register_builtin_tools,
 )
@@ -266,6 +267,7 @@ __all__ = [
     "UpdateChecklistExecutor",
     "ValidateRoutineExecutor",
     "build_openhands_prompt",
+    "build_openhands_execution_result",
     "extract_metrics",
     "register_builtin_tools",
     # Codex common

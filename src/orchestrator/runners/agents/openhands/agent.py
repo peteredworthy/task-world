@@ -48,6 +48,7 @@ from orchestrator.runners.agents.openhands.common import (
     GetRequirementsExecutor,
     SubmitExecutor,
     UpdateChecklistExecutor,
+    build_openhands_execution_result,
     build_openhands_prompt,
     extract_metrics,
     register_builtin_tools,
@@ -59,6 +60,7 @@ from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     EscalationCallback,
     ExecutionContext,
+    ExecutionMetrics,
     ExecutionResult,
     GradeCallback,
     LogLineCallback,
@@ -477,6 +479,15 @@ class OpenHandsAgent:
             version=None,
         )
 
+    @staticmethod
+    def build_execution_result(
+        metrics: ExecutionMetrics,
+        output_lines: list[str] | None = None,
+        action_log: Any = None,
+    ) -> ExecutionResult:
+        """Construct the local adapter's metadata-neutral execution result."""
+        return build_openhands_execution_result(metrics, output_lines, action_log)
+
     async def check_health(self) -> bool:
         """Check if the local OpenHands agent is usable.
 
@@ -842,12 +853,7 @@ class OpenHandsAgent:
             except Exception:
                 pass  # Action log is best-effort
 
-            return ExecutionResult(
-                success=True,
-                metrics=metrics,
-                action_log=action_log,
-                output_lines=collected_lines,
-            )
+            return self.build_execution_result(metrics, collected_lines, action_log)
 
         except AgentCancelledError:
             raise

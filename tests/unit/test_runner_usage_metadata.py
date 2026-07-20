@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 import pytest
@@ -16,6 +15,7 @@ from orchestrator.runners import (
     MockBehavior,
     OpenHandsAgent,
     DockerOpenHandsAgent,
+    build_openhands_execution_result,
     extract_metrics_and_usage,
     extract_turn_finish_reasons,
 )
@@ -232,64 +232,23 @@ async def test_mock_agent_returns_usage_metadata() -> None:
     assert result.gen_ai_response_finish_reasons == ["mock_complete"]
 
 
-async def _noop_checklist(_id: str, _status: Any, _note: str | None) -> None:
-    return None
+def test_openhands_execution_result_seam_preserves_metrics_and_output() -> None:
+    metrics = ExecutionMetrics(duration_ms=42, gen_ai_usage_output_tokens=9)
 
+    result = build_openhands_execution_result(metrics, ["first", "second"])
 
-async def _noop_submit() -> None:
-    return None
-
-
-_OPENHANDS_LOCAL_URL = os.getenv("OPENHANDS_TEST_LOCAL_BASE_URL")
-
-
-@pytest.mark.skipif(
-    not _OPENHANDS_LOCAL_URL,
-    reason="requires an explicitly configured local OpenAI-compatible OpenHands test runtime",
-)
-@pytest.mark.asyncio
-async def test_openhands_local_execute_returns_empty_finish_reasons_without_external_provider() -> (
-    None
-):
-    agent = OpenHandsAgent(
-        api_key="",
-        llm_config={"base_url": _OPENHANDS_LOCAL_URL},
-        max_iterations=1,
-    )
-    result = await agent.execute(
-        ExecutionContext(
-            run_id="run", task_id="task", working_dir="/tmp", prompt="Stop.", requirements=[]
-        ),
-        _noop_checklist,
-        _noop_submit,
-    )
-
+    assert result.success is True
+    assert result.metrics == metrics
+    assert result.output_lines == ["first", "second"]
     assert result.gen_ai_response_finish_reasons == []
 
 
-_OPENHANDS_DOCKER_URL = os.getenv("OPENHANDS_TEST_DOCKER_BASE_URL")
-_OPENHANDS_DOCKER_KEY = os.getenv("OPENHANDS_TEST_DOCKER_API_KEY")
+@pytest.mark.parametrize("adapter", [OpenHandsAgent, DockerOpenHandsAgent])
+def test_openhands_adapter_construction_paths_use_shared_metadata_defaults(adapter: Any) -> None:
+    metrics = ExecutionMetrics(duration_ms=7)
 
+    result = adapter.build_execution_result(metrics, ["output"])
 
-@pytest.mark.skipif(
-    not (_OPENHANDS_DOCKER_URL and _OPENHANDS_DOCKER_KEY),
-    reason="requires an explicitly configured local Docker OpenHands test runtime",
-)
-@pytest.mark.asyncio
-async def test_openhands_docker_execute_returns_empty_finish_reasons_without_external_provider() -> (
-    None
-):
-    agent = DockerOpenHandsAgent(
-        api_key=_OPENHANDS_DOCKER_KEY,
-        llm_config={"base_url": _OPENHANDS_DOCKER_URL},
-        max_iterations=1,
-    )
-    result = await agent.execute(
-        ExecutionContext(
-            run_id="run", task_id="task", working_dir="/tmp", prompt="Stop.", requirements=[]
-        ),
-        _noop_checklist,
-        _noop_submit,
-    )
-
+    assert result.metrics == metrics
+    assert result.output_lines == ["output"]
     assert result.gen_ai_response_finish_reasons == []

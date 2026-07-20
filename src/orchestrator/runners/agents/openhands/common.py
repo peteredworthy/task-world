@@ -18,10 +18,31 @@ from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     ExecutionContext,
     ExecutionMetrics,
+    ExecutionResult,
     GradeCallback,
     SubmitCallback,
 )
 from orchestrator.config.enums import ChecklistStatus
+
+
+# ---------------------------------------------------------------------------
+# Execution result construction
+# ---------------------------------------------------------------------------
+
+
+def build_openhands_execution_result(
+    metrics: ExecutionMetrics,
+    output_lines: list[str] | None = None,
+    action_log: Any = None,
+) -> ExecutionResult:
+    """Construct the metadata-neutral result shared by OpenHands adapters."""
+    return ExecutionResult(
+        success=True,
+        metrics=metrics,
+        action_log=action_log,
+        output_lines=output_lines or [],
+        gen_ai_response_finish_reasons=[],
+    )
 
 
 # ---------------------------------------------------------------------------
