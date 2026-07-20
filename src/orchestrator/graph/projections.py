@@ -244,6 +244,7 @@ class GraphProjection(TypedDict):
     tokens_by_node_kind: dict[str, int]
     latency_ms_by_node_kind: dict[str, int]
     execution_count_by_node_kind: dict[str, int]
+    num_actions_by_node_kind: dict[str, int]
     recorded_node_usage_keys: dict[str, bool]
 
 
@@ -538,6 +539,7 @@ def initial_projection() -> GraphProjection:
         "tokens_by_node_kind": {},
         "latency_ms_by_node_kind": {},
         "execution_count_by_node_kind": {},
+        "num_actions_by_node_kind": {},
         "recorded_node_usage_keys": {},
     }
 
@@ -901,6 +903,9 @@ def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjectio
     )
     projection["execution_count_by_node_kind"] = _int_map_from_checkpoint(
         raw_projection.get("execution_count_by_node_kind")
+    )
+    projection["num_actions_by_node_kind"] = _int_map_from_checkpoint(
+        raw_projection.get("num_actions_by_node_kind")
     )
     projection["recorded_node_usage_keys"] = _bool_map_from_checkpoint(
         raw_projection.get("recorded_node_usage_keys")
@@ -2006,6 +2011,7 @@ def _clone_projection(state: GraphProjection) -> GraphProjection:
         "tokens_by_node_kind": dict(state.get("tokens_by_node_kind", {})),
         "latency_ms_by_node_kind": dict(state.get("latency_ms_by_node_kind", {})),
         "execution_count_by_node_kind": dict(state.get("execution_count_by_node_kind", {})),
+        "num_actions_by_node_kind": dict(state.get("num_actions_by_node_kind", {})),
         "recorded_node_usage_keys": dict(state.get("recorded_node_usage_keys", {})),
     }
     return next_state
@@ -2108,6 +2114,10 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
                 )
                 next_state["execution_count_by_node_kind"][usage.node_kind] = (
                     next_state["execution_count_by_node_kind"].get(usage.node_kind, 0) + 1
+                )
+                next_state["num_actions_by_node_kind"][usage.node_kind] = (
+                    next_state["num_actions_by_node_kind"].get(usage.node_kind, 0)
+                    + usage.num_actions
                 )
     elif event.event_type == "node_retired":
         node_id = NodeRetiredPayload.model_validate(event.payload).node_id

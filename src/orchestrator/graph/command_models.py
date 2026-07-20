@@ -296,6 +296,7 @@ class RecordNodeUsageCommand(StrictCommandPayload):
     node_role: str | None = None
     profile: str | None = None
     execution_id: CommandIdentifier
+    num_actions: int = Field(default=0, ge=0)
     usage: list[ModelTokenUsage] = Field(min_length=1)
 
 

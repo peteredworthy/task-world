@@ -198,6 +198,7 @@ def test_empty_projection() -> None:
         "tokens_by_node_kind": {},
         "latency_ms_by_node_kind": {},
         "execution_count_by_node_kind": {},
+        "num_actions_by_node_kind": {},
         "recorded_node_usage_keys": {},
     }
 

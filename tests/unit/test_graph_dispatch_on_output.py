@@ -689,6 +689,13 @@ class RecordingOutputSink:
         self.calls.append((context, lines))
 
 
+class RaisingUsageObserver:
+    async def __call__(self, context: GraphDispatchContext, result: Any) -> None:
+        del context
+        del result
+        raise RuntimeError("usage observer unavailable")
+
+
 @pytest.mark.asyncio
 async def test_wait_for_all_timeout_returns_without_cancelling_active_task() -> None:
     release = asyncio.Event()
@@ -747,6 +754,20 @@ async def test_executor_runs_without_output_callback() -> None:
     assert executor.submitted == [context]
     assert executor.failures == []
     assert agent.submitted is True
+
+
+@pytest.mark.asyncio
+async def test_executor_logs_usage_observer_failure_without_marking_agent_dead(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    context = _context()
+    executor = RecordingExecutor()
+    executor._on_agent_usage = RaisingUsageObserver()
+
+    await executor._run_agent(context, OutputAgent(["line"]))
+
+    assert executor.failures == []
+    assert "graph usage observer failed" in caplog.text
 
 
 @pytest.mark.asyncio

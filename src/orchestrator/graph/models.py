@@ -905,6 +905,7 @@ class NodeUsageRecordedPayload(GraphEventPayloadBase):
     gen_ai_response_finish_reasons: list[str] = Field(default_factory=list)
     cost_usd: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     latency_ms: int = Field(default=0, ge=0)
+    num_actions: int = Field(default=0, ge=0)
     rate_missing: bool = False
 
     @model_validator(mode="after")

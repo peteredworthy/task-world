@@ -274,7 +274,7 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         ),
         "node_usage_recorded": _same(
             "node_usage_recorded",
-            "cost_usd execution_id gen_ai_response_finish_reasons gen_ai_usage_cache_creation_input_tokens gen_ai_usage_cache_read_input_tokens gen_ai_usage_input_tokens gen_ai_usage_output_tokens gen_ai_usage_reasoning_output_tokens latency_ms model node_id node_kind node_role profile rate_missing usage_count usage_index usage_key",
+            "cost_usd execution_id gen_ai_response_finish_reasons gen_ai_usage_cache_creation_input_tokens gen_ai_usage_cache_read_input_tokens gen_ai_usage_input_tokens gen_ai_usage_output_tokens gen_ai_usage_reasoning_output_tokens latency_ms model node_id node_kind node_role num_actions profile rate_missing usage_count usage_index usage_key",
         ),
         "output_record_accepted": _spec(
             "output_record_accepted",

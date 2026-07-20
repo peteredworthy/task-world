@@ -373,7 +373,11 @@ class GraphEventStore:
             stored_events,
             expected_position=expected_position,
         )
-        await self.sync_run_usage_read_model(run_id)
+        usage_events = [
+            event for event in stored_events if event.event_type == "node_usage_recorded"
+        ]
+        if usage_events:
+            await self.apply_run_usage_events(run_id, usage_events)
         return stored_events
 
     async def read_run(self, run_id: str, from_position: int = 0) -> list[EventEnvelope]:
@@ -935,54 +939,64 @@ class GraphEventStore:
             )
         )
         await self._session.flush()
-        await self.sync_run_usage_read_model(run_id, events=events)
+        await self.replace_run_usage_read_model(run_id, events)
         return snapshot
 
-    async def sync_run_usage_read_model(
+    async def replace_run_usage_read_model(
         self,
         run_id: str,
-        *,
-        events: list[EventEnvelope] | None = None,
+        events: list[EventEnvelope],
     ) -> None:
-        """Rebuild graph-run usage fields from durable node-usage facts.
-
-        The graph stream is authoritative. This read-model update deliberately
-        runs in the same transaction as appends and is safe to invoke during a
-        replay rebuild.
-        """
+        """Replace graph-run usage read fields from a caller-provided full replay."""
         run_model = await self._session.get(RunModel, run_id)
         if run_model is None:
             return
-        source_events = events if events is not None else await self.read_run(run_id)
-        usage_by_key: dict[str, NodeUsageRecordedPayload] = {}
-        for event in source_events:
+        run_model.token_usage_by_model = []
+        run_model.total_duration_ms = 0
+        run_model.total_num_actions = 0
+        await self.apply_run_usage_events(run_id, events, run_model=run_model)
+
+    async def apply_run_usage_events(
+        self,
+        run_id: str,
+        events: list[EventEnvelope],
+        *,
+        run_model: RunModel | None = None,
+    ) -> None:
+        """Incrementally project newly committed graph usage facts without replaying history."""
+        model = run_model or await self._session.get(RunModel, run_id)
+        if model is None:
+            return
+        existing = list(model.token_usage_by_model or [])
+        recorded_keys = {
+            entry["graph_usage_key"]
+            for entry in existing
+            if isinstance(entry.get("graph_usage_key"), str)
+        }
+        for event in events:
             if event.event_type != "node_usage_recorded":
                 continue
             usage = NodeUsageRecordedPayload.model_validate(event.payload)
-            usage_by_key.setdefault(usage.usage_key, usage)
-        if not usage_by_key:
-            return
-        ordered_usage = [usage_by_key[key] for key in sorted(usage_by_key)]
-        run_model.token_usage_by_model = [
-            ModelTokenUsage(
+            if usage.usage_key in recorded_keys:
+                continue
+            usage_record = ModelTokenUsage(
                 model=usage.model,
                 gen_ai_usage_input_tokens=usage.gen_ai_usage_input_tokens,
                 gen_ai_usage_output_tokens=usage.gen_ai_usage_output_tokens,
                 gen_ai_usage_cache_read_input_tokens=usage.gen_ai_usage_cache_read_input_tokens,
-                gen_ai_usage_cache_creation_input_tokens=(
-                    usage.gen_ai_usage_cache_creation_input_tokens
-                ),
+                gen_ai_usage_cache_creation_input_tokens=usage.gen_ai_usage_cache_creation_input_tokens,
                 gen_ai_usage_reasoning_output_tokens=usage.gen_ai_usage_reasoning_output_tokens,
                 gen_ai_response_finish_reasons=usage.gen_ai_response_finish_reasons,
                 cost_usd=usage.cost_usd,
                 latency_ms=usage.latency_ms,
                 rate_missing=usage.rate_missing,
             ).model_dump(mode="json")
-            for usage in ordered_usage
-        ]
-        run_model.total_duration_ms = sum(
-            usage.latency_ms for usage in ordered_usage if usage.usage_index == 0
-        )
+            existing.append({"graph_usage_key": usage.usage_key, **usage_record})
+            recorded_keys.add(usage.usage_key)
+            if usage.usage_index == 0:
+                model.total_duration_ms = (model.total_duration_ms or 0) + usage.latency_ms
+                model.total_num_actions = (model.total_num_actions or 0) + usage.num_actions
+        model.token_usage_by_model = existing
         await self._session.flush()
 
     async def rebuild_node_detail_summaries(self, run_id: str) -> None:

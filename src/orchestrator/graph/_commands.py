@@ -437,6 +437,7 @@ def _apply_record_node_usage(
             usage_index=usage_index,
             usage_count=usage_count,
             usage_key=usage_key,
+            num_actions=payload.num_actions if usage_index == 0 else 0,
             **usage.model_dump(mode="json"),
         )
         events.append(make_event("node_usage_recorded", event_payload.model_dump(mode="json")))

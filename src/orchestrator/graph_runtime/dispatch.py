@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import logging
 from dataclasses import dataclass, field
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -52,6 +53,7 @@ from orchestrator.runners import AgentRunner, create_agent_runner
 from orchestrator.runners.types import ExecutionContext
 
 MAX_GRAPH_PROMPT_CHARS = _prompts.MAX_GRAPH_PROMPT_CHARS
+logger = logging.getLogger(__name__)
 MAX_GRAPH_JSON_SECTION_CHARS = _prompts.MAX_GRAPH_JSON_SECTION_CHARS
 MAX_GRAPH_PROMPT_FIELD_CHARS = _prompts.MAX_GRAPH_PROMPT_FIELD_CHARS
 MAX_CHECK_OUTPUT_CHARS = 20_000
@@ -333,9 +335,16 @@ class GraphDispatchExecutor(SideEffectExecutor):
 
             _, usage_by_model = extract_metrics_and_usage(result)
             if usage_by_model:
-                await self._controller.record_node_usage(context, usage_by_model)
+                await self._controller.record_node_usage(
+                    context,
+                    usage_by_model,
+                    num_actions=result.metrics.num_actions,
+                )
             if self._on_agent_usage is not None:
-                await self._on_agent_usage(context, result)
+                try:
+                    await self._on_agent_usage(context, result)
+                except Exception:
+                    logger.exception("graph usage observer failed")
             if not submitted_callback:
                 await self._agent_died(context, "agent exited without submit")
         except Exception as exc:

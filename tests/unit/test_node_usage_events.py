@@ -78,6 +78,26 @@ def test_record_node_usage_emits_one_idempotent_fact_per_execution_model() -> No
     assert [event.payload["profile"] for event in events] == ["coder", "coder"]
 
 
+def test_record_node_usage_carries_execution_actions_only_on_first_fact() -> None:
+    events = apply_command(
+        initial_projection(),
+        [],
+        "record_node_usage",
+        {
+            "node_id": "worker-1",
+            "node_kind": "worker",
+            "execution_id": "execution-1",
+            "num_actions": 4,
+            "usage": [{"model": "model-a"}, {"model": "model-b"}],
+        },
+        GraphCommandContext(run_id="run-usage", current_graph_position=0),
+        FakeClock(),
+        SequentialIdGenerator(),
+    )
+
+    assert [event.payload["num_actions"] for event in events] == [4, 0]
+
+
 def test_node_usage_reducer_deduplicates_facts_and_counts_execution_latency_once() -> None:
     usage_payload = {
         "node_id": "worker-1",

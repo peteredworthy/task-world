@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.graph import (
@@ -22,6 +24,7 @@ from orchestrator.graph import (
     serialize_event_payload,
 )
 from orchestrator.state import ModelTokenUsage
+from orchestrator.db import is_retriable_sqlite_write_conflict
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime.errors import StaleProjectionError
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, append_outbox_rows
@@ -36,6 +39,9 @@ class GraphCommandResult:
     events: list[EventEnvelope]
     outbox_items: list[OutboxItem]
     projection_position: int
+
+
+MAX_NODE_USAGE_WRITE_RETRIES = 5
 
 
 class GraphController:
@@ -181,6 +187,8 @@ class GraphController:
         self,
         context: GraphDispatchContext,
         usage: Sequence[ModelTokenUsage],
+        *,
+        num_actions: int = 0,
     ) -> GraphCommandResult:
         """Record immutable per-model usage facts for one graph execution."""
         if not usage:
@@ -189,21 +197,37 @@ class GraphController:
                 outbox_items=[],
                 projection_position=await self.current_position(context.run_id),
             )
-        position = await self.current_position(context.run_id)
         profile = context.node_payload.get("profile")
-        return await self.handle_command(
-            context.run_id,
-            position,
-            "record_node_usage",
-            {
-                "node_id": context.node_id,
-                "node_kind": context.node_kind,
-                "node_role": context.node_role or None,
-                "profile": profile if isinstance(profile, str) else None,
-                "execution_id": context.execution_id,
-                "usage": [item.model_dump(mode="json") for item in usage],
-            },
-        )
+        payload: dict[str, object] = {
+            "node_id": context.node_id,
+            "node_kind": context.node_kind,
+            "node_role": context.node_role or None,
+            "profile": profile if isinstance(profile, str) else None,
+            "execution_id": context.execution_id,
+            "num_actions": num_actions,
+            "usage": [item.model_dump(mode="json") for item in usage],
+        }
+        delay_seconds = 0.1
+        for attempt in range(MAX_NODE_USAGE_WRITE_RETRIES + 1):
+            position = await self.current_position(context.run_id)
+            try:
+                return await self.handle_command(
+                    context.run_id,
+                    position,
+                    "record_node_usage",
+                    payload,
+                )
+            except StaleProjectionError:
+                if attempt >= MAX_NODE_USAGE_WRITE_RETRIES:
+                    raise
+            except OperationalError as exc:
+                if (
+                    not is_retriable_sqlite_write_conflict(exc)
+                    or attempt >= MAX_NODE_USAGE_WRITE_RETRIES
+                ):
+                    raise
+            await asyncio.sleep(delay_seconds * (attempt + 1))
+        raise StaleProjectionError(f"graph usage write retry loop exhausted: {context.run_id}")
 
     async def read_projection(self, run_id: str) -> GraphProjection:
         """Return the current durable graph projection for a run."""
