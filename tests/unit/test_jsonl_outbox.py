@@ -26,6 +26,29 @@ from orchestrator.workflow import RunStatusChanged
 NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
 
+class FinalByteRecorder:
+    """Real binary reads used to prove the clean-tail fast path is constant-size."""
+
+    def __init__(self) -> None:
+        self.read_sizes: list[int] = []
+
+    def read_final_byte(self, path: Path) -> bytes:
+        with open(path, "rb") as file:
+            file.seek(-1, 2)
+            value = file.read(1)
+        self.read_sizes.append(len(value))
+        return value
+
+    def read_final_fragment(self, path: Path, chunk_size: int) -> tuple[int, bytes]:
+        raise AssertionError("a clean final newline must not scan a fragment")
+
+    def append_delimiter(self, path: Path) -> None:
+        raise AssertionError("a clean final newline needs no delimiter")
+
+    def truncate(self, path: Path, length: int) -> None:
+        raise AssertionError("a clean final newline needs no truncation")
+
+
 def _stored(position: int, aggregate_id: str = "run-1") -> StoredEvent:
     return StoredEvent(
         position=position,
@@ -72,6 +95,16 @@ async def test_write_event_to_jsonl(tmp_path: Path) -> None:
     assert record["event_type"] == "run_status_changed"
     assert "timestamp" in record
     assert "payload" in record
+
+
+async def test_clean_active_tail_repair_reads_only_the_final_byte(tmp_path: Path) -> None:
+    path = tmp_path / "events.jsonl"
+    path.write_text(json.dumps({"position": 1}) + "\n")
+    file_operations = FinalByteRecorder()
+
+    await JsonlOutboxObserver(path, file_operations=file_operations)([_stored(2)])
+
+    assert file_operations.read_sizes == [1]
 
 
 async def test_idempotent_same_position(tmp_path: Path) -> None:

@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 _JOURNAL_PATH_ENV = "ORCHESTRATOR_EVENT_JOURNAL_PATH"
 _ARCHIVE_NAME = re.compile(r"^(?P<stem>.+)\.(?P<first>\d+)-(?P<last>\d+)\.jsonl$")
+_TAIL_SCAN_CHUNK_SIZE = 64 * 1024
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,60 @@ class JournalSegment:
     path: Path
     first_position: int
     last_position: int
+
+
+class JournalFileOperations(Protocol):
+    """Bounded binary operations used to repair an active JSONL tail."""
+
+    def read_final_byte(self, path: Path) -> bytes: ...
+
+    def read_final_fragment(self, path: Path, chunk_size: int) -> tuple[int, bytes]: ...
+
+    def append_delimiter(self, path: Path) -> None: ...
+
+    def truncate(self, path: Path, length: int) -> None: ...
+
+
+class SystemJournalFileOperations:
+    """Production binary file operations for bounded active-tail inspection."""
+
+    def read_final_byte(self, path: Path) -> bytes:
+        try:
+            with open(path, "rb") as file:
+                if file.seek(0, os.SEEK_END) == 0:
+                    return b""
+                file.seek(-1, os.SEEK_END)
+                return file.read(1)
+        except FileNotFoundError:
+            return b""
+
+    def read_final_fragment(self, path: Path, chunk_size: int) -> tuple[int, bytes]:
+        chunks: list[bytes] = []
+        with open(path, "rb") as file:
+            offset = file.seek(0, os.SEEK_END)
+            while offset:
+                start = max(0, offset - chunk_size)
+                file.seek(start)
+                chunk = file.read(offset - start)
+                newline = chunk.rfind(b"\n")
+                if newline >= 0:
+                    chunks.append(chunk[newline + 1 :])
+                    return start + newline + 1, b"".join(reversed(chunks))
+                chunks.append(chunk)
+                offset = start
+        return 0, b"".join(reversed(chunks))
+
+    def append_delimiter(self, path: Path) -> None:
+        with open(path, "ab") as file:
+            file.write(b"\n")
+            file.flush()
+            os.fsync(file.fileno())
+
+    def truncate(self, path: Path, length: int) -> None:
+        with open(path, "r+b") as file:
+            file.truncate(length)
+            file.flush()
+            os.fsync(file.fileno())
 
 
 def discover_journal_segments(active_path: Path) -> list[JournalSegment]:
@@ -105,6 +160,7 @@ class JsonlOutboxObserver:
         lock: asyncio.Lock | None = None,
         rotation_operations: RotationOperations | None = None,
         segment_reader: Callable[[Path], set[int]] | None = None,
+        file_operations: JournalFileOperations | None = None,
     ) -> None:
         self._path = path
         self._max_bytes = max_bytes
@@ -114,6 +170,7 @@ class JsonlOutboxObserver:
         self._lock = lock or asyncio.Lock()
         self._rotation_operations = rotation_operations or SystemRotationOperations()
         self._segment_reader = segment_reader or _read_positions
+        self._file_operations = file_operations or SystemJournalFileOperations()
 
     async def __call__(self, events: list[StoredEvent]) -> None:
         async with self._lock:
@@ -124,6 +181,7 @@ class JsonlOutboxObserver:
                 events,
                 self._rotation_operations,
                 self._segment_reader,
+                self._file_operations,
             )
 
     async def reconcile(
@@ -146,41 +204,38 @@ class JsonlOutboxObserver:
                 # The active file can contain positions which belong to sparse
                 # archive ranges. Retain its one bounded set throughout this
                 # pass so those positions never get appended as archive gaps.
-                active_positions = self._segment_reader(self._path)
+                initial_active_positions = self._segment_reader(self._path)
                 for segment in discover_journal_segments(self._path):
                     observed += await self._reconcile_page_range(
                         store,
                         cursor,
                         segment.first_position - 1,
                         batch_size,
-                        active_positions,
-                        active_positions,
+                        initial_active_positions,
                     )
                     cursor = max(cursor, segment.first_position - 1)
                     segment_positions = self._segment_reader(segment.path)
-                    segment_positions.update(active_positions)
+                    existing_positions = initial_active_positions | segment_positions
                     observed += await self._reconcile_page_range(
                         store,
                         cursor,
                         segment.last_position,
                         batch_size,
-                        segment_positions,
-                        active_positions,
+                        existing_positions,
                     )
                     cursor = max(cursor, segment.last_position)
 
-                # Archives are chronological journal prefixes. The active set
-                # remains authoritative for this pass, including records
-                # appended before an active rotation created a new archive.
+                # Archives are chronological journal prefixes. Only the
+                # initial active positions filter the whole pass; DB cursor
+                # advancement makes newly appended positions irrelevant.
                 observed += await self._reconcile_page_range(
                     store,
                     cursor,
                     None,
                     batch_size,
-                    active_positions,
-                    active_positions,
+                    initial_active_positions,
                 )
-                self._written = active_positions
+                self._written = self._segment_reader(self._path)
                 return observed
 
     async def _reconcile_page_range(
@@ -190,7 +245,6 @@ class JsonlOutboxObserver:
         through_position: int | None,
         batch_size: int,
         existing_positions: set[int],
-        active_positions: set[int],
     ) -> int:
         observed = 0
         while True:
@@ -208,9 +262,8 @@ class JsonlOutboxObserver:
                 self._max_bytes,
                 new_events,
                 self._rotation_operations,
+                self._file_operations,
             )
-            existing_positions.update(event.position for event in new_events)
-            active_positions.update(event.position for event in new_events)
             cursor = page[-1].position
 
 
@@ -267,34 +320,28 @@ def _append_lines(path: Path, lines: str, operations: RotationOperations) -> Non
     operations.fsync_parent(path)
 
 
-def _repair_active_append_boundary(path: Path, operations: RotationOperations) -> None:
+def _repair_active_append_boundary(
+    path: Path,
+    operations: RotationOperations,
+    file_operations: JournalFileOperations,
+) -> None:
     """Make a nonempty active journal safe for a complete JSONL append.
 
     A valid final record merely lacks its delimiter after an interrupted write,
     so preserve it and durably add the delimiter. An invalid final fragment is
     not an authoritative record and is truncated back to the preceding newline.
     """
-    try:
-        content = path.read_bytes()
-    except FileNotFoundError:
-        return
-    if not content or content.endswith(b"\n"):
+    final_byte = file_operations.read_final_byte(path)
+    if not final_byte or final_byte == b"\n":
         return
 
-    final_newline = content.rfind(b"\n")
-    final_line = content[final_newline + 1 :]
+    final_line_start, final_line = file_operations.read_final_fragment(path, _TAIL_SCAN_CHUNK_SIZE)
     try:
         json.loads(final_line)
     except json.JSONDecodeError:
-        with open(path, "r+b") as file:
-            file.truncate(final_newline + 1)
-            file.flush()
-            os.fsync(file.fileno())
+        file_operations.truncate(path, final_line_start)
     else:
-        with open(path, "ab") as file:
-            file.write(b"\n")
-            file.flush()
-            os.fsync(file.fileno())
+        file_operations.append_delimiter(path)
     operations.fsync_active(path)
     operations.fsync_parent(path)
 
@@ -305,6 +352,7 @@ def _write_events_under_lock(
     events: list[StoredEvent],
     rotation_operations: RotationOperations,
     segment_reader: Callable[[Path], set[int]],
+    file_operations: JournalFileOperations,
 ) -> set[int]:
     """Serialize the complete journal read/rotate/write transaction by path."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -345,7 +393,7 @@ def _write_events_under_lock(
             ]
         if new_events:
             lines = "\n".join(json.dumps(_to_record(event)) for event in new_events) + "\n"
-            _repair_active_append_boundary(path, rotation_operations)
+            _repair_active_append_boundary(path, rotation_operations, file_operations)
             _append_lines(path, lines, rotation_operations)
             active_positions.update(event.position for event in new_events)
             # Rotation is a postcondition of every durable append.  A batch
@@ -365,6 +413,7 @@ def _append_events_under_held_lock(
     max_bytes: int,
     events: list[StoredEvent],
     rotation_operations: RotationOperations,
+    file_operations: JournalFileOperations,
 ) -> None:
     """Append already-reconciled events while the caller holds the journal lock."""
     unique_events: list[StoredEvent] = []
@@ -376,7 +425,7 @@ def _append_events_under_held_lock(
     if not unique_events:
         return
     lines = "\n".join(json.dumps(_to_record(event)) for event in unique_events) + "\n"
-    _repair_active_append_boundary(path, rotation_operations)
+    _repair_active_append_boundary(path, rotation_operations, file_operations)
     _append_lines(path, lines, rotation_operations)
     if _should_rotate(path, max_bytes):
         _rotate(path, rotation_operations)

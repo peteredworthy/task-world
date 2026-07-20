@@ -4,10 +4,10 @@
 
 1. **Startup journal reconciliation**
    - `JsonlOutboxObserver.reconcile()` scans the active journal once before archive segments, then scans archive segments in global-position order.
-   - It retains the active sparse exact-position set for the complete pass and combines it with exactly one archive sparse set while it fetches bounded DB pages for that archive range; the archive set is then discarded before the next segment.
-   - The reconciliation advisory lock spans scan/filter/append work. Newly appended positions remain in the active-pass set, so an active rotation cannot reopen an already advanced range.
+   - It retains only the initial active sparse exact-position set for complete cross-range filtering and combines it with exactly one archive sparse set while it fetches bounded DB pages for that archive range; the archive set is then discarded before the next segment.
+   - The reconciliation advisory lock spans scan/filter/append work. The monotonic DB cursor, rather than retained appended positions, prevents an active rotation from reopening already advanced work; the final active segment is rescanned once for observer state.
    - Ordinary observer appends likewise scan an archive candidate once per batch, so sparse gap events no longer reopen the same candidate per event.
-   - Evidence: an injected real JSONL segment reader reconciles six bounded DB pages across sparse archive ranges `{1, 3, 5}` and `{6, 8}` with active positions `{2, 4, 7}`. Each active/archive file is traversed once per pass; after a second pass, active bytes are unchanged and positions `1..9` occur exactly once across journal files. A malformed final active fragment is truncated and fsynced before an authoritative replacement append; JSONL bootstrap then restores positions `1, 2`.
+   - Evidence: an injected real JSONL segment reader reconciles five bounded DB pages with archive positions `1..5`, initial active position `7`, and a forced rotation after every append. The retained active set never exceeds its one-position initial segment; after a second pass, active bytes are unchanged and positions `1..9` occur exactly once across journal files. Clean-tail repair uses one real binary final-byte read and never scans a fragment; malformed-tail truncation and JSONL bootstrap restoration of positions `1, 2` remain covered.
 
 2. **Rollup input bound**
    - `MAX_ROLLUP_FACTS = 100_000` caps raw graph usage facts.
@@ -26,7 +26,8 @@
 Each new behavior was written and run red before the minimal implementation:
 
 - Archive instrumentation initially failed because `JsonlOutboxObserver` had no injected segment reader; it then passed after segment-scoped reconciliation was added.
-- Sparse active/archive instrumentation initially duplicated active positions on its second pass because active scanning followed archive filtering; it then passed after active-first exact filtering was retained across every archive range.
+- Sparse active/archive instrumentation initially retained appended DB positions through forced rotations; it then passed after retaining only the initial active segment while the cursor advances monotonically.
+- Clean-tail instrumentation initially could not inject real binary reads and full-file repair used `read_bytes`; it then passed after the one-byte fast path and bounded backward fragment scan were introduced.
 - Partial-final-record instrumentation initially produced one malformed joined line; it then passed after the held-lock append path durably truncates malformed fragments (or delimits complete unterminated records) before replacement append.
 - Same-group rollup input test initially failed because `load_cost_rollup_facts` lacked `max_facts`; it then passed after sentinel-row enforcement was added.
 - Exact-provenance regression initially failed at public API import; it then passed after exporting the established presenter through the API boundary.
@@ -35,7 +36,7 @@ Each new behavior was written and run red before the minimal implementation:
 
 | Command | Result |
 | --- | --- |
-| `uv run pytest` | PASS — 4,959 passed, 6 skipped (3 existing Python 3.12 SQLite adapter deprecation warnings), 127.32s |
+| `uv run pytest` | PASS — 4,961 passed, 6 skipped (3 existing Python 3.12 SQLite adapter deprecation warnings), 135.51s |
 | `uv run pyright` | PASS — 0 errors, 0 warnings |
 | `uv run ruff check .` | PASS |
 | `uv run ruff format --check .` | PASS |

@@ -71,6 +71,19 @@ PROJECTION_TABLES = {
     "attempts": AttemptModel,
 }
 
+
+class TrackingPositions(set[int]):
+    """A real segment set that records the largest retained active workload."""
+
+    def __init__(self, values: set[int]) -> None:
+        super().__init__(values)
+        self.max_size = len(self)
+
+    def update(self, *others: object) -> None:
+        super().update(*others)
+        self.max_size = max(self.max_size, len(self))
+
+
 # Helper contract: no deterministic run/step/task/attempt read-model columns are
 # omitted. If a future projector-owned column is intentionally skipped, name it
 # here with the domain reason it is non-deterministic.
@@ -1164,27 +1177,27 @@ async def test_journal_drain_reconciles_sparse_archives_without_duplicate_second
     factory = create_session_factory(engine)
     journal_path = db_path.parent / "history.jsonl"
     archive_path = db_path.parent / "history.1-5.jsonl"
-    second_archive_path = db_path.parent / "history.6-8.jsonl"
     archive_path.write_text(
-        "\n".join(json.dumps({"position": position}) for position in (1, 3, 5)) + "\n"
+        "\n".join(json.dumps({"position": position}) for position in range(1, 6)) + "\n"
     )
-    second_archive_path.write_text(
-        "\n".join(json.dumps({"position": position}) for position in (6, 8)) + "\n"
-    )
-    journal_path.write_text(
-        "\n".join(json.dumps({"position": position}) for position in (2, 4, 7)) + "\n"
-    )
+    journal_path.write_text(json.dumps({"position": 7}) + "\n")
     traversal_count: dict[Path, int] = {}
+    retained_active_sets: list[TrackingPositions] = []
 
     def read_segment(path: Path) -> set[int]:
         if not path.exists():
             return set()
         traversal_count[path] = traversal_count.get(path, 0) + 1
-        return {
+        positions = {
             record["position"]
             for record in (json.loads(line) for line in path.read_text().splitlines())
             if type(record.get("position")) is int
         }
+        if path == journal_path:
+            retained = TrackingPositions(positions)
+            retained_active_sets.append(retained)
+            return retained
+        return positions
 
     async with factory() as session:
         for position in range(1, 10):
@@ -1202,21 +1215,28 @@ async def test_journal_drain_reconciles_sparse_archives_without_duplicate_second
             session,
             journal_path,
             batch_size=2,
-            observer=JsonlOutboxObserver(journal_path, segment_reader=read_segment),
+            observer=JsonlOutboxObserver(
+                journal_path,
+                max_bytes=1,
+                segment_reader=read_segment,
+            ),
         )
         first_active_bytes = journal_path.read_bytes()
         observed_second_pass = await drain_committed_events_to_journal(
             session,
             journal_path,
             batch_size=2,
-            observer=JsonlOutboxObserver(journal_path, segment_reader=read_segment),
+            observer=JsonlOutboxObserver(
+                journal_path,
+                max_bytes=1,
+                segment_reader=read_segment,
+            ),
         )
 
     archive_positions = [
-        json.loads(line)["position"] for line in archive_path.read_text().splitlines()
-    ]
-    archive_positions += [
-        json.loads(line)["position"] for line in second_archive_path.read_text().splitlines()
+        json.loads(line)["position"]
+        for archive in journal_path.parent.glob("history.*-*.jsonl")
+        for line in archive.read_text().splitlines()
     ]
     active_positions = [
         json.loads(line)["position"] for line in journal_path.read_text().splitlines()
@@ -1224,8 +1244,7 @@ async def test_journal_drain_reconciles_sparse_archives_without_duplicate_second
     assert observed == 9
     assert observed_second_pass == 9
     assert traversal_count[archive_path] == 2
-    assert traversal_count[second_archive_path] == 2
-    assert traversal_count[journal_path] == 2
+    assert max(active.max_size for active in retained_active_sets) <= 1
     assert journal_path.read_bytes() == first_active_bytes
     assert sorted(archive_positions + active_positions) == list(range(1, 10))
     await engine.dispose()
