@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from orchestrator.api import CostRollupFact, compute_cost_rollup
+import orchestrator.api as api
+from orchestrator.api import CostRollupFact, CostRollupFilters, compute_cost_rollup
 
 
 def _fact(
@@ -132,6 +133,51 @@ def test_counts_execution_latency_and_actions_once_for_multiple_usage_facts() ->
     assert row.num_actions == 4
     assert row.gen_ai_usage_input_tokens == 30
     assert row.cost_usd == 1.0
+
+
+def test_scopes_execution_identity_to_its_run_when_grouping_omits_run() -> None:
+    response = compute_cost_rollup(
+        [
+            _fact(run_id="run-a", execution_id="shared", rate_missing=True, latency_ms=100),
+            _fact(
+                run_id="run-b",
+                execution_id="shared",
+                rate_missing=True,
+                latency_ms=200,
+                num_actions=6,
+            ),
+        ],
+        ("day",),
+    )
+
+    row = response.rows[0]
+    assert row.execution_count == 2
+    assert row.latency_ms == 300
+    assert row.num_actions == 10
+    assert row.rate_missing_execution_count == 2
+
+
+def test_normalizes_both_naive_time_filters_to_utc() -> None:
+    filters = CostRollupFilters(
+        start=datetime(2026, 7, 20),
+        end=datetime(2026, 7, 21),
+    )
+
+    assert filters.start == datetime(2026, 7, 20, tzinfo=timezone.utc)
+    assert filters.end == datetime(2026, 7, 21, tzinfo=timezone.utc)
+
+
+def test_rejects_mixed_naive_and_aware_time_filters() -> None:
+    with pytest.raises(ValueError, match="same timezone awareness"):
+        CostRollupFilters(
+            start=datetime(2026, 7, 20),
+            end=datetime(2026, 7, 21, tzinfo=timezone.utc),
+        )
+
+
+def test_exports_cost_rollup_fact_loader_from_public_api() -> None:
+    assert "load_cost_rollup_facts" in api.__all__
+    assert callable(api.load_cost_rollup_facts)
 
 
 def test_tracks_missing_rate_usage_without_inventing_missing_cost() -> None:

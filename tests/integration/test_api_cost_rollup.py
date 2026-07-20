@@ -157,3 +157,20 @@ async def test_cost_rollup_rejects_invalid_literals_and_reversed_time_range(
     )
     assert reversed_range.status_code == 422
     assert "from" in reversed_range.text
+
+
+async def test_cost_rollup_defaults_to_run_grouping_and_rejects_mixed_time_awareness(
+    _shared_app_fixture: tuple[object, object, object, object, object],
+) -> None:
+    client, _, _, _, _ = _shared_app_fixture
+
+    default_grouping = await client.get("/api/runs/cost-rollup")
+    assert default_grouping.status_code == 200
+    assert default_grouping.json()["group_by"] == ["run"]
+
+    mixed_time_range = await client.get(
+        "/api/runs/cost-rollup",
+        params={"from": "2026-07-20T00:00:00", "to": "2026-07-21T00:00:00Z"},
+    )
+    assert mixed_time_range.status_code == 422
+    assert "same timezone awareness" in mixed_time_range.text

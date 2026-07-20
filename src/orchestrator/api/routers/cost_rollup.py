@@ -72,7 +72,7 @@ async def load_cost_rollup_facts(
 @router.get("/cost-rollup", response_model=CostRollupResponse)
 async def get_cost_rollup(
     session: Annotated[AsyncSession, Depends(get_session)],
-    group_by: Annotated[list[CostRollupDimension], Query()] = ["day"],
+    group_by: Annotated[list[CostRollupDimension], Query()] = ["run"],
     status: Annotated[list[RunStatusFilter], Query()] = [],
     runner_type: Annotated[list[SelectableRunnerTypeFilter], Query()] = [],
     start: Annotated[datetime | None, Query(alias="from")] = None,

@@ -49,14 +49,15 @@ def compute_cost_rollup(
         grouped, key=lambda values: tuple("" if value is None else value for value in values)
     ):
         group_facts = grouped[key]
-        execution_facts: dict[str, CostRollupFact] = {}
-        missing_executions: set[str] = set()
+        execution_facts: dict[tuple[str, str], CostRollupFact] = {}
+        missing_executions: set[tuple[str, str]] = set()
         for fact in group_facts:
-            existing = execution_facts.get(fact.execution_id)
+            execution_identity = (fact.run_id, fact.execution_id)
+            existing = execution_facts.get(execution_identity)
             if existing is None or fact.usage_index < existing.usage_index:
-                execution_facts[fact.execution_id] = fact
+                execution_facts[execution_identity] = fact
             if fact.rate_missing:
-                missing_executions.add(fact.execution_id)
+                missing_executions.add(execution_identity)
 
         rows.append(
             CostRollupRow(

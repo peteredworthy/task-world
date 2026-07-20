@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Literal
+from datetime import datetime, timezone
+from typing import Literal, cast
 
 from pydantic import Field, model_validator
 
@@ -26,11 +26,42 @@ class CostRollupFilters(ApiModel):
     start: datetime | None = None
     end: datetime | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_time_filters(cls, value: object) -> object:
+        """Normalize equally-aware bounds to UTC and reject mixed awareness."""
+        if not isinstance(value, dict):
+            return value
+        data = dict(cast(dict[str, object], value))
+        start = _parse_datetime(data.get("start"))
+        end = _parse_datetime(data.get("end"))
+        if start is not None and end is not None and (start.tzinfo is None) != (end.tzinfo is None):
+            raise ValueError("'from' and 'to' must use the same timezone awareness")
+        for field, timestamp in (("start", start), ("end", end)):
+            if timestamp is not None:
+                data[field] = (
+                    timestamp.replace(tzinfo=timezone.utc)
+                    if timestamp.tzinfo is None
+                    else timestamp.astimezone(timezone.utc)
+                )
+        return data
+
     @model_validator(mode="after")
     def start_precedes_end(self) -> "CostRollupFilters":
         if self.start is not None and self.end is not None and self.start > self.end:
             raise ValueError("'from' must be less than or equal to 'to'")
         return self
+
+
+def _parse_datetime(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not isinstance(value, str):
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 class CostRollupFact(ApiModel):

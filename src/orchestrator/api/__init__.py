@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from orchestrator.api.app import create_app
 from orchestrator.api.deps import (
     get_artifact_garbage_collector,
@@ -110,6 +112,7 @@ __all__ = [
     "get_agent_runner_icon",
     "get_connection_manager",
     "get_runner_executor",
+    "load_cost_rollup_facts",
     "is_clarification_pause_reason",
     "run_to_trace_response",
     "validate_clarification_question_payloads",
@@ -143,7 +146,6 @@ _GRAPH_ROUTER_SYMBOLS = {
 }
 _RUNS_ROUTER_SYMBOLS = {"_graph_backed_run_ids_from_rows"}
 _CLARIFICATION_ROUTER_SYMBOLS = {"is_clarification_pause_reason"}
-_COST_ROLLUP_ROUTER_SYMBOLS = {"load_cost_rollup_facts"}
 
 
 def build_graph_patch_attempts_response(*args: Any, **kwargs: Any) -> Any:
@@ -182,6 +184,18 @@ def is_clarification_pause_reason(*args: Any, **kwargs: Any) -> Any:
     return _clarifications_router.is_clarification_pause_reason(*args, **kwargs)
 
 
+async def load_cost_rollup_facts(
+    session: AsyncSession,
+    filters: CostRollupFilters,
+) -> list[CostRollupFact]:
+    """Load canonical graph usage facts through the public API module."""
+    from orchestrator.api.routers.cost_rollup import (  # noqa: PLC0415
+        load_cost_rollup_facts as _load_cost_rollup_facts,
+    )
+
+    return await _load_cost_rollup_facts(session, filters)
+
+
 def __getattr__(name: str) -> object:
     if name in _TASKS_ROUTER_SYMBOLS:
         import orchestrator.api.routers.tasks as _tasks  # noqa: PLC0415
@@ -207,8 +221,4 @@ def __getattr__(name: str) -> object:
         import orchestrator.api.routers.clarifications as _clarifications_router  # noqa: PLC0415
 
         return getattr(_clarifications_router, name)
-    if name in _COST_ROLLUP_ROUTER_SYMBOLS:
-        import orchestrator.api.routers.cost_rollup as _cost_rollup_router  # noqa: PLC0415
-
-        return getattr(_cost_rollup_router, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
