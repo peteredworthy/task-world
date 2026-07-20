@@ -11,8 +11,11 @@
 - Rotation uses the durable link protocol exactly:
   `link(active, archive) → fsync(parent) → unlink(active) → fsync(parent)`.
   `RotationOperations` is an injected filesystem seam; its recorder test
-  delegates to real operations and asserts that order. The linked-file recovery
-  crash-state test remains in the rotation suite.
+  delegates to real operations and asserts that order. Linked-rotation recovery
+  follows `fsync(parent) → unlink(active) → fsync(parent)` through that same
+  seam. The duplicate retry path re-syncs a previously written active record
+  and its parent before suppressing it, so a failed post-write sync can be
+  retried without duplicating the JSONL line.
 - Archive names retain position ranges as a compact candidate index. A matching
   range is streamed before suppressing a position, so sparse legacy archives
   cannot hide missing positions.
@@ -38,10 +41,9 @@ archive-only backup omission, and structurally malformed record crashes.
 GREEN after the fixes:
 
 ```text
-Exact:   19 passed (rotation, recovery, controller-limit, and configuration-boundary tests)
-Broader: 118 passed (journal, graph driver, graph API/decision/cancel, and signal-consumer paths)
-Assert-clean: `uv run python -m scripts.codemods.r04_otel_vocab --assert-clean` (no output)
+Exact:   30 passed (rotation, recovery, duplicate-retry, controller-limit, and configuration-boundary tests)
+Broader: 120 passed (journal, graph driver, graph API/decision/cancel, and signal-consumer paths)
 Pyright: 0 errors, 0 warnings, 0 informations
-Full:    4940 passed, 6 skipped, 3 Python 3.12 SQLite deprecation warnings
+Full:    4942 passed, 6 skipped, 3 Python 3.12 SQLite deprecation warnings
 Hooks:   `uv run pre-commit run --all-files` (all hooks passed)
 ```

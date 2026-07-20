@@ -131,12 +131,12 @@ def _to_record(e: StoredEvent) -> dict[str, object]:
     }
 
 
-def _append_lines(path: Path, lines: str) -> None:
+def _append_lines(path: Path, lines: str, operations: RotationOperations) -> None:
     with open(path, "a") as f:
         f.write(lines)
         f.flush()
-        os.fsync(f.fileno())
-    _fsync_directory(path.parent)
+    operations.fsync_active(path)
+    operations.fsync_parent(path)
 
 
 def _write_events_under_lock(
@@ -148,13 +148,17 @@ def _write_events_under_lock(
     """Serialize the complete journal read/rotate/write transaction by path."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with _advisory_lock(path):
-        _recover_linked_rotation(path)
+        _recover_linked_rotation(path, rotation_operations)
         active_positions = _read_positions(path)
         archive_segments = discover_journal_segments(path)
         if _should_rotate(path, max_bytes):
             _rotate(path, rotation_operations)
             active_positions: set[int] = set()
             archive_segments = discover_journal_segments(path)
+
+        if any(event.position in active_positions for event in events):
+            rotation_operations.fsync_active(path)
+            rotation_operations.fsync_parent(path)
 
         batch_positions: set[int] = set()
         new_events: list[StoredEvent] = []
@@ -169,7 +173,7 @@ def _write_events_under_lock(
             new_events.append(event)
         if new_events:
             lines = "\n".join(json.dumps(_to_record(event)) for event in new_events) + "\n"
-            _append_lines(path, lines)
+            _append_lines(path, lines, rotation_operations)
             active_positions.update(event.position for event in new_events)
         return active_positions
 
@@ -205,6 +209,8 @@ class RotationOperations(Protocol):
 
     def fsync_parent(self, path: Path) -> None: ...
 
+    def fsync_active(self, path: Path) -> None: ...
+
     def unlink(self, active: Path) -> None: ...
 
 
@@ -216,6 +222,10 @@ class SystemRotationOperations:
 
     def fsync_parent(self, path: Path) -> None:
         _fsync_directory(path.parent)
+
+    def fsync_active(self, path: Path) -> None:
+        with open(path) as file:
+            os.fsync(file.fileno())
 
     def unlink(self, active: Path) -> None:
         os.unlink(active)
@@ -233,15 +243,16 @@ def _rotate(path: Path, operations: RotationOperations) -> None:
     operations.fsync_parent(path)
 
 
-def _recover_linked_rotation(path: Path) -> None:
+def _recover_linked_rotation(path: Path, operations: RotationOperations) -> None:
     """Finish an interrupted link/unlink rotation before any new append."""
     if not path.exists():
         return
     for segment in discover_journal_segments(path):
         try:
             if path.samefile(segment.path):
-                os.unlink(path)
-                _fsync_directory(path.parent)
+                operations.fsync_parent(path)
+                operations.unlink(path)
+                operations.fsync_parent(path)
                 return
         except FileNotFoundError:
             continue

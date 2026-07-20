@@ -52,9 +52,28 @@ class RecordingRotationOperations:
         self.operations.append("fsync_parent")
         self._delegate.fsync_parent(path)
 
+    def fsync_active(self, path: Path) -> None:
+        self.operations.append("fsync_active")
+        self._delegate.fsync_active(path)
+
     def unlink(self, active: Path) -> None:
         self.operations.append("unlink")
         self._delegate.unlink(active)
+
+
+class FailFirstActiveSyncOperations(RecordingRotationOperations):
+    """Delegates real operations but fails the first active-file sync."""
+
+    def __init__(self, delegate: RotationOperations) -> None:
+        super().__init__(delegate)
+        self._fail_next_active_sync = True
+
+    def fsync_active(self, path: Path) -> None:
+        self.operations.append("fsync_active")
+        if self._fail_next_active_sync:
+            self._fail_next_active_sync = False
+            raise OSError("injected active journal sync failure")
+        self._delegate.fsync_active(path)
 
 
 def test_journal_config_defaults_to_64_mebibytes() -> None:
@@ -98,7 +117,36 @@ async def test_rotation_durably_links_fsyncs_unlinks_then_fsyncs_parent(tmp_path
 
     await JsonlOutboxObserver(path, max_bytes=1, rotation_operations=recorder)([_event(2)])
 
-    assert recorder.operations == ["link", "fsync_parent", "unlink", "fsync_parent"]
+    assert recorder.operations[:4] == ["link", "fsync_parent", "unlink", "fsync_parent"]
+
+
+async def test_linked_rotation_recovery_syncs_before_and_after_unlink(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+    path.write_text(json.dumps({"position": 1}) + "\n")
+    archive = tmp_path / "history.1-1.jsonl"
+    archive.hardlink_to(path)
+    recorder = RecordingRotationOperations(SystemRotationOperations())
+
+    await JsonlOutboxObserver(path, rotation_operations=recorder)([])
+
+    assert recorder.operations == ["fsync_parent", "unlink", "fsync_parent"]
+
+
+async def test_duplicate_retry_syncs_existing_active_record_before_succeeding(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "history.jsonl"
+    operations = FailFirstActiveSyncOperations(SystemRotationOperations())
+    observer = JsonlOutboxObserver(path, rotation_operations=operations)
+
+    with pytest.raises(OSError, match="injected active journal sync failure"):
+        await observer([_event(1)])
+    assert [json.loads(line)["position"] for line in path.read_text().splitlines()] == [1]
+
+    await observer([_event(1)])
+
+    assert operations.operations == ["fsync_active", "fsync_active", "fsync_parent"]
+    assert [json.loads(line)["position"] for line in path.read_text().splitlines()] == [1]
 
 
 async def test_restart_deduplicates_archived_positions_with_bounded_active_state(
