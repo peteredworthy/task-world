@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import json
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from dataclasses import dataclass
@@ -82,6 +83,11 @@ from orchestrator.workflow import (
     handle_update_run_worktree,
     handle_update_task_status,
 )
+
+
+def _legacy_usage_snapshot(value: object) -> object:
+    return value
+
 
 NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
@@ -359,19 +365,23 @@ async def test_create_run_snapshot_only_stores_one_event_but_projects_children(
                                         "agent_output": "output text",
                                         "action_log": {"actions": [{"kind": "edit"}]},
                                         "token_usage_by_model": [
-                                            {
-                                                "model": "gpt-5.3-codex",
-                                                "input_tokens": 10,
-                                                "output_tokens": 20,
-                                            }
+                                            _legacy_usage_snapshot(
+                                                {
+                                                    "model": "gpt-5.3-codex",
+                                                    "input_tokens": 10,
+                                                    "output_tokens": 20,
+                                                }
+                                            )
                                         ],
-                                        "metrics": {
-                                            "tokens_read": 2,
-                                            "tokens_write": 3,
-                                            "tokens_cache": 4,
-                                            "duration_ms": 5,
-                                            "num_actions": 6,
-                                        },
+                                        "metrics": _legacy_usage_snapshot(
+                                            {
+                                                "tokens_read": 2,
+                                                "tokens_write": 3,
+                                                "tokens_cache": 4,
+                                                "duration_ms": 5,
+                                                "num_actions": 6,
+                                            }
+                                        ),
                                         "agent_runner_type": "cli_subprocess",
                                         "agent_model": "gpt-5.3-codex",
                                         "agent_settings": {"temperature": 0},
@@ -422,7 +432,7 @@ async def test_create_run_snapshot_only_stores_one_event_but_projects_children(
     assert attempt.agent_output == "output text"
     assert attempt.action_log_json == {"actions": [{"kind": "edit"}]}
     assert attempt.token_usage_by_model == [
-        {"model": "gpt-5.3-codex", "input_tokens": 10, "output_tokens": 20}
+        _legacy_usage_snapshot({"model": "gpt-5.3-codex", "input_tokens": 10, "output_tokens": 20})
     ]
     assert attempt.runner_type == "cli_subprocess"
     assert attempt.agent_model == "gpt-5.3-codex"
@@ -539,7 +549,11 @@ async def test_create_run_replays_initial_attempt_gap_fields(
             total_tokens_cache=10,
             total_duration_ms=1500,
             total_num_actions=5,
-            token_usage_by_model=[{"model": "gpt-run", "input_tokens": 30, "output_tokens": 50}],
+            token_usage_by_model=[
+                _legacy_usage_snapshot(
+                    {"model": "gpt-run", "input_tokens": 30, "output_tokens": 50}
+                )
+            ],
             transition_tracker={"counts": {"S-02->S-01": 2}},
             aggregate_metrics_are_authoritative=True,
             initial_steps=[
@@ -569,11 +583,13 @@ async def test_create_run_replays_initial_attempt_gap_fields(
                             ],
                             action_log={"session_id": "session-1", "entries": []},
                             token_usage_by_model=[
-                                {
-                                    "model": "gpt-test",
-                                    "input_tokens": 3,
-                                    "output_tokens": 5,
-                                }
+                                _legacy_usage_snapshot(
+                                    {
+                                        "model": "gpt-test",
+                                        "input_tokens": 3,
+                                        "output_tokens": 5,
+                                    }
+                                )
                             ],
                             gen_ai_usage_input_tokens=10,
                             gen_ai_usage_output_tokens=4,
@@ -596,7 +612,9 @@ async def test_create_run_replays_initial_attempt_gap_fields(
             "output_lines": ["line one\nline two"],
             "auto_verify_results": [{"id": "output_exists", "passed": False, "output": "missing"}],
             "action_log": {"session_id": "session-1", "entries": []},
-            "token_usage_by_model": [{"model": "gpt-test", "input_tokens": 3, "output_tokens": 5}],
+            "token_usage_by_model": [
+                _legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3, "output_tokens": 5})
+            ],
             "gen_ai_usage_input_tokens": 10,
             "gen_ai_usage_output_tokens": 4,
             "gen_ai_usage_cache_read_input_tokens": 2,
@@ -627,7 +645,7 @@ async def test_create_run_replays_initial_attempt_gap_fields(
     ]
     assert attempt.action_log_json == {"session_id": "session-1", "entries": []}
     assert attempt.token_usage_by_model == [
-        {"model": "gpt-test", "input_tokens": 3, "output_tokens": 5}
+        _legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3, "output_tokens": 5})
     ]
     assert attempt.tokens_read == 10
     assert attempt.tokens_write == 4
@@ -645,7 +663,7 @@ async def test_create_run_replays_initial_attempt_gap_fields(
     assert run.total_duration_ms == 1500
     assert run.total_num_actions == 5
     assert run.token_usage_by_model == [
-        {"model": "gpt-run", "input_tokens": 30, "output_tokens": 50}
+        _legacy_usage_snapshot({"model": "gpt-run", "input_tokens": 30, "output_tokens": 50})
     ]
 
 
@@ -1292,7 +1310,7 @@ async def test_update_latest_attempt_projects_attempt_and_task_status(
             paused_at="2025-01-15T10:31:00+00:00",
             auto_verify_results=[{"id": "output_exists", "passed": False, "output": "missing"}],
             action_log={"session_id": "session-1", "entries": []},
-            token_usage_by_model=[{"model": "gpt-test", "input_tokens": 3}],
+            token_usage_by_model=[_legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3})],
             gen_ai_usage_input_tokens=10,
             gen_ai_usage_output_tokens=4,
             gen_ai_usage_cache_read_input_tokens=2,
@@ -1331,14 +1349,16 @@ async def test_update_latest_attempt_projects_attempt_and_task_status(
     assert attempt.duration_ms == 150
     assert attempt.num_actions == 3
     assert attempt.action_log_json == {"session_id": "session-1", "entries": []}
-    assert attempt.token_usage_by_model == [{"model": "gpt-test", "input_tokens": 3}]
+    assert attempt.token_usage_by_model == [
+        _legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3})
+    ]
     run = await _get_run(harness.session)
     assert run.total_tokens_read == 10
     assert run.total_tokens_write == 4
     assert run.total_tokens_cache == 2
     assert run.total_duration_ms == 150
     assert run.total_num_actions == 3
-    assert run.token_usage_by_model == [{"model": "gpt-test", "input_tokens": 3}]
+    assert run.token_usage_by_model == [{"model": "gpt-test"}]
 
     await _run_handler(
         harness,
@@ -1466,13 +1486,15 @@ async def test_record_task_reverted_emits_event_and_projects_snapshot(
                 "started_at": "2025-01-15T10:00:00Z",
                 "completed_at": "2025-01-15T10:30:00Z",
                 "outcome": "reverted",
-                "metrics": {
-                    "tokens_read": 1,
-                    "tokens_write": 2,
-                    "tokens_cache": 0,
-                    "duration_ms": 3,
-                    "num_actions": 4,
-                },
+                "metrics": _legacy_usage_snapshot(
+                    {
+                        "tokens_read": 1,
+                        "tokens_write": 2,
+                        "tokens_cache": 0,
+                        "duration_ms": 3,
+                        "num_actions": 4,
+                    }
+                ),
             },
             {
                 "id": "attempt-2",

@@ -72,6 +72,11 @@ from orchestrator.workflow import (
     deserialize_event,
 )
 
+
+def _legacy_usage_snapshot(value: object) -> object:
+    return value
+
+
 NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 NOW_ISO = "2025-01-15T10:30:00Z"
 
@@ -1180,7 +1185,7 @@ def test_run_created_round_trip() -> None:
         total_tokens_cache=10,
         total_duration_ms=1500,
         total_num_actions=5,
-        token_usage_by_model=[{"model": "gpt-test", "input_tokens": 3}],
+        token_usage_by_model=[_legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3})],
         transition_tracker={"counts": {"S-02->S-01": 2}},
         run_snapshot={
             "id": "run-1",
@@ -1205,7 +1210,9 @@ def test_run_created_round_trip() -> None:
     assert rt.total_tokens_cache == 10
     assert rt.total_duration_ms == 1500
     assert rt.total_num_actions == 5
-    assert rt.token_usage_by_model == [{"model": "gpt-test", "input_tokens": 3}]
+    assert rt.token_usage_by_model == [
+        _legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3})
+    ]
     assert rt.transition_tracker == {"counts": {"S-02->S-01": 2}}
     assert rt.run_snapshot["steps"][0]["tasks"][0]["id"] == "task-1"
 
@@ -1555,7 +1562,7 @@ def test_attempt_updated_round_trip() -> None:
         clear_paused_state=True,
         auto_verify_results=[{"id": "output_exists", "passed": True, "output": "ok"}],
         action_log={"session_id": "session-1"},
-        token_usage_by_model=[{"model": "gpt-test", "input_tokens": 3}],
+        token_usage_by_model=[_legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3})],
         gen_ai_usage_input_tokens=100,
         gen_ai_usage_output_tokens=50,
         gen_ai_usage_cache_read_input_tokens=10,
@@ -1574,7 +1581,9 @@ def test_attempt_updated_round_trip() -> None:
     assert rt.clear_paused_state is True
     assert rt.auto_verify_results == [{"id": "output_exists", "passed": True, "output": "ok"}]
     assert rt.action_log == {"session_id": "session-1"}
-    assert rt.token_usage_by_model == [{"model": "gpt-test", "input_tokens": 3}]
+    assert rt.token_usage_by_model == [
+        _legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3})
+    ]
     assert rt.gen_ai_usage_input_tokens == 100
     assert rt.new_task_status == TaskStatus.COMPLETED
     assert rt.apply_to_run_totals is False

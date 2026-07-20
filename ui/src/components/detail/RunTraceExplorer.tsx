@@ -78,10 +78,10 @@ const MODE_HELP: Record<AccountingMode, string> = {
 function metricTotal(metrics: TurnMetrics | null | undefined): number {
   if (!metrics) return 0;
   return (
-    metrics.input_tokens +
-    metrics.output_tokens +
-    metrics.cache_read_tokens +
-    metrics.cache_creation_tokens
+    metrics.gen_ai_usage_input_tokens +
+    metrics.gen_ai_usage_output_tokens +
+    metrics.gen_ai_usage_cache_read_input_tokens +
+    metrics.gen_ai_usage_cache_creation_input_tokens
   );
 }
 
@@ -94,10 +94,10 @@ function divideMetric(metrics: TurnMetrics | null | undefined, divisor: number):
     return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
   }
   return {
-    input: Math.round(metrics.input_tokens / divisor),
-    output: Math.round(metrics.output_tokens / divisor),
-    cacheRead: Math.round(metrics.cache_read_tokens / divisor),
-    cacheWrite: Math.round(metrics.cache_creation_tokens / divisor),
+    input: Math.round(metrics.gen_ai_usage_input_tokens / divisor),
+    output: Math.round(metrics.gen_ai_usage_output_tokens / divisor),
+    cacheRead: Math.round(metrics.gen_ai_usage_cache_read_input_tokens / divisor),
+    cacheWrite: Math.round(metrics.gen_ai_usage_cache_creation_input_tokens / divisor),
   };
 }
 
@@ -249,7 +249,7 @@ function prepareTrace(attempts: RunTraceAttempt[], mode: AccountingMode): Prepar
     const fallbackEntries = [...toolEntries, ...messageMetricEntries].sort(
       (a, b) => a.sequence_num - b.sequence_num,
     );
-    const initialContext = metricEntries[0]?.metrics?.input_tokens ?? 0;
+    const initialContext = metricEntries[0]?.metrics?.gen_ai_usage_input_tokens ?? 0;
     let context = mode === 'context' ? initialContext : 0;
     const pendingBlocks: Omit<TraceBlock, 'leftPct' | 'widthPct'>[] = [];
     let rowTokens = 0;
@@ -426,10 +426,10 @@ function EntryDetail({ entry, result }: { entry: ActionLogEntry; result: ActionL
         {entry.metrics && metricTotal(entry.metrics) > 0 && (
           <span className="text-[11px] text-text-muted">
             {tokenSummary({
-              input: entry.metrics.input_tokens,
-              output: entry.metrics.output_tokens,
-              cacheRead: entry.metrics.cache_read_tokens,
-              cacheWrite: entry.metrics.cache_creation_tokens,
+              input: entry.metrics.gen_ai_usage_input_tokens,
+              output: entry.metrics.gen_ai_usage_output_tokens,
+              cacheRead: entry.metrics.gen_ai_usage_cache_read_input_tokens,
+              cacheWrite: entry.metrics.gen_ai_usage_cache_creation_input_tokens,
             })}
           </span>
         )}

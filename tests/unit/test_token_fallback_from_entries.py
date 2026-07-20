@@ -26,8 +26,8 @@ from orchestrator.state.models import (
 
 
 def _make_entry(
-    input_tokens: int,
-    output_tokens: int,
+    gen_ai_usage_input_tokens: int,
+    gen_ai_usage_output_tokens: int,
     cache_read: int = 0,
     cache_creation: int = 0,
     kind: ActionEntryKind = ActionEntryKind.ASSISTANT_TEXT,
@@ -35,8 +35,8 @@ def _make_entry(
     return ActionLogEntry(
         kind=kind,
         metrics=TurnMetrics(
-            gen_ai_usage_input_tokens=input_tokens,
-            gen_ai_usage_output_tokens=output_tokens,
+            gen_ai_usage_input_tokens=gen_ai_usage_input_tokens,
+            gen_ai_usage_output_tokens=gen_ai_usage_output_tokens,
             gen_ai_usage_cache_read_input_tokens=cache_read,
             gen_ai_usage_cache_creation_input_tokens=cache_creation,
         ),
@@ -84,7 +84,7 @@ class TestExtractMetricsAndUsage:
     def test_uses_aggregate_when_populated(self) -> None:
         """When aggregate totals are non-zero, they take precedence over per-entry."""
         al = _make_action_log(
-            entries=[_make_entry(input_tokens=999, output_tokens=888)],
+            entries=[_make_entry(gen_ai_usage_input_tokens=999, gen_ai_usage_output_tokens=888)],
             total_input=1000,
             total_output=500,
         )
@@ -101,9 +101,13 @@ class TestExtractMetricsAndUsage:
         """When aggregates are zero but entries have metrics, sum entries instead."""
         al = _make_action_log(
             entries=[
-                _make_entry(input_tokens=500, output_tokens=200, cache_read=100),
+                _make_entry(
+                    gen_ai_usage_input_tokens=500, gen_ai_usage_output_tokens=200, cache_read=100
+                ),
                 _make_tool_entry(),  # no metrics — should be skipped
-                _make_entry(input_tokens=300, output_tokens=150, cache_creation=50),
+                _make_entry(
+                    gen_ai_usage_input_tokens=300, gen_ai_usage_output_tokens=150, cache_creation=50
+                ),
             ],
             total_input=0,
             total_output=0,
@@ -143,9 +147,13 @@ class TestExtractMetricsAndUsage:
     def test_real_world_1_9m_tokens_scenario(self) -> None:
         """Simulate the 1.9M-displayed-tokens scenario: aggregate=0, entries have data."""
         turns = [
-            _make_entry(input_tokens=100_000, output_tokens=5_000),
-            _make_entry(input_tokens=200_000, output_tokens=8_000),
-            _make_entry(input_tokens=1_600_000, output_tokens=30_000, cache_read=500_000),
+            _make_entry(gen_ai_usage_input_tokens=100_000, gen_ai_usage_output_tokens=5_000),
+            _make_entry(gen_ai_usage_input_tokens=200_000, gen_ai_usage_output_tokens=8_000),
+            _make_entry(
+                gen_ai_usage_input_tokens=1_600_000,
+                gen_ai_usage_output_tokens=30_000,
+                cache_read=500_000,
+            ),
         ]
         al = _make_action_log(entries=turns, total_input=0, total_output=0)
         result = _make_result(al)
@@ -170,7 +178,11 @@ def _make_run_with_action_log(action_log: ActionLog) -> Any:
         token_usage_by_model=[],
         action_log=action_log,
         metrics=SimpleNamespace(
-            duration_ms=0, num_actions=0, tokens_read=0, tokens_write=0, tokens_cache=0
+            duration_ms=0,
+            num_actions=0,
+            gen_ai_usage_input_tokens=0,
+            gen_ai_usage_output_tokens=0,
+            gen_ai_usage_cache_read_input_tokens=0,
         ),
     )
     task = SimpleNamespace(attempts=[attempt])
@@ -182,37 +194,49 @@ class TestComputeRunTotalsFromAttempts:
     def test_uses_per_entry_metrics_when_aggregate_zero(self) -> None:
         al = _make_action_log(
             entries=[
-                _make_entry(input_tokens=400, output_tokens=100),
+                _make_entry(gen_ai_usage_input_tokens=400, gen_ai_usage_output_tokens=100),
                 _make_tool_entry(),
-                _make_entry(input_tokens=600, output_tokens=200, cache_read=50),
+                _make_entry(
+                    gen_ai_usage_input_tokens=600, gen_ai_usage_output_tokens=200, cache_read=50
+                ),
             ],
             total_input=0,
             total_output=0,
         )
         run = _make_run_with_action_log(al)
-        tokens_read, tokens_write, tokens_cache, _dur, _actions, usage = (
-            compute_run_totals_from_attempts(run)
-        )
+        (
+            gen_ai_usage_input_tokens,
+            gen_ai_usage_output_tokens,
+            gen_ai_usage_cache_read_input_tokens,
+            _dur,
+            _actions,
+            usage,
+        ) = compute_run_totals_from_attempts(run)
 
-        assert tokens_read == 1000
-        assert tokens_write == 300
-        assert tokens_cache == 50
+        assert gen_ai_usage_input_tokens == 1000
+        assert gen_ai_usage_output_tokens == 300
+        assert gen_ai_usage_cache_read_input_tokens == 50
 
     def test_uses_aggregate_when_populated(self) -> None:
         al = _make_action_log(
-            entries=[_make_entry(input_tokens=999, output_tokens=999)],
+            entries=[_make_entry(gen_ai_usage_input_tokens=999, gen_ai_usage_output_tokens=999)],
             total_input=2000,
             total_output=1000,
             total_cache_read=200,
         )
         run = _make_run_with_action_log(al)
-        tokens_read, tokens_write, tokens_cache, _dur, _actions, _usage = (
-            compute_run_totals_from_attempts(run)
-        )
+        (
+            gen_ai_usage_input_tokens,
+            gen_ai_usage_output_tokens,
+            gen_ai_usage_cache_read_input_tokens,
+            _dur,
+            _actions,
+            _usage,
+        ) = compute_run_totals_from_attempts(run)
 
-        assert tokens_read == 2000
-        assert tokens_write == 1000
-        assert tokens_cache == 200
+        assert gen_ai_usage_input_tokens == 2000
+        assert gen_ai_usage_output_tokens == 1000
+        assert gen_ai_usage_cache_read_input_tokens == 200
 
     def test_returns_zero_when_no_entries_and_aggregate_zero(self) -> None:
         al = _make_action_log(entries=[], total_input=0, total_output=0)

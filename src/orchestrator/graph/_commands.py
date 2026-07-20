@@ -4422,7 +4422,7 @@ def _apply_record_gatekeeper_verdicts(
             gen_ai_usage_input_tokens=verdict.gen_ai_usage_input_tokens,
             gen_ai_usage_output_tokens=verdict.gen_ai_usage_output_tokens,
             gen_ai_usage_cache_read_input_tokens=verdict.gen_ai_usage_cache_read_input_tokens,
-            cache_write_tokens=verdict.cache_write_tokens,
+            gen_ai_usage_cache_creation_input_tokens=verdict.gen_ai_usage_cache_creation_input_tokens,
             cost_usd=verdict.cost_usd,
             wall_time_ms=verdict.wall_time_ms,
         )
@@ -4707,7 +4707,9 @@ def _gatekeeper_cost_payload(
         "gen_ai_usage_cache_read_input_tokens": sum(
             verdict.gen_ai_usage_cache_read_input_tokens for verdict in verdicts
         ),
-        "cache_write_tokens": sum(verdict.cache_write_tokens for verdict in verdicts),
+        "gen_ai_usage_cache_creation_input_tokens": sum(
+            verdict.gen_ai_usage_cache_creation_input_tokens for verdict in verdicts
+        ),
         "cost_usd": sum(verdict.cost_usd for verdict in verdicts),
         "wall_time_ms": sum(verdict.wall_time_ms for verdict in verdicts),
         "item_count": len(verdicts),
@@ -4720,7 +4722,7 @@ def _gatekeeper_cost_payload(
                 "gen_ai_usage_input_tokens": cost.gen_ai_usage_input_tokens,
                 "gen_ai_usage_output_tokens": cost.gen_ai_usage_output_tokens,
                 "gen_ai_usage_cache_read_input_tokens": cost.gen_ai_usage_cache_read_input_tokens,
-                "cache_write_tokens": cost.cache_write_tokens,
+                "gen_ai_usage_cache_creation_input_tokens": cost.gen_ai_usage_cache_creation_input_tokens,
                 "cost_usd": cost.cost_usd,
                 "wall_time_ms": cost.wall_time_ms,
             }.items()

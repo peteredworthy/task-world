@@ -292,7 +292,7 @@ function formatCostTitle(run: RunResponse): string {
     return `${label}: ${formatCost(run)}`;
   }
   const lines = run.token_usage_by_model.map(
-    (u) => `${u.model}: $${u.total_cost_usd.toFixed(2)}`,
+    (u) => `${u.model}: $${u.cost_usd.toFixed(2)}`,
   );
   lines.push(`Total: ${formatCost(run)}`);
   return lines.join('\n');

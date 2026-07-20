@@ -75,9 +75,18 @@ def _attempt_values_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "verifier_prompt": snapshot.get("verifier_prompt"),
         "verifier_comment": snapshot.get("verifier_comment"),
         "outcome": snapshot.get("outcome"),
-        "tokens_read": cast(int, metrics.get("tokens_read", 0)),
-        "tokens_write": cast(int, metrics.get("tokens_write", 0)),
-        "tokens_cache": cast(int, metrics.get("tokens_cache", 0)),
+        # Task 4's ORM columns retain their historical names.  Read current
+        # snapshots canonically, with exact legacy fallback for replay only.
+        "tokens_read": cast(
+            int, metrics.get("gen_ai_usage_input_tokens", metrics.get("tokens_read", 0))
+        ),
+        "tokens_write": cast(
+            int, metrics.get("gen_ai_usage_output_tokens", metrics.get("tokens_write", 0))
+        ),
+        "tokens_cache": cast(
+            int,
+            metrics.get("gen_ai_usage_cache_read_input_tokens", metrics.get("tokens_cache", 0)),
+        ),
         "duration_ms": cast(int, metrics.get("duration_ms", 0)),
         "num_actions": cast(int, metrics.get("num_actions", 0)),
         "grade_snapshot": snapshot.get("grade_snapshot") or None,

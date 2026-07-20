@@ -54,6 +54,20 @@ from orchestrator.time_utils import format_utc_datetime
 logger = logging.getLogger(__name__)
 
 _LIST_LIMIT = 100
+_LEGACY_USAGE_ALIASES = frozenset(
+    {
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "tokens_reasoning",
+        "cost_per_m_input",
+        "cost_per_m_output",
+        "cost_per_m_cache_read",
+        "cost_per_m_cache_creation",
+        "total_cost_usd",
+    }
+)
 
 
 def _parse_datetime(value: Any) -> datetime | None:
@@ -80,7 +94,10 @@ def _merge_token_usage_by_model(
     if not delta:
         return existing
 
-    merged: list[dict[str, Any]] = [dict(entry) for entry in (existing or [])]
+    merged: list[dict[str, Any]] = [
+        {key: value for key, value in entry.items() if key not in _LEGACY_USAGE_ALIASES}
+        for entry in (existing or [])
+    ]
     idx_by_model = {entry["model"]: index for index, entry in enumerate(merged) if "model" in entry}
     for usage in delta:
         usage_dict = dict(usage)
@@ -98,8 +115,6 @@ def _merge_token_usage_by_model(
                     canonical, usage_dict.get(legacy, 0)
                 )
                 merged_entry[canonical] = total
-                # Transitional bridge: keep legacy readers synchronized until Task 3 removal.
-                merged_entry[legacy] = total
             merged_entry["cost_usd"] = previous.get("cost_usd", 0.0) + usage_dict.get(
                 "cost_usd", 0.0
             )
@@ -122,7 +137,13 @@ def _merge_token_usage_by_model(
             merged[idx_by_model[model_name]] = merged_entry
         else:
             idx_by_model[model_name] = len(merged)
-            merged.append(usage_dict)
+            merged.append(
+                {
+                    key: value
+                    for key, value in usage_dict.items()
+                    if key not in _LEGACY_USAGE_ALIASES
+                }
+            )
     return merged
 
 

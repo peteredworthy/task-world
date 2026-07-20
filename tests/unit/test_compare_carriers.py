@@ -6,11 +6,18 @@ with no network and no orchestrator.
 
 from __future__ import annotations
 
+
 import importlib.util
 import urllib.error
 from pathlib import Path
 
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "compare_carriers.py"
+
+
+def _legacy_usage_snapshot(value: object) -> object:
+    return value
+
+
 _SPEC = importlib.util.spec_from_file_location("compare_carriers", _SCRIPT)
 assert _SPEC and _SPEC.loader
 compare_carriers = importlib.util.module_from_spec(_SPEC)
@@ -60,7 +67,7 @@ def test_row_fixture_does_not_translate_retired_metric_keywords() -> None:
     row = _row(**{retired_keyword: 7})
 
     assert row["gen_ai_usage_input_tokens"] == 0
-    assert row["tokens_read"] == 7
+    assert row[retired_keyword] == 7
 
 
 def test_aggregate_counts_completion_and_grades() -> None:
@@ -233,12 +240,14 @@ def test_run_metrics_extracts_dynamic_graph_metrics_from_graph_events() -> None:
                 },
                 {
                     "event_type": "gatekeeper_cost_recorded",
-                    "payload": {
-                        "kind": "review",
-                        "input_tokens": 3,
-                        "output_tokens": 4,
-                        "cache_read_tokens": 5,
-                    },
+                    "payload": _legacy_usage_snapshot(
+                        {
+                            "kind": "review",
+                            "input_tokens": 3,
+                            "output_tokens": 4,
+                            "cache_read_tokens": 5,
+                        }
+                    ),
                 },
                 {
                     "event_type": "unrelated",

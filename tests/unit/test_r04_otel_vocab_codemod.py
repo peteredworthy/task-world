@@ -90,6 +90,8 @@ snake_case = payload.get("input_tokens")
     assert 'payload.get("input_tokens")' in transformed
     assert diagnose_source(source, path="src/orchestrator/runners/agents/codex/parser.py") == ()
     assert FIELD_RENAMES["cache_read_tokens"] == "gen_ai_usage_cache_read_input_tokens"
+    assert FIELD_RENAMES["tokens_reasoning"] == "gen_ai_usage_reasoning_output_tokens"
+    assert FIELD_RENAMES["cache_write_tokens"] == "gen_ai_usage_cache_creation_input_tokens"
 
 
 def test_unproven_owners_and_dictionaries_are_diagnostic_not_renamed() -> None:
@@ -698,7 +700,7 @@ def extract_token_usage_update(payload):
 
 def test_explicit_test_internal_metric_context_is_mechanically_renamed() -> None:
     source = """\
-async def test_attempt_store_writes_metrics():
+async def test_attempt_store_appends_events_and_projects_attempt_and_run_totals():
     assert attempt.metrics.tokens_read == 1
 """
 
@@ -757,3 +759,176 @@ def test_extract_turn_usage_without_usage_field():
     assert '"usage": {"input_tokens": 1}' in transformed
     assert '"gen_ai_usage_input_tokens": 1' in transformed
     assert '"gen_ai_usage_output_tokens": 2' in transformed
+
+
+def test_db_source_does_not_exempt_live_legacy_internal_attribute() -> None:
+    source = "live = usage.input_tokens\n"
+
+    assert diagnose_source(source, path="src/orchestrator/db/projections/run_state.py")
+
+
+def test_provider_fixture_does_not_exempt_live_legacy_constructor_keyword() -> None:
+    source = "live = ProviderUsage(input_tokens=1)\n"
+
+    assert diagnose_source(source, path="tests/unit/test_codex_server_common.py")
+
+
+def test_task_four_fixture_does_not_exempt_live_legacy_mapping() -> None:
+    source = 'live = {"tokens_read": 1}\n'
+
+    assert diagnose_source(source, path="tests/unit/test_command_handlers.py")
+
+
+def test_task_four_helper_marks_only_wrapped_historical_mapping() -> None:
+    source = """\
+def _legacy_usage_snapshot(value):
+    return value
+
+def test_snapshot():
+    historical = _legacy_usage_snapshot({"input_tokens": 1})
+    live = {"input_tokens": 1}
+"""
+
+    diagnostics = diagnose_source(source, path="tests/unit/test_command_handlers.py")
+
+    assert len(diagnostics) == 1
+    assert "input_tokens" in diagnostics[0]
+
+
+def test_historical_fixture_wrapper_is_idempotent() -> None:
+    source = """\
+def _legacy_usage_snapshot(value: object) -> object:
+    return value
+
+historical = _legacy_usage_snapshot({"input_tokens": 1})
+"""
+
+    assert transform_source(source, path="tests/unit/test_command_handlers.py") == source
+
+
+def test_projection_legacy_read_fallbacks_are_exact_structural_boundaries() -> None:
+    run_state_source = """\
+_LEGACY_USAGE_ALIASES = frozenset({"input_tokens"})
+def _merge_token_usage_by_model(previous, usage):
+    return previous.get("input_tokens", 0) + usage.get("input_tokens", 0)
+"""
+    task_state_source = """\
+def _attempt_values_from_snapshot(metrics):
+    return {"tokens_read": metrics.get("tokens_read", 0)}
+"""
+    live_source = 'live = usage.get("input_tokens", 0)\n'
+
+    assert (
+        diagnose_source(run_state_source, path="src/orchestrator/db/projections/run_state.py") == ()
+    )
+    assert (
+        diagnose_source(task_state_source, path="src/orchestrator/db/projections/task_state.py")
+        == ()
+    )
+    assert diagnose_source(live_source, path="src/orchestrator/db/projections/run_state.py")
+
+
+def test_provider_fixture_call_preserves_only_raw_provider_builder_arguments() -> None:
+    raw_source = """\
+def test_result_event():
+    event = _result_event("done", input_tokens=1, output_tokens=2)
+"""
+    live_source = """\
+def test_result_event():
+    event = ProviderUsage(input_tokens=1)
+"""
+
+    assert diagnose_source(raw_source, path="tests/unit/test_claude_parser.py") == ()
+    assert diagnose_source(live_source, path="tests/unit/test_claude_parser.py")
+
+
+def test_historical_orm_assertion_is_limited_to_reviewed_fixture_function() -> None:
+    historical_source = """\
+async def test_create_run_replays_initial_attempt_gap_fields():
+    assert attempt.tokens_read == 2
+"""
+    live_source = """\
+async def test_new_live_assertion():
+    assert attempt.tokens_read == 2
+"""
+
+    assert diagnose_source(historical_source, path="tests/unit/test_command_handlers.py") == ()
+    assert diagnose_source(live_source, path="tests/unit/test_command_handlers.py")
+    assert (
+        transform_source(historical_source, path="tests/unit/test_command_handlers.py")
+        == historical_source
+    )
+
+
+def test_provider_fake_attribute_is_limited_to_reviewed_fixture_function() -> None:
+    raw_source = """\
+def test_extract_metrics_multiple_models():
+    return usage.cache_read_tokens
+"""
+    live_source = """\
+def test_live_metric():
+    return usage.cache_read_tokens
+"""
+
+    assert diagnose_source(raw_source, path="tests/unit/test_openhands_common.py") == ()
+    assert diagnose_source(live_source, path="tests/unit/test_openhands_common.py")
+
+
+def test_codex_fixture_preserves_total_token_usage_provider_shape_only() -> None:
+    raw_source = """\
+def test_extract_token_usage_update_camel_and_snake():
+    message = {"total_token_usage": {"input_tokens": 1, "output_tokens": 2}}
+"""
+    live_source = """\
+def test_unrelated_mapping():
+    message = {"input_tokens": 1, "output_tokens": 2}
+"""
+
+    assert diagnose_source(raw_source, path="tests/unit/test_codex_server_common.py") == ()
+    assert diagnose_source(live_source, path="tests/unit/test_codex_server_common.py")
+
+
+def test_current_event_payload_fixture_is_mechanically_canonicalized() -> None:
+    source = """\
+async def test_gatekeeper_cost_fields_survive_summary_reconstruction():
+    payload = {"cache_write_tokens": 3}
+"""
+
+    transformed = transform_source(
+        source, path="tests/unit/test_file_state_gatekeeper_event_payloads.py"
+    )
+
+    assert '"gen_ai_usage_cache_creation_input_tokens": 3' in transformed
+    assert (
+        diagnose_source(source, path="tests/unit/test_file_state_gatekeeper_event_payloads.py")
+        == ()
+    )
+
+
+def test_historical_fixture_helper_marks_only_wrapped_mapping_access() -> None:
+    source = """\
+def _legacy_usage_snapshot(value):
+    return value
+
+historical = _legacy_usage_snapshot(snapshot)["input_tokens"]
+live = snapshot["input_tokens"]
+"""
+
+    diagnostics = diagnose_source(source, path="tests/unit/test_run_aggregation.py")
+
+    assert len(diagnostics) == 1
+    assert "input_tokens" in diagnostics[0]
+
+
+def test_generated_historical_fixture_helper_preserves_docstring_and_future_import() -> None:
+    source = '''\
+"""Fixture module."""
+from __future__ import annotations
+
+historical = {"input_tokens": 1}
+'''
+
+    transformed = transform_source(source, path="tests/unit/test_run_aggregation.py")
+
+    assert transformed.index('"""Fixture module."""') < transformed.index("from __future__")
+    assert transformed.index("from __future__") < transformed.index("def _legacy_usage_snapshot")

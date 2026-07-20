@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import json
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -52,6 +53,11 @@ from orchestrator.workflow import (
     deserialize_event,
 )
 from orchestrator.workflow.service import WorkflowService
+
+
+def _legacy_usage_snapshot(value: object) -> object:
+    return value
+
 
 NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
@@ -667,13 +673,15 @@ async def test_canonical_projection_snapshot_matches_after_events_v2_rebuild(
                 auto_verify_results=[{"name": "durability", "passed": True}],
                 action_log={"events": [{"name": "submit", "args": {"b": 2, "a": 1}}]},
                 token_usage_by_model=[
-                    {
-                        "model": "gpt-5.3-codex",
-                        "output_tokens": 5,
-                        "input_tokens": 10,
-                        "cache_read_tokens": 3,
-                        "cache_creation_tokens": 1,
-                    }
+                    _legacy_usage_snapshot(
+                        {
+                            "model": "gpt-5.3-codex",
+                            "output_tokens": 5,
+                            "input_tokens": 10,
+                            "cache_read_tokens": 3,
+                            "cache_creation_tokens": 1,
+                        }
+                    )
                 ],
                 gen_ai_usage_input_tokens=10,
                 gen_ai_usage_output_tokens=5,

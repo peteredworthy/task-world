@@ -199,8 +199,8 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         "gatekeeper_cost_recorded": _spec(
             "gatekeeper_cost_recorded",
             projection="execution_id file_state_record_id",
-            light="cache_write_tokens consult_id cost_usd execution_id file_state_record_id gen_ai_usage_cache_read_input_tokens gen_ai_usage_input_tokens gen_ai_usage_output_tokens item_count model_id wall_time_ms",
-            summary="cache_write_tokens consult_id cost_usd execution_id file_state_record_id gen_ai_usage_cache_read_input_tokens gen_ai_usage_input_tokens gen_ai_usage_output_tokens item_count model_id wall_time_ms",
+            light="consult_id cost_usd execution_id file_state_record_id gen_ai_usage_cache_creation_input_tokens gen_ai_usage_cache_read_input_tokens gen_ai_usage_input_tokens gen_ai_usage_output_tokens item_count model_id wall_time_ms",
+            summary="consult_id cost_usd execution_id file_state_record_id gen_ai_usage_cache_creation_input_tokens gen_ai_usage_cache_read_input_tokens gen_ai_usage_input_tokens gen_ai_usage_output_tokens item_count model_id wall_time_ms",
             node_detail="execution_id",
         ),
         "gatekeeper_verdict_recorded": _spec(

@@ -169,7 +169,7 @@ def test_record_gatekeeper_verdicts_allows_only_nested_accounting_overrides() ->
         "gen_ai_usage_input_tokens": 20,
         "gen_ai_usage_output_tokens": 10,
         "gen_ai_usage_cache_read_input_tokens": 5,
-        "cache_write_tokens": 2,
+        "gen_ai_usage_cache_creation_input_tokens": 2,
         "cost_usd": 0.25,
         "wall_time_ms": 40,
     }
@@ -613,7 +613,7 @@ def _cost_event(record_id: str, *, position: int) -> EventEnvelope:
             "gen_ai_usage_input_tokens": 11,
             "gen_ai_usage_output_tokens": 3,
             "gen_ai_usage_cache_read_input_tokens": 0,
-            "cache_write_tokens": 0,
+            "gen_ai_usage_cache_creation_input_tokens": 0,
             "cost_usd": 0.001,
             "wall_time_ms": 12,
             "item_count": 1,

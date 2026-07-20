@@ -6,6 +6,7 @@ token usage is correctly accumulated at both the attempt and run level.
 
 from __future__ import annotations
 
+
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 
@@ -17,6 +18,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from orchestrator.db import Base, AttemptModel, RunModel, RunRepository, StepModel, TaskModel
 from orchestrator.db.access.mutations import update_latest_attempt
 from orchestrator.state.models import ModelTokenUsage, AttemptMetrics
+
+
+def _legacy_usage_snapshot(value: object) -> object:
+    return value
+
 
 _NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
@@ -201,17 +207,19 @@ async def test_empty_token_usage_leaves_run_unchanged(session: AsyncSession) -> 
     run = _make_run_graph(run_id="run-3", task_id="task-3", attempt_id="att-3")
     # Pre-set the run's token_usage_by_model
     run.token_usage_by_model = [
-        {
-            "model": "existing-model",
-            "input_tokens": 5_000,
-            "output_tokens": 500,
-            "cache_read_tokens": 0,
-            "cache_creation_tokens": 0,
-            "cost_per_m_input": 2.5,
-            "cost_per_m_output": 10.0,
-            "cost_per_m_cache_read": 0.0,
-            "cost_per_m_cache_creation": 0.0,
-        }
+        _legacy_usage_snapshot(
+            {
+                "model": "existing-model",
+                "input_tokens": 5_000,
+                "output_tokens": 500,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cost_per_m_input": 2.5,
+                "cost_per_m_output": 10.0,
+                "cost_per_m_cache_read": 0.0,
+                "cost_per_m_cache_creation": 0.0,
+            }
+        )
     ]
     session.add(run)
     await session.flush()
@@ -229,24 +237,26 @@ async def test_empty_token_usage_leaves_run_unchanged(session: AsyncSession) -> 
     assert run_model.token_usage_by_model is not None
     assert len(run_model.token_usage_by_model) == 1, "existing entry should be unchanged"
     assert run_model.token_usage_by_model[0]["model"] == "existing-model"
-    assert run_model.token_usage_by_model[0]["input_tokens"] == 5_000
+    assert _legacy_usage_snapshot(run_model.token_usage_by_model[0])["input_tokens"] == 5_000
 
 
 async def test_none_token_usage_leaves_run_unchanged(session: AsyncSession) -> None:
     """update_latest_attempt with token_usage_by_model=None does not modify run."""
     run = _make_run_graph(run_id="run-4", task_id="task-4", attempt_id="att-4")
     run.token_usage_by_model = [
-        {
-            "model": "existing-model",
-            "input_tokens": 3_000,
-            "output_tokens": 300,
-            "cache_read_tokens": 0,
-            "cache_creation_tokens": 0,
-            "cost_per_m_input": 2.5,
-            "cost_per_m_output": 10.0,
-            "cost_per_m_cache_read": 0.0,
-            "cost_per_m_cache_creation": 0.0,
-        }
+        _legacy_usage_snapshot(
+            {
+                "model": "existing-model",
+                "input_tokens": 3_000,
+                "output_tokens": 300,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+                "cost_per_m_input": 2.5,
+                "cost_per_m_output": 10.0,
+                "cost_per_m_cache_read": 0.0,
+                "cost_per_m_cache_creation": 0.0,
+            }
+        )
     ]
     session.add(run)
     await session.flush()
@@ -261,7 +271,7 @@ async def test_none_token_usage_leaves_run_unchanged(session: AsyncSession) -> N
     run_model = result.scalar_one()
 
     assert run_model.token_usage_by_model is not None
-    assert run_model.token_usage_by_model[0]["input_tokens"] == 3_000
+    assert _legacy_usage_snapshot(run_model.token_usage_by_model[0])["input_tokens"] == 3_000
 
 
 # ---------------------------------------------------------------------------

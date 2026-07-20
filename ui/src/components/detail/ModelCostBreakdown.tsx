@@ -1,15 +1,6 @@
 import { formatTokens } from '../../lib/format';
 import type { ModelTokenUsage, RunResponse } from '../../types';
 
-function isRateUnknown(usage: ModelTokenUsage): boolean {
-  return (
-    usage.cost_per_m_cache_read === 0 &&
-    usage.cost_per_m_cache_creation === 0 &&
-    usage.cost_per_m_input === 0 &&
-    usage.cost_per_m_output === 0
-  );
-}
-
 function formatCost(usd: number): string {
   if (usd === 0) return '$0.00';
   if (usd < 0.001) return '<$0.001';
@@ -22,7 +13,7 @@ interface ModelRowProps {
 }
 
 function ModelRow({ usage }: ModelRowProps) {
-  const unknown = isRateUnknown(usage);
+  const unknown = usage.rate_missing;
   return (
     <tr className="border-t border-border hover:bg-bg-elevated/50 transition-colors">
       <td className="py-2 px-3 text-sm text-text-primary font-mono whitespace-nowrap">
@@ -36,22 +27,22 @@ function ModelRow({ usage }: ModelRowProps) {
         </div>
       </td>
       <td className="py-2 px-3 text-sm text-text-secondary text-right tabular-nums">
-        {formatTokens(usage.input_tokens)}
+        {formatTokens(usage.gen_ai_usage_input_tokens)}
       </td>
       <td className="py-2 px-3 text-sm text-text-secondary text-right tabular-nums">
-        {formatTokens(usage.cache_read_tokens)}
+        {formatTokens(usage.gen_ai_usage_cache_read_input_tokens)}
       </td>
       <td className="py-2 px-3 text-sm text-text-secondary text-right tabular-nums">
-        {formatTokens(usage.cache_creation_tokens)}
+        {formatTokens(usage.gen_ai_usage_cache_creation_input_tokens)}
       </td>
       <td className="py-2 px-3 text-sm text-text-secondary text-right tabular-nums">
-        {formatTokens(usage.output_tokens)}
+        {formatTokens(usage.gen_ai_usage_output_tokens)}
       </td>
       <td className="py-2 px-3 text-sm text-right tabular-nums">
         {unknown ? (
           <span className="text-text-muted">—</span>
         ) : (
-          <span className="text-text-primary font-medium">{formatCost(usage.total_cost_usd)}</span>
+          <span className="text-text-primary font-medium">{formatCost(usage.cost_usd)}</span>
         )}
       </td>
     </tr>
@@ -135,8 +126,8 @@ export function ModelCostBreakdown({ run }: ModelCostBreakdownProps) {
     return <LegacyFallback run={run} />;
   }
 
-  const grandTotal = usages.reduce((sum, u) => sum + u.total_cost_usd, 0);
-  const allUnknown = usages.every(isRateUnknown);
+  const grandTotal = usages.reduce((sum, u) => sum + u.cost_usd, 0);
+  const allUnknown = usages.every((usage) => usage.rate_missing);
 
   return (
     <div className="rounded-lg border border-border bg-bg-card overflow-hidden">

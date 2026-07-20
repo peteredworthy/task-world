@@ -2172,7 +2172,7 @@ class GatekeeperVerdictRow(StrictEventPayload):
     gen_ai_usage_input_tokens: StrictInt = Field(default=0, ge=0)
     gen_ai_usage_output_tokens: StrictInt = Field(default=0, ge=0)
     gen_ai_usage_cache_read_input_tokens: StrictInt = Field(default=0, ge=0)
-    cache_write_tokens: StrictInt = Field(default=0, ge=0)
+    gen_ai_usage_cache_creation_input_tokens: StrictInt = Field(default=0, ge=0)
     cost_usd: StrictFloat = Field(default=0.0, ge=0.0)
     wall_time_ms: StrictInt = Field(default=0, ge=0)
 
@@ -2193,7 +2193,7 @@ class GatekeeperCostRecordedPayload(StrictEventPayload):
     gen_ai_usage_input_tokens: StrictInt = Field(default=0, ge=0)
     gen_ai_usage_output_tokens: StrictInt = Field(default=0, ge=0)
     gen_ai_usage_cache_read_input_tokens: StrictInt = Field(default=0, ge=0)
-    cache_write_tokens: StrictInt = Field(default=0, ge=0)
+    gen_ai_usage_cache_creation_input_tokens: StrictInt = Field(default=0, ge=0)
     item_count: StrictInt = Field(default=0, ge=0)
     cost_usd: StrictFloat = Field(default=0.0, ge=0.0)
     wall_time_ms: StrictInt = Field(default=0, ge=0)

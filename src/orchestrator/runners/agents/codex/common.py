@@ -698,7 +698,8 @@ def extract_token_usage_update(notification: dict[str, Any]) -> dict[str, int] |
       - ``cachedInputTokens|cached_input_tokens|cache_read_input_tokens`` → ``tokens_cache``
       - ``outputTokens|output_tokens`` + ``reasoningOutputTokens|reasoning_output_tokens``
         → ``tokens_write`` (reasoning folded into write)
-      - ``reasoningOutputTokens|reasoning_output_tokens`` → ``tokens_reasoning``
+      - ``reasoningOutputTokens|reasoning_output_tokens`` →
+        ``gen_ai_usage_reasoning_output_tokens``
         (also surfaced separately for observability)
 
     Args:
@@ -706,7 +707,8 @@ def extract_token_usage_update(notification: dict[str, Any]) -> dict[str, int] |
 
     Returns:
         Dict with keys ``tokens_read``, ``tokens_write``, ``tokens_cache``,
-        ``tokens_reasoning`` when the notification is ``thread/tokenUsage/updated``,
+        ``gen_ai_usage_reasoning_output_tokens`` when the notification is
+        ``thread/tokenUsage/updated``,
         otherwise ``None``.
     """
     if notification.get("method") != "thread/tokenUsage/updated":
@@ -752,7 +754,7 @@ def extract_token_usage_update(notification: dict[str, Any]) -> dict[str, int] |
         "gen_ai_usage_input_tokens": 0,
         "gen_ai_usage_output_tokens": 0,
         "gen_ai_usage_cache_read_input_tokens": 0,
-        "tokens_reasoning": 0,
+        "gen_ai_usage_reasoning_output_tokens": 0,
     }
 
     # Input tokens
@@ -785,7 +787,7 @@ def extract_token_usage_update(notification: dict[str, Any]) -> dict[str, int] |
             gen_ai_usage_reasoning_output_tokens = int(val)
             break
 
-    result["tokens_reasoning"] = gen_ai_usage_reasoning_output_tokens
+    result["gen_ai_usage_reasoning_output_tokens"] = gen_ai_usage_reasoning_output_tokens
     result["gen_ai_usage_output_tokens"] = (
         gen_ai_usage_output_tokens + gen_ai_usage_reasoning_output_tokens
     )
@@ -809,13 +811,13 @@ def extract_turn_usage(notification: dict[str, Any]) -> dict[str, int]:
 
     Returns:
         Dict with keys ``tokens_read``, ``tokens_write``, ``tokens_cache``,
-        ``tokens_reasoning``. All values default to 0 when usage data is absent.
+        ``gen_ai_usage_reasoning_output_tokens``. All values default to 0 when usage data is absent.
     """
     result = {
         "gen_ai_usage_input_tokens": 0,
         "gen_ai_usage_output_tokens": 0,
         "gen_ai_usage_cache_read_input_tokens": 0,
-        "tokens_reasoning": 0,
+        "gen_ai_usage_reasoning_output_tokens": 0,
     }
 
     if notification.get("method") != "turn/completed":
@@ -857,7 +859,7 @@ def extract_turn_usage(notification: dict[str, Any]) -> dict[str, int]:
             gen_ai_usage_reasoning_output_tokens = int(val)
             break
 
-    result["tokens_reasoning"] = gen_ai_usage_reasoning_output_tokens
+    result["gen_ai_usage_reasoning_output_tokens"] = gen_ai_usage_reasoning_output_tokens
     result["gen_ai_usage_output_tokens"] = (
         gen_ai_usage_output_tokens + gen_ai_usage_reasoning_output_tokens
     )

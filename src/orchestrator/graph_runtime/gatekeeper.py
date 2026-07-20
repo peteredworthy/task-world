@@ -42,7 +42,7 @@ class GatekeeperVerdict:
     gen_ai_usage_input_tokens: int = 0
     gen_ai_usage_output_tokens: int = 0
     gen_ai_usage_cache_read_input_tokens: int = 0
-    cache_write_tokens: int = 0
+    gen_ai_usage_cache_creation_input_tokens: int = 0
     cost_usd: float = 0.0
     wall_time_ms: int = 0
 
@@ -56,7 +56,7 @@ class GatekeeperVerdict:
             "gen_ai_usage_input_tokens": self.gen_ai_usage_input_tokens,
             "gen_ai_usage_output_tokens": self.gen_ai_usage_output_tokens,
             "gen_ai_usage_cache_read_input_tokens": self.gen_ai_usage_cache_read_input_tokens,
-            "cache_write_tokens": self.cache_write_tokens,
+            "gen_ai_usage_cache_creation_input_tokens": self.gen_ai_usage_cache_creation_input_tokens,
             "cost_usd": self.cost_usd,
             "wall_time_ms": self.wall_time_ms,
         }

@@ -26,15 +26,14 @@ function makeRun(overrides: Partial<RunResponse> = {}): RunResponse {
 function makeUsage(overrides: Partial<ModelTokenUsage> = {}): ModelTokenUsage {
   return {
     model: 'claude-sonnet-4-6',
-    cache_read_tokens: 0,
-    cache_creation_tokens: 0,
-    input_tokens: 1000,
-    output_tokens: 500,
-    cost_per_m_cache_read: 0.30,
-    cost_per_m_cache_creation: 3.75,
-    cost_per_m_input: 3.00,
-    cost_per_m_output: 15.00,
-    total_cost_usd: 0.0105,
+    gen_ai_usage_cache_read_input_tokens: 0,
+    gen_ai_usage_cache_creation_input_tokens: 0,
+    gen_ai_usage_input_tokens: 1000,
+    gen_ai_usage_output_tokens: 500,
+    gen_ai_usage_reasoning_output_tokens: 0,
+    cost_usd: 0.0105,
+    latency_ms: 0,
+    rate_missing: false,
     ...overrides,
   };
 }
@@ -42,8 +41,8 @@ function makeUsage(overrides: Partial<ModelTokenUsage> = {}): ModelTokenUsage {
 describe('ModelCostBreakdown', () => {
   it('renders correct rows with model names and grand total for multi-model table', () => {
     const usages: ModelTokenUsage[] = [
-      makeUsage({ model: 'claude-sonnet-4-6', total_cost_usd: 0.01 }),
-      makeUsage({ model: 'gpt-4o', total_cost_usd: 0.02 }),
+      makeUsage({ model: 'claude-sonnet-4-6', cost_usd: 0.01 }),
+      makeUsage({ model: 'gpt-4o', cost_usd: 0.02 }),
     ];
     render(<ModelCostBreakdown run={makeRun({ token_usage_by_model: usages })} />);
 
@@ -53,15 +52,12 @@ describe('ModelCostBreakdown', () => {
     expect(screen.getByText('$0.0300')).toBeInTheDocument();
   });
 
-  it('shows "cost unknown" badge when all cost rates are zero', () => {
+  it('shows "cost unknown" badge when the rate is missing', () => {
     const usages: ModelTokenUsage[] = [
       makeUsage({
         model: 'mystery-model',
-        cost_per_m_cache_read: 0,
-        cost_per_m_cache_creation: 0,
-        cost_per_m_input: 0,
-        cost_per_m_output: 0,
-        total_cost_usd: 0,
+        rate_missing: true,
+        cost_usd: 0,
       }),
     ];
     render(<ModelCostBreakdown run={makeRun({ token_usage_by_model: usages })} />);
@@ -94,11 +90,11 @@ describe('ModelCostBreakdown', () => {
     ).toBeInTheDocument();
   });
 
-  it('grand total row sums total_cost_usd across all entries correctly', () => {
+  it('grand total row sums cost_usd across all entries correctly', () => {
     const usages: ModelTokenUsage[] = [
-      makeUsage({ model: 'model-a', total_cost_usd: 0.005 }),
-      makeUsage({ model: 'model-b', total_cost_usd: 0.010 }),
-      makeUsage({ model: 'model-c', total_cost_usd: 0.015 }),
+      makeUsage({ model: 'model-a', cost_usd: 0.005 }),
+      makeUsage({ model: 'model-b', cost_usd: 0.010 }),
+      makeUsage({ model: 'model-c', cost_usd: 0.015 }),
     ];
     render(<ModelCostBreakdown run={makeRun({ token_usage_by_model: usages })} />);
 
@@ -108,7 +104,7 @@ describe('ModelCostBreakdown', () => {
 
   it('renders without errors for single-model case', () => {
     const usages: ModelTokenUsage[] = [
-      makeUsage({ model: 'claude-opus-4-6', total_cost_usd: 0.25 }),
+      makeUsage({ model: 'claude-opus-4-6', cost_usd: 0.25 }),
     ];
     render(<ModelCostBreakdown run={makeRun({ token_usage_by_model: usages })} />);
 

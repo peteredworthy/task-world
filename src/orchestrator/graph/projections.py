@@ -3851,7 +3851,9 @@ def project_gatekeeper_report(events: list[EventEnvelope]) -> dict[str, dict[str
             run["gen_ai_usage_input_tokens"] += cost.gen_ai_usage_input_tokens
             run["gen_ai_usage_output_tokens"] += cost.gen_ai_usage_output_tokens
             run["gen_ai_usage_cache_read_input_tokens"] += cost.gen_ai_usage_cache_read_input_tokens
-            run["cache_write_tokens"] += cost.cache_write_tokens
+            run["gen_ai_usage_cache_creation_input_tokens"] += (
+                cost.gen_ai_usage_cache_creation_input_tokens
+            )
             run["cost_usd"] += cost.cost_usd
             run["wall_time_ms"] += cost.wall_time_ms
             _record_model_cost(run, cost_payload)
@@ -5524,7 +5526,7 @@ def _empty_gatekeeper_report(run_id: str) -> dict[str, Any]:
         "gen_ai_usage_input_tokens": 0,
         "gen_ai_usage_output_tokens": 0,
         "gen_ai_usage_cache_read_input_tokens": 0,
-        "cache_write_tokens": 0,
+        "gen_ai_usage_cache_creation_input_tokens": 0,
         "cost_usd": 0.0,
         "wall_time_ms": 0,
         "models": {},
@@ -5544,7 +5546,7 @@ def _record_model_cost(run: dict[str, Any], payload: dict[str, Any]) -> None:
             "gen_ai_usage_input_tokens": 0,
             "gen_ai_usage_output_tokens": 0,
             "gen_ai_usage_cache_read_input_tokens": 0,
-            "cache_write_tokens": 0,
+            "gen_ai_usage_cache_creation_input_tokens": 0,
             "cost_usd": 0.0,
             "wall_time_ms": 0,
             "executions": [],
@@ -5556,7 +5558,9 @@ def _record_model_cost(run: dict[str, Any], payload: dict[str, Any]) -> None:
     model["gen_ai_usage_cache_read_input_tokens"] += _payload_number(
         payload, "gen_ai_usage_cache_read_input_tokens"
     )
-    model["cache_write_tokens"] += _payload_number(payload, "cache_write_tokens")
+    model["gen_ai_usage_cache_creation_input_tokens"] += _payload_number(
+        payload, "gen_ai_usage_cache_creation_input_tokens"
+    )
     model["cost_usd"] += _payload_float(payload, "cost_usd")
     model["wall_time_ms"] += _payload_number(payload, "wall_time_ms")
     execution_id = payload.get("execution_id")

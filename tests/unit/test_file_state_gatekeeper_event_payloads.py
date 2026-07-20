@@ -85,7 +85,7 @@ async def test_gatekeeper_cost_fields_survive_summary_reconstruction() -> None:
         "gen_ai_usage_input_tokens": 11,
         "gen_ai_usage_output_tokens": 7,
         "gen_ai_usage_cache_read_input_tokens": 5,
-        "cache_write_tokens": 3,
+        "gen_ai_usage_cache_creation_input_tokens": 3,
         "item_count": 2,
         "cost_usd": 0.125,
         "wall_time_ms": 19,

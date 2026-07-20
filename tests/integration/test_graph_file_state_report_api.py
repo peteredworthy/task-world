@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 from typing import Any
 from uuid import uuid4
 
@@ -13,6 +14,10 @@ from orchestrator.db.access.mutations import save_run
 from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock
 from orchestrator.graph_runtime import GraphEventStore
 from orchestrator.state.factory import create_run_from_routine
+
+
+def _legacy_usage_snapshot(value: object) -> object:
+    return value
 
 
 def _routine() -> RoutineConfig:
@@ -133,17 +138,19 @@ async def _seed_file_state_report_run(app: Any, run_id: str) -> None:
                 "execution_id": "exec-1",
                 "producer_node_id": "worker-1",
                 "verdicts": [
-                    {
-                        "path": "reports/result.xml",
-                        "classification": "test_artifact",
-                        "confidence": 0.92,
-                        "rationale": "metadata shape matches test output",
-                        "model_id": "fake-small-model",
-                        "input_tokens": 7,
-                        "output_tokens": 2,
-                        "cost_usd": 0.0001,
-                        "wall_time_ms": 5,
-                    }
+                    _legacy_usage_snapshot(
+                        {
+                            "path": "reports/result.xml",
+                            "classification": "test_artifact",
+                            "confidence": 0.92,
+                            "rationale": "metadata shape matches test output",
+                            "model_id": "fake-small-model",
+                            "input_tokens": 7,
+                            "output_tokens": 2,
+                            "cost_usd": 0.0001,
+                            "wall_time_ms": 5,
+                        }
+                    )
                 ],
                 "resolved_count": 1,
             },

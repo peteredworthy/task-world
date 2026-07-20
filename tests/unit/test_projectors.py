@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import json
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
@@ -37,6 +38,11 @@ from orchestrator.workflow import (
     TaskReverted,
     TaskStatusChanged,
 )
+
+
+def _legacy_usage_snapshot(value: object) -> object:
+    return value
+
 
 NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
@@ -409,13 +415,15 @@ async def test_task_reverted_restores_task_and_attempts_from_snapshot(
                 "completed_at": "2025-01-15T10:30:00Z",
                 "paused_at": None,
                 "outcome": "reverted",
-                "metrics": {
-                    "tokens_read": 7,
-                    "tokens_write": 3,
-                    "tokens_cache": 1,
-                    "duration_ms": 250,
-                    "num_actions": 2,
-                },
+                "metrics": _legacy_usage_snapshot(
+                    {
+                        "tokens_read": 7,
+                        "tokens_write": 3,
+                        "tokens_cache": 1,
+                        "duration_ms": 250,
+                        "num_actions": 2,
+                    }
+                ),
                 "grade_snapshot": [],
                 "auto_verify_results": [],
                 "token_usage_by_model": [],
@@ -435,13 +443,15 @@ async def test_task_reverted_restores_task_and_attempts_from_snapshot(
                 "completed_at": None,
                 "paused_at": None,
                 "outcome": None,
-                "metrics": {
-                    "tokens_read": 0,
-                    "tokens_write": 0,
-                    "tokens_cache": 0,
-                    "duration_ms": 0,
-                    "num_actions": 0,
-                },
+                "metrics": _legacy_usage_snapshot(
+                    {
+                        "tokens_read": 0,
+                        "tokens_write": 0,
+                        "tokens_cache": 0,
+                        "duration_ms": 0,
+                        "num_actions": 0,
+                    }
+                ),
                 "grade_snapshot": [],
                 "auto_verify_results": [],
                 "token_usage_by_model": [],
@@ -1055,7 +1065,7 @@ async def test_run_created_inserts_explicit_metadata_without_snapshot(
         total_tokens_cache=10,
         total_duration_ms=1500,
         total_num_actions=5,
-        token_usage_by_model=[{"model": "gpt-test", "input_tokens": 3}],
+        token_usage_by_model=[_legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3})],
         transition_tracker={"counts": {"S-02->S-01": 2}},
     )
     await projector.handle(event, session)
@@ -1072,7 +1082,9 @@ async def test_run_created_inserts_explicit_metadata_without_snapshot(
     assert run.total_tokens_cache == 10
     assert run.total_duration_ms == 1500
     assert run.total_num_actions == 5
-    assert run.token_usage_by_model == [{"model": "gpt-test", "input_tokens": 3}]
+    assert run.token_usage_by_model == [
+        _legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3})
+    ]
     assert run.transition_tracker == {"counts": {"S-02->S-01": 2}}
 
 
@@ -1260,13 +1272,15 @@ def _snapshot_run_created_event() -> RunCreated:
                                     "started_at": "2025-01-15T10:30:00Z",
                                     "outcome": "paused",
                                     "paused_at": "2025-01-15T10:31:00Z",
-                                    "metrics": {
-                                        "tokens_read": 2,
-                                        "tokens_write": 3,
-                                        "tokens_cache": 4,
-                                        "duration_ms": 5,
-                                        "num_actions": 6,
-                                    },
+                                    "metrics": _legacy_usage_snapshot(
+                                        {
+                                            "tokens_read": 2,
+                                            "tokens_write": 3,
+                                            "tokens_cache": 4,
+                                            "duration_ms": 5,
+                                            "num_actions": 6,
+                                        }
+                                    ),
                                     "agent_runner_type": "cli_subprocess",
                                     "agent_model": "gpt-5.3-codex",
                                     "agent_settings": {"model": "gpt-5.3-codex"},
@@ -1278,11 +1292,13 @@ def _snapshot_run_created_event() -> RunCreated:
                                     "agent_output": "agent output",
                                     "action_log": {"actions": [{"kind": "edit"}]},
                                     "token_usage_by_model": [
-                                        {
-                                            "model": "gpt-5.3-codex",
-                                            "input_tokens": 2,
-                                            "output_tokens": 3,
-                                        }
+                                        _legacy_usage_snapshot(
+                                            {
+                                                "model": "gpt-5.3-codex",
+                                                "input_tokens": 2,
+                                                "output_tokens": 3,
+                                            }
+                                        )
                                     ],
                                     "start_commit": "start-sha",
                                     "end_commit": "end-sha",
@@ -1379,7 +1395,7 @@ async def test_run_created_snapshot_projected_by_registry_into_initial_steps_and
     assert attempts[0].agent_output == "agent output"
     assert attempts[0].action_log_json == {"actions": [{"kind": "edit"}]}
     assert attempts[0].token_usage_by_model == [
-        {"model": "gpt-5.3-codex", "input_tokens": 2, "output_tokens": 3}
+        _legacy_usage_snapshot({"model": "gpt-5.3-codex", "input_tokens": 2, "output_tokens": 3})
     ]
     assert attempts[0].start_commit == "start-sha"
     assert attempts[0].end_commit == "end-sha"
@@ -1529,7 +1545,7 @@ async def test_attempt_updated_can_skip_run_totals_projection(
     run.total_tokens_cache = 10
     run.total_duration_ms = 1500
     run.total_num_actions = 5
-    run.token_usage_by_model = [{"model": "gpt-run", "input_tokens": 30}]
+    run.token_usage_by_model = [_legacy_usage_snapshot({"model": "gpt-run", "input_tokens": 30})]
     await populated_session.flush()
 
     task_projector = TaskStateProjector()
@@ -1555,7 +1571,7 @@ async def test_attempt_updated_can_skip_run_totals_projection(
         gen_ai_usage_cache_read_input_tokens=2,
         duration_ms=150,
         num_actions=3,
-        token_usage_by_model=[{"model": "gpt-attempt", "input_tokens": 3}],
+        token_usage_by_model=[_legacy_usage_snapshot({"model": "gpt-attempt", "input_tokens": 3})],
         apply_to_run_totals=False,
     )
     await task_projector.handle(event, populated_session)
@@ -1569,14 +1585,18 @@ async def test_attempt_updated_can_skip_run_totals_projection(
     assert attempts[0].tokens_cache == 2
     assert attempts[0].duration_ms == 150
     assert attempts[0].num_actions == 3
-    assert attempts[0].token_usage_by_model == [{"model": "gpt-attempt", "input_tokens": 3}]
+    assert attempts[0].token_usage_by_model == [
+        _legacy_usage_snapshot({"model": "gpt-attempt", "input_tokens": 3})
+    ]
     unchanged_run = await _get_run(populated_session, "r1")
     assert unchanged_run.total_tokens_read == 100
     assert unchanged_run.total_tokens_write == 50
     assert unchanged_run.total_tokens_cache == 10
     assert unchanged_run.total_duration_ms == 1500
     assert unchanged_run.total_num_actions == 5
-    assert unchanged_run.token_usage_by_model == [{"model": "gpt-run", "input_tokens": 30}]
+    assert unchanged_run.token_usage_by_model == [
+        _legacy_usage_snapshot({"model": "gpt-run", "input_tokens": 30})
+    ]
 
 
 async def test_task_attempt_created_projects_requested_task_status(

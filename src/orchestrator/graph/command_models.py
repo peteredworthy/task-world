@@ -238,7 +238,7 @@ class GatekeeperVerdictCommandRow(StrictCommandPayload):
     gen_ai_usage_input_tokens: int = Field(default=0, ge=0)
     gen_ai_usage_output_tokens: int = Field(default=0, ge=0)
     gen_ai_usage_cache_read_input_tokens: int = Field(default=0, ge=0)
-    cache_write_tokens: int = Field(default=0, ge=0)
+    gen_ai_usage_cache_creation_input_tokens: int = Field(default=0, ge=0)
     cost_usd: float = Field(default=0.0, ge=0.0)
     wall_time_ms: int = Field(default=0, ge=0)
 
@@ -248,7 +248,7 @@ class GatekeeperCostCommandRow(StrictCommandPayload):
     gen_ai_usage_input_tokens: int | None = Field(default=None, ge=0)
     gen_ai_usage_output_tokens: int | None = Field(default=None, ge=0)
     gen_ai_usage_cache_read_input_tokens: int | None = Field(default=None, ge=0)
-    cache_write_tokens: int | None = Field(default=None, ge=0)
+    gen_ai_usage_cache_creation_input_tokens: int | None = Field(default=None, ge=0)
     cost_usd: float | None = Field(default=None, ge=0.0)
     wall_time_ms: int | None = Field(default=None, ge=0)
 

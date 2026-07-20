@@ -25,6 +25,8 @@ FIELD_RENAMES = {
     "cache_read_tokens": "gen_ai_usage_cache_read_input_tokens",
     "cache_creation_tokens": "gen_ai_usage_cache_creation_input_tokens",
     "reasoning_tokens": "gen_ai_usage_reasoning_output_tokens",
+    "tokens_reasoning": "gen_ai_usage_reasoning_output_tokens",
+    "cache_write_tokens": "gen_ai_usage_cache_creation_input_tokens",
     "total_input_tokens": "gen_ai_usage_input_tokens",
     "total_output_tokens": "gen_ai_usage_output_tokens",
     "total_cache_read_tokens": "gen_ai_usage_cache_read_input_tokens",
@@ -100,10 +102,7 @@ INTENTIONAL_LITERAL_PATHS = frozenset(
         "scripts/cost_report.py",
     }
 )
-TASK_FOUR_PERSISTENCE_PATH_PREFIXES = (
-    "src/orchestrator/db/",
-    "src/orchestrator/db/migrations/versions/",
-)
+MIGRATION_HISTORY_PATH_PREFIX = "src/orchestrator/db/migrations/versions/"
 
 # Every entry is an internal telemetry producer or consumer reviewed in the
 # Task 3 inventory.  Path membership is an additional proof; it is never
@@ -153,6 +152,16 @@ INTERNAL_FLAT_METRIC_FUNCTIONS = {
     ),
     "scripts/compare_carriers.py": frozenset({"run_metrics", "aggregate_bucket"}),
     "tests/unit/test_compare_carriers.py": frozenset({"_row"}),
+    "tests/unit/test_token_fallback_from_entries.py": frozenset(
+        {
+            "_make_entry",
+            "_make_run_with_action_log",
+            "test_uses_aggregate_when_populated",
+            "test_falls_back_to_per_entry_when_aggregate_is_zero",
+            "test_real_world_1_9m_tokens_scenario",
+            "test_uses_per_entry_metrics_when_aggregate_zero",
+        }
+    ),
     "tests/integration/test_graph_fr15_acceptance.py": frozenset({"_secret_verdict"}),
     "tests/integration/test_graph_outbox_crash_points.py": frozenset({"_secret_verdict"}),
 }
@@ -188,48 +197,26 @@ PROVIDER_RAW_FIXTURE_PATHS = frozenset(
         "tests/unit/test_openhands_common.py",
     }
 )
-TASK_FOUR_PERSISTED_FIXTURE_PATHS = frozenset(
+# Legacy persistence examples are retained only in these exact fixture
+# functions until Task 4 owns their conversion.  This intentionally cannot
+# exempt a live attribute, constructor keyword, or unrelated mapping nearby.
+TASK_FOUR_HISTORICAL_FIXTURE_FUNCTIONS = {}
+HISTORICAL_PERSISTENCE_FIXTURE_PATHS = frozenset(
     {
         "tests/integration/test_cost_records.py",
-        "tests/integration/test_attempt_store_event_sourcing.py",
         "tests/integration/test_database.py",
         "tests/integration/test_event_log_durability.py",
         "tests/integration/test_event_sourced_workflow.py",
         "tests/integration/test_graph_file_state_report_api.py",
-        "tests/integration/test_graph_fr15_acceptance.py",
-        "tests/integration/test_graph_outbox_crash_points.py",
-        "tests/integration/test_repositories.py",
         "tests/unit/test_command_handlers.py",
         "tests/unit/test_compare_carriers.py",
         "tests/unit/test_projectors.py",
         "tests/unit/test_pydantic_events.py",
-        "tests/unit/test_state_models.py",
-        "tests/unit/test_token_fallback_from_entries.py",
-        "tests/integration/test_repositories.py",
-        "tests/unit/test_codex_server_transport.py",
         "tests/unit/test_run_aggregation.py",
-        "tests/unit/test_state_models.py",
         "tests/unit/test_token_fallback_from_entries.py",
     }
 )
-# These test files exercise current in-memory telemetry objects, rather than
-# historical payloads.  Attribute syntax is an explicit structural proof; the
-# dictionary and raw-input boundaries above still take precedence.
-TEST_INTERNAL_ATTRIBUTE_PATHS = frozenset(
-    {
-        "tests/integration/test_attempt_store_event_sourcing.py",
-        "tests/unit/test_claude_parser.py",
-        "tests/unit/test_codex_server_agent.py",
-        "tests/unit/test_codex_server_token_capture.py",
-        "tests/unit/test_pydantic_events.py",
-        "tests/unit/test_state_models.py",
-        "tests/unit/test_codex_server_common.py",
-        "tests/unit/test_compare_carriers.py",
-        "tests/unit/test_token_fallback_from_entries.py",
-        "tests/integration/test_repositories.py",
-        "tests/unit/test_codex_server_transport.py",
-    }
-)
+HISTORICAL_FIXTURE_HELPERS = frozenset({"_legacy_usage_snapshot", "_legacy_event_payload"})
 TEST_INTERNAL_METRIC_FUNCTIONS = {
     "tests/integration/test_attempt_store_event_sourcing.py": frozenset(
         {"test_attempt_store_appends_events_and_projects_attempt_and_run_totals"}
@@ -256,6 +243,48 @@ TEST_INTERNAL_METRIC_FUNCTIONS = {
     "tests/unit/test_command_handlers.py": frozenset(
         {"test_create_run_replays_initial_attempt_gap_fields"}
     ),
+    "tests/unit/test_file_state_gatekeeper_event_payloads.py": frozenset(
+        {"test_gatekeeper_cost_fields_survive_summary_reconstruction"}
+    ),
+}
+
+# Provider fixture builders emit wire-format payloads.  This recognizes only
+# their call keywords, not arbitrary constructors in the same test modules.
+PROVIDER_RAW_FIXTURE_CALLS = {
+    "tests/unit/test_claude_parser.py": frozenset({"_assistant_event", "_result_event"}),
+}
+PROVIDER_RAW_FIXTURE_ATTRIBUTE_FUNCTIONS = {
+    "tests/unit/test_openhands_common.py": frozenset({"test_extract_metrics_multiple_models"}),
+}
+
+# Task 4 retains the physical ORM schema temporarily.  These are the exact
+# tests that assert its historical column names; current telemetry facts are
+# asserted through their canonical domain fields elsewhere.
+HISTORICAL_ORM_ASSERTION_FUNCTIONS = {
+    "tests/unit/test_command_handlers.py": frozenset(
+        {
+            "test_create_run_replays_initial_attempt_gap_fields",
+            "test_create_run_snapshot_only_stores_one_event_but_projects_children",
+            "test_update_latest_attempt_projects_attempt_and_task_status",
+            "test_update_latest_attempt_appends_output_and_accumulates_metrics",
+            "test_record_task_reverted_emits_event_and_projects_snapshot",
+        }
+    ),
+    "tests/unit/test_projectors.py": frozenset(
+        {
+            "test_task_reverted_restores_task_and_attempts_from_snapshot",
+            "test_run_created_snapshot_projected_by_registry_into_initial_steps_and_tasks",
+            "test_attempt_updated_can_skip_run_totals_projection",
+        }
+    ),
+    "tests/integration/test_database.py": frozenset({"test_crud_with_steps_and_tasks"}),
+    "tests/integration/test_cost_records.py": frozenset(
+        {
+            "test_phase_handler_records_cost_and_interaction_logs_for_each_agent_execution",
+            "test_phase_handler_records_recovering_cost_and_interaction_log_prompt",
+            "test_phase_handler_persists_per_model_cost_usage",
+        }
+    ),
 }
 
 
@@ -276,7 +305,7 @@ def _is_literal_boundary(path: str) -> bool:
     return (
         path in INTENTIONAL_LITERAL_PATHS
         or path == "scripts/codemods/r04_otel_vocab.py"
-        or path.startswith(TASK_FOUR_PERSISTENCE_PATH_PREFIXES)
+        or path.startswith(MIGRATION_HISTORY_PATH_PREFIX)
     )
 
 
@@ -284,14 +313,14 @@ def _is_test_provider_raw_fixture(path: str, node: cst.CSTNode) -> bool:
     return path in PROVIDER_RAW_FIXTURE_PATHS and isinstance(node, cst.SimpleString)
 
 
-def _is_task_four_persisted_fixture(path: str, node: cst.CSTNode) -> bool:
-    return path in TASK_FOUR_PERSISTED_FIXTURE_PATHS and isinstance(
-        node, (cst.SimpleString, cst.Attribute)
+def _is_task_four_historical_fixture(
+    path: str,
+    node: cst.CSTNode,
+    get_parent: Callable[[cst.CSTNode, cst.CSTNode | None], cst.CSTNode | None],
+) -> bool:
+    return _enclosing_function_name(node, get_parent) in TASK_FOUR_HISTORICAL_FIXTURE_FUNCTIONS.get(
+        path, frozenset()
     )
-
-
-def _is_test_internal_attribute(path: str, node: cst.Attribute) -> bool:
-    return path in TEST_INTERNAL_ATTRIBUTE_PATHS and not _is_openhands_raw_cache_attribute(node)
 
 
 def _is_internal_telemetry_path(path: str) -> bool:
@@ -308,6 +337,30 @@ def _enclosing_function_name(
             return parent.name.value
         parent = get_parent(parent, None)
     return None
+
+
+def _has_enclosing_function_name(
+    node: cst.CSTNode,
+    names: frozenset[str],
+    get_parent: Callable[[cst.CSTNode, cst.CSTNode | None], cst.CSTNode | None],
+) -> bool:
+    parent = get_parent(node, None)
+    while parent is not None:
+        if isinstance(parent, cst.FunctionDef) and parent.name.value in names:
+            return True
+        parent = get_parent(parent, None)
+    return False
+
+
+def _is_historical_orm_assertion(
+    node: cst.CSTNode,
+    path: str,
+    get_parent: Callable[[cst.CSTNode, cst.CSTNode | None], cst.CSTNode | None],
+) -> bool:
+    return (
+        path in HISTORICAL_ORM_ASSERTION_FUNCTIONS
+        and _enclosing_function_name(node, get_parent) in HISTORICAL_ORM_ASSERTION_FUNCTIONS[path]
+    )
 
 
 def _is_internal_flat_metric_context(
@@ -541,6 +594,26 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
         self.path = path
         self.is_internal_telemetry_path = _is_internal_telemetry_path(path)
         self.is_provider_boundary = _is_provider_boundary(path)
+        self.used_historical_wrapper = False
+
+    def _is_historical_fixture_dict(self, node: cst.Dict) -> bool:
+        if self.path not in HISTORICAL_PERSISTENCE_FIXTURE_PATHS:
+            return False
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        while parent is not None:
+            if (
+                isinstance(parent, cst.Call)
+                and _callee_leaf_name(parent) in HISTORICAL_FIXTURE_HELPERS
+            ):
+                return False
+            parent = self.get_metadata(ParentNodeProvider, parent, None)
+        return any(
+            isinstance(element, cst.DictElement)
+            and isinstance(element.key, cst.SimpleString)
+            and isinstance(element.key.evaluated_value, str)
+            and element.key.evaluated_value in FIELD_RENAMES
+            for element in node.elements
+        )
 
     def _is_internal_metric_context(self, node: cst.CSTNode) -> bool:
         parent = self.get_metadata(ParentNodeProvider, node, None)
@@ -634,6 +707,17 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
             and _callee_leaf_name(call) == "_assert_latest_event"
         )
 
+    def _is_test_internal_event_payload(self, node: cst.Dict) -> bool:
+        if not self._is_test_internal_metric_context(node):
+            return False
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        return (
+            isinstance(parent, cst.Assign)
+            and len(parent.targets) == 1
+            and isinstance(parent.targets[0].target, cst.Name)
+            and parent.targets[0].target.value == "payload"
+        )
+
     def _is_owner(self, node: cst.CSTNode, path: str | None) -> bool:
         if isinstance(node, cst.Attribute) and _is_telemetry_result(node.value):
             return True
@@ -687,11 +771,16 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
             (
                 self._is_owner(original_node, _expression_path(original_node.value))
                 or self._is_internal_metric_context(original_node)
-                or _is_test_internal_attribute(self.path, original_node)
+                or self._is_test_internal_metric_context(original_node)
             )
             or self._is_flat_metric_context(original_node)
         ) and (
             not _is_openhands_raw_cache_attribute(original_node)
+            and not _is_historical_orm_assertion(
+                original_node,
+                self.path,
+                lambda child, default: self.get_metadata(ParentNodeProvider, child, default),
+            )
             and updated_node.attr.value in FIELD_RENAMES
         ):
             return updated_node.with_changes(
@@ -724,7 +813,7 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
             )
         return updated_node
 
-    def leave_Dict(self, original_node: cst.Dict, updated_node: cst.Dict) -> cst.Dict:
+    def leave_Dict(self, original_node: cst.Dict, updated_node: cst.Dict) -> cst.BaseExpression:
         parent = self.get_metadata(ParentNodeProvider, original_node, None)
         if isinstance(parent, cst.Arg):
             parent = self.get_metadata(ParentNodeProvider, parent, None)
@@ -733,7 +822,14 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
             or self._is_flat_metric_context(original_node)
             or self._is_test_internal_result_mapping(original_node)
             or self._is_test_internal_event_expectation(original_node)
+            or self._is_test_internal_event_payload(original_node)
         ):
+            if self._is_historical_fixture_dict(original_node):
+                self.used_historical_wrapper = True
+                return cst.Call(
+                    func=cst.Name("_legacy_usage_snapshot"),
+                    args=(cst.Arg(value=updated_node),),
+                )
             return updated_node
         elements: list[cst.BaseDictElement] = []
         for original_element, updated_element in zip(
@@ -758,7 +854,71 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
                 )
             else:
                 elements.append(updated_element)
-        return updated_node.with_changes(elements=elements)
+        result = updated_node.with_changes(elements=elements)
+        if self._is_historical_fixture_dict(original_node):
+            self.used_historical_wrapper = True
+            return cst.Call(func=cst.Name("_legacy_usage_snapshot"), args=(cst.Arg(value=result),))
+        return result
+
+    def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
+        body = list(updated_node.body)
+        helper_indexes = [
+            index
+            for index, statement in enumerate(body)
+            if isinstance(statement, cst.FunctionDef)
+            and statement.name.value == "_legacy_usage_snapshot"
+        ]
+        if len(helper_indexes) > 1:
+            body = [
+                statement
+                for index, statement in enumerate(body)
+                if index == helper_indexes[0] or index not in helper_indexes[1:]
+            ]
+        if not self.used_historical_wrapper:
+            return updated_node.with_changes(body=tuple(body))
+        if helper_indexes:
+            return updated_node.with_changes(body=tuple(body))
+        if any(
+            isinstance(statement, cst.FunctionDef)
+            and statement.name.value == "_legacy_usage_snapshot"
+            for statement in body
+        ):
+            return updated_node.with_changes(body=tuple(body))
+        helper = cst.parse_module(
+            "def _legacy_usage_snapshot(value: object) -> object:\n    return value\n\n"
+        ).body[0]
+        insertion_index = 0
+        if (
+            body
+            and isinstance(body[0], cst.SimpleStatementLine)
+            and len(body[0].body) == 1
+            and isinstance(body[0].body[0], cst.Expr)
+            and isinstance(body[0].body[0].value, cst.SimpleString)
+        ):
+            insertion_index = 1
+        while (
+            insertion_index < len(body)
+            and isinstance(body[insertion_index], cst.SimpleStatementLine)
+            and any(
+                isinstance(statement, cst.ImportFrom)
+                and isinstance(statement.module, cst.Name)
+                and statement.module.value == "__future__"
+                for statement in body[insertion_index].body
+            )
+        ):
+            insertion_index += 1
+        body.insert(insertion_index, helper)
+        return updated_node.with_changes(body=tuple(body))
+
+    def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.BaseExpression:
+        if (
+            _callee_leaf_name(updated_node) in HISTORICAL_FIXTURE_HELPERS
+            and len(updated_node.args) == 1
+            and isinstance(updated_node.args[0].value, cst.Call)
+            and _callee_leaf_name(updated_node.args[0].value) in HISTORICAL_FIXTURE_HELPERS
+        ):
+            return updated_node.args[0].value
+        return updated_node
 
     def leave_Name(self, original_node: cst.Name, updated_node: cst.Name) -> cst.Name:
         parent = self.get_metadata(ParentNodeProvider, original_node, None)
@@ -808,12 +968,12 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
     def _diagnose(self, node: cst.CSTNode, name: str) -> None:
         if (
             self.is_literal_boundary
-            # These exact test fixtures are reviewed raw-provider or Task 4
-            # historical persistence boundaries.  Reaching this branch already
-            # proves the candidate is a legacy field syntax; no directory-wide
-            # test exemption is involved.
-            or self.path in PROVIDER_RAW_FIXTURE_PATHS
-            or self.path in TASK_FOUR_PERSISTED_FIXTURE_PATHS
+            or _is_task_four_historical_fixture(
+                self.path,
+                node,
+                lambda child, default: self.get_metadata(ParentNodeProvider, child, default),
+            )
+            or self._is_historical_persistence_expression(node)
         ):
             return
         position = self.get_metadata(PositionProvider, node).start
@@ -857,6 +1017,13 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
             lambda child, default: self.get_metadata(ParentNodeProvider, child, default),
         )
 
+    def _is_test_internal_metric_context(self, node: cst.CSTNode) -> bool:
+        return _is_test_internal_metric_context(
+            node,
+            self.path,
+            lambda child, default: self.get_metadata(ParentNodeProvider, child, default),
+        )
+
     def _is_internal_mapping_subscript(self, node: cst.SimpleString) -> bool:
         parent = self.get_metadata(ParentNodeProvider, node, None)
         if isinstance(parent, cst.Arg):
@@ -884,6 +1051,166 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
             lambda child, default: self.get_metadata(ParentNodeProvider, child, default),
         ) in RAW_STORAGE_LITERAL_CONTEXTS.get(self.path, frozenset())
 
+    def _is_provider_fixture_raw_dictionary(self, node: cst.Dict) -> bool:
+        """Recognize only nested provider usage dictionary fixture shapes."""
+        if self.path not in PROVIDER_RAW_FIXTURE_PATHS:
+            return False
+        current: cst.CSTNode | None = node
+        while current is not None:
+            if isinstance(current, cst.Dict) and any(
+                isinstance(element, cst.DictElement)
+                and isinstance(element.key, cst.SimpleString)
+                and element.key.evaluated_value in {"usage", "total_token_usage"}
+                for element in current.elements
+            ):
+                return True
+            current = self.get_metadata(ParentNodeProvider, current, None)
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        if isinstance(parent, cst.Arg) and parent.keyword is not None:
+            return parent.keyword.value == "usage"
+        return False
+
+    def _is_test_internal_event_payload(self, node: cst.Dict) -> bool:
+        if not self._is_test_internal_metric_context(node):
+            return False
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        return (
+            isinstance(parent, cst.Assign)
+            and len(parent.targets) == 1
+            and isinstance(parent.targets[0].target, cst.Name)
+            and parent.targets[0].target.value == "payload"
+        )
+
+    def _is_historical_persistence_expression(self, node: cst.CSTNode) -> bool:
+        """Allow only storage-shaped Task 4 facts, never a fixture file wholesale."""
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        expression = parent if isinstance(parent, cst.Attribute) else node
+        enclosing_function = _enclosing_function_name(
+            node,
+            lambda child, default: self.get_metadata(ParentNodeProvider, child, default),
+        )
+        if (
+            isinstance(node, cst.SimpleString)
+            and self.path == "src/orchestrator/db/projections/run_state.py"
+            and (
+                enclosing_function == "_merge_token_usage_by_model"
+                or self._is_legacy_usage_alias_declaration(node)
+            )
+        ):
+            return True
+        if (
+            isinstance(node, cst.SimpleString)
+            and self.path == "src/orchestrator/db/projections/task_state.py"
+            and enclosing_function == "_attempt_values_from_snapshot"
+        ):
+            return True
+        if self._is_provider_fixture_builder_keyword(node):
+            return True
+        if isinstance(node, cst.SimpleString) and self._is_historical_fixture_helper_access(node):
+            return True
+        if (
+            isinstance(expression, cst.Attribute)
+            and self.path in HISTORICAL_ORM_ASSERTION_FUNCTIONS
+            and enclosing_function in HISTORICAL_ORM_ASSERTION_FUNCTIONS[self.path]
+        ):
+            return True
+        if (
+            isinstance(expression, cst.Attribute)
+            and self.path in PROVIDER_RAW_FIXTURE_ATTRIBUTE_FUNCTIONS
+            and _has_enclosing_function_name(
+                node,
+                PROVIDER_RAW_FIXTURE_ATTRIBUTE_FUNCTIONS[self.path],
+                lambda child, default: self.get_metadata(ParentNodeProvider, child, default),
+            )
+        ):
+            return True
+        if self.path == "src/orchestrator/db/orm/models.py":
+            if isinstance(node, cst.Name):
+                return (
+                    isinstance(parent, cst.AnnAssign)
+                    and isinstance(parent.value, cst.Call)
+                    and _callee_leaf_name(parent.value) == "mapped_column"
+                )
+        if isinstance(expression, cst.Attribute):
+            return (
+                self.path.startswith("src/orchestrator/db/")
+                and isinstance(expression.value, cst.Name)
+                and expression.value.value in {"attempt", "att_model"}
+            )
+        if (
+            self.path in HISTORICAL_PERSISTENCE_FIXTURE_PATHS
+            and isinstance(parent, cst.Attribute)
+            and node.value in {"tokens_read", "tokens_write", "tokens_cache"}
+        ):
+            return True
+        if isinstance(node, cst.Name) and isinstance(parent, cst.Arg):
+            call = self.get_metadata(ParentNodeProvider, parent, None)
+            return isinstance(call, cst.Call) and _callee_leaf_name(call) in {
+                "AttemptModel",
+                "CostRecordModel",
+            }
+        if self.path not in HISTORICAL_PERSISTENCE_FIXTURE_PATHS:
+            return False
+        current: cst.CSTNode | None = node
+        while current is not None:
+            if (
+                isinstance(current, cst.Call)
+                and _callee_leaf_name(current) in HISTORICAL_FIXTURE_HELPERS
+            ):
+                return True
+            current = self.get_metadata(ParentNodeProvider, current, None)
+        if isinstance(node, cst.SimpleString):
+            current = self.get_metadata(ParentNodeProvider, node, None)
+            while current is not None and not isinstance(current, cst.Dict):
+                current = self.get_metadata(ParentNodeProvider, current, None)
+            if isinstance(current, cst.Dict):
+                outer = self.get_metadata(ParentNodeProvider, current, None)
+                while outer is not None and not isinstance(outer, cst.Comparison):
+                    outer = self.get_metadata(ParentNodeProvider, outer, None)
+                return isinstance(outer, cst.Comparison)
+        if isinstance(expression, cst.Attribute):
+            return isinstance(expression.value, cst.Name) and expression.value.value in {
+                "attempt",
+                "att_model",
+                "record",
+            }
+        return False
+
+    def _is_legacy_usage_alias_declaration(self, node: cst.SimpleString) -> bool:
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        while parent is not None and not isinstance(parent, cst.Assign):
+            parent = self.get_metadata(ParentNodeProvider, parent, None)
+        return (
+            isinstance(parent, cst.Assign)
+            and len(parent.targets) == 1
+            and isinstance(parent.targets[0].target, cst.Name)
+            and parent.targets[0].target.value == "_LEGACY_USAGE_ALIASES"
+        )
+
+    def _is_historical_fixture_helper_access(self, node: cst.SimpleString) -> bool:
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        if not isinstance(parent, cst.Index):
+            return False
+        element = self.get_metadata(ParentNodeProvider, parent, None)
+        subscript = self.get_metadata(ParentNodeProvider, element, None)
+        return (
+            isinstance(subscript, cst.Subscript)
+            and isinstance(subscript.value, cst.Call)
+            and _callee_leaf_name(subscript.value) in HISTORICAL_FIXTURE_HELPERS
+        )
+
+    def _is_provider_fixture_builder_keyword(self, node: cst.CSTNode) -> bool:
+        if not isinstance(node, cst.Name) or self.path not in PROVIDER_RAW_FIXTURE_CALLS:
+            return False
+        parent = self.get_metadata(ParentNodeProvider, node, None)
+        call = self.get_metadata(ParentNodeProvider, parent, None)
+        return (
+            isinstance(parent, cst.Arg)
+            and parent.keyword is node
+            and isinstance(call, cst.Call)
+            and _callee_leaf_name(call) in PROVIDER_RAW_FIXTURE_CALLS[self.path]
+        )
+
     def _is_codex_raw_provider_literal(self, node: cst.CSTNode) -> bool:
         if self.path != "src/orchestrator/runners/agents/codex/common.py":
             return False
@@ -904,7 +1231,7 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
             and not self._is_internal_metric_context(node)
             and not self._is_flat_metric_context(node)
             and not _is_openhands_raw_cache_attribute(node)
-            and not _is_test_internal_attribute(self.path, node)
+            and not self._is_test_internal_metric_context(node)
         ):
             self._diagnose(node.attr, node.attr.value)
 
@@ -947,9 +1274,11 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
         parent = self.get_metadata(ParentNodeProvider, node, None)
         if isinstance(parent, cst.Arg):
             parent = self.get_metadata(ParentNodeProvider, parent, None)
-        if (
-            isinstance(parent, cst.Call) and _is_telemetry_validation(parent)
-        ) or self._is_flat_metric_context(node):
+        if (isinstance(parent, cst.Call) and _is_telemetry_validation(parent)) or (
+            self._is_flat_metric_context(node)
+            or self._is_test_internal_event_payload(node)
+            or self._is_provider_fixture_raw_dictionary(node)
+        ):
             return
         for element in node.elements:
             if isinstance(element, cst.DictElement) and isinstance(element.key, cst.SimpleString):

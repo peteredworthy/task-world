@@ -856,7 +856,7 @@ def test_extract_turn_usage_with_input_output_tokens() -> None:
         "gen_ai_usage_input_tokens": 1500,
         "gen_ai_usage_output_tokens": 300,
         "gen_ai_usage_cache_read_input_tokens": 50,
-        "tokens_reasoning": 0,
+        "gen_ai_usage_reasoning_output_tokens": 0,
     }
 
 
@@ -880,7 +880,7 @@ def test_extract_turn_usage_with_prompt_completion_tokens() -> None:
         "gen_ai_usage_input_tokens": 2000,
         "gen_ai_usage_output_tokens": 400,
         "gen_ai_usage_cache_read_input_tokens": 100,
-        "tokens_reasoning": 0,
+        "gen_ai_usage_reasoning_output_tokens": 0,
     }
 
 
@@ -895,7 +895,7 @@ def test_extract_turn_usage_without_usage_field() -> None:
         "gen_ai_usage_input_tokens": 0,
         "gen_ai_usage_output_tokens": 0,
         "gen_ai_usage_cache_read_input_tokens": 0,
-        "tokens_reasoning": 0,
+        "gen_ai_usage_reasoning_output_tokens": 0,
     }
 
 
@@ -910,7 +910,7 @@ def test_extract_turn_usage_non_terminal_notification() -> None:
         "gen_ai_usage_input_tokens": 0,
         "gen_ai_usage_output_tokens": 0,
         "gen_ai_usage_cache_read_input_tokens": 0,
-        "tokens_reasoning": 0,
+        "gen_ai_usage_reasoning_output_tokens": 0,
     }
 
 
@@ -925,7 +925,7 @@ def test_extract_turn_usage_empty_usage_dict() -> None:
         "gen_ai_usage_input_tokens": 0,
         "gen_ai_usage_output_tokens": 0,
         "gen_ai_usage_cache_read_input_tokens": 0,
-        "tokens_reasoning": 0,
+        "gen_ai_usage_reasoning_output_tokens": 0,
     }
 
 
@@ -1120,7 +1120,7 @@ def test_extract_token_usage_update_total_cumulative() -> None:
     assert result["gen_ai_usage_cache_read_input_tokens"] == 1200
     # Reasoning folded into write: 450 + 120 = 570
     assert result["gen_ai_usage_output_tokens"] == 570
-    assert result["tokens_reasoning"] == 120
+    assert result["gen_ai_usage_reasoning_output_tokens"] == 120
 
 
 def test_extract_token_usage_update_camel_and_snake() -> None:
@@ -1142,7 +1142,7 @@ def test_extract_token_usage_update_camel_and_snake() -> None:
     assert result["gen_ai_usage_input_tokens"] == 1000
     assert result["gen_ai_usage_cache_read_input_tokens"] == 200
     assert result["gen_ai_usage_output_tokens"] == 200  # 150 + 50
-    assert result["tokens_reasoning"] == 50
+    assert result["gen_ai_usage_reasoning_output_tokens"] == 50
 
     # Test snake_case
     msg_snake = {
@@ -1161,7 +1161,7 @@ def test_extract_token_usage_update_camel_and_snake() -> None:
     assert result["gen_ai_usage_input_tokens"] == 800
     assert result["gen_ai_usage_cache_read_input_tokens"] == 100
     assert result["gen_ai_usage_output_tokens"] == 150  # 120 + 30
-    assert result["tokens_reasoning"] == 30
+    assert result["gen_ai_usage_reasoning_output_tokens"] == 30
 
 
 def test_extract_token_usage_update_non_usage_returns_none() -> None:
@@ -1199,5 +1199,5 @@ def test_extract_turn_usage_reasoning_folded() -> None:
     # Reasoning folded into write: 100 + 25 = 125
     assert result["gen_ai_usage_input_tokens"] == 500
     assert result["gen_ai_usage_output_tokens"] == 125
-    assert result["tokens_reasoning"] == 25
+    assert result["gen_ai_usage_reasoning_output_tokens"] == 25
     assert result["gen_ai_usage_cache_read_input_tokens"] == 50

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import json
 import subprocess
 import sys
@@ -35,6 +36,10 @@ from orchestrator.runners import (
 from orchestrator.runners.types import ExecutionContext
 from orchestrator.state.models import ActionLog, ChecklistItem, Run, StepState, TaskState
 from orchestrator.workflow.service import WorkflowService
+
+
+def _legacy_usage_snapshot(value: object) -> object:
+    return value
 
 
 @pytest.fixture
@@ -463,27 +468,31 @@ async def test_cost_report_aggregates_temp_database(tmp_path: Path) -> None:
     report = json.loads(result.stdout)
 
     assert report["by_run"] == [
-        {
-            "run_id": "run-a",
-            "executions": 2,
-            "input_tokens": 140,
-            "output_tokens": 70,
-            "cache_read_tokens": 13,
-            "cache_write_tokens": 7,
-            "wall_time_ms": 1400,
-            "cost_usd": 0.35,
-        }
+        _legacy_usage_snapshot(
+            {
+                "run_id": "run-a",
+                "executions": 2,
+                "input_tokens": 140,
+                "output_tokens": 70,
+                "cache_read_tokens": 13,
+                "cache_write_tokens": 7,
+                "wall_time_ms": 1400,
+                "cost_usd": 0.35,
+            }
+        )
     ]
     assert report["by_mode"] == [
-        {
-            "agent_runner_type": "cli_subprocess",
-            "mode_tag": "loop",
-            "executions": 2,
-            "input_tokens": 140,
-            "output_tokens": 70,
-            "cache_read_tokens": 13,
-            "cache_write_tokens": 7,
-            "wall_time_ms": 1400,
-            "cost_usd": 0.35,
-        }
+        _legacy_usage_snapshot(
+            {
+                "agent_runner_type": "cli_subprocess",
+                "mode_tag": "loop",
+                "executions": 2,
+                "input_tokens": 140,
+                "output_tokens": 70,
+                "cache_read_tokens": 13,
+                "cache_write_tokens": 7,
+                "wall_time_ms": 1400,
+                "cost_usd": 0.35,
+            }
+        )
     ]

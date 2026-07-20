@@ -112,11 +112,11 @@ function EntryRenderer({ entry, resultMap }: { entry: ActionLogEntry; resultMap:
       return (
         <div className="rounded bg-bg-elevated border border-border px-3 py-2">
           <p className="text-xs text-text-primary whitespace-pre-wrap">{entry.text}</p>
-          {entry.metrics && (entry.metrics.input_tokens > 0 || entry.metrics.output_tokens > 0) && (
+          {entry.metrics && (entry.metrics.gen_ai_usage_input_tokens > 0 || entry.metrics.gen_ai_usage_output_tokens > 0) && (
             <div className="text-[10px] text-text-muted mt-1">
-              {entry.metrics.input_tokens > 0 && <span>{formatTokens(entry.metrics.input_tokens)} in</span>}
-              {entry.metrics.input_tokens > 0 && entry.metrics.output_tokens > 0 && ' / '}
-              {entry.metrics.output_tokens > 0 && <span>{formatTokens(entry.metrics.output_tokens)} out</span>}
+              {entry.metrics.gen_ai_usage_input_tokens > 0 && <span>{formatTokens(entry.metrics.gen_ai_usage_input_tokens)} in</span>}
+              {entry.metrics.gen_ai_usage_input_tokens > 0 && entry.metrics.gen_ai_usage_output_tokens > 0 && ' / '}
+              {entry.metrics.gen_ai_usage_output_tokens > 0 && <span>{formatTokens(entry.metrics.gen_ai_usage_output_tokens)} out</span>}
             </div>
           )}
         </div>
@@ -145,8 +145,8 @@ function EntryRenderer({ entry, resultMap }: { entry: ActionLogEntry; resultMap:
           )}
           {entry.metrics && (
             <div className="text-[10px] text-text-muted mt-1 flex gap-3">
-              {entry.metrics.input_tokens > 0 && <span>{formatTokens(entry.metrics.input_tokens)} input</span>}
-              {entry.metrics.output_tokens > 0 && <span>{formatTokens(entry.metrics.output_tokens)} output</span>}
+              {entry.metrics.gen_ai_usage_input_tokens > 0 && <span>{formatTokens(entry.metrics.gen_ai_usage_input_tokens)} input</span>}
+              {entry.metrics.gen_ai_usage_output_tokens > 0 && <span>{formatTokens(entry.metrics.gen_ai_usage_output_tokens)} output</span>}
               {entry.metrics.cost_usd > 0 && <span>${entry.metrics.cost_usd.toFixed(4)}</span>}
             </div>
           )}
@@ -219,12 +219,12 @@ export function StructuredLogsViewer({ actionLog }: StructuredLogsViewerProps) {
           <span>Model: {actionLog.agent_model}</span>
           {actionLog.total_turns > 0 && <span>| {actionLog.total_turns} turns</span>}
           {actionLog.total_cost_usd > 0 && <span>| ${actionLog.total_cost_usd.toFixed(4)}</span>}
-          {actionLog.total_input_tokens > 0 && (
+          {actionLog.gen_ai_usage_input_tokens > 0 && (
             <span>
-              | {formatTokens(actionLog.total_input_tokens)} in
-              {' / '}{formatTokens(actionLog.total_output_tokens)} out
-              {(actionLog.total_cache_read_tokens + actionLog.total_cache_creation_tokens) > 0 && (
-                <> / {formatTokens(actionLog.total_cache_read_tokens + actionLog.total_cache_creation_tokens)} cache</>
+              | {formatTokens(actionLog.gen_ai_usage_input_tokens)} in
+              {' / '}{formatTokens(actionLog.gen_ai_usage_output_tokens)} out
+              {(actionLog.gen_ai_usage_cache_read_input_tokens + actionLog.gen_ai_usage_cache_creation_input_tokens) > 0 && (
+                <> / {formatTokens(actionLog.gen_ai_usage_cache_read_input_tokens + actionLog.gen_ai_usage_cache_creation_input_tokens)} cache</>
               )}
             </span>
           )}

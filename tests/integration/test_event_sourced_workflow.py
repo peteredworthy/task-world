@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+
 import json
 from collections.abc import AsyncGenerator
 from datetime import date, datetime
@@ -34,6 +35,11 @@ from orchestrator.workflow import (
     handle_update_run_status,
 )
 from orchestrator.workflow import deserialize_event
+
+
+def _legacy_usage_snapshot(value: object) -> object:
+    return value
+
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "routines"
 
@@ -317,13 +323,15 @@ async def test_empty_db_rebuild(
                 auto_verify_results=[{"name": "unit", "passed": True}],
                 action_log={"events": [{"kind": "command", "name": "pytest"}]},
                 token_usage_by_model=[
-                    {
-                        "model": "gpt-5.3-codex",
-                        "input_tokens": 11,
-                        "output_tokens": 7,
-                        "cache_read_tokens": 0,
-                        "cache_creation_tokens": 0,
-                    }
+                    _legacy_usage_snapshot(
+                        {
+                            "model": "gpt-5.3-codex",
+                            "input_tokens": 11,
+                            "output_tokens": 7,
+                            "cache_read_tokens": 0,
+                            "cache_creation_tokens": 0,
+                        }
+                    )
                 ],
                 gen_ai_usage_input_tokens=11,
                 gen_ai_usage_output_tokens=7,
