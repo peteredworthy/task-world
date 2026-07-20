@@ -1180,9 +1180,6 @@ def test_run_created_round_trip() -> None:
         started_at="2025-01-15T10:02:00Z",
         completed_at="2025-01-15T10:03:00Z",
         agent_runner_started_at="2025-01-15T10:02:30Z",
-        total_tokens_read=100,
-        total_tokens_write=50,
-        total_tokens_cache=10,
         total_duration_ms=1500,
         total_num_actions=5,
         token_usage_by_model=[_legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3})],
@@ -1205,9 +1202,6 @@ def test_run_created_round_trip() -> None:
     assert rt.started_at == "2025-01-15T10:02:00Z"
     assert rt.completed_at == "2025-01-15T10:03:00Z"
     assert rt.agent_runner_started_at == "2025-01-15T10:02:30Z"
-    assert rt.total_tokens_read == 100
-    assert rt.total_tokens_write == 50
-    assert rt.total_tokens_cache == 10
     assert rt.total_duration_ms == 1500
     assert rt.total_num_actions == 5
     assert rt.token_usage_by_model == [

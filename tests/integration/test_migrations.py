@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -233,3 +234,140 @@ def test_migration_retires_historical_claude_sdk_relational_values(tmp_path: Pat
             == before_upgrade["noncolliding_historical_default"][2:]
         )
         assert connection.execute("SELECT payload FROM events_v2").fetchone() == (event_payload,)
+
+
+def test_otel_usage_cutover_migrates_persisted_usage_facts_and_event_snapshots(
+    tmp_path: Path,
+) -> None:
+    """The cutover retains every legacy usage value while changing its vocabulary."""
+    database_path = tmp_path / "otel-usage-cutover.db"
+    config = _alembic_config(database_path)
+    command.upgrade(config, "zg1h2i3j4k5l")
+
+    legacy_usage = {
+        "model": "legacy-model",
+        "input_tokens": 11,
+        "output_tokens": 13,
+        "cache_read_tokens": 17,
+        "cache_creation_tokens": 19,
+        "tokens_reasoning": 23,
+        "total_cost_usd": 2.5,
+        "provider_raw_key": "leave-me-alone",
+    }
+    event_payload = {
+        "telemetry": {"token_usage_by_model": [legacy_usage]},
+        "run_snapshot": {"token_usage_by_model": [legacy_usage]},
+        "attempt_snapshot": {"token_usage_by_model": [legacy_usage]},
+    }
+    with sqlite3.connect(database_path) as connection:
+        connection.execute("PRAGMA foreign_keys = OFF")
+        connection.execute(
+            "INSERT INTO runs (id, repo_name, status, runner_config, config, created_at, updated_at, "
+            "total_tokens_read, total_tokens_write, total_tokens_cache, total_duration_ms, "
+            "total_num_actions, token_usage_by_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "usage-run",
+                "repo",
+                "draft",
+                "{}",
+                "{}",
+                "2025-01-01",
+                "2025-01-01",
+                11,
+                13,
+                17,
+                29,
+                31,
+                json.dumps([legacy_usage]),
+            ),
+        )
+        connection.execute(
+            "INSERT INTO attempts (id, task_id, attempt_num, tokens_read, tokens_write, tokens_cache, "
+            "duration_ms, num_actions, token_usage_by_model) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ("usage-attempt", "usage-task", 1, 11, 13, 17, 29, 31, json.dumps([legacy_usage])),
+        )
+        connection.execute(
+            "INSERT INTO cost_records (id, run_id, task_id, attempt_num, agent_runner_type, phase, "
+            "mode_tag, model_name, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, "
+            "wall_time_ms, cost_usd, token_usage_by_model, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "usage-cost",
+                "usage-run",
+                "usage-task",
+                1,
+                "cli_subprocess",
+                "builder",
+                "default",
+                "legacy-model",
+                11,
+                13,
+                17,
+                19,
+                29,
+                2.5,
+                json.dumps([legacy_usage]),
+                "2025-01-01",
+            ),
+        )
+        connection.execute(
+            "INSERT INTO events_v2 (aggregate_id, event_type, payload, timestamp, version) "
+            "VALUES (?, ?, ?, ?, ?)",
+            ("usage-run", "run_created", json.dumps(event_payload), "2025-01-01T00:00:00Z", 1),
+        )
+        connection.commit()
+
+    command.upgrade(config, "r04a1b2c3d4e")
+
+    expected_usage = {
+        "model": "legacy-model",
+        "gen_ai_usage_input_tokens": 11,
+        "gen_ai_usage_output_tokens": 13,
+        "gen_ai_usage_cache_read_input_tokens": 17,
+        "gen_ai_usage_cache_creation_input_tokens": 19,
+        "gen_ai_usage_reasoning_output_tokens": 23,
+        "cost_usd": 2.5,
+        "provider_raw_key": "leave-me-alone",
+    }
+    with sqlite3.connect(database_path) as connection:
+        run_columns = {row[1] for row in connection.execute("PRAGMA table_info(runs)")}
+        attempt_columns = {row[1] for row in connection.execute("PRAGMA table_info(attempts)")}
+        cost_columns = {row[1] for row in connection.execute("PRAGMA table_info(cost_records)")}
+        assert {"total_tokens_read", "total_tokens_write", "total_tokens_cache"}.isdisjoint(
+            run_columns
+        )
+        assert {"tokens_read", "tokens_write", "tokens_cache"}.isdisjoint(attempt_columns)
+        assert {
+            "gen_ai_usage_input_tokens",
+            "gen_ai_usage_output_tokens",
+            "gen_ai_usage_cache_read_input_tokens",
+            "gen_ai_usage_cache_creation_input_tokens",
+        }.issubset(cost_columns)
+        assert json.loads(
+            connection.execute("SELECT token_usage_by_model FROM runs").fetchone()[0]
+        ) == [expected_usage]
+        assert json.loads(
+            connection.execute("SELECT token_usage_by_model FROM attempts").fetchone()[0]
+        ) == [expected_usage]
+        assert json.loads(
+            connection.execute("SELECT token_usage_by_model FROM cost_records").fetchone()[0]
+        ) == [expected_usage]
+        payload = json.loads(connection.execute("SELECT payload FROM events_v2").fetchone()[0])
+        assert payload["telemetry"]["token_usage_by_model"] == [expected_usage]
+        assert payload["run_snapshot"]["token_usage_by_model"] == [expected_usage]
+        assert payload["attempt_snapshot"]["token_usage_by_model"] == [expected_usage]
+        assert connection.execute(
+            "SELECT gen_ai_usage_input_tokens, gen_ai_usage_output_tokens, "
+            "gen_ai_usage_cache_read_input_tokens, gen_ai_usage_cache_creation_input_tokens "
+            "FROM cost_records"
+        ).fetchone() == (11, 13, 17, 19)
+
+    command.downgrade(config, "zg1h2i3j4k5l")
+    with sqlite3.connect(database_path) as connection:
+        assert connection.execute(
+            "SELECT total_tokens_read, total_tokens_write, total_tokens_cache, "
+            "total_duration_ms, total_num_actions FROM runs"
+        ).fetchone() == (11, 13, 36, 29, 31)
+        assert connection.execute(
+            "SELECT tokens_read, tokens_write, tokens_cache, duration_ms, num_actions FROM attempts"
+        ).fetchone() == (11, 13, 36, 29, 31)

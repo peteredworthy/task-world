@@ -26,6 +26,7 @@ from orchestrator.state.models import (
     Attempt,
     AttemptMetrics,
     ChecklistItem,
+    ModelTokenUsage,
     Run,
     StepState,
     TaskState,
@@ -155,6 +156,13 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
                                     gen_ai_usage_output_tokens=200,
                                     duration_ms=10000,
                                 ),
+                                token_usage_by_model=[
+                                    ModelTokenUsage(
+                                        model="model-a",
+                                        gen_ai_usage_input_tokens=500,
+                                        gen_ai_usage_output_tokens=200,
+                                    )
+                                ],
                             ),
                             Attempt(
                                 id="att-2",
@@ -167,6 +175,13 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
                                     gen_ai_usage_output_tokens=100,
                                     duration_ms=5000,
                                 ),
+                                token_usage_by_model=[
+                                    ModelTokenUsage(
+                                        model="model-b",
+                                        gen_ai_usage_input_tokens=300,
+                                        gen_ai_usage_output_tokens=100,
+                                    )
+                                ],
                             ),
                         ],
                         current_attempt=2,
@@ -178,8 +193,6 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
         created_at=now,
         updated_at=now,
         started_at=now,
-        total_tokens_read=800,
-        total_tokens_write=300,
         total_duration_ms=15000,
     )
 
@@ -188,7 +201,7 @@ async def test_save_and_get_complex_run(repo: RunRepository) -> None:
 
     assert loaded.status == RunStatus.ACTIVE
     assert loaded.routine_sha == "abc123"
-    assert loaded.total_tokens_read == 800
+    assert loaded.total_tokens_read == 0
 
     task = loaded.steps[0].tasks[0]
     assert task.status == TaskStatus.COMPLETED

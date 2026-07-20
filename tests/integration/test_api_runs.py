@@ -1226,8 +1226,9 @@ async def test_run_response_includes_cost_estimation(client: AsyncClient, repo_n
     assert data["estimated_cost_usd"] is None
     assert data["cost_disclaimer"] is None
 
-    # Simulate task execution by updating the run state with token data
+    # Simulate task execution by persisting a canonical immutable usage fact.
     from orchestrator.db import RunRepository
+    from orchestrator.state import ModelTokenUsage
 
     app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
     session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
@@ -1235,9 +1236,14 @@ async def test_run_response_includes_cost_estimation(client: AsyncClient, repo_n
     async with session_factory() as session:
         repo = RunRepository(session)
         run = await repo.get(run_id)
-        run.total_tokens_read = 100000
-        run.total_tokens_write = 50000
-        run.total_tokens_cache = 10000
+        run.token_usage_by_model = [
+            ModelTokenUsage(
+                model="gpt-4o",
+                gen_ai_usage_input_tokens=100000,
+                gen_ai_usage_output_tokens=50000,
+                gen_ai_usage_cache_read_input_tokens=10000,
+            )
+        ]
         await save_run(repo.session, run)
         await session.commit()
 
@@ -1318,18 +1324,14 @@ async def test_get_run_returns_token_usage_by_model_with_all_fields(
 async def test_get_run_empty_token_usage_returns_empty_list_and_no_crash(
     client: AsyncClient, repo_name: str
 ) -> None:
-    """R7: Old runs with no token_usage_by_model return [] without error.
-
-    estimated_cost_usd falls back to legacy token-based estimation (>= 0.0)
-    or None — the important thing is no crash and token_usage_by_model == [].
-    """
+    """Runs without immutable usage facts return empty usage and no estimate."""
     app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
     session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
 
     data = await _create_run(client, repo_name)
     run_id = data["id"]
 
-    # Simulate old run: no per-model data, but has legacy token counts
+    # A run without immutable usage facts has no token-derived estimate.
     from sqlalchemy import select
 
     from orchestrator.db import RunModel
@@ -1337,10 +1339,7 @@ async def test_get_run_empty_token_usage_returns_empty_list_and_no_crash(
     async with session_factory() as session:
         result = await session.execute(select(RunModel).where(RunModel.id == run_id))
         run_model = result.scalar_one()
-        run_model.token_usage_by_model = None  # no per-model data
-        run_model.total_tokens_read = 200_000
-        run_model.total_tokens_write = 80_000
-        run_model.total_tokens_cache = 10_000
+        run_model.token_usage_by_model = None
         await session.commit()
 
     response = await client.get(f"/api/runs/{run_id}")
@@ -1349,10 +1348,7 @@ async def test_get_run_empty_token_usage_returns_empty_list_and_no_crash(
 
     assert body["token_usage_by_model"] == []
 
-    # Legacy fallback: estimated_cost_usd should be a non-negative number (not None)
-    cost = body["estimated_cost_usd"]
-    assert cost is not None
-    assert cost >= 0.0
+    assert body["estimated_cost_usd"] is None
 
 
 async def test_get_run_estimated_cost_equals_sum_of_per_model_costs(

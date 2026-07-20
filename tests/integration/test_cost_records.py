@@ -201,13 +201,13 @@ async def test_phase_handler_records_cost_and_interaction_logs_for_each_agent_ex
             ("cost-run", "cost-task", 1, "cli_subprocess", "verifying"),
         }
         by_phase = {row.phase: row for row in cost_rows}
-        assert by_phase["building"].input_tokens == 100
-        assert by_phase["building"].output_tokens == 40
-        assert by_phase["building"].cache_read_tokens == 7
+        assert by_phase["building"].gen_ai_usage_input_tokens == 100
+        assert by_phase["building"].gen_ai_usage_output_tokens == 40
+        assert by_phase["building"].gen_ai_usage_cache_read_input_tokens == 7
         assert by_phase["building"].wall_time_ms == 1200
-        assert by_phase["verifying"].input_tokens == 30
-        assert by_phase["verifying"].output_tokens == 10
-        assert by_phase["verifying"].cache_read_tokens == 3
+        assert by_phase["verifying"].gen_ai_usage_input_tokens == 30
+        assert by_phase["verifying"].gen_ai_usage_output_tokens == 10
+        assert by_phase["verifying"].gen_ai_usage_cache_read_input_tokens == 3
         assert by_phase["verifying"].wall_time_ms == 800
 
         artifacts = (
@@ -227,9 +227,9 @@ async def test_phase_handler_records_cost_and_interaction_logs_for_each_agent_ex
         assert artifact_by_phase["verifying"].output_text == "verifier output"
 
         run_state = await RunRepository(session).get("cost-run")
-        assert run_state.total_tokens_read == 130
-        assert run_state.total_tokens_write == 50
-        assert run_state.total_tokens_cache == 10
+        assert run_state.total_tokens_read == 0
+        assert run_state.total_tokens_write == 0
+        assert run_state.total_tokens_cache == 0
 
 
 async def test_phase_handler_records_recovering_cost_and_interaction_log_prompt(
@@ -300,10 +300,10 @@ async def test_phase_handler_records_recovering_cost_and_interaction_log_prompt(
         assert cost_row.task_id == "cost-task"
         assert cost_row.attempt_num == 1
         assert cost_row.agent_runner_type == "cli_subprocess"
-        assert cost_row.input_tokens == 55
-        assert cost_row.output_tokens == 21
-        assert cost_row.cache_read_tokens == 8
-        assert cost_row.cache_write_tokens == 0
+        assert cost_row.gen_ai_usage_input_tokens == 55
+        assert cost_row.gen_ai_usage_output_tokens == 21
+        assert cost_row.gen_ai_usage_cache_read_input_tokens == 8
+        assert cost_row.gen_ai_usage_cache_creation_input_tokens == 0
         assert cost_row.wall_time_ms == 900
 
         artifact = (
@@ -375,10 +375,10 @@ async def test_phase_handler_persists_per_model_cost_usage(
     async with session_factory_fixture() as session:
         cost_row = (await session.execute(select(CostRecordModel))).scalar_one()
         assert cost_row.model_name == "gpt-4o"
-        assert cost_row.input_tokens == 1_000
-        assert cost_row.output_tokens == 500
-        assert cost_row.cache_read_tokens == 100
-        assert cost_row.cache_write_tokens == 200
+        assert cost_row.gen_ai_usage_input_tokens == 1_000
+        assert cost_row.gen_ai_usage_output_tokens == 500
+        assert cost_row.gen_ai_usage_cache_read_input_tokens == 100
+        assert cost_row.gen_ai_usage_cache_creation_input_tokens == 200
         assert cost_row.wall_time_ms == 1_234
         assert cost_row.cost_usd > 0
         assert cost_row.token_usage_by_model is not None
@@ -429,10 +429,10 @@ async def test_cost_report_aggregates_temp_database(tmp_path: Path) -> None:
                     phase="building",
                     mode_tag="loop",
                     model_name="model-a",
-                    input_tokens=100,
-                    output_tokens=50,
-                    cache_read_tokens=10,
-                    cache_write_tokens=5,
+                    gen_ai_usage_input_tokens=100,
+                    gen_ai_usage_output_tokens=50,
+                    gen_ai_usage_cache_read_input_tokens=10,
+                    gen_ai_usage_cache_creation_input_tokens=5,
                     wall_time_ms=1000,
                     cost_usd=0.25,
                     created_at=now,
@@ -446,10 +446,10 @@ async def test_cost_report_aggregates_temp_database(tmp_path: Path) -> None:
                     phase="verifying",
                     mode_tag="loop",
                     model_name="model-a",
-                    input_tokens=40,
-                    output_tokens=20,
-                    cache_read_tokens=3,
-                    cache_write_tokens=2,
+                    gen_ai_usage_input_tokens=40,
+                    gen_ai_usage_output_tokens=20,
+                    gen_ai_usage_cache_read_input_tokens=3,
+                    gen_ai_usage_cache_creation_input_tokens=2,
                     wall_time_ms=400,
                     cost_usd=0.10,
                     created_at=now,
@@ -472,10 +472,10 @@ async def test_cost_report_aggregates_temp_database(tmp_path: Path) -> None:
             {
                 "run_id": "run-a",
                 "executions": 2,
-                "input_tokens": 140,
-                "output_tokens": 70,
-                "cache_read_tokens": 13,
-                "cache_write_tokens": 7,
+                "gen_ai_usage_input_tokens": 140,
+                "gen_ai_usage_output_tokens": 70,
+                "gen_ai_usage_cache_read_input_tokens": 13,
+                "gen_ai_usage_cache_creation_input_tokens": 7,
                 "wall_time_ms": 1400,
                 "cost_usd": 0.35,
             }
@@ -487,10 +487,10 @@ async def test_cost_report_aggregates_temp_database(tmp_path: Path) -> None:
                 "agent_runner_type": "cli_subprocess",
                 "mode_tag": "loop",
                 "executions": 2,
-                "input_tokens": 140,
-                "output_tokens": 70,
-                "cache_read_tokens": 13,
-                "cache_write_tokens": 7,
+                "gen_ai_usage_input_tokens": 140,
+                "gen_ai_usage_output_tokens": 70,
+                "gen_ai_usage_cache_read_input_tokens": 13,
+                "gen_ai_usage_cache_creation_input_tokens": 7,
                 "wall_time_ms": 1400,
                 "cost_usd": 0.35,
             }

@@ -419,9 +419,6 @@ async def test_create_run_snapshot_only_stores_one_event_but_projects_children(
     attempt = await _get_attempt(harness.session, "snapshot-only-attempt")
     assert attempt.task_id == "snapshot-only-task"
     assert attempt.outcome == "paused"
-    assert attempt.tokens_read == 2
-    assert attempt.tokens_write == 3
-    assert attempt.tokens_cache == 4
     assert attempt.duration_ms == 5
     assert attempt.num_actions == 6
     assert attempt.builder_prompt == "build prompt"
@@ -513,9 +510,6 @@ def test_build_create_run_command_preserves_initial_attempt_replay_fields() -> N
     assert command.started_at == started_at.isoformat()
     assert command.completed_at == completed_at.isoformat()
     assert command.agent_runner_started_at == runner_started_at.isoformat()
-    assert command.total_tokens_read == 100
-    assert command.total_tokens_write == 50
-    assert command.total_tokens_cache == 10
     assert command.total_duration_ms == 1500
     assert command.total_num_actions == 5
     assert command.token_usage_by_model == [run_usage.model_dump(mode="json")]
@@ -647,9 +641,6 @@ async def test_create_run_replays_initial_attempt_gap_fields(
     assert attempt.token_usage_by_model == [
         _legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3, "output_tokens": 5})
     ]
-    assert attempt.tokens_read == 10
-    assert attempt.tokens_write == 4
-    assert attempt.tokens_cache == 2
     assert attempt.duration_ms == 150
     assert attempt.num_actions == 3
     task = await _get_task(harness.session, "task-1")
@@ -657,9 +648,6 @@ async def test_create_run_replays_initial_attempt_gap_fields(
     assert task.has_verification == 0
     run = await _get_run(harness.session)
     assert run.transition_tracker == {"counts": {"S-02->S-01": 2}}
-    assert run.total_tokens_read == 100
-    assert run.total_tokens_write == 50
-    assert run.total_tokens_cache == 10
     assert run.total_duration_ms == 1500
     assert run.total_num_actions == 5
     assert run.token_usage_by_model == [
@@ -1343,9 +1331,6 @@ async def test_update_latest_attempt_projects_attempt_and_task_status(
     assert attempt.auto_verify_results == [
         {"id": "output_exists", "passed": False, "output": "missing"}
     ]
-    assert attempt.tokens_read == 10
-    assert attempt.tokens_write == 4
-    assert attempt.tokens_cache == 2
     assert attempt.duration_ms == 150
     assert attempt.num_actions == 3
     assert attempt.action_log_json == {"session_id": "session-1", "entries": []}
@@ -1353,9 +1338,6 @@ async def test_update_latest_attempt_projects_attempt_and_task_status(
         _legacy_usage_snapshot({"model": "gpt-test", "input_tokens": 3})
     ]
     run = await _get_run(harness.session)
-    assert run.total_tokens_read == 10
-    assert run.total_tokens_write == 4
-    assert run.total_tokens_cache == 2
     assert run.total_duration_ms == 150
     assert run.total_num_actions == 3
     assert run.token_usage_by_model == [{"model": "gpt-test", "gen_ai_usage_input_tokens": 3}]
@@ -1435,11 +1417,6 @@ async def test_update_latest_attempt_appends_output_and_accumulates_metrics(
     attempt = await _get_attempt(harness.session)
     assert task.status == "verifying"
     assert attempt.agent_output == "first\nsecond"
-    assert attempt.tokens_read == 4
-    assert attempt.tokens_write == 6
-    run = await _get_run(harness.session)
-    assert run.total_tokens_read == 4
-    assert run.total_tokens_write == 6
 
 
 async def test_update_run_metadata_merges_runner_config(
@@ -1542,7 +1519,6 @@ async def test_record_task_reverted_emits_event_and_projects_snapshot(
     assert task.current_attempt == 2
     assert [attempt.id for attempt in attempt_rows] == ["attempt-1", "attempt-2"]
     assert attempt_rows[0].outcome == "reverted"
-    assert attempt_rows[0].tokens_read == 1
 
 
 async def test_update_parent_oversight_facts_emits_event_and_projects_merged_state(

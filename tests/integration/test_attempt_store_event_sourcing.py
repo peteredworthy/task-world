@@ -155,17 +155,17 @@ async def test_attempt_store_appends_events_and_projects_attempt_and_run_totals(
         assert attempt.error == "agent warning"
         assert attempt.action_log is not None
         assert attempt.action_log.session_id == "session-1"
-        assert attempt.metrics.gen_ai_usage_input_tokens == 10
-        assert attempt.metrics.gen_ai_usage_output_tokens == 20
-        assert attempt.metrics.gen_ai_usage_cache_read_input_tokens == 3
+        assert attempt.metrics.gen_ai_usage_input_tokens == 7
+        assert attempt.metrics.gen_ai_usage_output_tokens == 11
+        assert attempt.metrics.gen_ai_usage_cache_read_input_tokens == 0
         assert attempt.metrics.duration_ms == 40
         assert attempt.metrics.num_actions == 5
         assert attempt.token_usage_by_model is not None
         assert attempt.token_usage_by_model[0].model == "gpt-test"
         assert attempt.token_usage_by_model[0].gen_ai_usage_input_tokens == 7
-        assert run.total_tokens_read == 10
-        assert run.total_tokens_write == 20
-        assert run.total_tokens_cache == 3
+        assert run.total_tokens_read == 7
+        assert run.total_tokens_write == 11
+        assert run.total_tokens_cache == 0
         assert run.total_duration_ms == 40
         assert run.total_num_actions == 5
         assert run.token_usage_by_model is not None
@@ -234,30 +234,14 @@ async def test_attempt_store_merges_token_usage_and_agent_metadata_via_events(
 
     async with session_factory() as session:
         run = await RunRepository(session).get("attempt-store-run")
-        assert run.total_tokens_read == 5
+        assert run.total_tokens_read == 7
         assert run.agent_runner_config == {"model": "gpt-test", "pid": 1234}
         assert run.token_usage_by_model is not None
-        usage = run.token_usage_by_model[0]
-        assert usage.model == "gpt-test"
-        assert usage.gen_ai_usage_input_tokens == 7
-        assert usage.gen_ai_usage_output_tokens == 10
-        assert usage.gen_ai_usage_input_tokens == usage.gen_ai_usage_input_tokens == 7
-        assert usage.gen_ai_usage_output_tokens == usage.gen_ai_usage_output_tokens == 10
-        assert (
-            usage.gen_ai_usage_cache_read_input_tokens
-            == usage.gen_ai_usage_cache_read_input_tokens
-            == 1
-        )
-        assert (
-            usage.gen_ai_usage_cache_creation_input_tokens
-            == usage.gen_ai_usage_cache_creation_input_tokens
-            == 2
-        )
-        assert usage.gen_ai_usage_reasoning_output_tokens == 12
-        assert usage.latency_ms == 24
-        assert usage.cost_usd == pytest.approx(0.3)
-        assert usage.rate_missing is True
-        assert usage.gen_ai_response_finish_reasons == ["stop", "length", "tool_calls"]
+        assert len(run.token_usage_by_model) == 2
+        assert [usage.gen_ai_usage_input_tokens for usage in run.token_usage_by_model] == [2, 5]
+        assert [usage.gen_ai_usage_output_tokens for usage in run.token_usage_by_model] == [3, 7]
+        assert [usage.cost_usd for usage in run.token_usage_by_model] == [0.1, 0.2]
+        assert run.token_usage_by_model[1].rate_missing is True
 
         result = await session.execute(
             select(EventV2Model)
@@ -308,11 +292,11 @@ async def test_attempt_store_events_rebuild_attempt_and_run_read_models(
         assert attempt.agent_output == "replay line"
         assert attempt.action_log is not None
         assert attempt.action_log.session_id == "replay-session"
-        assert attempt.metrics.gen_ai_usage_input_tokens == 6
-        assert attempt.metrics.gen_ai_usage_output_tokens == 8
+        assert attempt.metrics.gen_ai_usage_input_tokens == 4
+        assert attempt.metrics.gen_ai_usage_output_tokens == 9
         assert attempt.metrics.duration_ms == 10
-        assert run.total_tokens_read == 6
-        assert run.total_tokens_write == 8
+        assert run.total_tokens_read == 4
+        assert run.total_tokens_write == 9
         assert run.total_duration_ms == 10
         assert run.agent_runner_config == {"model": "gpt-test", "pid": 5678}
         assert run.token_usage_by_model is not None

@@ -109,56 +109,21 @@ def _merge_token_usage_by_model(
     if not delta:
         return existing
 
-    merged = [_canonicalize_usage_entry(entry) for entry in (existing or [])]
-    idx_by_model = {entry["model"]: index for index, entry in enumerate(merged) if "model" in entry}
-    for usage in delta:
-        usage_dict = _canonicalize_usage_entry(dict(usage))
-        model_name = usage_dict["model"]
-        if model_name in idx_by_model:
-            previous = merged[idx_by_model[model_name]]
-            merged_entry = {**previous}
-            for canonical, legacy in (
-                ("gen_ai_usage_input_tokens", "input_tokens"),
-                ("gen_ai_usage_output_tokens", "output_tokens"),
-                ("gen_ai_usage_cache_read_input_tokens", "cache_read_tokens"),
-                ("gen_ai_usage_cache_creation_input_tokens", "cache_creation_tokens"),
-            ):
-                total = previous.get(canonical, previous.get(legacy, 0)) + usage_dict.get(
-                    canonical, usage_dict.get(legacy, 0)
-                )
-                merged_entry[canonical] = total
-            merged_entry["cost_usd"] = previous.get("cost_usd", 0.0) + usage_dict.get(
-                "cost_usd", 0.0
-            )
-            merged_entry["gen_ai_usage_reasoning_output_tokens"] = previous.get(
-                "gen_ai_usage_reasoning_output_tokens", 0
-            ) + usage_dict.get("gen_ai_usage_reasoning_output_tokens", 0)
-            merged_entry["rate_missing"] = bool(previous.get("rate_missing")) or bool(
-                usage_dict.get("rate_missing")
-            )
-            # Aggregate bridge facts retain ordered, de-duplicated reasons and sum latency.
-            merged_entry["gen_ai_response_finish_reasons"] = list(
-                dict.fromkeys(
-                    previous.get("gen_ai_response_finish_reasons", [])
-                    + usage_dict.get("gen_ai_response_finish_reasons", [])
-                )
-            )
-            merged_entry["latency_ms"] = previous.get("latency_ms", 0) + usage_dict.get(
-                "latency_ms", 0
-            )
-            merged[idx_by_model[model_name]] = merged_entry
-        else:
-            idx_by_model[model_name] = len(merged)
-            merged.append(usage_dict)
-    return merged
+    return [
+        *[_canonicalize_usage_entry(entry) for entry in (existing or [])],
+        *[_canonicalize_usage_entry(dict(usage)) for usage in delta],
+    ]
 
 
 def merge_token_usage_by_model(
     existing: list[dict[str, Any]] | None,
     delta: list[dict[str, Any]] | None,
 ) -> list[dict[str, Any]] | None:
-    """Canonicalize and aggregate persisted per-model usage entries."""
-    return _merge_token_usage_by_model(existing, delta)
+    """Canonicalize and append immutable execution usage entries."""
+    return [
+        *[_canonicalize_usage_entry(entry) for entry in (existing or [])],
+        *[_canonicalize_usage_entry(entry) for entry in (delta or [])],
+    ] or None
 
 
 def merge_oversight_patch(state: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
@@ -243,7 +208,6 @@ class RunStateProjector:
                         " source_branch, source_branch_sha, intended_seed_sha, merge_strategy,"
                         " oversight_state, env_file_specs, env_source_dir,"
                         " current_step_index, transition_tracker,"
-                        " total_tokens_read, total_tokens_write, total_tokens_cache,"
                         " total_duration_ms, total_num_actions,"
                         " token_usage_by_model,"
                         " created_at, updated_at, started_at, completed_at, runner_started_at)"
@@ -257,7 +221,6 @@ class RunStateProjector:
                         " :source_branch, :source_branch_sha, :intended_seed_sha, :merge_strategy,"
                         " :oversight_state, :env_file_specs, :env_source_dir,"
                         " :current_step_index, :transition_tracker,"
-                        " :total_tokens_read, :total_tokens_write, :total_tokens_cache,"
                         " :total_duration_ms, :total_num_actions,"
                         " :token_usage_by_model,"
                         " :created_at, :updated_at, :started_at, :completed_at, :runner_started_at)"
@@ -298,9 +261,6 @@ class RunStateProjector:
                         "transition_tracker": _json_dump(event.transition_tracker)
                         if event.transition_tracker is not None
                         else None,
-                        "total_tokens_read": event.total_tokens_read,
-                        "total_tokens_write": event.total_tokens_write,
-                        "total_tokens_cache": event.total_tokens_cache,
                         "total_duration_ms": event.total_duration_ms,
                         "total_num_actions": event.total_num_actions,
                         "token_usage_by_model": _json_dump(event.token_usage_by_model),
@@ -419,18 +379,6 @@ class RunStateProjector:
                 if not event.apply_to_run_totals:
                     return
                 values: dict[str, Any] = {}
-                if event.gen_ai_usage_input_tokens is not None:
-                    values["total_tokens_read"] = (
-                        RunModel.total_tokens_read + event.gen_ai_usage_input_tokens
-                    )
-                if event.gen_ai_usage_output_tokens is not None:
-                    values["total_tokens_write"] = (
-                        RunModel.total_tokens_write + event.gen_ai_usage_output_tokens
-                    )
-                if event.gen_ai_usage_cache_read_input_tokens is not None:
-                    values["total_tokens_cache"] = (
-                        RunModel.total_tokens_cache + event.gen_ai_usage_cache_read_input_tokens
-                    )
                 if event.duration_ms is not None:
                     values["total_duration_ms"] = RunModel.total_duration_ms + event.duration_ms
                 if event.num_actions is not None:
@@ -555,8 +503,7 @@ class RunStateProjector:
                 " source_branch, source_branch_sha, intended_seed_sha, merge_strategy, config,"
                 " env_file_specs, env_source_dir, current_step_index, transition_tracker,"
                 " created_at, updated_at, started_at, completed_at,"
-                " runner_started_at, scheduled_resume_at, total_tokens_read, total_tokens_write,"
-                " total_tokens_cache, total_duration_ms, total_num_actions,"
+                " runner_started_at, scheduled_resume_at, total_duration_ms, total_num_actions,"
                 " token_usage_by_model)"
                 " VALUES (:id, :repo_name, :status, :pause_reason, :last_error,"
                 " :execution_mode, :routine_id, :routine_sha, :routine_source, :routine_embedded,"
@@ -567,8 +514,7 @@ class RunStateProjector:
                 " :source_branch, :source_branch_sha, :intended_seed_sha, :merge_strategy, :config,"
                 " :env_file_specs, :env_source_dir, :current_step_index, :transition_tracker,"
                 " :created_at, :updated_at, :started_at, :completed_at,"
-                " :runner_started_at, :scheduled_resume_at, :total_tokens_read, :total_tokens_write,"
-                " :total_tokens_cache, :total_duration_ms, :total_num_actions,"
+                " :runner_started_at, :scheduled_resume_at, :total_duration_ms, :total_num_actions,"
                 " :token_usage_by_model)"
             ),
             {
@@ -615,9 +561,6 @@ class RunStateProjector:
                 "completed_at": _datetime_param(snapshot.get("completed_at")),
                 "runner_started_at": _datetime_param(snapshot.get("agent_runner_started_at")),
                 "scheduled_resume_at": _datetime_param(snapshot.get("scheduled_resume_at")),
-                "total_tokens_read": snapshot.get("total_tokens_read", 0),
-                "total_tokens_write": snapshot.get("total_tokens_write", 0),
-                "total_tokens_cache": snapshot.get("total_tokens_cache", 0),
                 "total_duration_ms": snapshot.get("total_duration_ms", 0),
                 "total_num_actions": snapshot.get("total_num_actions", 0),
                 "token_usage_by_model": _json_dump(snapshot.get("token_usage_by_model")),

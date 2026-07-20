@@ -436,8 +436,9 @@ async def test_cost_estimation_in_response(client_and_drain: tuple[AsyncClient, 
     assert run_final["status"] == "completed"
     assert run_final["total_tokens_read"] == 0, "No tokens tracked through API"
 
-    # 2. Manually update token counts via the repo layer
+    # 2. Persist an immutable canonical execution fact via the repository layer.
     from orchestrator.db import RunRepository
+    from orchestrator.state import ModelTokenUsage
 
     app = cast(FastAPI, client._transport.app)  # type: ignore[attr-defined]
     session_factory = cast(async_sessionmaker[AsyncSession], app.state.session_factory)
@@ -445,9 +446,14 @@ async def test_cost_estimation_in_response(client_and_drain: tuple[AsyncClient, 
     async with session_factory() as session:
         repo = RunRepository(session)
         run = await repo.get(run_id)
-        run.total_tokens_read = 100_000
-        run.total_tokens_write = 50_000
-        run.total_tokens_cache = 10_000
+        run.token_usage_by_model = [
+            ModelTokenUsage(
+                model="gpt-4o",
+                gen_ai_usage_input_tokens=100_000,
+                gen_ai_usage_output_tokens=50_000,
+                gen_ai_usage_cache_read_input_tokens=10_000,
+            )
+        ]
         await save_run(repo.session, run)
         await session.commit()
 
@@ -456,9 +462,9 @@ async def test_cost_estimation_in_response(client_and_drain: tuple[AsyncClient, 
     assert run_resp.status_code == 200
     data = run_resp.json()
 
-    assert data["total_tokens_read"] == 100_000, "Token read count should be persisted"
-    assert data["total_tokens_write"] == 50_000, "Token write count should be persisted"
-    assert data["total_tokens_cache"] == 10_000, "Token cache count should be persisted"
+    assert data["total_tokens_read"] == 100_000
+    assert data["total_tokens_write"] == 50_000
+    assert data["total_tokens_cache"] == 10_000
 
     # 4. Verify cost fields are populated
     assert data["estimated_cost_usd"] is not None, "Cost estimate should be populated"

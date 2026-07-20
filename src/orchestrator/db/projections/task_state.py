@@ -75,18 +75,6 @@ def _attempt_values_from_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         "verifier_prompt": snapshot.get("verifier_prompt"),
         "verifier_comment": snapshot.get("verifier_comment"),
         "outcome": snapshot.get("outcome"),
-        # Task 4's ORM columns retain their historical names.  Read current
-        # snapshots canonically, with exact legacy fallback for replay only.
-        "tokens_read": cast(
-            int, metrics.get("gen_ai_usage_input_tokens", metrics.get("tokens_read", 0))
-        ),
-        "tokens_write": cast(
-            int, metrics.get("gen_ai_usage_output_tokens", metrics.get("tokens_write", 0))
-        ),
-        "tokens_cache": cast(
-            int,
-            metrics.get("gen_ai_usage_cache_read_input_tokens", metrics.get("tokens_cache", 0)),
-        ),
         "duration_ms": cast(int, metrics.get("duration_ms", 0)),
         "num_actions": cast(int, metrics.get("num_actions", 0)),
         "grade_snapshot": snapshot.get("grade_snapshot") or None,
@@ -432,10 +420,9 @@ class TaskStateProjector:
                     text(
                         "INSERT OR IGNORE INTO attempts"
                         " (id, task_id, attempt_num, attempt_id, started_at,"
-                        " runner_type, agent_model,"
-                        " tokens_read, tokens_write, tokens_cache, duration_ms, num_actions)"
+                        " runner_type, agent_model, duration_ms, num_actions)"
                         " VALUES (:id, :task_id, :attempt_num, :attempt_id,"
-                        " :started_at, :runner_type, :agent_model, 0, 0, 0, 0, 0)"
+                        " :started_at, :runner_type, :agent_model, 0, 0)"
                     ),
                     {
                         "id": event.attempt_id,
@@ -496,19 +483,10 @@ class TaskStateProjector:
                     if event.action_log is not None:
                         attempt.action_log_json = event.action_log
                     if event.token_usage_by_model is not None:
-                        attempt.token_usage_by_model = event.token_usage_by_model
-                    if event.gen_ai_usage_input_tokens is not None:
-                        attempt.tokens_read = (
-                            attempt.tokens_read or 0
-                        ) + event.gen_ai_usage_input_tokens
-                    if event.gen_ai_usage_output_tokens is not None:
-                        attempt.tokens_write = (
-                            attempt.tokens_write or 0
-                        ) + event.gen_ai_usage_output_tokens
-                    if event.gen_ai_usage_cache_read_input_tokens is not None:
-                        attempt.tokens_cache = (
-                            attempt.tokens_cache or 0
-                        ) + event.gen_ai_usage_cache_read_input_tokens
+                        attempt.token_usage_by_model = [
+                            *(attempt.token_usage_by_model or []),
+                            *event.token_usage_by_model,
+                        ]
                     if event.duration_ms is not None:
                         attempt.duration_ms = (attempt.duration_ms or 0) + event.duration_ms
                     if event.num_actions is not None:

@@ -138,9 +138,6 @@ class CreateRunCommand(BaseModel):
     started_at: str | None = None
     completed_at: str | None = None
     agent_runner_started_at: str | None = None
-    total_tokens_read: int = 0
-    total_tokens_write: int = 0
-    total_tokens_cache: int = 0
     total_duration_ms: int = 0
     total_num_actions: int = 0
     token_usage_by_model: list[dict[str, Any]] | None = None
@@ -219,9 +216,6 @@ def _snapshot_attempt_needs_update(
         or any(
             metrics.get(field)
             for field in (
-                "tokens_read",
-                "tokens_write",
-                "tokens_cache",
                 "duration_ms",
                 "num_actions",
             )
@@ -346,10 +340,6 @@ def expand_run_snapshot_for_projection(event: RunCreated) -> "list[WorkflowEvent
                             token_usage_by_model=attempt.get("token_usage_by_model"),
                             completed_at=attempt.get("completed_at"),
                             paused_at=attempt.get("paused_at"),
-                            gen_ai_usage_input_tokens=metrics.get("tokens_read") or None,
-                            gen_ai_usage_output_tokens=metrics.get("tokens_write") or None,
-                            gen_ai_usage_cache_read_input_tokens=metrics.get("tokens_cache")
-                            or None,
                             duration_ms=metrics.get("duration_ms") or None,
                             num_actions=metrics.get("num_actions") or None,
                             agent_runner_type=attempt.get("agent_runner_type"),
@@ -497,9 +487,6 @@ def build_create_run_command(run: Run, *, project_path: str = "") -> CreateRunCo
         agent_runner_started_at=run.agent_runner_started_at.isoformat()
         if run.agent_runner_started_at
         else None,
-        total_tokens_read=run.total_tokens_read,
-        total_tokens_write=run.total_tokens_write,
-        total_tokens_cache=run.total_tokens_cache,
         total_duration_ms=run.total_duration_ms,
         total_num_actions=run.total_num_actions,
         token_usage_by_model=[usage.model_dump(mode="json") for usage in run.token_usage_by_model]
@@ -558,9 +545,6 @@ async def handle_create_run(
         started_at=cmd.started_at,
         completed_at=cmd.completed_at,
         agent_runner_started_at=cmd.agent_runner_started_at,
-        total_tokens_read=cmd.total_tokens_read,
-        total_tokens_write=cmd.total_tokens_write,
-        total_tokens_cache=cmd.total_tokens_cache,
         total_duration_ms=cmd.total_duration_ms,
         total_num_actions=cmd.total_num_actions,
         token_usage_by_model=cmd.token_usage_by_model,

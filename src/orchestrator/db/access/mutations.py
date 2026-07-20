@@ -55,7 +55,7 @@ def merge_token_usage_into_run(
     num_actions: int | None = None,
     token_usage_by_model: Any = None,
 ) -> None:
-    """Accumulate one agent execution's usage into a run's running totals.
+    """Append immutable execution usage and accumulate independent run timing facts.
 
     Carrier-agnostic and the single home for run-level token accounting: the
     legacy attempt path (``update_latest_attempt``) and the graph dispatch path
@@ -65,16 +65,6 @@ def merge_token_usage_into_run(
     """
     if run_model is None:
         return
-    if gen_ai_usage_input_tokens is not None:
-        run_model.total_tokens_read = (run_model.total_tokens_read or 0) + gen_ai_usage_input_tokens
-    if gen_ai_usage_output_tokens is not None:
-        run_model.total_tokens_write = (
-            run_model.total_tokens_write or 0
-        ) + gen_ai_usage_output_tokens
-    if gen_ai_usage_cache_read_input_tokens is not None:
-        run_model.total_tokens_cache = (
-            run_model.total_tokens_cache or 0
-        ) + gen_ai_usage_cache_read_input_tokens
     if duration_ms is not None:
         run_model.total_duration_ms = (run_model.total_duration_ms or 0) + duration_ms
     if num_actions is not None:
@@ -82,48 +72,11 @@ def merge_token_usage_into_run(
 
     if token_usage_by_model is not None and len(token_usage_by_model) > 0:
         existing = cast("list[dict[str, Any]]", run_model.token_usage_by_model or [])
-        merged: list[dict[str, Any]] = [dict(e) for e in existing]
-        idx_by_model = {entry["model"]: i for i, entry in enumerate(merged)}
-        for usage in token_usage_by_model:
-            usage_dict = (
-                usage.model_dump(mode="json") if hasattr(usage, "model_dump") else dict(usage)
-            )
-            model_name = usage_dict["model"]
-            if model_name in idx_by_model:
-                prev = merged[idx_by_model[model_name]]
-                merged[idx_by_model[model_name]] = {
-                    **prev,
-                    "gen_ai_usage_input_tokens": prev.get("gen_ai_usage_input_tokens", 0)
-                    + usage_dict.get("gen_ai_usage_input_tokens", 0),
-                    "gen_ai_usage_output_tokens": prev.get("gen_ai_usage_output_tokens", 0)
-                    + usage_dict.get("gen_ai_usage_output_tokens", 0),
-                    "gen_ai_usage_cache_read_input_tokens": prev.get(
-                        "gen_ai_usage_cache_read_input_tokens", 0
-                    )
-                    + usage_dict.get("gen_ai_usage_cache_read_input_tokens", 0),
-                    "gen_ai_usage_cache_creation_input_tokens": prev.get(
-                        "gen_ai_usage_cache_creation_input_tokens", 0
-                    )
-                    + usage_dict.get("gen_ai_usage_cache_creation_input_tokens", 0),
-                    "gen_ai_usage_reasoning_output_tokens": prev.get(
-                        "gen_ai_usage_reasoning_output_tokens", 0
-                    )
-                    + usage_dict.get("gen_ai_usage_reasoning_output_tokens", 0),
-                    "gen_ai_response_finish_reasons": list(
-                        dict.fromkeys(
-                            prev.get("gen_ai_response_finish_reasons", [])
-                            + usage_dict.get("gen_ai_response_finish_reasons", [])
-                        )
-                    ),
-                    "cost_usd": prev.get("cost_usd", 0) + usage_dict.get("cost_usd", 0),
-                    "latency_ms": prev.get("latency_ms", 0) + usage_dict.get("latency_ms", 0),
-                    "rate_missing": prev.get("rate_missing", False)
-                    or usage_dict.get("rate_missing", False),
-                }
-            else:
-                merged.append(usage_dict)
-                idx_by_model[model_name] = len(merged) - 1
-        run_model.token_usage_by_model = merged
+        executions = [
+            usage.model_dump(mode="json") if hasattr(usage, "model_dump") else dict(usage)
+            for usage in token_usage_by_model
+        ]
+        run_model.token_usage_by_model = [*existing, *executions]
 
 
 async def update_latest_attempt(
@@ -194,26 +147,12 @@ async def update_latest_attempt(
     if verifier_prompt is not None:
         attempt.verifier_prompt = verifier_prompt
 
-    effective_tokens_read = tokens_read
-    effective_tokens_write = tokens_write
-    effective_tokens_cache = tokens_cache
     effective_duration_ms = duration_ms
     effective_num_actions = num_actions
     if metrics is not None:
-        effective_tokens_read = (effective_tokens_read or 0) + metrics.gen_ai_usage_input_tokens
-        effective_tokens_write = (effective_tokens_write or 0) + metrics.gen_ai_usage_output_tokens
-        effective_tokens_cache = (
-            effective_tokens_cache or 0
-        ) + metrics.gen_ai_usage_cache_read_input_tokens
         effective_duration_ms = (effective_duration_ms or 0) + metrics.duration_ms
         effective_num_actions = (effective_num_actions or 0) + metrics.num_actions
 
-    if effective_tokens_read is not None:
-        attempt.tokens_read = (attempt.tokens_read or 0) + effective_tokens_read
-    if effective_tokens_write is not None:
-        attempt.tokens_write = (attempt.tokens_write or 0) + effective_tokens_write
-    if effective_tokens_cache is not None:
-        attempt.tokens_cache = (attempt.tokens_cache or 0) + effective_tokens_cache
     if effective_duration_ms is not None:
         attempt.duration_ms = (attempt.duration_ms or 0) + effective_duration_ms
     if effective_num_actions is not None:
@@ -222,9 +161,6 @@ async def update_latest_attempt(
     run_model = attempt.task.step.run if attempt.task and attempt.task.step else None
     merge_token_usage_into_run(
         run_model,
-        gen_ai_usage_input_tokens=effective_tokens_read,
-        gen_ai_usage_output_tokens=effective_tokens_write,
-        gen_ai_usage_cache_read_input_tokens=effective_tokens_cache,
         duration_ms=effective_duration_ms,
         num_actions=effective_num_actions,
         token_usage_by_model=token_usage_by_model,

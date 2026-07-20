@@ -53,6 +53,20 @@ from orchestrator.time_utils import (
 _UNSET = object()
 
 
+def _usage_metrics(entries: list[dict[str, Any]] | None) -> tuple[int, int, int]:
+    """Derive display metrics from immutable canonical usage facts."""
+    usage = entries or []
+    return (
+        sum(int(item.get("gen_ai_usage_input_tokens", 0)) for item in usage),
+        sum(int(item.get("gen_ai_usage_output_tokens", 0)) for item in usage),
+        sum(
+            int(item.get("gen_ai_usage_cache_read_input_tokens", 0))
+            + int(item.get("gen_ai_usage_cache_creation_input_tokens", 0))
+            for item in usage
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class RunLivenessRecord:
     """Minimal run data needed for agent liveness recovery."""
@@ -174,6 +188,9 @@ def run_model_to_domain(
                 if att_model.runner_type == "script":
                     agent_settings = {**agent_settings, "execution_kind": "script"}
 
+                token_read, token_write, token_cache = _usage_metrics(
+                    att_model.token_usage_by_model
+                )
                 attempts.append(
                     Attempt(
                         id=att_model.id,
@@ -186,9 +203,9 @@ def run_model_to_domain(
                         verifier_comment=att_model.verifier_comment,
                         outcome=att_model.outcome,
                         metrics=AttemptMetrics(
-                            gen_ai_usage_input_tokens=att_model.tokens_read,
-                            gen_ai_usage_output_tokens=att_model.tokens_write,
-                            gen_ai_usage_cache_read_input_tokens=att_model.tokens_cache,
+                            gen_ai_usage_input_tokens=token_read,
+                            gen_ai_usage_output_tokens=token_write,
+                            gen_ai_usage_cache_read_input_tokens=token_cache,
                             duration_ms=att_model.duration_ms,
                             num_actions=att_model.num_actions,
                         ),
@@ -282,6 +299,9 @@ def run_model_to_domain(
         for spec in env_specs_data
     ]
 
+    total_tokens_read, total_tokens_write, total_tokens_cache = _usage_metrics(
+        model.token_usage_by_model
+    )
     return Run(
         id=model.id,
         repo_name=model.repo_name,
@@ -322,9 +342,9 @@ def run_model_to_domain(
         started_at=_ensure_utc_optional(model.started_at),
         completed_at=_ensure_utc_optional(model.completed_at),
         agent_runner_started_at=_ensure_utc_optional(model.runner_started_at),
-        total_tokens_read=model.total_tokens_read,
-        total_tokens_write=model.total_tokens_write,
-        total_tokens_cache=model.total_tokens_cache,
+        total_tokens_read=total_tokens_read,
+        total_tokens_write=total_tokens_write,
+        total_tokens_cache=total_tokens_cache,
         total_duration_ms=model.total_duration_ms,
         total_num_actions=model.total_num_actions,
         token_usage_by_model=[
@@ -365,9 +385,6 @@ def run_to_model(run: Run) -> RunModel:
                         verifier_prompt=att.verifier_prompt,
                         verifier_comment=att.verifier_comment,
                         outcome=att.outcome,
-                        tokens_read=att.metrics.gen_ai_usage_input_tokens,
-                        tokens_write=att.metrics.gen_ai_usage_output_tokens,
-                        tokens_cache=att.metrics.gen_ai_usage_cache_read_input_tokens,
                         duration_ms=att.metrics.duration_ms,
                         num_actions=att.metrics.num_actions,
                         grade_snapshot=snapshot_json,
@@ -474,9 +491,6 @@ def run_to_model(run: Run) -> RunModel:
         started_at=run.started_at,
         completed_at=run.completed_at,
         runner_started_at=run.agent_runner_started_at,
-        total_tokens_read=run.total_tokens_read,
-        total_tokens_write=run.total_tokens_write,
-        total_tokens_cache=run.total_tokens_cache,
         total_duration_ms=run.total_duration_ms,
         total_num_actions=run.total_num_actions,
         token_usage_by_model=(

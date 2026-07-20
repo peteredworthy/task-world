@@ -84,7 +84,6 @@ async def test_crud_with_steps_and_tasks(session: AsyncSession) -> None:
         task_id="task-1",
         attempt_num=1,
         started_at=datetime(2025, 1, 15, 10, 31, 0, tzinfo=timezone.utc),
-        tokens_read=100,
     )
 
     run.steps.append(step)
@@ -100,7 +99,7 @@ async def test_crud_with_steps_and_tasks(session: AsyncSession) -> None:
     assert len(loaded.steps[0].tasks) == 1
     assert loaded.steps[0].tasks[0].checklist[0]["req_id"] == "R1"
     assert len(loaded.steps[0].tasks[0].attempts) == 1
-    assert loaded.steps[0].tasks[0].attempts[0].tokens_read == 100
+    assert loaded.steps[0].tasks[0].attempts[0].token_usage_by_model is None
 
 
 async def test_cascade_delete(session: AsyncSession) -> None:
@@ -395,8 +394,6 @@ async def test_run_fields_roundtrip(session: AsyncSession) -> None:
         created_at=now,
         updated_at=now,
         started_at=now,
-        total_tokens_read=500,
-        total_tokens_write=200,
         total_duration_ms=30000,
     )
     session.add(run)
@@ -412,4 +409,3 @@ async def test_run_fields_roundtrip(session: AsyncSession) -> None:
     assert loaded.worktree_path == "/tmp/wt"
     assert loaded.config == {"feature": "auth"}
     assert loaded.current_step_index == 2
-    assert loaded.total_tokens_read == 500

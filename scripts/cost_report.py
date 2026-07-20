@@ -12,10 +12,10 @@ from typing import Any
 
 METRIC_COLUMNS = [
     "executions",
-    "input_tokens",
-    "output_tokens",
-    "cache_read_tokens",
-    "cache_write_tokens",
+    "gen_ai_usage_input_tokens",
+    "gen_ai_usage_output_tokens",
+    "gen_ai_usage_cache_read_input_tokens",
+    "gen_ai_usage_cache_creation_input_tokens",
     "wall_time_ms",
     "cost_usd",
 ]
@@ -34,10 +34,10 @@ def _fetch_aggregates(conn: sqlite3.Connection, group_columns: list[str]) -> lis
         SELECT
             {columns},
             COUNT(*) AS executions,
-            COALESCE(SUM(input_tokens), 0) AS input_tokens,
-            COALESCE(SUM(output_tokens), 0) AS output_tokens,
-            COALESCE(SUM(cache_read_tokens), 0) AS cache_read_tokens,
-            COALESCE(SUM(cache_write_tokens), 0) AS cache_write_tokens,
+            COALESCE(SUM(gen_ai_usage_input_tokens), 0) AS gen_ai_usage_input_tokens,
+            COALESCE(SUM(gen_ai_usage_output_tokens), 0) AS gen_ai_usage_output_tokens,
+            COALESCE(SUM(gen_ai_usage_cache_read_input_tokens), 0) AS gen_ai_usage_cache_read_input_tokens,
+            COALESCE(SUM(gen_ai_usage_cache_creation_input_tokens), 0) AS gen_ai_usage_cache_creation_input_tokens,
             COALESCE(SUM(wall_time_ms), 0) AS wall_time_ms,
             COALESCE(SUM(cost_usd), 0.0) AS cost_usd
         FROM cost_records
@@ -62,10 +62,10 @@ def _format_table(title: str, rows: list[dict[str, Any]], group_columns: list[st
         [
             *(str(row[column]) for column in group_columns),
             str(row["executions"]),
-            str(row["input_tokens"]),
-            str(row["output_tokens"]),
-            str(row["cache_read_tokens"]),
-            str(row["cache_write_tokens"]),
+            str(row["gen_ai_usage_input_tokens"]),
+            str(row["gen_ai_usage_output_tokens"]),
+            str(row["gen_ai_usage_cache_read_input_tokens"]),
+            str(row["gen_ai_usage_cache_creation_input_tokens"]),
             str(row["wall_time_ms"]),
             f"{row['cost_usd']:.6f}",
         ]

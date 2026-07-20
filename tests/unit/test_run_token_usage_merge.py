@@ -15,16 +15,13 @@ from orchestrator.db import merge_token_usage_into_run
 
 def _run() -> SimpleNamespace:
     return SimpleNamespace(
-        total_tokens_read=0,
-        total_tokens_write=0,
-        total_tokens_cache=0,
         total_duration_ms=0,
         total_num_actions=0,
         token_usage_by_model=[],
     )
 
 
-def test_merge_accumulates_totals_and_tool_calls() -> None:
+def test_merge_accumulates_duration_and_tool_calls_independently() -> None:
     run = _run()
     merge_token_usage_into_run(
         run,
@@ -34,22 +31,21 @@ def test_merge_accumulates_totals_and_tool_calls() -> None:
         duration_ms=1200,
         num_actions=7,
     )
-    assert run.total_tokens_read == 100
-    assert run.total_tokens_write == 200
-    assert run.total_tokens_cache == 50
     assert run.total_duration_ms == 1200
     assert run.total_num_actions == 7  # tool-call count flows through
 
 
-def test_merge_is_additive_across_executions() -> None:
+def test_merge_keeps_each_usage_execution_as_an_immutable_entry() -> None:
     run = _run()
-    merge_token_usage_into_run(run, gen_ai_usage_output_tokens=200, num_actions=3)
-    merge_token_usage_into_run(run, gen_ai_usage_output_tokens=300, num_actions=4)
-    assert run.total_tokens_write == 500
-    assert run.total_num_actions == 7  # two agent executions accumulate
+    first_execution = {"model": "m1", "gen_ai_usage_output_tokens": 200}
+    second_execution = {"model": "m1", "gen_ai_usage_output_tokens": 300}
+    merge_token_usage_into_run(run, token_usage_by_model=[first_execution], num_actions=3)
+    merge_token_usage_into_run(run, token_usage_by_model=[second_execution], num_actions=4)
+    assert run.token_usage_by_model == [first_execution, second_execution]
+    assert run.total_num_actions == 7
 
 
-def test_merge_per_model_usage_sums_by_model() -> None:
+def test_merge_does_not_merge_usage_entries_with_the_same_model() -> None:
     run = _run()
     merge_token_usage_into_run(
         run,
@@ -82,10 +78,29 @@ def test_merge_per_model_usage_sums_by_model() -> None:
             },
         ],
     )
-    by_model = {u["model"]: u for u in run.token_usage_by_model}
-    assert by_model["m1"]["gen_ai_usage_input_tokens"] == 17  # 10 + 7 merged
-    assert by_model["m1"]["gen_ai_usage_output_tokens"] == 23
-    assert by_model["m2"]["gen_ai_usage_input_tokens"] == 100
+    assert run.token_usage_by_model == [
+        {
+            "model": "m1",
+            "gen_ai_usage_input_tokens": 10,
+            "gen_ai_usage_output_tokens": 20,
+            "gen_ai_usage_cache_read_input_tokens": 5,
+            "gen_ai_usage_cache_creation_input_tokens": 1,
+        },
+        {
+            "model": "m1",
+            "gen_ai_usage_input_tokens": 7,
+            "gen_ai_usage_output_tokens": 3,
+            "gen_ai_usage_cache_read_input_tokens": 2,
+            "gen_ai_usage_cache_creation_input_tokens": 0,
+        },
+        {
+            "model": "m2",
+            "gen_ai_usage_input_tokens": 100,
+            "gen_ai_usage_output_tokens": 0,
+            "gen_ai_usage_cache_read_input_tokens": 0,
+            "gen_ai_usage_cache_creation_input_tokens": 0,
+        },
+    ]
 
 
 def test_merge_none_run_is_noop() -> None:

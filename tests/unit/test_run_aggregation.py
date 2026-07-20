@@ -11,7 +11,6 @@ from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
 from typing import Any, cast
 
-import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -36,7 +35,7 @@ def _legacy_usage_snapshot(value: object) -> object:
 _NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
 
 
-def test_projection_merges_legacy_existing_usage_with_canonical_same_model_delta() -> None:
+def test_projection_preserves_execution_entries_with_the_same_model() -> None:
     merged = merge_token_usage_by_model(
         [
             cast(
@@ -64,16 +63,16 @@ def test_projection_merges_legacy_existing_usage_with_canonical_same_model_delta
     assert merged == [
         {
             "model": "legacy-model",
-            "gen_ai_usage_input_tokens": 13,
-            "gen_ai_usage_output_tokens": 6,
-            "gen_ai_usage_cache_read_input_tokens": 0,
-            "gen_ai_usage_cache_creation_input_tokens": 0,
-            "gen_ai_usage_reasoning_output_tokens": 0,
-            "cost_usd": 0.35,
-            "rate_missing": False,
-            "gen_ai_response_finish_reasons": [],
-            "latency_ms": 0,
-        }
+            "gen_ai_usage_input_tokens": 10,
+            "gen_ai_usage_output_tokens": 2,
+            "cost_usd": 0.25,
+        },
+        {
+            "model": "legacy-model",
+            "gen_ai_usage_input_tokens": 3,
+            "gen_ai_usage_output_tokens": 4,
+            "cost_usd": 0.1,
+        },
     ]
 
 
@@ -172,9 +171,6 @@ def _make_run_graph(
         config={},
         created_at=_NOW,
         updated_at=_NOW,
-        total_tokens_read=0,
-        total_tokens_write=0,
-        total_tokens_cache=0,
     )
     step = StepModel(
         id=f"{run_id}-step",
@@ -265,8 +261,8 @@ async def test_two_different_models_both_appear_in_run(session: AsyncSession) ->
 # ---------------------------------------------------------------------------
 
 
-async def test_same_model_tokens_are_summed_rates_preserved(session: AsyncSession) -> None:
-    """Same model contributed across two calls: tokens sum, rates from first call."""
+async def test_same_model_executions_remain_distinct(session: AsyncSession) -> None:
+    """Same-model executions remain distinct immutable usage facts."""
     run = _make_run_graph(run_id="run-2", task_id="task-2", attempt_id="att-2")
     session.add(run)
     await session.flush()
@@ -307,14 +303,32 @@ async def test_same_model_tokens_are_summed_rates_preserved(session: AsyncSessio
     run_model = result.scalar_one()
 
     assert run_model.token_usage_by_model is not None
-    usage_by_model = {u["model"]: u for u in run_model.token_usage_by_model}
-
-    assert "claude-sonnet-4-6" in usage_by_model
-    entry = usage_by_model["claude-sonnet-4-6"]
-    # Tokens must be summed
-    assert entry["gen_ai_usage_input_tokens"] == 1_500
-    assert entry["gen_ai_usage_output_tokens"] == 150
-    assert entry["cost_usd"] == pytest.approx(0.00675)
+    assert run_model.token_usage_by_model == [
+        {
+            "model": "claude-sonnet-4-6",
+            "gen_ai_usage_input_tokens": 1_000,
+            "gen_ai_usage_output_tokens": 100,
+            "gen_ai_usage_cache_read_input_tokens": 0,
+            "gen_ai_usage_cache_creation_input_tokens": 0,
+            "gen_ai_usage_reasoning_output_tokens": 0,
+            "gen_ai_response_finish_reasons": [],
+            "cost_usd": 0.0045,
+            "latency_ms": 0,
+            "rate_missing": False,
+        },
+        {
+            "model": "claude-sonnet-4-6",
+            "gen_ai_usage_input_tokens": 500,
+            "gen_ai_usage_output_tokens": 50,
+            "gen_ai_usage_cache_read_input_tokens": 0,
+            "gen_ai_usage_cache_creation_input_tokens": 0,
+            "gen_ai_usage_reasoning_output_tokens": 0,
+            "gen_ai_response_finish_reasons": [],
+            "cost_usd": 0.00225,
+            "latency_ms": 0,
+            "rate_missing": False,
+        },
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -399,8 +413,8 @@ async def test_none_token_usage_leaves_run_unchanged(session: AsyncSession) -> N
 # ---------------------------------------------------------------------------
 
 
-async def test_run_legacy_fields_match_per_model_sum(session: AsyncSession) -> None:
-    """Run-level total_tokens_read/write/cache are consistent with token_usage_by_model sum."""
+async def test_run_usage_facts_retain_their_derived_totals(session: AsyncSession) -> None:
+    """Canonical usage facts provide the complete token total without flat columns."""
     run = _make_run_graph(run_id="run-5", task_id="task-5", attempt_id="att-5")
     session.add(run)
     await session.flush()
@@ -441,22 +455,11 @@ async def test_run_legacy_fields_match_per_model_sum(session: AsyncSession) -> N
     result = await session.execute(select(RunModel).where(RunModel.id == "run-5"))
     run_model = result.scalar_one()
 
-    # Compute expected legacy totals from per-model breakdown
     by_model = run_model.token_usage_by_model or []
     total_input = sum(u["gen_ai_usage_input_tokens"] for u in by_model)
     total_output = sum(u["gen_ai_usage_output_tokens"] for u in by_model)
     total_cache = sum(u["gen_ai_usage_cache_read_input_tokens"] for u in by_model)
 
-    # Legacy fields should match sums of per-model data
-    assert run_model.total_tokens_read == total_input, (
-        f"total_tokens_read ({run_model.total_tokens_read}) should equal "
-        f"sum of input_tokens across models ({total_input})"
-    )
-    assert run_model.total_tokens_write == total_output, (
-        f"total_tokens_write ({run_model.total_tokens_write}) should equal "
-        f"sum of output_tokens across models ({total_output})"
-    )
-    assert run_model.total_tokens_cache == total_cache, (
-        f"total_tokens_cache ({run_model.total_tokens_cache}) should equal "
-        f"sum of cache_read_tokens across models ({total_cache})"
-    )
+    assert total_input == sonnet_input + haiku_input
+    assert total_output == sonnet_output + haiku_output
+    assert total_cache == sonnet_cache

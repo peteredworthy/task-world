@@ -101,9 +101,6 @@ class RunModel(Base):
     scheduled_resume_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Aggregate metrics
-    total_tokens_read: Mapped[int] = mapped_column(Integer, default=0)
-    total_tokens_write: Mapped[int] = mapped_column(Integer, default=0)
-    total_tokens_cache: Mapped[int] = mapped_column(Integer, default=0)
     total_duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     total_num_actions: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -214,9 +211,6 @@ class AttemptModel(Base):
     verifier_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     verifier_comment: Mapped[str | None] = mapped_column(Text, nullable=True)
     outcome: Mapped[str | None] = mapped_column(String, nullable=True)
-    tokens_read: Mapped[int] = mapped_column(Integer, default=0)
-    tokens_write: Mapped[int] = mapped_column(Integer, default=0)
-    tokens_cache: Mapped[int] = mapped_column(Integer, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     num_actions: Mapped[int] = mapped_column(Integer, default=0)
     grade_snapshot: Mapped[list[dict[str, Any]] | None] = mapped_column(JSON, nullable=True)
@@ -277,10 +271,14 @@ class CostRecordModel(Base):
     phase: Mapped[str] = mapped_column(String, nullable=False)
     mode_tag: Mapped[str] = mapped_column(String, nullable=False, default="default")
     model_name: Mapped[str] = mapped_column(String, nullable=False, default="unknown")
-    input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    cache_read_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    cache_write_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    gen_ai_usage_input_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    gen_ai_usage_output_tokens: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    gen_ai_usage_cache_read_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
+    gen_ai_usage_cache_creation_input_tokens: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0
+    )
     wall_time_ms: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     token_usage_by_model: Mapped[list[dict[str, Any]] | None] = mapped_column(

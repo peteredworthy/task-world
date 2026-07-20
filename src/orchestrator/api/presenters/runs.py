@@ -53,7 +53,7 @@ def compute_run_totals_from_attempts(
 
     Returns (tokens_read, tokens_write, tokens_cache, duration_ms, num_actions, usage_list).
     """
-    merged_usage: dict[str, ModelTokenUsage] = {}
+    usage_list: list[ModelTokenUsage] = []
     tokens_read_fallback = 0
     tokens_write_fallback = 0
     tokens_cache_fallback = 0
@@ -64,61 +64,7 @@ def compute_run_totals_from_attempts(
         for task in step.tasks:
             for attempt in task.attempts:
                 has_per_model_data = bool(attempt.token_usage_by_model)
-
-                for usage in attempt.token_usage_by_model:
-                    model = usage.model
-                    if model in merged_usage:
-                        existing = merged_usage[model]
-                        merged_usage[model] = ModelTokenUsage(
-                            model=model,
-                            gen_ai_usage_cache_read_input_tokens=(
-                                existing.gen_ai_usage_cache_read_input_tokens
-                                + usage.gen_ai_usage_cache_read_input_tokens
-                            ),
-                            gen_ai_usage_cache_creation_input_tokens=(
-                                existing.gen_ai_usage_cache_creation_input_tokens
-                                + usage.gen_ai_usage_cache_creation_input_tokens
-                            ),
-                            gen_ai_usage_input_tokens=(
-                                existing.gen_ai_usage_input_tokens + usage.gen_ai_usage_input_tokens
-                            ),
-                            gen_ai_usage_output_tokens=(
-                                existing.gen_ai_usage_output_tokens
-                                + usage.gen_ai_usage_output_tokens
-                            ),
-                            gen_ai_usage_reasoning_output_tokens=(
-                                existing.gen_ai_usage_reasoning_output_tokens
-                                + usage.gen_ai_usage_reasoning_output_tokens
-                            ),
-                            gen_ai_response_finish_reasons=list(
-                                dict.fromkeys(
-                                    existing.gen_ai_response_finish_reasons
-                                    + usage.gen_ai_response_finish_reasons
-                                )
-                            ),
-                            cost_usd=existing.cost_usd + usage.cost_usd,
-                            latency_ms=existing.latency_ms + usage.latency_ms,
-                            rate_missing=existing.rate_missing or usage.rate_missing,
-                        )
-                    else:
-                        merged_usage[model] = ModelTokenUsage(
-                            model=model,
-                            gen_ai_usage_cache_read_input_tokens=usage.gen_ai_usage_cache_read_input_tokens,
-                            gen_ai_usage_cache_creation_input_tokens=(
-                                usage.gen_ai_usage_cache_creation_input_tokens
-                            ),
-                            gen_ai_usage_input_tokens=usage.gen_ai_usage_input_tokens,
-                            gen_ai_usage_output_tokens=usage.gen_ai_usage_output_tokens,
-                            gen_ai_usage_reasoning_output_tokens=(
-                                usage.gen_ai_usage_reasoning_output_tokens
-                            ),
-                            gen_ai_response_finish_reasons=list(
-                                usage.gen_ai_response_finish_reasons
-                            ),
-                            cost_usd=usage.cost_usd,
-                            latency_ms=usage.latency_ms,
-                            rate_missing=usage.rate_missing,
-                        )
+                usage_list.extend(attempt.token_usage_by_model)
 
                 if attempt.action_log is not None:
                     al = attempt.action_log
@@ -154,7 +100,6 @@ def compute_run_totals_from_attempts(
                             attempt.metrics.gen_ai_usage_cache_read_input_tokens
                         )
 
-    usage_list = list(merged_usage.values())
     if usage_list:
         tokens_read = sum(u.gen_ai_usage_input_tokens for u in usage_list)
         tokens_write = sum(u.gen_ai_usage_output_tokens for u in usage_list)
@@ -172,14 +117,19 @@ def compute_run_totals_from_attempts(
 
 def compute_run_metrics(run: Run) -> RunMetricSummary:
     """Aggregate run-level totals and cost using the same fallback semantics as RunResponse."""
-    tokens_read = run.total_tokens_read
-    tokens_write = run.total_tokens_write
-    tokens_cache = run.total_tokens_cache
     duration_ms = run.total_duration_ms
     num_actions = run.total_num_actions
     usage = run.token_usage_by_model
 
-    if not tokens_read and not tokens_write and not usage:
+    if usage:
+        tokens_read = sum(item.gen_ai_usage_input_tokens for item in usage)
+        tokens_write = sum(item.gen_ai_usage_output_tokens for item in usage)
+        tokens_cache = sum(
+            item.gen_ai_usage_cache_read_input_tokens
+            + item.gen_ai_usage_cache_creation_input_tokens
+            for item in usage
+        )
+    else:
         (
             tokens_read,
             tokens_write,
@@ -397,14 +347,19 @@ def run_to_trace_response(run: Run) -> RunTraceResponse:
                     )
                 )
 
-    tokens_read = run.total_tokens_read
-    tokens_write = run.total_tokens_write
-    tokens_cache = run.total_tokens_cache
     duration_ms = run.total_duration_ms
     num_actions = run.total_num_actions
     usage = run.token_usage_by_model
 
-    if not tokens_read and not tokens_write and not usage:
+    if usage:
+        tokens_read = sum(item.gen_ai_usage_input_tokens for item in usage)
+        tokens_write = sum(item.gen_ai_usage_output_tokens for item in usage)
+        tokens_cache = sum(
+            item.gen_ai_usage_cache_read_input_tokens
+            + item.gen_ai_usage_cache_creation_input_tokens
+            for item in usage
+        )
+    else:
         tokens_read, tokens_write, tokens_cache, duration_ms, num_actions, usage = (
             compute_run_totals_from_attempts(run)
         )

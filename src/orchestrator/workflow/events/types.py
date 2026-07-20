@@ -391,9 +391,6 @@ class RunCreated(WorkflowEvent):
     started_at: str | None = None
     completed_at: str | None = None
     agent_runner_started_at: str | None = None
-    total_tokens_read: int = 0
-    total_tokens_write: int = 0
-    total_tokens_cache: int = 0
     total_duration_ms: int = 0
     total_num_actions: int = 0
     token_usage_by_model: list[dict[str, Any]] | None = None

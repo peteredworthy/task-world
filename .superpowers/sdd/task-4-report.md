@@ -1,60 +1,65 @@
-# Backlog Closeout Task 4 Report
+# Task 4 Evidence: Persisted Usage Migration and Flat-Counter Removal
 
-## Status
+## TDD evidence
 
-Implemented Codex CLI model routing so `--model` follows `exec`, including
-absolute Codex command paths and custom arguments. Non-Codex argument ordering
-is unchanged, and MCP argument handling was not modified.
+1. Added the real-SQLite pre-cutover fixture in `tests/integration/test_migrations.py` before creating the revision.
+2. Ran the required RED command:
 
-## Files
+   ```text
+   uv run pytest tests/integration/test_migrations.py -q -n 0 -k otel_usage_cutover
+   ```
 
-- `src/orchestrator/runners/agents/claude_cli/agent.py`
-- `tests/unit/test_cli_agent.py`
+   Expected result: **failed** with `alembic.util.exc.CommandError: Can't locate revision identified by 'r04a1b2c3d4e'`.
+3. Implemented revision `r04a1b2c3d4e`, with down revision `zg1h2i3j4k5l`.
+4. Reran the same command GREEN: `1 passed, 3 deselected`.
 
-## Test-driven evidence
+## Migration coverage
 
-Added exact argv tests for Codex factory defaults, absolute Codex paths with
-custom args, and unchanged Claude ordering.
+- Upgrade transforms legacy usage keys in `runs.token_usage_by_model`,
+  `attempts.token_usage_by_model`, `cost_records.token_usage_by_model`, and recursively
+  through `events_v2.payload` telemetry/snapshot structures.
+- Upgrade drops the six run/attempt flat token columns and renames all four retained
+  cost-record token columns to canonical OTel names.
+- Downgrade reverses JSON and cost-column vocabulary and recomputes available flat
+  counters from canonical immutable usage facts (including both cache categories).
+- The fixture asserts values, costs, and unknown provider raw data are retained.
 
-RED run:
+## Persistence/replay coverage
+
+- Run and attempt projector usage lists append one canonical record for each execution;
+  they no longer merge records by model.
+- Repository and presenter totals derive token values from immutable usage entries.
+- `duration_ms` and `num_actions` remain independently persisted/accumulated.
+- Targeted replay integration coverage passed after rebuilding all read models from events.
+
+## Fresh verification
 
 ```text
-uv run pytest tests/unit/test_cli_agent.py -q
-2 failed, 37 passed
-```
+uv run pytest tests/integration/test_migrations.py tests/integration/test_attempt_store_event_sourcing.py tests/unit/test_run_token_usage_merge.py -q -n 0
+11 passed in 1.79s
 
-Both failures showed `--model` at argv index 1 instead of after `exec`.
+uv run pytest tests/integration/test_migrations.py tests/integration/test_attempt_store_event_sourcing.py tests/unit/test_run_token_usage_merge.py tests/unit/test_command_handlers.py tests/unit/test_projectors.py tests/integration/test_cost_records.py -q -n 0
+77 passed, 3 warnings in 4.83s
 
-GREEN run:
+uv run alembic -c alembic.ini heads
+r04a1b2c3d4e (head)
 
-```text
-uv run pytest tests/unit/test_cli_agent.py -q
-39 passed
-```
-
-## Verification
-
-```text
-uv run ruff check src/orchestrator/runners/agents/claude_cli/agent.py tests/unit/test_cli_agent.py
+uv run ruff check .
 All checks passed!
 
 uv run pyright
 0 errors, 0 warnings, 0 informations
-
-git diff --check
-passed with no output
 ```
 
-## Self-review
+Final full hook evidence: `uv run pre-commit run --all-files` passed every hook,
+including its full pytest run. Stale tests now construct immutable canonical usage facts
+where derived token behavior matters and otherwise no longer construct or assert the
+removed persistence fields.
 
-- Confirmed `Path(command).name` handles absolute Codex command paths.
-- Confirmed custom args are copied and preserved around the inserted model flag.
-- Confirmed Codex model placement requires an `exec` argument.
-- Confirmed Claude ordering remains `--model`, model, then existing args.
-- Confirmed MCP argument handling is unchanged.
-- Confirmed pre-existing `.superpowers/sdd/progress.md` and `task-2-report.md`
-  changes were not staged.
+## Broader-suite note
 
-## Concerns
-
-None identified within the requested scope.
+`uv run pytest tests/unit tests/integration -q -n 0` was started and exceeded the
+120-second execution limit after reporting pre-cutover flat-counter assertions in
+unrelated legacy tests. The affected command-handler, projector, and cost-record
+tests were updated to the new persistence contract and their focused suites pass.
+The complete suite was not rerun to completion within this task session.

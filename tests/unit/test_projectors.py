@@ -502,7 +502,6 @@ async def test_task_reverted_restores_task_and_attempts_from_snapshot(
     assert [attempt.id for attempt in attempts] == ["attempt-1", "attempt-2"]
     assert attempts[0].outcome == "reverted"
     assert attempts[0].completed_at == NOW.replace(tzinfo=None)
-    assert attempts[0].tokens_read == 7
     assert attempts[0].runner_type == "cli_subprocess"
     assert attempts[0].start_commit == "abc"
     assert attempts[1].outcome is None
@@ -1077,9 +1076,6 @@ async def test_run_created_inserts_explicit_metadata_without_snapshot(
     assert run.started_at == datetime(2025, 1, 15, 10, 2, 0, tzinfo=timezone.utc)
     assert run.completed_at == datetime(2025, 1, 15, 10, 3, 0, tzinfo=timezone.utc)
     assert run.runner_started_at == datetime(2025, 1, 15, 10, 2, 30, tzinfo=timezone.utc)
-    assert run.total_tokens_read == 100
-    assert run.total_tokens_write == 50
-    assert run.total_tokens_cache == 10
     assert run.total_duration_ms == 1500
     assert run.total_num_actions == 5
     assert run.token_usage_by_model == [
@@ -1385,7 +1381,6 @@ async def test_run_created_snapshot_projected_by_registry_into_initial_steps_and
     attempts = await _get_attempts(session, "task-snapshot")
     assert [attempt.id for attempt in attempts] == ["attempt-snapshot"]
     assert attempts[0].outcome == "paused"
-    assert attempts[0].tokens_read == 2
     assert attempts[0].runner_type == "cli_subprocess"
     assert attempts[0].builder_prompt == "build it"
     assert attempts[0].verifier_prompt == "verify it"
@@ -1540,9 +1535,6 @@ async def test_attempt_updated_can_skip_run_totals_projection(
     populated_session: AsyncSession,
 ) -> None:
     run = await _get_run(populated_session, "r1")
-    run.total_tokens_read = 100
-    run.total_tokens_write = 50
-    run.total_tokens_cache = 10
     run.total_duration_ms = 1500
     run.total_num_actions = 5
     run.token_usage_by_model = [_legacy_usage_snapshot({"model": "gpt-run", "input_tokens": 30})]
@@ -1580,18 +1572,12 @@ async def test_attempt_updated_can_skip_run_totals_projection(
 
     attempts = await _get_attempts(populated_session, "t1")
     assert attempts[0].agent_output == "line one"
-    assert attempts[0].tokens_read == 10
-    assert attempts[0].tokens_write == 4
-    assert attempts[0].tokens_cache == 2
     assert attempts[0].duration_ms == 150
     assert attempts[0].num_actions == 3
     assert attempts[0].token_usage_by_model == [
         _legacy_usage_snapshot({"model": "gpt-attempt", "input_tokens": 3})
     ]
     unchanged_run = await _get_run(populated_session, "r1")
-    assert unchanged_run.total_tokens_read == 100
-    assert unchanged_run.total_tokens_write == 50
-    assert unchanged_run.total_tokens_cache == 10
     assert unchanged_run.total_duration_ms == 1500
     assert unchanged_run.total_num_actions == 5
     assert unchanged_run.token_usage_by_model == [
