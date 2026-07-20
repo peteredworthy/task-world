@@ -95,8 +95,12 @@ class TestResolveModelCosts:
 
         assert resolve_model_costs("gpt-4o-mini").cost_per_m_input == 2
 
-    def test_unmatched_and_zero_priced_matches_are_distinguished(self, tmp_path: Path) -> None:
-        _load(tmp_path, {"zero": {}})
+    def test_only_explicit_complete_zero_rates_are_local_no_provider_cost(
+        self, tmp_path: Path
+    ) -> None:
+        _load(tmp_path, {"zero": {"cache_read": 0, "cache_creation": 0, "input": 0, "output": 0}})
 
-        assert resolve_model_costs("zero").rate_missing is False
+        assert resolve_model_costs("zero").cost_classification == "local_no_provider_cost"
+        _load(tmp_path, {"partial": {"input": 0}})
+        assert resolve_model_costs("partial").cost_classification == "unpriced_provider"
         assert resolve_model_costs("unknown").rate_missing is True

@@ -921,7 +921,14 @@ def build_graph_health_response(
         for node_id, reason in sorted(failed_reasons.items())
     ]
     expired_leases = _expired_lease_rows(leases, failed_reasons)
-    blockers = _health_blockers(events)
+    blockers = [
+        GraphHealthBlockerResponse(
+            node_id=str(blocker.get("node_id", "run")),
+            kind=str(blocker.get("kind", "final_invariant")),
+            reason=str(blocker.get("reason", "blocked")),
+        )
+        for blocker in project_final_invariant_blockers(events, projection=projection)
+    ]
     patches = _health_patch_decisions(events)
     verifier_recent = _health_verifier_results(events)
     pending_gates = _health_pending_gates(decisions["pending_gates"])
@@ -957,11 +964,11 @@ def build_graph_health_response(
         failed_nodes=failed_nodes,
         expired_leases=expired_leases,
         blockers=blockers,
-        recent_patch_decisions=patches,
+        recent_patch_decisions=patches[-20:],
         verifier=GraphHealthVerifierResponse(
             passed=counts.verifier_passed,
             failed=counts.verifier_failed,
-            recent=verifier_recent,
+            recent=verifier_recent[-20:],
         ),
         pending_gates=pending_gates,
         review_blockers=review_blockers,
@@ -1010,38 +1017,6 @@ def _expired_lease_rows(
     return rows
 
 
-def _health_blockers(events: list[EventEnvelope]) -> list[GraphHealthBlockerResponse]:
-    rows: dict[tuple[str, str], GraphHealthBlockerResponse] = {}
-    for event in events:
-        if event.event_type == "node_deferred":
-            node_id, reason = event.payload.get("node_id"), event.payload.get("reason")
-            if isinstance(node_id, str) and isinstance(reason, str):
-                rows[(node_id, "final_invariant")] = GraphHealthBlockerResponse(
-                    node_id=node_id, kind="final_invariant", reason=reason
-                )
-        if event.event_type == "command_rejected":
-            raw_blockers = event.payload.get("blockers")
-            if not isinstance(raw_blockers, list):
-                continue
-            for raw_blocker in cast(list[Any], raw_blockers):
-                if not isinstance(raw_blocker, dict):
-                    continue
-                blocker = cast(dict[str, Any], raw_blocker)
-                node_id, kind = blocker.get("node_id"), blocker.get("kind")
-                if not isinstance(node_id, str) or not isinstance(kind, str):
-                    continue
-                reason = event.payload.get("reason", "blocked")
-                rows.setdefault(
-                    (node_id, kind),
-                    GraphHealthBlockerResponse(
-                        node_id=node_id,
-                        kind=kind,
-                        reason=reason if isinstance(reason, str) else "blocked",
-                    ),
-                )
-    return list(rows.values())
-
-
 def _health_patch_decisions(events: list[EventEnvelope]) -> list[GraphHealthPatchDecisionResponse]:
     rows: list[GraphHealthPatchDecisionResponse] = []
     for event in events:
@@ -1059,7 +1034,7 @@ def _health_patch_decisions(events: list[EventEnvelope]) -> list[GraphHealthPatc
                 reason=reason if isinstance(reason, str) else None,
             )
         )
-    return rows[-20:]
+    return rows
 
 
 def _health_verifier_results(
@@ -1081,7 +1056,7 @@ def _health_verifier_results(
                     verdict="passed" if event.event_type == "verification_passed" else "failed",
                 )
             )
-    return rows[-20:]
+    return rows
 
 
 def build_decision_view_response(
@@ -1937,7 +1912,7 @@ async def get_graph_health(
         await service.get_run(run_id)
     except RunNotFoundError as exc:
         raise HTTPException(status_code=404, detail="Run not found") from exc
-    events = await graph_store.read_run(run_id)
+    events = await graph_store.read_run_light(run_id)
     return build_graph_health_response(run_id, events)
 
 

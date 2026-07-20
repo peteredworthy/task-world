@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # Cost rates keyed by model name.  Each value is a dict with keys:
 # cost_per_m_cache_read, cost_per_m_cache_creation, cost_per_m_input, cost_per_m_output
-_cost_table: dict[str, dict[str, float]] = {}
+_cost_table: dict[str, dict[str, float | bool]] = {}
 
 _ZERO_COSTS: dict[str, float] = {
     "cost_per_m_cache_read": 0.0,
@@ -89,11 +89,14 @@ def load_cost_table(path: Path | None = None) -> None:
 
     table: dict[str, dict[str, float]] = {}
     for model_name, rates in models.items():
+        required_rate_keys = {"cache_read", "cache_creation", "input", "output"}
         table[model_name] = {
             "cost_per_m_cache_read": float(rates.get("cache_read", 0)),
             "cost_per_m_cache_creation": float(rates.get("cache_creation", 0)),
             "cost_per_m_input": float(rates.get("input", 0)),
             "cost_per_m_output": float(rates.get("output", 0)),
+            "explicit_zero_rate": required_rate_keys.issubset(rates)
+            and all(float(rates[key]) == 0 for key in required_rate_keys),
         }
 
     _cost_table = table
@@ -136,11 +139,19 @@ def resolve_model_costs(model_name: str | None) -> ModelCostResolution:
     )
 
 
-def _resolved_costs(rates: dict[str, float]) -> ModelCostResolution:
+def _resolved_costs(rates: dict[str, float | bool]) -> ModelCostResolution:
     """Classify matched zero rates separately from absent provider pricing."""
     classification: Literal["provider_billed", "local_no_provider_cost"] = (
         "provider_billed"
         if rates["cost_per_m_input"] > 0 or rates["cost_per_m_output"] > 0
         else "local_no_provider_cost"
     )
-    return ModelCostResolution(**rates, rate_missing=False, cost_classification=classification)
+    if classification == "local_no_provider_cost" and rates["explicit_zero_rate"] is not True:
+        return ModelCostResolution(
+            **_ZERO_COSTS, rate_missing=True, cost_classification="unpriced_provider"
+        )
+    return ModelCostResolution(
+        **{key: value for key, value in rates.items() if key != "explicit_zero_rate"},
+        rate_missing=False,
+        cost_classification=classification,
+    )

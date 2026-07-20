@@ -339,14 +339,14 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
         "verification_failed": _spec(
             "verification_failed",
             projection="candidate_id evidence node_id outcome record_id task_region_id value verifier_node_id",
-            light="candidate_id node_id outcome record_id task_region_id",
+            light="candidate_id node_id outcome record_id task_region_id verifier_node_id",
             summary="candidate_id evidence node_id outcome record_id task_region_id value verifier_node_id",
             node_detail="candidate_id node_id outcome record_id task_region_id",
         ),
         "verification_passed": _spec(
             "verification_passed",
             projection="candidate_id evidence node_id outcome record_id task_region_id value verifier_node_id",
-            light="candidate_id node_id outcome record_id task_region_id",
+            light="candidate_id node_id outcome record_id task_region_id verifier_node_id",
             summary="candidate_id evidence node_id outcome record_id task_region_id value verifier_node_id",
             node_detail="candidate_id node_id outcome record_id task_region_id",
         ),
