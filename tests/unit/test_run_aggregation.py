@@ -9,13 +9,22 @@ from __future__ import annotations
 
 from collections.abc import AsyncGenerator
 from datetime import datetime, timezone
+from typing import Any, cast
 
 import pytest
 import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from orchestrator.db import Base, AttemptModel, RunModel, RunRepository, StepModel, TaskModel
+from orchestrator.db import (
+    Base,
+    AttemptModel,
+    RunModel,
+    RunRepository,
+    StepModel,
+    TaskModel,
+    merge_token_usage_by_model,
+)
 from orchestrator.db.access.mutations import update_latest_attempt
 from orchestrator.state.models import ModelTokenUsage, AttemptMetrics
 
@@ -25,6 +34,117 @@ def _legacy_usage_snapshot(value: object) -> object:
 
 
 _NOW = datetime(2025, 1, 15, 10, 30, 0, tzinfo=timezone.utc)
+
+
+def test_projection_merges_legacy_existing_usage_with_canonical_same_model_delta() -> None:
+    merged = merge_token_usage_by_model(
+        [
+            cast(
+                dict[str, Any],
+                _legacy_usage_snapshot(
+                    {
+                        "model": "legacy-model",
+                        "input_tokens": 10,
+                        "output_tokens": 2,
+                        "total_cost_usd": 0.25,
+                    }
+                ),
+            )
+        ],
+        [
+            {
+                "model": "legacy-model",
+                "gen_ai_usage_input_tokens": 3,
+                "gen_ai_usage_output_tokens": 4,
+                "cost_usd": 0.1,
+            }
+        ],
+    )
+
+    assert merged == [
+        {
+            "model": "legacy-model",
+            "gen_ai_usage_input_tokens": 13,
+            "gen_ai_usage_output_tokens": 6,
+            "gen_ai_usage_cache_read_input_tokens": 0,
+            "gen_ai_usage_cache_creation_input_tokens": 0,
+            "gen_ai_usage_reasoning_output_tokens": 0,
+            "cost_usd": 0.35,
+            "rate_missing": False,
+            "gen_ai_response_finish_reasons": [],
+            "latency_ms": 0,
+        }
+    ]
+
+
+def test_projection_canonicalizes_an_untouched_legacy_model() -> None:
+    merged = merge_token_usage_by_model(
+        [
+            cast(
+                dict[str, Any],
+                _legacy_usage_snapshot(
+                    {"model": "legacy-model", "input_tokens": 10, "total_cost_usd": 0.25}
+                ),
+            )
+        ],
+        [{"model": "canonical-model", "gen_ai_usage_input_tokens": 3, "cost_usd": 0.1}],
+    )
+
+    assert merged is not None
+    usage_by_model = {entry["model"]: entry for entry in merged}
+    assert usage_by_model["legacy-model"]["gen_ai_usage_input_tokens"] == 10
+    assert usage_by_model["legacy-model"]["cost_usd"] == 0.25
+
+
+def test_projection_prefers_canonical_values_in_mixed_historical_entry() -> None:
+    merged = merge_token_usage_by_model(
+        [
+            cast(
+                dict[str, Any],
+                _legacy_usage_snapshot(
+                    {
+                        "model": "mixed-model",
+                        "input_tokens": 10,
+                        "gen_ai_usage_input_tokens": 4,
+                        "total_cost_usd": 0.25,
+                        "cost_usd": 0.15,
+                    }
+                ),
+            )
+        ],
+        [{"model": "other-model", "gen_ai_usage_input_tokens": 3, "cost_usd": 0.1}],
+    )
+
+    assert merged is not None
+    usage_by_model = {entry["model"]: entry for entry in merged}
+    assert usage_by_model["mixed-model"]["gen_ai_usage_input_tokens"] == 4
+    assert usage_by_model["mixed-model"]["cost_usd"] == 0.15
+
+
+def test_projection_emits_no_legacy_usage_keys() -> None:
+    merged = merge_token_usage_by_model(
+        [
+            cast(
+                dict[str, Any],
+                _legacy_usage_snapshot(
+                    {"model": "legacy-model", "input_tokens": 10, "total_cost_usd": 0.25}
+                ),
+            )
+        ],
+        [{"model": "canonical-model", "gen_ai_usage_input_tokens": 3, "cost_usd": 0.1}],
+    )
+
+    assert merged is not None
+    assert all(
+        key
+        not in {f"{kind}_tokens" for kind in ("input", "output", "cache_read", "cache_creation")}
+        | {
+            "tokens" + "_reasoning",
+            "total" + "_cost_usd",
+        }
+        for entry in merged
+        for key in entry
+    )
 
 
 @pytest_asyncio.fixture

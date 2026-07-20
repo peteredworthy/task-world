@@ -747,7 +747,7 @@ def test_attempt_store_appends_events_and_projects_attempt_and_run_totals():
     assert 'payload.get("gen_ai_usage_input_tokens")' in transformed
 
 
-def test_provider_fixture_preserves_raw_input_but_renames_proven_result_mapping() -> None:
+def test_provider_fixture_preserves_raw_input_but_diagnoses_unwrapped_result_mapping() -> None:
     source = """\
 def test_extract_turn_usage_without_usage_field():
     msg = {"usage": {"input_tokens": 1}}
@@ -757,8 +757,9 @@ def test_extract_turn_usage_without_usage_field():
     transformed = transform_source(source, path="tests/unit/test_codex_server_common.py")
 
     assert '"usage": {"input_tokens": 1}' in transformed
-    assert '"gen_ai_usage_input_tokens": 1' in transformed
-    assert '"gen_ai_usage_output_tokens": 2' in transformed
+    assert transformed == source
+    diagnostics = diagnose_source(source, path="tests/unit/test_codex_server_common.py")
+    assert len(diagnostics) == 2
 
 
 def test_db_source_does_not_exempt_live_legacy_internal_attribute() -> None:
@@ -828,6 +829,37 @@ def _attempt_values_from_snapshot(metrics):
     assert diagnose_source(live_source, path="src/orchestrator/db/projections/run_state.py")
 
 
+def test_physical_orm_usage_is_limited_to_exact_storage_functions() -> None:
+    storage_source = """\
+async def update_latest_attempt():
+    attempt.tokens_read = attempt.tokens_read + 1
+"""
+    live_source = """\
+async def unrelated():
+    attempt.tokens_read = attempt.tokens_read + 1
+"""
+
+    assert diagnose_source(storage_source, path="src/orchestrator/db/access/mutations.py") == ()
+    assert diagnose_source(live_source, path="src/orchestrator/db/access/mutations.py")
+
+
+def test_projection_alias_canonicalizer_is_an_exact_literal_boundary() -> None:
+    canonicalizer_source = """\
+def _canonicalize_usage_entry(entry):
+    return entry.get("input_tokens", 0)
+"""
+    live_source = """\
+def unrelated(entry):
+    return entry.get("input_tokens", 0)
+"""
+
+    assert (
+        diagnose_source(canonicalizer_source, path="src/orchestrator/db/projections/run_state.py")
+        == ()
+    )
+    assert diagnose_source(live_source, path="src/orchestrator/db/projections/run_state.py")
+
+
 def test_provider_fixture_call_preserves_only_raw_provider_builder_arguments() -> None:
     raw_source = """\
 def test_result_event():
@@ -858,6 +890,45 @@ async def test_new_live_assertion():
         transform_source(historical_source, path="tests/unit/test_command_handlers.py")
         == historical_source
     )
+
+
+def test_historical_fixture_attributes_require_the_exact_orm_allowlist() -> None:
+    sources = {
+        "tests/unit/test_command_handlers.py": """\
+def test_unreviewed_fixture():
+    assert attempt.tokens_read == 2
+""",
+        "tests/integration/test_database.py": """\
+def test_unreviewed_fixture():
+    assert attempt.tokens_read == 2
+""",
+    }
+
+    for path, source in sources.items():
+        diagnostics = diagnose_source(source, path=path)
+
+        assert len(diagnostics) == 1
+        assert "tokens_read" in diagnostics[0]
+
+
+def test_unwrapped_historical_comparison_dictionary_is_diagnostic() -> None:
+    source = 'assert result == {"input_tokens": 1}\n'
+
+    diagnostics = diagnose_source(source, path="tests/unit/test_command_handlers.py")
+
+    assert len(diagnostics) == 1
+    assert "input_tokens" in diagnostics[0]
+
+
+def test_explicitly_wrapped_historical_comparison_dictionary_is_allowed() -> None:
+    source = """\
+def _legacy_usage_snapshot(value):
+    return value
+
+assert result == _legacy_usage_snapshot({"input_tokens": 1})
+"""
+
+    assert diagnose_source(source, path="tests/unit/test_command_handlers.py") == ()
 
 
 def test_provider_fake_attribute_is_limited_to_reviewed_fixture_function() -> None:
@@ -920,7 +991,7 @@ live = snapshot["input_tokens"]
     assert "input_tokens" in diagnostics[0]
 
 
-def test_generated_historical_fixture_helper_preserves_docstring_and_future_import() -> None:
+def test_unwrapped_historical_fixture_dictionary_is_diagnostic() -> None:
     source = '''\
 """Fixture module."""
 from __future__ import annotations
@@ -928,7 +999,4 @@ from __future__ import annotations
 historical = {"input_tokens": 1}
 '''
 
-    transformed = transform_source(source, path="tests/unit/test_run_aggregation.py")
-
-    assert transformed.index('"""Fixture module."""') < transformed.index("from __future__")
-    assert transformed.index("from __future__") < transformed.index("def _legacy_usage_snapshot")
+    assert diagnose_source(source, path="tests/unit/test_run_aggregation.py")

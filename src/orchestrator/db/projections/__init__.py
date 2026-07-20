@@ -2,7 +2,7 @@
 
 from orchestrator.db.projections.registry import Projector, ProjectionRegistry
 from orchestrator.db.projections.run_lifecycle import RunLifecycleProjector
-from orchestrator.db.projections.run_state import RunStateProjector
+from orchestrator.db.projections.run_state import RunStateProjector, merge_token_usage_by_model
 from orchestrator.db.projections.task_state import TaskStateProjector
 
 __all__ = [
@@ -10,5 +10,6 @@ __all__ = [
     "ProjectionRegistry",
     "RunLifecycleProjector",
     "RunStateProjector",
+    "merge_token_usage_by_model",
     "TaskStateProjector",
 ]

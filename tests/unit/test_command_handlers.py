@@ -1358,7 +1358,7 @@ async def test_update_latest_attempt_projects_attempt_and_task_status(
     assert run.total_tokens_cache == 2
     assert run.total_duration_ms == 150
     assert run.total_num_actions == 3
-    assert run.token_usage_by_model == [{"model": "gpt-test"}]
+    assert run.token_usage_by_model == [{"model": "gpt-test", "gen_ai_usage_input_tokens": 3}]
 
     await _run_handler(
         harness,

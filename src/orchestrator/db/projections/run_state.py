@@ -87,6 +87,21 @@ def _json_dump(value: Any) -> str:
     return json.dumps(value)
 
 
+def _canonicalize_usage_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    canonicalized = dict(entry)
+    for canonical, legacy in (
+        ("gen_ai_usage_input_tokens", "input_tokens"),
+        ("gen_ai_usage_output_tokens", "output_tokens"),
+        ("gen_ai_usage_cache_read_input_tokens", "cache_read_tokens"),
+        ("gen_ai_usage_cache_creation_input_tokens", "cache_creation_tokens"),
+        ("gen_ai_usage_reasoning_output_tokens", "tokens_reasoning"),
+        ("cost_usd", "total_cost_usd"),
+    ):
+        if canonical not in canonicalized and legacy in canonicalized:
+            canonicalized[canonical] = canonicalized[legacy]
+    return {key: value for key, value in canonicalized.items() if key not in _LEGACY_USAGE_ALIASES}
+
+
 def _merge_token_usage_by_model(
     existing: list[dict[str, Any]] | None,
     delta: list[dict[str, Any]] | None,
@@ -94,13 +109,10 @@ def _merge_token_usage_by_model(
     if not delta:
         return existing
 
-    merged: list[dict[str, Any]] = [
-        {key: value for key, value in entry.items() if key not in _LEGACY_USAGE_ALIASES}
-        for entry in (existing or [])
-    ]
+    merged = [_canonicalize_usage_entry(entry) for entry in (existing or [])]
     idx_by_model = {entry["model"]: index for index, entry in enumerate(merged) if "model" in entry}
     for usage in delta:
-        usage_dict = dict(usage)
+        usage_dict = _canonicalize_usage_entry(dict(usage))
         model_name = usage_dict["model"]
         if model_name in idx_by_model:
             previous = merged[idx_by_model[model_name]]
@@ -137,14 +149,16 @@ def _merge_token_usage_by_model(
             merged[idx_by_model[model_name]] = merged_entry
         else:
             idx_by_model[model_name] = len(merged)
-            merged.append(
-                {
-                    key: value
-                    for key, value in usage_dict.items()
-                    if key not in _LEGACY_USAGE_ALIASES
-                }
-            )
+            merged.append(usage_dict)
     return merged
+
+
+def merge_token_usage_by_model(
+    existing: list[dict[str, Any]] | None,
+    delta: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]] | None:
+    """Canonicalize and aggregate persisted per-model usage entries."""
+    return _merge_token_usage_by_model(existing, delta)
 
 
 def merge_oversight_patch(state: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

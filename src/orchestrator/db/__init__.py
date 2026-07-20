@@ -80,6 +80,7 @@ if TYPE_CHECKING:
         RunLifecycleProjector,
         RunStateProjector,
         TaskStateProjector,
+        merge_token_usage_by_model,
     )
     from orchestrator.db.access.repositories import (
         RunLivenessRecord,
@@ -147,6 +148,10 @@ def __getattr__(name: str):
         from orchestrator.db.projections import RunStateProjector
 
         return RunStateProjector
+    elif name == "merge_token_usage_by_model":
+        from orchestrator.db.projections import merge_token_usage_by_model
+
+        return merge_token_usage_by_model
     elif name == "TaskStateProjector":
         from orchestrator.db.projections import TaskStateProjector
 
@@ -202,6 +207,7 @@ __all__ = [
     "RunLifecycleProjector",
     "RunStateProjector",
     "TaskStateProjector",
+    "merge_token_usage_by_model",
     "clear_event_outbox",
     "commit_with_event_outbox",
     "flush_event_outbox",

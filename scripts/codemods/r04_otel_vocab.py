@@ -197,10 +197,6 @@ PROVIDER_RAW_FIXTURE_PATHS = frozenset(
         "tests/unit/test_openhands_common.py",
     }
 )
-# Legacy persistence examples are retained only in these exact fixture
-# functions until Task 4 owns their conversion.  This intentionally cannot
-# exempt a live attribute, constructor keyword, or unrelated mapping nearby.
-TASK_FOUR_HISTORICAL_FIXTURE_FUNCTIONS = {}
 HISTORICAL_PERSISTENCE_FIXTURE_PATHS = frozenset(
     {
         "tests/integration/test_cost_records.py",
@@ -286,6 +282,11 @@ HISTORICAL_ORM_ASSERTION_FUNCTIONS = {
         }
     ),
 }
+PHYSICAL_ORM_ATTRIBUTE_FUNCTIONS = {
+    "src/orchestrator/db/access/mutations.py": frozenset({"update_latest_attempt"}),
+    "src/orchestrator/db/access/repositories.py": frozenset({"run_model_to_domain"}),
+    "src/orchestrator/db/projections/task_state.py": frozenset({"handle"}),
+}
 
 
 def _expression_path(node: cst.BaseExpression) -> str | None:
@@ -311,16 +312,6 @@ def _is_literal_boundary(path: str) -> bool:
 
 def _is_test_provider_raw_fixture(path: str, node: cst.CSTNode) -> bool:
     return path in PROVIDER_RAW_FIXTURE_PATHS and isinstance(node, cst.SimpleString)
-
-
-def _is_task_four_historical_fixture(
-    path: str,
-    node: cst.CSTNode,
-    get_parent: Callable[[cst.CSTNode, cst.CSTNode | None], cst.CSTNode | None],
-) -> bool:
-    return _enclosing_function_name(node, get_parent) in TASK_FOUR_HISTORICAL_FIXTURE_FUNCTIONS.get(
-        path, frozenset()
-    )
 
 
 def _is_internal_telemetry_path(path: str) -> bool:
@@ -594,26 +585,6 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
         self.path = path
         self.is_internal_telemetry_path = _is_internal_telemetry_path(path)
         self.is_provider_boundary = _is_provider_boundary(path)
-        self.used_historical_wrapper = False
-
-    def _is_historical_fixture_dict(self, node: cst.Dict) -> bool:
-        if self.path not in HISTORICAL_PERSISTENCE_FIXTURE_PATHS:
-            return False
-        parent = self.get_metadata(ParentNodeProvider, node, None)
-        while parent is not None:
-            if (
-                isinstance(parent, cst.Call)
-                and _callee_leaf_name(parent) in HISTORICAL_FIXTURE_HELPERS
-            ):
-                return False
-            parent = self.get_metadata(ParentNodeProvider, parent, None)
-        return any(
-            isinstance(element, cst.DictElement)
-            and isinstance(element.key, cst.SimpleString)
-            and isinstance(element.key.evaluated_value, str)
-            and element.key.evaluated_value in FIELD_RENAMES
-            for element in node.elements
-        )
 
     def _is_internal_metric_context(self, node: cst.CSTNode) -> bool:
         parent = self.get_metadata(ParentNodeProvider, node, None)
@@ -682,18 +653,6 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
             isinstance(subscript, cst.Subscript)
             and isinstance(subscript.value, cst.Name)
             and subscript.value.value in INTERNAL_MAPPING_RECEIVERS | {"payload"}
-        )
-
-    def _is_test_internal_result_mapping(self, node: cst.Dict) -> bool:
-        if not self._is_test_internal_metric_context(node):
-            return False
-        parent = self.get_metadata(ParentNodeProvider, node, None)
-        if isinstance(parent, cst.ComparisonTarget):
-            parent = self.get_metadata(ParentNodeProvider, parent, None)
-        return (
-            isinstance(parent, cst.Comparison)
-            and isinstance(parent.left, cst.Name)
-            and parent.left.value == "result"
         )
 
     def _is_test_internal_event_expectation(self, node: cst.Dict) -> bool:
@@ -820,16 +779,9 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
         if not (
             (isinstance(parent, cst.Call) and _is_telemetry_validation(parent))
             or self._is_flat_metric_context(original_node)
-            or self._is_test_internal_result_mapping(original_node)
             or self._is_test_internal_event_expectation(original_node)
             or self._is_test_internal_event_payload(original_node)
         ):
-            if self._is_historical_fixture_dict(original_node):
-                self.used_historical_wrapper = True
-                return cst.Call(
-                    func=cst.Name("_legacy_usage_snapshot"),
-                    args=(cst.Arg(value=updated_node),),
-                )
             return updated_node
         elements: list[cst.BaseDictElement] = []
         for original_element, updated_element in zip(
@@ -855,70 +807,7 @@ class _OtelVocabularyTransformer(cst.CSTTransformer):
             else:
                 elements.append(updated_element)
         result = updated_node.with_changes(elements=elements)
-        if self._is_historical_fixture_dict(original_node):
-            self.used_historical_wrapper = True
-            return cst.Call(func=cst.Name("_legacy_usage_snapshot"), args=(cst.Arg(value=result),))
         return result
-
-    def leave_Module(self, original_node: cst.Module, updated_node: cst.Module) -> cst.Module:
-        body = list(updated_node.body)
-        helper_indexes = [
-            index
-            for index, statement in enumerate(body)
-            if isinstance(statement, cst.FunctionDef)
-            and statement.name.value == "_legacy_usage_snapshot"
-        ]
-        if len(helper_indexes) > 1:
-            body = [
-                statement
-                for index, statement in enumerate(body)
-                if index == helper_indexes[0] or index not in helper_indexes[1:]
-            ]
-        if not self.used_historical_wrapper:
-            return updated_node.with_changes(body=tuple(body))
-        if helper_indexes:
-            return updated_node.with_changes(body=tuple(body))
-        if any(
-            isinstance(statement, cst.FunctionDef)
-            and statement.name.value == "_legacy_usage_snapshot"
-            for statement in body
-        ):
-            return updated_node.with_changes(body=tuple(body))
-        helper = cst.parse_module(
-            "def _legacy_usage_snapshot(value: object) -> object:\n    return value\n\n"
-        ).body[0]
-        insertion_index = 0
-        if (
-            body
-            and isinstance(body[0], cst.SimpleStatementLine)
-            and len(body[0].body) == 1
-            and isinstance(body[0].body[0], cst.Expr)
-            and isinstance(body[0].body[0].value, cst.SimpleString)
-        ):
-            insertion_index = 1
-        while (
-            insertion_index < len(body)
-            and isinstance(body[insertion_index], cst.SimpleStatementLine)
-            and any(
-                isinstance(statement, cst.ImportFrom)
-                and isinstance(statement.module, cst.Name)
-                and statement.module.value == "__future__"
-                for statement in body[insertion_index].body
-            )
-        ):
-            insertion_index += 1
-        body.insert(insertion_index, helper)
-        return updated_node.with_changes(body=tuple(body))
-
-    def leave_Call(self, original_node: cst.Call, updated_node: cst.Call) -> cst.BaseExpression:
-        if (
-            _callee_leaf_name(updated_node) in HISTORICAL_FIXTURE_HELPERS
-            and len(updated_node.args) == 1
-            and isinstance(updated_node.args[0].value, cst.Call)
-            and _callee_leaf_name(updated_node.args[0].value) in HISTORICAL_FIXTURE_HELPERS
-        ):
-            return updated_node.args[0].value
-        return updated_node
 
     def leave_Name(self, original_node: cst.Name, updated_node: cst.Name) -> cst.Name:
         parent = self.get_metadata(ParentNodeProvider, original_node, None)
@@ -966,15 +855,7 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
         self.diagnostics: list[str] = []
 
     def _diagnose(self, node: cst.CSTNode, name: str) -> None:
-        if (
-            self.is_literal_boundary
-            or _is_task_four_historical_fixture(
-                self.path,
-                node,
-                lambda child, default: self.get_metadata(ParentNodeProvider, child, default),
-            )
-            or self._is_historical_persistence_expression(node)
-        ):
+        if self.is_literal_boundary or self._is_historical_persistence_expression(node):
             return
         position = self.get_metadata(PositionProvider, node).start
         self.diagnostics.append(
@@ -1094,6 +975,7 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
             and self.path == "src/orchestrator/db/projections/run_state.py"
             and (
                 enclosing_function == "_merge_token_usage_by_model"
+                or enclosing_function == "_canonicalize_usage_entry"
                 or self._is_legacy_usage_alias_declaration(node)
             )
         ):
@@ -1114,6 +996,10 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
             and enclosing_function in HISTORICAL_ORM_ASSERTION_FUNCTIONS[self.path]
         ):
             return True
+        if isinstance(
+            expression, cst.Attribute
+        ) and enclosing_function in PHYSICAL_ORM_ATTRIBUTE_FUNCTIONS.get(self.path, frozenset()):
+            return True
         if (
             isinstance(expression, cst.Attribute)
             and self.path in PROVIDER_RAW_FIXTURE_ATTRIBUTE_FUNCTIONS
@@ -1131,18 +1017,6 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
                     and isinstance(parent.value, cst.Call)
                     and _callee_leaf_name(parent.value) == "mapped_column"
                 )
-        if isinstance(expression, cst.Attribute):
-            return (
-                self.path.startswith("src/orchestrator/db/")
-                and isinstance(expression.value, cst.Name)
-                and expression.value.value in {"attempt", "att_model"}
-            )
-        if (
-            self.path in HISTORICAL_PERSISTENCE_FIXTURE_PATHS
-            and isinstance(parent, cst.Attribute)
-            and node.value in {"tokens_read", "tokens_write", "tokens_cache"}
-        ):
-            return True
         if isinstance(node, cst.Name) and isinstance(parent, cst.Arg):
             call = self.get_metadata(ParentNodeProvider, parent, None)
             return isinstance(call, cst.Call) and _callee_leaf_name(call) in {
@@ -1159,21 +1033,6 @@ class _AmbiguousDictionaryVisitor(cst.CSTVisitor):
             ):
                 return True
             current = self.get_metadata(ParentNodeProvider, current, None)
-        if isinstance(node, cst.SimpleString):
-            current = self.get_metadata(ParentNodeProvider, node, None)
-            while current is not None and not isinstance(current, cst.Dict):
-                current = self.get_metadata(ParentNodeProvider, current, None)
-            if isinstance(current, cst.Dict):
-                outer = self.get_metadata(ParentNodeProvider, current, None)
-                while outer is not None and not isinstance(outer, cst.Comparison):
-                    outer = self.get_metadata(ParentNodeProvider, outer, None)
-                return isinstance(outer, cst.Comparison)
-        if isinstance(expression, cst.Attribute):
-            return isinstance(expression.value, cst.Name) and expression.value.value in {
-                "attempt",
-                "att_model",
-                "record",
-            }
         return False
 
     def _is_legacy_usage_alias_declaration(self, node: cst.SimpleString) -> bool:
