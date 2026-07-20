@@ -15,6 +15,7 @@ from orchestrator.graph._commands import (
     apply_record_cleanup_applied,
     apply_record_decision,
     apply_record_gatekeeper_verdicts,
+    apply_record_node_usage,
     apply_record_requirement_revision,
     apply_record_support_evidence,
     apply_raise_appeal,
@@ -26,6 +27,7 @@ from orchestrator.graph.command_models import (
     RecordCleanupAppliedCommand,
     RecordDecisionCommand,
     RecordGatekeeperVerdictsCommand,
+    RecordNodeUsageCommand,
     RecordRequirementRevisionCommand,
     RecordSupportEvidenceCommand,
     SubmitCallbackCommand,
@@ -126,6 +128,24 @@ def handle_record_gatekeeper_verdicts(
     return apply_record_gatekeeper_verdicts(projection, payload, make_event)
 
 
+def handle_record_node_usage(
+    projection: GraphProjection,
+    events: list[EventEnvelope],
+    command_type: str,
+    payload: RecordNodeUsageCommand,
+    context: GraphCommandContext,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+    clock: Clock,
+    id_gen: IdGenerator,
+) -> list[EventEnvelope]:
+    del events
+    del command_type
+    del context
+    del clock
+    del id_gen
+    return apply_record_node_usage(projection, payload, make_event)
+
+
 def handle_record_requirement_revision(
     projection: GraphProjection,
     events: list[EventEnvelope],
@@ -191,6 +211,7 @@ __all__ = [
     "handle_record_cleanup_applied",
     "handle_record_decision",
     "handle_record_gatekeeper_verdicts",
+    "handle_record_node_usage",
     "handle_record_requirement_revision",
     "handle_record_support_evidence",
     "handle_submit_callback",

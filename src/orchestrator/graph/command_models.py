@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_vali
 from orchestrator.graph.macros import MacroInvocation
 from orchestrator.graph.models import Actor, EventEnvelope, FileStateRecord
 from orchestrator.graph.projections import GraphProjection
+from orchestrator.state import ModelTokenUsage
 
 
 class StrictCommandPayload(BaseModel):
@@ -289,6 +290,15 @@ class RecordSupportEvidenceCommand(StrictCommandPayload):
     confidence: str | None = None
 
 
+class RecordNodeUsageCommand(StrictCommandPayload):
+    node_id: CommandIdentifier
+    node_kind: CommandIdentifier
+    node_role: str | None = None
+    profile: str | None = None
+    execution_id: CommandIdentifier
+    usage: list[ModelTokenUsage] = Field(min_length=1)
+
+
 class LeaseScopedEvaluationCommand(StrictCommandPayload):
     node_id: CommandIdentifier
     record_id: CommandIdentifier | None = None
@@ -345,6 +355,7 @@ __all__ = [
     "RecordDecisionCommand",
     "RecordGatekeeperVerdictsCommand",
     "RecordHeartbeatCommand",
+    "RecordNodeUsageCommand",
     "RecordRequirementRevisionCommand",
     "RecordSupportEvidenceCommand",
     "ResumeCommand",

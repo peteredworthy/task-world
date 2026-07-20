@@ -885,6 +885,38 @@ class GraphEventPayloadBase(StrictEventPayload):
     pass
 
 
+class NodeUsageRecordedPayload(GraphEventPayloadBase):
+    """One immutable model-usage fact emitted by a graph node execution."""
+
+    node_id: str
+    node_kind: str
+    node_role: str | None = None
+    profile: str | None = None
+    execution_id: str
+    usage_index: int = Field(ge=0)
+    usage_count: int = Field(gt=0)
+    usage_key: str
+    model: str
+    gen_ai_usage_input_tokens: int = Field(default=0, ge=0)
+    gen_ai_usage_output_tokens: int = Field(default=0, ge=0)
+    gen_ai_usage_cache_read_input_tokens: int = Field(default=0, ge=0)
+    gen_ai_usage_cache_creation_input_tokens: int = Field(default=0, ge=0)
+    gen_ai_usage_reasoning_output_tokens: int = Field(default=0, ge=0)
+    gen_ai_response_finish_reasons: list[str] = Field(default_factory=list)
+    cost_usd: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
+    latency_ms: int = Field(default=0, ge=0)
+    rate_missing: bool = False
+
+    @model_validator(mode="after")
+    def usage_identity_is_stable(self) -> "NodeUsageRecordedPayload":
+        expected = f"{self.execution_id}:{self.usage_index}"
+        if self.usage_key != expected:
+            raise ValueError("usage_key must match execution_id:usage_index")
+        if self.usage_index >= self.usage_count:
+            raise ValueError("usage_index must be less than usage_count")
+        return self
+
+
 class CleanupEventPayloadBase(GraphEventPayloadBase):
     pass
 

@@ -36,6 +36,7 @@ from orchestrator.graph.command_models import (
     RecordDecisionCommand,
     RecordGatekeeperVerdictsCommand,
     RecordHeartbeatCommand,
+    RecordNodeUsageCommand,
     RecordRequirementRevisionCommand,
     RecordSupportEvidenceCommand,
     ResumeCommand,
@@ -51,6 +52,7 @@ from orchestrator.graph.commands.callbacks import (
     handle_record_cleanup_applied,
     handle_record_decision,
     handle_record_gatekeeper_verdicts,
+    handle_record_node_usage,
     handle_record_requirement_revision,
     handle_record_support_evidence,
     handle_submit_callback,
@@ -99,6 +101,7 @@ COMMAND_SPECS: dict[str, CommandSpec] = {
     "record_gatekeeper_verdicts": CommandSpec(
         RecordGatekeeperVerdictsCommand, handle_record_gatekeeper_verdicts
     ),
+    "record_node_usage": CommandSpec(RecordNodeUsageCommand, handle_record_node_usage),
     "record_requirement_revision": CommandSpec(
         RecordRequirementRevisionCommand, handle_record_requirement_revision
     ),

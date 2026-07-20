@@ -31,6 +31,7 @@ from orchestrator.graph.command_models import (
     RecordDecisionCommand,
     RecordGatekeeperVerdictsCommand,
     RecordHeartbeatCommand,
+    RecordNodeUsageCommand,
     RecordRequirementRevisionCommand,
     RecordSupportEvidenceCommand,
     ResumeCommand,
@@ -91,6 +92,7 @@ from orchestrator.graph.models import (
     LeaseRenewedPayload,
     LeaseRevokedPayload,
     NodeCreatedPayload,
+    NodeUsageRecordedPayload,
     OutputRecord,
     OversightDecisionRecordedPayload,
     PatchEnvelope,
@@ -413,6 +415,32 @@ def _apply_record_heartbeat(
         make_event("heartbeat_recorded", heartbeat_payload),
         make_event("lease_renewed", _typed_lease_event_payload("lease_renewed", heartbeat_payload)),
     ]
+
+
+def _apply_record_node_usage(
+    projection: GraphProjection,
+    payload: RecordNodeUsageCommand,
+    make_event: Callable[[str, dict[str, Any]], EventEnvelope],
+) -> list[EventEnvelope]:
+    usage_count = len(payload.usage)
+    events: list[EventEnvelope] = []
+    for usage_index, usage in enumerate(payload.usage):
+        usage_key = f"{payload.execution_id}:{usage_index}"
+        if usage_key in projection["recorded_node_usage_keys"]:
+            continue
+        event_payload = NodeUsageRecordedPayload(
+            node_id=payload.node_id,
+            node_kind=payload.node_kind,
+            node_role=payload.node_role,
+            profile=payload.profile,
+            execution_id=payload.execution_id,
+            usage_index=usage_index,
+            usage_count=usage_count,
+            usage_key=usage_key,
+            **usage.model_dump(mode="json"),
+        )
+        events.append(make_event("node_usage_recorded", event_payload.model_dump(mode="json")))
+    return events
 
 
 def _cancel_active_lease_events(
@@ -5486,6 +5514,7 @@ apply_agent_died = _apply_agent_died
 apply_raise_appeal = _apply_raise_appeal
 apply_record_decision = _apply_record_decision
 apply_record_gatekeeper_verdicts = _apply_record_gatekeeper_verdicts
+apply_record_node_usage = _apply_record_node_usage
 apply_record_requirement_revision = _apply_record_requirement_revision
 apply_record_support_evidence = _apply_record_support_evidence
 apply_evaluate_join = _apply_evaluate_join

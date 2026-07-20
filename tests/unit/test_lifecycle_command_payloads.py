@@ -34,6 +34,7 @@ EXPECTED_COMMANDS = {
     "raise_appeal",
     "record_decision",
     "record_gatekeeper_verdicts",
+    "record_node_usage",
     "record_requirement_revision",
     "record_support_evidence",
     "evaluate_join",
@@ -42,9 +43,9 @@ EXPECTED_COMMANDS = {
 }
 
 
-def test_command_registry_has_exactly_23_strict_models() -> None:
+def test_command_registry_has_exactly_24_strict_models() -> None:
     assert set(COMMAND_SPECS) == EXPECTED_COMMANDS
-    assert len(COMMAND_SPECS) == 23
+    assert len(COMMAND_SPECS) == 24
     assert all(
         spec.payload_model.model_config["extra"] == "forbid" for spec in COMMAND_SPECS.values()
     )

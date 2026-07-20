@@ -28,6 +28,7 @@ from orchestrator.graph import (
     LIGHT_GRAPH_PAYLOAD_FIELDS,
     NODE_DETAIL_PAYLOAD_FIELDS,
     PROJECTION_SCHEMA_VERSION,
+    NodeUsageRecordedPayload,
     SUMMARY_REBUILD_PAYLOAD_FIELDS,
     initial_projection,
     build_projection,
@@ -42,6 +43,8 @@ from orchestrator.graph import (
     reduce_event,
 )
 from orchestrator.graph_runtime.errors import StaleProjectionError
+from orchestrator.db import RunModel
+from orchestrator.state import ModelTokenUsage
 
 GRAPH_AGGREGATE_PREFIX = "graph:"
 _CHECKPOINT_PROJECTION_KEY = "_projection_checkpoint"
@@ -370,6 +373,7 @@ class GraphEventStore:
             stored_events,
             expected_position=expected_position,
         )
+        await self.sync_run_usage_read_model(run_id)
         return stored_events
 
     async def read_run(self, run_id: str, from_position: int = 0) -> list[EventEnvelope]:
@@ -931,7 +935,55 @@ class GraphEventStore:
             )
         )
         await self._session.flush()
+        await self.sync_run_usage_read_model(run_id, events=events)
         return snapshot
+
+    async def sync_run_usage_read_model(
+        self,
+        run_id: str,
+        *,
+        events: list[EventEnvelope] | None = None,
+    ) -> None:
+        """Rebuild graph-run usage fields from durable node-usage facts.
+
+        The graph stream is authoritative. This read-model update deliberately
+        runs in the same transaction as appends and is safe to invoke during a
+        replay rebuild.
+        """
+        run_model = await self._session.get(RunModel, run_id)
+        if run_model is None:
+            return
+        source_events = events if events is not None else await self.read_run(run_id)
+        usage_by_key: dict[str, NodeUsageRecordedPayload] = {}
+        for event in source_events:
+            if event.event_type != "node_usage_recorded":
+                continue
+            usage = NodeUsageRecordedPayload.model_validate(event.payload)
+            usage_by_key.setdefault(usage.usage_key, usage)
+        if not usage_by_key:
+            return
+        ordered_usage = [usage_by_key[key] for key in sorted(usage_by_key)]
+        run_model.token_usage_by_model = [
+            ModelTokenUsage(
+                model=usage.model,
+                gen_ai_usage_input_tokens=usage.gen_ai_usage_input_tokens,
+                gen_ai_usage_output_tokens=usage.gen_ai_usage_output_tokens,
+                gen_ai_usage_cache_read_input_tokens=usage.gen_ai_usage_cache_read_input_tokens,
+                gen_ai_usage_cache_creation_input_tokens=(
+                    usage.gen_ai_usage_cache_creation_input_tokens
+                ),
+                gen_ai_usage_reasoning_output_tokens=usage.gen_ai_usage_reasoning_output_tokens,
+                gen_ai_response_finish_reasons=usage.gen_ai_response_finish_reasons,
+                cost_usd=usage.cost_usd,
+                latency_ms=usage.latency_ms,
+                rate_missing=usage.rate_missing,
+            ).model_dump(mode="json")
+            for usage in ordered_usage
+        ]
+        run_model.total_duration_ms = sum(
+            usage.latency_ms for usage in ordered_usage if usage.usage_index == 0
+        )
+        await self._session.flush()
 
     async def rebuild_node_detail_summaries(self, run_id: str) -> None:
         """Rebuild disposable compact node-detail rows for a run from events_v2."""

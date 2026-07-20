@@ -194,6 +194,11 @@ def test_empty_projection() -> None:
         "authority_revision_blockers": {},
         "cleanup_requested_events": {},
         "cleanup_applied_ids": {},
+        "tokens_by_node": {},
+        "tokens_by_node_kind": {},
+        "latency_ms_by_node_kind": {},
+        "execution_count_by_node_kind": {},
+        "recorded_node_usage_keys": {},
     }
 
 

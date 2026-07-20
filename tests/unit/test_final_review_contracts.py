@@ -224,6 +224,12 @@ COMMAND_EXAMPLES: dict[str, dict[str, Any]] = {
         "execution_id": "exec-1",
         "verdicts": [{"path": "build/output", "classification": "build_output"}],
     },
+    "record_node_usage": {
+        "node_id": "worker-1",
+        "node_kind": "worker",
+        "execution_id": "exec-1",
+        "usage": [{"model": "model-1"}],
+    },
     "record_requirement_revision": {"requirement_id": "R1", "version_id": "R1-v2"},
     "record_support_evidence": {
         "support_id": "support-1",
@@ -276,6 +282,7 @@ IDENTITY_FIELDS: dict[str, tuple[str, ...]] = {
     ),
     "record_decision": ("node_id", "decider", "record_id"),
     "record_gatekeeper_verdicts": ("file_state_record_id", "execution_id", "consult_id"),
+    "record_node_usage": ("node_id", "node_kind", "execution_id"),
     "record_requirement_revision": (
         "requirement_id",
         "version_id",

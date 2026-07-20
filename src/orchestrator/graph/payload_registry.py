@@ -272,6 +272,10 @@ EVENT_PAYLOAD_SPECS: MappingProxyType[str, EventPayloadSpec] = MappingProxyType(
             summary="attempt_number blockers graph_verifier_grades membership new_state node_id operations reason retry_not_before tokens_by_node tokens_by_node_kind trigger",
             node_detail="attempt_number membership new_state node_id prompt_summary reason retry_not_before trigger",
         ),
+        "node_usage_recorded": _same(
+            "node_usage_recorded",
+            "cost_usd execution_id gen_ai_response_finish_reasons gen_ai_usage_cache_creation_input_tokens gen_ai_usage_cache_read_input_tokens gen_ai_usage_input_tokens gen_ai_usage_output_tokens gen_ai_usage_reasoning_output_tokens latency_ms model node_id node_kind node_role profile rate_missing usage_count usage_index usage_key",
+        ),
         "output_record_accepted": _spec(
             "output_record_accepted",
             projection="attempt_number base_snapshot_id candidate_id evidence file_state_record_id outcome port producer_node_id record_id record_kind record_type schema snapshot_id supersedes_record_id supersedes_task_region_id supersedes_task_region_ids task_region_id value verdict",

@@ -70,6 +70,7 @@ from orchestrator.graph.models import (
     NodeReadyPayload,
     NodeRetiredPayload,
     NodeStateChangedPayload,
+    NodeUsageRecordedPayload,
     NodeSuspectPayload,
     NodeKind,
     NodeState,
@@ -121,7 +122,7 @@ _NODE_STATE_VALUES = {state.value for state in NodeState}
 _NODE_KIND_VALUES = {kind.value for kind in NodeKind}
 
 # Bump this whenever reduce_event semantics or GraphProjection shape changes.
-PROJECTION_SCHEMA_VERSION = 11
+PROJECTION_SCHEMA_VERSION = 12
 GRAPH_PROJECTION_PAYLOAD_FIELDS = _GENERATED_GRAPH_PROJECTION_PAYLOAD_FIELDS
 
 
@@ -239,6 +240,11 @@ class GraphProjection(TypedDict):
     authority_revision_blockers: dict[str, FinalInvariantBlocker]
     cleanup_requested_events: dict[str, CleanupRequestedProjection]
     cleanup_applied_ids: dict[str, bool]
+    tokens_by_node: dict[str, int]
+    tokens_by_node_kind: dict[str, int]
+    latency_ms_by_node_kind: dict[str, int]
+    execution_count_by_node_kind: dict[str, int]
+    recorded_node_usage_keys: dict[str, bool]
 
 
 class GraphTopologyBinding(TypedDict, total=False):
@@ -528,6 +534,11 @@ def initial_projection() -> GraphProjection:
         "authority_revision_blockers": {},
         "cleanup_requested_events": {},
         "cleanup_applied_ids": {},
+        "tokens_by_node": {},
+        "tokens_by_node_kind": {},
+        "latency_ms_by_node_kind": {},
+        "execution_count_by_node_kind": {},
+        "recorded_node_usage_keys": {},
     }
 
 
@@ -880,6 +891,19 @@ def projection_from_checkpoint(raw_projection: dict[str, Any]) -> GraphProjectio
     )
     projection["cleanup_applied_ids"] = _bool_map_from_checkpoint(
         raw_projection.get("cleanup_applied_ids"),
+    )
+    projection["tokens_by_node"] = _int_map_from_checkpoint(raw_projection.get("tokens_by_node"))
+    projection["tokens_by_node_kind"] = _int_map_from_checkpoint(
+        raw_projection.get("tokens_by_node_kind")
+    )
+    projection["latency_ms_by_node_kind"] = _int_map_from_checkpoint(
+        raw_projection.get("latency_ms_by_node_kind")
+    )
+    projection["execution_count_by_node_kind"] = _int_map_from_checkpoint(
+        raw_projection.get("execution_count_by_node_kind")
+    )
+    projection["recorded_node_usage_keys"] = _bool_map_from_checkpoint(
+        raw_projection.get("recorded_node_usage_keys")
     )
     return projection
 
@@ -1978,6 +2002,11 @@ def _clone_projection(state: GraphProjection) -> GraphProjection:
             if (cleanup_event_copy := _copy_cleanup_requested_projection(cleanup_event)) is not None
         },
         "cleanup_applied_ids": dict(state.get("cleanup_applied_ids", {})),
+        "tokens_by_node": dict(state.get("tokens_by_node", {})),
+        "tokens_by_node_kind": dict(state.get("tokens_by_node_kind", {})),
+        "latency_ms_by_node_kind": dict(state.get("latency_ms_by_node_kind", {})),
+        "execution_count_by_node_kind": dict(state.get("execution_count_by_node_kind", {})),
+        "recorded_node_usage_keys": dict(state.get("recorded_node_usage_keys", {})),
     }
     return next_state
 
@@ -2062,6 +2091,24 @@ def reduce_event(state: GraphProjection, event: EventEnvelope) -> GraphProjectio
         attempt_number = payload.attempt_number
         if attempt_number is not None:
             next_state["node_attempts"][node_id] = attempt_number
+    elif event.event_type == "node_usage_recorded":
+        usage = NodeUsageRecordedPayload.model_validate(event.payload)
+        if usage.usage_key not in next_state["recorded_node_usage_keys"]:
+            next_state["recorded_node_usage_keys"][usage.usage_key] = True
+            tokens = usage.gen_ai_usage_input_tokens + usage.gen_ai_usage_output_tokens
+            next_state["tokens_by_node"][usage.node_id] = (
+                next_state["tokens_by_node"].get(usage.node_id, 0) + tokens
+            )
+            next_state["tokens_by_node_kind"][usage.node_kind] = (
+                next_state["tokens_by_node_kind"].get(usage.node_kind, 0) + tokens
+            )
+            if usage.usage_index == 0:
+                next_state["latency_ms_by_node_kind"][usage.node_kind] = (
+                    next_state["latency_ms_by_node_kind"].get(usage.node_kind, 0) + usage.latency_ms
+                )
+                next_state["execution_count_by_node_kind"][usage.node_kind] = (
+                    next_state["execution_count_by_node_kind"].get(usage.node_kind, 0) + 1
+                )
     elif event.event_type == "node_retired":
         node_id = NodeRetiredPayload.model_validate(event.payload).node_id
         next_state["node_states"][node_id] = "retired"

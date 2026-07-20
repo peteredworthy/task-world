@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -20,10 +21,14 @@ from orchestrator.graph import (
     build_projection,
     serialize_event_payload,
 )
+from orchestrator.state import ModelTokenUsage
 from orchestrator.graph.commands import Clock, IdGenerator
 from orchestrator.graph_runtime.errors import StaleProjectionError
 from orchestrator.graph_runtime.outbox import OutboxDispatcher, OutboxItem, append_outbox_rows
 from orchestrator.graph_runtime.store import GraphEventStore
+
+if TYPE_CHECKING:
+    from orchestrator.graph_runtime.dispatch import GraphDispatchContext
 
 
 @dataclass(frozen=True)
@@ -171,6 +176,34 @@ class GraphController:
         """Return the current durable graph position for a run."""
         async with self._session_factory() as session:
             return await GraphEventStore(session).current_position(run_id)
+
+    async def record_node_usage(
+        self,
+        context: GraphDispatchContext,
+        usage: Sequence[ModelTokenUsage],
+    ) -> GraphCommandResult:
+        """Record immutable per-model usage facts for one graph execution."""
+        if not usage:
+            return GraphCommandResult(
+                events=[],
+                outbox_items=[],
+                projection_position=await self.current_position(context.run_id),
+            )
+        position = await self.current_position(context.run_id)
+        profile = context.node_payload.get("profile")
+        return await self.handle_command(
+            context.run_id,
+            position,
+            "record_node_usage",
+            {
+                "node_id": context.node_id,
+                "node_kind": context.node_kind,
+                "node_role": context.node_role or None,
+                "profile": profile if isinstance(profile, str) else None,
+                "execution_id": context.execution_id,
+                "usage": [item.model_dump(mode="json") for item in usage],
+            },
+        )
 
     async def read_projection(self, run_id: str) -> GraphProjection:
         """Return the current durable graph projection for a run."""

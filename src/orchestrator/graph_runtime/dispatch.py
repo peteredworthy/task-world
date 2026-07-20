@@ -329,9 +329,11 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 on_grade=on_grade if context.node_kind == "verifier" else None,
             )
             result.metrics.duration_ms = int((self._monotonic() - started) * 1000)
-            # Record this execution's token usage against the run via the shared,
-            # carrier-agnostic sink (same path the legacy attempt flow uses). The
-            # emitter lives above the import boundary and is injected.
+            from orchestrator.runners import extract_metrics_and_usage
+
+            _, usage_by_model = extract_metrics_and_usage(result)
+            if usage_by_model:
+                await self._controller.record_node_usage(context, usage_by_model)
             if self._on_agent_usage is not None:
                 await self._on_agent_usage(context, result)
             if not submitted_callback:

@@ -408,33 +408,6 @@ def make_graph_runner(
                 context.run_id, task_id, attempt_num, line, node_id=context.node_id
             )
 
-    async def on_agent_usage(context: "GraphDispatchContext", result: Any) -> None:
-        # Record graph-node agent usage against the run through the SAME shared
-        # sink the legacy attempt path uses, so token/cost accounting is identical
-        # across carriers (see runners.execution.usage + db.access.mutations).
-        from sqlalchemy import select
-
-        from orchestrator.db import RunModel, merge_token_usage_into_run
-        from orchestrator.runners import extract_metrics_and_usage
-
-        metrics, usage_by_model = extract_metrics_and_usage(result)
-        async with session_factory() as session:
-            run_model = (
-                await session.execute(select(RunModel).where(RunModel.id == context.run_id))
-            ).scalar_one_or_none()
-            if run_model is None:
-                return
-            merge_token_usage_into_run(
-                run_model,
-                gen_ai_usage_input_tokens=metrics.gen_ai_usage_input_tokens,
-                gen_ai_usage_output_tokens=metrics.gen_ai_usage_output_tokens,
-                gen_ai_usage_cache_read_input_tokens=metrics.gen_ai_usage_cache_read_input_tokens,
-                duration_ms=metrics.duration_ms,
-                num_actions=metrics.num_actions,
-                token_usage_by_model=usage_by_model,
-            )
-            await session.commit()
-
     async def _run(run_id: str) -> None:
         from orchestrator.workflow.graph_driver import GraphRunDriver
 
@@ -442,7 +415,6 @@ def make_graph_runner(
             session_factory,
             service_factory,
             on_agent_output=on_agent_output,
-            on_agent_usage=on_agent_usage,
             artifact_stores=artifact_stores,
         )
         try:
