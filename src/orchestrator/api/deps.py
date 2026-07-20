@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator, Awaitable, Callable
+from functools import partial
 from pathlib import Path
 from typing import Annotated, Any, TYPE_CHECKING, cast
 
@@ -403,6 +404,7 @@ def make_graph_runner(
     service_factory: Callable[[AsyncSession], Awaitable[WorkflowService]],
     connection_manager: ConnectionManager | None = None,
     artifact_stores: ArtifactStoreResolver | None = None,
+    journal_max_bytes: int = 64 * 1024 * 1024,
 ) -> Callable[[str], Awaitable[None]]:
     """Return a graph run driver callback for ``SignalConsumer``."""
     from orchestrator.runners import OutputBatcher
@@ -425,6 +427,7 @@ def make_graph_runner(
             )
 
     async def _run(run_id: str) -> None:
+        from orchestrator.graph_runtime import build_graph_runtime
         from orchestrator.workflow.graph_driver import GraphRunDriver
 
         driver = GraphRunDriver(
@@ -432,6 +435,8 @@ def make_graph_runner(
             service_factory,
             on_agent_output=on_agent_output,
             artifact_stores=artifact_stores,
+            journal_max_bytes=journal_max_bytes,
+            runtime_builder=partial(build_graph_runtime, journal_max_bytes=journal_max_bytes),
         )
         try:
             await driver.run(run_id)

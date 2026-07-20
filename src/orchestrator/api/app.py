@@ -515,8 +515,10 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             service_factory,
             connection_manager=app.state.connection_manager,
             artifact_stores=app.state.artifact_store_resolver,
+            journal_max_bytes=app.state.global_config.journal.max_bytes,
         ),
         workflow_preparer=make_workflow_preparer(getattr(app.state, "runner_executor", None)),
+        journal_max_bytes=app.state.global_config.journal.max_bytes,
     )
     app.state.signal_consumer = signal_consumer
     await signal_consumer.start()

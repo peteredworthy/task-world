@@ -39,6 +39,8 @@ from orchestrator.db.access.concurrency import is_retriable_sqlite_write_conflic
 # JSONL outbox: path helpers + observer
 from orchestrator.db.access.jsonl_outbox import (
     JsonlOutboxObserver,
+    RotationOperations,
+    SystemRotationOperations,
     JournalSegment,
     discover_journal_segments,
     resolve_default_journal_path,
@@ -229,6 +231,8 @@ __all__ = [
     "rollback_with_event_outbox",
     # JSONL outbox
     "JsonlOutboxObserver",
+    "RotationOperations",
+    "SystemRotationOperations",
     "JournalSegment",
     "discover_journal_segments",
     "resolve_default_journal_path",

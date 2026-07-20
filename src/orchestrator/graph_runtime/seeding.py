@@ -30,6 +30,7 @@ async def seed_run(
     source_path: str | None = None,
     source_ref: str | None = None,
     run_config: dict[str, Any] | None = None,
+    journal_max_bytes: int = 64 * 1024 * 1024,
 ) -> SeedRunResult:
     """Compile and transactionally append a run's initial graph.
 
@@ -52,6 +53,7 @@ async def seed_run(
         clock,
         id_gen,
         auto_dispatch=False,
+        journal_max_bytes=journal_max_bytes,
     ).handle_command(
         run_id,
         expected_position,

@@ -11,7 +11,13 @@ from pathlib import Path
 import pytest
 
 from orchestrator.config import JournalConfig
-from orchestrator.db import JsonlOutboxObserver, StoredEvent, discover_journal_segments
+from orchestrator.db import (
+    JsonlOutboxObserver,
+    RotationOperations,
+    SystemRotationOperations,
+    StoredEvent,
+    discover_journal_segments,
+)
 
 
 def _event(position: int) -> StoredEvent:
@@ -29,6 +35,26 @@ def _write_from_separate_process(path_string: str) -> None:
     asyncio.run(
         JsonlOutboxObserver(Path(path_string))([_event(position) for position in range(1, 21)])
     )
+
+
+class RecordingRotationOperations:
+    """Records each real durable rotation operation without replacing it."""
+
+    def __init__(self, delegate: RotationOperations) -> None:
+        self.operations: list[str] = []
+        self._delegate = delegate
+
+    def link(self, active: Path, archive: Path) -> None:
+        self.operations.append("link")
+        self._delegate.link(active, archive)
+
+    def fsync_parent(self, path: Path) -> None:
+        self.operations.append("fsync_parent")
+        self._delegate.fsync_parent(path)
+
+    def unlink(self, active: Path) -> None:
+        self.operations.append("unlink")
+        self._delegate.unlink(active)
 
 
 def test_journal_config_defaults_to_64_mebibytes() -> None:
@@ -63,6 +89,16 @@ async def test_rotation_archives_exact_position_range_without_overwriting(tmp_pa
     with pytest.raises(FileExistsError):
         await JsonlOutboxObserver(path, max_bytes=1)([_event(12)])
     assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [10]
+
+
+async def test_rotation_durably_links_fsyncs_unlinks_then_fsyncs_parent(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+    path.write_text(json.dumps({"position": 1}) + "\n")
+    recorder = RecordingRotationOperations(SystemRotationOperations())
+
+    await JsonlOutboxObserver(path, max_bytes=1, rotation_operations=recorder)([_event(2)])
+
+    assert recorder.operations == ["link", "fsync_parent", "unlink", "fsync_parent"]
 
 
 async def test_restart_deduplicates_archived_positions_with_bounded_active_state(

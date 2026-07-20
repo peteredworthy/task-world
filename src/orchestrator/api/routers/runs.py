@@ -80,8 +80,7 @@ from orchestrator.db import EventV2Model, RunRepository, create_wired_event_stor
 from orchestrator.db import SqliteEventStore
 from orchestrator.graph_runtime.store import GRAPH_AGGREGATE_PREFIX, graph_aggregate_id
 from orchestrator.db import commit_with_event_outbox
-from orchestrator.config import discover_routines
-from orchestrator.config import RoutineNotFoundError
+from orchestrator.config import RoutineNotFoundError, discover_routines
 from orchestrator.state.factory import create_run_from_routine
 from orchestrator.state.errors import RunNotFoundError, StepNotFoundError, TaskNotFoundError
 from orchestrator.state.models import Run
@@ -651,6 +650,7 @@ async def start_run(
 @router.post("/{run_id}/cancel", response_model=RunResponse, status_code=202)
 async def cancel_run(
     run_id: str,
+    config: Annotated[GlobalConfig, Depends(get_global_config)],
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
     session_factory: Annotated[async_sessionmaker[AsyncSession], Depends(get_session_factory)],
@@ -667,7 +667,12 @@ async def cancel_run(
         from orchestrator.workflow.graph_driver import apply_graph_cancel_until_terminal
 
         run = await service.cancel_run(run_id)
-        await apply_graph_cancel_until_terminal(session_factory, run_id, reason="api_cancel")
+        await apply_graph_cancel_until_terminal(
+            session_factory,
+            run_id,
+            reason="api_cancel",
+            journal_max_bytes=config.journal.max_bytes,
+        )
         await executor.cancel_run(run_id)
         await _cancel_active_child_executors(run_id, service, executor)
         graph_position = await graph_store.current_position(run_id)

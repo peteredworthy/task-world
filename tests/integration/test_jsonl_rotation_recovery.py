@@ -10,6 +10,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.config import load_routine_from_path
 from orchestrator.db import (
     ProjectionRegistry,
     bootstrap_from_jsonl,
@@ -20,8 +21,8 @@ from orchestrator.db import (
     init_db,
     scan_max_sequence,
 )
-from orchestrator.graph import Actor, ActorKind, EventEnvelope
-from orchestrator.graph_runtime import GraphEventStore
+from orchestrator.graph import Actor, ActorKind, EventEnvelope, FakeClock, SequentialIdGenerator
+from orchestrator.graph_runtime import GraphController, GraphEventStore, seed_run
 
 
 @pytest.fixture
@@ -137,3 +138,35 @@ async def test_graph_events_reach_the_committed_jsonl_journal(tmp_path: Path) ->
         "run_lifecycle_changed"
     ]
     await engine.dispose()
+
+
+async def test_graph_controller_rotates_at_its_injected_journal_limit(tmp_path: Path) -> None:
+    engine = create_engine(tmp_path / "orchestrator.db")
+    await init_db(engine)
+    session_factory = create_session_factory(engine)
+    clock = FakeClock()
+    ids = SequentialIdGenerator()
+    try:
+        await seed_run(
+            session_factory,
+            load_routine_from_path(Path("routines/demo-task.yaml")),
+            run_id="journal-limit-run",
+            clock=clock,
+            id_gen=ids,
+            journal_max_bytes=1,
+        )
+        controller = GraphController(
+            session_factory,
+            clock,
+            ids,
+            auto_dispatch=False,
+            journal_max_bytes=1,
+        )
+        position = await controller.current_position("journal-limit-run")
+
+        await controller.handle_command("journal-limit-run", position, "accept_run")
+
+        journal_dir = tmp_path / ".orchestrator" / "state"
+        assert list(journal_dir.glob("history.*-*.jsonl"))
+    finally:
+        await engine.dispose()

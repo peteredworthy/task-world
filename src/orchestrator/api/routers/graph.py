@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from orchestrator.api.deps import (
     get_artifact_store_resolver,
+    get_global_config,
     get_graph_store,
     get_run_repository,
     get_session_factory,
@@ -26,7 +27,7 @@ from orchestrator.artifacts import (
     StoredArtifactRef,
 )
 from orchestrator.api.schemas.base import ApiModel
-from orchestrator.config import RunStatus
+from orchestrator.config import GlobalConfig, RunStatus
 from orchestrator.db import GraphOutboxModel, RunRepository, flush_event_outbox
 from orchestrator.graph import (
     Actor,
@@ -1672,6 +1673,7 @@ async def get_graph_patch_attempts(
 async def submit_operator_graph_patch(
     run_id: str,
     request: SubmitGraphPatchRequest,
+    config: Annotated[GlobalConfig, Depends(get_global_config)],
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> SubmitGraphPatchResponse:
@@ -1694,6 +1696,7 @@ async def submit_operator_graph_patch(
         _ApiGraphClock(),
         _ApiGraphIdGenerator(),
         auto_dispatch=False,
+        journal_max_bytes=config.journal.max_bytes,
     )
     try:
         result = await controller.handle_command(
@@ -1890,6 +1893,7 @@ async def get_graph_decision_view(
 async def record_graph_decision(
     run_id: str,
     request: RecordGraphDecisionRequest,
+    config: Annotated[GlobalConfig, Depends(get_global_config)],
     session_factory: async_sessionmaker[AsyncSession] = Depends(get_session_factory),
     graph_store: GraphEventStore = Depends(get_graph_store),
 ) -> RecordGraphDecisionResponse:
@@ -1902,6 +1906,7 @@ async def record_graph_decision(
         _ApiGraphClock(),
         _ApiGraphIdGenerator(),
         auto_dispatch=False,
+        journal_max_bytes=config.journal.max_bytes,
     )
     try:
         result = await controller.handle_command(

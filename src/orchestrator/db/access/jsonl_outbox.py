@@ -9,7 +9,7 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, TextIO, cast
+from typing import TYPE_CHECKING, Protocol, TextIO, cast
 
 from orchestrator.db.access.event_store_v2 import StoredEvent
 
@@ -100,6 +100,7 @@ class JsonlOutboxObserver:
         *,
         max_bytes: int = 64 * 1024 * 1024,
         lock: asyncio.Lock | None = None,
+        rotation_operations: RotationOperations | None = None,
     ) -> None:
         self._path = path
         self._max_bytes = max_bytes
@@ -107,6 +108,7 @@ class JsonlOutboxObserver:
         # Callers that share a journal can inject one lock; no process-global
         # state is used. The private default keeps a standalone observer safe.
         self._lock = lock or asyncio.Lock()
+        self._rotation_operations = rotation_operations or SystemRotationOperations()
 
     async def __call__(self, events: list[StoredEvent]) -> None:
         async with self._lock:
@@ -115,6 +117,7 @@ class JsonlOutboxObserver:
                 self._path,
                 self._max_bytes,
                 events,
+                self._rotation_operations,
             )
 
 
@@ -140,6 +143,7 @@ def _write_events_under_lock(
     path: Path,
     max_bytes: int,
     events: list[StoredEvent],
+    rotation_operations: RotationOperations,
 ) -> set[int]:
     """Serialize the complete journal read/rotate/write transaction by path."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -148,7 +152,7 @@ def _write_events_under_lock(
         active_positions = _read_positions(path)
         archive_segments = discover_journal_segments(path)
         if _should_rotate(path, max_bytes):
-            _rotate(path)
+            _rotate(path, rotation_operations)
             active_positions: set[int] = set()
             archive_segments = discover_journal_segments(path)
 
@@ -194,15 +198,39 @@ def _should_rotate(path: Path, max_bytes: int) -> bool:
         return False
 
 
-def _rotate(path: Path) -> None:
+class RotationOperations(Protocol):
+    """Durable filesystem operations required to rotate a journal segment."""
+
+    def link(self, active: Path, archive: Path) -> None: ...
+
+    def fsync_parent(self, path: Path) -> None: ...
+
+    def unlink(self, active: Path) -> None: ...
+
+
+class SystemRotationOperations:
+    """Production implementation of the journal rotation filesystem operations."""
+
+    def link(self, active: Path, archive: Path) -> None:
+        os.link(active, archive)
+
+    def fsync_parent(self, path: Path) -> None:
+        _fsync_directory(path.parent)
+
+    def unlink(self, active: Path) -> None:
+        os.unlink(active)
+
+
+def _rotate(path: Path, operations: RotationOperations) -> None:
     positions = _read_positions(path)
     if not positions:
         return
     archive = path.with_name(f"{path.stem}.{min(positions)}-{max(positions)}{path.suffix}")
     # link is an atomic no-clobber install: EEXIST leaves the destination intact.
-    os.link(path, archive)
-    os.unlink(path)
-    _fsync_directory(path.parent)
+    operations.link(path, archive)
+    operations.fsync_parent(path)
+    operations.unlink(path)
+    operations.fsync_parent(path)
 
 
 def _recover_linked_rotation(path: Path) -> None:

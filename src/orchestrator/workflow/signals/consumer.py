@@ -66,6 +66,7 @@ class SignalConsumer:
         graph_runner: Callable[[str], Awaitable[None]] | None = None,
         workflow_preparer: Callable[[str, dict[str, Any] | None], Awaitable[bool]] | None = None,
         projector: RunLifecycleProjector | None = None,
+        journal_max_bytes: int = 64 * 1024 * 1024,
     ) -> None:
         self._session_factory = session_factory
         self._create_service = create_service
@@ -78,6 +79,7 @@ class SignalConsumer:
 
             projector = RunLifecycleProjector()
         self._projector = projector
+        self._journal_max_bytes = journal_max_bytes
 
         # RunWorkflow instances owned by this consumer (keyed by run_id)
         self._active_workflows: dict[str, RunWorkflow] = {}
@@ -526,6 +528,7 @@ class SignalConsumer:
                 self._session_factory,
                 run_id,
                 reason=reason,
+                journal_max_bytes=self._journal_max_bytes,
             )
 
         await service.apply_cancel_run(run_id, reason=reason)

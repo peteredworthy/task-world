@@ -110,6 +110,7 @@ async def apply_graph_cancel_until_terminal(
     run_id: str,
     *,
     reason: str | None = None,
+    journal_max_bytes: int = 64 * 1024 * 1024,
 ) -> None:
     """Durably cancel graph runtime state before external callbacks can win.
 
@@ -122,6 +123,7 @@ async def apply_graph_cancel_until_terminal(
         SystemClock(),
         UuidIdGenerator(),
         auto_dispatch=False,
+        journal_max_bytes=journal_max_bytes,
     )
     del reason
     delay_seconds = 0.05
@@ -289,6 +291,7 @@ class GraphRunDriver:
         on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
         on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
         artifact_stores: ArtifactStoreResolver | None = None,
+        journal_max_bytes: int = 64 * 1024 * 1024,
     ) -> None:
         self._session_factory = session_factory
         self._create_service = create_service
@@ -300,6 +303,7 @@ class GraphRunDriver:
         self._on_agent_output = on_agent_output
         self._on_agent_usage = on_agent_usage
         self._artifact_stores = artifact_stores or ArtifactStoreResolver(ArtifactRootResolver())
+        self._journal_max_bytes = journal_max_bytes
 
     async def run(self, run_id: str) -> GraphRunOutcome:
         run = await self._get_run(run_id)
@@ -394,6 +398,7 @@ class GraphRunDriver:
                 source_path=run.routine_path,
                 source_ref=run.routine_commit,
                 run_config=seed_run_config,
+                journal_max_bytes=self._journal_max_bytes,
             )
             await self._bootstrap_graph_lifecycle(run_id)
         elif (
@@ -709,7 +714,12 @@ class GraphRunDriver:
         # below for the analogous risk in the main drive loop).
         events = await self._read_events(run_id)
         run_state = project_run_state(events)
-        controller = GraphController(self._session_factory, self._clock, self._id_gen)
+        controller = GraphController(
+            self._session_factory,
+            self._clock,
+            self._id_gen,
+            journal_max_bytes=self._journal_max_bytes,
+        )
         if run_state is None or run_state == "draft":
             await self._handle_command_at_head(controller, run_id, "accept_run")
             await self._handle_command_at_head(controller, run_id, "start")
@@ -736,7 +746,12 @@ class GraphRunDriver:
         run_state = project_run_state(events)
         if run_state not in {"failed", "resuming"}:
             return False
-        controller = GraphController(self._session_factory, self._clock, self._id_gen)
+        controller = GraphController(
+            self._session_factory,
+            self._clock,
+            self._id_gen,
+            journal_max_bytes=self._journal_max_bytes,
+        )
         actor = Actor(kind=ActorKind.HUMAN, id="human-operator", role="operator")
         if run_state == "failed":
             await self._handle_command_at_head(controller, run_id, "resume", actor=actor)

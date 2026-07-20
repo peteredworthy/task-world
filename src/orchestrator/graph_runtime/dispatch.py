@@ -888,12 +888,19 @@ def build_graph_runtime(
     artifact_store: ArtifactStore,
     runner_type: AgentRunnerType,
     runner_config: dict[str, Any] | None = None,
+    journal_max_bytes: int = 64 * 1024 * 1024,
     on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
     on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
 ) -> tuple[GraphController, GraphDispatchExecutor]:
     """Assemble graph controller and dispatch executor without API imports."""
 
-    controller = GraphController(session_factory, clock, id_gen, auto_dispatch=False)
+    controller = GraphController(
+        session_factory,
+        clock,
+        id_gen,
+        auto_dispatch=False,
+        journal_max_bytes=journal_max_bytes,
+    )
     executor = GraphDispatchExecutor(
         session_factory,
         controller,
