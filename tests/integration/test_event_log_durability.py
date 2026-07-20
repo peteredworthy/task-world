@@ -39,6 +39,7 @@ from orchestrator.db import (
     create_engine,
     create_session_factory,
     create_wired_event_store_v2,
+    bootstrap_from_jsonl,
     drain_committed_events_to_journal,
     init_db,
 )
@@ -1152,10 +1153,10 @@ async def test_journal_drain_reads_events_in_bounded_global_position_pages(tmp_p
     await engine.dispose()
 
 
-async def test_journal_drain_traverses_each_archive_once_across_multiple_pages_and_gaps(
+async def test_journal_drain_reconciles_sparse_archives_without_duplicate_second_pass(
     tmp_path: Path,
 ) -> None:
-    """Startup reconciliation scans one real archive once, not once per missing event."""
+    """Active positions fill archive gaps without reopening them on a later pass."""
     db_path = tmp_path / "segment-reconciliation" / "orchestrator.db"
     db_path.parent.mkdir()
     engine = create_engine(db_path)
@@ -1163,8 +1164,15 @@ async def test_journal_drain_traverses_each_archive_once_across_multiple_pages_a
     factory = create_session_factory(engine)
     journal_path = db_path.parent / "history.jsonl"
     archive_path = db_path.parent / "history.1-5.jsonl"
+    second_archive_path = db_path.parent / "history.6-8.jsonl"
     archive_path.write_text(
         "\n".join(json.dumps({"position": position}) for position in (1, 3, 5)) + "\n"
+    )
+    second_archive_path.write_text(
+        "\n".join(json.dumps({"position": position}) for position in (6, 8)) + "\n"
+    )
+    journal_path.write_text(
+        "\n".join(json.dumps({"position": position}) for position in (2, 4, 7)) + "\n"
     )
     traversal_count: dict[Path, int] = {}
 
@@ -1179,7 +1187,7 @@ async def test_journal_drain_traverses_each_archive_once_across_multiple_pages_a
         }
 
     async with factory() as session:
-        for position in range(1, 8):
+        for position in range(1, 10):
             session.add(
                 EventV2Model(
                     aggregate_id=f"run-{position}",
@@ -1196,15 +1204,83 @@ async def test_journal_drain_traverses_each_archive_once_across_multiple_pages_a
             batch_size=2,
             observer=JsonlOutboxObserver(journal_path, segment_reader=read_segment),
         )
+        first_active_bytes = journal_path.read_bytes()
+        observed_second_pass = await drain_committed_events_to_journal(
+            session,
+            journal_path,
+            batch_size=2,
+            observer=JsonlOutboxObserver(journal_path, segment_reader=read_segment),
+        )
 
     archive_positions = [
         json.loads(line)["position"] for line in archive_path.read_text().splitlines()
     ]
+    archive_positions += [
+        json.loads(line)["position"] for line in second_archive_path.read_text().splitlines()
+    ]
     active_positions = [
         json.loads(line)["position"] for line in journal_path.read_text().splitlines()
     ]
-    assert observed == 7
-    assert traversal_count[archive_path] == 1
-    assert traversal_count[journal_path] == 1
-    assert sorted(archive_positions + active_positions) == list(range(1, 8))
+    assert observed == 9
+    assert observed_second_pass == 9
+    assert traversal_count[archive_path] == 2
+    assert traversal_count[second_archive_path] == 2
+    assert traversal_count[journal_path] == 2
+    assert journal_path.read_bytes() == first_active_bytes
+    assert sorted(archive_positions + active_positions) == list(range(1, 10))
+    await engine.dispose()
+
+
+async def test_journal_drain_repairs_partial_final_record_before_replacement(
+    tmp_path: Path,
+) -> None:
+    """A malformed final fragment cannot join an authoritative replacement record."""
+    db_path = tmp_path / "partial-final" / "orchestrator.db"
+    db_path.parent.mkdir()
+    engine = create_engine(db_path)
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    journal_path = db_path.parent / "history.jsonl"
+    record_one = {
+        "position": 1,
+        "aggregate_id": "run-1",
+        "event_type": "run_created",
+        "timestamp": "2026-07-20T00:00:00+00:00",
+        "payload": {"position": 1},
+    }
+    journal_path.write_text(json.dumps(record_one) + '\n{"position":')
+
+    async with factory() as session:
+        for position in (1, 2):
+            session.add(
+                EventV2Model(
+                    aggregate_id=f"run-{position}",
+                    version=1,
+                    event_type="run_created",
+                    payload=json.dumps({"position": position}),
+                    timestamp="2026-07-20T00:00:00+00:00",
+                )
+            )
+        await session.commit()
+        observed = await drain_committed_events_to_journal(session, journal_path, batch_size=1)
+
+    assert observed == 2
+    parsed_positions = [
+        json.loads(line)["position"] for line in journal_path.read_text().splitlines()
+    ]
+    assert parsed_positions == [1, 2]
+
+    restored_engine = create_engine(tmp_path / "partial-final" / "restored.db")
+    await init_db(restored_engine)
+    restored_factory = create_session_factory(restored_engine)
+    async with restored_factory() as session:
+        await bootstrap_from_jsonl(session, journal_path, ProjectionRegistry())
+        restored_positions = (
+            (await session.execute(text("SELECT position FROM events_v2 ORDER BY position")))
+            .scalars()
+            .all()
+        )
+
+    assert restored_positions == [1, 2]
+    await restored_engine.dispose()
     await engine.dispose()

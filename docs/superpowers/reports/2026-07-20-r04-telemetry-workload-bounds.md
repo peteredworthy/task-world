@@ -3,11 +3,11 @@
 ## Delivered
 
 1. **Startup journal reconciliation**
-   - `JsonlOutboxObserver.reconcile()` scans archive segments in global-position order.
-   - It holds exactly one archive's sparse exact-position set while it fetches bounded DB pages for that archive range, then discards that set before scanning the next segment.
-   - The active journal is scanned once after the archive prefixes. The reconciliation advisory lock spans scan/filter/append work, preserving exact dedupe against concurrent writers.
+   - `JsonlOutboxObserver.reconcile()` scans the active journal once before archive segments, then scans archive segments in global-position order.
+   - It retains the active sparse exact-position set for the complete pass and combines it with exactly one archive sparse set while it fetches bounded DB pages for that archive range; the archive set is then discarded before the next segment.
+   - The reconciliation advisory lock spans scan/filter/append work. Newly appended positions remain in the active-pass set, so an active rotation cannot reopen an already advanced range.
    - Ordinary observer appends likewise scan an archive candidate once per batch, so sparse gap events no longer reopen the same candidate per event.
-   - Evidence: an injected real JSONL segment reader reconciles a three-page DB stream with archive gaps `{1, 3, 5}`; the archive and active segment are each traversed once and positions `1..7` occur exactly once across journal files.
+   - Evidence: an injected real JSONL segment reader reconciles six bounded DB pages across sparse archive ranges `{1, 3, 5}` and `{6, 8}` with active positions `{2, 4, 7}`. Each active/archive file is traversed once per pass; after a second pass, active bytes are unchanged and positions `1..9` occur exactly once across journal files. A malformed final active fragment is truncated and fsynced before an authoritative replacement append; JSONL bootstrap then restores positions `1, 2`.
 
 2. **Rollup input bound**
    - `MAX_ROLLUP_FACTS = 100_000` caps raw graph usage facts.
@@ -26,7 +26,8 @@
 Each new behavior was written and run red before the minimal implementation:
 
 - Archive instrumentation initially failed because `JsonlOutboxObserver` had no injected segment reader; it then passed after segment-scoped reconciliation was added.
-- Gap-event instrumentation initially observed two archive reads for two missing positions; it then passed after batch-level archive scanning replaced per-event scans.
+- Sparse active/archive instrumentation initially duplicated active positions on its second pass because active scanning followed archive filtering; it then passed after active-first exact filtering was retained across every archive range.
+- Partial-final-record instrumentation initially produced one malformed joined line; it then passed after the held-lock append path durably truncates malformed fragments (or delimits complete unterminated records) before replacement append.
 - Same-group rollup input test initially failed because `load_cost_rollup_facts` lacked `max_facts`; it then passed after sentinel-row enforcement was added.
 - Exact-provenance regression initially failed at public API import; it then passed after exporting the established presenter through the API boundary.
 

@@ -143,33 +143,41 @@ class JsonlOutboxObserver:
                 _recover_linked_rotation(self._path, self._rotation_operations)
                 cursor = 0
                 observed = 0
+                # The active file can contain positions which belong to sparse
+                # archive ranges. Retain its one bounded set throughout this
+                # pass so those positions never get appended as archive gaps.
+                active_positions = self._segment_reader(self._path)
                 for segment in discover_journal_segments(self._path):
                     observed += await self._reconcile_page_range(
                         store,
                         cursor,
                         segment.first_position - 1,
                         batch_size,
-                        set(),
+                        active_positions,
+                        active_positions,
                     )
                     cursor = max(cursor, segment.first_position - 1)
                     segment_positions = self._segment_reader(segment.path)
+                    segment_positions.update(active_positions)
                     observed += await self._reconcile_page_range(
                         store,
                         cursor,
                         segment.last_position,
                         batch_size,
                         segment_positions,
+                        active_positions,
                     )
                     cursor = max(cursor, segment.last_position)
 
-                # Archives are chronological journal prefixes. Scan the active
-                # tail once only after those segment sets have been discarded.
-                active_positions = self._segment_reader(self._path)
+                # Archives are chronological journal prefixes. The active set
+                # remains authoritative for this pass, including records
+                # appended before an active rotation created a new archive.
                 observed += await self._reconcile_page_range(
                     store,
                     cursor,
                     None,
                     batch_size,
+                    active_positions,
                     active_positions,
                 )
                 self._written = active_positions
@@ -182,6 +190,7 @@ class JsonlOutboxObserver:
         through_position: int | None,
         batch_size: int,
         existing_positions: set[int],
+        active_positions: set[int],
     ) -> int:
         observed = 0
         while True:
@@ -193,12 +202,15 @@ class JsonlOutboxObserver:
             if not page:
                 return observed
             observed += len(page)
+            new_events = [event for event in page if event.position not in existing_positions]
             _append_events_under_held_lock(
                 self._path,
                 self._max_bytes,
-                [event for event in page if event.position not in existing_positions],
+                new_events,
                 self._rotation_operations,
             )
+            existing_positions.update(event.position for event in new_events)
+            active_positions.update(event.position for event in new_events)
             cursor = page[-1].position
 
 
@@ -255,6 +267,38 @@ def _append_lines(path: Path, lines: str, operations: RotationOperations) -> Non
     operations.fsync_parent(path)
 
 
+def _repair_active_append_boundary(path: Path, operations: RotationOperations) -> None:
+    """Make a nonempty active journal safe for a complete JSONL append.
+
+    A valid final record merely lacks its delimiter after an interrupted write,
+    so preserve it and durably add the delimiter. An invalid final fragment is
+    not an authoritative record and is truncated back to the preceding newline.
+    """
+    try:
+        content = path.read_bytes()
+    except FileNotFoundError:
+        return
+    if not content or content.endswith(b"\n"):
+        return
+
+    final_newline = content.rfind(b"\n")
+    final_line = content[final_newline + 1 :]
+    try:
+        json.loads(final_line)
+    except json.JSONDecodeError:
+        with open(path, "r+b") as file:
+            file.truncate(final_newline + 1)
+            file.flush()
+            os.fsync(file.fileno())
+    else:
+        with open(path, "ab") as file:
+            file.write(b"\n")
+            file.flush()
+            os.fsync(file.fileno())
+    operations.fsync_active(path)
+    operations.fsync_parent(path)
+
+
 def _write_events_under_lock(
     path: Path,
     max_bytes: int,
@@ -301,6 +345,7 @@ def _write_events_under_lock(
             ]
         if new_events:
             lines = "\n".join(json.dumps(_to_record(event)) for event in new_events) + "\n"
+            _repair_active_append_boundary(path, rotation_operations)
             _append_lines(path, lines, rotation_operations)
             active_positions.update(event.position for event in new_events)
             # Rotation is a postcondition of every durable append.  A batch
@@ -331,6 +376,7 @@ def _append_events_under_held_lock(
     if not unique_events:
         return
     lines = "\n".join(json.dumps(_to_record(event)) for event in unique_events) + "\n"
+    _repair_active_append_boundary(path, rotation_operations)
     _append_lines(path, lines, rotation_operations)
     if _should_rotate(path, max_bytes):
         _rotate(path, rotation_operations)
