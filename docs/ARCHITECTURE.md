@@ -59,11 +59,12 @@ task-world/
 │   │   │   ├── server.py      # FastMCP SSE server
 │   │   │   ├── tools.py       # Tool definitions (ORCHESTRATOR_TOOLS)
 │   │   │   └── clarification_tools.py
-│   │   ├── routers/           # API endpoints (11 routers)
+│   │   ├── routers/           # API endpoints (12 routers)
 │   │   │   ├── agents.py      # GET/POST/PUT/DELETE /api/agents
 │   │   │   ├── runners.py     # GET /api/agent-runners
 │   │   │   ├── model_profiles.py # GET/PUT /api/agent-runners/{type}/model-profile-defaults
 │   │   │   ├── routines.py    # /api/routines CRUD + validate
+│   │   │   ├── cost_rollup.py # GET /api/runs/cost-rollup graph usage aggregation
 │   │   │   ├── runs.py        # /api/runs CRUD + lifecycle
 │   │   │   ├── tasks.py       # Task operations, checklist, grades, prompts
 │   │   │   ├── repos.py       # /api/repos (repository browser)
@@ -75,7 +76,7 @@ task-world/
 │   │   └── schemas/           # Pydantic request/response models
 │   │       ├── runs.py, tasks.py, steps.py, routines.py
 │   │       ├── repos.py, clarifications.py, envfiles.py
-│   │       ├── model_profiles.py, activity.py, review.py, base.py
+│   │       ├── model_profiles.py, activity.py, review.py, cost_rollup.py, base.py
 │   │
 │   ├── cli/                   # Click CLI commands
 │   │   ├── main.py            # Entry point (orchestrator command)
@@ -633,6 +634,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 |--------|------|-------------|
 | POST | `/api/runs` | Create a new run |
 | GET | `/api/runs` | List runs (filterable) |
+| GET | `/api/runs/cost-rollup` | Aggregate canonical graph `node_usage_recorded` facts by day, node kind, model, profile, and/or run |
 | GET | `/api/runs/{id}` | Get run details |
 | DELETE | `/api/runs/{id}` | Delete run |
 | POST | `/api/runs/{id}/start` | Start run execution |

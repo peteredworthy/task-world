@@ -14,8 +14,16 @@ from orchestrator.api.metrics import PRICING, CostEstimate, estimate_cost
 from orchestrator.api.mcp.clarification_tools import validate_clarification_question_payloads
 from orchestrator.api.presenters import (
     build_run_evidence_digest_response,
+    compute_cost_rollup,
     compute_run_totals_from_attempts,
     run_to_trace_response,
+)
+from orchestrator.api.schemas.cost_rollup import (
+    CostRollupDimension,
+    CostRollupFact,
+    CostRollupFilters,
+    CostRollupResponse,
+    CostRollupRow,
 )
 from orchestrator.api.schemas.base import ApiModel
 from orchestrator.api.schemas.envfiles import CopyBackRequest, RevertEnvFileRequest
@@ -58,6 +66,11 @@ __all__ = [
     "CallbackInstructions",
     "CopyBackRequest",
     "CostEstimate",
+    "CostRollupDimension",
+    "CostRollupFact",
+    "CostRollupFilters",
+    "CostRollupResponse",
+    "CostRollupRow",
     "CreateRunRequest",
     "EvidenceBundleSchema",
     "InvalidEvidenceItem",
@@ -84,6 +97,7 @@ __all__ = [
     "UpdateChecklistRequest",
     "create_app",
     "compute_run_totals_from_attempts",
+    "compute_cost_rollup",
     "estimate_cost",
     "build_graph_patch_attempts_response",
     "build_final_invariant_blockers_response",
@@ -129,6 +143,7 @@ _GRAPH_ROUTER_SYMBOLS = {
 }
 _RUNS_ROUTER_SYMBOLS = {"_graph_backed_run_ids_from_rows"}
 _CLARIFICATION_ROUTER_SYMBOLS = {"is_clarification_pause_reason"}
+_COST_ROLLUP_ROUTER_SYMBOLS = {"load_cost_rollup_facts"}
 
 
 def build_graph_patch_attempts_response(*args: Any, **kwargs: Any) -> Any:
@@ -192,4 +207,8 @@ def __getattr__(name: str) -> object:
         import orchestrator.api.routers.clarifications as _clarifications_router  # noqa: PLC0415
 
         return getattr(_clarifications_router, name)
+    if name in _COST_ROLLUP_ROUTER_SYMBOLS:
+        import orchestrator.api.routers.cost_rollup as _cost_rollup_router  # noqa: PLC0415
+
+        return getattr(_cost_rollup_router, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
