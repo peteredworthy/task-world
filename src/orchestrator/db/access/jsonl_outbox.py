@@ -133,6 +133,7 @@ def _append_lines(path: Path, lines: str) -> None:
         f.write(lines)
         f.flush()
         os.fsync(f.fileno())
+    _fsync_directory(path.parent)
 
 
 def _write_events_under_lock(
@@ -143,6 +144,7 @@ def _write_events_under_lock(
     """Serialize the complete journal read/rotate/write transaction by path."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with _advisory_lock(path):
+        _recover_linked_rotation(path)
         active_positions = _read_positions(path)
         archive_segments = discover_journal_segments(path)
         if _should_rotate(path, max_bytes):
@@ -197,12 +199,24 @@ def _rotate(path: Path) -> None:
     if not positions:
         return
     archive = path.with_name(f"{path.stem}.{min(positions)}-{max(positions)}{path.suffix}")
-    # Path.rename overwrites on POSIX. Refuse before rename so a retained archive
-    # can never be silently replaced.
-    if archive.exists():
-        raise FileExistsError(f"journal archive already exists: {archive}")
-    os.rename(path, archive)
+    # link is an atomic no-clobber install: EEXIST leaves the destination intact.
+    os.link(path, archive)
+    os.unlink(path)
     _fsync_directory(path.parent)
+
+
+def _recover_linked_rotation(path: Path) -> None:
+    """Finish an interrupted link/unlink rotation before any new append."""
+    if not path.exists():
+        return
+    for segment in discover_journal_segments(path):
+        try:
+            if path.samefile(segment.path):
+                os.unlink(path)
+                _fsync_directory(path.parent)
+                return
+        except FileNotFoundError:
+            continue
 
 
 def _fsync_directory(path: Path) -> None:
@@ -233,6 +247,7 @@ def _archive_contains_position(path: Path, position: int) -> bool:
                 if (
                     isinstance(record, dict)
                     and cast("dict[str, object]", record).get("position") == position
+                    and type(cast("dict[str, object]", record).get("position")) is int
                 ):
                     return True
     except FileNotFoundError:

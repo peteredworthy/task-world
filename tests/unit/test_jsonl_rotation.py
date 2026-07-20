@@ -89,6 +89,26 @@ async def test_rotation_failure_propagates(tmp_path: Path) -> None:
         await JsonlOutboxObserver(path, max_bytes=1)([_event(2)])
 
 
+async def test_rotation_recovers_linked_active_file_before_appending(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+    path.write_text(json.dumps({"position": 1}) + "\n")
+    archive = tmp_path / "history.1-1.jsonl"
+    archive.hardlink_to(path)
+
+    await JsonlOutboxObserver(path)([_event(2)])
+
+    assert not path.samefile(archive)
+    assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [1]
+    assert [json.loads(line)["position"] for line in path.read_text().splitlines()] == [2]
+
+
+async def test_boolean_archive_position_does_not_deduplicate_integer(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+    (tmp_path / "history.1-1.jsonl").write_text(json.dumps({"position": True}) + "\n")
+    await JsonlOutboxObserver(path)([_event(1)])
+    assert [json.loads(line)["position"] for line in path.read_text().splitlines()] == [1]
+
+
 async def test_archive_range_is_only_a_candidate_index_for_gaps(tmp_path: Path) -> None:
     path = tmp_path / "history.jsonl"
     (tmp_path / "history.1-3.jsonl").write_text(
