@@ -81,10 +81,7 @@ async def _save_run(
                 gen_ai_usage_output_tokens=22,
                 gen_ai_usage_cache_read_input_tokens=3,
                 gen_ai_usage_cache_creation_input_tokens=4,
-                cost_per_m_input=1.0,
-                cost_per_m_output=2.0,
-                cost_per_m_cache_read=3.0,
-                cost_per_m_cache_creation=4.0,
+                cost_usd=0.000067,
             )
         ]
         step.tasks[0].attempts = [attempt]

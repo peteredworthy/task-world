@@ -204,6 +204,32 @@ async def test_partial_idempotency_skips_already_written(tmp_path: Path) -> None
     assert positions == {1, 2, 3}
 
 
+async def test_gap_events_scan_an_archive_once_before_appending_missing_positions(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "events.jsonl"
+    archive = tmp_path / "events.1-5.jsonl"
+    archive.write_text("\n".join(json.dumps({"position": value}) for value in (1, 3, 5)) + "\n")
+    reads = 0
+
+    def read_segment(segment: Path) -> set[int]:
+        nonlocal reads
+        if not segment.exists():
+            return set()
+        if segment == archive:
+            reads += 1
+        return {
+            record["position"]
+            for record in (json.loads(line) for line in segment.read_text().splitlines())
+            if type(record.get("position")) is int
+        }
+
+    await JsonlOutboxObserver(path, segment_reader=read_segment)([_stored(2), _stored(4)])
+
+    assert reads == 1
+    assert [json.loads(line)["position"] for line in path.read_text().splitlines()] == [2, 4]
+
+
 async def test_payload_is_parsed_json(tmp_path: Path) -> None:
     path = tmp_path / "events.jsonl"
     observer = JsonlOutboxObserver(path)

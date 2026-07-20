@@ -14,6 +14,7 @@ from orchestrator.api.presenters.runs import (
     compute_run_metrics,
     compute_run_totals_from_attempts,
     run_to_trace_response,
+    token_usage_to_schema,
 )
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "compute_cost_rollup",
     "CostRollupCardinalityError",
     "run_to_trace_response",
+    "token_usage_to_schema",
 ]

@@ -443,15 +443,13 @@ def test_build_create_run_command_preserves_initial_attempt_replay_fields() -> N
         model="gpt-test",
         gen_ai_usage_input_tokens=3,
         gen_ai_usage_output_tokens=5,
-        cost_per_m_input=1.25,
-        cost_per_m_output=10.0,
+        cost_usd=0.00005375,
     )
     run_usage = ModelTokenUsage(
         model="gpt-run",
         gen_ai_usage_input_tokens=30,
         gen_ai_usage_output_tokens=50,
-        cost_per_m_input=1.5,
-        cost_per_m_output=12.0,
+        cost_usd=0.000645,
     )
     created_at = datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)
     updated_at = datetime(2025, 1, 15, 10, 1, 0, tzinfo=timezone.utc)

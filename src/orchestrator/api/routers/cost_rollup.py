@@ -26,6 +26,11 @@ from orchestrator.db import EventV2Model, RunModel
 from orchestrator.graph_runtime import graph_aggregate_id
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
+MAX_ROLLUP_FACTS = 100_000
+
+
+class CostRollupInputLimitError(ValueError):
+    """Raw graph usage facts exceed the bounded rollup input workload."""
 
 
 def _utc_isoformat(value: datetime) -> str:
@@ -38,6 +43,8 @@ def _utc_isoformat(value: datetime) -> str:
 async def load_cost_rollup_facts(
     session: AsyncSession,
     filters: CostRollupFilters,
+    *,
+    max_facts: int = MAX_ROLLUP_FACTS,
 ) -> list[CostRollupFact]:
     """Load only canonical graph ``node_usage_recorded`` facts with SQL filters."""
     statement = (
@@ -58,14 +65,19 @@ async def load_cost_rollup_facts(
     if filters.end is not None:
         statement = statement.where(EventV2Model.timestamp < _utc_isoformat(filters.end))
 
-    result = await session.execute(statement)
+    result = await session.execute(statement.limit(max_facts + 1))
+    rows = result.all()
+    if len(rows) > max_facts:
+        raise CostRollupInputLimitError(
+            f"cost rollup exceeds maximum of {max_facts} facts; narrow time range or filters"
+        )
     return [
         CostRollupFact(
             run_id=run_id,
             timestamp=datetime.fromisoformat(timestamp.replace("Z", "+00:00")),
             **json.loads(payload),
         )
-        for run_id, timestamp, payload in result.all()
+        for run_id, timestamp, payload in rows
     ]
 
 
@@ -90,6 +102,8 @@ async def get_cost_rollup(
         raise HTTPException(status_code=422, detail=jsonable_encoder(error.errors())) from error
     try:
         return compute_cost_rollup(await load_cost_rollup_facts(session, filters), tuple(group_by))
+    except CostRollupInputLimitError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
     except CostRollupCardinalityError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
     except ValueError as error:

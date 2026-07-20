@@ -9,13 +9,15 @@ import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, TextIO, cast
+from typing import TYPE_CHECKING, Callable, Protocol, TextIO, cast
 
 from orchestrator.db.access.event_store_v2 import StoredEvent
 from orchestrator.db.access.event_outbox import EventOutboxObserver
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
+
+    from orchestrator.db.access.event_store_v2 import SqliteEventStore
 
 _JOURNAL_PATH_ENV = "ORCHESTRATOR_EVENT_JOURNAL_PATH"
 _ARCHIVE_NAME = re.compile(r"^(?P<stem>.+)\.(?P<first>\d+)-(?P<last>\d+)\.jsonl$")
@@ -102,6 +104,7 @@ class JsonlOutboxObserver:
         max_bytes: int = 64 * 1024 * 1024,
         lock: asyncio.Lock | None = None,
         rotation_operations: RotationOperations | None = None,
+        segment_reader: Callable[[Path], set[int]] | None = None,
     ) -> None:
         self._path = path
         self._max_bytes = max_bytes
@@ -110,6 +113,7 @@ class JsonlOutboxObserver:
         # state is used. The private default keeps a standalone observer safe.
         self._lock = lock or asyncio.Lock()
         self._rotation_operations = rotation_operations or SystemRotationOperations()
+        self._segment_reader = segment_reader or _read_positions
 
     async def __call__(self, events: list[StoredEvent]) -> None:
         async with self._lock:
@@ -119,7 +123,83 @@ class JsonlOutboxObserver:
                 self._max_bytes,
                 events,
                 self._rotation_operations,
+                self._segment_reader,
             )
+
+    async def reconcile(
+        self,
+        store: "SqliteEventStore",
+        *,
+        batch_size: int,
+    ) -> int:
+        """Reconcile DB pages with one exact-position set per journal segment.
+
+        The advisory lock spans this startup-only operation so a concurrent
+        writer cannot invalidate a segment set between its scan and append.
+        """
+        async with self._lock:
+            self._path.parent.mkdir(parents=True, exist_ok=True)
+            with _advisory_lock(self._path):
+                _recover_linked_rotation(self._path, self._rotation_operations)
+                cursor = 0
+                observed = 0
+                for segment in discover_journal_segments(self._path):
+                    observed += await self._reconcile_page_range(
+                        store,
+                        cursor,
+                        segment.first_position - 1,
+                        batch_size,
+                        set(),
+                    )
+                    cursor = max(cursor, segment.first_position - 1)
+                    segment_positions = self._segment_reader(segment.path)
+                    observed += await self._reconcile_page_range(
+                        store,
+                        cursor,
+                        segment.last_position,
+                        batch_size,
+                        segment_positions,
+                    )
+                    cursor = max(cursor, segment.last_position)
+
+                # Archives are chronological journal prefixes. Scan the active
+                # tail once only after those segment sets have been discarded.
+                active_positions = self._segment_reader(self._path)
+                observed += await self._reconcile_page_range(
+                    store,
+                    cursor,
+                    None,
+                    batch_size,
+                    active_positions,
+                )
+                self._written = active_positions
+                return observed
+
+    async def _reconcile_page_range(
+        self,
+        store: "SqliteEventStore",
+        cursor: int,
+        through_position: int | None,
+        batch_size: int,
+        existing_positions: set[int],
+    ) -> int:
+        observed = 0
+        while True:
+            page = await store.get_page_after_position(
+                cursor,
+                limit=batch_size,
+                through_position=through_position,
+            )
+            if not page:
+                return observed
+            observed += len(page)
+            _append_events_under_held_lock(
+                self._path,
+                self._max_bytes,
+                [event for event in page if event.position not in existing_positions],
+                self._rotation_operations,
+            )
+            cursor = page[-1].position
 
 
 async def drain_committed_events_to_journal(
@@ -142,6 +222,8 @@ async def drain_committed_events_to_journal(
 
     journal_observer = observer or JsonlOutboxObserver(path, max_bytes=max_bytes)
     store = SqliteEventStore(session)
+    if isinstance(journal_observer, JsonlOutboxObserver):
+        return await journal_observer.reconcile(store, batch_size=batch_size)
     cursor = 0
     observed = 0
     while True:
@@ -178,12 +260,13 @@ def _write_events_under_lock(
     max_bytes: int,
     events: list[StoredEvent],
     rotation_operations: RotationOperations,
+    segment_reader: Callable[[Path], set[int]],
 ) -> set[int]:
     """Serialize the complete journal read/rotate/write transaction by path."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with _advisory_lock(path):
         _recover_linked_rotation(path, rotation_operations)
-        active_positions = _read_positions(path)
+        active_positions = segment_reader(path)
         archive_segments = discover_journal_segments(path)
         if _should_rotate(path, max_bytes):
             _rotate(path, rotation_operations)
@@ -197,14 +280,25 @@ def _write_events_under_lock(
         batch_positions: set[int] = set()
         new_events: list[StoredEvent] = []
         for event in events:
-            if (
-                event.position in active_positions
-                or event.position in batch_positions
-                or _position_in_archives(event.position, archive_segments)
-            ):
+            if event.position in active_positions or event.position in batch_positions:
                 continue
             batch_positions.add(event.position)
             new_events.append(event)
+        for segment in archive_segments:
+            if not any(
+                segment.first_position <= event.position <= segment.last_position
+                for event in new_events
+            ):
+                continue
+            segment_positions = segment_reader(segment.path)
+            new_events = [
+                event
+                for event in new_events
+                if not (
+                    segment.first_position <= event.position <= segment.last_position
+                    and event.position in segment_positions
+                )
+            ]
         if new_events:
             lines = "\n".join(json.dumps(_to_record(event)) for event in new_events) + "\n"
             _append_lines(path, lines, rotation_operations)
@@ -219,6 +313,30 @@ def _write_events_under_lock(
                 rotation_operations.fsync_parent(path)
                 active_positions = set()
         return active_positions
+
+
+def _append_events_under_held_lock(
+    path: Path,
+    max_bytes: int,
+    events: list[StoredEvent],
+    rotation_operations: RotationOperations,
+) -> None:
+    """Append already-reconciled events while the caller holds the journal lock."""
+    unique_events: list[StoredEvent] = []
+    positions: set[int] = set()
+    for event in events:
+        if event.position not in positions:
+            positions.add(event.position)
+            unique_events.append(event)
+    if not unique_events:
+        return
+    lines = "\n".join(json.dumps(_to_record(event)) for event in unique_events) + "\n"
+    _append_lines(path, lines, rotation_operations)
+    if _should_rotate(path, max_bytes):
+        _rotate(path, rotation_operations)
+        path.touch()
+        rotation_operations.fsync_active(path)
+        rotation_operations.fsync_parent(path)
 
 
 class _advisory_lock:
@@ -308,34 +426,6 @@ def _fsync_directory(path: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
-
-
-def _position_in_archives(position: int, segments: list[JournalSegment]) -> bool:
-    """Use ranges as an index, then confirm candidates by streaming the archive."""
-    return any(
-        segment.first_position <= position <= segment.last_position
-        and _archive_contains_position(segment.path, position)
-        for segment in segments
-    )
-
-
-def _archive_contains_position(path: Path, position: int) -> bool:
-    try:
-        with open(path) as file:
-            for line in file:
-                try:
-                    record = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if (
-                    isinstance(record, dict)
-                    and cast("dict[str, object]", record).get("position") == position
-                    and type(cast("dict[str, object]", record).get("position")) is int
-                ):
-                    return True
-    except FileNotFoundError:
-        return False
-    return False
 
 
 def _read_positions(path: Path) -> set[int]:

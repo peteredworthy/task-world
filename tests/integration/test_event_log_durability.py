@@ -1150,3 +1150,61 @@ async def test_journal_drain_reads_events_in_bounded_global_position_pages(tmp_p
         5,
     ]
     await engine.dispose()
+
+
+async def test_journal_drain_traverses_each_archive_once_across_multiple_pages_and_gaps(
+    tmp_path: Path,
+) -> None:
+    """Startup reconciliation scans one real archive once, not once per missing event."""
+    db_path = tmp_path / "segment-reconciliation" / "orchestrator.db"
+    db_path.parent.mkdir()
+    engine = create_engine(db_path)
+    await init_db(engine)
+    factory = create_session_factory(engine)
+    journal_path = db_path.parent / "history.jsonl"
+    archive_path = db_path.parent / "history.1-5.jsonl"
+    archive_path.write_text(
+        "\n".join(json.dumps({"position": position}) for position in (1, 3, 5)) + "\n"
+    )
+    traversal_count: dict[Path, int] = {}
+
+    def read_segment(path: Path) -> set[int]:
+        if not path.exists():
+            return set()
+        traversal_count[path] = traversal_count.get(path, 0) + 1
+        return {
+            record["position"]
+            for record in (json.loads(line) for line in path.read_text().splitlines())
+            if type(record.get("position")) is int
+        }
+
+    async with factory() as session:
+        for position in range(1, 8):
+            session.add(
+                EventV2Model(
+                    aggregate_id=f"run-{position}",
+                    version=1,
+                    event_type="run_created",
+                    payload=json.dumps({"position": position}),
+                    timestamp="2026-07-20T00:00:00+00:00",
+                )
+            )
+        await session.commit()
+        observed = await drain_committed_events_to_journal(
+            session,
+            journal_path,
+            batch_size=2,
+            observer=JsonlOutboxObserver(journal_path, segment_reader=read_segment),
+        )
+
+    archive_positions = [
+        json.loads(line)["position"] for line in archive_path.read_text().splitlines()
+    ]
+    active_positions = [
+        json.loads(line)["position"] for line in journal_path.read_text().splitlines()
+    ]
+    assert observed == 7
+    assert traversal_count[archive_path] == 1
+    assert traversal_count[journal_path] == 1
+    assert sorted(archive_positions + active_positions) == list(range(1, 8))
+    await engine.dispose()

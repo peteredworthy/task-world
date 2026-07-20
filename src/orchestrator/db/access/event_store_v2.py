@@ -51,7 +51,7 @@ class EventStore(Protocol):
     async def get_stream(self, aggregate_id: str) -> list[StoredEvent]: ...
     async def get_all(self, after_position: int = 0) -> list[StoredEvent]: ...
     async def get_page_after_position(
-        self, after_position: int, *, limit: int
+        self, after_position: int, *, limit: int, through_position: int | None = None
     ) -> list[StoredEvent]: ...
     async def get_events_paginated(
         self,
@@ -174,16 +174,15 @@ class SqliteEventStore:
         after_position: int,
         *,
         limit: int,
+        through_position: int | None = None,
     ) -> list[StoredEvent]:
         """Read one bounded global-position page for durable sink reconciliation."""
         if limit < 1:
             raise ValueError("limit must be positive")
-        result = await self._session.execute(
-            select(EventV2Model)
-            .where(EventV2Model.position > after_position)
-            .order_by(EventV2Model.position)
-            .limit(limit)
-        )
+        statement = select(EventV2Model).where(EventV2Model.position > after_position)
+        if through_position is not None:
+            statement = statement.where(EventV2Model.position <= through_position)
+        result = await self._session.execute(statement.order_by(EventV2Model.position).limit(limit))
         return [_to_stored(model) for model in result.scalars()]
 
     async def get_events_paginated(

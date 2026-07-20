@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from orchestrator.api import CostRollupFilters, load_cost_rollup_facts
 from orchestrator.db import EventV2Model, RunModel
 
 
@@ -174,3 +175,42 @@ async def test_cost_rollup_defaults_to_run_grouping_and_rejects_mixed_time_aware
     )
     assert mixed_time_range.status_code == 422
     assert "same timezone awareness" in mixed_time_range.text
+
+
+async def test_cost_rollup_input_cap_rejects_same_group_volume_before_decoding(
+    _shared_app_fixture: tuple[object, object, object, object, object],
+) -> None:
+    """A single group cannot force an unbounded raw-fact materialization."""
+    _, _, _, _, app = _shared_app_fixture
+    async with app.state.session_factory() as session:
+        await _add_graph_usage(session, run_id="high-volume")
+        for index in range(1, 3):
+            session.add(
+                EventV2Model(
+                    aggregate_id="graph:high-volume",
+                    event_type="node_usage_recorded",
+                    payload=json.dumps(
+                        {
+                            "node_id": "node-a",
+                            "node_kind": "builder",
+                            "profile": "coder",
+                            "execution_id": "high-volume-execution",
+                            "usage_index": index,
+                            "usage_count": 3,
+                            "usage_key": f"high-volume-execution:{index}",
+                            "model": "gpt-5",
+                            "gen_ai_usage_input_tokens": 10,
+                            "gen_ai_usage_output_tokens": 5,
+                            "cost_usd": 0.25,
+                            "latency_ms": 100,
+                            "num_actions": 0,
+                        }
+                    ),
+                    timestamp="2026-07-20T12:00:00+00:00",
+                    version=index + 1,
+                )
+            )
+        await session.commit()
+
+        with pytest.raises(ValueError, match="maximum of 2 facts; narrow time range or filters"):
+            await load_cost_rollup_facts(session, CostRollupFilters(), max_facts=2)

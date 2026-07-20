@@ -19,6 +19,7 @@ from orchestrator.api.presenters import (
     compute_cost_rollup,
     compute_run_totals_from_attempts,
     run_to_trace_response,
+    token_usage_to_schema,
 )
 from orchestrator.api.schemas.cost_rollup import (
     CostRollupDimension,
@@ -117,6 +118,7 @@ __all__ = [
     "load_cost_rollup_facts",
     "is_clarification_pause_reason",
     "run_to_trace_response",
+    "token_usage_to_schema",
     "validate_clarification_question_payloads",
 ]
 
@@ -202,13 +204,17 @@ def is_clarification_pause_reason(*args: Any, **kwargs: Any) -> Any:
 async def load_cost_rollup_facts(
     session: AsyncSession,
     filters: CostRollupFilters,
+    *,
+    max_facts: int | None = None,
 ) -> list[CostRollupFact]:
     """Load canonical graph usage facts through the public API module."""
     from orchestrator.api.routers.cost_rollup import (  # noqa: PLC0415
         load_cost_rollup_facts as _load_cost_rollup_facts,
     )
 
-    return await _load_cost_rollup_facts(session, filters)
+    if max_facts is None:
+        return await _load_cost_rollup_facts(session, filters)
+    return await _load_cost_rollup_facts(session, filters, max_facts=max_facts)
 
 
 def __getattr__(name: str) -> object:
