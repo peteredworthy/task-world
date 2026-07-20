@@ -34,6 +34,7 @@ from orchestrator.workflow import GateBlockedError
 from orchestrator.git import WorktreeCommitError
 from orchestrator.runners.runtime.nudger import NudgeAction, Nudger, NudgerConfig, TimeProvider
 from orchestrator.runners.environment import build_agent_subprocess_env
+from orchestrator.runners.agents.claude_cli.parser import ClaudeStreamParser
 from orchestrator.runners.types import (
     AgentRunnerInfo,
     AgentMetadataCallback,
@@ -1054,6 +1055,11 @@ class CLIAgent:
                 agent_metadata={"pid": agent_pid} if agent_pid else {},
                 output_lines=final_output_lines,
                 action_log=action_log,
+                gen_ai_response_finish_reasons=(
+                    self._parser.finish_reasons
+                    if isinstance(self._parser, ClaudeStreamParser)
+                    else []
+                ),
             )
 
         except AgentCancelledError:

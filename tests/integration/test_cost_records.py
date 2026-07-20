@@ -114,9 +114,11 @@ async def test_phase_handler_records_cost_and_interaction_logs_for_each_agent_ex
     session_factory_fixture: async_sessionmaker[AsyncSession],
     tmp_path: Path,
 ) -> None:
+    monotonic_values = iter([0.0, 1.2, 2.0, 2.8001])
     phase_handler = PhaseHandler(
         AttemptStore(session_factory_fixture),
         EventBroadcaster(session_factory_fixture),
+        monotonic=lambda: next(monotonic_values),
     )
 
     async with session_factory_fixture() as service_session:
@@ -236,9 +238,11 @@ async def test_phase_handler_records_recovering_cost_and_interaction_log_prompt(
     session_factory_fixture: async_sessionmaker[AsyncSession],
     tmp_path: Path,
 ) -> None:
+    monotonic_values = iter([0.0, 0.9])
     phase_handler = PhaseHandler(
         AttemptStore(session_factory_fixture),
         EventBroadcaster(session_factory_fixture),
+        monotonic=lambda: next(monotonic_values),
     )
 
     async with session_factory_fixture() as service_session:
@@ -322,9 +326,11 @@ async def test_phase_handler_persists_per_model_cost_usage(
     session_factory_fixture: async_sessionmaker[AsyncSession],
     tmp_path: Path,
 ) -> None:
+    monotonic_values = iter([0.0, 1.234])
     phase_handler = PhaseHandler(
         AttemptStore(session_factory_fixture),
         EventBroadcaster(session_factory_fixture),
+        monotonic=lambda: next(monotonic_values),
     )
 
     async with session_factory_fixture() as service_session:

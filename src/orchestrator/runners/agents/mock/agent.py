@@ -50,6 +50,8 @@ class MockBehavior:
     duration_ms: int = 1000
     output_lines: list[str] = field(default_factory=_empty_output_lines)
     action_log: Any = None
+    gen_ai_usage_reasoning_output_tokens: int = 0
+    gen_ai_response_finish_reasons: list[str] = field(default_factory=_empty_output_lines)
 
 
 class MockAgent:
@@ -118,6 +120,8 @@ class MockAgent:
             ),
             output_lines=list(self._behavior.output_lines),
             action_log=self._behavior.action_log,
+            gen_ai_usage_reasoning_output_tokens=self._behavior.gen_ai_usage_reasoning_output_tokens,
+            gen_ai_response_finish_reasons=list(self._behavior.gen_ai_response_finish_reasons),
         )
 
     async def cancel(self) -> None:

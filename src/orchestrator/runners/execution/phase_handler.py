@@ -10,6 +10,8 @@ and ``_handle_recovery`` -- preserves exact same logic and error handling.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from time import perf_counter
 from typing import TYPE_CHECKING, Any
 
 from orchestrator.config.enums import ChecklistStatus, RunStatus, TaskStatus
@@ -37,11 +39,20 @@ class PhaseHandler:
         event_broadcaster: "EventBroadcaster",
         api_base_url: str = "http://localhost:8000",
         output_batcher: "OutputBatcher | None" = None,
+        monotonic: Callable[[], float] = perf_counter,
     ) -> None:
         self._attempt_store = attempt_store
         self._broadcaster = event_broadcaster
         self._api_base_url = api_base_url
         self._output_batcher = output_batcher
+        self._monotonic = monotonic
+
+    async def _execute_agent(self, agent: "AgentRunner", *args: Any, **kwargs: Any) -> Any:
+        """Invoke one runner and stamp only the runner-boundary latency."""
+        started = self._monotonic()
+        result = await agent.execute(*args, **kwargs)
+        result.metrics.duration_ms = int((self._monotonic() - started) * 1000)
+        return result
 
     # ------------------------------------------------------------------
     # Metrics helpers
@@ -244,7 +255,8 @@ class PhaseHandler:
         # Execute the agent
         logger.info(f"Task {task_state.id}: starting builder agent")
         try:
-            result = await agent.execute(
+            result = await self._execute_agent(
+                agent,
                 context,
                 on_checklist_update,
                 on_submit,
@@ -400,7 +412,8 @@ class PhaseHandler:
             await service.escalate_requirement(run.id, task_state.id, requirement_id, reason)
 
         # Execute the verifier agent
-        result = await agent.execute(
+        result = await self._execute_agent(
+            agent,
             context,
             on_checklist_update,
             on_complete,
@@ -488,7 +501,8 @@ class PhaseHandler:
 
         # Execute the recovery agent
         logger.info(f"Task {task_state.id}: starting recovery agent")
-        result = await agent.execute(
+        result = await self._execute_agent(
+            agent,
             context,
             on_checklist_update,
             on_submit,

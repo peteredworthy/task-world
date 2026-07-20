@@ -3,7 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any, Literal, Protocol
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from orchestrator.config.enums import AgentRunnerType, ChecklistStatus
 from orchestrator.config.models import MCPServerConfig
@@ -75,6 +75,10 @@ class ExecutionResult(BaseModel):
     agent_metadata: dict[str, Any] = {}  # Runtime metadata like PID, container_id
     output_lines: list[str] = []
     action_log: Any = None  # ActionLog | None — typed as Any to avoid circular import
+    # Provider-native metadata retained at the runner boundary. These are kept
+    # outside normalized metrics because they describe a response, not a cost.
+    gen_ai_response_finish_reasons: list[str] = Field(default_factory=list)
+    gen_ai_usage_reasoning_output_tokens: int = Field(default=0, ge=0)
 
 
 class ExecutionContext(BaseModel):

@@ -1,67 +1,51 @@
-# Backlog Closeout Task 5 Report
+# Task 5: Runner Usage Metadata Report
 
-## Status
+## Delivered
 
-Implemented symmetric approval target validation in the graph kernel and API
-product-path coverage for durable human-gate approval, lease release, and
-successor readiness.
+- Added finish-reason and reasoning-token fields to `ExecutionResult`.
+- Preserved raw Codex terminal statuses (`completed`, `interrupted`, and
+  `systemError`) as finish reasons, and kept reasoning tokens distinct from the
+  already-inclusive output token total.
+- Captured Claude CLI `stop_reason`, kept OpenHands on the empty default, and
+  passed mock metadata through unchanged.
+- Propagated reasoning, finish reasons, and runner-boundary latency into the
+  single parent `ModelTokenUsage` fact without duplicating reasoning output.
+- Injected `perf_counter`-defaulted monotonic clocks into `PhaseHandler` and
+  `GraphDispatchExecutor`; the timer surrounds only `agent.execute()`.
 
-## Files
+## Strict TDD Evidence
 
-- `src/orchestrator/graph/_commands.py`
-- `tests/unit/test_graph_commands.py`
-- `tests/integration/test_graph_decisions_api.py`
-
-## Test-driven evidence
-
-RED run:
+Initial RED command (new metadata surface absent):
 
 ```text
-uv run pytest tests/unit/test_graph_commands.py::test_record_decision_rejects_approval_for_non_gate_target tests/integration/test_graph_decisions_api.py::test_record_approval_decision_is_durable_and_releases_waiting_successor -q
+uv run pytest tests/unit/test_runner_usage_metadata.py tests/unit/test_codex_server_token_capture.py tests/unit/test_codex_server_common.py -q -n 0
+ERROR: cannot import name 'extract_turn_finish_reasons'
+```
+
+Latency RED command (injected monotonic seams absent):
+
+```text
+uv run pytest tests/unit/test_runner_usage_metadata.py tests/unit/test_codex_server_token_capture.py tests/unit/test_codex_server_common.py -q -n 0
 2 failed
 ```
 
-The worker-target approval emitted an approval decision instead of
-`command_rejected`. The exact human decider payload with a role also exposed
-that the existing typed decision record accepts only the decision actor's kind
-and ID.
+The failures were the missing `PhaseHandler.monotonic` constructor argument and
+the unchanged graph runner result duration (`999`, expected `125`).
 
-GREEN run:
+GREEN command:
 
 ```text
-uv run pytest tests/unit/test_graph_commands.py tests/integration/test_graph_decisions_api.py -q
-183 passed
+uv run pytest tests/unit/test_runner_usage_metadata.py tests/unit/test_codex_server_token_capture.py tests/unit/test_codex_server_common.py -q -n 0
+127 passed
 ```
 
-## Verification
+## Broader Verification
 
-```text
-uv run ruff check src/orchestrator/graph/_commands.py tests/unit/test_graph_commands.py tests/integration/test_graph_decisions_api.py
-All checks passed!
+- `uv run pytest tests/unit -q -n 0` — 3529 passed, 1 skipped.
+- `uv run ruff check ...` — passed.
+- `uv run pyright` — 0 errors, 0 warnings, 0 informations.
 
-uv run pyright
-0 errors, 0 warnings, 0 informations
+## Scope Note
 
-git diff --check -- src/orchestrator/graph/_commands.py tests/unit/test_graph_commands.py tests/integration/test_graph_decisions_api.py
-passed with no output
-```
-
-## Self-review
-
-- Approval target validation mirrors the existing authority target validation
-  and remains inside `_apply_record_decision` before event creation.
-- Existing terminal-target, terminal-run, and Pydantic request validation are
-  unchanged.
-- Human actor payloads are reduced to the existing `DecisionActor` fields for
-  typed decision records; no decision schemas were duplicated or broadened.
-- The API test uses real event storage and shared integration fixtures, proving
-  durable approval readback, pending-gate removal, lease release, input binding,
-  and successor readiness without mocks.
-- The non-gate API rejection returns 409 and leaves node and lease state
-  unchanged.
-- Pre-existing `.superpowers/sdd/progress.md` and `task-2-report.md` changes were
-  not included in the task diff.
-
-## Concerns
-
-None identified within the requested scope.
+The pre-existing `.superpowers/sdd/progress.md` modification was left out of
+the task commit.

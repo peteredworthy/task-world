@@ -685,6 +685,12 @@ def is_terminal_notification(notification: dict[str, Any]) -> tuple[bool, str]:
     return (True, status)
 
 
+def extract_turn_finish_reasons(notification: dict[str, Any]) -> list[str]:
+    """Return the raw Codex terminal status as its response finish reason."""
+    terminal, status = is_terminal_notification(notification)
+    return [status] if terminal and status else []
+
+
 def extract_token_usage_update(notification: dict[str, Any]) -> dict[str, int] | None:
     """Extract token usage from a ``thread/tokenUsage/updated`` notification.
 
@@ -1101,6 +1107,8 @@ def build_execution_result(
     gen_ai_usage_cache_read_input_tokens: int = 0,
     num_actions: int = 0,
     agent_model: str | None = None,
+    gen_ai_response_finish_reasons: list[str] | None = None,
+    gen_ai_usage_reasoning_output_tokens: int = 0,
 ) -> ExecutionResult:
     """Build an ``ExecutionResult`` from collected output lines and elapsed time.
 
@@ -1141,6 +1149,8 @@ def build_execution_result(
             gen_ai_usage_cache_read_input_tokens=gen_ai_usage_cache_read_input_tokens,
             input_tokens_include_cache=True,
         ),
+        gen_ai_response_finish_reasons=gen_ai_response_finish_reasons or [],
+        gen_ai_usage_reasoning_output_tokens=gen_ai_usage_reasoning_output_tokens,
     )
 
 

@@ -184,6 +184,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         max_gatekeeper_items_per_boundary: int = 20,
         on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
         on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
+        monotonic: Callable[[], float] = perf_counter,
     ) -> None:
         self._session_factory = session_factory
         self._controller = controller
@@ -196,6 +197,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self._max_gatekeeper_items_per_boundary = max_gatekeeper_items_per_boundary
         self._on_agent_output = on_agent_output
         self._on_agent_usage = on_agent_usage
+        self._monotonic = monotonic
 
     async def dispatch(self, item: OutboxItem) -> None:
         if item.kind == "snapshot_cleanup":
@@ -313,6 +315,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 if self._on_agent_output is not None:
                     await self._on_agent_output(context, lines)
 
+            started = self._monotonic()
             result = await runner.execute(
                 self._execution_context(
                     context,
@@ -325,6 +328,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 on_output=on_output,
                 on_grade=on_grade if context.node_kind == "verifier" else None,
             )
+            result.metrics.duration_ms = int((self._monotonic() - started) * 1000)
             # Record this execution's token usage against the run via the shared,
             # carrier-agnostic sink (same path the legacy attempt flow uses). The
             # emitter lives above the import boundary and is injected.

@@ -71,6 +71,12 @@ class ClaudeStreamParser:
 
         # Exit classification from result event (e.g. "error_max_turns")
         self._exit_subtype: str = ""
+        self._finish_reasons: list[str] = []
+
+    @property
+    def finish_reasons(self) -> list[str]:
+        """Return provider stop reasons in the order the CLI reported them."""
+        return list(self._finish_reasons)
 
     def parse_line(self, line: str) -> None:
         """Parse a single NDJSON line from Claude stream-json output."""
@@ -313,6 +319,9 @@ class ClaudeStreamParser:
             self._exit_subtype = str(event.get("subtype", "error_unknown"))
         else:
             self._exit_subtype = str(event.get("subtype", "success"))
+        stop_reason = event.get("stop_reason")
+        if isinstance(stop_reason, str) and stop_reason:
+            self._finish_reasons.append(stop_reason)
 
         # Extract cost / timing totals from the result event.
         #

@@ -44,6 +44,7 @@ from orchestrator.runners.agents.codex.common import (
     extract_agent_message_delta,
     extract_item_activity_line,
     extract_turn_error,
+    extract_turn_finish_reasons,
     extract_dynamic_tool_call,
     extract_tool_call_from_notification,
     extract_token_usage_update,
@@ -603,6 +604,7 @@ class CodexServerAgent:
             done = False
             num_actions = 0
             turn_usage: dict[str, int] = {}
+            finish_reasons: list[str] = []
 
             async def _dispatch_tool_call(tool_msg: dict[str, Any]) -> None:
                 """Respond to an ``item/tool/call`` server request and fire callbacks."""
@@ -711,7 +713,7 @@ class CodexServerAgent:
 
             async def _process_msg(msg: dict[str, Any]) -> bool:
                 """Process one message; return True if it is a terminal notification."""
-                nonlocal num_actions, turn_usage
+                nonlocal num_actions, turn_usage, finish_reasons
                 # Dynamic tool call request from the server (has id AND method).
                 if msg.get("method") == "item/tool/call" and "id" in msg:
                     await _dispatch_tool_call(msg)
@@ -736,6 +738,7 @@ class CodexServerAgent:
                     context.graph_patch_callback,
                     on_complete_recovery,
                 )
+                finish_reasons.extend(extract_turn_finish_reasons(msg))
                 # Accumulate usage: cumulative wins (last value overwrites), or sum per-turn.
                 # thread/tokenUsage/updated sends cumulative total_token_usage, so we keep
                 # the latest. turn/completed usage is used only if no token updates were seen.
@@ -835,6 +838,10 @@ class CodexServerAgent:
             ),
             num_actions=num_actions,
             agent_model=model,
+            gen_ai_response_finish_reasons=finish_reasons,
+            gen_ai_usage_reasoning_output_tokens=turn_usage.get(
+                "gen_ai_usage_reasoning_output_tokens", 0
+            ),
         )
         action_log = parser.finalize()
         action_log.agent_model = model

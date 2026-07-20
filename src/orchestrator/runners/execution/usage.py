@@ -36,6 +36,9 @@ def _usage_fact(
     cache_read_tokens: int,
     cache_creation_tokens: int,
     input_tokens_include_cache: bool,
+    reasoning_output_tokens: int = 0,
+    finish_reasons: list[str] | None = None,
+    latency_ms: int = 0,
 ) -> ModelTokenUsage:
     """Build one immutable execution x model fact from one pricing resolution."""
     canonical_input = _canonical_input_tokens(
@@ -51,6 +54,9 @@ def _usage_fact(
         gen_ai_usage_output_tokens=output_tokens,
         gen_ai_usage_cache_read_input_tokens=cache_read_tokens,
         gen_ai_usage_cache_creation_input_tokens=cache_creation_tokens,
+        gen_ai_usage_reasoning_output_tokens=reasoning_output_tokens,
+        gen_ai_response_finish_reasons=finish_reasons or [],
+        latency_ms=latency_ms,
         rate_missing=resolution.rate_missing,
         cost_usd=calculate_model_usage_cost(
             input_tokens=canonical_input,
@@ -74,6 +80,8 @@ def extract_metrics_and_usage(
     metrics = result.metrics
     usage_by_model: list[ModelTokenUsage] = []
 
+    reasoning_output_tokens = getattr(result, "gen_ai_usage_reasoning_output_tokens", 0)
+    finish_reasons = getattr(result, "gen_ai_response_finish_reasons", [])
     if result.action_log is not None:
         al: ActionLog = result.action_log
         computed_input = al.gen_ai_usage_input_tokens
@@ -102,6 +110,9 @@ def extract_metrics_and_usage(
                     cache_read_tokens=computed_cache_read,
                     cache_creation_tokens=computed_cache_creation,
                     input_tokens_include_cache=al.input_tokens_include_cache,
+                    reasoning_output_tokens=reasoning_output_tokens,
+                    finish_reasons=finish_reasons,
+                    latency_ms=metrics.duration_ms,
                 )
             )
 
@@ -139,5 +150,20 @@ def extract_metrics_and_usage(
                 duration_ms=al.total_duration_ms,
                 num_actions=sum(1 for e in al.entries if e.kind.value == "tool_use"),
             )
+
+    elif reasoning_output_tokens or finish_reasons:
+        usage_by_model.append(
+            _usage_fact(
+                model="unknown",
+                input_tokens=metrics.gen_ai_usage_input_tokens,
+                output_tokens=metrics.gen_ai_usage_output_tokens,
+                cache_read_tokens=metrics.gen_ai_usage_cache_read_input_tokens,
+                cache_creation_tokens=0,
+                input_tokens_include_cache=True,
+                reasoning_output_tokens=reasoning_output_tokens,
+                finish_reasons=finish_reasons,
+                latency_ms=metrics.duration_ms,
+            )
+        )
 
     return metrics, usage_by_model
