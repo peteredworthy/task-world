@@ -9,7 +9,8 @@
   fsync, and parent-directory fsync. Failures remain visible to the post-commit
   observer caller.
 - Rotation uses the durable link protocol exactly:
-  `link(active, archive) → fsync(parent) → unlink(active) → fsync(parent)`.
+  `fsync(active) → link(active, archive) → fsync(parent) → unlink(active) →
+  fsync(parent)`.
   `RotationOperations` is an injected filesystem seam; its recorder test
   delegates to real operations and asserts that order. Linked-rotation recovery
   follows `fsync(parent) → unlink(active) → fsync(parent)` through that same
@@ -41,9 +42,9 @@ archive-only backup omission, and structurally malformed record crashes.
 GREEN after the fixes:
 
 ```text
-Exact:   30 passed (rotation, recovery, duplicate-retry, controller-limit, and configuration-boundary tests)
-Broader: 120 passed (journal, graph driver, graph API/decision/cancel, and signal-consumer paths)
+Exact:   31 passed (rotation, recovery, duplicate-retry, controller-limit, and configuration-boundary tests)
+Broader: 121 passed (journal, graph driver, graph API/decision/cancel, and signal-consumer paths)
 Pyright: 0 errors, 0 warnings, 0 informations
-Full:    4942 passed, 6 skipped, 3 Python 3.12 SQLite deprecation warnings
+Full:    4943 passed, 6 skipped, 3 Python 3.12 SQLite deprecation warnings
 Hooks:   `uv run pre-commit run --all-files` (all hooks passed)
 ```

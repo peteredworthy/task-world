@@ -110,14 +110,48 @@ async def test_rotation_archives_exact_position_range_without_overwriting(tmp_pa
     assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [10]
 
 
-async def test_rotation_durably_links_fsyncs_unlinks_then_fsyncs_parent(tmp_path: Path) -> None:
+async def test_rotation_syncs_active_then_links_fsyncs_unlinks_and_fsyncs_parent(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "history.jsonl"
     path.write_text(json.dumps({"position": 1}) + "\n")
     recorder = RecordingRotationOperations(SystemRotationOperations())
 
     await JsonlOutboxObserver(path, max_bytes=1, rotation_operations=recorder)([_event(2)])
 
-    assert recorder.operations[:4] == ["link", "fsync_parent", "unlink", "fsync_parent"]
+    assert recorder.operations[:5] == [
+        "fsync_active",
+        "link",
+        "fsync_parent",
+        "unlink",
+        "fsync_parent",
+    ]
+
+
+async def test_rotation_retry_syncs_before_link_and_preserves_single_event(tmp_path: Path) -> None:
+    path = tmp_path / "history.jsonl"
+    path.write_text(json.dumps({"position": 1}) + "\n")
+    operations = FailFirstActiveSyncOperations(SystemRotationOperations())
+    observer = JsonlOutboxObserver(path, max_bytes=1, rotation_operations=operations)
+
+    with pytest.raises(OSError, match="injected active journal sync failure"):
+        await observer([_event(1)])
+    assert [json.loads(line)["position"] for line in path.read_text().splitlines()] == [1]
+    assert not list(tmp_path.glob("history.*-*.jsonl"))
+
+    await observer([_event(1)])
+
+    assert operations.operations == [
+        "fsync_active",
+        "fsync_active",
+        "link",
+        "fsync_parent",
+        "unlink",
+        "fsync_parent",
+    ]
+    archive = tmp_path / "history.1-1.jsonl"
+    assert [json.loads(line)["position"] for line in archive.read_text().splitlines()] == [1]
+    assert not path.exists()
 
 
 async def test_linked_rotation_recovery_syncs_before_and_after_unlink(tmp_path: Path) -> None:

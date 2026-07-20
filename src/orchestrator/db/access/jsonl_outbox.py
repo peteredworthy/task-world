@@ -237,6 +237,7 @@ def _rotate(path: Path, operations: RotationOperations) -> None:
         return
     archive = path.with_name(f"{path.stem}.{min(positions)}-{max(positions)}{path.suffix}")
     # link is an atomic no-clobber install: EEXIST leaves the destination intact.
+    operations.fsync_active(path)
     operations.link(path, archive)
     operations.fsync_parent(path)
     operations.unlink(path)
