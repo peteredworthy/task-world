@@ -362,7 +362,9 @@ their graph rollup through `GET /api/runs/cost-rollup`. Provider-billed built-in
 runner defaults must resolve to a matched, nonzero rate in `model_costs.yaml`.
 Local/no-provider-cost models must instead be represented by an explicit
 zero-rate table entry; a missing rate is surfaced as `rate_missing=true`, never
-silently classified as local. Budget blocking, alert thresholds, and
+silently classified as local. Runners with no baked-in model default are
+classified separately as `no_static_default`, so runtime discovery is not
+mistaken for a zero-cost provider. Budget blocking, alert thresholds, and
 per-profile effort configuration remain Phase-2 work.
 
 ### Graph Planning and Legacy Delegation
@@ -669,6 +671,7 @@ The 15+ callback parameters have been consolidated into an `ExecutorCallbacks` d
 | GET | `/api/runs/{id}/guidance` | Aggregate guidance for agents |
 | GET | `/api/runs/{id}/artifacts/{sha256_hex}?offset=0&limit=65536` | Authenticated, run-referenced byte range after complete blob verification (`0 <= offset`, `1 <= limit <= 1,048,576`) |
 | GET | `/api/runs/{id}/graph/events` | Graph event log for a run |
+| GET | `/api/runs/{id}/graph/health` | Bounded graph health snapshot: scheduler, lease, blocker, patch, verifier, and pending-gate facts; no raw event payloads |
 | GET | `/api/runs/{id}/graph/scheduler` | Graph scheduler buckets and leases |
 | GET | `/api/runs/{id}/graph/decisions` | Graph human decisions, appeals, and review readiness |
 | GET | `/api/runs/{id}/graph/patches` | Graph patch proposal/result readback |

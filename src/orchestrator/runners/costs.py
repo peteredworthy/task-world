@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field
@@ -31,6 +31,12 @@ class ModelCostResolution(BaseModel):
     cost_per_m_input: float = Field(ge=0)
     cost_per_m_output: float = Field(ge=0)
     rate_missing: bool
+    cost_classification: Literal[
+        "provider_billed",
+        "local_no_provider_cost",
+        "no_static_default",
+        "unpriced_provider",
+    ] = "unpriced_provider"
 
 
 def calculate_model_usage_cost(
@@ -104,11 +110,15 @@ def resolve_model_costs(model_name: str | None) -> ModelCostResolution:
         load_cost_table()
 
     if model_name is None:
-        return ModelCostResolution(**_ZERO_COSTS, rate_missing=True)
+        return ModelCostResolution(
+            **_ZERO_COSTS,
+            rate_missing=True,
+            cost_classification="no_static_default",
+        )
 
     # Exact match
     if model_name in _cost_table:
-        return ModelCostResolution(**_cost_table[model_name], rate_missing=False)
+        return _resolved_costs(_cost_table[model_name])
 
     matches = [
         key
@@ -117,6 +127,20 @@ def resolve_model_costs(model_name: str | None) -> ModelCostResolution:
     ]
     if matches:
         key = max(matches, key=lambda candidate: (len(candidate), candidate))
-        return ModelCostResolution(**_cost_table[key], rate_missing=False)
+        return _resolved_costs(_cost_table[key])
 
-    return ModelCostResolution(**_ZERO_COSTS, rate_missing=True)
+    return ModelCostResolution(
+        **_ZERO_COSTS,
+        rate_missing=True,
+        cost_classification="unpriced_provider",
+    )
+
+
+def _resolved_costs(rates: dict[str, float]) -> ModelCostResolution:
+    """Classify matched zero rates separately from absent provider pricing."""
+    classification: Literal["provider_billed", "local_no_provider_cost"] = (
+        "provider_billed"
+        if rates["cost_per_m_input"] > 0 or rates["cost_per_m_output"] > 0
+        else "local_no_provider_cost"
+    )
+    return ModelCostResolution(**rates, rate_missing=False, cost_classification=classification)

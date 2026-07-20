@@ -547,7 +547,7 @@ function EventModal({
 export function GraphPanel({ runId, run, open, onClose, activityEvents = [], initialNodeId = null }: GraphPanelProps) {
   const { data: projection } = useGraphProjection(runId);
   const { data: schedulerView } = useSchedulerView(runId);
-  const { data: health } = useGraphHealth(runId);
+  const { data: health } = useGraphHealth(runId, open);
   const { data: decisionView } = useDecisionView(runId);
   const { data: fileStateReport } = useFileStateReport(runId);
   const { data: events = [] } = useGraphEvents(runId);

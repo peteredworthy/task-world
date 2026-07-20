@@ -37,6 +37,7 @@ from orchestrator.graph import (
     CheckResultRecord,
     PatchCommandFields,
     PatchCommandContext,
+    PendingGateDecision,
     RecordSelector,
     RecordDecisionCommand,
     build_projection,
@@ -244,6 +245,78 @@ class SchedulerViewResponse(ApiModel):
     event_count: int
     scheduler: SchedulerViewResponseBody
     leases: LeaseViewResponse
+
+
+class GraphHealthCountsResponse(ApiModel):
+    ready: int
+    blocked: int
+    waiting_resources: int
+    waiting_gates: int
+    active_leases: int
+    suspended_leases: int
+    expired_leases: int
+    failed_nodes: int
+    final_blockers: int
+    patches_accepted: int
+    patches_rejected: int
+    verifier_passed: int
+    verifier_failed: int
+    pending_gates: int
+
+
+class GraphHealthFailedNodeResponse(ApiModel):
+    node_id: str
+    reason: str
+
+
+class GraphHealthExpiredLeaseResponse(ApiModel):
+    lease_id: str
+    node_id: str
+    reason: str
+
+
+class GraphHealthBlockerResponse(ApiModel):
+    node_id: str
+    kind: str
+    reason: str
+
+
+class GraphHealthPatchDecisionResponse(ApiModel):
+    patch_id: str
+    decision: Literal["accepted", "rejected"]
+    reason: str | None = None
+
+
+class GraphHealthVerifierResultResponse(ApiModel):
+    node_id: str
+    candidate_id: str
+    verdict: Literal["passed", "failed"]
+
+
+class GraphHealthVerifierResponse(ApiModel):
+    passed: int
+    failed: int
+    recent: list[GraphHealthVerifierResultResponse]
+
+
+class GraphHealthPendingGateResponse(ApiModel):
+    node_id: str
+    gate_type: str
+
+
+class GraphHealthResponse(ApiModel):
+    run_id: str
+    event_count: int
+    run_state: str | None
+    status: str
+    counts: GraphHealthCountsResponse
+    failed_nodes: list[GraphHealthFailedNodeResponse]
+    expired_leases: list[GraphHealthExpiredLeaseResponse]
+    blockers: list[GraphHealthBlockerResponse]
+    recent_patch_decisions: list[GraphHealthPatchDecisionResponse]
+    verifier: GraphHealthVerifierResponse
+    pending_gates: list[GraphHealthPendingGateResponse]
+    review_blockers: list[str]
 
 
 def _empty_dict_items() -> list[dict[str, Any]]:
@@ -798,6 +871,217 @@ def build_scheduler_view_response_from_snapshot(
             ],
         ),
     )
+
+
+def build_graph_health_response(
+    run_id: str,
+    events: list[EventEnvelope],
+) -> GraphHealthResponse:
+    """Reduce authoritative graph facts into the bounded operator health contract."""
+    empty_counts = GraphHealthCountsResponse(
+        ready=0,
+        blocked=0,
+        waiting_resources=0,
+        waiting_gates=0,
+        active_leases=0,
+        suspended_leases=0,
+        expired_leases=0,
+        failed_nodes=0,
+        final_blockers=0,
+        patches_accepted=0,
+        patches_rejected=0,
+        verifier_passed=0,
+        verifier_failed=0,
+        pending_gates=0,
+    )
+    if not events:
+        return GraphHealthResponse(
+            run_id=run_id,
+            event_count=0,
+            run_state=None,
+            status="empty",
+            counts=empty_counts,
+            failed_nodes=[],
+            expired_leases=[],
+            blockers=[],
+            recent_patch_decisions=[],
+            verifier=GraphHealthVerifierResponse(passed=0, failed=0, recent=[]),
+            pending_gates=[],
+            review_blockers=[],
+        )
+
+    projection = build_projection(events)
+    scheduler = project_scheduler_view(events, projection=projection)
+    leases = project_leases(events, projection=projection)
+    decisions = project_decision_view(events, projection=projection)
+    node_states = project_node_states(events, projection=projection)
+    failed_reasons = _failed_node_reasons(events, node_states)
+    failed_nodes = [
+        GraphHealthFailedNodeResponse(node_id=node_id, reason=reason)
+        for node_id, reason in sorted(failed_reasons.items())
+    ]
+    expired_leases = _expired_lease_rows(leases, failed_reasons)
+    blockers = _health_blockers(events)
+    patches = _health_patch_decisions(events)
+    verifier_recent = _health_verifier_results(events)
+    pending_gates = _health_pending_gates(decisions["pending_gates"])
+    pending_gate_ids = {gate.node_id for gate in pending_gates}
+    review_blockers = list(decisions["review"]["blockers"])
+    counts = GraphHealthCountsResponse(
+        ready=len(scheduler["ready"]),
+        blocked=sum(entry["node_id"] not in pending_gate_ids for entry in scheduler["blocked"]),
+        waiting_resources=len(scheduler["waiting_resources"]),
+        waiting_gates=len(scheduler["waiting_gates"])
+        + sum(
+            gate.node_id not in {entry["node_id"] for entry in scheduler["waiting_gates"]}
+            for gate in pending_gates
+        ),
+        active_leases=sum(lease.get("state") == "active" for lease in leases.values()),
+        suspended_leases=sum(lease.get("state") == "suspended" for lease in leases.values()),
+        expired_leases=len(expired_leases),
+        failed_nodes=len(failed_nodes),
+        final_blockers=len(blockers),
+        patches_accepted=sum(patch.decision == "accepted" for patch in patches),
+        patches_rejected=sum(patch.decision == "rejected" for patch in patches),
+        verifier_passed=sum(result.verdict == "passed" for result in verifier_recent),
+        verifier_failed=sum(result.verdict == "failed" for result in verifier_recent),
+        pending_gates=len(pending_gates),
+    )
+    run_state = project_run_state(events, projection=projection)
+    return GraphHealthResponse(
+        run_id=run_id,
+        event_count=max(event.position for event in events),
+        run_state=run_state,
+        status="blocked" if blockers or failed_nodes or pending_gates else (run_state or "unknown"),
+        counts=counts,
+        failed_nodes=failed_nodes,
+        expired_leases=expired_leases,
+        blockers=blockers,
+        recent_patch_decisions=patches,
+        verifier=GraphHealthVerifierResponse(
+            passed=counts.verifier_passed,
+            failed=counts.verifier_failed,
+            recent=verifier_recent,
+        ),
+        pending_gates=pending_gates,
+        review_blockers=review_blockers,
+    )
+
+
+def _failed_node_reasons(
+    events: list[EventEnvelope], node_states: dict[str, str]
+) -> dict[str, str]:
+    reasons: dict[str, str] = {}
+    for event in events:
+        if event.event_type != "node_state_changed" or event.payload.get("new_state") != "failed":
+            continue
+        node_id = event.payload.get("node_id")
+        if not isinstance(node_id, str) or node_states.get(node_id) != "failed":
+            continue
+        reason = event.payload.get("reason", event.payload.get("trigger", "failed"))
+        reasons[node_id] = reason if isinstance(reason, str) else "failed"
+    return reasons
+
+
+def _health_pending_gates(rows: list[PendingGateDecision]) -> list[GraphHealthPendingGateResponse]:
+    return [
+        GraphHealthPendingGateResponse(node_id=node_id, gate_type=gate_type)
+        for row in rows
+        if isinstance(node_id := row.get("node_id"), str)
+        and isinstance(gate_type := row.get("gate_type"), str)
+    ]
+
+
+def _expired_lease_rows(
+    leases: dict[str, dict[str, Any]], failed_reasons: dict[str, str]
+) -> list[GraphHealthExpiredLeaseResponse]:
+    rows: list[GraphHealthExpiredLeaseResponse] = []
+    for lease_id, lease in sorted(leases.items()):
+        node_id = lease.get("node_id")
+        if lease.get("state") != "expired" or not isinstance(node_id, str):
+            continue
+        rows.append(
+            GraphHealthExpiredLeaseResponse(
+                lease_id=lease_id,
+                node_id=node_id,
+                reason=failed_reasons.get(node_id, "lease_expired_without_callback"),
+            )
+        )
+    return rows
+
+
+def _health_blockers(events: list[EventEnvelope]) -> list[GraphHealthBlockerResponse]:
+    rows: dict[tuple[str, str], GraphHealthBlockerResponse] = {}
+    for event in events:
+        if event.event_type == "node_deferred":
+            node_id, reason = event.payload.get("node_id"), event.payload.get("reason")
+            if isinstance(node_id, str) and isinstance(reason, str):
+                rows[(node_id, "final_invariant")] = GraphHealthBlockerResponse(
+                    node_id=node_id, kind="final_invariant", reason=reason
+                )
+        if event.event_type == "command_rejected":
+            raw_blockers = event.payload.get("blockers")
+            if not isinstance(raw_blockers, list):
+                continue
+            for raw_blocker in cast(list[Any], raw_blockers):
+                if not isinstance(raw_blocker, dict):
+                    continue
+                blocker = cast(dict[str, Any], raw_blocker)
+                node_id, kind = blocker.get("node_id"), blocker.get("kind")
+                if not isinstance(node_id, str) or not isinstance(kind, str):
+                    continue
+                reason = event.payload.get("reason", "blocked")
+                rows.setdefault(
+                    (node_id, kind),
+                    GraphHealthBlockerResponse(
+                        node_id=node_id,
+                        kind=kind,
+                        reason=reason if isinstance(reason, str) else "blocked",
+                    ),
+                )
+    return list(rows.values())
+
+
+def _health_patch_decisions(events: list[EventEnvelope]) -> list[GraphHealthPatchDecisionResponse]:
+    rows: list[GraphHealthPatchDecisionResponse] = []
+    for event in events:
+        if event.event_type not in {"graph_patch_accepted", "graph_patch_rejected"}:
+            continue
+        patch_id = event.payload.get("patch_id")
+        if not isinstance(patch_id, str):
+            continue
+        accepted = event.event_type == "graph_patch_accepted"
+        reason = event.payload.get("reason")
+        rows.append(
+            GraphHealthPatchDecisionResponse(
+                patch_id=patch_id,
+                decision="accepted" if accepted else "rejected",
+                reason=reason if isinstance(reason, str) else None,
+            )
+        )
+    return rows[-20:]
+
+
+def _health_verifier_results(
+    events: list[EventEnvelope],
+) -> list[GraphHealthVerifierResultResponse]:
+    rows: list[GraphHealthVerifierResultResponse] = []
+    for event in events:
+        if event.event_type not in {"verification_passed", "verification_failed"}:
+            continue
+        node_id, candidate_id = (
+            event.payload.get("verifier_node_id"),
+            event.payload.get("candidate_id"),
+        )
+        if isinstance(node_id, str) and isinstance(candidate_id, str):
+            rows.append(
+                GraphHealthVerifierResultResponse(
+                    node_id=node_id,
+                    candidate_id=candidate_id,
+                    verdict="passed" if event.event_type == "verification_passed" else "failed",
+                )
+            )
+    return rows[-20:]
 
 
 def build_decision_view_response(
@@ -1640,6 +1924,21 @@ async def get_graph_projection(
             "task_states": projected_task_states,
         }
     )
+
+
+@router.get("/{run_id}/graph/health", response_model=GraphHealthResponse)
+async def get_graph_health(
+    run_id: str,
+    graph_store: GraphEventStore = Depends(get_graph_store),
+    service: Any = Depends(get_workflow_service),
+) -> GraphHealthResponse:
+    """Return bounded graph diagnostics only for a persisted run."""
+    try:
+        await service.get_run(run_id)
+    except RunNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Run not found") from exc
+    events = await graph_store.read_run(run_id)
+    return build_graph_health_response(run_id, events)
 
 
 @router.get("/{run_id}/graph/topology", response_model=GraphTopologyResponse)

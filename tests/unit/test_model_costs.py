@@ -8,7 +8,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from orchestrator.config.enums import SELECTABLE_AGENT_RUNNER_TYPES
+from orchestrator.config import SELECTABLE_AGENT_RUNNER_TYPES
 from orchestrator.runners import (
     ModelCostResolution,
     get_builtin_config_schema,
@@ -39,27 +39,30 @@ class TestResolveModelCosts:
         """Reconcile built-in provider defaults from runner config schemas."""
         load_cost_table(Path("model_costs.yaml"))
 
-        default_models = {
-            runner_type: next(
-                (
-                    field.default
-                    for field in get_builtin_config_schema(runner_type)
-                    if field.name == "model" and isinstance(field.default, str)
-                ),
-                None,
-            )
+        schema_registry = {
+            runner_type: get_builtin_config_schema(runner_type)
             for runner_type in SELECTABLE_AGENT_RUNNER_TYPES
         }
+        assert set(schema_registry) == SELECTABLE_AGENT_RUNNER_TYPES
+        assert all(
+            any(field.name == "model" for field in schema) for schema in schema_registry.values()
+        )
 
-        assert set(default_models) == SELECTABLE_AGENT_RUNNER_TYPES
-        for runner_type, model in default_models.items():
-            if model is None:
-                continue
-
+        for runner_type, schema in schema_registry.items():
+            model_field = next(field for field in schema if field.name == "model")
+            model = model_field.default if isinstance(model_field.default, str) else None
             resolution = resolve_model_costs(model)
-            assert resolution.rate_missing is False, f"{runner_type.value}: {model}"
-            assert resolution.cost_per_m_input > 0, f"{runner_type.value}: {model}"
-            assert resolution.cost_per_m_output > 0, f"{runner_type.value}: {model}"
+            if model is None:
+                assert resolution.cost_classification == "no_static_default", runner_type.value
+            else:
+                assert resolution.cost_classification in {
+                    "provider_billed",
+                    "local_no_provider_cost",
+                }
+                if resolution.cost_classification == "provider_billed":
+                    assert resolution.rate_missing is False, f"{runner_type.value}: {model}"
+                    assert resolution.cost_per_m_input > 0, f"{runner_type.value}: {model}"
+                    assert resolution.cost_per_m_output > 0, f"{runner_type.value}: {model}"
 
     @pytest.mark.parametrize(
         "field",

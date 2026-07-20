@@ -90,11 +90,11 @@ export function useSchedulerView(runId: string | undefined) {
   });
 }
 
-export function useGraphHealth(runId: string | undefined) {
+export function useGraphHealth(runId: string | undefined, enabled = true) {
   return useQuery<GraphHealthResponse>({
     queryKey: ['graphHealth', runId],
     queryFn: () => api.getRunGraphHealth(runId!),
-    enabled: !!runId,
+    enabled: enabled && !!runId,
     staleTime: 5000,
   });
 }

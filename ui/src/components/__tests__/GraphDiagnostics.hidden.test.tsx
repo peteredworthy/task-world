@@ -5,8 +5,9 @@ import { GraphPanel } from '../GraphPanel';
 import type {
   ActivityEvent,
   DecisionViewResponse,
-  FileStateReportResponse,
-  GraphEventResponse,
+    FileStateReportResponse,
+    GraphEventResponse,
+    GraphHealthResponse,
   GraphProjectionResponse,
   NodeDetailResponse,
   RunResponse,
@@ -290,7 +291,7 @@ function makeNodeDetail(runId: string): NodeDetailResponse {
   };
 }
 
-function makeHealth(runId: string) {
+function makeHealth(runId: string): GraphHealthResponse {
   return {
     run_id: runId,
     event_count: 24,
@@ -368,6 +369,21 @@ function renderGraphPanel() {
 }
 
 describe('S3 graph diagnostics hidden oracle', () => {
+  it('does not enable the health query while the graph panel is closed', () => {
+    const run = makeRun();
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphPanel runId={run.id} run={run} open={false} onClose={() => undefined} />
+      </QueryClientProvider>,
+    );
+
+    expect(queryClient.getQueryState(['graphHealth', run.id])?.fetchStatus).toBe('idle');
+  });
+
   it('renders compact graph health and opens causal node detail without raw payloads', () => {
     renderGraphPanel();
 

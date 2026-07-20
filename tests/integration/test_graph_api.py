@@ -538,6 +538,231 @@ async def test_graph_projection_empty_for_non_graph_run(
     assert projection["ready_nodes"] == []
 
 
+async def test_graph_health_returns_not_found_for_a_missing_run(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, _app = _shared_app_fixture
+
+    response = await client.get("/api/runs/no-such-run/graph/health")
+
+    assert response.status_code == 404
+
+
+async def test_graph_health_returns_an_empty_bounded_snapshot_for_a_saved_run(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-health-empty-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+
+    response = await client.get(f"/api/runs/{run_id}/graph/health")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "run_id": run_id,
+        "event_count": 0,
+        "run_state": None,
+        "status": "empty",
+        "counts": {
+            "ready": 0,
+            "blocked": 0,
+            "waiting_resources": 0,
+            "waiting_gates": 0,
+            "active_leases": 0,
+            "suspended_leases": 0,
+            "expired_leases": 0,
+            "failed_nodes": 0,
+            "final_blockers": 0,
+            "patches_accepted": 0,
+            "patches_rejected": 0,
+            "verifier_passed": 0,
+            "verifier_failed": 0,
+            "pending_gates": 0,
+        },
+        "failed_nodes": [],
+        "expired_leases": [],
+        "blockers": [],
+        "recent_patch_decisions": [],
+        "verifier": {"passed": 0, "failed": 0, "recent": []},
+        "pending_gates": [],
+        "review_blockers": [],
+    }
+
+
+async def test_graph_health_reduces_current_typed_events_to_compact_operator_facts(
+    _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
+) -> None:
+    client, _drain, _, _, app = _shared_app_fixture
+    run_id = f"graph-health-populated-{uuid4().hex[:8]}"
+    await _save_manual_graph_run(app, run_id)
+    events = [
+        _event("run_lifecycle_changed", {"to_state": "active"}),
+        _event(
+            "node_created",
+            {
+                "node_id": "verifier-expired",
+                "kind": "verifier",
+                "role": "verifier",
+                "state": "planned",
+                "task_region_id": "step-1/task-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "review-final",
+                "kind": "review",
+                "role": "invariant",
+                "state": "blocked",
+                "task_region_id": "step-1/task-1",
+            },
+        ),
+        _event(
+            "node_created",
+            {
+                "node_id": "gate-human",
+                "kind": "gate",
+                "role": "approval",
+                "state": "blocked",
+                "gate_type": "human_approval",
+                "task_region_id": "step-1/task-1",
+            },
+        ),
+        _event(
+            "lease_granted",
+            {
+                "lease_id": "lease-expired",
+                "node_id": "verifier-expired",
+                "generation": 1,
+                "execution_id": "execution-expired",
+                "expires_at": "2026-06-21T12:05:00+00:00",
+                "base_snapshot_id": "snapshot-1",
+            },
+        ),
+        _event("lease_expired", {"lease_id": "lease-expired", "node_id": "verifier-expired"}),
+        _event(
+            "node_state_changed",
+            {
+                "node_id": "verifier-expired",
+                "new_state": "failed",
+                "trigger": "lease_expired_without_callback",
+                "reason": "lease_expired_without_callback",
+            },
+        ),
+        _event(
+            "verification_passed",
+            {
+                "verifier_node_id": "verifier-pass",
+                "candidate_id": "candidate-1",
+                "task_region_id": "step-1/task-1",
+                "record_id": "verification-pass",
+                "value": {"grades": [{"requirement_id": "req-1", "grade": "A", "reason": "met"}]},
+            },
+        ),
+        _event(
+            "verification_failed",
+            {
+                "verifier_node_id": "verifier-expired",
+                "candidate_id": "candidate-1",
+                "task_region_id": "step-1/task-1",
+                "record_id": "verification-failed",
+                "value": {
+                    "grades": [{"requirement_id": "req-2", "grade": "C", "reason": "not met"}]
+                },
+            },
+        ),
+        _event(
+            "graph_patch_accepted",
+            {
+                "patch_id": "patch-accepted",
+                "actor_role": "planner",
+                "proposed_by_node_id": "planner-1",
+                "ops": [{"op": "create_node"}],
+            },
+        ),
+        _event(
+            "graph_patch_rejected",
+            {
+                "patch_id": "patch-rejected",
+                "actor_role": "planner",
+                "proposed_by_node_id": "planner-1",
+                "reason": "read_set_changed",
+            },
+        ),
+        _event(
+            "node_deferred",
+            {"node_id": "review-final", "reason": "missing_required_input:verification_evidence"},
+        ),
+        _event(
+            "command_rejected",
+            {
+                "command_type": "complete",
+                "reason": "final invariant blockers remain",
+                "blockers": [{"node_id": "review-final", "kind": "final_invariant"}],
+            },
+        ),
+    ]
+    session_factory: async_sessionmaker[AsyncSession] = app.state.session_factory
+    async with session_factory() as session:
+        await GraphEventStore(session).append_events(run_id, 0, events)
+        await session.commit()
+
+    response = await client.get(f"/api/runs/{run_id}/graph/health")
+
+    assert response.status_code == 200
+    health = response.json()
+    assert health["counts"] == {
+        "ready": 0,
+        "blocked": 1,
+        "waiting_resources": 0,
+        "waiting_gates": 1,
+        "active_leases": 0,
+        "suspended_leases": 0,
+        "expired_leases": 1,
+        "failed_nodes": 1,
+        "final_blockers": 1,
+        "patches_accepted": 1,
+        "patches_rejected": 1,
+        "verifier_passed": 1,
+        "verifier_failed": 1,
+        "pending_gates": 1,
+    }
+    assert health["failed_nodes"] == [
+        {"node_id": "verifier-expired", "reason": "lease_expired_without_callback"}
+    ]
+    assert health["expired_leases"] == [
+        {
+            "lease_id": "lease-expired",
+            "node_id": "verifier-expired",
+            "reason": "lease_expired_without_callback",
+        }
+    ]
+    assert health["blockers"] == [
+        {
+            "node_id": "review-final",
+            "kind": "final_invariant",
+            "reason": "missing_required_input:verification_evidence",
+        }
+    ]
+    assert health["verifier"] == {
+        "passed": 1,
+        "failed": 1,
+        "recent": [
+            {"node_id": "verifier-pass", "candidate_id": "candidate-1", "verdict": "passed"},
+            {"node_id": "verifier-expired", "candidate_id": "candidate-1", "verdict": "failed"},
+        ],
+    }
+    assert health["recent_patch_decisions"] == [
+        {"patch_id": "patch-accepted", "decision": "accepted", "reason": None},
+        {"patch_id": "patch-rejected", "decision": "rejected", "reason": "read_set_changed"},
+    ]
+    assert health["pending_gates"] == [{"node_id": "gate-human", "gate_type": "human_approval"}]
+    assert health["review_blockers"] == [
+        "review-final: missing_required_input:verification_evidence"
+    ]
+    assert len(response.content) < 4_000
+
+
 async def test_graph_projection_reflects_seeded_events(
     _shared_app_fixture: tuple[AsyncClient, Any, Any, Any, Any],
 ) -> None:

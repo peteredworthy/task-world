@@ -112,7 +112,10 @@ Phase 1 is complete for the graph execution carrier:
   schemas. Provider-billed defaults (currently `gpt-5-mini` for both
   OpenHands runners) have matched nonzero input/output rates in
   `model_costs.yaml`; intentional local/no-provider-cost models require an
-  explicit zero-rate entry. An unmatched name remains `rate_missing=true`.
+  explicit zero-rate entry. An unmatched name remains `rate_missing=true`, and
+  runners with no static model (currently CLI subprocess and Codex Server) are
+  explicitly classified `no_static_default` rather than treated as local or
+  silently zero-priced.
 
 Phase 2 depends on these immutable graph facts and the graph rollup: add
 per-run/per-node token and dollar limits at the dispatch chokepoint, emit the
