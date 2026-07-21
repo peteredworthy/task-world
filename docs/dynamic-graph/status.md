@@ -44,6 +44,16 @@ As of 2026-07-18, the implementation review follow-up has moved past the old
   cannot be discovered or dispatched. `codex_server` is the supported graph
   runner and replacement for explicitly resumed retired runs.
 
+The post-merge priority order for what comes next — with per-item benefit
+statements and evidence re-verified at HEAD `3cbc824b8` — is
+`re-evaluation-2026-07-18.md` (headline: cost/token telemetry first, then
+boundary/mirror hardening and a deletion sweep, then a graph-runner
+capability contract with a second graph-capable runner, then execution-first
+verification and the eval harness). Note the current single-runner
+constraint is dispatch policy, not architecture: `cli_subprocess` and both
+openhands forms remain fully supported for legacy-carrier runs, and the
+dispatch layer itself is runner-agnostic.
+
 ### Task 17 Steps 3–4 — final branch verification evidence
 
 The fresh no-context verifier identified by

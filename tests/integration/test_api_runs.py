@@ -71,7 +71,12 @@ async def _create_run(client: AsyncClient, repo_name: str) -> dict[str, Any]:
     """
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": repo_name,
+            "branch": "main",
+        },
     )
     assert response.status_code == 201
     return response.json()
@@ -114,6 +119,7 @@ async def _create_run_paused_at_manual_gate(
     create_resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": routine_config,
@@ -207,7 +213,12 @@ async def test_skip_step_writes_step_skipped_to_events_v2_and_activity(
 async def test_create_run_routine_not_found(client: AsyncClient, repo_name: str) -> None:
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "nonexistent", "repo_name": repo_name, "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "nonexistent",
+            "repo_name": repo_name,
+            "branch": "main",
+        },
     )
     assert response.status_code == 404
 
@@ -553,6 +564,7 @@ async def test_run_agent_runner_requests_reject_non_string_runner_type(
     create_response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_id": "simple-routine",
             "repo_name": repo_name,
             "branch": "main",
@@ -733,6 +745,7 @@ async def test_resume_with_agent_change(
         response = await client.post(
             "/api/runs",
             json={
+                "execution_mode": "legacy",
                 "routine_id": "simple-routine",
                 "repo_name": repo_name,
                 "branch": "main",
@@ -794,6 +807,7 @@ async def test_resume_without_agent_change(
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_id": "simple-routine",
             "repo_name": repo_name,
             "branch": "main",
@@ -840,6 +854,7 @@ async def test_resume_with_config_only_change(
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_id": "simple-routine",
             "repo_name": repo_name,
             "branch": "main",
@@ -897,6 +912,7 @@ async def test_create_run_with_agent_runner_config(client: AsyncClient, repo_nam
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_id": "simple-routine",
             "repo_name": repo_name,
             "branch": "main",
@@ -1026,6 +1042,7 @@ async def test_create_run_with_embedded_routine(client: AsyncClient, repo_name: 
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE,
@@ -1049,6 +1066,7 @@ async def test_create_run_embedded_routine_persisted(client: AsyncClient, repo_n
     create_resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE,
@@ -1071,6 +1089,7 @@ async def test_create_run_both_routine_id_and_embedded_fails(
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_id": "simple-routine",
             "repo_name": repo_name,
             "branch": "main",
@@ -1086,7 +1105,7 @@ async def test_create_run_neither_routine_id_nor_embedded_fails(
     """Providing neither routine_id nor routine_embedded returns 422."""
     response = await client.post(
         "/api/runs",
-        json={"repo_name": repo_name, "branch": "main"},
+        json={"execution_mode": "legacy", "repo_name": repo_name, "branch": "main"},
     )
     assert response.status_code == 422
 
@@ -1098,6 +1117,7 @@ async def test_create_run_embedded_routine_invalid_schema(
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": {"id": "bad", "name": "Bad"},
@@ -1114,6 +1134,7 @@ async def test_create_run_embedded_routine_with_ref_rejected(
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": {
@@ -1165,6 +1186,7 @@ async def test_create_run_embedded_with_config(client: AsyncClient, repo_name: s
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": routine_with_inputs,
@@ -1203,6 +1225,7 @@ async def test_create_run_embedded_missing_required_input(
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": repo_name,
             "branch": "main",
             "routine_embedded": routine_with_inputs,
@@ -1439,7 +1462,12 @@ async def test_create_run_produces_run_created_event_in_events_v2(
 
     response = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": repo_name,
+            "branch": "main",
+        },
     )
     assert response.status_code == 201
     run_id = response.json()["id"]

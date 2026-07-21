@@ -66,6 +66,7 @@ async def _create_and_start_run(
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_embedded": SIMPLE_ROUTINE,
             "repo_name": repo,
             "branch": "main",

@@ -63,6 +63,7 @@ async def _create_run_with_approval_task(client: AsyncClient) -> tuple[str, str]
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": "test-project",
             "branch": "main",
             "routine_embedded": routine.model_dump(mode="json"),

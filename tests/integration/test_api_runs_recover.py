@@ -88,6 +88,7 @@ async def _create_recover_run(client: AsyncClient, repo_name: str) -> tuple[str,
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_embedded": _recover_test_routine(),
             "repo_name": repo_name,
             "branch": "main",

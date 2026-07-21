@@ -241,14 +241,6 @@ if TYPE_CHECKING:
     from orchestrator.workflow.graph_driver import GraphRunDriver
     from orchestrator.workflow.service import WorkflowService, find_step_config, find_task_config
 from orchestrator.workflow.completion import handle_run_completion
-from orchestrator.workflow.dry_run import (
-    DryRunResult,
-    build_dry_run_context,
-    build_dry_run_prompt,
-    execute_dry_run,
-    get_step_by_id,
-    parse_dry_run_response,
-)
 from orchestrator.workflow.delegation import (
     DelegateCommand,
     DelegateCommandKind,
@@ -518,18 +510,12 @@ __all__ = [
     "resolve_variables",
     "truncate_to_tokens",
     # Service & Completion
-    "DryRunResult",
     "GraphRunDriver",
     "GraphRunOutcome",
     "WorkflowService",
-    "build_dry_run_context",
-    "build_dry_run_prompt",
-    "execute_dry_run",
     "find_step_config",
     "find_task_config",
-    "get_step_by_id",
     "handle_run_completion",
-    "parse_dry_run_response",
     "select_graph_runs_to_rearm",
     "select_graph_runs_to_recover",
     # Delegation

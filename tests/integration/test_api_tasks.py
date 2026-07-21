@@ -86,7 +86,12 @@ async def _setup_active_run(
     """
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
+        json={
+            "routine_id": "simple-routine",
+            "repo_name": repo_name,
+            "branch": "main",
+            "execution_mode": "legacy",
+        },
     )
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
@@ -465,3 +470,78 @@ async def test_submit_with_unfinished_checklist_returns_409(
     run_resp = await client.get(f"/api/runs/{run_id}")
     data = run_resp.json()
     assert data["status"] == "active"
+
+
+async def _setup_graph_run(client: AsyncClient, repo_name: str) -> str:
+    """Create a graph execution_mode run (not started) and return its run_id.
+
+    Legacy task endpoints must reject these before touching ``run.steps``
+    (which graph runs never populate), so no task needs to exist.
+    """
+    resp = await client.post(
+        "/api/runs",
+        json={
+            "routine_id": "simple-routine",
+            "repo_name": repo_name,
+            "branch": "main",
+            "execution_mode": "graph",
+        },
+    )
+    assert resp.status_code == 201
+    return resp.json()["id"]
+
+
+async def test_legacy_task_endpoints_reject_graph_execution_mode(
+    client: AsyncClient, repo_name: str
+) -> None:
+    """All task-phase endpoints in this router are legacy-only.
+
+    Graph runs have their own task-detail equivalent at
+    ``/api/runs/{run_id}/graph/nodes/{node_id}``; hitting a legacy task
+    endpoint against a graph run must return a deliberate 409, not an
+    accidental 404 from an empty ``run.steps``.
+    """
+    run_id = await _setup_graph_run(client, repo_name)
+    task_id = "nonexistent-task"
+
+    calls = [
+        ("GET", f"/api/runs/{run_id}/tasks/{task_id}", None),
+        ("POST", f"/api/runs/{run_id}/tasks/{task_id}/start", None),
+        ("POST", f"/api/runs/{run_id}/tasks/{task_id}/submit", None),
+        ("POST", f"/api/runs/{run_id}/tasks/{task_id}/complete-verification", None),
+        (
+            "POST",
+            f"/api/runs/{run_id}/tasks/{task_id}/complete-recovery",
+            {"outcome": "retry"},
+        ),
+        ("POST", f"/api/runs/{run_id}/tasks/{task_id}/retry", None),
+        (
+            "PATCH",
+            f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1",
+            {"status": "done"},
+        ),
+        (
+            "PUT",
+            f"/api/runs/{run_id}/tasks/{task_id}/checklist/R1/grade",
+            {"grade": "A"},
+        ),
+        ("GET", f"/api/runs/{run_id}/tasks/{task_id}/prompt", None),
+        ("GET", f"/api/runs/{run_id}/tasks/{task_id}/attempts/1/logs", None),
+        (
+            "POST",
+            f"/api/runs/{run_id}/tasks/{task_id}/escalate",
+            {"requirement_id": "R1", "reason": "cannot fulfill"},
+        ),
+        ("POST", f"/api/runs/{run_id}/tasks/{task_id}/approve", {"comment": ""}),
+        ("POST", f"/api/runs/{run_id}/tasks/{task_id}/reject", {"reason": "no"}),
+        (
+            "POST",
+            f"/api/runs/{run_id}/tasks/{task_id}/force-accept",
+            {"comment": ""},
+        ),
+    ]
+
+    for method, url, json_body in calls:
+        resp = await client.request(method, url, json=json_body)
+        assert resp.status_code == 409, f"{method} {url} -> {resp.status_code}: {resp.text}"
+        assert "execution_mode='graph'" in resp.json()["detail"]

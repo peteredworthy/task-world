@@ -197,7 +197,6 @@ async def test_codex_lifecycle_recovery_local_no_pid_start_is_clean(
     data = await _create_codex_run(
         client,
         "codex_server",
-        agent_runner_config={"callback_channel": "rest"},
         repo_name="proj-nopid",
     )
     run_id = data["id"]

@@ -65,6 +65,7 @@ async def _create_run(
         "routine_id": routine_id,
         "repo_name": repo_name,
         "branch": branch,
+        "execution_mode": "legacy",
         **extra,
     }
     resp = await client.post("/api/runs", json=body)
@@ -507,6 +508,7 @@ async def test_embedded_routine_full_lifecycle(
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": "proj-embedded",
             "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE,
@@ -675,6 +677,7 @@ async def test_auto_verify_results_in_response(
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": "test-repo",
             "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE_WITH_AUTO_VERIFY,
@@ -882,6 +885,7 @@ async def test_embedded_routine_persists_across_requests(
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": "proj-persist",
             "branch": "main",
             "routine_embedded": EMBEDDED_ROUTINE_PERSIST,

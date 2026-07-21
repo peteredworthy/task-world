@@ -93,6 +93,7 @@ async def _create_run(client: AsyncClient) -> dict[str, Any]:
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_embedded": LINEAR_ROUTINE,
             "repo_name": "parity-linear-repo",
             "branch": "main",

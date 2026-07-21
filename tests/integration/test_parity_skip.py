@@ -162,6 +162,7 @@ async def test_skip_step_not_executed(
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_embedded": SKIP_ROUTINE,
             "repo_name": "parity-skip-repo",
             "branch": "main",
@@ -199,6 +200,7 @@ async def test_skip_step_run_advances_to_next(
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_embedded": SKIP_ROUTINE,
             "repo_name": "parity-skip-advance-repo",
             "branch": "main",
@@ -229,6 +231,7 @@ async def test_skip_reason_recorded(
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_embedded": SKIP_ROUTINE,
             "repo_name": "parity-skip-reason-repo",
             "branch": "main",
@@ -259,6 +262,7 @@ async def test_skip_step_full_workflow_completes(
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_embedded": SKIP_ROUTINE,
             "repo_name": "parity-skip-full-repo",
             "branch": "main",

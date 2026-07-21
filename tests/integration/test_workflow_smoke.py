@@ -55,6 +55,7 @@ async def _create_run(
     response = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_id": routine_id,
             "repo_name": repo_name,
             "branch": "main",

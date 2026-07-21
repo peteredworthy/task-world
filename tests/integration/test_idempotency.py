@@ -45,7 +45,12 @@ async def _create_and_start_run(client: AsyncClient, drain: DrainFn) -> tuple[st
     """Create a run, start it, return (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     assert resp.status_code == 201
     run_data = resp.json()

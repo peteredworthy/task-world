@@ -44,7 +44,12 @@ async def _setup_building_task(
     """Create a run, start it, and start building a task. Returns (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": routine_id, "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": routine_id,
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
@@ -197,7 +202,12 @@ async def test_get_pending_actions_empty(client_and_drain: tuple[AsyncClient, Dr
     """Test getting pending actions when there are none."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     run_id = resp.json()["id"]
 
@@ -285,7 +295,12 @@ async def test_create_clarification_invalid_task(
     """Test creating a clarification for a non-existent task."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     run_id = resp.json()["id"]
 
@@ -618,7 +633,12 @@ async def test_get_clarification_history_nonexistent_task_returns_404(
     """GET .../clarifications with nonexistent task_id returns 404."""
     run_resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     assert run_resp.status_code == 201
     run_id = run_resp.json()["id"]

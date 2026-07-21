@@ -32,6 +32,7 @@ Documentation for implementing the Orchestrator system from scratch.
 | [07-UI-MOCKUP.html](./07-UI-MOCKUP.html) | React component mockup |
 | [08-UI-DESCRIPTION.md](./08-UI-DESCRIPTION.md) | UI spec for Stitch |
 | [09-COMPETITIVE-ANALYSIS.md](./09-COMPETITIVE-ANALYSIS.md) | Market comparison |
+| [JTBD and User Journeys](../jtbd/README.md) | Canonical jobs, journeys, decision information, information architecture, and UI evaluation rubric |
 
 ### Implementation Slices
 
