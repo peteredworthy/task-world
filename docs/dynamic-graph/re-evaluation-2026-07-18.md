@@ -36,7 +36,7 @@
 > server mounted at `/mcp-graph/{token}`, closing directly over that
 > execution's callbacks; `codex exec` via `cli_subprocess` remains a
 > documented gap (capability flag says yes, no MCP wiring for it). Full suite
-> green: 5001 passed, 3 skipped; ruff and pyright clean.
+> green: 4926 passed, 3 skipped; ruff and pyright clean.
 
 ## 1. What the closeout already resolved (no action)
 
