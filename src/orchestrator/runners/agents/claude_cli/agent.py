@@ -577,10 +577,14 @@ class CLIAgent:
             and context.graph_mcp_url is not None
             and Path(self._command).name == "claude"
         ):
-            mcp_config["mcpServers"]["orchestrator-graph"] = {
+            graph_entry: dict[str, Any] = {
                 "type": "sse",
                 "url": context.graph_mcp_url,
             }
+            if context.auth_token:
+                # Pass env var reference, not the actual token
+                graph_entry["env"] = {"ORCHESTRATOR_AUTH_TOKEN": "${ORCHESTRATOR_AUTH_TOKEN}"}
+            mcp_config["mcpServers"]["orchestrator-graph"] = graph_entry
 
         mcp_json_path = self._mcp_json_path(working_dir)
         mcp_json_path.parent.mkdir(parents=True, exist_ok=True)

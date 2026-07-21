@@ -203,6 +203,35 @@ def test_write_mcp_json_adds_graph_mcp_url_as_sse_server() -> None:
     }
 
 
+def test_write_mcp_json_graph_mcp_entry_gets_auth_env_when_auth_token_set() -> None:
+    """When auth is enabled, the orchestrator-graph mount carries an env-var
+    reference to the auth token (never the literal secret), matching the
+    convention used for externally-configured MCP servers with auth_token_env.
+    """
+    agent = CLIAgent(command="claude")
+    ctx = _make_context(
+        graph_mcp_url="http://localhost:8000/mcp-graph/tok1/sse",
+        auth_token="tok-abc123",
+    )
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = agent._write_mcp_json(  # pyright: ignore[reportPrivateUsage]
+            tmp, ctx.mcp_servers or [], ctx.available_tools, ctx
+        )
+        raw = path.read_text()
+        config = json.loads(raw)
+
+    assert config["mcpServers"]["orchestrator-graph"] == {
+        "type": "sse",
+        "url": "http://localhost:8000/mcp-graph/tok1/sse",
+        "env": {"ORCHESTRATOR_AUTH_TOKEN": "${ORCHESTRATOR_AUTH_TOKEN}"},
+    }
+    # The literal secret must never be written to disk.
+    assert "tok-abc123" not in raw
+
+
 def test_build_prompt_with_api_url() -> None:
     """With api_base_url, prompt is enriched with REST API instructions."""
     ctx = _make_context(api_base_url="http://localhost:8000")

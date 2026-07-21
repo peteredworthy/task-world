@@ -525,6 +525,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             artifact_stores=app.state.artifact_store_resolver,
             journal_max_bytes=app.state.global_config.journal.max_bytes,
             graph_mcp_registry=app.state.graph_mcp_registry,
+            base_url=f"http://localhost:{app.state.global_config.server.port}",
         ),
         workflow_preparer=make_workflow_preparer(getattr(app.state, "runner_executor", None)),
         journal_max_bytes=app.state.global_config.journal.max_bytes,

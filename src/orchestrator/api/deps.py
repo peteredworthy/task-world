@@ -407,6 +407,7 @@ def make_graph_runner(
     artifact_stores: ArtifactStoreResolver | None = None,
     journal_max_bytes: int = 64 * 1024 * 1024,
     graph_mcp_registry: "GraphMcpExecutionRegistry | None" = None,
+    base_url: str | None = None,
 ) -> Callable[[str], Awaitable[None]]:
     """Return a graph run driver callback for ``SignalConsumer``.
 
@@ -414,6 +415,13 @@ def make_graph_runner(
     supply the process-wide registry, and is forwarded into
     ``build_graph_runtime`` below so ``GraphDispatchExecutor`` can mount a
     per-execution graph MCP tool server around each graph-capable node.
+
+    ``base_url`` is the orchestrator's own externally-reachable base URL
+    (e.g. ``http://localhost:{port}``), used to build the per-execution
+    graph MCP SSE URL handed to subprocess agents. Callers should derive
+    this from the running server's configured port rather than relying on
+    the ``http://localhost:8000`` fallback, since worktree/dev instances
+    commonly listen on other ports.
     """
     from orchestrator.runners import OutputBatcher
 
@@ -448,6 +456,7 @@ def make_graph_runner(
                 build_graph_runtime,
                 journal_max_bytes=journal_max_bytes,
                 graph_mcp_registry=graph_mcp_registry,
+                base_url=base_url or "http://localhost:8000",
             ),
         )
         try:
