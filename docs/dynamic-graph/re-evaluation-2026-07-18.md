@@ -28,6 +28,15 @@
 > Full suite after this pass: 4892 passed, 3 skipped (down from 4971 — dead
 > tests were deleted alongside dead code, not just dead source); ruff and
 > pyright clean.
+>
+> **Update — 2026-07-21, HEAD `447196950`:** Priority 4 (§5, the graph-runner
+> capability contract) is done — the capability contract is now derived from
+> `agent_factory`'s `graph_capable` registration flag (no hand-maintained
+> frozenset); `claude_cli` is graph-capable via a per-execution MCP tool
+> server mounted at `/mcp-graph/{token}`, closing directly over that
+> execution's callbacks; `codex exec` via `cli_subprocess` remains a
+> documented gap (capability flag says yes, no MCP wiring for it). Full suite
+> green: 5001 passed, 3 skipped; ruff and pyright clean.
 
 ## 1. What the closeout already resolved (no action)
 
@@ -226,7 +235,7 @@ UI/CLI/MCP will miss a test suite that uses the HTTP layer as its access
 path. Grep the test suite before scoping a deletion as cheap — the size of
 that blast radius is the real cost, not the size of the source diff.
 
-## 5. Priority 4 — Graph-runner capability contract and a second graph runner
+## 5. Priority 4 — Graph-runner capability contract and a second graph runner — RESOLVED 2026-07-21
 
 **What.** Today a run can *select* four runner types, but the graph carrier
 *dispatches* exactly one: `SUPPORTED_GRAPH_RUNNER_TYPES` is the hard-coded
