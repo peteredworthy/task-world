@@ -92,51 +92,51 @@ unchanged — this is a mechanical move (no behavior change), done so
 claude_cli's new MCP tool handlers can call the exact same normalization
 codex_server already relies on, instead of duplicating it.
 
-### 4.2 Per-execution registry
+### 4.2 Per-execution SSE endpoint, same process
 
-`GraphDispatchExecutor._run_agent` gains a small in-memory registry:
+`GraphDispatchExecutor._run_agent` mounts a single-use SSE MCP route on the
+orchestrator's already-running ASGI app, at a path containing an
+unguessable per-execution token (`secrets.token_urlsafe(...)`, generated
+fresh per call — **not** `run_id`/`node_id`, which are guessable/enumerable
+by any client that can already talk to the API). The route's tool handlers
+are defined inline inside `_run_agent`, in the same closure scope as
+`on_submit_graph_patch` and `on_grade` — they close over those callables
+directly, the same way codex_server's in-process JSON-RPC handlers do. The
+route is unmounted in a `finally` around `runner.execute()`, so it exists
+for exactly the lifetime of that one execution.
 
-```python
-@dataclass
-class GraphNodeCallbacks:
-    on_submit_graph_patch: GraphPatchCallback
-    on_grade: GradeCallback | None
-```
-
-Keyed by `(run_id, node_id)`. Registered immediately before
-`runner.execute()`, removed in a `finally` around that call — the registry's
-entire lifecycle is contained within one `_run_agent` invocation. No new
-cross-request state, no separate cleanup path to get wrong. If the
-orchestrator process crashes mid-execution, the whole in-memory registry
-disappears with it — consistent with how all other in-flight graph dispatch
-state already recovers today, via `agent_died` reconciliation on restart.
-
-Concurrency note: the graph kernel's lease model already guarantees at most
-one active execution per node, so `(run_id, node_id)` collisions should not
-occur; if the invariant is ever violated elsewhere, last-write-wins on the
-registry entry is an acceptable (not silently unsafe) behavior, not something
-this layer needs to defend against independently.
+Honest framing: mounting/unmounting a route on the app's router *is* a form
+of registration — Starlette's route table is the thing being mutated at
+runtime (`app.router.routes.append(...)` / matching removal). What this
+buys over a hand-rolled `(run_id, node_id)` dict, which was the version of
+this design mistakenly written into an earlier draft of this spec, is real:
+no permanent new tool names on the global MCP server (other sessions, legacy
+or graph, never see graph tools at all), no lookup key derived from
+guessable/enumerable IDs, and the handler function value itself already
+carries the right closures by construction — there is no separate
+"look up which execution this belongs to" step for the handler to get wrong.
+If the orchestrator process crashes mid-execution, the mounted route
+disappears with it, same as any other in-memory dispatch state — consistent
+with existing `agent_died` reconciliation on restart.
 
 ### 4.3 New MCP tools
 
-Add to the orchestrator's existing MCP server (`api/mcp/tools.py`):
-`submit_graph_patch` plus the 13 macro tool names, plus a graph-scoped
-`grade`. Each takes `run_id` and the node's ID as explicit arguments — no new
-prompt plumbing needed, since `GraphDispatchExecutor._execution_context`
-already sets `ExecutionContext.task_id` to the node ID for graph-dispatched
-nodes (`node.get("task_id") or node.get("task_region_id") or context.node_id`),
-and that value is already shown to the LLM as "Task ID" in the existing
-prompt. Handlers look up the `(run_id, node_id)` registry; a miss (wrong IDs,
-or a node that already finished/was reassigned) returns a clean tool-result
-error, not a crash, matching how `route_tool_call` already raises `ValueError`
-for a disallowed tool name today.
+The per-execution route exposes `submit_graph_patch` plus the 13 macro tool
+names, plus `graph_grade` (§6) when the node is a verifier. No new prompt
+plumbing is needed to scope these to the right node: since the tools are
+served from an execution-scoped URL, there's nothing to disambiguate by
+`run_id`/`node_id` in the tool arguments at all — every call arriving on
+that route is, by construction, for this execution.
 
 ### 4.4 Wiring into CLIAgent
 
-When `context.graph_patch_callback is not None`, `CLIAgent`:
-- Adds the orchestrator's own graph-tool MCP endpoint into the
-  `--mcp-config` it already writes via `_write_mcp_json`, alongside any
-  routine-declared external `context.mcp_servers`.
+When `context.graph_patch_callback is not None`, the dispatch executor also
+sets a new `ExecutionContext.graph_mcp_url: str | None` field to the
+per-execution route's URL. `CLIAgent`:
+- Adds that URL as an `"sse"`-type entry in the `--mcp-config` it already
+  writes via `_write_mcp_json` (the same branch `_write_mcp_json` already
+  uses for external `mcp.url`-based servers), alongside any routine-declared
+  external `context.mcp_servers`.
 - Appends prompt instructions describing the graph tools — same spirit as
   the deleted `_graph_patch_bridge_section`, but describing native MCP tool
   calls instead of a stdout sentinel format.
@@ -148,10 +148,11 @@ pass `--mcp-config`/`--tools` at all — consistent with §2's non-goal for
 
 ### 4.5 Auth
 
-Graph-tool MCP calls carry the same `context.auth_token` bearer mechanism
-already used for MCP-mode callbacks. The registry lookup is a second,
-natural scope check: even a valid token can't act on a `(run_id, node_id)`
-that isn't currently live.
+The per-execution URL's unguessable token is the primary scope control —
+equivalent in spirit to a bearer credential, since only this one execution
+(via its `--mcp-config`) is ever told the URL. It also carries the same
+`context.auth_token` bearer check already used for MCP-mode callbacks, as
+defense in depth.
 
 ## 5. Testing
 
@@ -159,13 +160,15 @@ that isn't currently live.
   (`{CODEX_SERVER, CLI_SUBPROCESS}`) given the declared flags.
 - Unit: the extracted `graph_tool_routing` module — existing codex tests
   continue to pass against the new import path unchanged.
-- Unit: new MCP tool handlers — registry hit invokes the correct closure
-  with the correctly normalized payload; registry miss errors cleanly
-  without raising an uncaught exception.
+- Unit: the per-execution route's tool handlers invoke the correct closure
+  with the correctly normalized payload; a request against an unmounted or
+  already-torn-down execution route 404s cleanly rather than raising an
+  uncaught exception.
 - Integration: a claude_cli-dispatched builder node submits a graph patch
-  end-to-end through the new MCP path using a fake local MCP transport (no
-  live subprocess), landing via `GraphController` exactly as it does for
-  codex_server today.
+  end-to-end through the mounted per-execution route using a fake local MCP
+  transport (no live subprocess), landing via `GraphController` exactly as
+  it does for codex_server today; assert the route is unmounted after the
+  execution completes.
 - At least one small "second runner" smoke test per node role (planner,
   builder, verifier) confirming behavioral parity with `codex_server` —
   not a duplication of the full FR-01..18 suite for a second runner.
@@ -174,12 +177,11 @@ that isn't currently live.
 
 The new graph-scoped grade tool is named `graph_grade`, distinct from the
 existing legacy-task tool `orchestrator_set_grade`. They back genuinely
-different code paths — a DB-backed checklist write versus a registry-routed
-closure call — and a single run is always either legacy or graph end-to-end,
-so there is no session that would need both. Keeping them as separate,
-unambiguous tool names avoids a fallback-through-registry-miss path that
-would blur real errors (wrong node ID) with intentional legacy/graph
-disambiguation.
+different code paths — a DB-backed checklist write versus a closure call on
+a per-execution route — and a single run is always either legacy or graph
+end-to-end, so there is no session that would need both. Keeping them as
+separate, unambiguous tool names avoids conflating two different systems
+under one name.
 
 ## 7. Open questions carried into implementation planning
 
