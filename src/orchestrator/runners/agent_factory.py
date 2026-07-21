@@ -37,11 +37,33 @@ class AgentFactory(Protocol):
 # Global registry: AgentRunnerType -> factory callable
 _REGISTRY: dict[AgentRunnerType, AgentFactory] = {}
 
+# Runner types whose adapter implements the graph callback contract (patch
+# submission, grade). Declared at registration time alongside the factory,
+# rather than a hand-maintained frozenset elsewhere — see graph_driver.py's
+# get_supported_graph_runner_types().
+_GRAPH_CAPABLE: dict[AgentRunnerType, bool] = {}
 
-def register(agent_runner_type: AgentRunnerType, factory: AgentFactory) -> None:
-    """Register an agent factory for a given type."""
+
+def register(
+    agent_runner_type: AgentRunnerType,
+    factory: AgentFactory,
+    *,
+    graph_capable: bool = False,
+) -> None:
+    """Register an agent factory for a given type.
+
+    Args:
+        graph_capable: Whether this runner's adapter can deliver graph
+            callback tool calls (submit_graph_patch and friends, grade) into
+            the graph dispatcher's in-process closures. Defaults to False.
+    """
     _REGISTRY[agent_runner_type] = factory
-    logger.debug("Registered agent factory for %s", agent_runner_type.value)
+    _GRAPH_CAPABLE[agent_runner_type] = graph_capable
+    logger.debug(
+        "Registered agent factory for %s (graph_capable=%s)",
+        agent_runner_type.value,
+        graph_capable,
+    )
 
 
 def create(
@@ -76,6 +98,12 @@ def get_registered_agent_runner_types() -> frozenset[AgentRunnerType]:
     return frozenset(_REGISTRY)
 
 
+def get_graph_capable_agent_runner_types() -> frozenset[AgentRunnerType]:
+    """Return an immutable snapshot of runner types declared graph-capable."""
+    return frozenset(runner_type for runner_type, capable in _GRAPH_CAPABLE.items() if capable)
+
+
 def clear_registry() -> None:
     """Clear all registered factories (for testing)."""
     _REGISTRY.clear()
+    _GRAPH_CAPABLE.clear()

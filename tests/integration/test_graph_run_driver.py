@@ -651,7 +651,7 @@ async def test_driver_crash_bridge_persists_pause_and_reraises(
 @pytest.mark.parametrize(
     ("agent_runner_type", "expected_runner", "expected_status"),
     [
-        (AgentRunnerType.CLI_SUBPROCESS, "cli_subprocess", RunStatus.PAUSED),
+        (AgentRunnerType.OPENHANDS_LOCAL, "openhands_local", RunStatus.PAUSED),
         (AgentRunnerType.RETIRED, "retired", RunStatus.DRAFT),
     ],
 )

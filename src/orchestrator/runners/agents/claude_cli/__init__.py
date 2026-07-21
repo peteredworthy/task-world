@@ -10,7 +10,7 @@ from orchestrator.runners.agents.claude_cli.config import (
     cli_config_for_codex,
 )
 
-register(AgentRunnerType.CLI_SUBPROCESS, create_cli_agent)
+register(AgentRunnerType.CLI_SUBPROCESS, create_cli_agent, graph_capable=True)
 
 __all__ = [
     "CLIAgent",
