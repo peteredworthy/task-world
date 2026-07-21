@@ -25,6 +25,12 @@ from typing_extensions import Protocol
 
 from orchestrator.graph import DEFAULT_NODE_CONTRACTS
 from orchestrator.state.models import ActionLog
+from orchestrator.runners.graph_tool_routing import (
+    GRAPH_MACRO_TOOL_NAMES,
+    normalize_macro_tool_payload as _normalize_macro_tool_payload,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    normalize_patch_payload as _normalize_patch_payload,  # noqa: F401  # pyright: ignore[reportUnusedImport]
+    route_tool_call as _route_tool_call_impl,
+)
 from orchestrator.runners.types import (
     ChecklistUpdateCallback,
     GraphPatchCallback,
@@ -35,23 +41,8 @@ from orchestrator.runners.types import (
     GradeCallback,
     SubmitCallback,
 )
-from orchestrator.config.enums import ChecklistStatus
 
 logger = logging.getLogger(__name__)
-
-
-GRAPH_MACRO_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        "create_work_region",
-        "create_corrective_region",
-        "attach_verifier",
-        "attach_check",
-        "create_gap_planner",
-        "create_join",
-        "request_gate",
-        "retire_or_supersede",
-    }
-)
 
 
 # ---------------------------------------------------------------------------
@@ -1181,144 +1172,27 @@ async def route_tool_call(
 ) -> str:
     """Route an allow-listed callback tool call to the appropriate callback.
 
-    Enforces the v1 allow-list (``CODEX_SERVER_TOOL_ALLOWLIST``) before
-    dispatching.  Disallowed tool names raise ``ValueError`` via
-    ``enforce_tool_allowlist``.
+    Thin wrapper over ``graph_tool_routing.route_tool_call`` binding the
+    codex-server-specific ``CODEX_SERVER_TOOL_ALLOWLIST``.
 
-    Tool routing:
-    - ``update_checklist`` → ``on_checklist_update(req_id, status, note)``
-    - ``submit``           → ``on_submit()``
-    - ``submit_graph_patch`` → ``on_submit_graph_patch(payload)``
-    - ``grade``            → ``on_grade(req_id, grade, grade_reason)`` (verifier only)
-    - ``request_clarification`` → logged; no callback in v1
-
-    Args:
-        tool_name: Name of the callback tool the Codex session invoked.
-        args: Tool argument dict from the Codex server event payload.
-        on_checklist_update: Bound checklist-update callback.
-        on_submit: Bound submit callback.
-        on_submit_graph_patch: Bound graph patch callback.
-        on_grade: Bound grade callback (``None`` in builder phase).
-        agent_label: Label used in log messages (e.g. ``"CodexServerAgent"``).
-
-    Raises:
-        ValueError: If ``tool_name`` is not on the v1 allow-list.
+    Enforces the allow-list via this module's ``enforce_tool_allowlist``
+    first so disallowed calls keep raising the codex-specific error message
+    and warning log they always have — ``graph_tool_routing.route_tool_call``
+    performs its own (generic) allow-list check too, but by construction it
+    never fires once this check has already passed.
     """
     enforce_tool_allowlist(tool_name)
-
-    if tool_name == "update_checklist":
-        req_id: str = str(args.get("req_id", "")).strip()
-        if not req_id:
-            raise ValueError("update_checklist requires a non-empty 'req_id'")
-        raw_status: str = str(args.get("status", "done"))
-        note: str | None = args.get("note")
-        status = ChecklistStatus(raw_status)
-        await on_checklist_update(req_id, status, note)
-
-    elif tool_name == "submit":
-        await on_submit()
-
-    elif tool_name == "submit_graph_patch":
-        if on_submit_graph_patch is None:
-            raise ValueError("submit_graph_patch is not registered for this session")
-        payload = _normalize_patch_payload(args)
-        return await on_submit_graph_patch(payload)
-
-    elif tool_name in GRAPH_MACRO_TOOL_NAMES:
-        if on_submit_graph_patch is None:
-            raise ValueError(f"{tool_name} is not registered for this session")
-        payload = _normalize_macro_tool_payload(tool_name, args)
-        return await on_submit_graph_patch(payload)
-
-    elif tool_name == "grade":
-        if on_grade is not None:
-            req_id = str(args.get("req_id", "")).strip()
-            grade: str = str(args.get("grade", "")).strip()
-            if not req_id:
-                raise ValueError("grade requires a non-empty 'req_id'")
-            if not grade:
-                raise ValueError("grade requires a non-empty 'grade'")
-            grade_reason: str | None = args.get("grade_reason")
-            await on_grade(req_id, grade, grade_reason)
-        else:
-            logger.warning("%s: 'grade' tool called in builder phase — ignoring", agent_label)
-
-    elif tool_name == "request_clarification":
-        question: str = str(args.get("question", ""))
-        logger.info("%s: request_clarification received — question=%r", agent_label, question)
-
-    elif tool_name == "complete_recovery":
-        outcome: str = str(args.get("outcome", "retry"))
-        notes: str | None = args.get("notes")
-        if on_complete_recovery is not None:
-            await on_complete_recovery(outcome, notes)
-        else:
-            logger.info(
-                "%s: complete_recovery called (outcome=%r) but no callback registered — ignoring",
-                agent_label,
-                outcome,
-            )
-    return ""
-
-
-def _normalize_macro_tool_payload(tool_name: str, args: dict[str, Any]) -> dict[str, Any]:
-    patch_id = args.get("patch_id")
-    base_graph_position = args.get("base_graph_position")
-    if not isinstance(patch_id, str) or not patch_id.strip():
-        raise ValueError(f"{tool_name} requires a non-empty patch_id")
-    if not isinstance(base_graph_position, int):
-        raise ValueError(f"{tool_name} requires integer base_graph_position")
-
-    macro_args = {
-        key: value
-        for key, value in args.items()
-        if key not in {"patch_id", "base_graph_position", "rationale_record_id"}
-    }
-    payload: dict[str, Any] = {
-        "patch_id": patch_id,
-        "base_graph_position": base_graph_position,
-        "macro_invocations": [{"macro": tool_name, "args": macro_args}],
-    }
-    rationale_record_id = args.get("rationale_record_id")
-    if isinstance(rationale_record_id, str):
-        payload["rationale_record_id"] = rationale_record_id
-    return payload
-
-
-def _normalize_patch_payload(args: dict[str, Any]) -> dict[str, Any]:
-    """Normalize planner patch arguments into a top-level PatchEnvelope payload."""
-    if "patch" in args:
-        if len(args) != 1:
-            raise ValueError("submit_graph_patch accepts either `patch` or patch fields, not both")
-        raw_patch = args.get("patch")
-        if not isinstance(raw_patch, dict):
-            raise ValueError("submit_graph_patch requires `patch` to be an object")
-        patch = cast(dict[str, Any], raw_patch)
-        patch_id = patch.get("patch_id")
-        base_graph_position = patch.get("base_graph_position")
-        ops = patch.get("ops")
-        rationale_record_id = patch.get("rationale_record_id")
-    else:
-        patch_id = args.get("patch_id")
-        base_graph_position = args.get("base_graph_position")
-        ops = args.get("ops")
-        rationale_record_id = args.get("rationale_record_id")
-
-    if not isinstance(patch_id, str) or not patch_id.strip():
-        raise ValueError("submit_graph_patch requires a non-empty patch_id")
-    if not isinstance(base_graph_position, int):
-        raise ValueError("submit_graph_patch requires integer base_graph_position")
-    if not isinstance(ops, list):
-        raise ValueError("submit_graph_patch requires an ops list")
-
-    payload: dict[str, Any] = {
-        "patch_id": patch_id,
-        "base_graph_position": base_graph_position,
-        "ops": ops,
-    }
-    if isinstance(rationale_record_id, str):
-        payload["rationale_record_id"] = rationale_record_id
-    return payload
+    return await _route_tool_call_impl(
+        tool_name,
+        args,
+        on_checklist_update,
+        on_submit,
+        on_submit_graph_patch=on_submit_graph_patch,
+        on_grade=on_grade,
+        on_complete_recovery=on_complete_recovery,
+        allowlist=CODEX_SERVER_TOOL_ALLOWLIST,
+        agent_label=agent_label,
+    )
 
 
 # ---------------------------------------------------------------------------
