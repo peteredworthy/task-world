@@ -410,11 +410,10 @@ def make_graph_runner(
 ) -> Callable[[str], Awaitable[None]]:
     """Return a graph run driver callback for ``SignalConsumer``.
 
-    ``graph_mcp_registry`` is accepted and threaded through here so callers
-    (``api/app.py``) can supply the process-wide registry, but it is not yet
-    forwarded into ``build_graph_runtime`` below: that function doesn't accept
-    this parameter until a later task wires it up. Forwarding it early would
-    fail at call time (``build_graph_runtime`` doesn't have this kwarg yet).
+    ``graph_mcp_registry`` is accepted here so callers (``api/app.py``) can
+    supply the process-wide registry, and is forwarded into
+    ``build_graph_runtime`` below so ``GraphDispatchExecutor`` can mount a
+    per-execution graph MCP tool server around each graph-capable node.
     """
     from orchestrator.runners import OutputBatcher
 
@@ -448,6 +447,7 @@ def make_graph_runner(
             runtime_builder=partial(
                 build_graph_runtime,
                 journal_max_bytes=journal_max_bytes,
+                graph_mcp_registry=graph_mcp_registry,
             ),
         )
         try:

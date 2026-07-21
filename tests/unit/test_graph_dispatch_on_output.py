@@ -33,6 +33,7 @@ from orchestrator.graph_runtime.dispatch import (
     _requirements_for_node,
     _runtime_death_max_attempts,
 )
+from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
 from orchestrator.runners.types import (
     AgentMetadataCallback,
     AgentRunnerInfo,
@@ -679,6 +680,138 @@ class RecordingExecutor(GraphDispatchExecutor):
 
     async def _agent_died(self, context: GraphDispatchContext, reason: str) -> None:
         self.failures.append(reason)
+
+
+class GraphMcpUrlCapturingAgent(OutputAgent):
+    """Fake agent that asserts the per-execution graph MCP route is live
+    during execute() and records the token for the caller to check
+    afterward."""
+
+    def __init__(self, registry: GraphMcpExecutionRegistry, captured_tokens: list[str]) -> None:
+        super().__init__([])
+        self._registry = registry
+        self._captured_tokens = captured_tokens
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        assert context.graph_mcp_url is not None
+        assert context.graph_mcp_url.startswith("http://test-base:9000/mcp-graph/")
+        token = context.graph_mcp_url.removeprefix("http://test-base:9000/mcp-graph/").removesuffix(
+            "/sse"
+        )
+        self._captured_tokens.append(token)
+        assert self._registry.get(token) is not None, "route must be mounted during execute()"
+        # node_role="planner" requires an accepted graph patch before submit is
+        # allowed (see _requires_graph_patch_before_submit) — go through the
+        # same graph_patch_callback path a real claude_cli planner would use.
+        if context.graph_patch_callback is not None:
+            await context.graph_patch_callback(
+                {"patch_id": "patch-1", "base_graph_position": 3, "ops": []}
+            )
+        await on_submit()
+        self.submitted = True
+        return ExecutionResult(success=True)
+
+
+class RecordingExecutorWithGraphMcp(RecordingExecutor):
+    def __init__(self, registry: GraphMcpExecutionRegistry) -> None:
+        super().__init__()
+        self._graph_mcp_registry = registry
+        self._base_url = "http://test-base:9000"
+
+
+@pytest.mark.asyncio
+async def test_graph_mcp_route_mounted_during_execute_and_unmounted_after() -> None:
+    registry = GraphMcpExecutionRegistry()
+    context = _context(node_id="planner-1", node_kind="planner", node_role="planner")
+    captured_tokens: list[str] = []
+    agent = GraphMcpUrlCapturingAgent(registry, captured_tokens)
+    executor = RecordingExecutorWithGraphMcp(registry)
+
+    await executor._run_agent(context, agent)
+
+    assert executor.submitted == [context]
+    assert executor.failures == []
+    assert len(captured_tokens) == 1
+    assert registry.get(captured_tokens[0]) is None, "route must be unmounted after execute()"
+
+
+@pytest.mark.asyncio
+async def test_verifier_node_gets_graph_mcp_route_too() -> None:
+    registry = GraphMcpExecutionRegistry()
+    context = _context(node_id="verifier-1", node_kind="verifier", node_role="verifier")
+    captured_tokens: list[str] = []
+    agent = GraphMcpUrlCapturingAgent(registry, captured_tokens)
+    executor = RecordingExecutorWithGraphMcp(registry)
+
+    await executor._run_agent(context, agent)
+
+    assert executor.submitted == [context]
+    assert len(captured_tokens) == 1
+
+
+class GraphMcpRaisingAgent(OutputAgent):
+    """Fake agent that raises during execute() after confirming the
+    per-execution graph MCP route is live, to prove the route is unmounted
+    even when runner.execute() fails."""
+
+    def __init__(self, registry: GraphMcpExecutionRegistry, captured_tokens: list[str]) -> None:
+        super().__init__([])
+        self._registry = registry
+        self._captured_tokens = captured_tokens
+
+    async def execute(
+        self,
+        context: ExecutionContext,
+        on_checklist_update: ChecklistUpdateCallback,
+        on_submit: SubmitCallback,
+        on_output: LogLineCallback | None = None,
+        on_grade: GradeCallback | None = None,
+        on_agent_metadata: AgentMetadataCallback | None = None,
+        on_escalation: EscalationCallback | None = None,
+    ) -> ExecutionResult:
+        assert context.graph_mcp_url is not None
+        token = context.graph_mcp_url.removeprefix("http://test-base:9000/mcp-graph/").removesuffix(
+            "/sse"
+        )
+        self._captured_tokens.append(token)
+        assert self._registry.get(token) is not None, "route must be mounted during execute()"
+        raise RuntimeError("simulated runner crash")
+
+
+@pytest.mark.asyncio
+async def test_graph_mcp_route_unmounted_when_runner_execute_raises() -> None:
+    registry = GraphMcpExecutionRegistry()
+    context = _context(node_id="verifier-1", node_kind="verifier", node_role="verifier")
+    captured_tokens: list[str] = []
+    agent = GraphMcpRaisingAgent(registry, captured_tokens)
+    executor = RecordingExecutorWithGraphMcp(registry)
+
+    await executor._run_agent(context, agent)
+
+    assert len(captured_tokens) == 1
+    assert registry.get(captured_tokens[0]) is None, "route must be unmounted after a crash"
+    assert executor.failures == ["simulated runner crash"]
+
+
+@pytest.mark.asyncio
+async def test_no_registry_configured_means_no_graph_mcp_url() -> None:
+    """Every existing call site that doesn't pass graph_mcp_registry (the
+    default in Task 6 Step 5) gets exactly the pre-Task-6 behavior."""
+    context = _context(node_id="planner-1", node_kind="planner", node_role="planner")
+    executor = RecordingExecutor()  # no graph_mcp_registry — the plain existing class
+
+    execution_context = executor._execution_context(context, graph_patch_callback=None)
+
+    assert execution_context.graph_mcp_url is None
 
 
 class RecordingOutputSink:

@@ -46,6 +46,8 @@ class _GraphLatencyExecutor(GraphDispatchExecutor):
         self._monotonic = monotonic
         self._on_agent_output = None
         self._on_agent_usage = None
+        self._graph_mcp_registry = None
+        self._base_url = "http://localhost:8000"
         self.death_reasons: list[str] = []
 
     async def _acknowledge_start(self, context: GraphDispatchContext) -> None:
