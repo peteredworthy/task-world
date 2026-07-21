@@ -98,6 +98,7 @@ class ExecutionContext(BaseModel):
     node_role: str | None = None
     expected_git_branch: str | None = None
     graph_patch_callback: GraphPatchCallback | None = None
+    graph_mcp_url: str | None = None
     available_tools: list[str] | None = None
     mcp_servers: list[MCPServerConfig] | None = None
     work_mode: Literal["implementation", "oversight"] = "implementation"
