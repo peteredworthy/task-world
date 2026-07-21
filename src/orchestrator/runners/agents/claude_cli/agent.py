@@ -262,8 +262,22 @@ class CLIAgent:
                     "  (e.g. `git --no-pager diff`, `git --no-pager log`, `git --no-pager show`)\n"
                 )
 
+        graph_tools_section = ""
+        if context.graph_mcp_url is not None:
+            graph_tools_section = (
+                "\n\n## Graph Tools\n"
+                "You are connected to an orchestrator-graph MCP server exposing "
+                "submit_graph_patch and the graph macro tools (create_work_region, "
+                "attach_verifier, attach_check, create_gap_planner, create_join, "
+                "request_gate, retire_or_supersede, create_corrective_region). Use "
+                "them directly as native tool calls — prefer the macro tools; use "
+                "submit_graph_patch with raw ops only when no macro expresses the "
+                "mutation you need. The MCP endpoint for this execution is "
+                f"{context.graph_mcp_url}."
+            )
+
         if context.api_base_url is None:
-            return prompt + git_section
+            return prompt + git_section + graph_tools_section
 
         base = context.api_base_url.rstrip("/")
 
@@ -521,6 +535,7 @@ class CLIAgent:
         working_dir: str,
         mcp_servers: list[Any],
         available_tools: list[str] | None = None,
+        context: ExecutionContext | None = None,
     ) -> Path:
         """Write a generated MCP config for Claude Code subprocesses.
 
@@ -528,6 +543,8 @@ class CLIAgent:
             working_dir: Directory path where `.orchestrator/mcp.json` will be written.
             mcp_servers: List of MCPServerConfig objects.
             available_tools: Explicit task tools used to scope orchestrator MCP exposure.
+            context: Execution context, used to add the per-execution graph MCP
+                endpoint (when set) as an additional SSE server for `claude` commands.
         """
         scoped_mcp_servers = scope_mcp_servers_to_available_tools(
             mcp_servers,
@@ -554,6 +571,16 @@ class CLIAgent:
                 server_entry["env"] = server_entry.get("env", {})
                 server_entry["env"][mcp.auth_token_env] = f"${{{mcp.auth_token_env}}}"
             mcp_config["mcpServers"][mcp.name] = server_entry
+
+        if (
+            context is not None
+            and context.graph_mcp_url is not None
+            and Path(self._command).name == "claude"
+        ):
+            mcp_config["mcpServers"]["orchestrator-graph"] = {
+                "type": "sse",
+                "url": context.graph_mcp_url,
+            }
 
         mcp_json_path = self._mcp_json_path(working_dir)
         mcp_json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -656,6 +683,7 @@ class CLIAgent:
                     context.working_dir,
                     context.mcp_servers or [],
                     context.available_tools,
+                    context,
                 )
 
             cmd = [path, *self._args_with_mcp_config(mcp_json_path, context.available_tools)]
