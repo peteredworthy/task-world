@@ -28,14 +28,14 @@ subprocess exits — not from a tool call. So making claude_cli graph-capable
 requires new plumbing to deliver `graph_patch_callback` (and `grade`, for
 verifier nodes) into that closure-based world — not just flipping a flag.
 
-All 14 graph tools an LLM can call (`submit_graph_patch` plus 13 "macro"
+All 9 graph tools an LLM can call (`submit_graph_patch` plus 8 macro
 tools — `create_work_region`, `attach_verifier`, `attach_check`,
 `create_gap_planner`, `create_join`, `request_gate`, `retire_or_supersede`,
-`create_corrective_region`, etc.) already normalize through **one** shared
+`create_corrective_region`) already normalize through **one** shared
 closure, `graph_patch_callback` — `route_tool_call`/`_normalize_macro_tool_payload`
 in `runners/agents/codex/common.py` (despite the module name, this logic is
 not codex-specific) turn every one of them into a patch envelope before
-calling it. The real contract is smaller than "14 tools": it's "can this
+calling it. The real contract is smaller than "9 tools": it's "can this
 runner deliver `graph_patch_callback` and `grade` calls in-process."
 
 ## 2. Goals / non-goals
@@ -121,8 +121,7 @@ with existing `agent_died` reconciliation on restart.
 
 ### 4.3 New MCP tools
 
-The per-execution route exposes `submit_graph_patch` plus the 13 macro tool
-names, plus `graph_grade` (§6) when the node is a verifier. No new prompt
+The per-execution route exposes `submit_graph_patch` plus the 8 macro tool names (`create_work_region`, `create_corrective_region`, `attach_verifier`, `attach_check`, `create_gap_planner`, `create_join`, `request_gate`, `retire_or_supersede`), plus `graph_grade` (§6) when the node is a verifier. No new prompt
 plumbing is needed to scope these to the right node: since the tools are
 served from an execution-scoped URL, there's nothing to disambiguate by
 `run_id`/`node_id` in the tool arguments at all — every call arriving on
@@ -185,6 +184,6 @@ under one name.
 
 ## 7. Open questions carried into implementation planning
 
-- Exact MCP tool JSON schemas for the 13 macro tools on claude_cli's side —
+- Exact MCP tool JSON schemas for the 8 macro tools on claude_cli's side —
   should mirror codex's existing tool specs in `codex/common.py` (now moved)
   as closely as possible for prompt/behavior parity.
