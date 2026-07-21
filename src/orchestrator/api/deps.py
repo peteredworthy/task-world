@@ -38,6 +38,7 @@ from orchestrator.runners.agent_detector import ToolDetector
 
 if TYPE_CHECKING:
     from orchestrator.graph_runtime import GraphDispatchContext
+    from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
     from orchestrator.graph_runtime.store import GraphEventStore
 
 
@@ -405,8 +406,16 @@ def make_graph_runner(
     connection_manager: ConnectionManager | None = None,
     artifact_stores: ArtifactStoreResolver | None = None,
     journal_max_bytes: int = 64 * 1024 * 1024,
+    graph_mcp_registry: "GraphMcpExecutionRegistry | None" = None,
 ) -> Callable[[str], Awaitable[None]]:
-    """Return a graph run driver callback for ``SignalConsumer``."""
+    """Return a graph run driver callback for ``SignalConsumer``.
+
+    ``graph_mcp_registry`` is accepted and threaded through here so callers
+    (``api/app.py``) can supply the process-wide registry, but it is not yet
+    forwarded into ``build_graph_runtime`` below: that function doesn't accept
+    this parameter until a later task wires it up. Forwarding it early would
+    fail at call time (``build_graph_runtime`` doesn't have this kwarg yet).
+    """
     from orchestrator.runners import OutputBatcher
 
     output_batcher = OutputBatcher(
@@ -436,7 +445,10 @@ def make_graph_runner(
             on_agent_output=on_agent_output,
             artifact_stores=artifact_stores,
             journal_max_bytes=journal_max_bytes,
-            runtime_builder=partial(build_graph_runtime, journal_max_bytes=journal_max_bytes),
+            runtime_builder=partial(
+                build_graph_runtime,
+                journal_max_bytes=journal_max_bytes,
+            ),
         )
         try:
             await driver.run(run_id)

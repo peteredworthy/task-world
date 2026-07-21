@@ -31,6 +31,7 @@ from orchestrator.artifacts import (
 from orchestrator.config.enums import RoutineSource, RunStatus
 from orchestrator.config.global_config import GlobalConfig, load_global_config
 from orchestrator.db import create_engine, create_session_factory, init_db
+from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
 from orchestrator.state.models import Run
 from orchestrator.envfiles.store import EnvFileStore
 from orchestrator.envfiles.lifecycle import EnvFileLifecycle
@@ -523,6 +524,7 @@ async def _lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             connection_manager=app.state.connection_manager,
             artifact_stores=app.state.artifact_store_resolver,
             journal_max_bytes=app.state.global_config.journal.max_bytes,
+            graph_mcp_registry=app.state.graph_mcp_registry,
         ),
         workflow_preparer=make_workflow_preparer(getattr(app.state, "runner_executor", None)),
         journal_max_bytes=app.state.global_config.journal.max_bytes,
@@ -696,6 +698,14 @@ def create_app(
     else:
         app.state.connection_manager = ConnectionManager()
 
+    # Registry of live per-execution graph MCP ASGI apps, populated by
+    # GraphDispatchExecutor for the lifetime of one graph-node execution and
+    # read by the /mcp-graph dispatcher mounted below. Created here (not in
+    # _lifespan) because _mount_mcp_sse runs synchronously during create_app(),
+    # before _lifespan ever executes — and test fixtures using ASGITransport
+    # skip lifespan entirely.
+    app.state.graph_mcp_registry = GraphMcpExecutionRegistry()
+
     # Authentication
     auth_config = resolve_auth_config(auth_disabled=auth_disabled, jwt_secret=jwt_secret)
     app.state.auth_config = auth_config
@@ -822,7 +832,7 @@ def create_app(
     app.include_router(tasks_router, dependencies=auth_deps)
 
     # Mount MCP SSE transport at /mcp (with auth middleware)
-    _mount_mcp_sse(app, auth_config)
+    _mount_mcp_sse(app, auth_config, app.state.graph_mcp_registry)
 
     @app.get("/health")
     async def health() -> dict[str, str]:  # type: ignore[reportUnusedFunction]
@@ -869,7 +879,11 @@ class _SessionPerCallHandler:
             return await handler.handle(tool_name, arguments)
 
 
-def _mount_mcp_sse(app: FastAPI, auth_config: AuthConfig) -> None:
+def _mount_mcp_sse(
+    app: FastAPI,
+    auth_config: AuthConfig,
+    graph_mcp_registry: GraphMcpExecutionRegistry,
+) -> None:
     """Create and mount the MCP SSE transport.
 
     Creates an OrchestratorMCPServer backed by a session-per-call handler
@@ -883,6 +897,7 @@ def _mount_mcp_sse(app: FastAPI, auth_config: AuthConfig) -> None:
     from starlette.types import ASGIApp, Receive, Scope, Send
 
     from orchestrator.api.auth import InvalidTokenError, validate_token
+    from orchestrator.api.mcp.graph_dispatcher import GraphMcpDispatcher
     from orchestrator.api.mcp.server import ALL_TOOLS, OrchestratorMCPServer
 
     handler = _SessionPerCallHandler(app)
@@ -950,10 +965,12 @@ def _mount_mcp_sse(app: FastAPI, auth_config: AuthConfig) -> None:
             await scoped_app(scoped_scope, receive, send)
 
     scoped_mcp_asgi = _ScopedMcpDispatcher(handler)
+    graph_mcp_asgi = GraphMcpDispatcher(graph_mcp_registry)
 
     if auth_config.auth_disabled:
         app.mount("/mcp", mcp_asgi)  # type: ignore[arg-type]
         app.mount("/mcp-scoped", scoped_mcp_asgi)  # type: ignore[arg-type]
+        app.mount("/mcp-graph", graph_mcp_asgi)  # type: ignore[arg-type]
     else:
 
         class _McpAuthMiddleware:
@@ -988,6 +1005,7 @@ def _mount_mcp_sse(app: FastAPI, auth_config: AuthConfig) -> None:
 
         app.mount("/mcp", _McpAuthMiddleware(mcp_asgi))  # type: ignore[arg-type]
         app.mount("/mcp-scoped", _McpAuthMiddleware(scoped_mcp_asgi))  # type: ignore[arg-type]
+        app.mount("/mcp-graph", _McpAuthMiddleware(graph_mcp_asgi))  # type: ignore[arg-type]
 
     # Serve architecture documentation site as static files
     _docs_dir = Path(__file__).resolve().parent.parent.parent.parent / "docs" / "architecture-site"
