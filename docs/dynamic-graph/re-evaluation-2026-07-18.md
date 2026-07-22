@@ -324,3 +324,4 @@ data would be guesswork.
 | Polling → event-triggered driver | Explicitly not a prerequisite for anything (guard-retirement ledger); revisit only if drive-loop latency becomes a measured problem. |
 | Steering directive (operator context-injection) | Real gap, but product-shaped; belongs to the UI-v2 / JTBD track, not this hardening roadmap. |
 | SQLite scaling (OQ-4) | Human steer on record: file-payload removal (W5.5) bought enough headroom for now. |
+| Promote hot payload fields to relational columns | Precondition (100% strict payload catalog) is met, but no representative measurement pass has run against main yet — see `post-w5-event-column-promotion.md`. |
