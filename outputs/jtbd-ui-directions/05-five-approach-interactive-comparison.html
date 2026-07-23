@@ -26,6 +26,21 @@
     .state-rail { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; width: 100%; }
     .state-rail button { min-width: 0; }
     .state-rail button[aria-pressed="true"] { color: var(--ink); border-color: var(--focus); }
+    .concept-workspace.cartography { display: grid; grid-template-columns: minmax(150px, .6fr) minmax(360px, 1.6fr) minmax(330px, 1fr); min-height: min(680px, calc(100vh - 142px)); border: 1px solid var(--line); background: var(--panel); overflow: hidden; }
+    .fleet-rail, .selection-inspector { padding: 14px; background: #081721; }
+    .fleet-rail { border-right: 1px solid var(--line); }
+    .fleet-ribbon { display: flex; height: 20px; overflow: hidden; border-radius: 3px; margin: 8px 0 12px; }
+    .fleet-ribbon i { display: grid; place-items: center; flex: var(--share); min-width: 18px; color: #06121a; font: 800 11px ui-monospace, monospace; font-style: normal; }
+    .fleet-ribbon i:nth-child(1) { background: var(--blocking); }.fleet-ribbon i:nth-child(2) { background: var(--verified); }.fleet-ribbon i:nth-child(3) { background: var(--waiting); }
+    .fleet-rail ol { padding: 0; margin: 0; list-style: none; }.fleet-rail li { padding: 9px; border-left: 3px solid var(--blocking); background: #102430; }.fleet-rail b, .fleet-rail span { display: block; }.fleet-rail span { margin-top: 4px; color: var(--muted); font-size: 12px; }
+    .graph-map { position: relative; min-height: 480px; overflow: hidden; background-image: linear-gradient(rgba(65,96,116,.14) 1px, transparent 1px), linear-gradient(90deg, rgba(65,96,116,.14) 1px, transparent 1px); background-size: 28px 28px; }
+    .graph-routes { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }.graph-route { fill: none; stroke-width: 5; }.route--verified { stroke: var(--verified); }.route--blocking { stroke: var(--blocking); }.route--proposed { stroke: var(--waiting); stroke-dasharray: 9 7; }
+    .graph-node { position: absolute; left: var(--x); top: var(--y); width: min(150px, 27%); transform: translate(-50%, -50%); padding: 9px; border: 1px solid #416074; border-radius: 6px; background: #0b1b26; color: var(--ink); text-align: left; cursor: pointer; }.graph-node small, .graph-node strong { display: block; }.graph-node small { color: var(--muted); font: 700 10px ui-monospace, monospace; }.graph-node strong { margin: 5px 0; font-size: 12px; }.graph-node.is-selected { border: 2px solid var(--focus); box-shadow: 0 0 0 4px rgba(142,232,216,.14); }
+    .grade { display: inline-block; padding: 2px 5px; border-radius: 3px; font: 800 11px ui-monospace, monospace; }.grade--c { color: #ffd0d8; background: #6f2c34; }.grade--pending { color: #332508; background: var(--waiting); }
+    .selection-inspector { min-width: 0; border-left: 1px solid var(--line); }.selection-inspector > small { color: var(--muted); font: 700 11px ui-monospace, monospace; }.selection-inspector h2 { margin: 6px 0; font-size: 18px; }.selection-inspector p { line-height: 1.4; }.selection-inspector p b { color: var(--focus); }
+    .node-stat-table { max-height: 340px; overflow: auto; border: 1px solid var(--line); }.node-stat-head, .node-stat-row { display: grid; grid-template-columns: minmax(140px, 1fr) 48px 44px 70px 58px; gap: 5px; align-items: center; width: 100%; }.node-stat-head { position: sticky; top: 0; z-index: 1; padding: 8px; background: #102430; color: var(--muted); font: 700 9px ui-monospace, monospace; }.node-stat-row { padding: 8px; border: 0; border-top: 1px solid #1b3546; background: #091923; color: var(--ink); text-align: left; cursor: pointer; }.node-stat-row:hover { background: #102430; }.node-stat-row small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; }.capability { border-left: 3px solid var(--waiting); padding: 8px; background: #201b10; color: #f5d99e; }
+    .cartography[data-state="fleet"] .fleet-rail, .cartography[data-state="position"] .graph-map, .cartography[data-state="cause"] .selection-inspector, .cartography[data-state="action"] .capability, .cartography[data-state="outcome"] .node-stat-table { box-shadow: inset 0 0 0 1px var(--focus); }
+    .cartography[data-state="fleet"] { grid-template-columns: minmax(180px, .85fr) minmax(320px, 1.35fr) minmax(300px, .9fr); }.cartography[data-state="position"] { grid-template-columns: minmax(130px, .45fr) minmax(440px, 1.9fr) minmax(280px, .8fr); }.cartography[data-state="cause"] { grid-template-columns: minmax(130px, .45fr) minmax(340px, 1.3fr) minmax(350px, 1.25fr); }.cartography[data-state="action"] { grid-template-columns: minmax(130px, .45fr) minmax(340px, 1.2fr) minmax(360px, 1.35fr); }.cartography[data-state="outcome"] { grid-template-columns: minmax(130px, .45fr) minmax(340px, 1.15fr) minmax(360px, 1.4fr); }
     @media (max-width: 720px) {
       .slide { padding: 8px; }
       .deck-nav, .deck-footer { gap: 4px; padding: 0 6px; font-size: 10px; }
@@ -34,6 +49,7 @@
       .deck-nav button { padding: 2px 4px; }
       .state-rail { gap: 2px; font-size: 11px; }
       .state-rail button { padding: 3px 1px; }
+      .concept-workspace.cartography { grid-template-columns: 1fr; }.fleet-rail, .selection-inspector { border: 0; border-bottom: 1px solid var(--line); }.graph-map { min-height: 390px; }.node-stat-head, .node-stat-row { grid-template-columns: minmax(135px, 1fr) 42px 38px 58px 52px; font-size: 11px; }
     }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
   </style>
@@ -74,6 +90,27 @@
     const stateRail = () => `<nav class="state-rail" aria-label="Operating loop state">${WORKSPACE_STATES.map((id, index) => `<button type="button" data-workspace-state="${id}" aria-pressed="${state.workspaceState === id}">${index + 1} ${id === 'cause' ? 'Cause / Evidence' : id[0].toUpperCase() + id.slice(1)}</button>`).join('')}</nav>`;
     const renderLoop = () => `<section class="slide" data-slide="loop"><h1>One operating loop, five interface models</h1><p>Notice → position → decide or explain → verify → act → learn → compare.</p></section>`;
     const renderPlaceholderConcept = (id, title) => `<section class="slide" data-slide="${id}"><header><h1>${title}</h1>${state.slide === id ? stateRail() : ''}</header><div class="concept-workspace" data-concept="${id}"></div></section>`;
+    function renderNodeRows(nodes) {
+      return `<div class="node-stat-table" role="table" aria-label="Nodes touching selected requirement">
+        <div class="node-stat-head" role="row"><span role="columnheader">Node / attempt</span><span role="columnheader">Grade</span><span role="columnheader">Files</span><span role="columnheader">New evidence</span><span role="columnheader">Cost</span></div>
+        ${nodes.map((node) => `<button type="button" class="node-stat-row" role="row" data-node-stat-row data-node-id="${node.id}">
+          <span><strong>${escapeHtml(node.name)}</strong><small>${node.id} · ${node.kind} · attempt ${node.attempt}</small></span>
+          <span class="grade grade--${(node.grade || 'pending').toLowerCase()}">${node.grade || '—'}</span>
+          <span>${node.files ?? '—'}</span><span>${node.newEvidence > 0 ? `+${node.newEvidence}` : node.newEvidence}</span><span>$${node.cost.toFixed(2)}</span>
+        </button>`).join('')}
+      </div>`;
+    }
+    function renderCartography(scenario, workspaceState, selectedId) {
+      const selected = scenario.nodes.find((node) => node.id === selectedId) || scenario.nodes[3];
+      return `<section class="concept-workspace cartography" data-concept="cartography" data-state="${workspaceState}">
+        <aside class="fleet-rail"><div class="fleet-ribbon" role="img" aria-label="${scenario.fleet.attention} need attention, ${scenario.fleet.progressing} progressing, ${scenario.fleet.waiting} waiting"><i style="--share:${scenario.fleet.attention}">2</i><i style="--share:${scenario.fleet.progressing}">7</i><i style="--share:${scenario.fleet.waiting}">1</i></div><ol><li><b>${scenario.run.id} ${scenario.run.name}</b><span>same failure ×2 · ${scenario.run.blockedSuccessors} blocked</span></li></ol></aside>
+        <div class="graph-map" aria-label="Issue neighborhood for ${escapeHtml(scenario.requirement.name)}">
+          <svg class="graph-routes" viewBox="0 0 800 500" aria-hidden="true"><path class="graph-route route--verified" d="M90 160 C190 160 210 230 315 230"/><path class="graph-route route--blocking" d="M315 230 C470 160 520 150 650 160"/><path class="graph-route route--blocking" d="M315 230 C470 280 520 330 650 340"/><path class="graph-route route--proposed" d="M315 230 C330 330 360 390 430 420"/></svg>
+          ${scenario.nodes.map((node, index) => `<button type="button" class="graph-node ${node.id === selected.id ? 'is-selected' : ''}" data-node-id="${node.id}" style="--x:${[8,34,66,68,36][index]}%;--y:${[25,38,20,58,75][index]}%"><small>${node.id} · ${node.kind}</small><strong>${escapeHtml(node.name)}</strong><span class="grade grade--${(node.grade || 'pending').toLowerCase()}">${node.grade || '—'}</span></button>`).join('')}
+        </div>
+        <aside class="selection-inspector" data-selected-object><small>Selected node · ${selected.id}</small><h2>${escapeHtml(selected.name)}</h2><p data-requirement-id="${scenario.requirement.id}"><b><span>${scenario.requirement.id}</span> · required</b> ${escapeHtml(scenario.requirement.name)}</p>${renderNodeRows(scenario.nodes)}<p class="capability capability--proposed">Proposed capability · bind replay fixture and incident evidence</p></aside>
+      </section>`;
+    }
     const renderComparison = () => `<section class="slide" data-slide="comparison"><h1>Compare architectural trade-offs</h1></section>`;
     function announce(message) { document.querySelector('[data-live-region]').textContent = message; }
     function goToSlide(id) {
@@ -90,7 +127,8 @@
       return true;
     }
     function render() {
-      const markup = [renderLoop(), renderPlaceholderConcept('cartography', 'Operational Cartography'), renderPlaceholderConcept('causal', 'Causal Spine'), renderPlaceholderConcept('intervention', 'Intervention Desk'), renderPlaceholderConcept('evidence', 'Evidence Workbench'), renderPlaceholderConcept('weave', 'Mission Weave'), renderComparison()].join('');
+      const cartography = `<section class="slide" data-slide="cartography"><header><h1>Operational Cartography</h1>${state.slide === 'cartography' ? stateRail() : ''}</header>${renderCartography(SCENARIO, state.workspaceState, state.selectedByConcept.cartography)}</section>`;
+      const markup = [renderLoop(), cartography, renderPlaceholderConcept('causal', 'Causal Spine'), renderPlaceholderConcept('intervention', 'Intervention Desk'), renderPlaceholderConcept('evidence', 'Evidence Workbench'), renderPlaceholderConcept('weave', 'Mission Weave'), renderComparison()].join('');
       document.querySelector('#slides').innerHTML = markup;
       document.querySelectorAll('[data-slide]').forEach((slide) => { slide.hidden = slide.dataset.slide !== state.slide; });
       document.querySelector('#slide-position').textContent = `${SLIDES.indexOf(state.slide) + 1} / ${SLIDES.length}`;
@@ -98,6 +136,10 @@
     }
     document.querySelector('[data-action="previous-slide"]').addEventListener('click', () => goToSlide(SLIDES[Math.max(0, SLIDES.indexOf(state.slide) - 1)]));
     document.querySelector('[data-action="next-slide"]').addEventListener('click', () => goToSlide(SLIDES[Math.min(SLIDES.length - 1, SLIDES.indexOf(state.slide) + 1)]));
+    document.addEventListener('click', (event) => {
+      const target = event.target instanceof Element ? event.target.closest('[data-concept="cartography"] [data-node-id]') : null;
+      if (target instanceof HTMLElement) selectObject('cartography', target.dataset.nodeId);
+    });
     addEventListener('hashchange', () => {
       const id = SLIDES.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'loop';
       if (state.slide === id) return;

@@ -218,6 +218,76 @@ ui-lint..................................................................Passed
 ui-typecheck.............................................................Passed
 ```
 
+## Operational Cartography Workspace (JTBD presentation Task 2)
+
+### Scope and files
+
+Modified Task 2 implementation files:
+
+- `outputs/jtbd-ui-directions/05-five-approach-interactive-comparison.html`
+- `ui/tests/e2e/jtbd-presentation.spec.ts`
+
+No recovered documentation, presentation files, plans/specifications, production React code, backend code, or progress ledger was modified. Pre-existing unrelated working-tree changes remain unmodified.
+
+### TDD evidence
+
+#### RED
+
+1. Appended the required `cartography joins topology, readable requirements, grades, and vertical node statistics` Playwright test before changing the presentation.
+2. Ran from `ui/`:
+
+   ```sh
+   npm run test:e2e -- jtbd-presentation.spec.ts -g "cartography joins"
+   ```
+
+3. Result: **FAIL**. The test timed out looking for `Recovery resumes suspended work exactly once after executor restart`, because the Cartography concept still rendered an empty temporary workspace.
+
+#### GREEN
+
+1. Added `renderNodeRows()` and `renderCartography()` using the established `SCENARIO`, workspace state, selected Cartography node, and `selectObject()` contract.
+2. Replaced only the Cartography placeholder with the renderer, added its CSS layout/responsiveness, and added one delegated Cartography node click handler.
+3. Re-ran the focused command above.
+4. Result: **PASS — 1 passed (1.9s)**.
+
+### Final verification evidence
+
+Executed from `ui/` after the final workspace styling:
+
+```sh
+npm run test:e2e -- jtbd-presentation.spec.ts && npm run lint && npm run typecheck
+```
+
+Results:
+
+- Playwright presentation suite: **7 passed (2.4s)**.
+- `npm run lint`: **exit 0**, no ESLint findings.
+- `npm run typecheck`: **exit 0**, TypeScript build completed.
+
+Reviewed all five workspace states in a real headless Chromium session by opening `#cartography` and pressing `1` through `5`. Each state updated its active state control and its layout proportions:
+
+| State | Active control | Computed grid columns |
+| --- | --- | --- |
+| fleet | fleet | `340.547px 540.859px 360.594px` |
+| position | position | `177.422px 749.141px 315.438px` |
+| cause | cause | `186.297px 538.188px 517.5px` |
+| action | action | `186.297px 496.797px 558.906px` |
+| outcome | outcome | `186.297px 476.094px 579.594px` |
+
+### Self-review
+
+- The fleet ribbon is proportional through `flex: var(--share)` and has the requested accessible fleet summary.
+- The central map is the largest region in the default and position-focused layouts, with semantic verified/blocking/proposed SVG routes and readable labels on all nodes.
+- The inspector retains the human-readable requirement, grade, fixed statistic columns, and vertical scrolling/sticky statistics header.
+- Both map nodes and statistics rows carry `data-node-id`; a single delegated handler updates the selected node through the existing controller.
+- The five state layouts preserve the same information while changing emphasis rather than introducing large metric cards or generated IDs as primary labels.
+- Mobile CSS collapses the workspace to fleet, map, and inspector stacking. The existing mobile no-horizontal-overflow Playwright test passes.
+- `git diff --check` reported no whitespace errors during review.
+
+### Concerns
+
+- Playwright and the Vite web server emit Node's upstream `DEP0205` deprecation warning for `module.register()`/`module.registerHooks()`. This is outside these two Task 2 files; all checks still passed.
+- The supplied test requires an exact visible `R2` text node while the specified renderer example combines it with `· required`. The implementation wraps only the existing `R2` label in a span, preserving the rendered phrase and enabling the required exact test.
+
 ## Narrow transitional bridge follow-up
 
 ### RED

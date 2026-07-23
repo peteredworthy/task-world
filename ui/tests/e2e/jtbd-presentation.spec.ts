@@ -59,6 +59,22 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page).toHaveURL(/#cartography$/);
   });
 
+  test('cartography joins topology, readable requirements, grades, and vertical node statistics', async ({ page }) => {
+    await openPresentation(page, '#cartography');
+    await page.keyboard.press('3');
+
+    await expect(page.getByText('Recovery resumes suspended work exactly once after executor restart')).toBeVisible();
+    await expect(page.getByText('R2', { exact: true })).toBeVisible();
+    await expect(page.locator('[data-node-stat-row]')).toHaveCount(5);
+    await expect(page.locator('[data-node-stat-row]').first()).toContainText('Implement replay boundary');
+    await expect(page.locator('[data-node-stat-row]').first()).toContainText('C');
+    await expect(page.locator('.fleet-ribbon')).toHaveAttribute('aria-label', /2 need attention, 7 progressing, 1 waiting/);
+
+    await page.locator('.graph-node[data-node-id="N14"]').click();
+    await expect(page.locator('[data-selected-object]')).toContainText('Implement replay boundary');
+    await expect(page.locator('.capability--proposed')).toContainText('Proposed capability');
+  });
+
   test('fits the presentation and all workspace states at mobile width', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openPresentation(page, '#cartography');
