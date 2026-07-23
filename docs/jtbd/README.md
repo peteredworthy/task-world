@@ -78,3 +78,4 @@ Mock names, timestamps, costs, token totals, and outcomes in the source blueprin
 4. Mark capability status whenever a UI depends on backend or derived behavior.
 5. Keep a job independent of a particular screen. Home surfaces may change; desired progress should not.
 6. Validate prototypes with the rubric and record evidence, not preference alone.
+

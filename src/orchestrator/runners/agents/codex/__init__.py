@@ -10,7 +10,7 @@ from orchestrator.runners.agents.codex.config import (  # noqa: F401
     prepare_codex_config,
 )
 
-register(AgentRunnerType.CODEX_SERVER, create_codex_agent)
+register(AgentRunnerType.CODEX_SERVER, create_codex_agent, graph_capable=True)
 
 __all__ = [
     "CodexServerAgent",

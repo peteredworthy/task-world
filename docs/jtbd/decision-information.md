@@ -69,3 +69,4 @@ An action is not complete when a button is clicked. The UI must show:
 4. resulting lifecycle/topology/decision state;
 5. next expected system activity;
 6. recovery path if the action fails or races with newer state.
+

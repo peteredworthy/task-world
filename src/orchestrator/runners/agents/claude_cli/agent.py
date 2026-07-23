@@ -18,7 +18,7 @@ import shutil
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from orchestrator.runners.errors import (
     AgentCancelledError,
@@ -45,7 +45,6 @@ from orchestrator.runners.types import (
     ExecutionMetrics,
     ExecutionResult,
     GradeCallback,
-    GraphPatchCallback,
     LogLineCallback,
     QuotaBucket,
     SubmitCallback,
@@ -58,8 +57,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-_GRAPH_PATCH_SENTINEL = "ORCHESTRATOR_GRAPH_PATCH:"
-
 
 def _first_api_error(lines: list[str]) -> str | None:
     """Return the first upstream API error line from readable CLI output."""
@@ -68,103 +65,6 @@ def _first_api_error(lines: list[str]) -> str | None:
         if stripped.startswith("API Error:"):
             return stripped
     return None
-
-
-def _extract_graph_patch_payloads(line: str) -> list[dict[str, Any]]:
-    """Extract graph patch envelopes from Claude CLI stream output."""
-    candidates = [line]
-    try:
-        parsed = json.loads(line)
-    except json.JSONDecodeError:
-        parsed = None
-    if parsed is not None:
-        candidates.extend(_json_strings(parsed))
-
-    payloads: list[dict[str, Any]] = []
-    for candidate in candidates:
-        for payload_text in _sentinel_payload_texts(candidate):
-            try:
-                payload, _end = json.JSONDecoder().raw_decode(payload_text)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(payload, dict):
-                payloads.append(_normalize_graph_patch_payload(cast(dict[str, Any], payload)))
-    return payloads
-
-
-def _json_strings(value: Any) -> list[str]:
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        strings: list[str] = []
-        for item in cast(list[Any], value):
-            strings.extend(_json_strings(item))
-        return strings
-    if isinstance(value, dict):
-        strings = []
-        for item in cast(dict[str, Any], value).values():
-            strings.extend(_json_strings(item))
-        return strings
-    return []
-
-
-def _sentinel_payload_texts(text: str) -> list[str]:
-    payloads: list[str] = []
-    start = 0
-    while True:
-        index = text.find(_GRAPH_PATCH_SENTINEL, start)
-        if index < 0:
-            return payloads
-        payload_text = text[index + len(_GRAPH_PATCH_SENTINEL) :].strip()
-        if payload_text:
-            payloads.append(payload_text)
-        start = index + len(_GRAPH_PATCH_SENTINEL)
-
-
-def _normalize_graph_patch_payload(args: dict[str, Any]) -> dict[str, Any]:
-    if "patch" in args:
-        raw_patch = args.get("patch")
-        if not isinstance(raw_patch, dict):
-            raise ValueError("graph patch sentinel requires `patch` to be an object")
-        patch = cast(dict[str, Any], raw_patch)
-    else:
-        patch = args
-
-    patch_id = patch.get("patch_id")
-    base_graph_position = patch.get("base_graph_position")
-    ops = patch.get("ops")
-    if not isinstance(patch_id, str) or not patch_id.strip():
-        raise ValueError("graph patch sentinel requires a non-empty patch_id")
-    if not isinstance(base_graph_position, int):
-        raise ValueError("graph patch sentinel requires integer base_graph_position")
-    if not isinstance(ops, list):
-        raise ValueError("graph patch sentinel requires an ops list")
-
-    payload: dict[str, Any] = {
-        "patch_id": patch_id,
-        "base_graph_position": base_graph_position,
-        "ops": ops,
-    }
-    rationale_record_id = patch.get("rationale_record_id")
-    if isinstance(rationale_record_id, str):
-        payload["rationale_record_id"] = rationale_record_id
-    return payload
-
-
-def _graph_patch_bridge_section() -> str:
-    return (
-        "\n\n## Graph Planner Patch Submission\n"
-        "Claude CLI does not expose submit_graph_patch as a native tool in this runner. "
-        "When you need to call submit_graph_patch, emit exactly one line whose text starts "
-        f"with `{_GRAPH_PATCH_SENTINEL}` followed immediately by the JSON patch envelope.\n"
-        "Accepted forms:\n"
-        f'- `{_GRAPH_PATCH_SENTINEL}{"{"}"patch_id":"patch-1",'
-        f'"base_graph_position":14,"ops":[]{"}"}`\n'
-        f'- `{_GRAPH_PATCH_SENTINEL}{"{"}"patch":{"{"}"patch_id":"patch-1",'
-        f'"base_graph_position":14,"ops":[]{"}"}{"}"}`\n'
-        "Use `base_graph_position` from the planner packet. After emitting the sentinel "
-        "line, finish normally; plain submit runs automatically after the CLI exits."
-    )
 
 
 _CLAUDE_CODE_BASE_TOOLS = (
@@ -362,12 +262,22 @@ class CLIAgent:
                     "  (e.g. `git --no-pager diff`, `git --no-pager log`, `git --no-pager show`)\n"
                 )
 
-        graph_patch_bridge_section = (
-            _graph_patch_bridge_section() if context.graph_patch_callback is not None else ""
-        )
+        graph_tools_section = ""
+        if context.graph_mcp_url is not None:
+            graph_tools_section = (
+                "\n\n## Graph Tools\n"
+                "You are connected to an orchestrator-graph MCP server exposing "
+                "submit_graph_patch and the graph macro tools (create_work_region, "
+                "attach_verifier, attach_check, create_gap_planner, create_join, "
+                "request_gate, retire_or_supersede, create_corrective_region). Use "
+                "them directly as native tool calls — prefer the macro tools; use "
+                "submit_graph_patch with raw ops only when no macro expresses the "
+                "mutation you need. The MCP endpoint for this execution is "
+                f"{context.graph_mcp_url}."
+            )
 
         if context.api_base_url is None:
-            return prompt + git_section + graph_patch_bridge_section
+            return prompt + git_section + graph_tools_section
 
         base = context.api_base_url.rstrip("/")
 
@@ -462,9 +372,6 @@ class CLIAgent:
                     "Include the following header with all API requests:\n"
                     "Authorization: Bearer ${ORCHESTRATOR_AUTH_TOKEN}"
                 )
-
-        if context.graph_patch_callback is not None:
-            api_section += graph_patch_bridge_section
 
         # Add step-level tool hints
         if context.available_tools:
@@ -628,6 +535,7 @@ class CLIAgent:
         working_dir: str,
         mcp_servers: list[Any],
         available_tools: list[str] | None = None,
+        context: ExecutionContext | None = None,
     ) -> Path:
         """Write a generated MCP config for Claude Code subprocesses.
 
@@ -635,6 +543,8 @@ class CLIAgent:
             working_dir: Directory path where `.orchestrator/mcp.json` will be written.
             mcp_servers: List of MCPServerConfig objects.
             available_tools: Explicit task tools used to scope orchestrator MCP exposure.
+            context: Execution context, used to add the per-execution graph MCP
+                endpoint (when set) as an additional SSE server for `claude` commands.
         """
         scoped_mcp_servers = scope_mcp_servers_to_available_tools(
             mcp_servers,
@@ -661,6 +571,20 @@ class CLIAgent:
                 server_entry["env"] = server_entry.get("env", {})
                 server_entry["env"][mcp.auth_token_env] = f"${{{mcp.auth_token_env}}}"
             mcp_config["mcpServers"][mcp.name] = server_entry
+
+        if (
+            context is not None
+            and context.graph_mcp_url is not None
+            and Path(self._command).name == "claude"
+        ):
+            graph_entry: dict[str, Any] = {
+                "type": "sse",
+                "url": context.graph_mcp_url,
+            }
+            if context.auth_token:
+                # Pass env var reference, not the actual token
+                graph_entry["env"] = {"ORCHESTRATOR_AUTH_TOKEN": "${ORCHESTRATOR_AUTH_TOKEN}"}
+            mcp_config["mcpServers"]["orchestrator-graph"] = graph_entry
 
         mcp_json_path = self._mcp_json_path(working_dir)
         mcp_json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -710,24 +634,6 @@ class CLIAgent:
             args.append("--strict-mcp-config")
 
         return args
-
-    async def _submit_graph_patch_sentinels(
-        self,
-        line: str,
-        graph_patch_callback: GraphPatchCallback,
-        submitted_keys: set[str],
-        output_lines: list[str],
-        batch_buffer: list[str],
-    ) -> None:
-        for payload in _extract_graph_patch_payloads(line):
-            key = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-            if key in submitted_keys:
-                continue
-            submitted_keys.add(key)
-            feedback = await graph_patch_callback(payload)
-            feedback_line = f"[submit_graph_patch] {feedback}"
-            output_lines.append(feedback_line)
-            batch_buffer.append(feedback_line)
 
     async def execute(
         self,
@@ -781,6 +687,7 @@ class CLIAgent:
                     context.working_dir,
                     context.mcp_servers or [],
                     context.available_tools,
+                    context,
                 )
 
             cmd = [path, *self._args_with_mcp_config(mcp_json_path, context.available_tools)]
@@ -825,7 +732,6 @@ class CLIAgent:
             # LimitOverrunError threshold — never crash the agent.
             output_lines: list[str] = []
             batch_buffer: list[str] = []
-            submitted_graph_patch_keys: set[str] = set()
             BATCH_SIZE = 20
             CHUNK_SIZE = 64 * 1024  # 64KB per read
             raw_buf: bytes = b""
@@ -851,14 +757,6 @@ class CLIAgent:
                                 batch_buffer.append(line)
                                 if self._parser is not None:
                                     self._parser.parse_line(line)
-                                if context.graph_patch_callback is not None:
-                                    await self._submit_graph_patch_sentinels(
-                                        line,
-                                        context.graph_patch_callback,
-                                        submitted_graph_patch_keys,
-                                        output_lines,
-                                        batch_buffer,
-                                    )
                             raw_buf = b""
                         break
 
@@ -873,14 +771,6 @@ class CLIAgent:
                         batch_buffer.append(line)
                         if self._parser is not None:
                             self._parser.parse_line(line)
-                        if context.graph_patch_callback is not None:
-                            await self._submit_graph_patch_sentinels(
-                                line,
-                                context.graph_patch_callback,
-                                submitted_graph_patch_keys,
-                                output_lines,
-                                batch_buffer,
-                            )
                         if len(batch_buffer) >= BATCH_SIZE and on_output:
                             await on_output(batch_buffer)
                             batch_buffer = []

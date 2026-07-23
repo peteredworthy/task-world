@@ -72,6 +72,29 @@ from orchestrator.workflow.service import find_task_config
 router = APIRouter(prefix="/api/runs", tags=["tasks"])
 
 
+async def require_legacy_execution_mode(
+    run_id: str,
+    service: Annotated[WorkflowService, Depends(get_workflow_service)],
+) -> None:
+    """Reject legacy task-phase endpoints for graph execution_mode runs.
+
+    These endpoints read/write task state through ``run.steps``, which graph
+    runs never populate — without this guard the failure is an accidental
+    404/empty-state rather than a deliberate, documented rejection. The
+    graph-native equivalents live under ``/api/runs/{run_id}/graph/*``
+    (e.g. ``/graph/nodes/{node_id}`` for task detail).
+    """
+    run = await service.get_run(run_id)
+    if getattr(run, "execution_mode", "legacy") == "graph":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Run {run_id} uses execution_mode='graph'; this endpoint is "
+                "legacy-only. Use the /api/runs/{run_id}/graph/* endpoints instead."
+            ),
+        )
+
+
 def _infer_fan_out_child_status(parent_status: TaskStatus) -> str:
     if parent_status in (TaskStatus.COMPLETED, TaskStatus.VERIFYING):
         return TaskStatus.COMPLETED.value
@@ -122,6 +145,7 @@ async def get_task(
     run_id: str,
     task_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> TaskDetailResponse:
     """Get task detail with checklist and attempts."""
     task = await service.get_task(run_id, task_id)
@@ -260,6 +284,7 @@ async def start_task(
     run_id: str,
     task_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> TransitionResponse:
     """Start building a task."""
     result = await service.start_task(run_id, task_id)
@@ -277,6 +302,7 @@ async def submit_task(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> TransitionResponse:
     """Submit task for verification (BUILDING → VERIFYING).
 
@@ -328,6 +354,7 @@ async def complete_verification_endpoint(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     signal_transport: Annotated[SignalTransport, Depends(get_signal_transport)],
     session: Annotated[AsyncSession, Depends(get_session)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> TransitionResponse:
     """Complete verification phase and transition task to its outcome state.
 
@@ -381,6 +408,7 @@ async def complete_recovery(
     task_id: str,
     request: CompleteRecoveryRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> TransitionResponse:
     """Complete recovery phase by specifying the recovery outcome."""
     outcome = request.outcome
@@ -410,6 +438,7 @@ async def retry_fan_out_child(
     run_id: str,
     task_id: str,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> dict[str, str]:
     """Retry a failed fan-out child task.
 
@@ -441,6 +470,7 @@ async def update_checklist_item(
     req_id: str,
     request: UpdateChecklistRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> ChecklistItemSchema:
     """Update a checklist item status."""
     item = await service.update_checklist_item(
@@ -471,6 +501,7 @@ async def set_grade(
     req_id: str,
     request: SetGradeRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> ChecklistItemSchema:
     """Set a grade on a checklist item."""
     item = await service.set_grade(
@@ -624,6 +655,7 @@ async def get_task_prompt(
     routine_dirs: Annotated[list[tuple[Path, RoutineSource]], Depends(get_routine_dirs)],
     session: Annotated[AsyncSession, Depends(get_session)],
     summary_caches: Annotated[dict[str, Any], Depends(get_summary_caches)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> PromptResponse:
     """Get the appropriate prompt for a task based on its current status.
 
@@ -772,6 +804,7 @@ async def get_attempt_logs(
     task_id: str,
     attempt_num: int,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> AgentLogsResponse:
     """Get agent output logs for a specific attempt."""
     run = await service.get_run(run_id)
@@ -887,6 +920,7 @@ async def escalate_requirement(
     task_id: str,
     request: EscalateRequirementRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> dict[str, str]:
     """Agent flags a requirement as unfulfillable.
 
@@ -910,6 +944,7 @@ async def approve_task(
     request: ApproveTaskRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     user: Annotated[str, Depends(get_current_user)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> TransitionResponse:
     """Human approves task verification."""
     result = await service.approve_task(run_id, task_id, user, request.comment)
@@ -927,6 +962,7 @@ async def reject_task(
     request: RejectTaskRequest,
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     user: Annotated[str, Depends(get_current_user)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> TransitionResponse:
     """Human rejects task verification."""
     result = await service.reject_task(run_id, task_id, user, request.reason)
@@ -945,6 +981,7 @@ async def force_accept_task(
     service: Annotated[WorkflowService, Depends(get_workflow_service)],
     executor: Annotated[AgentRunnerExecutor, Depends(get_runner_executor)],
     user: Annotated[str, Depends(get_current_user)],
+    _legacy: Annotated[None, Depends(require_legacy_execution_mode)] = None,
 ) -> TransitionResponse:
     """Override verification failure and force-complete a task.
 

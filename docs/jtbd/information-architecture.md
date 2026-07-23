@@ -124,3 +124,4 @@ Healthy states should be deliberately quiet. Exception states may become informa
 5. Typed steering capability, first as context injection and later as planner-assisted replanning.
 6. Rich topology/map lens after the workspace can already answer position and diagnosis.
 7. Observatory after node attribution and price coverage are trustworthy.
+

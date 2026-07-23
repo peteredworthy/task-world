@@ -63,11 +63,16 @@ logger = logging.getLogger(__name__)
 MAX_NODE_RECOVERIES_PER_DRIVE = 3
 
 
-SUPPORTED_GRAPH_RUNNER_TYPES = frozenset(
-    {
-        AgentRunnerType.CODEX_SERVER,
-    }
-)
+def get_supported_graph_runner_types() -> frozenset[AgentRunnerType]:
+    """Return runner types the graph carrier can dispatch to right now.
+
+    Derived from each runner's declared capability at registration time
+    (``agent_factory.register(..., graph_capable=True)``), not a
+    hand-maintained list — see ``runners/agent_factory.py``.
+    """
+    from orchestrator.runners.agent_factory import get_graph_capable_agent_runner_types
+
+    return get_graph_capable_agent_runner_types()
 
 
 # Persisted, consume-once discriminator written to a run row's pause_reason by
@@ -352,9 +357,10 @@ class GraphRunDriver:
                 completed=False,
                 blocked_reason="Graph run has no agent runner type",
             )
-        if run.agent_runner_type not in SUPPORTED_GRAPH_RUNNER_TYPES:
+        supported_graph_runner_types = get_supported_graph_runner_types()
+        if run.agent_runner_type not in supported_graph_runner_types:
             supported = ", ".join(
-                sorted(runner_type.value for runner_type in SUPPORTED_GRAPH_RUNNER_TYPES)
+                sorted(runner_type.value for runner_type in supported_graph_runner_types)
             )
             runner_type = run.agent_runner_type.value
             message = (

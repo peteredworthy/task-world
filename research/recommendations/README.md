@@ -4,6 +4,19 @@
 > ([../system/](../system/)) and external research ([../external/](../external/)).
 > Each recommendation file carries its own evidence, risks, and validation plan.
 
+> **Re-sequenced 2026-07-18** at HEAD `3cbc824b8`, after the backlog-closeout
+> merge closed R01 in full (July-4 supersession replay pinned, scheduler-view
+> drift fixed, graph human-gate approval landed, codex CLI routing fixed,
+> W-ledger corrected) plus W7, W8, and the Claude SDK runner removal (OQ-5 →
+> remove). The updated priority order, with per-item benefit statements and
+> freshly verified evidence, is
+> [docs/dynamic-graph/re-evaluation-2026-07-18.md](../../docs/dynamic-graph/re-evaluation-2026-07-18.md):
+> **R04 phase 1 (cost/token telemetry) → boundary/mirror hardening +
+> deletion sweep → graph-runner capability contract + second graph runner
+> (unblocks OQ-1) → R02 → R07 → R03.** The roadmap table below is retained
+> as the original analysis; where it disagrees with the re-evaluation, the
+> re-evaluation wins.
+
 ## Recommended direction
 
 **Keep the architecture. Add the policy layer, the oracles, and the

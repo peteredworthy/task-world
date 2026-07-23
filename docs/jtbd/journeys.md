@@ -4,9 +4,9 @@ These journeys describe trigger-to-outcome behavior. Screen names are responsibi
 
 ## Journey A — The all-quiet sweep
 
-**Jobs:** J1\
-**Trigger:** The operator sits down or returns after a context switch.\
-**Outcome:** Confidence that nothing needs attention without opening a run.\
+**Jobs:** J1  
+**Trigger:** The operator sits down or returns after a context switch.  
+**Outcome:** Confidence that nothing needs attention without opening a run.  
 **Target:** Under 30 seconds, zero required clicks.
 
 | Stage | Operator question | Information required | Evidence / provenance | UI responsibility |
@@ -20,9 +20,9 @@ These journeys describe trigger-to-outcome behavior. Screen names are responsibi
 
 ## Journey B — Answer a decision
 
-**Jobs:** J3\
-**Trigger:** A run reaches a human gate, clarification, patch approval, or escalation.\
-**Outcome:** A safe, recorded answer with consequences understood; the run unblocks or deliberately remains paused.\
+**Jobs:** J3  
+**Trigger:** A run reaches a human gate, clarification, patch approval, or escalation.  
+**Outcome:** A safe, recorded answer with consequences understood; the run unblocks or deliberately remains paused.  
 **Target:** Under one minute for a routine decision.
 
 | Stage | Operator question | Information required | Evidence / provenance | UI responsibility |
@@ -37,9 +37,9 @@ These journeys describe trigger-to-outcome behavior. Screen names are responsibi
 
 ## Journey C — Diagnose and steer a degrading run
 
-**Jobs:** J2, J4, J5, J6\
-**Trigger:** A repeated verifier finding indicates that another retry is unlikely to add information.\
-**Outcome:** The run recovers without cancel-and-restart, and the intervention is auditable.\
+**Jobs:** J2, J4, J5, J6  
+**Trigger:** A repeated verifier finding indicates that another retry is unlikely to add information.  
+**Outcome:** The run recovers without cancel-and-restart, and the intervention is auditable.  
 **Target:** Find the causal information gap before spending another attempt.
 
 This journey is the comparison scenario for the four concept decks.
@@ -60,8 +60,8 @@ This journey is the comparison scenario for the four concept decks.
 
 ## Journey D — Audit one node deeply
 
-**Jobs:** J5\
-**Trigger:** A claim needs verification or an operator wants to understand actual agent behavior.\
+**Jobs:** J5  
+**Trigger:** A claim needs verification or an operator wants to understand actual agent behavior.  
 **Outcome:** The node’s inputs, interaction, outputs, file effect, and cost are understood in one stable context.
 
 | Stage | Operator question | Information required | Evidence / provenance | UI responsibility |
@@ -75,8 +75,8 @@ This journey is the comparison scenario for the four concept decks.
 
 ## Journey E — Review patterns and compare runs
 
-**Jobs:** J7, J8\
-**Trigger:** Weekly operational review or a change to routine, prompt, policy, model, or profile.\
+**Jobs:** J7, J8  
+**Trigger:** Weekly operational review or a change to routine, prompt, policy, model, or profile.  
 **Outcome:** A ranked, priced list of improvement opportunities with drill-through to ground truth.
 
 | Stage | Operator question | Information required | Evidence / provenance | UI responsibility |
@@ -95,3 +95,4 @@ This journey is the comparison scenario for the four concept decks.
 4. Every derived claim must expose source evidence and freshness.
 5. Every action must show scope, consequence, reversibility, authority, and confirmation state.
 6. A responsive layout may re-proportion or stack surfaces, but it must not silently remove context needed for a decision.
+

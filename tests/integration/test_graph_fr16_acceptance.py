@@ -452,7 +452,7 @@ async def test_fr16_unsupported_runner_fails_before_graph_seeding(
         _routine(),
         run_id=run_id,
         repo=repo,
-        agent_runner_type=AgentRunnerType.CLI_SUBPROCESS,
+        agent_runner_type=AgentRunnerType.OPENHANDS_LOCAL,
     )
 
     outcome = await _driver(

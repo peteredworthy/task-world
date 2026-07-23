@@ -134,6 +134,7 @@ _TASKS_ROUTER_SYMBOLS = {
 
 _MCP_SYMBOLS = {"ORCHESTRATOR_TOOLS", "ToolHandler"}
 _MCP_SERVER_SYMBOLS = {"OrchestratorMCPServer", "ALL_TOOLS"}
+_MCP_GRAPH_DISPATCHER_SYMBOLS = {"GraphMcpDispatcher"}
 
 # Pure helpers from graph router + runs router, exposed here so tests don't
 # reach into orchestrator.api.routers.* sub-packages directly.
@@ -230,6 +231,10 @@ def __getattr__(name: str) -> object:
         import orchestrator.api.mcp.server as _mcp_server  # noqa: PLC0415
 
         return getattr(_mcp_server, name)
+    if name in _MCP_GRAPH_DISPATCHER_SYMBOLS:
+        import orchestrator.api.mcp.graph_dispatcher as _mcp_graph_dispatcher  # noqa: PLC0415
+
+        return getattr(_mcp_graph_dispatcher, name)
     if name in _GRAPH_ROUTER_SYMBOLS:
         import orchestrator.api.routers.graph as _graph_router  # noqa: PLC0415
 

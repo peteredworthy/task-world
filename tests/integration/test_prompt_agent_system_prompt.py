@@ -63,7 +63,12 @@ async def _setup_run_with_embedded_routine(
     """Create run with embedded routine, start it, start first task. Returns (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
-        json={"repo_name": "test-project", "branch": "main", "routine_embedded": routine},
+        json={
+            "execution_mode": "legacy",
+            "repo_name": "test-project",
+            "branch": "main",
+            "routine_embedded": routine,
+        },
     )
     assert resp.status_code == 201, f"Expected 201: {resp.text}"
     run_id = resp.json()["id"]
@@ -121,7 +126,12 @@ async def test_prompt_unchanged_via_file_based_routine(
     client, drain = client_and_drain
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     assert resp.status_code == 201
     run_id = resp.json()["id"]

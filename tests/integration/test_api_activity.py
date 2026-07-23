@@ -62,7 +62,12 @@ async def _setup_active_run(client: AsyncClient, drain: DrainFn) -> tuple[str, s
     """Create a run and start it, returning (run_id, task_id)."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     run_id = resp.json()["id"]
     task_id = resp.json()["steps"][0]["tasks"][0]["id"]
@@ -108,7 +113,12 @@ async def test_activity_for_new_run_includes_run_created_event(client: AsyncClie
     """A freshly created run exposes its events_v2 run_created event."""
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     run_id = resp.json()["id"]
 
@@ -213,7 +223,12 @@ async def test_activity_and_stream_read_agent_output_from_events_v2_only(
     client, _drain, _repos_dir, _worktrees_dir, app = _shared_app_fixture
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": repo_name,
+            "branch": "main",
+        },
     )
     assert resp.status_code == 201
     run = resp.json()
@@ -273,7 +288,12 @@ async def test_activity_defaults_to_summary_payload_for_agent_output(
     client, _drain, _repos_dir, _worktrees_dir, app = _shared_app_fixture
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": repo_name, "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": repo_name,
+            "branch": "main",
+        },
     )
     assert resp.status_code == 201
     run = resp.json()
@@ -331,7 +351,12 @@ async def test_activity_includes_compact_graph_patch_decision_summaries(
     client, app, _drain = client_app_and_drain
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     run_id = resp.json()["id"]
 
@@ -396,7 +421,12 @@ async def test_activity_includes_graph_rejected_command_verifier_and_blocker_fac
     client, app, _drain = client_app_and_drain
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     run_id = resp.json()["id"]
 
@@ -517,7 +547,12 @@ async def test_graph_activity_summaries_preserve_filtering_and_pagination(
     client, app, _drain = client_app_and_drain
     resp = await client.post(
         "/api/runs",
-        json={"routine_id": "simple-routine", "repo_name": "proj-1", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_id": "simple-routine",
+            "repo_name": "proj-1",
+            "branch": "main",
+        },
     )
     run_id = resp.json()["id"]
 

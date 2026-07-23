@@ -120,16 +120,14 @@ DECISION_RECORD_VALUE_FIELDS = (
 BOOLEAN_PAYLOAD_FIELDS = frozenset(
     {
         "active",
-        "approved",
         "behavior_change",
+        "deleted_snapshot_ref",
         "explicit_authority_required",
         "new_behavior",
+        "rate_missing",
         "required",
         "requires_authority",
         "semantic_change",
-        "stale_only",
-        "supported",
-        "unsupported",
         "validation_strengthening",
     }
 )

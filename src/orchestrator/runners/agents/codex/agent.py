@@ -223,8 +223,6 @@ class CodexServerAgent:
     Configuration:
         model: Model name forwarded to the Codex session.  Defaults to the
             server's configured default when omitted.
-        callback_channel: ``"rest"`` or ``"mcp"`` — determines how the
-            prompt instructs the Codex agent to call back.
         api_key: OpenAI API key sent via ``account/login/start``.  Falls back
             to ``OPENAI_API_KEY`` from the environment.  If neither is present,
             the login step is skipped (the server must be pre-configured).
@@ -252,7 +250,6 @@ class CodexServerAgent:
     def __init__(
         self,
         model: str | None = None,
-        callback_channel: str = "rest",
         api_key: str | None = None,
         restrictions: str = "managed",
         reasoning_effort: str = "high",
@@ -261,7 +258,6 @@ class CodexServerAgent:
         _environ: dict[str, str] | None = None,
     ) -> None:
         self._model = model
-        self._callback_channel = callback_channel
         # Reasoning effort for Codex model turns. Falls back to "medium" for any
         # value outside the supported set.
         self._reasoning_effort = (

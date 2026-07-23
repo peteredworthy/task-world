@@ -23,13 +23,6 @@ CODEX_SERVER_CONFIG: list[AgentConfigField] = [
         allow_custom=True,
     ),
     AgentConfigField(
-        name="callback_channel",
-        field_type="select",
-        default="rest",
-        description="How the Codex server calls back to the orchestrator",
-        options=["rest", "mcp"],
-    ),
-    AgentConfigField(
         name="restrictions",
         field_type="select",
         default="managed",

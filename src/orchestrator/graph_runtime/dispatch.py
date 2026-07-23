@@ -50,6 +50,7 @@ from orchestrator.graph_runtime.gatekeeper import (
     metadata_from_file_state_record,
     policy_with_pattern_library,
 )
+from orchestrator.graph_runtime.graph_mcp_registry import GraphMcpExecutionRegistry
 from orchestrator.graph_runtime.outbox import OutboxItem, SideEffectExecutor
 from orchestrator.graph_runtime.store import GraphEventStore
 from orchestrator.runners import AgentRunner, create_agent_runner
@@ -190,6 +191,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
         on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
         on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
         monotonic: Callable[[], float] = perf_counter,
+        graph_mcp_registry: "GraphMcpExecutionRegistry | None" = None,
+        base_url: str = "http://localhost:8000",
     ) -> None:
         self._session_factory = session_factory
         self._controller = controller
@@ -203,6 +206,8 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self._on_agent_output = on_agent_output
         self._on_agent_usage = on_agent_usage
         self._monotonic = monotonic
+        self._graph_mcp_registry = graph_mcp_registry
+        self._base_url = base_url.rstrip("/")
 
     async def dispatch(self, item: OutboxItem) -> None:
         if item.kind == "snapshot_cleanup":
@@ -320,19 +325,41 @@ class GraphDispatchExecutor(SideEffectExecutor):
                 if self._on_agent_output is not None:
                     await self._on_agent_output(context, lines)
 
-            started = self._monotonic()
-            result = await runner.execute(
-                self._execution_context(
-                    context,
-                    graph_patch_callback=(
-                        on_submit_graph_patch if _can_submit_graph_patch(context) else None
+            graph_mcp_token: str | None = None
+            graph_mcp_url: str | None = None
+            can_submit_patch = _can_submit_graph_patch(context)
+            is_verifier = context.node_kind == "verifier"
+            if self._graph_mcp_registry is not None and (can_submit_patch or is_verifier):
+                import secrets
+
+                from orchestrator.graph_runtime.graph_mcp_tools import build_graph_mcp_server
+
+                graph_mcp_server = build_graph_mcp_server(
+                    on_submit_graph_patch,
+                    on_grade if is_verifier else None,
+                )
+                graph_mcp_token = secrets.token_urlsafe(24)
+                self._graph_mcp_registry.register(
+                    graph_mcp_token, graph_mcp_server.sse_app(mount_path="/")
+                )
+                graph_mcp_url = f"{self._base_url}/mcp-graph/{graph_mcp_token}/sse"
+
+            try:
+                started = self._monotonic()
+                result = await runner.execute(
+                    self._execution_context(
+                        context,
+                        graph_patch_callback=(on_submit_graph_patch if can_submit_patch else None),
+                        graph_mcp_url=graph_mcp_url,
                     ),
-                ),
-                on_checklist_update,
-                on_submit,
-                on_output=on_output,
-                on_grade=on_grade if context.node_kind == "verifier" else None,
-            )
+                    on_checklist_update,
+                    on_submit,
+                    on_output=on_output,
+                    on_grade=on_grade if is_verifier else None,
+                )
+            finally:
+                if graph_mcp_token is not None:
+                    self._graph_mcp_registry.unregister(graph_mcp_token)  # type: ignore[union-attr]
             result.metrics.duration_ms = int((self._monotonic() - started) * 1000)
             from orchestrator.runners import extract_metrics_and_usage
 
@@ -431,6 +458,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
         self,
         context: GraphDispatchContext,
         graph_patch_callback: Callable[[dict[str, Any]], Awaitable[str]] | None = None,
+        graph_mcp_url: str | None = None,
     ) -> ExecutionContext:
         node = context.node_payload
         prompt = _prompt_for_node(context)
@@ -445,6 +473,7 @@ class GraphDispatchExecutor(SideEffectExecutor):
             node_kind=context.node_kind,
             node_role=context.node_role,
             graph_patch_callback=graph_patch_callback,
+            graph_mcp_url=graph_mcp_url,
             available_tools=_available_tools_for_context(context),
             mcp_servers=cast(Any, node.get("mcp_servers")),
             work_mode=_work_mode(node.get("work_mode")),
@@ -894,6 +923,8 @@ def build_graph_runtime(
     journal_max_bytes: int = 64 * 1024 * 1024,
     on_agent_output: Callable[[GraphDispatchContext, list[str]], Awaitable[None]] | None = None,
     on_agent_usage: Callable[[GraphDispatchContext, Any], Awaitable[None]] | None = None,
+    graph_mcp_registry: "GraphMcpExecutionRegistry | None" = None,
+    base_url: str = "http://localhost:8000",
 ) -> tuple[GraphController, GraphDispatchExecutor]:
     """Assemble graph controller and dispatch executor without API imports."""
 
@@ -912,6 +943,8 @@ def build_graph_runtime(
         artifact_store=artifact_store,
         on_agent_output=on_agent_output,
         on_agent_usage=on_agent_usage,
+        graph_mcp_registry=graph_mcp_registry,
+        base_url=base_url,
     )
     return controller, executor
 

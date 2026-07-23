@@ -169,19 +169,13 @@ async def test_codex_server_has_stable_shape(agents_data: list[dict[str, Any]]) 
 
 
 async def test_codex_server_config_fields(agents_data: list[dict[str, Any]]) -> None:
-    """codex_server exposes model, restrictions, and callback_channel config fields."""
+    """codex_server exposes model and restrictions config fields."""
     cs = next(a for a in agents_data if a["agent_runner_type"] == "codex_server")
     schema = cast(list[dict[str, Any]], cs["config_schema"])
     field_names = [f["name"] for f in schema]
 
     assert "model" in field_names
     assert "restrictions" in field_names
-    assert "callback_channel" in field_names
-
-    cb_field = next(f for f in schema if f["name"] == "callback_channel")
-    assert cb_field.get("options") is not None
-    assert "rest" in cb_field["options"]
-    assert "mcp" in cb_field["options"]
 
 
 # ---------------------------------------------------------------------------

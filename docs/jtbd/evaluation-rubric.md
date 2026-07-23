@@ -78,3 +78,4 @@ For each concept, record:
 ## Decision rule
 
 Do not choose a concept solely from the weighted total. A candidate is not viable if it scores below 3 on decision readiness, evidence access, action safety, or capability honesty, even if its visual appeal or fleet scan score is high.
+

@@ -82,6 +82,7 @@ async def test_revision_attempt_count_and_outcomes(
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_embedded": REVISION_ROUTINE,
             "repo_name": "parity-revision-repo",
             "branch": "main",
@@ -187,6 +188,7 @@ async def test_revision_feedback_available_on_second_attempt(
     resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "routine_embedded": REVISION_ROUTINE,
             "repo_name": "parity-feedback-repo",
             "branch": "main",

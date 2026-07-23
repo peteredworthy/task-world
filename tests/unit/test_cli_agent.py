@@ -16,6 +16,7 @@ def _make_context(
     auth_token: str | None = None,
     work_mode: Literal["implementation", "oversight"] = "implementation",
     graph_patch_callback: Any | None = None,
+    graph_mcp_url: str | None = None,
 ) -> ExecutionContext:
     return ExecutionContext(
         run_id="run-1",
@@ -27,6 +28,7 @@ def _make_context(
         auth_token=auth_token,
         work_mode=work_mode,
         graph_patch_callback=graph_patch_callback,
+        graph_mcp_url=graph_mcp_url,
     )
 
 
@@ -177,6 +179,59 @@ def test_build_prompt_without_api_url_verifier_phase_unchanged() -> None:
     assert result == "Original prompt"
 
 
+def test_build_prompt_with_graph_mcp_url_mentions_graph_tools() -> None:
+    ctx = _make_context(graph_mcp_url="http://localhost:8000/mcp-graph/tok1/sse")
+    result = CLIAgent.build_prompt("Plan the graph", ctx)
+    assert "submit_graph_patch" in result
+    assert "http://localhost:8000/mcp-graph/tok1/sse" in result
+
+
+def test_write_mcp_json_adds_graph_mcp_url_as_sse_server() -> None:
+    agent = CLIAgent(command="claude")
+    ctx = _make_context(graph_mcp_url="http://localhost:8000/mcp-graph/tok1/sse")
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = agent._write_mcp_json(  # pyright: ignore[reportPrivateUsage]
+            tmp, ctx.mcp_servers or [], ctx.available_tools, ctx
+        )
+        config = json.loads(path.read_text())
+    assert config["mcpServers"]["orchestrator-graph"] == {
+        "type": "sse",
+        "url": "http://localhost:8000/mcp-graph/tok1/sse",
+    }
+
+
+def test_write_mcp_json_graph_mcp_entry_gets_auth_env_when_auth_token_set() -> None:
+    """When auth is enabled, the orchestrator-graph mount carries an env-var
+    reference to the auth token (never the literal secret), matching the
+    convention used for externally-configured MCP servers with auth_token_env.
+    """
+    agent = CLIAgent(command="claude")
+    ctx = _make_context(
+        graph_mcp_url="http://localhost:8000/mcp-graph/tok1/sse",
+        auth_token="tok-abc123",
+    )
+    import json
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        path = agent._write_mcp_json(  # pyright: ignore[reportPrivateUsage]
+            tmp, ctx.mcp_servers or [], ctx.available_tools, ctx
+        )
+        raw = path.read_text()
+        config = json.loads(raw)
+
+    assert config["mcpServers"]["orchestrator-graph"] == {
+        "type": "sse",
+        "url": "http://localhost:8000/mcp-graph/tok1/sse",
+        "env": {"ORCHESTRATOR_AUTH_TOKEN": "${ORCHESTRATOR_AUTH_TOKEN}"},
+    }
+    # The literal secret must never be written to disk.
+    assert "tok-abc123" not in raw
+
+
 def test_build_prompt_with_api_url() -> None:
     """With api_base_url, prompt is enriched with REST API instructions."""
     ctx = _make_context(api_base_url="http://localhost:8000")
@@ -193,32 +248,6 @@ def test_build_prompt_with_api_url() -> None:
     assert "GET" in result
     assert "/checklist/" in result
     assert "/submit" in result
-
-
-async def _noop_graph_patch(_payload: dict[str, Any]) -> str:
-    return "graph patch accepted"
-
-
-def test_build_prompt_graph_callback_includes_cli_sentinel_bridge() -> None:
-    ctx = _make_context(
-        api_base_url="http://localhost:8000",
-        graph_patch_callback=_noop_graph_patch,
-    )
-
-    result = CLIAgent.build_prompt("Plan the graph", ctx)
-
-    assert "Graph Planner Patch Submission" in result
-    assert "ORCHESTRATOR_GRAPH_PATCH:" in result
-    assert "base_graph_position" in result
-
-
-def test_build_prompt_graph_callback_without_api_url_includes_cli_sentinel_bridge() -> None:
-    ctx = _make_context(api_base_url=None, graph_patch_callback=_noop_graph_patch)
-
-    result = CLIAgent.build_prompt("Plan the graph", ctx)
-
-    assert "Graph Planner Patch Submission" in result
-    assert "ORCHESTRATOR_GRAPH_PATCH:" in result
 
 
 def test_build_prompt_with_api_url_oversight_mode_limits_workflow() -> None:

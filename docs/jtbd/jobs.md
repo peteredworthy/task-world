@@ -121,3 +121,4 @@ The eight jobs form one operating loop:
 `J1 notice → J2 position → J3 decide / J4 explain → J5 verify → J6 act → J7 learn → J8 compare`
 
 The loop is intentionally not a navigation model. A good UI may support several adjacent jobs in one stable surface when their information overlaps.
+

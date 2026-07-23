@@ -76,6 +76,7 @@ async def _create_run_with_manual_gate(client: AsyncClient, drain: DrainFn) -> t
     create_resp = await client.post(
         "/api/runs",
         json={
+            "execution_mode": "legacy",
             "repo_name": "test-repo",
             "branch": "main",
             "routine_embedded": routine_config,
@@ -180,6 +181,7 @@ class TestSkipStepAPI:
         create_resp = await client.post(
             "/api/runs",
             json={
+                "execution_mode": "legacy",
                 "repo_name": "test-repo",
                 "branch": "main",
                 "routine_embedded": routine_config,
@@ -286,6 +288,7 @@ class TestSkipStepAPI:
         create_resp = await client.post(
             "/api/runs",
             json={
+                "execution_mode": "legacy",
                 "repo_name": "test-repo",
                 "branch": "main",
                 "routine_embedded": routine_config,
@@ -389,6 +392,7 @@ class TestSkipStepAPI:
         create_resp = await client.post(
             "/api/runs",
             json={
+                "execution_mode": "legacy",
                 "repo_name": "test-repo",
                 "branch": "main",
                 "routine_embedded": routine_config,

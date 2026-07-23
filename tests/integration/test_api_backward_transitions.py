@@ -90,7 +90,12 @@ async def test_transition_backward_basic(
     # Create run
     create_resp = await client.post(
         "/api/runs",
-        json={"routine_embedded": routine, "repo_name": "/tmp/test-project", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_embedded": routine,
+            "repo_name": "/tmp/test-project",
+            "branch": "main",
+        },
     )
     assert create_resp.status_code == 201
     run_data = create_resp.json()
@@ -178,7 +183,12 @@ async def test_transition_backward_invalid_target_out_of_bounds(client: AsyncCli
 
     create_resp = await client.post(
         "/api/runs",
-        json={"routine_embedded": routine, "repo_name": "/tmp/test-project", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_embedded": routine,
+            "repo_name": "/tmp/test-project",
+            "branch": "main",
+        },
     )
     assert create_resp.status_code == 201
     run_id = create_resp.json()["id"]
@@ -226,7 +236,12 @@ async def test_transition_backward_invalid_target_forward(client: AsyncClient) -
 
     create_resp = await client.post(
         "/api/runs",
-        json={"routine_embedded": routine, "repo_name": "/tmp/test-project", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_embedded": routine,
+            "repo_name": "/tmp/test-project",
+            "branch": "main",
+        },
     )
     assert create_resp.status_code == 201
     run_id = create_resp.json()["id"]
@@ -277,7 +292,12 @@ async def test_transition_backward_event_emitted(
 
     create_resp = await client.post(
         "/api/runs",
-        json={"routine_embedded": routine, "repo_name": "/tmp/test-project", "branch": "main"},
+        json={
+            "execution_mode": "legacy",
+            "routine_embedded": routine,
+            "repo_name": "/tmp/test-project",
+            "branch": "main",
+        },
     )
     assert create_resp.status_code == 201
     run_data = create_resp.json()
