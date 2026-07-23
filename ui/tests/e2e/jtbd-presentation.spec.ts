@@ -201,17 +201,49 @@ test.describe('JTBD UI approaches presentation', () => {
     expect(evidenceController.manySuccessors.every((y) => y >= 10 && y <= 140)).toBe(true);
   });
 
-  test('mission weave shows dynamic branches, rework, and final convergence', async ({ page }) => {
+  test('mission weave resolves branches, grades, rework, directive, and convergence by state', async ({ page }) => {
     await openPresentation(page, '#weave');
     await page.keyboard.press('2');
     await expect(page.locator('.weave-lane')).toHaveCount(5);
-    await expect(page.locator('.rework-loop')).toBeVisible();
-    await expect(page.locator('.final-invariant')).toContainText('Recovery invariants');
+    await expect(page.locator('[data-weave-segment="corrective-evidence"]')).toHaveCount(0);
+    await expect(page.locator('[data-weave-segment="verify-correction"], [data-weave-segment="final-gate"], [data-weave-segment="merge"]')).toHaveCount(0);
+    await expect(page.locator('[data-weave-final-invariant]')).toHaveCount(0);
+    await expect(page.locator('[data-weave-grade-history]')).toHaveText('C → C');
+    await expect(page.locator('.weave-routes [data-weave-relation][data-weave-from="verify-a1"][data-weave-to="build-a2"][data-weave-kind="rework"]')).toBeVisible();
     await page.keyboard.press('4');
-    await expect(page.locator('[data-weave-segment="corrective-evidence"]')).toContainText('Proposed capability');
+    const corrective = page.locator('.weave-grid [data-weave-segment="corrective-evidence"]');
+    await expect(corrective).toContainText('Proposed capability');
+    await expect(corrective).toHaveClass(/weave-segment--proposed/);
+    await expect(corrective).toHaveCSS('border-style', 'dashed');
+    await corrective.click();
     await page.keyboard.press('5');
-    await expect(page.locator('[data-weave-segment="corrective-evidence"]')).not.toContainText('Proposed capability');
-    await expect(page.locator('.final-invariant')).toContainText('A · merged');
+    await expect(corrective).toContainText('Replay + incident evidence bound');
+    await expect(corrective).not.toContainText('Proposed capability');
+    await expect(corrective).toHaveClass(/weave-segment--verified/);
+    await expect(page.locator('[data-weave-selected-detail]')).toContainText('Replay + incident evidence bound');
+    await expect(page.locator('[data-weave-selected-detail]')).toContainText('verified');
+    await expect(page.locator('[data-weave-final-invariant]')).toContainText('Recovery invariants · A · merged');
+    await expect(page.locator('[data-weave-segment="verify-correction"]')).toContainText('A');
+  });
+
+  test('mission weave preserves labeled relations and vertical workstream rows on mobile', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openPresentation(page, '#weave');
+    await page.keyboard.press('5');
+    const mobileRelations = page.locator('.weave-mobile-relations [data-weave-relation]');
+    await expect(mobileRelations).toHaveCount(8);
+    await expect(mobileRelations.filter({ hasText: 'Verify: Suspension replay → Build: Revise recovery path' })).toBeVisible();
+    await expect(mobileRelations.filter({ hasText: 'Rework' })).toHaveCount(1);
+    await expect(mobileRelations.filter({ hasText: 'Gate: Recovery invariants → Settle: Merged' })).toBeVisible();
+    await expect(page.locator('.weave-row[data-weave-row="3"]')).toBeVisible();
+    const containment = await page.locator('.mission-weave').evaluate((workspace) => ({
+      documentFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      relationsVisible: [...workspace.querySelectorAll<HTMLElement>('.weave-mobile-relation')].every((relation) => {
+        const bounds = relation.getBoundingClientRect();
+        return bounds.width > 0 && bounds.height > 0;
+      }),
+    }));
+    expect(containment).toEqual({ documentFits: true, relationsVisible: true });
   });
 
   test('causal spine preserves parallel branches and opens evidence in place', async ({ page }) => {
