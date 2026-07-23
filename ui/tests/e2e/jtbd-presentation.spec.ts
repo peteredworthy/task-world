@@ -183,18 +183,30 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(trigger).toBeFocused();
   });
 
-  test('evidence controller uses canonical successors, mixed-grade history, and bounded locator coordinates', async ({ page }) => {
+  test('evidence controller exposes a mutation-safe complete scenario clone with canonical successors, mixed-grade history, and bounded locator coordinates', async ({ page }) => {
     await openPresentation(page, '#evidence');
-    const evidenceController = await page.evaluate(() => ({
-      scenario: window.taskWorldPresentation.getEvidenceScenario(),
-      repeated: window.taskWorldPresentation.describeEvidenceGradeHistory(['C', 'C']),
-      mixed: window.taskWorldPresentation.describeEvidenceGradeHistory(['C', 'B']),
-      oneSuccessor: window.taskWorldPresentation.getLocatorSuccessorYs(1),
-      manySuccessors: window.taskWorldPresentation.getLocatorSuccessorYs(12),
-    }));
+    const evidenceController = await page.evaluate(() => {
+      const scenario = window.taskWorldPresentation.getEvidenceScenario();
+      scenario.run.successors.pop();
+      return {
+        scenario,
+        freshScenario: window.taskWorldPresentation.getEvidenceScenario(),
+        repeated: window.taskWorldPresentation.describeEvidenceGradeHistory(['C', 'C']),
+        mixed: window.taskWorldPresentation.describeEvidenceGradeHistory(['C', 'B']),
+        oneSuccessor: window.taskWorldPresentation.getLocatorSuccessorYs(1),
+        manySuccessors: window.taskWorldPresentation.getLocatorSuccessorYs(12),
+      };
+    });
 
+    expect(evidenceController.scenario.run).toMatchObject({
+      id: 'r314',
+      name: 'Suspension replay recovery',
+      retryCost: 1.05,
+      attemptsLeft: 1,
+    });
     expect(Object.hasOwn(evidenceController.scenario.run, 'blocked' + 'Successors')).toBe(false);
-    expect(evidenceController.scenario.run.successors).toHaveLength(3);
+    expect(evidenceController.scenario.run.successors).toHaveLength(2);
+    expect(evidenceController.freshScenario.run.successors).toHaveLength(3);
     expect(evidenceController.repeated).toEqual({ history: 'C → C', summary: '2 C grades', repeated: true });
     expect(evidenceController.mixed).toEqual({ history: 'C → B', summary: 'Grade history C → B', repeated: false });
     expect(evidenceController.oneSuccessor).toEqual([75]);
@@ -365,11 +377,73 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('.intervention-state-note')).toContainText('Release manager approval is required before the recovery audit can publish');
   });
 
-  test('intervention review action is guarded until the modal capability is available', async ({ page }) => {
+  test('decision confirmation is modal, labeled proposed, and restores focus', async ({ page }) => {
     await openPresentation(page, '#intervention');
-    const review = page.getByRole('button', { name: 'Review proposed intervention' });
-    await review.click();
-    await expect(page.locator('[data-live-region]')).toContainText('Confirmation becomes available in the final interaction task');
+    const trigger = page.getByRole('button', { name: 'Review proposed intervention' });
+    await trigger.click();
+    const dialog = page.getByRole('dialog', { name: 'Review corrective intervention' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('Proposed capability');
+    await expect(dialog).toContainText('3 successors');
+    await expect(dialog).toContainText('$0.62');
+    const cancel = dialog.getByRole('button', { name: 'Cancel' });
+    const authorize = dialog.getByRole('button', { name: 'Authorize proposed correction' });
+    await authorize.focus();
+    await page.keyboard.press('Tab');
+    await expect(cancel).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(authorize).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(dialog).not.toBeVisible();
+    await expect(trigger).toBeFocused();
+  });
+
+  test('decision confirmation records an auditable local outcome without a backend call', async ({ page }) => {
+    const nonFileRequests: string[] = [];
+    page.on('request', (request) => {
+      if (!request.url().startsWith('file:')) nonFileRequests.push(request.url());
+    });
+    await openPresentation(page, '#intervention');
+    await page.getByRole('button', { name: 'Review proposed intervention' }).click();
+    await page.getByRole('button', { name: 'Authorize proposed correction' }).click();
+    await expect(page.locator('[data-concept="intervention"][data-state="outcome"]')).toBeVisible();
+    await expect(page.locator('[data-decision-result]')).toContainText('Accepted locally');
+    await expect(page.locator('[data-decision-result]')).toContainText('no backend command sent');
+    expect(nonFileRequests).toEqual([]);
+  });
+
+  test('comparison uses rubric language without fabricated observed scores', async ({ page }) => {
+    await openPresentation(page, '#comparison');
+    await expect(page.locator('.comparison-matrix')).toContainText('Causal comprehension');
+    await expect(page.locator('.comparison-matrix')).toContainText('Decision readiness');
+    await expect(page.locator('.comparison-matrix')).toContainText('Expected strength');
+    await expect(page.getByText(/user-tested score/i)).toHaveCount(0);
+  });
+
+  test('artifact makes no external requests and avoids horizontal overflow', async ({ page }) => {
+    const externalRequests: string[] = [];
+    page.on('request', (request) => {
+      if (!request.url().startsWith('file:')) externalRequests.push(request.url());
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openPresentation(page, '#cartography');
+    await page.keyboard.press('3');
+    expect(externalRequests).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+    await expect(page.locator('.metric-card')).toHaveCount(0);
+  });
+
+  test('every concept exposes all five operating-loop states in place', async ({ page }) => {
+    const concepts = ['cartography', 'causal', 'intervention', 'evidence', 'weave'];
+    const states = ['fleet', 'position', 'cause', 'action', 'outcome'];
+    for (const concept of concepts) {
+      await openPresentation(page, `#${concept}`);
+      for (const [index, state] of states.entries()) {
+        await page.keyboard.press(String(index + 1));
+        await expect(page.locator(`[data-concept="${concept}"][data-state="${state}"]`)).toBeVisible();
+        await expect(page.locator(`[data-workspace-state="${state}"]`)).toHaveAttribute('aria-pressed', 'true');
+      }
+    }
   });
 
   test('causal spine stacks every visible event inside its mobile workspace', async ({ page }) => {
