@@ -988,3 +988,97 @@ def test_question_references_use_only_typed_question_namespace(tmp_path: Path) -
     result = run_validator(root, phase=0)
     assert "QUESTION_REFERENCE_WRONG_NAMESPACE" in issue_codes(result)
     assert "QUESTION_REFERENCE_UNRESOLVED" in issue_codes(result)
+
+
+def test_current_action_status_requires_present_and_executable_in_both_directions(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    absent_current = {
+        "id": "ACT-01",
+        "implementation_status": "absent",
+        "capability_status": "current",
+        "executable": False,
+        "required_outcome": "Intervene",
+        "source_demand_ids": ["scope.action"],
+        "implementation_constraints": ["none"],
+        "required_evidence": ["command design"],
+        "unresolved_command_decisions": ["authority"],
+    }
+    present_nonexecutable = present_action(
+        "CMD-01", {"from_state_id": "STA-01", "to_state_id": "STA-02"}
+    ) | {"executable": False}
+    write_yaml(root / "reality/actions/ACT-01.yaml", absent_current)
+    write_yaml(root / "reality/actions/ACT-02.yaml", present_nonexecutable | {"id": "ACT-02"})
+    result = run_validator(root, phase=0)
+    assert issue_codes(result).count("ACTION_STATUS_INCOMPATIBLE") == 2
+
+
+def test_derived_classification_rejects_all_conflicting_semantic_evidence(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    current_input = semantic_item(
+        "CAP-01",
+        implementation_status="present",
+        test_status="exercised",
+        documentation_status="documented",
+        capability_status="current",
+        evidence_ids=["EVD-01", "EVD-02"],
+    )
+    derived = semantic_item(
+        "CAP-02",
+        capability_status="derived",
+        derivation_id="DRV-01",
+        test_status="contradicted",
+        documentation_status="conflicting",
+        conflict_ids=["CON-01"],
+        evidence_ids=["EVD-03"],
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {"schema_version": "1", "items": [current_input, derived]},
+    )
+    write_yaml(
+        root / "catalog/conflicts.yaml",
+        {"schema_version": "1", "items": [{"id": "CON-01", "status": "unresolved"}]},
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {"id": "EVD-01", "source_kind": "implementation", "reachable": True},
+                {"id": "EVD-02", "source_kind": "test", "test_status": "exercised"},
+                {
+                    "id": "EVD-03",
+                    "source_kind": "documentation",
+                    "test_status": "contradicted",
+                },
+            ],
+        },
+    )
+    write_yaml(
+        root / "capabilities/derivations/DRV-01.yaml",
+        {
+            "id": "DRV-01",
+            "status": "admitted",
+            "inputs": ["CAP-01"],
+            "algorithm": "identity",
+            "output_type": "string",
+            "unknown_behavior": "unknown",
+            "failure_behavior": "unknown",
+            "freshness": "snapshot",
+            "recomputation_behavior": "when inputs change",
+            "implementation_evidence_ids": ["EVD-01"],
+            "limitations": ["none"],
+            "prohibited_interpretations": ["causal"],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert {
+        "DERIVED_CONFLICT_UNRESOLVED",
+        "DERIVED_EVIDENCE_CONTRADICTED",
+        "DERIVED_CONFLICTING",
+    } <= set(issue_codes(result))

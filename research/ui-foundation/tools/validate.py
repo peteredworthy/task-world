@@ -724,6 +724,49 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     item.get("id"),
                 )
             )
+        if status == "derived":
+            conflict_ids = item.get("conflict_ids")
+            unresolved_conflict = isinstance(conflict_ids, list) and any(
+                reference not in conflicts or conflicts[reference].status != "resolved"
+                for reference in conflict_ids
+                if isinstance(reference, str)
+            )
+            if unresolved_conflict:
+                issues.append(
+                    _issue(
+                        "DERIVED_CONFLICT_UNRESOLVED",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
+            evidence_ids = item.get("evidence_ids")
+            records = (
+                [evidence[value] for value in evidence_ids if value in evidence]
+                if isinstance(evidence_ids, list)
+                else []
+            )
+            evidence_contradicted = any(record.test_status == "contradicted" for record in records)
+            if evidence_contradicted:
+                issues.append(
+                    _issue(
+                        "DERIVED_EVIDENCE_CONTRADICTED",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
+            if (
+                unresolved_conflict
+                or evidence_contradicted
+                or item.get("test_status") == "contradicted"
+                or item.get("documentation_status") == "conflicting"
+            ):
+                issues.append(
+                    _issue(
+                        "DERIVED_CONFLICTING",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
 
     derivations: dict[str, tuple[str, DerivationContract]] = {}
     for relative, value in package.documents.items():
@@ -854,15 +897,27 @@ def _validate_actions(
             _declare(declarations, typed_action.id, relative, package, issues)
         except ValidationError as error:
             issues.append(_issue("ACTION_CONTRACT_INVALID", path, error))
-        if action.get("implementation_status") == "present":
-            if action.get("capability_status") != "current" or action.get("executable") is not True:
-                issues.append(
-                    _issue(
-                        "ACTION_STATUS_INCOMPATIBLE",
-                        path,
-                        "present executable action must be current",
-                    )
+        status_incompatible = (
+            action.get("implementation_status") == "present"
+            and (
+                action.get("capability_status") != "current" or action.get("executable") is not True
+            )
+        ) or (
+            action.get("capability_status") == "current"
+            and (
+                action.get("implementation_status") != "present"
+                or action.get("executable") is not True
+            )
+        )
+        if status_incompatible:
+            issues.append(
+                _issue(
+                    "ACTION_STATUS_INCOMPATIBLE",
+                    path,
+                    "current executable action must be present and vice versa",
                 )
+            )
+        if action.get("implementation_status") == "present":
             if action.get("enforced_authorization") in {None, "absent", "unknown"} and action.get(
                 "proposed_role_policy"
             ):
