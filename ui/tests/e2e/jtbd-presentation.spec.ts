@@ -124,7 +124,7 @@ test.describe('JTBD UI approaches presentation', () => {
       ['2', 'position', '.graph-locator', 'holds 3 successors'],
       ['3', 'cause', '.packet-delta', '2 C grades have the same omission'],
       ['4', 'action', '.evidence-records', 'Open the source records'],
-      ['5', 'outcome', '.node-stat-table', 'needed to establish grade A'],
+      ['5', 'outcome', '.node-stat-table', 'preserves the lineage that established grade A'],
     ] as const;
 
     for (const [key, state, focus, note] of expected) {
@@ -597,6 +597,8 @@ test.describe('JTBD UI approaches presentation', () => {
       await expect(outcome).toContainText('predecessor');
       await expect(page.locator(`[data-concept="${concept}"] .capability--current`).first()).toBeVisible();
       await expect(page.locator(`[data-concept="${concept}"] .capability--derivable`).first()).toBeVisible();
+      await expect(page.locator(`[data-concept="${concept}"] .capability--proposed`)).toHaveCount(0);
+      await page.keyboard.press('4');
       await expect(page.locator(`[data-concept="${concept}"] .capability--proposed`).first()).toBeVisible();
     }
   });
@@ -676,5 +678,31 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('.loop-map span')).toHaveCount(8);
     expect(await page.locator('.loop-map').evaluate((loop) => getComputedStyle(loop).gridTemplateColumns.split(' ').length)).toBe(2);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  });
+
+  test('renders Outcome semantics directly and keeps Action blocking/proposed', async ({ page }) => {
+    await openPresentation(page, '#cartography');
+    await page.keyboard.press('5');
+    const cartographyOutcome = page.locator('[data-concept="cartography"][data-state="outcome"]');
+    await expect(cartographyOutcome.locator('[data-cartography-successor-route]')).toHaveCount(3);
+    expect(await cartographyOutcome.locator('[data-cartography-successor-route]').evaluateAll((routes) => routes.every((route) => route.classList.contains('route--verified') && !route.classList.contains('route--blocking')))).toBe(true);
+    expect(await cartographyOutcome.locator('[data-cartography-successor]').evaluateAll((nodes) => nodes.every((node) => node.classList.contains('successor-node--released')))).toBe(true);
+    await expect(cartographyOutcome.locator('.capability--current').first()).toBeVisible();
+    await expect(cartographyOutcome.locator('.capability--proposed')).toHaveCount(0);
+
+    await page.keyboard.press('4');
+    const cartographyAction = page.locator('[data-concept="cartography"][data-state="action"]');
+    expect(await cartographyAction.locator('[data-cartography-successor-route]').evaluateAll((routes) => routes.every((route) => route.classList.contains('route--blocking')))).toBe(true);
+    await expect(cartographyAction.locator('.capability--proposed').first()).toBeVisible();
+
+    await openPresentation(page, '#evidence');
+    await page.keyboard.press('5');
+    await expect(page.locator('.evidence-state-note')).toHaveText('The matrix preserves the lineage that established grade A.');
+
+    await openPresentation(page, '#weave');
+    await page.keyboard.press('5');
+    const terminals = page.locator('.weave-fleet .mini-weave i').nth(3);
+    await expect(terminals).toHaveClass(/mini-weave-segment--verified/);
+    await expect(page.locator('.weave-fleet .mini-weave i').nth(4)).toHaveClass(/mini-weave-segment--verified/);
   });
 });
