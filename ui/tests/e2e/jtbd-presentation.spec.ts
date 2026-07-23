@@ -149,6 +149,23 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('[data-selected-node-summary]')).toContainText('N15');
   });
 
+  test('causal categories resolve labels, branches, and distinct source records', async ({ page }) => {
+    await openPresentation(page, '#causal');
+    await expect(page.locator('[data-event-id="verdict-a2"]')).toContainText('Attempt 2 verifier verdict');
+    await expect(page.locator('[data-branch-from="build-a1"][data-branch-to="verdict-a1"]')).toHaveAttribute('data-branch-kind', 'handoff');
+    await expect(page.locator('[data-branch-from="verdict-a1"][data-branch-to="retry"]')).toHaveAttribute('data-branch-kind', 'retry');
+
+    await page.keyboard.press('4');
+    await expect(page.locator('[data-event-id="directive"]')).toContainText('Bind replay and incident evidence');
+    await page.getByRole('button', { name: 'Requirement record R2' }).click();
+    await expect(page).toHaveURL(/#cartography$/);
+    await expect(page.locator('[data-requirement-id="R2"]')).toBeFocused();
+
+    await openPresentation(page, '#causal');
+    await page.getByRole('button', { name: 'Run record r314' }).click();
+    await expect(page.locator('[data-causal-run-record]')).toBeFocused();
+  });
+
   test('causal spine stacks every visible event inside its mobile workspace', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openPresentation(page, '#causal');
