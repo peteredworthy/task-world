@@ -50,12 +50,12 @@ capabilities merely because their envelopes differ.
 
 | Provisional key | Status | Finding |
 |---|---|---|
-| `api-authn-jwt` | implemented, tested | All `/api/*` routers share one optional Bearer JWT dependency in `api.app.create_app`; `/mcp`, `/mcp-scoped`, and `/mcp-graph` use equivalent middleware. Auth is disabled by default. When enabled, possession of any valid token grants every read and mutation. `tests/integration/test_api_auth.py` exercises missing, invalid, and valid tokens. |
-| `api-authz-roles` | implemented as absent, tested indirectly | No endpoint checks JWT subject, role, scope, ownership, run membership, or action-specific permission. `auth.validate_token` returns claims, but router dependencies discard them. The system has authentication when enabled, not authorization. |
+| `api-authn-jwt` | implemented, tested | All `/api/*` routers share one optional Bearer JWT dependency in `api.app.create_app`; `/mcp`, `/mcp-scoped`, and `/mcp-graph` use equivalent middleware. Auth is disabled by default. When enabled, possession of any valid token grants every read and mutation. Exact tests: `tests/integration/test_api_auth.py::test_auth_disabled_allows_all`, `::test_auth_enabled_rejects_missing_token`, `::test_auth_enabled_accepts_valid_token`, `::test_auth_enabled_rejects_invalid_token`, `::test_websocket_auth_with_query_param`, `::test_websocket_auth_rejects_bad_token`, `::test_mcp_auth_rejects_no_token`, `::test_mcp_auth_with_bearer`, and `::test_mcp_auth_rejects_invalid_token`. |
+| `api-authz-roles` | implemented as absent, inferred | No endpoint checks JWT subject, role, scope, ownership, run membership, or action-specific permission. `auth.validate_token` returns claims, but router dependencies discard them. The system has authentication when enabled, not authorization. The auth tests above prove one token crosses the global gate; they do not independently test the absence of every possible role check. |
 | `api-operator-assumption` | implemented | REST graph patch, decision, scheduling-after-decision, and requeue endpoints construct `Actor(kind=human, id="human-operator", role="operator")`; this is an endpoint assumption, not an authenticated product role. |
-| `api-identity-attribution` | implemented, tested, conflicting | Legacy clarification endpoints use fixed identity `"user"`; task approve/reject/force-accept use `deps.get_current_user`; step approval accepts caller-supplied `approved_by`; graph decisions accept caller-supplied `decider`; requeue records fixed `human-operator`. These are incompatible attribution mechanisms and none is bound to JWT claims. |
-| `mcp-tool-scope` | implemented, tested | `/mcp-scoped/{tool-set}` limits registered tool names, and runner setup derives a phase/task allowlist. This is capability exposure, not actor authorization. The unscoped `/mcp` server registers all 11 tools regardless of phase; domain state checks reject some phase-invalid calls. |
-| `graph-mcp-execution-scope` | implemented, tested | `/mcp-graph/{token}` uses an unguessable, live-execution token and closures bound to one execution. Planner/builder instances omit `graph_grade`; verifier instances include it. Token possession and closure binding constrain execution, while outer JWT auth remains global and optional. |
+| `api-identity-attribution` | implemented, tested, conflicting | Legacy clarification endpoints use fixed identity `"user"`; task approve/reject/force-accept use `deps.get_current_user`; step approval accepts caller-supplied `approved_by`; graph decisions accept caller-supplied `decider`; requeue records fixed `human-operator`. These are incompatible attribution mechanisms and none is bound to JWT claims. Exact persistence/readback tests: `tests/integration/test_api_human_approval.py::test_approve_step_audit_trail`, `tests/integration/test_graph_decisions_api.py::test_record_authority_decision_updates_decision_readback`, `tests/integration/test_api_clarifications.py::test_respond_to_clarification`, and `tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event`. |
+| `mcp-tool-scope` | implemented, tested | `/mcp-scoped/{tool-set}` limits registered tool names, and runner setup derives a phase/task allowlist. This is capability exposure, not actor authorization. The unscoped `/mcp` server registers all 11 tools regardless of phase. Exact tests: `tests/integration/test_mcp.py::test_tool_names`; `tests/integration/test_mcp_sse.py::test_scoped_mcp_sse_endpoint_exists_with_encoded_commas` and `::test_scoped_mcp_messages_endpoint_stays_under_scope`; `tests/unit/test_cli_tool_hints.py::TestCLIMCPInfo::test_orchestrator_mcp_json_scoped_to_available_tools`, `::test_orchestrator_mcp_json_scoped_to_workflow_tools_by_default`, and `::test_orchestrator_mcp_json_verifier_uses_verifier_workflow_tools`; `tests/unit/test_openhands_tool_filtering.py::TestOpenHandsMCPConfig::test_orchestrator_url_scoped_to_available_tools` and `::test_orchestrator_url_verifier_scoped_to_verifier_tools`. The transport tests establish scoped routing; they do not perform a full JSON-RPC forbidden-tool call. |
+| `graph-mcp-execution-scope` | implemented, tested | `/mcp-graph/{token}` uses a generated live-execution token and closures bound to one execution. Planner/builder instances omit `graph_grade`; verifier instances include it. Token possession and closure binding constrain execution, while outer JWT auth remains global and optional. Exact tests: `tests/unit/test_graph_mcp_tools.py::test_builder_server_has_submit_graph_patch_and_macro_tools_but_not_grade`, `::test_verifier_server_has_graph_grade_tool`, `::test_submit_graph_patch_tool_calls_the_closure`, and `::test_create_work_region_tool_normalizes_and_calls_the_closure`; `tests/integration/test_graph_mcp_dispatcher.py::test_unknown_token_returns_404`, `::test_registered_token_forwards_to_its_app`, and `::test_unregistering_then_calling_returns_404`; `tests/integration/test_graph_mcp_second_runner_smoke.py::test_real_graph_mcp_server_is_reachable_through_the_real_dispatcher` and `::test_unknown_token_is_never_reachable`; `tests/unit/test_graph_dispatch_on_output.py::test_graph_mcp_route_mounted_during_execute_and_unmounted_after` and `::test_graph_mcp_route_unmounted_when_runner_execute_raises`. "Unguessable" follows token generation, not these fixed-token tests. |
 
 The source demand `jobs.J6.authority` is therefore only partly supported. The
 graph decision projection can show `requested_authority`, node detail can show
@@ -86,13 +86,40 @@ enabled. These commands work in the default auth-disabled deployment and fail
 against an auth-enabled server unless transport behavior is changed outside the
 implemented CLI.
 
+#### CLI database maintenance capability
+
+These commands are local process/operator surfaces. They bypass REST auth,
+domain authorization, the signal queue, and API action evidence.
+
+| Provisional key | Input validation and preconditions | Effect and failures | Concurrency, reversibility, and audit evidence |
+|---|---|---|---|
+| `cli-db-create-backup` | `orchestrator [--db PATH] db create-backup [--notes TEXT] [--backup-dir PATH]`. Click parses paths but does not require the backup directory to pre-exist. The command and `db.recovery.backup.create_backup` both reject a missing source DB. It resolves the default JSONL journal path from the DB path. | Creates the backup directory, uses `shutil.copy2` to copy the SQLite file, then scans active/archived journal segments and writes `orchestrator-{UTC-second}.backup-meta.json` with source backup path, timestamp-derived ID, journal marker, journal path, and free-form notes. CLI catches `BackupError`; ordinary copy/write `OSError` is not wrapped by the implementation. Primitive tests: `tests/unit/test_backup.py::test_create_backup_copies_db_and_writes_metadata`, `::test_create_backup_with_journal_captures_sequence`, and `::test_create_backup_missing_db_raises_error`. No test invokes the Click command. | No SQLite online-backup API, transaction, server-lock check, or quiescence is used. The DB copy occurs before journal scanning, so concurrent writes can make the copied DB and later marker describe different instants. UTC-second IDs can collide/overwrite under same-second calls. The operation does not mutate the source; reversal means deleting the backup manually. Backup file plus metadata are audit artifacts, but there is no event, authenticated actor, checksum, or durable command record. |
+| `cli-db-restore-backup` | `db restore-backup BACKUP_META_PATH [--target-db PATH]`; Click requires only that the metadata path exists. `restore_backup` parses JSON, takes `db_path` from metadata, falls back to the metadata directory by basename, and rejects missing/unreadable metadata or backup. It does not validate a checksum, SQLite integrity, schema version, journal continuity, or containment of either path. | Creates target parent directories and `shutil.copy2` overwrites the target DB. It returns source metadata and tells the operator to replay after the marker, but performs no journal replay. CLI catches `BackupError`; malformed required metadata keys and copy errors may escape that type. Primitive tests: `tests/unit/test_backup.py::test_restore_backup_copies_db_back` and `::test_restore_backup_missing_meta_raises_error`. No test invokes the Click command. | Unlike rebuild, restore does not inspect `.orchestrator/server.lock`; replacing a DB used by a running server is not prevented. Copy is not staged to a temporary file plus atomic rename, and no automatic pre-restore backup exists. Reversibility requires restoring another independently retained backup. Metadata is provenance for the source backup, not evidence that replay occurred or that the target safely reopened; no operator/event record is written. |
+| `cli-db-rebuild-projections` | `db rebuild-projections [--db PATH]`. It refuses execution only if `<db-parent>/.orchestrator/server.lock` exists; it does not validate lock ownership/freshness or independently verify no process has the DB open. It does not explicitly require an existing DB before creating an engine. | Reads all `events_v2`, attempts `deserialize_event`, silently drops every event that raises, registers only `RunLifecycleProjector`, `RunStateProjector`, and `TaskStateProjector`, deletes projection checkpoints/tasks/runs, rebuilds, and commits. The clear/replay is in one SQLAlchemy transaction, so a raised rebuild error should roll it back; engine disposal is guaranteed. Underlying registry behavior is tested by `tests/unit/test_projection_rebuild.py::test_rebuild_all_restores_run_status`, `::test_rebuild_all_restores_run_lifecycle_projector`, and `::test_rebuild_resets_checkpoint_to_zero`. No test invokes this CLI orchestration, its lock check, table deletion, or malformed-event skipping. | A stale lock blocks safe work and a missing lock does not prove exclusivity. Concurrent server writes/processes can race if the advisory file is absent. Re-running can reconstruct these selected projections from the same deserializable stream, but it cannot recover silently skipped/unsupported events and is not an inverse of a bad rebuild. Source events remain the recovery evidence; stdout counts are ephemeral, and no rebuild event/report, skipped-event list, backup prerequisite, or operator identity is persisted. |
+
+#### Remaining CLI surface inventory
+
+| CLI surface | Classification and boundary |
+|---|---|
+| `serve --host --port [--reload]` | Operational process launcher, not a domain command. It invokes `uvicorn.run("scripts.serve:app", ...)`, may bind a network listener and spawn reload processes, and persists whatever the app subsequently persists. Click validates `port` as an integer but imposes no range; auth behavior comes from app configuration, not CLI options. Only registration/help is tested by `tests/integration/test_cli.py::test_serve_command_is_registered`; startup, bind failure, shutdown, and reload races are unexercised here. |
+| `agents detect` / `agents list` | Observational runner discovery (`list` invokes `detect`), returning availability, detail, and install hints from a real `ToolDetector`. It may inspect local executables/services but writes no orchestrator domain state in this command. No command-level test was found; detector logic has separate tests outside this CLI contract. |
+| `runs list` | Reads the selected SQLite DB directly through `RunRepository`, but also calls `init_db`, so a read-looking command can create/migrate the DB. Repo filter wins over status when both are supplied; status is converted to `RunStatus` only when repo is absent. Exact smoke tests: `tests/integration/test_cli.py::test_runs_list_empty` and `::test_runs_list_json`. |
+| `runs status`, `runs watch`, `runs branch-status` | Read-only remote projections/stream after connection: run JSON, WebSocket events, and git branch status. They do not mutate domain state, but lack Bearer/query-token options and therefore are unavailable against auth-enabled endpoints as implemented. `test_runs_status_via_api` explicitly does not invoke the status command; no command-level watch/branch-status test was found. |
+| `routines list`, `routines show`, `routines validate` | Local file discovery/read/validation, except `show --url` is an unauthenticated REST read. They do not edit/archive routine source. Exact command tests: `tests/integration/test_cli.py::test_routines_list`, `::test_routines_show_local`, `::test_routines_validate`, and `::test_routines_validate_invalid`. |
+| `repos list`, `repos show`, `repos branches` | Local filesystem/git reads only; CLI has no add/remove command. `--repos-dir`, repository name, glob pattern, `--local-only`, and `--limit` shape readback; `limit` is not constrained positive by Click. Exact tests include `tests/integration/test_cli_repos.py::test_repos_list_empty`, `::test_repos_list_with_repo`, `::test_repos_show`, `::test_repos_show_not_found`, `::test_repos_branches`, `::test_repos_branches_with_pattern`, `::test_repos_branches_local_only`, and `::test_repos_branches_not_found`. |
+
+JSON versus human formatting, aliases, and help-only group commands are not
+separate capabilities. All consequential CLI mutations are covered above or in
+the run/approval/branch tables; the remaining exclusions are bounded to process
+launch or observational reads/validation.
+
 #### Legacy task, approval, clarification, and retry capability
 
 | Provisional key | Surface and request | Domain eligibility and durable effect | Failure, race, evidence, reversibility |
 |---|---|---|---|
 | `action-task-phase` | REST start, submit, complete-verification; checklist `PATCH`; grade `PUT`. Public MCP get/update/submit/grade maps to the same workflow service family. | Legacy-only. Task state, checklist status, gate checks, and grades control progression. REST submit/check-verification enqueue signals after synchronous checks. MCP submit calls `submit_for_verification` directly. | 404/409/422 for identity, transition, gate, worktree commit, or validation errors. **Transport divergence:** REST signal application and MCP direct transition have different acceptance/result timing and race behavior. Workflow events and attempt snapshots are durable evidence. |
 | `action-task-approval` | REST task `approve`, `reject`, `force-accept`; bodies contain optional comment/reason only. | Approve completes a pending task; reject returns it to building; force-accept bypasses grades from failed/building/verifying and may complete the run. | State transition checks provide domain eligibility. Fixed/injected `user` identity is not role authorization. ApprovalDecision events are durable. Force-accept has no undo and is high-consequence. |
-| `action-step-approval` | REST step `approve` with caller-supplied `approved_by`; CLI interactive `runs approve`. | Current actionable step must have a human approval gate. Records `StepHumanApprovalRecorded`, may enqueue resume, and may spawn an executor. Repeated approval is explicitly tested as last-write-wins. | 404/409 for absent/non-current/non-gated step. No expected version. **Tested contradiction:** on legacy runs, answering "no" in CLI still posts to the approve-only endpoint; `tests/integration/test_cli_approve.py::test_legacy_run_keeps_step_approval_no_answer_behavior` locks in this behavior. There is no legacy step-deny/defer command. |
+| `action-step-approval` | REST step `approve` with caller-supplied `approved_by`; CLI interactive `runs approve`. | Current actionable step must have a human approval gate. Records `StepHumanApprovalRecorded`, may enqueue resume, and may spawn an executor. Repeated approval is tested as last-write-wins by `tests/integration/test_api_human_approval.py::test_approve_step_multiple_times`; audit fields are exercised by `::test_approve_step_audit_trail`. | 404/409 for absent/non-current/non-gated step. No expected version. **Tested contradiction:** on legacy runs, answering "no" in CLI still posts to the approve-only endpoint; `tests/integration/test_cli_approve.py::test_legacy_run_keeps_step_approval_no_answer_behavior` locks in this behavior. Graph approve/reject payloads are separately exercised by `::test_graph_run_approves_pending_human_gate` and `::test_graph_run_discovers_and_rejects_pending_human_gate`. There is no legacy step-deny/defer command. |
 | `action-step-skip` | REST step `skip`, no body/reason. | Only a run paused at `manual_gate`, only current actionable step. Marks step skipped/completed and resumes or progresses to another gate. | 409 for stale/wrong context. Emits `StepSkipped` and status/progression events. No undo endpoint; transition-back is not documented as an exact inverse. |
 | `action-clarification-create` | REST `CreateClarificationRequest`; public MCP `orchestrator_request_clarification`. | Builder/verifier creates typed questions, transitions task to pending user action, pauses the run, and records request. REST requires typed options by question type; MCP additionally rejects finite-choice prose disguised as free text. | Schema/service transition failures. Request ID, timestamps, questions, pending action, and event are evidence. MCP returns an explicit stop instruction. |
 | `action-clarification-respond` | REST response with answer variants plus top-level skip fields; CLI interactive wrapper. | Records answers, appends a Q&A artifact, compresses decisions into run config, clears pending state, resumes only clarification-paused runs, and can respawn the agent. | `StaleDataError` maps to 409, but the artifact append occurs before event commit. Required-answer guard is an empty `pass`; answer schemas do not enforce that required questions are answered, selected values belong to options, or numeric bounds apply. There is no expected request version. Durable response event/config/artifact exist, but retries could duplicate file content before DB conflict settles. No answer revision/undo command. |
@@ -114,7 +141,7 @@ per action from the concrete contracts above, and many decisions have no inverse
 | `action-graph-decision` | REST `POST /graph/decisions` reuses strict `RecordDecisionCommand`: approval, authority, or oversight; typed decision set; node; decider; optional scope/expiry/reason/record ID. CLI handles pending human-approval gates only. | Graph controller validates target kind, decision type/value, graph state, and actor/domain rules. Accepted authority/approval can produce decision records, bind inputs, release leases, change node state, and make successors ready; rejection can dead-end required inputs. | 404 for no graph; 409 for stale projection or command rejection; 422 for malformed/invalid decision. Endpoint reads current position itself, so the client supplies no expected graph version. Durable graph events and decision records give identity/state evidence; response includes events and refreshed decision view. No decision-reversal command. Caller-supplied `decider` is not bound to auth. |
 | `action-graph-patch` | REST operator `POST /graph/patch` with optional patch ID, optional nonnegative base position, strict ops, optional rationale record. Per-execution graph MCP exposes raw patch plus eight macros, including `retire_or_supersede`. | Controller validates patch and graph invariants. REST stamps human operator context; MCP callbacks bind a node execution and normalize macros into the same patch envelope. Accepted patch appends patch and topology events. | 404 no graph; 409 stale/rejected; 422 strict fields. Client base position supports stale-base validation for patches. Patch attempts projection exposes accepted/rejected event IDs, diagnostics, read-set differences, and created topology IDs. No generic patch rollback; corrective patches are new effects, not undo. |
 | `action-retire-supersede` | Per-execution graph MCP macro; operator can express equivalent low-level ops through raw REST patch if validator permits. | Agent macro requires target/action and optional replacement ops/rationale, then graph validation controls legal topology effects. | This is not a standalone operator REST contract. Evidence is the normalized patch attempt/events. Reversibility depends on a subsequent validated patch and is not guaranteed. Assisted operator UI remains absent. |
-| `action-outbox-requeue` | REST `POST /graph/outbox/requeue/{event_id}`, constrained path IDs. | Exact row must belong to run and be failed. Transaction resets status/attempts/error/backoff and appends `outbox_requeued`; dispatcher may execute it again. | 404/409/422. Optimistic append conflict maps to 409 and the transaction rolls back. Event records prior error/attempts and fixed operator. Requeue deliberately risks duplicate work according to downstream idempotency; no API preview or idempotency key. It is repeatable only after another failure, not reversible. |
+| `action-outbox-requeue` | REST `POST /graph/outbox/requeue/{event_id}`, constrained path IDs. | Exact row must belong to run and be failed. One `session.begin()` transaction resets status/attempts/error/backoff and appends `outbox_requeued`; dispatcher may execute it again. `tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event` exercises the successful row change, audit event, and later dispatch. | 404/409/422 are exercised by `tests/integration/test_graph_api.py::test_operator_requeue_failed_outbox_row_rejects_invalid_requests`. `::test_requeue_audit_append_translates_stale_position_to_conflict` proves stale append translation in the helper, but no test injects that stale race through the full endpoint and then asserts row rollback. Endpoint-level rollback is therefore implemented/inferred from the enclosing transaction, not directly tested. Event records prior error/attempts and fixed operator. Requeue deliberately risks duplicate work according to downstream idempotency; no API preview or idempotency key. It is repeatable only after another failure, not reversible. |
 
 Raw graph patches are **not** typed steering. `retire_or_supersede` is an
 agent-scoped patch macro, not proof that an operator can inject new knowledge
@@ -136,10 +163,17 @@ was found under `src/orchestrator/`.
 
 ### Validation and failure contract
 
-- **implemented, tested:** Shared Pydantic schemas validate many constrained
-  values: selectable runner types, merge/execution mode, checklist status,
-  grade, graph identifiers, patch strictness, graph decisions, review prune
-  modes, and clarification question type/options.
+- **implemented, selected cases tested:** Shared Pydantic schemas validate many
+  constrained values. Exact boundary tests include
+  `tests/integration/test_cli.py::test_runs_create_rejects_non_selectable_agent_runner`,
+  `::test_runs_create_explicit_legacy_opt_in`,
+  `tests/integration/test_graph_api.py::test_operator_graph_patch_rejects_noncanonical_payload_fields`,
+  `tests/integration/test_graph_decisions_api.py::test_record_decision_rejects_invalid_decision_at_api_boundary`,
+  `::test_record_decision_rejects_removed_decision_aliases_at_api_boundary`,
+  `::test_record_decision_restores_http_field_constraints`,
+  `tests/integration/test_api_clarifications.py::test_create_clarification_multi_select_empty_options_returns_422`,
+  `tests/integration/test_api_review_validation.py::test_diff_invalid_scope_returns_422`,
+  and `::test_diff_files_invalid_scope_returns_422`.
 - **implemented limitation:** `ApiModel` does not set `extra="forbid"`; strict
   rejection depends on inherited domain schemas such as graph command payloads.
   Several request models use free strings and endpoint-body conversion instead
@@ -159,18 +193,32 @@ was found under `src/orchestrator/`.
 
 ### Race, idempotency, and action feedback
 
-- **tested:** Graph event appends enforce expected positions and expose stale
-  projection as 409. Patch requests can carry `base_graph_position`; graph
-  decisions cannot carry a client-observed source position.
-- **tested:** Outbox requeue changes the row and appends audit evidence in one DB
-  transaction; stale append becomes 409. Subsequent dispatch is separately
-  observable.
-- **tested:** Clarification response catches SQLAlchemy `StaleDataError`, and a
-  stale legacy clarification does not reopen an already advanced task. File
-  append occurs outside the DB transaction before conflict resolution, so exact
-  once-only artifact evidence is unclear.
-- **tested contradiction:** Step approval is last-write-wins and can be posted
-  repeatedly. This is not idempotency tied to a decision ID or source version.
+- **tested:** Graph append expected-position and race handling are exercised by
+  `tests/integration/test_graph_event_store.py::test_unique_version_conflict`,
+  `::test_unique_constraint_race_surfaces_stale_projection_error`, and
+  `tests/integration/test_graph_controller_transactions.py::test_handle_command_raises_stale_projection_error_when_position_moves_before_write`.
+  Atomic rejection/rollback is exercised by
+  `tests/integration/test_graph_event_store.py::test_append_events_rejects_malformed_accepted_record_atomically`
+  and `tests/integration/test_graph_read_models.py::test_graph_read_models_roll_back_with_event_append`.
+  Patch requests can carry `base_graph_position`; graph decisions cannot carry a
+  client-observed source position.
+- **implemented, partly tested:** Requeue's row update and audit append share one
+  DB transaction. `tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event`
+  proves the successful effect/evidence/dispatch path, and
+  `::test_requeue_audit_append_translates_stale_position_to_conflict` proves the
+  helper's stale translation. Full endpoint rollback after an injected stale
+  append is not tested. General event/outbox atomic rollback is separately
+  exercised by `tests/integration/test_graph_outbox_crash_points.py::test_events_and_outbox_rows_commit_atomically_on_outbox_failure`
+  and `::test_controller_rolls_back_events_when_dispatch_outbox_insert_fails`.
+- **tested:** A stale legacy clarification does not reopen an advanced task in
+  `tests/integration/test_clarification_workflow.py::test_respond_to_legacy_stale_clarification_does_not_reopen_completed_task`;
+  response event persistence is exercised by `::test_clarification_responded_event_emitted`.
+  The route's explicit `StaleDataError` to 409 branch has no direct injected-race
+  test located. File append occurs outside the DB transaction before conflict
+  resolution, so exact once-only artifact evidence is unclear.
+- **tested contradiction:** Step approval is last-write-wins in
+  `tests/integration/test_api_human_approval.py::test_approve_step_multiple_times`.
+  This is not idempotency tied to a decision ID or source version.
 - **implemented:** Lifecycle and REST task progression often return command
   acceptance/current status before queued signals apply. Polling activity/run
   state is needed for resulting state; responses do not consistently state next
@@ -228,6 +276,11 @@ was found under `src/orchestrator/`.
 - **unclear:** Whether an intervention count can be deterministically derived
   without first deciding which heterogeneous events count. No current API
   contract supplies that taxonomy.
+- **unclear:** Whether operators externally quiesce SQLite before backup/restore.
+  The CLI contracts do not enforce or record such a procedure.
+- **unclear:** Which event types the projection rebuild silently skipped in any
+  real invocation; the command emits no skipped-event report or durable rebuild
+  record.
 
 ## Conflicts found
 
@@ -255,6 +308,11 @@ was found under `src/orchestrator/`.
    subtype-specific: requeue means graph outbox row, retry has multiple narrow
    commands, and retire/supersede is agent macro/raw patch machinery. The source
    demand does not establish a unified current action.
+7. **Database maintenance safety is inconsistent.** Projection rebuild refuses
+   to run when the advisory server lock file exists, while backup and restore do
+   not check it. Backup documentation implies a replay boundary, but the DB is
+   copied before the journal marker is scanned without a common lock/snapshot;
+   restore reports the marker but does not replay it.
 
 ## Decisions required
 
@@ -311,27 +369,73 @@ Primary implementation:
   patch macros and verifier-only grade.
 - `src/orchestrator/cli/runs.py` and `src/orchestrator/cli/approve.py`: direct DB
   and REST CLI behavior.
+- `src/orchestrator/cli/db.py`: `create_backup_cmd`, `restore_backup_cmd`, and
+  `rebuild_projections_cmd`.
+- `src/orchestrator/cli/main.py`, `agents.py`, `routines.py`, and `repos.py`:
+  serve, detection, local validation, and read-only inventory surfaces.
+- `src/orchestrator/db/recovery/backup.py`: `create_backup`, `restore_backup`,
+  `BackupMetadata`, and `scan_max_sequence`.
 - `src/orchestrator/workflow/service.py`: `recover_run`,
   `retry_fan_out_child`, `respond_to_clarification`, task approval methods, and
   recovery outcomes.
 
-Decisive tests:
+Exact high-impact test pointers not already cited inline:
 
-- `tests/integration/test_api_auth.py`
-- `tests/integration/test_cli_approve.py`
-- `tests/integration/test_api_clarifications.py`
-- `tests/integration/test_api_human_approval.py`
-- `tests/integration/test_api_tasks.py`
-- `tests/integration/test_graph_decisions_api.py`
-- `tests/integration/test_graph_api.py`
-- `tests/integration/test_graph_fr08_acceptance.py`
-- `tests/integration/test_mcp.py`
-- `tests/integration/test_mcp_sse.py`
-- `tests/integration/test_merge_readiness.py`
-- `tests/integration/test_prune_api.py`
-- `tests/integration/test_stopping_state.py`
-- `tests/integration/test_workflow_service.py`
-- `tests/unit/test_graph_mcp_tools.py`
+- Auth transport gate: `tests/integration/test_api_auth.py::test_auth_disabled_allows_all`,
+  `::test_auth_enabled_rejects_missing_token`,
+  `::test_auth_enabled_accepts_valid_token`,
+  `::test_auth_enabled_rejects_invalid_token`,
+  `::test_websocket_auth_with_query_param`,
+  `::test_websocket_auth_rejects_bad_token`,
+  `::test_mcp_auth_rejects_no_token`, `::test_mcp_auth_with_bearer`, and
+  `::test_mcp_auth_rejects_invalid_token`.
+- Public/scoped MCP: `tests/integration/test_mcp.py::test_tool_names`,
+  `::test_full_workflow_through_mcp_server`,
+  `tests/integration/test_mcp_sse.py::test_scoped_mcp_sse_endpoint_exists_with_encoded_commas`,
+  `::test_scoped_mcp_messages_endpoint_stays_under_scope`, and
+  `::test_mcp_handler_updates_database_state`.
+- Graph MCP lifetime and phase scoping:
+  `tests/unit/test_graph_mcp_tools.py::test_builder_server_has_submit_graph_patch_and_macro_tools_but_not_grade`,
+  `::test_verifier_server_has_graph_grade_tool`,
+  `tests/integration/test_graph_mcp_dispatcher.py::test_unknown_token_returns_404`,
+  `::test_registered_token_forwards_to_its_app`,
+  `::test_unregistering_then_calling_returns_404`, and
+  `tests/unit/test_graph_dispatch_on_output.py::test_graph_mcp_route_mounted_during_execute_and_unmounted_after`.
+- Graph decisions and durable effects:
+  `tests/integration/test_graph_decisions_api.py::test_record_authority_decision_updates_decision_readback`,
+  `::test_record_authority_decision_binds_and_recomputes_active_scheduler`,
+  `::test_record_approval_decision_is_durable_and_releases_waiting_successor`,
+  `::test_record_rejected_approval_is_durable_and_dead_inputs_successor`, and
+  `::test_record_decision_rejects_invalid_decision_at_api_boundary`.
+- Graph append/stale/atomicity:
+  `tests/integration/test_graph_event_store.py::test_unique_version_conflict`,
+  `::test_unique_constraint_race_surfaces_stale_projection_error`,
+  `::test_append_events_rejects_malformed_accepted_record_atomically`,
+  `tests/integration/test_graph_controller_transactions.py::test_handle_command_raises_stale_projection_error_when_position_moves_before_write`,
+  `tests/integration/test_graph_read_models.py::test_append_keeps_graph_read_models_synchronized`,
+  and `::test_graph_read_models_roll_back_with_event_append`.
+- Requeue effect and stale boundary:
+  `tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event`,
+  `::test_operator_requeue_failed_outbox_row_rejects_invalid_requests`, and
+  `::test_requeue_audit_append_translates_stale_position_to_conflict`.
+- Clarification and approval races/evidence:
+  `tests/integration/test_clarification_workflow.py::test_full_clarification_cycle`,
+  `::test_respond_to_legacy_stale_clarification_does_not_reopen_completed_task`,
+  `::test_clarification_responded_event_emitted`,
+  `tests/integration/test_api_human_approval.py::test_approve_step_multiple_times`,
+  `::test_approve_step_audit_trail`, and
+  `tests/integration/test_cli_approve.py::test_legacy_run_keeps_step_approval_no_answer_behavior`.
+- Backup/restore primitives:
+  `tests/unit/test_backup.py::test_create_backup_copies_db_and_writes_metadata`,
+  `::test_create_backup_with_journal_captures_sequence`,
+  `::test_restore_backup_copies_db_back`,
+  `::test_create_backup_missing_db_raises_error`, and
+  `::test_restore_backup_missing_meta_raises_error`.
+- Projection registry rebuild primitives:
+  `tests/unit/test_projection_rebuild.py::test_rebuild_all_restores_run_status`,
+  `::test_rebuild_all_restores_run_lifecycle_projector`, and
+  `::test_rebuild_resets_checkpoint_to_zero`. No exact CLI DB-command test was
+  found.
 
 ## Recommended next delegation
 

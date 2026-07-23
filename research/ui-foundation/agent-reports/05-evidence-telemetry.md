@@ -92,9 +92,9 @@ executed that test.
 | ET-09 | CAS artifact reference: content SHA-256 as artifact ID/hash plus size/media type/encoding/opaque URI | Check stdout/stderr over 16,384 bytes is put in the run project's CAS; the check record stores a 4,000-character tail and typed reference | CAS content is globally deduplicated within a project; authorization is established by finding the reference in that run's check-result events | Full blob is hash/size verified before API range read. Missing is 404, corrupt is 409. Publication locking coordinates append and GC | implemented, tested |
 | ET-10 | Declared run-output artifact reference: graph record containing artifact ID/type/path URI/summary/source candidate ID | Worker submission translates static node payload `artifacts` declarations into records | Run/node/candidate via the accepted record | This path does not read the file, hash it, put it in CAS, or prove it exists. Generic references are not accepted by the CAS download endpoint | implemented declaration-to-record wiring, evidence integrity partial |
 | ET-11 | Legacy interaction-log DB row keyed by stable run/task/attempt/runner/phase ID; prompt, final output, action-log JSON, optional cost-record FK | Only legacy `PhaseHandler` calls the `AttemptStore` upsert path. Production graph composition supplies output streaming but no equivalent interaction-log persistence | Strong legacy execution identity; no graph node/execution identity | Mutable upsert, direct commit, current-clock `created_at`, and swallowed write failure. It is not the content-addressed artifact store and has no dedicated public retrieval API | implemented, tested; graph gap |
-| ET-12 | Immutable per-execution/model usage fact identified by `execution_id:usage_index` in `node_usage_recorded` | All graph agent executions call `extract_metrics_and_usage`; when the returned list is nonempty, `_run_agent` calls `GraphController.record_node_usage`. This is independent of the optional, unwired production `on_agent_usage` observer | Run stream, node ID/kind/role, profile, execution, usage index/count, model. Sub-agent usage becomes additional model facts but loses sub-agent ID/type | Command deduplicates by usage key; retries stale writes; graph projection and run usage read model are updated in the event transaction and can replay. Exact-zero/no-reported usage emits no fact | implemented, tested |
-| ET-13 | Legacy per-model usage in attempt/run JSON plus `CostRecordModel` keyed by run/task/attempt/runner/phase | `PhaseHandler` extracts usage after execution and calls `store_attempt_metrics`; `AttemptStore` appends attempt telemetry then best-effort upserts the cost row | Run/task/attempt/phase/runner/model/mode; per-model list may include parent and sub-agent models | Attempt/run usage is event-projected; cost record is a mutable direct upsert with swallowed failures. It is not included in graph cross-run cost rollups | implemented, tested |
-| ET-14 | Cross-run graph cost rollup rows grouped by day/node kind/model/profile/run | `GET /api/runs/cost-rollup` reads only `graph:*` `node_usage_recorded` rows, joins runs, filters time/status/runner, and reduces them | Exact run/execution/model facts under each requested dimension; execution latency/actions counted once using run-scoped execution identity | Event timestamp defines UTC day. Input is capped at 100,000 facts and output at 1,000 groups. It excludes legacy cost records and executions with no usage event | implemented, tested |
+| ET-12 | Immutable per-execution/model usage fact identified by `execution_id:usage_index` in `node_usage_recorded` | Graph agent executions that return an `ExecutionResult` call `extract_metrics_and_usage`; when the returned list is nonempty, `_run_agent` calls `GraphController.record_node_usage`. A raised runner exception jumps directly to `_agent_died` and bypasses extraction, even if provider work already consumed tokens. This is independent of the optional, unwired production `on_agent_usage` observer | Run stream, node ID/kind/role, profile, execution, usage index/count, model. Sub-agent usage becomes additional model facts but loses sub-agent ID/type | Command deduplicates by usage key; retries stale writes; graph projection and run usage read model are updated in the event transaction and can replay. Exact-zero/no-reported usage and exception-terminated usage emit no fact | implemented, tested return path; exception coverage gap |
+| ET-13 | Legacy per-model usage in attempt/run JSON plus `CostRecordModel` keyed by run/task/attempt/runner/phase | `PhaseHandler` extracts and stores usage only after its runner call returns an `ExecutionResult`; returned unsuccessful results reach storage before the builder raises, but runner exceptions bypass output/metrics persistence. `AttemptStore` appends attempt telemetry then best-effort upserts the cost row | Run/task/attempt/phase/runner/model/mode; per-model list may include parent and sub-agent models | Attempt/run usage is event-projected; cost record is a mutable direct upsert with swallowed failures. Exception-terminated provider work can be unmetered. Legacy usage is not included in graph cross-run cost rollups | implemented, tested return path; exception coverage gap |
+| ET-14 | Cross-run graph cost rollup rows grouped by day/node kind/model/profile/run | `GET /api/runs/cost-rollup` reads only persisted `graph:*` `node_usage_recorded` rows, joins runs, filters time/status/runner, and reduces them | Exact run/execution/model facts under each requested dimension; execution latency/actions counted once using run-scoped execution identity | Event timestamp defines UTC day. Input is capped at 100,000 facts and output at 1,000 groups. It excludes legacy cost records, exact-zero/no-reported executions, and exception-terminated executions without usage events | implemented, tested |
 | ET-15 | Requirement-support freshness facts: fresh/stale support IDs, active requirement version, stale reason, unsupported flag | `support_evidence_recorded` and requirement revisions feed graph projection; planner packet computes freshness at dispatch | Requirement, version, support, and evidence IDs | A support becomes stale when inactive, missing an active requirement, or targeting a superseded version. The full freshness packet is sent to planners but only its key name, not its values, appears in prompt summary | implemented, tested in graph projection paths; exposure partial |
 | ET-16 | Runner-local repetition/no-output inputs | OpenHands records normalized terminal commands, selected read-only tool actions, reasoning-prefix hashes, and an action count; CLI subprocess records time since output and nudge count | Process-local execution only | Values and detector verdicts are not durable telemetry. OpenHands pause degrades to generic exit/no-submit evidence; CLI nudge text or terminal error may appear in output/error events | implemented and unit-tested detector logic; durable detector evidence absent |
 
@@ -113,7 +113,7 @@ graph subset: rejected commands, accepted/rejected graph patches, deferrals,
 verification pass/fail, and review-node creation. It orders that selection by
 global SQL position and defaults to compact payloads. It is not the complete
 graph ledger. `GET /api/runs/{run_id}/graph/events` is the run-local graph ledger,
-with summary/full modes. A complete causal chronology currently requires joining
+with summary/full modes. A complete temporal chronology currently requires joining
 the two namespaced streams by global SQL position; no public endpoint returns
 that complete join.
 
@@ -148,21 +148,31 @@ the contents merely because an artifact record existed.
 
 ### Usage, cost, pricing, and rollups
 
-Usage extraction normalizes provider input-token semantics so canonical input
-includes cache-read and cache-creation tokens. It produces one immutable
-`ModelTokenUsage` per parent/sub-agent model with output, cache components,
-reasoning output, finish reasons, measured execution latency, computed cost, and
-`rate_missing`. Latency is copied to every per-model fact, but graph and cross-run
-reducers count it once per `(run_id, execution_id)` using the first usage index;
-`num_actions` is placed only on usage index zero.
+When runner execution returns an `ExecutionResult`, usage extraction normalizes
+provider input-token semantics so canonical input includes cache-read and
+cache-creation tokens. It can produce one immutable `ModelTokenUsage` per
+parent/sub-agent model with output, cache components, reasoning output, finish
+reasons, measured execution latency, computed cost, and `rate_missing`. Latency
+is copied to every per-model fact, but graph and cross-run reducers count it once
+per `(run_id, execution_id)` using the first usage index; `num_actions` is placed
+only on usage index zero. If the runner raises instead of returning, graph and
+legacy phase handlers bypass extraction and storage, so provider-consumed tokens
+can have no usage fact.
 
-Pricing resolution correctly distinguishes two cases at production time:
+Pricing resolution applies these production rules:
 
 - A complete, explicitly zero rate entry is `local_no_provider_cost`, has
   `rate_missing == false`, and legitimately computes zero.
-- An unknown, absent, or incomplete rate is `unpriced_provider`, has
-  `rate_missing == true`, and carries zero only as the unavailable numeric cost,
-  not as proof of no cost.
+- An unmatched model is `unpriced_provider`, while no model is
+  `no_static_default`; both have `rate_missing == true` and zero only as the
+  unavailable numeric cost, not as proof of no cost.
+- For a matched entry, every absent rate field defaults to zero. Any positive
+  input or output rate classifies the entry as `provider_billed` with
+  `rate_missing == false`, even if cache or other rate fields were omitted.
+  Positive-rate entry completeness is not validated.
+- A matched entry with no positive input/output rate is
+  `local_no_provider_cost` only when all four fields are explicitly present and
+  zero. Otherwise it is `unpriced_provider`.
 
 That distinction survives in `ModelTokenUsage.rate_missing`. It also survives in
 graph cost rollups as `has_rate_missing`, missing-rate execution count, and
@@ -176,10 +186,17 @@ Important limitations prevent a broader price-coverage claim:
 - `ModelCostResolution.cost_classification` and the resolved rate values are not
   persisted. Only computed cost and `rate_missing` remain, despite
   `model_costs.yaml` saying rates are embedded in usage records.
+- A partially populated matched entry with positive input or output is treated as
+  priced; omitted rate categories silently price at zero. `rate_missing == false`
+  therefore proves a matched positive-rate classification, not a complete rate
+  card.
 - `model_costs.yaml` covers a small fixed model set. Custom/dynamic models are
   explicitly allowed by runner configuration and therefore can be unpriced.
 - Exactly zero or entirely absent provider usage produces no usage fact. Missing
   telemetry and a genuinely zero-token execution are indistinguishable.
+- A runner exception before `ExecutionResult` return also produces no usage fact
+  in graph or legacy phase handling. Streamed output or failure evidence may show
+  that work occurred without making consumed tokens or cost recoverable.
 - Graph usage facts for sub-agents retain model and execution but not sub-agent
   ID/type, so attribution stops at node execution and model.
 - `compute_run_metrics` treats a summed persisted cost of zero as though no
@@ -193,7 +210,7 @@ Important limitations prevent a broader price-coverage claim:
   with no coverage caveat.
 - The cross-run endpoint intentionally excludes legacy `CostRecordModel` rows.
   It supports graph-only comparisons and cannot represent fleet-wide coverage
-  while legacy runs exist.
+  while legacy runs exist or exception-terminated executions are unmetered.
 
 The graph rollup supports cross-run grouping by day, node kind, model, profile,
 and run, plus status, runner, and time filters. It does not group/filter by
@@ -231,7 +248,7 @@ the named derived claim.
 |---|---|---|
 | `jobs.J1.health-class` | gap | No shared health classifier or health event/field |
 | `jobs.J1.last-event-age`, `honesty.live-input-age` | derivable input only | Event timestamps/positions exist, but complete workflow+graph last-event join, clock, threshold, and age field do not |
-| `jobs.J1.budget-pace` | gap | Usage exists; no run spend/token cap, pace algorithm, or time-window output |
+| `jobs.J1.budget-pace` | gap | Usage exists only for executions returning metered results; no run spend/token cap, pace algorithm, time-window output, or exception-usage recovery |
 | `jobs.J3.evidence` | current input | Decision, patch, command rejection, record, and citation events provide identities and reasons; causal scope remains record-specific |
 | `jobs.J4.ordered-events` | current but split | Durable global position orders SQL rows; complete public chronology requires joining workflow and graph streams |
 | `jobs.J4.requirement-grade-changes` | current input | Legacy grade events and graph verification records carry requirement, grade, reason, attempt/candidate context; no normalized cross-carrier history endpoint |
@@ -241,23 +258,23 @@ the named derived claim.
 | `jobs.J5.transcript` | partial current | Streamed output is durable and legacy action log is structured; graph has no canonical complete transcript/action log |
 | `jobs.J5.tools` | partial current | Legacy structured tool events; graph persistence is carrier-specific output only |
 | `jobs.J5.file-delta` | partial current | Graph boundary has paths/status and immutable snapshot IDs; no normal diffstat/content delta and node-only causation is unproven. Legacy commits are boundaries, not persisted diffs |
-| `jobs.J5.usage`, `jobs.J8.tokens`, `jobs.J8.duration` | current with missing-data caveat | Per-model token and measured execution duration facts are wired; no fact is emitted for absent/exact-zero provider telemetry |
+| `jobs.J5.usage`, `jobs.J8.tokens`, `jobs.J8.duration` | partial current with unknown coverage | Per-model token and measured execution duration facts are wired only after `ExecutionResult` return; absent/exact-zero telemetry and exception-terminated executions emit no usage fact even when provider work occurred |
 | `jobs.J6.retry-information-delta`, `jobs.J7.retries-without-new-information` | gap | Inputs exist across attempts, prompts, records, grades, files, and usage; no defined or implemented comparison |
 | `jobs.J6.budget` | gap | Planner generation and runner action limits are not an operator intervention cost budget |
-| `jobs.J7.spend-tokens-by-node-kind` | current for graph only | Cross-run endpoint directly groups graph usage by node kind; legacy executions are excluded |
-| `jobs.J7.unpriced-share`, `jobs.J8.price-coverage` | partial/derivable | Graph rollup exposes numerator/denominator inputs and missing-rate counts, not a share/coverage field; missing usage facts are outside the denominator; legacy report loses coverage |
+| `jobs.J7.spend-tokens-by-node-kind` | partial current for graph | Cross-run endpoint directly groups persisted graph usage by node kind; legacy, exact-zero/no-reported, and exception-terminated executions without usage events are excluded |
+| `jobs.J7.unpriced-share`, `jobs.J8.price-coverage` | partial/derivable with unknown denominator | Graph rollup exposes recorded numerator/denominator inputs and missing-rate counts, not a share/coverage field; missing and exception-terminated usage is outside the denominator; matched partially populated positive-rate entries appear priced; legacy report loses coverage |
 | `honesty.unpriced-not-zero` | mixed | Per-model facts and graph rollup preserve `rate_missing`; run-level estimate fallback and legacy report can misrepresent unpriced usage |
 | `jobs.J7.repeated-work` | gap as evidence product | OpenHands has process-local command/read/reasoning detection, but no durable verdict/input window or carrier-wide/cross-run detector |
 | `jobs.J7.verifier-churn`, `jobs.J8.grade-churn` | gap | Grade history inputs exist; no churn definition, aggregation, or drill-through finding |
 | `jobs.J7.prompt-pressure` | gap | No canonical prompt-size/context-limit inputs or detector |
 | `journeys.A.no-runaway-signal`, `ia.health.runaway` | gap | Absence of a runaway event is not evidence of no runaway; classifier does not exist |
 | `journeys.B.wait-age` | derivable input only | Requests/decisions/events have timestamps; no wait-start precedence or age projection |
-| `journeys.C.cost-of-another-attempt` | gap | Historical execution cost exists; no cohort/phase estimator, uncertainty, or approximate result |
+| `journeys.C.cost-of-another-attempt` | gap | Historical returned-execution cost exists with unknown exception coverage; no cohort/phase estimator, uncertainty, or approximate result |
 | `journeys.C.candidate-delta` | gap/partial inputs | Candidate IDs, generic candidate records, file snapshots, commits, prompts, and outputs exist; no canonical candidate content/delta |
 | `journeys.C.causal-gap` | gap | Ordered prompt/grade/file/tool evidence does not establish causal mechanism; no causal-gap contract |
 | `journeys.C.directive-binding`, `honesty.directive-binding-proof`, `ia.health.steered` | gap | Typed steering directive and durable packet binding are absent. Prompt summaries must not be repurposed as directive proof |
 | `journeys.D.file-state-boundary` | current for graph | Callback producer captures, classifies, snapshots, accepts/rejects, and exposes graph file-state evidence |
-| `journeys.E.missing-node-attribution` | gap | Usage facts identify reporting nodes, but there is no expected-execution denominator or list of nodes with missing telemetry |
+| `journeys.E.missing-node-attribution` | gap | Usage facts identify reporting nodes, but there is no expected-execution denominator or list of nodes missing telemetry after absent, zero, or exception-terminated usage |
 | `journeys.E.detector-evidence` | gap | Named cross-run detectors and durable detector findings do not exist |
 | `journeys.continuity.derived-evidence-freshness` | partial current | Requirement support has explicit stale rules; other derived claims have no contracts or freshness outputs |
 | `ia.health.evidence-convergence` | gap with one current input | Requirement support freshness is current; convergence algorithm/output is absent |
@@ -298,11 +315,14 @@ High-value exercised paths found in tests:
   publication/GC coordination, and missing/corrupt states.
 - `tests/integration/test_graph_usage_persistence.py` exercises controller
   production commands, idempotent usage keys, run read-model updates, replay,
-  legacy preservation, provenance hiding, and concurrent writes.
+  legacy preservation, provenance hiding, and concurrent writes after usage facts
+  are available. It does not establish usage capture when runner execution raises.
 - `tests/unit/test_runner_usage_metadata.py` exercises provider metadata,
   parent/sub-agent facts, and measured graph/legacy execution latency.
-- `tests/unit/test_model_costs.py` exercises missing versus explicit-zero rate
-  classification and model-prefix matching.
+- `tests/unit/test_model_costs.py` exercises unmatched/partial-zero versus
+  explicit-zero classification, model-prefix matching, and matched positive
+  input rates with omitted fields. It does not enforce complete positive rate
+  cards because production does not validate completeness.
 - `tests/unit/test_cost_rollup.py` exercises all dimensions, run-scoped execution
   identity, once-only latency/actions, missing-rate counts/tokens, and caps.
 - `tests/integration/test_api_cost_rollup.py` exercises graph-only SQL filtering,
@@ -313,12 +333,13 @@ High-value exercised paths found in tests:
   not prove a durable detector event or graph/cross-run finding because none is
   produced.
 
-No inspected test establishes all-carrier transcript completeness, graph action
-log persistence, exact graph prompt replay, prompt size/pressure, candidate or
-retry information delta, missing-node coverage, budget pace, comparable cohorts,
-cost-of-next-attempt, health classifications, convergence, or durable detector
-drill-through. The report validator checks handoff structure only; it does not
-validate these implementation claims.
+No inspected test establishes usage persistence for exception-terminated graph
+or legacy runner work, complete positive price cards, all-carrier transcript
+completeness, graph action log persistence, exact graph prompt replay, prompt
+size/pressure, candidate or retry information delta, missing-node coverage,
+budget pace, comparable cohorts, cost-of-next-attempt, health classifications,
+convergence, or durable detector drill-through. The report validator checks
+handoff structure only; it does not validate these implementation claims.
 
 ## Important uncertainties
 
@@ -326,6 +347,11 @@ validate these implementation claims.
   tests do not establish production coverage for every selectable runner/model.
 - A graph execution that reports no usage is indistinguishable from telemetry
   loss or legitimate zero usage. This blocks complete price and node coverage.
+- A graph or legacy runner that consumes provider tokens and then raises before
+  returning `ExecutionResult` bypasses usage extraction. Failure events/output do
+  not reconstruct those tokens, so spend remains unknown rather than zero.
+- `rate_missing == false` does not prove rate-card completeness: a matched entry
+  with positive input or output can omit other fields, which default to zero.
 - Graph output events may retain enough runner-native data to reconstruct some
   tool activity for a particular carrier, but there is no canonical contract or
   completeness marker. Treat graph transcript/tool coverage as partial.
@@ -350,7 +376,8 @@ validate these implementation claims.
    output stream but discard the structured action log.
 2. `model_costs.yaml` says rates are embedded into usage records. Current
    `ModelTokenUsage` persists computed `cost_usd` and `rate_missing`, not the
-   resolved rate snapshot or `cost_classification`.
+   resolved rate snapshot or `cost_classification`; matched positive entries also
+   are not checked for complete rate fields.
 3. The per-model and graph-rollup boundaries preserve unpriced status, but
    `compute_run_metrics` can replace zero/unpriced captured cost with an
    approximate nonzero estimate, and `scripts/cost_report.py` sums legacy zeros
@@ -368,6 +395,9 @@ validate these implementation claims.
 7. Runner-local repetition and no-output controls are implemented, but the JTBD
    shared health model requires named, inspectable, cross-run detector evidence.
    Local process termination must not be normalized into that absent capability.
+8. Source documentation describes usage as current, but usage extraction is
+   post-return. Exception-terminated graph and legacy runner work can consume
+   provider tokens while leaving no usage record.
 
 ## Decisions required
 
@@ -379,7 +409,8 @@ Normalization and Phase 2 should decide, without inventing capability:
    exact prompt delivery, prompt size, truncation accounting, and directive
    binding remain gaps.
 3. Whether graph-only cost rollup is a current scoped capability and fleet-wide
-   rollup remains a gap until legacy and missing-execution coverage are explicit.
+   rollup remains a gap until legacy, exception-terminated, and other
+   missing-execution coverage are explicit.
 4. Whether run-level estimated cost is excluded from honest price-coverage
    derivations because it can conflate explicit zero, unpriced, and approximate.
 5. Whether file-state producer attribution is defined as `observed at node
@@ -387,6 +418,8 @@ Normalization and Phase 2 should decide, without inventing capability:
    available.
 6. Whether implementation/test source files need a new content-hash snapshot
    before these findings can be normalized as non-stale evidence.
+7. Whether `rate_missing == false` is accepted only as a matched-price signal,
+   not proof that every billable category had an explicit rate.
 
 No human product decision can make health, pressure, churn, convergence, retry
 delta, causal gap, budget pace, next-attempt cost, directive binding, or missing
@@ -424,13 +457,17 @@ Primary implementation symbols:
   `_externalize_check_output`, `_artifact_reference_for_run`,
   `hydrate_artifact_excerpt`
 - Legacy trace/cost wiring: `PhaseHandler._execute_building`,
-  `PhaseHandler._execute_verifying`, `AttemptStore.store_attempt_prompt`,
-  `AttemptStore.store_attempt_output`, `AttemptStore.store_attempt_metrics`,
-  `_upsert_interaction_log_artifact`, `_upsert_cost_record`
+  `PhaseHandler._execute_verifying`, `PhaseHandler._execute_recovering`, the
+  post-`_execute_agent` calls to `extract_metrics_and_usage`,
+  `AttemptStore.store_attempt_prompt`, `AttemptStore.store_attempt_output`,
+  `AttemptStore.store_attempt_metrics`, `_upsert_interaction_log_artifact`, and
+  `_upsert_cost_record`
 - Usage and pricing: `extract_metrics_and_usage`, `_usage_fact`,
-  `resolve_model_costs`, `calculate_model_usage_cost`,
-  `GraphController.record_node_usage`, `_apply_record_node_usage`,
-  `GraphEventStore.apply_run_usage_events`
+  `load_cost_table` default-zero field loading, `_resolved_costs` positive
+  input/output classification, `resolve_model_costs`,
+  `calculate_model_usage_cost`, `GraphDispatchExecutor._run_agent` post-return
+  extraction and exception branch, `GraphController.record_node_usage`,
+  `_apply_record_node_usage`, and `GraphEventStore.apply_run_usage_events`
 - Cross-run rollup: `load_cost_rollup_facts`, `compute_cost_rollup`,
   `get_cost_rollup`
 - Freshness: `support_evidence_freshness_from_projection`,
@@ -454,17 +491,20 @@ Delegate normalization to capability/derivation synthesis with these guards:
   `transcript` or `prompt packet` capability.
 - Admit raw event, record, graph file-state, CAS check artifact, graph usage, and
   graph cross-run rollup capabilities only with their stated identities,
-  missing conditions, and freshness rules.
+  missing conditions, and freshness rules. Usage admission must be qualified to
+  executions that returned a metered `ExecutionResult`; exception-consumed usage
+  remains unknown.
 - Keep unpriced usage separate from legitimate zero provider cost. Exclude
   run-level estimates and the legacy cost report from price-coverage evidence
-  unless their honesty conflicts are resolved.
+  unless their honesty conflicts are resolved. Treat `rate_missing == false` as
+  evidence of a matched classification, not a complete positive rate card.
 - Require separate derivation contracts for last-event age, wait age, unpriced
   share, price coverage, candidate delta, retry information delta, prompt
   pressure, repeated work, verifier/grade churn, convergence, degraded, stalled,
   runaway, and cost of another attempt.
 - Keep causal gap, intervention budget, missing-node attribution, and directive
   binding as gaps until their required evidence and producers exist.
-- Ask an independent verifier to challenge exact prompt delivery, usage coverage,
-  graph trace completeness, artifact-type distinctions, whole-worktree
-  attribution, and all claims based only on test fixtures rather than production
-  producers.
+- Ask an independent verifier to challenge exact prompt delivery, returned versus
+  exception-terminated usage coverage, positive rate-card completeness, graph
+  trace completeness, artifact-type distinctions, whole-worktree attribution,
+  and all claims based only on test fixtures rather than production producers.

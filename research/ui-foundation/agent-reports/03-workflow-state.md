@@ -51,41 +51,57 @@ event, and projection path was inspected.
 | `WF-run-edges` | Legacy engine edges are `draft -> active`; `active -> stopping`; `active|stopping -> paused` (pause is idempotent once paused); `paused -> active`; `active|paused|stopping -> cancelled`; and active-only completion/failure. The service implements pause as visible `active -> stopping` followed by queued `stopping -> paused`. | implemented, tested: `engine.py::{start_run,stop_run,pause_run,resume_run,cancel_run}`; `service.py::{apply_start_run,apply_stop_run,pause_run,apply_pause_run,apply_complete_run,_apply_terminal_stop}`; `test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused`. |
 | `WF-task-status` | Legacy task statuses are `pending`, `building`, `pending_user_action`, `verifying`, `recovering`, `fan_out_running`, `completed`, and `failed`. `VALID_TRANSITIONS` documents ordinary adjacency, while helper transitions add qualified paths. | implemented: `enums.py::TaskStatus`; `transitions.py::VALID_TRANSITIONS`, `transition_*`. |
 | `WF-task-edges` | Builder start creates an attempt and permits pending/building/verifying/pending-user-action/recovering -> building. Checklist gate permits building -> verifying. Verification yields completed, failed at attempt limit, or a new building revision attempt. Clarification is building -> pending-user-action -> building; approval is verifying -> pending-user-action -> completed/building/failed; recovery starts only from verifying. Fan-out parent is pending -> fan-out-running, then verifying/completed/failed. | implemented, tested: `transitions.py::{transition_to_building,transition_to_verifying,transition_after_verification,transition_to_pending_clarification,transition_from_clarification,transition_to_pending_approval,transition_from_approval,transition_to_recovering}`; `test_workflow_engine.py`; `test_workflow_service.py` recovery cases. |
+| `WF-force-accept` | Qualified force-accept bypasses grades and moves **failed, building, or verifying -> completed**. It is not legal from pending, pending-user-action, recovering, fan-out-running, or completed. The completion cascade can reactivate a failed run in memory only to recalculate remaining work, then emits the resulting run status. | implemented, tested: `transitions.py::transition_force_accept`; `engine.py::force_accept`; `tests/integration/test_api_tasks.py` force-accept coverage. |
 | `WF-step-run-cascade` | A step completes only when all top-level (not fan-out-child) tasks are terminal. Completion advances index, applies conditional forward/back edges or skips, then can make a run completed or failed. A failed step normally fail-stops unless configured transitions route it. | implemented, tested: `transitions.py::{is_step_complete,step_has_failure,check_step_progression}`; `engine.py::complete_verification`; `test_workflow_engine.py::{test_complete_verification_advances_step,test_run_auto_completes_when_all_steps_done,test_run_auto_fails_when_task_fails}`. |
 
-`pending_user_action`, `recovering`, and `fan_out_running` are task states, not
-run states. Step state is instead composed from `completed`, `skipped`, approval
-data, and the current run index; it is not an independent status enum. Attempt
-`outcome` is a nullable free-form value rather than a closed state machine.
+**implemented:** `pending_user_action`, `recovering`, and `fan_out_running` are
+task states, not run states. Step state is instead composed from `completed`,
+`skipped`, approval data, and the current run index; it is not an independent
+status enum. **implemented:** attempt `outcome` is a nullable free-form value,
+not a closed state machine. Evidence: `config/enums.py::TaskStatus`,
+`state/models.py::{StepState,Attempt}`.
 
 ### Accepted signal through durable event and projection
 
-The production path is durable and asynchronous:
+The production path is **implemented** and asynchronous, but it is not one
+atomic handler-plus-acknowledgement transaction:
 
-1. A lifecycle service method validates the current projected run and appends a
-   `SignalEnqueued` event through `EventSignalTransport.enqueue`; it commits via
-   `commit_with_event_outbox`. `start_run`, `resume_run`, and `cancel_run` return
-   the **pre-transition** run. `pause_run` is distinct: it first durably applies
-   `active -> stopping`, then returns the stopping run after queueing `PAUSE`.
-2. `SignalConsumer._find_pending_run_ids` and
-   `_fetch_next_event_signal` identify unacknowledged `signal_enqueued` rows by
-   global position. It runs one FIFO drain task per run ID and may process
-   different run IDs concurrently.
-3. `_handle_signal` sends `RUN_START`, `RESUME`, `PAUSE`, `CANCEL`,
-   `ACTIVITY_COMPLETED`, or `ACTIVITY_VERIFIED` to the corresponding apply
-   method. The apply method emits a `RunStatusChanged` or task/attempt event.
-4. `SqliteEventStore.append` flushes an `events_v2` row, then invokes
-   `ProjectionRegistry` in the same SQLAlchemy transaction. `RunStateProjector`
-   updates `runs`/`steps`; `TaskStateProjector` updates `tasks`/`attempts`;
-   `RunLifecycleProjector` refreshes the consumer's in-memory activity view.
-5. Only after the handler succeeds does `_dispatch_event_signal` append
-   `SignalProcessed` in that same session and commit. Thus a successful
-   acknowledged signal has both handler effects and its processed marker in the
-   database transaction. If stale, the consumer rolls back handler work and
-   writes a processed marker in a fresh transaction; if another exception occurs
-   it writes no marker, permitting redelivery.
+1. **implemented, tested:** A lifecycle service method validates the current
+   projected run, appends `SignalEnqueued` through
+   `EventSignalTransport.enqueue`, and commits the enqueue via
+   `commit_with_event_outbox`. `start_run`, `resume_run`, and `cancel_run`
+   return the **pre-transition** run. `pause_run` first durably applies
+   `active -> stopping`, then queues PAUSE and returns stopping. Evidence:
+   `service.py::{start_run,pause_run,resume_run,cancel_run}`;
+   `signals.py::EventSignalTransport.enqueue`;
+   `test_signal_queue.py::{test_run_start_signal_consumed_draft_to_active,test_pause_active_run_enters_stopping_then_paused}`.
+2. **implemented, tested:** `SignalConsumer._find_pending_run_ids` and
+   `_fetch_next_event_signal` identify unacknowledged `signal_enqueued` positions.
+   It serializes FIFO delivery within a run and may dispatch different run IDs
+   concurrently. Evidence: `consumer.py::{_tick,_process_run,_fetch_next_event_signal}`;
+   `test_signal_queue.py::test_concurrent_runs_process_signals_independently`.
+3. **implemented:** `_handle_signal` routes `RUN_START`, `RESUME`, `PAUSE`,
+   `CANCEL`, `ACTIVITY_COMPLETED`, and `ACTIVITY_VERIFIED` to an apply method.
+   Those apply methods append transition events and **commit internally before
+   returning**. Evidence: `consumer.py::{_handle_signal,_dispatch_event_signal}`;
+   `service.py::{apply_start_run,apply_pause_run,apply_resume_run,apply_cancel_run,apply_submission,apply_verification}`.
+4. **implemented, tested:** each event append flushes an `events_v2` row and
+   invokes `ProjectionRegistry` in that append's SQL transaction; projectors
+   update run/step and task/attempt read models. Evidence:
+   `event_store_v2.py::SqliteEventStore.append`; `projections/registry.py::__call__`;
+   `test_event_sourced_workflow.py::test_empty_db_rebuild`.
+5. **implemented, unexercised for the inter-commit crash window:** only after
+   the handler returns does `_dispatch_event_signal` append `SignalProcessed`
+   and commit the consumer session. Since an `apply_*` may already have committed
+   lifecycle effects (and may fail while flushing its post-commit observer), a
+   crash or post-commit observer failure can leave the transition projected but
+   the enqueued position unmarked. On redelivery, idempotent apply paths or
+   `InvalidTransitionError` stale handling are relied on to avoid repeating the
+   transition; stale handling appends the marker in a fresh session. Evidence:
+   `consumer.py::_dispatch_event_signal`; `service.py::{apply_start_run,apply_pause_run,apply_resume_run,_apply_terminal_stop}`;
+   `event_outbox.py::commit_with_event_outbox`; `jsonl_outbox.py::JsonlOutboxObserver`.
 
-**Acceptance/result distinction (tested).** `POST /start` returns 202 while
+**implemented, tested — acceptance/result distinction.** `POST /start` returns 202 while
 the row stays `draft`; consuming the signal makes it `active`.
 `tests/integration/test_signal_queue.py::test_run_start_signal_consumed_draft_to_active`
 asserts both observations. The analogous resume test proves paused before drain
@@ -108,10 +124,13 @@ command evidence, not proof of the requested resulting state.
   `test_signal_redelivery.py::test_startup_redelivery_processes_pending_signal`
   proves processing and acknowledgement; `test_startup_redelivery_skips_active_runs`
   proves its in-memory active guard.
-- **implemented:** stale `InvalidTransitionError`, retired-runner errors, and
-  missing runs are intentionally acknowledged as discarded signals. This avoids
-  indefinite retries, but it means the durable record distinguishes enqueued and
-  processed positions rather than recording a typed rejection outcome.
+- **implemented, tested in ordinary stale-signal cases; unexercised for an
+  apply-committed/marker-missing crash:** stale `InvalidTransitionError`,
+  retired-runner errors, and missing runs are intentionally acknowledged as
+  discarded signals. This avoids indefinite retries, but the durable record
+  distinguishes enqueued and processed positions rather than recording a typed
+  rejection outcome. Evidence: `consumer.py::_dispatch_event_signal`;
+  `test_signal_consumer.py::test_stale_activity_signal_for_paused_run_does_not_block_resume`.
 - **implemented:** runtime executor safety pauses before entering the agent loop
   (`executor_not_started`), clears that marker on its first loop iteration,
   pauses on cancellation as `server_shutdown`, pauses unexpected errors, and
@@ -120,29 +139,36 @@ command evidence, not proof of the requested resulting state.
 
 ### Retries, locks, cancellation, and races
 
-- **Retries:** failed verification before `max_attempts` creates a new attempt
+- **implemented, tested — retries:** failed verification before `max_attempts` creates a new attempt
   and returns to building; at the limit it fails the task. Rejected approval has
   the same retry-or-fail structure. Recovery retry/skip/abandon is a separate
   recovering-state mechanism; it must not be collapsed into ordinary verifier
   revision. `check_submission`/`apply_submission` split the REST path: the
   former synchronously performs auto-verify/checklist validation and persists
   evidence, while the latter applies building -> verifying after the signal.
-- **Locks:** `InMemoryLockManager` is keyed only by task ID, has a five-minute
-  default expiry, lets the same agent refresh/acquire, and only the owner may
-  release. `WorkflowEngine.start_task` acquires before its transition; terminal
-  `complete_verification` releases only for completed/failed, retaining a lock
-  across a revision. The monitor attempts to release default-agent locks after
-  agent death. This is process-local, time-expiring pessimistic coordination,
-  not a durable DB lease; restart/process races therefore remain outside its
-  proven protection.
-- **Cancellation/pause race:** a pause request writes `stopping` before its
+- **implemented; test coverage of lock failure paths is unclear — locks:**
+  `InMemoryLockManager` is keyed only by task ID, has a five-minute default
+  passive-expiry check, lets the same agent refresh/acquire, and only the owner
+  may release. `WorkflowEngine.start_task` acquires **before** it validates run,
+  task, future-step, or transition eligibility. If that later validation or
+  transition raises, no exception-safe release occurs in this method; the lock
+  remains until an owner release, monitor cleanup for a detected default-agent
+  death, or another `acquire` observes expiry. `is_locked` itself does not remove
+  expired entries. Terminal `complete_verification` releases only completed/failed
+  locks and retains a revision lock. Evidence: `locks.py::InMemoryLockManager`;
+  `engine.py::{start_task,complete_verification}`;
+  `runners/runtime/monitor.py::on_agent_died`. This is process-local
+  coordination, not a durable DB lease.
+- **implemented, tested in paused stale-activity behavior; unclear for every
+  mid-agent ordering — cancellation/pause race:** a pause request writes `stopping` before its
   PAUSE signal. The active executor may still be mid-agent work in that interval;
   the consumer removes the registered workflow and applies paused later. Activity
   signals delivered without an active workflow are ignored when the run is
   paused, preventing a stale completion/verification from advancing it after a
   pause. Cancel applies terminal state through the queue; graph cancellation
   additionally drives the graph kernel to terminal before `apply_cancel_run`.
-- **Concurrency:** signal FIFO is per run, not globally serial. The consumer
+- **implemented, tested for independent runs; inferred for all SQLite scheduling
+  interleavings — concurrency:** signal FIFO is per run, not globally serial. The consumer
   creates one processing task per run, while `SqliteEventStore` assigns
   aggregate versions under retrying optimistic concurrency. Fan-out expansion
   explicitly catches `StaleDataError`, reloads already-created children, and
@@ -151,20 +177,20 @@ command evidence, not proof of the requested resulting state.
 
 ### Legacy versus graph mode
 
-| Dimension | Legacy execution | Graph execution |
+| Dimension | Legacy execution | Graph execution | Status and exact evidence |
 |---|---|---|
-| Work driver | `RunWorkflow` selects a current step/task and runs the builder/verifier cycle. | `SignalConsumer` arms a re-enterable graph driver; it must resume from durable graph position and not seed again. |
-| Task state model | `TaskStatus`, attempts, checklist/grade gates, human clarification/approval, and fan-out state are active mechanisms. | Graph kernel node/run state is a distinct model; no proof equates graph node with task or graph run state with `TaskStatus`. |
-| Resume from failed | Failed legacy runs are not resumable through lifecycle resume. | `WorkflowService.resume_run` permits failed graph run reopening, but documentation in the method requires graph-kernel `failed -> resuming -> active` commands as well. |
-| Cancel | Removes legacy workflow registration and applies `cancelled`. | Consumer first calls `apply_graph_cancel_until_terminal`, disarms graph driver, then applies the same row-level cancelled status. |
-| States only in mode | `recovering`, `fan_out_running`, step index/step condition progression, and checklist verifier cycle are legacy task-flow carriers. | Graph lifecycle topology and graph `resuming` are graph-mode concepts; they are not declared `RunStatus` values. |
+| Work driver | `RunWorkflow` selects a current step/task and runs the builder/verifier cycle. | `SignalConsumer` arms a re-enterable graph driver; it resumes durable graph position without reseeding. | implemented: `runners/executor.py::_run_agent_loop`; `consumer.py::{_handle_run_start,_handle_resume,arm_graph_run}`. |
+| Task state model | `TaskStatus`, attempts, checklist/grade gates, human clarification/approval, and fan-out state are active mechanisms. | Graph kernel node/run state is distinct; no scoped proof equates graph node with task or graph run state with `TaskStatus`. | implemented for legacy; unclear for conversion: `enums.py::TaskStatus`; `consumer.py::_handle_resume`; graph equivalence absent from inspected boundaries. |
+| Resume from failed | Failed legacy runs are not resumable through lifecycle resume. | Failed graph row may reopen, but graph-kernel `failed -> resuming -> active` commands are also required. | implemented: `service.py::{resume_run,apply_resume_run}`; graph sequence documented in `apply_resume_run` docstring; graph-kernel legality not independently tested here. |
+| Cancel | Removes legacy workflow registration and applies `cancelled`. | Consumer drives graph cancellation to terminal, disarms graph driver, then applies row-level cancelled. | implemented: `consumer.py::_handle_cancel`; `graph_driver.py::apply_graph_cancel_until_terminal`; graph terminal ordering unexercised here. |
+| States only in mode | `recovering`, `fan_out_running`, step index/condition progression, and checklist verifier cycle are legacy carriers. | Graph topology and `resuming` are graph concepts, not `RunStatus` values. | implemented for named legacy enum states; documented-only in this report for graph `resuming`: `enums.py::{RunStatus,TaskStatus}`; `service.py::apply_resume_run`. |
 
-The shared row-level `RunStatus` is therefore a projection/control boundary, not
-evidence of a shared full execution topology.
+**inferred from the implemented boundary:** shared row-level `RunStatus` is a
+projection/control boundary, not evidence of a shared full execution topology.
 
 ### JSONL authority conflict
 
-There is a material source conflict. `AGENTS.md` states that transitions are
+**documented-only versus implemented conflict:** `AGENTS.md` states that transitions are
 logged to JSONL first and recovery reconstructs from history. Executable code
 does the opposite ordering: `SqliteEventStore.append` flushes `events_v2`, runs
 projections in the SQL transaction, and queues the JSONL observer;
@@ -199,9 +225,12 @@ documentation contradiction.
 3. **Signal result uncertainty:** `SignalProcessed` proves consumer handling
    completed or a stale signal was discarded; it is not a typed durable
    acceptance/rejection/result record for every queued command.
-4. **Exactly-once side-effect uncertainty:** durable signal handler and marker
-   commit together, but pre-commit worktree/agent side effects and post-commit
-   JSONL output do not become one atomic external transaction.
+4. **Signal acknowledgement atomicity uncertainty:** `apply_*` commits transition
+   effects before `_dispatch_event_signal` appends `SignalProcessed`. A crash or
+   `CommittedSecondaryOutputError` in that interval can leave projected state
+   applied without an acknowledgement marker. Redelivery relies on idempotent
+   transition methods or the consumer's stale-transition discard path; exact
+   coverage of this inter-commit failure is unexercised.
 5. **Recovery breadth uncertainty:** startup redelivery is tested for pending
    signals and projection rebuilding is tested for workflow events. Whether all
    executor/agent subprocess side effects are reconstructable after a crash is
@@ -222,12 +251,19 @@ documentation contradiction.
    independently inspected API/actions report identifies
    `cli.runs.start_run` directly invoking `WorkflowService.apply_start_run`.
    REST acceptance timing and that CLI behavior are not one contract.
-3. **CON-WF-03 — “exactly once” wording is too broad if applied to the whole
-   operation.** `SignalConsumer` atomically marks successful handler processing
-   in the DB, yet JSONL is post-commit and agents/worktrees are external. It is
-   valid only for the scoped durable handler/marker transaction, not every
-   observable side effect.
-4. **CON-WF-04 — terminality differs by mode.** `TERMINAL_RUN_STATUSES` includes
+3. **CON-WF-03 — handler-plus-marker atomicity claim is false.**
+   `SignalConsumer._dispatch_event_signal` appends `SignalProcessed` after the
+   handler returns, but `WorkflowService.apply_*` commits its lifecycle effects
+   internally. A crash or post-commit observer failure after that commit can
+   leave an applied projection without the marker. Redelivery relies on
+   idempotency/stale-transition handling, not one atomic handler-plus-marker
+   transaction.
+4. **CON-WF-04 — lock acquisition precedes eligibility validation.**
+   `WorkflowEngine.start_task` obtains the in-memory lock before checking run
+   status, step position, task eligibility, or transition success, and has no
+   `finally` release. The documented pessimistic-lock intent does not prove
+   exception-safe lock release.
+5. **CON-WF-05 — terminality differs by mode.** `TERMINAL_RUN_STATUSES` includes
    failed, while graph-mode service logic permits a qualified failed reopen.
    Failed must not be called absolutely terminal without its mode qualifier.
 
