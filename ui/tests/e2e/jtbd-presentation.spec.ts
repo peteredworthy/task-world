@@ -75,6 +75,28 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('.capability--proposed')).toContainText('Proposed capability');
   });
 
+  test('cartography presents a scenario-derived exception narrative with accessible node statistics', async ({ page }) => {
+    await openPresentation(page, '#cartography');
+
+    const inspector = page.locator('[data-selected-object]');
+    const narrativeOrder = await inspector.locator('[data-exception-step]').evaluateAll((steps) =>
+      steps.map((step) => step.getAttribute('data-exception-step')),
+    );
+    expect(narrativeOrder).toEqual(['constraint', 'evidence', 'consequence', 'action']);
+    await expect(inspector.locator('[data-exception-step="constraint"]')).toContainText('Recovery resumes suspended work exactly once after executor restart');
+    await expect(inspector.getByText('R2', { exact: true })).toBeVisible();
+    await expect(page.locator('.fleet-run-name')).toContainText('Suspension replay recovery');
+    await expect(page.locator('.fleet-run-meta')).toContainText('r314');
+    await expect(inspector.locator('[data-exception-step="evidence"]')).toContainText('Deterministic suspension replay');
+    await expect(inspector.locator('[data-exception-step="evidence"]')).toContainText('Incident record INC-042');
+    await expect(inspector.locator('[data-exception-step="consequence"]')).toContainText('3 blocked successors · $1.05 retry cost · 1 attempt left');
+    await expect(inspector.locator('[data-exception-step="action"]')).toContainText('bind Deterministic suspension replay and Incident record INC-042');
+
+    await expect(page.locator('[data-node-stat-row]').first()).toHaveAttribute('role', 'row');
+    await expect(page.locator('[data-node-stat-row]').first().locator('button')).not.toHaveAttribute('role');
+    await expect(page.locator('.node-stat-head')).toHaveCSS('position', 'sticky');
+  });
+
   test('fits the presentation and all workspace states at mobile width', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openPresentation(page, '#cartography');
@@ -95,6 +117,8 @@ test.describe('JTBD UI approaches presentation', () => {
       railOverflowX: 'visible',
     });
     await expect(page.locator('[data-workspace-state]')).toHaveCount(5);
+    const tableOverflow = await page.locator('.node-stat-table').evaluate((table) => table.scrollWidth <= table.clientWidth);
+    expect(tableOverflow).toBe(true);
   });
 
   test('does not hijack guarded keyboard events', async ({ page }) => {
