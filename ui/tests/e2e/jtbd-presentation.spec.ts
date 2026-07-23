@@ -382,12 +382,19 @@ test.describe('JTBD UI approaches presentation', () => {
     const trigger = page.getByRole('button', { name: 'Review proposed intervention' });
     await trigger.click();
     const dialog = page.getByRole('dialog', { name: 'Review corrective intervention' });
+    const cancel = dialog.getByRole('button', { name: 'Cancel' });
+    const authorize = dialog.getByRole('button', { name: 'Authorize proposed correction' });
     await expect(dialog).toBeVisible();
     await expect(dialog).toContainText('Proposed capability');
     await expect(dialog).toContainText('3 successors');
     await expect(dialog).toContainText('$0.62');
-    const cancel = dialog.getByRole('button', { name: 'Cancel' });
-    const authorize = dialog.getByRole('button', { name: 'Authorize proposed correction' });
+    await expect(dialog).toContainText('Consequence');
+    await expect(dialog).toContainText('remain blocked until correction verifies');
+    await expect(dialog).toContainText('Authority');
+    await expect(dialog).toContainText('Reversibility');
+    await expect(dialog).toContainText('Validation');
+    await expect(cancel).toBeFocused();
+    await expect(page.locator('body')).toHaveClass(/modal-open/);
     await authorize.focus();
     await page.keyboard.press('Tab');
     await expect(cancel).toBeFocused();
@@ -409,6 +416,7 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('[data-concept="intervention"][data-state="outcome"]')).toBeVisible();
     await expect(page.locator('[data-decision-result]')).toContainText('Accepted locally');
     await expect(page.locator('[data-decision-result]')).toContainText('no backend command sent');
+    await expect(page.locator('[data-decision-result]')).toBeFocused();
     expect(nonFileRequests).toEqual([]);
   });
 
@@ -418,6 +426,27 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('.comparison-matrix')).toContainText('Decision readiness');
     await expect(page.locator('.comparison-matrix')).toContainText('Expected strength');
     await expect(page.getByText(/user-tested score/i)).toHaveCount(0);
+    await expect(page.locator('.comparison-matrix tbody tr')).toHaveCount(5);
+    await expect(page.locator('.comparison-matrix thead tr').last().locator('th')).toHaveCount(10);
+    await expect(page.getByText('Expected strength', { exact: true }).count()).resolves.toBeGreaterThan(0);
+    await expect(page.getByText('Trade-off', { exact: true }).count()).resolves.toBeGreaterThan(0);
+    await expect(page.getByText('Risk', { exact: true }).count()).resolves.toBeGreaterThan(0);
+    await expect(page.getByText('Cartography + Evidence Workbench')).toBeVisible();
+    await expect(page.getByText('Intervention Desk + Causal Spine')).toBeVisible();
+    await expect(page.getByText('Mission Weave as fleet/run synopsis')).toBeVisible();
+    expect(await page.locator('.comparison-matrix td .comparison-cell-reason').count()).toBe(50);
+    expect(await page.locator('.comparison-matrix td .comparison-cell-reason').allTextContents()).not.toContain('');
+    expect((await page.locator('.comparison-matrix td').allTextContents()).join(' ')).not.toMatch(/\b[1-5]\b|rating/i);
+    await page.setViewportSize({ width: 390, height: 844 });
+    const mobileComparison = page.locator('[data-comparison-mobile]');
+    await expect(mobileComparison).toBeVisible();
+    await expect(mobileComparison.locator('section')).toHaveCount(5);
+    await expect(mobileComparison.locator('section').first().getByRole('listitem')).toHaveCount(10);
+    await expect(mobileComparison.locator('section').first().getByRole('listitem').first()).toContainText('Attention clarity');
+    await expect(mobileComparison.locator('section').first().getByRole('listitem').first()).toContainText('Expected strength');
+    await expect(mobileComparison.locator('section').first().getByRole('listitem').first()).toContainText('Ranks the exception before fleet detail.');
+    await expect(mobileComparison.locator('.comparison-cell-reason').first()).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
 
   test('artifact makes no external requests and avoids horizontal overflow', async ({ page }) => {
