@@ -99,6 +99,18 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('.node-stat-head')).toHaveCSS('position', 'sticky');
   });
 
+  test('evidence workbench uses node rows and fixed statistic columns', async ({ page }) => {
+    await openPresentation(page, '#evidence');
+    await page.keyboard.press('3');
+    const matrix = page.locator('.evidence-matrix');
+    await expect(matrix.getByRole('columnheader')).toHaveCount(5);
+    await expect(matrix.locator('[data-node-stat-row]')).toHaveCount(5);
+    await expect(matrix).toContainText('Recovery resumes suspended work exactly once after executor restart');
+    await expect(page.locator('.packet-delta')).toContainText('Deterministic suspension replay');
+    await expect(page.locator('.packet-delta')).toContainText('Incident record INC-042');
+    await expect(page.locator('.graph-locator')).toHaveAttribute('aria-label', /3 blocked successors/);
+  });
+
   test('causal spine preserves parallel branches and opens evidence in place', async ({ page }) => {
     await openPresentation(page, '#causal');
     await page.keyboard.press('3');
