@@ -201,6 +201,19 @@ test.describe('JTBD UI approaches presentation', () => {
     expect(evidenceController.manySuccessors.every((y) => y >= 10 && y <= 140)).toBe(true);
   });
 
+  test('mission weave shows dynamic branches, rework, and final convergence', async ({ page }) => {
+    await openPresentation(page, '#weave');
+    await page.keyboard.press('2');
+    await expect(page.locator('.weave-lane')).toHaveCount(5);
+    await expect(page.locator('.rework-loop')).toBeVisible();
+    await expect(page.locator('.final-invariant')).toContainText('Recovery invariants');
+    await page.keyboard.press('4');
+    await expect(page.locator('[data-weave-segment="corrective-evidence"]')).toContainText('Proposed capability');
+    await page.keyboard.press('5');
+    await expect(page.locator('[data-weave-segment="corrective-evidence"]')).not.toContainText('Proposed capability');
+    await expect(page.locator('.final-invariant')).toContainText('A · merged');
+  });
+
   test('causal spine preserves parallel branches and opens evidence in place', async ({ page }) => {
     await openPresentation(page, '#causal');
     await page.keyboard.press('3');
