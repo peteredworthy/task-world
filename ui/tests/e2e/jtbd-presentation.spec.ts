@@ -215,6 +215,11 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(corrective).toContainText('Proposed capability');
     await expect(corrective).toHaveClass(/weave-segment--proposed/);
     await expect(corrective).toHaveCSS('border-style', 'dashed');
+    await expect(page.locator('.weave-grid [data-weave-segment="verify-correction"], .weave-grid [data-weave-segment="final-gate"], .weave-grid [data-weave-segment="merge"]')).toHaveCount(0);
+    await expect(page.locator('[data-weave-final-invariant]')).toHaveCount(0);
+    const correctionBranch = page.locator('.weave-routes [data-weave-relation][data-weave-from="recovery-verify-a2"][data-weave-to="corrective-evidence"][data-weave-kind="branch"]');
+    await expect(correctionBranch).toHaveClass(/weave-route--proposed/);
+    await expect(page.locator('.weave-routes [data-weave-relation][data-weave-from="verify-correction"][data-weave-to="final-gate"][data-weave-kind="join"], .weave-routes [data-weave-relation][data-weave-from="final-gate"][data-weave-to="merge"][data-weave-kind="converge"]')).toHaveCount(0);
     await corrective.click();
     await page.keyboard.press('5');
     await expect(corrective).toContainText('Replay + incident evidence bound');
@@ -224,6 +229,7 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('[data-weave-selected-detail]')).toContainText('verified');
     await expect(page.locator('[data-weave-final-invariant]')).toContainText('Recovery invariants · A · merged');
     await expect(page.locator('[data-weave-segment="verify-correction"]')).toContainText('A');
+    await expect(correctionBranch).not.toHaveClass(/weave-route--proposed/);
   });
 
   test('mission weave preserves labeled relations and vertical workstream rows on mobile', async ({ page }) => {

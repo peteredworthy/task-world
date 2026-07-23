@@ -243,9 +243,15 @@
         <aside class="graph-locator" aria-label="Selected requirement with ${successors.length} blocked successors"><strong>Constraint locator</strong><small>${scenario.run.id} · blast radius ${successors.length} successors</small><svg viewBox="0 0 220 150" aria-hidden="true"><path d="M20 75 L95 75 ${successors.map((successor, index) => `M95 75 L175 ${successorYs[index]}`).join(' ')}"/>${successors.map((successor, index) => `<circle data-locator-successor="${successor.id}" cx="${175}" cy="${successorYs[index]}" r="6"><title>${escapeHtml(successor.name)}</title></circle>`).join('')}<circle cx="95" cy="75" r="10"/></svg></aside>
       </section>`;
     }
-    const weaveHorizon = (workspaceState) => workspaceState === 'outcome' ? 3 : workspaceState === 'action' ? 3 : 2;
+    const visibleWeaveSegmentIds = (workspaceState) => {
+      const baseline = WEAVE_SEGMENTS.filter((segment) => segment.row < 3).map((segment) => segment.id);
+      if (workspaceState === 'action') return [...baseline, 'corrective-evidence'];
+      if (workspaceState === 'outcome') return WEAVE_SEGMENTS.map((segment) => segment.id);
+      return baseline;
+    };
     function resolveWeaveSegments(scenario, workspaceState) {
-      return WEAVE_SEGMENTS.filter((segment) => segment.row <= weaveHorizon(workspaceState)).map((segment) => {
+      const visibleIds = new Set(visibleWeaveSegmentIds(workspaceState));
+      return WEAVE_SEGMENTS.filter((segment) => visibleIds.has(segment.id)).map((segment) => {
         const node = segment.nodeId ? scenario.nodes.find((candidate) => candidate.id === segment.nodeId) : null;
         const resolvedCorrection = segment.role === 'correction' && workspaceState === 'outcome';
         const grade = typeof segment.gradeIndex === 'number' ? scenario.requirement.grades[segment.gradeIndex] : segment.finalGrade ? scenario.outcome.finalGrade : null;
@@ -276,7 +282,7 @@
       };
       const relationName = (id) => visible.find((segment) => segment.id === id)?.label || id;
       const laneName = (id) => { const lane = visible.find((segment) => segment.id === id)?.lane || ''; return lane ? `${lane[0].toUpperCase() + lane.slice(1)}` : ''; };
-      const relationMarkup = relations.map((relation) => `<path class="weave-route ${relation.kind === 'rework' ? 'rework-loop' : ''} ${relation.kind === 'branch' ? 'weave-route--proposed' : ''}" data-weave-relation data-weave-from="${relation.from}" data-weave-to="${relation.to}" data-weave-kind="${relation.kind}" d="${relation.route}"/>`).join('');
+      const relationMarkup = relations.map((relation) => `<path class="weave-route ${relation.kind === 'rework' ? 'rework-loop' : ''} ${relation.kind === 'branch' && workspaceState === 'action' ? 'weave-route--proposed' : ''}" data-weave-relation data-weave-from="${relation.from}" data-weave-to="${relation.to}" data-weave-kind="${relation.kind}" d="${relation.route}"/>`).join('');
       const mobileRelations = relations.map((relation) => `<li class="weave-mobile-relation weave-mobile-relation--${relation.kind}" data-weave-relation data-weave-from="${relation.from}" data-weave-to="${relation.to}" data-weave-kind="${relation.kind}"><b>${relation.kind[0].toUpperCase() + relation.kind.slice(1)}</b><span>${laneName(relation.from)}: ${escapeHtml(relationName(relation.from))} → ${laneName(relation.to)}: ${escapeHtml(relationName(relation.to))}</span></li>`).join('');
       const rows = [1, 2, 3].filter((row) => visible.some((segment) => segment.row === row)).map((row) => `<div class="weave-row" data-weave-row="${row}">${visible.filter((segment) => segment.row === row).map(segmentCard).join('')}</div>`).join('');
       const fleetPattern = (run) => WEAVE_LANES.map((lane, index) => `<i class="mini-weave-segment mini-weave-segment--${run.states[index] || 'waiting'}"></i>`).join('');
