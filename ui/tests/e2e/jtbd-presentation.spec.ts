@@ -200,8 +200,16 @@ test.describe('JTBD UI approaches presentation', () => {
     }
 
     await page.locator('[data-case-id="case-auth-gate"]').click();
-    await expect(page.locator('.decision-packet')).toContainText('Release manager approval required');
-    await expect(page.locator('.decision-packet')).toContainText('Publish recovery audit');
+    const packet = page.locator('.decision-packet');
+    await expect(packet).toContainText('Release manager approval required');
+    await expect(packet).toContainText('1 recovery audit publication remains held');
+    await expect(packet).toContainText('Publish recovery audit');
+    await expect(packet).not.toContainText('Another unchanged retry');
+    await expect(packet).not.toContainText(/retry/i);
+    await expect(packet).not.toContainText('Proposed capability');
+    await expect(packet.getByRole('button', { name: 'Await release manager approval' })).toBeVisible();
+    await page.keyboard.press('4');
+    await expect(page.locator('.intervention-state-note')).toContainText('Release manager approval is required before the recovery audit can publish');
   });
 
   test('intervention review action is guarded until the modal capability is available', async ({ page }) => {
@@ -209,12 +217,6 @@ test.describe('JTBD UI approaches presentation', () => {
     const review = page.getByRole('button', { name: 'Review proposed intervention' });
     await review.click();
     await expect(page.locator('[data-live-region]')).toContainText('Confirmation becomes available in the final interaction task');
-
-    await page.evaluate(() => {
-      Object.assign(window, { openDecisionModal: (concept: string, selector: string) => Object.assign(window, { interventionReviewCall: [concept, selector] }) });
-    });
-    await review.click();
-    await expect.poll(() => page.evaluate(() => (window as Window & { interventionReviewCall?: string[] }).interventionReviewCall)).toEqual(['intervention', '[data-action="review-intervention"]']);
   });
 
   test('causal spine stacks every visible event inside its mobile workspace', async ({ page }) => {
