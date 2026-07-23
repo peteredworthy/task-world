@@ -705,4 +705,24 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(terminals).toHaveClass(/mini-weave-segment--verified/);
     await expect(page.locator('.weave-fleet .mini-weave i').nth(4)).toHaveClass(/mini-weave-segment--verified/);
   });
+
+  test('preserves Outcome weave geometry, separated grades, and Cartography release summaries', async ({ page }) => {
+    await openPresentation(page, '#weave');
+    await page.keyboard.press('5');
+    const weave = page.locator('[data-concept="weave"][data-state="outcome"]');
+    for (const expected of ['1', '2', '3', '4', '5'] as const) {
+      await expect(weave.locator(`.weave-lane:nth-of-type(${Number(expected)})`)).toHaveAttribute('style', `--lane:${expected}`);
+    }
+    const segments = [['build-a1', '--lane:2; --row:2'], ['verify-correction', '--lane:3; --row:4'], ['final-gate', '--lane:4; --row:4'], ['merge', '--lane:5; --row:4']] as const;
+    for (const [id, geometry] of segments) await expect(weave.locator(`[data-weave-segment="${id}"]`)).toHaveAttribute('style', geometry);
+    await expect(weave.locator('[data-weave-grade-history]')).toHaveClass(/grade--c/);
+    await expect(weave.locator('[data-weave-final-grade]')).toHaveClass(/grade--a/);
+
+    await openPresentation(page, '#cartography');
+    await page.keyboard.press('5');
+    const cartography = page.locator('[data-concept="cartography"][data-state="outcome"]');
+    await expect(cartography.locator('.fleet-ribbon')).toHaveAttribute('role', 'img');
+    await expect(cartography.locator('.fleet-ribbon')).toHaveAttribute('aria-label', /released/);
+    await expect(cartography.locator('.graph-map')).toHaveAttribute('aria-label', /Resolved|releases/);
+  });
 });
