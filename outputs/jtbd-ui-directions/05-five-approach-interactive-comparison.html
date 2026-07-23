@@ -50,7 +50,7 @@
       .deck-nav button { padding: 2px 4px; }
       .state-rail { gap: 2px; font-size: 11px; }
       .state-rail button { padding: 3px 1px; }
-       .concept-workspace.cartography, .concept-workspace.causal-spine { grid-template-columns: 1fr; }.fleet-rail, .selection-inspector, .causal-detail { border: 0; border-bottom: 1px solid var(--line); }.graph-map { min-height: 390px; }.node-stat-head, .node-stat-row { grid-template-columns: minmax(124px, 1fr) 40px 35px 54px 48px; font-size: 11px; }.causal-track { grid-template-columns: 82px minmax(0, 1fr); }.causal-event strong { font-size: 10px; }.causal-detail { max-height: 300px; }
+       .concept-workspace.cartography, .concept-workspace.causal-spine { grid-template-columns: 1fr; }.fleet-rail, .selection-inspector, .causal-detail { border: 0; border-bottom: 1px solid var(--line); }.graph-map { min-height: 390px; }.node-stat-head, .node-stat-row { grid-template-columns: minmax(124px, 1fr) 40px 35px 54px 48px; font-size: 11px; }.causal-main { padding: 8px; }.causal-tracks { min-height: 0; gap: 12px; }.causal-track { display: block; min-height: 0; border: 1px solid var(--line); }.causal-track > h2 { padding: 8px; border-bottom: 1px solid var(--line); }.causal-track[data-causal-track="work"] > h2 { color: var(--focus); }.causal-track[data-causal-track="verify"] > h2 { color: var(--verified); }.causal-track[data-causal-track="operator"] > h2 { color: var(--waiting); }.causal-lane { display: grid; grid-template-columns: 1fr; gap: 7px; padding: 8px; background: none; }.causal-event { grid-column: auto; width: 100%; min-height: 0; }.causal-event strong { font-size: 11px; }.event-branch { display: none; }.causal-detail { max-height: none; }
     }
     @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
   </style>
@@ -78,7 +78,7 @@
       requirement: Object.freeze({ id: 'R2', name: 'Recovery resumes suspended work exactly once after executor restart', required: true, grades: Object.freeze(['C', 'C']) }),
       nodes: Object.freeze([
         Object.freeze({ id: 'N14', name: 'Implement replay boundary', kind: 'builder', attempt: 1, grade: 'C', files: 8, newEvidence: 0, cost: 0.72 }),
-        Object.freeze({ id: 'N15', name: 'Verify suspension replay', kind: 'verifier', attempt: 1, grade: 'C', files: null, newEvidence: 0, cost: 0.19 }),
+        Object.freeze({ id: 'N15', name: 'Attempt 1 verifier verdict', kind: 'verifier', attempt: 1, grade: 'C', files: null, newEvidence: 0, cost: 0.19 }),
         Object.freeze({ id: 'N17', name: 'Revise recovery path', kind: 'builder', attempt: 2, grade: 'C', files: 3, newEvidence: 0, cost: 1.05 }),
         Object.freeze({ id: 'N18', name: 'Recheck replay proof', kind: 'verifier', attempt: 2, grade: 'C', files: null, newEvidence: 0, cost: 0.21 }),
         Object.freeze({ id: 'N24', name: 'Add incident evidence', kind: 'builder', attempt: 3, grade: null, files: 0, newEvidence: 2, cost: 0.62, proposed: true }),
@@ -87,14 +87,18 @@
       outcome: Object.freeze({ finalGrade: 'A', merged: true, avoidedRetryCost: 1.05, learning: 'Promote restart replay fixture into the routine packet' }),
     });
     const CAUSAL_EVENTS = Object.freeze([
-      Object.freeze({ id: 'build-a1', track: 'work', label: 'Implement replay boundary', nodeId: 'N14', sequence: 1 }),
-      Object.freeze({ id: 'verdict-a1', track: 'verify', label: 'Attempt 1 verifier verdict', nodeId: 'N15', sequence: 2, grade: 'C' }),
-      Object.freeze({ id: 'retry', track: 'operator', label: 'Retry authorized', sequence: 3 }),
-      Object.freeze({ id: 'build-a2', track: 'work', label: 'Revise recovery path', nodeId: 'N17', sequence: 4 }),
-      Object.freeze({ id: 'verdict-a2', track: 'verify', label: 'Attempt 2 verifier verdict', nodeId: 'N18', sequence: 5, grade: 'C' }),
-      Object.freeze({ id: 'directive', track: 'operator', label: 'Bind replay and incident evidence', nodeId: 'N24', sequence: 6, proposed: true }),
-      Object.freeze({ id: 'final-a', track: 'verify', label: 'Recovery invariant verified', nodeId: 'N24', sequence: 7, grade: 'A' }),
-      Object.freeze({ id: 'merge', track: 'operator', label: 'Run merged', sequence: 8 }),
+      Object.freeze({ id: 'build-a1', category: 'node', track: 'work', sequence: 1, nodeId: 'N14' }),
+      Object.freeze({ id: 'verdict-a1', category: 'node', track: 'verify', sequence: 2, nodeId: 'N15' }),
+      Object.freeze({ id: 'retry', category: 'retry', track: 'operator', sequence: 3 }),
+      Object.freeze({ id: 'build-a2', category: 'node', track: 'work', sequence: 4, nodeId: 'N17' }),
+      Object.freeze({ id: 'verdict-a2', category: 'node', track: 'verify', sequence: 5, nodeId: 'N18' }),
+      Object.freeze({ id: 'directive', category: 'node', track: 'operator', sequence: 6, nodeId: 'N24', proposed: true }),
+      Object.freeze({ id: 'final-a', category: 'outcome', track: 'verify', sequence: 7 }),
+      Object.freeze({ id: 'merge', category: 'merge', track: 'operator', sequence: 8 }),
+    ]);
+    const CAUSAL_BRANCHES = Object.freeze([
+      Object.freeze({ from: 'build-a1', to: 'verdict-a1', kind: 'handoff' }),
+      Object.freeze({ from: 'verdict-a1', to: 'retry', kind: 'retry' }),
     ]);
     const state = { slide: 'loop', workspaceState: 'fleet', selectedByConcept: { cartography: 'N18', causal: 'verdict-a2', intervention: 'case-r314', evidence: 'R2', weave: 'recovery-verify-a2' }, modal: null };
     const escapeHtml = (value) => String(value).replace(/[&<>"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character]);
@@ -122,9 +126,20 @@
         <aside class="selection-inspector" data-selected-object><div class="selected-node-summary" data-selected-node-summary><small>Selected node</small><strong>${escapeHtml(selected.name)}</strong><small>${selected.id} · ${selected.kind} · attempt ${selected.attempt}</small></div><section class="exception-step" data-exception-step="constraint"><small>Constraint</small><h2>${escapeHtml(scenario.requirement.name)}</h2><p data-requirement-id="${scenario.requirement.id}"><b><span>${scenario.requirement.id}</span> · required</b></p></section><section class="exception-step" data-exception-step="evidence"><small>Evidence</small><h3>Missing evidence and node history</h3><p>Missing: ${scenario.evidence.missing.map(escapeHtml).join(' · ')}. New evidence: +${scenario.nodes.reduce((total, node) => total + node.newEvidence, 0)} across ${scenario.evidence.changedFiles} changed files (+${scenario.evidence.additions}/−${scenario.evidence.deletions}).</p>${renderNodeRows(scenario.nodes)}</section><section class="exception-step" data-exception-step="consequence"><small>Consequence</small><p>${scenario.run.blockedSuccessors} blocked successors · $${scenario.run.retryCost.toFixed(2)} retry cost · ${scenario.run.attemptsLeft} attempt${scenario.run.attemptsLeft === 1 ? '' : 's'} left</p></section><section class="exception-step" data-exception-step="action"><small>Action</small><p class="capability capability--proposed">Proposed capability · bind ${scenario.evidence.missing.map(escapeHtml).join(' and ')}</p></section></aside>
       </section>`;
     }
+    const causalHorizon = (workspaceState) => workspaceState === 'action' ? 6 : workspaceState === 'outcome' ? 8 : 5;
+    const visibleCausalEvents = (workspaceState) => CAUSAL_EVENTS.filter((event) => event.sequence <= causalHorizon(workspaceState));
+    function deriveCausalDetail(scenario, event) {
+      const node = scenario.nodes.find((candidate) => candidate.id === event.nodeId);
+      const label = node ? node.name : event.category === 'retry' ? 'Retry authorized' : event.category === 'merge' ? 'Run merged' : 'Recovery invariant verified';
+      const grade = event.category === 'outcome' ? scenario.outcome.finalGrade : node ? node.grade : null;
+      const evidenceDelta = event.category === 'retry' || (node && node.kind === 'verifier') ? 'No new evidence' : event.category === 'outcome' ? 'Evidence bound and verified' : node ? `+${node.newEvidence} evidence records` : 'Run record updated';
+      const consequence = grade === 'C' ? `${scenario.run.blockedSuccessors} successors remain blocked; retry cost $${scenario.run.retryCost.toFixed(2)}.` : event.category === 'merge' ? `Merged after grade ${scenario.outcome.finalGrade}; learning captured.` : event.proposed ? 'Gate awaits evidence binding before the next verifier pass.' : 'Causal handoff continues on the adjacent track.';
+      return Object.freeze({ event, node, label, grade, evidenceDelta, consequence });
+    }
     function renderCausalSpine(scenario, workspaceState, selectedId) {
-      const selected = CAUSAL_EVENTS.find((event) => event.id === selectedId) || CAUSAL_EVENTS[4];
-      const node = scenario.nodes.find((candidate) => candidate.id === selected.nodeId);
+      const events = visibleCausalEvents(workspaceState);
+      const selectedEvent = events.find((event) => event.id === selectedId) || events[events.length - 1];
+      const selected = deriveCausalDetail(scenario, selectedEvent);
       const stateNotes = {
         fleet: `${scenario.fleet.active} active runs; this run carries the repeated verifier signal.`,
         position: 'Sequence exposes where recovery work and verification diverge across parallel tracks.',
@@ -133,14 +148,13 @@
         outcome: `Final grade ${scenario.outcome.finalGrade}; merge records the recovered invariant and $${scenario.outcome.avoidedRetryCost.toFixed(2)} avoided retry cost.`,
       };
       const trackLabels = { work: 'Recovery work', verify: 'Verification', operator: 'Operator / gate' };
-      const eventCard = (event) => `<button type="button" class="causal-event ${event.id === selected.id ? 'is-selected' : ''} ${event.proposed ? 'causal-event--proposed' : ''} ${event.id === 'final-a' || event.id === 'merge' ? 'causal-event--outcome' : ''}" data-event-id="${event.id}" style="--sequence:${event.sequence}"><small>${event.nodeId || scenario.run.id} · sequence ${event.sequence}</small><strong>${escapeHtml(event.label)}</strong>${event.grade ? `<span class="grade grade--${event.grade.toLowerCase()}">${event.grade}</span>` : event.proposed ? '<small>Proposed capability</small>' : ''}</button>`;
-      const eventEvidenceDelta = selected.id === 'retry' || selected.id === 'verdict-a2' ? 'No new evidence' : selected.proposed ? `+${node ? node.newEvidence : scenario.evidence.missing.length} evidence records` : selected.id === 'final-a' ? 'Evidence bound and verified' : `${node ? `+${node.newEvidence}` : '+0'} evidence records`;
-      const consequence = selected.grade === 'C' ? `${scenario.run.blockedSuccessors} successors remain blocked; retry cost $${scenario.run.retryCost.toFixed(2)}.` : selected.id === 'merge' ? `Merged after grade ${scenario.outcome.finalGrade}; learning captured.` : selected.proposed ? 'Gate awaits evidence binding before the next verifier pass.' : 'Causal handoff continues on the adjacent track.';
+      const eventCard = (event) => { const detail = deriveCausalDetail(scenario, event); return `<button type="button" class="causal-event ${event.id === selected.event.id ? 'is-selected' : ''} ${event.proposed ? 'causal-event--proposed' : ''} ${event.category === 'outcome' || event.category === 'merge' ? 'causal-event--outcome' : ''}" data-event-id="${event.id}" style="--sequence:${event.sequence}"><small>${event.nodeId || scenario.run.id} · sequence ${event.sequence}</small><strong>${escapeHtml(detail.label)}</strong>${detail.grade ? `<span class="grade grade--${detail.grade.toLowerCase()}">${detail.grade}</span>` : event.proposed ? '<small>Proposed capability</small>' : ''}</button>`; };
+      const branchMarkup = CAUSAL_BRANCHES.filter((branch) => events.some((event) => event.id === branch.from) && events.some((event) => event.id === branch.to)).map((branch, index) => `<i class="event-branch ${branch.kind === 'retry' ? 'event-branch--retry' : ''}" aria-hidden="true" data-branch-from="${branch.from}" data-branch-to="${branch.to}" data-branch-kind="${branch.kind}" style="--from:${index === 0 ? '15%' : '27%'};--top:${index === 0 ? '118px' : '265px'};--width:${index === 0 ? '12%' : '18%'};--height:${index === 0 ? '76px' : '78px'}"></i>`).join('');
       return `<section class="concept-workspace causal-spine" data-concept="causal" data-state="${workspaceState}">
         <div class="causal-main"><div class="causal-meta"><b>${escapeHtml(scenario.run.name)}</b><span>${scenario.run.id} · causal sequence, not clock duration</span><span class="causal-pulse-strip" aria-label="${scenario.fleet.attention} need attention, ${scenario.fleet.progressing} progressing, ${scenario.fleet.waiting} waiting">${Array.from({ length: scenario.fleet.active }, () => '<i></i>').join('')}</span></div><p class="causal-state-note">${stateNotes[workspaceState]}</p>
-          <div class="causal-tracks" aria-label="Causal event tracks"><i class="event-branch" aria-hidden="true" style="--from:15%;--top:118px;--width:12%;--height:76px"></i><i class="event-branch event-branch--retry" aria-hidden="true" style="--from:27%;--top:265px;--width:18%;--height:78px"></i>${Object.entries(trackLabels).map(([track, label]) => `<section class="causal-track" data-causal-track="${track}"><h2>${label}</h2><div class="causal-lane">${CAUSAL_EVENTS.filter((event) => event.track === track).map(eventCard).join('')}</div></section>`).join('')}</div>
+          <div class="causal-tracks" aria-label="Causal event tracks">${branchMarkup}${Object.entries(trackLabels).map(([track, label]) => `<section class="causal-track" data-causal-track="${track}"><h2>${label}</h2><div class="causal-lane">${events.filter((event) => event.track === track).map(eventCard).join('')}</div></section>`).join('')}</div>
         </div>
-        <aside class="causal-detail" data-causal-detail><small>Selected causal record</small><h2>${escapeHtml(selected.label)}</h2><p><b>${selected.nodeId || scenario.run.id}</b> · ${node ? `${node.kind} · attempt ${node.attempt}` : 'operator gate'}${selected.grade ? ` · grade <span class="grade grade--${selected.grade.toLowerCase()}">${selected.grade}</span>` : ''}</p><p><b>Evidence delta:</b> ${eventEvidenceDelta}</p><p><b>Consequence:</b> ${consequence}</p><ul><li><a href="#cartography">Requirement record ${scenario.requirement.id}</a></li><li><a href="#cartography">${node ? `Node record ${node.id}` : `Run record ${scenario.run.id}`}</a></li>${selected.proposed ? '<li>Proposed capability · evidence binding directive</li>' : ''}</ul></aside>
+        <aside class="causal-detail" data-causal-detail><small>Selected causal record</small><h2>${escapeHtml(selected.label)}</h2><section data-causal-step="constraint" data-causal-requirement-record tabindex="-1"><small>Constraint</small><p><b>Requirement</b> · ${scenario.requirement.id} required recovery invariant</p><button type="button" data-source-target="requirement">Requirement record ${scenario.requirement.id}</button></section><section data-causal-step="evidence"><small>Evidence</small><p><b>${selected.event.nodeId || scenario.run.id}</b> · ${selected.node ? `${selected.node.kind} · attempt ${selected.node.attempt}` : 'operator gate'}${selected.grade ? ` · grade <span class="grade grade--${selected.grade.toLowerCase()}">${selected.grade}</span>` : ''}</p><p>Evidence delta: ${selected.evidenceDelta}</p><button type="button" data-source-target="run" data-causal-run-record>Run record ${scenario.run.id}</button>${selected.node ? `<button type="button" data-source-node-id="${selected.node.id}">Node record ${selected.node.id}</button>` : ''}</section><section data-causal-step="consequence"><small>Consequence</small><p>${selected.consequence}</p></section><section data-causal-step="action"><small>Action</small><p class="${selected.event.proposed ? 'capability capability--proposed' : ''}">${selected.event.proposed ? 'Proposed capability · ' : ''}${selected.event.proposed ? 'bind deterministic replay and incident evidence' : 'Continue the visible causal handoff.'}</p></section></aside>
       </section>`;
     }
     const renderComparison = () => `<section class="slide" data-slide="comparison"><h1>Compare architectural trade-offs</h1></section>`;
@@ -170,8 +184,10 @@
     document.querySelector('[data-action="previous-slide"]').addEventListener('click', () => goToSlide(SLIDES[Math.max(0, SLIDES.indexOf(state.slide) - 1)]));
     document.querySelector('[data-action="next-slide"]').addEventListener('click', () => goToSlide(SLIDES[Math.min(SLIDES.length - 1, SLIDES.indexOf(state.slide) + 1)]));
     document.addEventListener('click', (event) => {
-      const target = event.target instanceof Element ? event.target.closest('[data-concept="cartography"] [data-node-id], [data-concept="causal"] [data-event-id]') : null;
+      const target = event.target instanceof Element ? event.target.closest('[data-concept="cartography"] [data-node-id], [data-concept="causal"] [data-event-id], [data-source-node-id], [data-source-target]') : null;
       if (!(target instanceof HTMLElement)) return;
+      if (target.dataset.sourceNodeId) { selectObject('cartography', target.dataset.sourceNodeId); goToSlide('cartography'); return; }
+      if (target.dataset.sourceTarget) { document.querySelector(target.dataset.sourceTarget === 'requirement' ? '[data-causal-requirement-record]' : '[data-causal-run-record]')?.focus(); return; }
       if (target.dataset.nodeId) selectObject('cartography', target.dataset.nodeId);
       if (target.dataset.eventId) selectObject('causal', target.dataset.eventId);
     });

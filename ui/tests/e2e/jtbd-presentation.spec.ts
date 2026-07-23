@@ -109,6 +109,64 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('[data-causal-detail]')).toContainText('C');
   });
 
+  test('causal spine progressively extends its event horizon without changing slides', async ({ page }) => {
+    await openPresentation(page, '#causal');
+    await expect(page.locator('[data-event-id="directive"]')).toHaveCount(0);
+    await expect(page.locator('[data-event-id="final-a"]')).toHaveCount(0);
+    await expect(page.locator('[data-event-id="merge"]')).toHaveCount(0);
+
+    await page.keyboard.press('2');
+    await expect(page).toHaveURL(/#causal$/);
+    await expect(page.locator('[data-event-id="directive"]')).toHaveCount(0);
+    await page.keyboard.press('3');
+    await expect(page.locator('[data-event-id="directive"]')).toHaveCount(0);
+
+    await page.keyboard.press('4');
+    await expect(page.locator('[data-event-id="directive"]')).toBeVisible();
+    await expect(page.locator('[data-event-id="final-a"]')).toHaveCount(0);
+    await expect(page.locator('[data-event-id="directive"]')).toContainText('Proposed capability');
+
+    await page.keyboard.press('5');
+    await expect(page.locator('[data-event-id="final-a"]')).toBeVisible();
+    await expect(page.locator('[data-event-id="merge"]')).toBeVisible();
+  });
+
+  test('causal detail orders evidence and source navigation around the selected event', async ({ page }) => {
+    await openPresentation(page, '#causal');
+    await page.keyboard.press('4');
+    await page.locator('[data-event-id="directive"]').click();
+    const detail = page.locator('[data-causal-detail]');
+    const detailOrder = await detail.locator('[data-causal-step]').evaluateAll((steps) =>
+      steps.map((step) => step.getAttribute('data-causal-step')),
+    );
+    expect(detailOrder).toEqual(['constraint', 'evidence', 'consequence', 'action']);
+    await expect(detail.locator('[data-causal-step="action"]')).toContainText('Proposed capability');
+
+    await page.keyboard.press('3');
+    await page.locator('[data-event-id="verdict-a1"]').click();
+    await page.locator('[data-source-node-id="N15"]').click();
+    await expect(page).toHaveURL(/#cartography$/);
+    await expect(page.locator('[data-selected-node-summary]')).toContainText('N15');
+  });
+
+  test('causal spine stacks every visible event inside its mobile workspace', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openPresentation(page, '#causal');
+    await page.keyboard.press('5');
+    const containment = await page.locator('.causal-spine').evaluate((workspace) => {
+      const workspaceBounds = workspace.getBoundingClientRect();
+      const eventBounds = [...workspace.querySelectorAll<HTMLElement>('[data-event-id]')].map((event) => {
+        const bounds = event.getBoundingClientRect();
+        return bounds.left >= workspaceBounds.left && bounds.right <= workspaceBounds.right;
+      });
+      return {
+        eventsWithinWorkspace: eventBounds.every(Boolean),
+        documentFits: document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      };
+    });
+    expect(containment).toEqual({ eventsWithinWorkspace: true, documentFits: true });
+  });
+
   test('fits the presentation and all workspace states at mobile width', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openPresentation(page, '#cartography');
