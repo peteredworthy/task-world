@@ -21,3 +21,5 @@ Final whole-branch review: complete (Opus). First pass: 2 Important findings (gr
 Workspace: `worktrees/ui-foundation-phase-0-3`
 Baseline: backend 4929 passed, 3 skipped; frontend 450 passed.
 Task 0: design and implementation plan approved; task commits authorized on isolated branch.
+Task 1: complete (commits ecf3a7bfa..d34fb47e3, 37 focused tests passed, review clean).
+Task 2: complete (commits d9ad39638..a69ba8362, 132 source demands, Phase 0 validation passed, review clean).
