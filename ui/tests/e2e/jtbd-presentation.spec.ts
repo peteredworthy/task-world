@@ -440,11 +440,49 @@ test.describe('JTBD UI approaches presentation', () => {
     await page.setViewportSize({ width: 390, height: 844 });
     const mobileComparison = page.locator('[data-comparison-mobile]');
     await expect(mobileComparison).toBeVisible();
-    await expect(mobileComparison.locator('section')).toHaveCount(5);
-    await expect(mobileComparison.locator('section').first().getByRole('listitem')).toHaveCount(10);
-    await expect(mobileComparison.locator('section').first().getByRole('listitem').first()).toContainText('Attention clarity');
-    await expect(mobileComparison.locator('section').first().getByRole('listitem').first()).toContainText('Expected strength');
-    await expect(mobileComparison.locator('section').first().getByRole('listitem').first()).toContainText('Ranks the exception before fleet detail.');
+    const mobileConcepts = [
+      'Operational Cartography',
+      'Causal Spine',
+      'Intervention Desk',
+      'Evidence Workbench',
+      'Mission Weave',
+    ];
+    await expect(mobileComparison.locator('section')).toHaveCount(mobileConcepts.length);
+    for (const conceptName of mobileConcepts) {
+      const concept = mobileComparison.locator('section').filter({ has: page.getByRole('heading', { name: conceptName }) });
+      const items = concept.getByRole('listitem');
+      await expect(items).toHaveCount(10);
+      for (const item of await items.all()) {
+        await expect(item).toBeVisible();
+        await expect(item.locator('strong')).not.toHaveText('');
+        await expect(item.locator('.comparison-cell-label')).not.toHaveText('');
+        await expect(item.locator('.comparison-cell-reason')).not.toHaveText('');
+      }
+    }
+    const representativeCells = [
+      ['Expected strength', 'The ranked exception queue puts blocked scope and urgency ahead of fleet context.'],
+      ['Trade-off', 'Spatial adjacency suggests dependency but does not order the two verifier verdicts.'],
+      ['Risk', 'The graph omits an authority packet, so a proposed correction can be mistaken for an approved command.'],
+    ] as const;
+    for (const [signal, reason] of representativeCells) {
+      const cell = mobileComparison.getByRole('listitem').filter({ hasText: reason });
+      await expect(cell).toBeVisible();
+      await expect(cell.locator('.comparison-cell-label')).toHaveText(signal);
+      await expect(cell.locator('.comparison-cell-reason')).toHaveText(reason);
+    }
+    const attentionReasons = await mobileComparison.locator('section').evaluateAll((sections) =>
+      sections.map((section) => section.querySelector<HTMLElement>('.comparison-mobile-item .comparison-cell-reason')?.innerText),
+    );
+    const actionSafetyReasons = await mobileComparison.locator('section').evaluateAll((sections) =>
+      sections.map((section) => {
+        const item = [...section.querySelectorAll<HTMLElement>('.comparison-mobile-item')].find((candidate) =>
+          candidate.querySelector('strong')?.textContent === 'Action safety and feedback',
+        );
+        return item?.querySelector<HTMLElement>('.comparison-cell-reason')?.innerText;
+      }),
+    );
+    expect(new Set(attentionReasons).size).toBe(5);
+    expect(new Set(actionSafetyReasons).size).toBe(5);
     await expect(mobileComparison.locator('.comparison-cell-reason').first()).toBeVisible();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   });
