@@ -636,4 +636,45 @@ test.describe('JTBD UI approaches presentation', () => {
       }
     }
   });
+
+  test('qualifies historical failure data and renders only resolved r314 facts in Outcome', async ({ page }) => {
+    for (const concept of ['cartography', 'causal', 'intervention', 'evidence', 'weave']) {
+      await openPresentation(page, `#${concept}`);
+      await page.keyboard.press('5');
+      const outcome = page.locator(`[data-concept="${concept}"][data-state="outcome"]`);
+      await expect(outcome).toContainText('Before intervention');
+      await expect(outcome).toContainText('released');
+      await expect(outcome).not.toContainText('blocked by');
+      await expect(outcome).not.toContainText('held successor');
+      await expect(outcome).not.toContainText('Missing in both attempts');
+    }
+  });
+
+  test('keeps the release approval case deferred instead of showing the r314 recovered outcome', async ({ page }) => {
+    await openPresentation(page, '#intervention');
+    await page.locator('[data-case-id="case-auth-gate"]').click();
+    await page.keyboard.press('5');
+    const outcome = page.locator('[data-concept="intervention"][data-state="outcome"]');
+    await expect(outcome).toContainText('Awaiting release manager approval');
+    await expect(outcome).not.toContainText('Grade A');
+    await expect(outcome).not.toContainText('Promote restart replay fixture into the routine packet');
+  });
+
+  test('uses full-width outcome projections and a two-column mobile operating loop', async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    for (const concept of ['intervention', 'evidence', 'weave']) {
+      await openPresentation(page, `#${concept}`);
+      await page.keyboard.press('5');
+      const bounds = await page.locator(`[data-concept="${concept}"] [data-outcome-postscript]`).evaluate((projection) => {
+        const workspace = projection.closest<HTMLElement>('[data-concept]')!;
+        return { projection: projection.getBoundingClientRect().width, workspace: workspace.getBoundingClientRect().width };
+      });
+      expect(bounds.projection / bounds.workspace).toBeGreaterThan(0.7);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await openPresentation(page);
+    await expect(page.locator('.loop-map span')).toHaveCount(8);
+    expect(await page.locator('.loop-map').evaluate((loop) => getComputedStyle(loop).gridTemplateColumns.split(' ').length)).toBe(2);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  });
 });
