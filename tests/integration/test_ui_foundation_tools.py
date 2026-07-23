@@ -120,6 +120,8 @@ def present_action(command_id: str, transition: dict[str, object]) -> dict[str, 
     return {
         "id": "ACT-01",
         "implementation_status": "present",
+        "capability_status": "current",
+        "executable": True,
         "command_id": command_id,
         "actor": "operator",
         "permission_requirements": ["run.write"],
@@ -850,3 +852,139 @@ def test_unresolved_or_weak_causality_cannot_retain_causal_label(tmp_path: Path)
         "CAUSAL_MECHANISM_EVIDENCE_MISSING",
         "CAUSAL_LABEL_UNRESOLVED",
     } <= set(issue_codes(result))
+
+
+def test_non_mapping_action_and_derivation_roots_are_never_skipped(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    for index, value in enumerate(([], "scalar", None), start=1):
+        write_yaml(root / f"reality/actions/ACT-0{index}.yaml", value)
+        write_yaml(root / f"capabilities/derivations/DRV-0{index}.yaml", value)
+    result = run_validator(root, phase=0)
+    assert issue_codes(result).count("ACTION_CONTRACT_INVALID") == 3
+    assert issue_codes(result).count("DERIVATION_CONTRACT_INVALID") == 3
+
+
+def test_derived_capability_requires_admitted_derivation_and_qualifying_evidence(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item("CAP-01", capability_status="derived", derivation_id="DRV-01"),
+                semantic_item("CAP-02", capability_status="derived", derivation_id="DRV-02"),
+            ],
+        },
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "documentation",
+                    "reachable": True,
+                }
+            ],
+        },
+    )
+    contract = {
+        "status": "admitted",
+        "inputs": ["CAP-03"],
+        "algorithm": "identity",
+        "output_type": "string",
+        "unknown_behavior": "unknown",
+        "failure_behavior": "unknown",
+        "freshness": "snapshot",
+        "recomputation_behavior": "when inputs change",
+        "implementation_evidence_ids": ["EVD-01"],
+        "limitations": [],
+        "prohibited_interpretations": [],
+    }
+    write_yaml(
+        root / "capabilities/derivations/DRV-01.yaml",
+        {"id": "DRV-01"} | contract,
+    )
+    write_yaml(
+        root / "capabilities/derivations/DRV-02.yaml",
+        {"id": "DRV-02"} | contract | {"status": "rejected"},
+    )
+    result = run_validator(root, phase=0)
+    assert {
+        "DERIVATION_NOT_ADMITTED",
+        "DERIVATION_IMPLEMENTATION_EVIDENCE_INVALID",
+    } <= set(issue_codes(result))
+
+
+def test_action_status_compatibility_and_absent_requirement_purity(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    present = present_action("CMD-01", {"from_state_id": "STA-01", "to_state_id": "STA-02"}) | {
+        "capability_status": "proposed",
+        "executable": True,
+    }
+    absent = {
+        "id": "ACT-02",
+        "implementation_status": "absent",
+        "capability_status": "gap",
+        "executable": False,
+        "required_outcome": "Intervene",
+        "source_demand_ids": ["scope.action"],
+        "implementation_constraints": ["none"],
+        "required_evidence": ["command design"],
+        "unresolved_command_decisions": ["authority"],
+        "command_id": "CMD-01",
+        "transition": {"from_state_id": "STA-01", "to_state_id": "STA-02"},
+        "durable_effect": "mutates state",
+        "retry_behavior": "retry",
+        "idempotency": "keyed",
+        "reversibility": "irreversible",
+        "audit_evidence_ids": ["EVD-01"],
+    }
+    write_yaml(root / "reality/actions/ACT-01.yaml", present)
+    write_yaml(root / "reality/actions/ACT-02.yaml", absent)
+    result = run_validator(root, phase=0)
+    assert "ACTION_STATUS_INCOMPATIBLE" in issue_codes(result)
+    assert "ABSENT_INTERVENTION_COMPLETED_SEMANTICS" in issue_codes(result)
+
+
+def test_action_resulting_state_must_match_legal_transition_target(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/state-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [semantic_item("STA-01"), semantic_item("STA-02")],
+            "transitions": [{"from_state_id": "STA-01", "to_state_id": "STA-02"}],
+        },
+    )
+    action = present_action("CMD-01", {"from_state_id": "STA-01", "to_state_id": "STA-02"})
+    action["resulting_state_id"] = "STA-01"
+    write_yaml(root / "reality/actions/ACT-01.yaml", action)
+    result = run_validator(root, phase=0)
+    assert "ACTION_RESULT_STATE_MISMATCH" in issue_codes(result)
+
+
+def test_question_references_use_only_typed_question_namespace(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/questions.yaml",
+        {"schema_version": "1", "items": [{"id": "Q-01"}]},
+    )
+    write_yaml(
+        root / "catalog/decisions.yaml",
+        {"schema_version": "1", "items": [{"id": "DEC-01"}]},
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [semantic_item("CAP-01", question_ids=["Q-01", "Q-99", "DEC-01"])],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert "QUESTION_REFERENCE_WRONG_NAMESPACE" in issue_codes(result)
+    assert "QUESTION_REFERENCE_UNRESOLVED" in issue_codes(result)

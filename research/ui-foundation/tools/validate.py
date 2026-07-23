@@ -609,6 +609,12 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 )
             )
 
+    question_document = canonical.get("catalog/questions.yaml")
+    typed_question_ids = {
+        identifier
+        for item in (question_document.items if question_document else [])
+        if isinstance((identifier := item.get("id")), str)
+    }
     for identifier, semantic in semantic_items.items():
         relative = declarations.get(identifier, "unknown")
         for reference in semantic.evidence_ids:
@@ -618,8 +624,22 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
             if reference not in conflicts:
                 issues.append(_issue("REFERENCE_UNRESOLVED", package.root / relative, reference))
         for reference in semantic.question_ids:
-            if reference not in declarations:
-                issues.append(_issue("REFERENCE_UNRESOLVED", package.root / relative, reference))
+            if not re.fullmatch(r"Q-\d+", reference):
+                issues.append(
+                    _issue(
+                        "QUESTION_REFERENCE_WRONG_NAMESPACE",
+                        package.root / relative,
+                        reference,
+                    )
+                )
+            elif reference not in typed_question_ids:
+                issues.append(
+                    _issue(
+                        "QUESTION_REFERENCE_UNRESOLVED",
+                        package.root / relative,
+                        reference,
+                    )
+                )
 
     registry = canonical.get("capabilities/registry.yaml")
     for item in registry.items if registry else []:
@@ -707,13 +727,23 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
 
     derivations: dict[str, tuple[str, DerivationContract]] = {}
     for relative, value in package.documents.items():
-        if relative.startswith("capabilities/derivations/") and isinstance(value, dict):
-            try:
-                derivation = DerivationContract.model_validate(value)
-                derivations[derivation.id] = (relative, derivation)
-                _declare(declarations, derivation.id, relative, package, issues)
-            except ValidationError as error:
-                issues.append(_issue("DERIVATION_CONTRACT_INVALID", package.root / relative, error))
+        if not relative.startswith("capabilities/derivations/"):
+            continue
+        if not isinstance(value, dict):
+            issues.append(
+                _issue(
+                    "DERIVATION_CONTRACT_INVALID",
+                    package.root / relative,
+                    "derivation root must be a mapping",
+                )
+            )
+            continue
+        try:
+            derivation = DerivationContract.model_validate(value)
+            derivations[derivation.id] = (relative, derivation)
+            _declare(declarations, derivation.id, relative, package, issues)
+        except ValidationError as error:
+            issues.append(_issue("DERIVATION_CONTRACT_INVALID", package.root / relative, error))
     required_derivation = {
         "inputs": "DERIVATION_INPUTS_MISSING",
         "algorithm": "DERIVATION_ALGORITHM_MISSING",
@@ -746,6 +776,8 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
             )
             continue
         relative, derivation = derivations[derivation_id]
+        if derivation.status != "admitted":
+            issues.append(_issue("DERIVATION_NOT_ADMITTED", package.root / relative, derivation.id))
         for input_id in derivation.inputs:
             capability = semantic_items.get(input_id)
             if capability is None or capability.capability_status != "current":
@@ -753,8 +785,17 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     _issue("DERIVATION_INPUT_NOT_CURRENT", package.root / relative, input_id)
                 )
         for evidence_id in derivation.implementation_evidence_ids:
-            if evidence_id not in evidence:
+            record = evidence.get(evidence_id)
+            if record is None:
                 issues.append(_issue("REFERENCE_UNRESOLVED", package.root / relative, evidence_id))
+            elif record.source_kind not in IMPLEMENTATION_SOURCE_KINDS or not record.reachable:
+                issues.append(
+                    _issue(
+                        "DERIVATION_IMPLEMENTATION_EVIDENCE_INVALID",
+                        package.root / relative,
+                        evidence_id,
+                    )
+                )
 
     issues.extend(_validate_actions(package, declarations, commands, evidence))
     issues.extend(_validate_epistemics(package, canonical, evidence))
@@ -802,15 +843,26 @@ def _validate_actions(
         "unresolved_command_decisions",
     )
     for relative, action in package.documents.items():
-        if not relative.startswith("reality/actions/") or not isinstance(action, dict):
+        if not relative.startswith("reality/actions/"):
             continue
         path = package.root / relative
+        if not isinstance(action, dict):
+            issues.append(_issue("ACTION_CONTRACT_INVALID", path, "action root must be a mapping"))
+            continue
         try:
             typed_action = ActionContract.model_validate(action)
             _declare(declarations, typed_action.id, relative, package, issues)
         except ValidationError as error:
             issues.append(_issue("ACTION_CONTRACT_INVALID", path, error))
         if action.get("implementation_status") == "present":
+            if action.get("capability_status") != "current" or action.get("executable") is not True:
+                issues.append(
+                    _issue(
+                        "ACTION_STATUS_INCOMPATIBLE",
+                        path,
+                        "present executable action must be current",
+                    )
+                )
             if action.get("enforced_authorization") in {None, "absent", "unknown"} and action.get(
                 "proposed_role_policy"
             ):
@@ -878,6 +930,19 @@ def _validate_actions(
                 issues.append(
                     _issue("ACTION_TRANSITION_UNREACHABLE", path, "no declared legal transition")
                 )
+            resulting_state = action.get("resulting_state_id")
+            if (
+                not isinstance(resulting_state, str)
+                or resulting_state not in end_states
+                or not any((start, resulting_state) in legal for start in start_states)
+            ):
+                issues.append(
+                    _issue(
+                        "ACTION_RESULT_STATE_MISMATCH",
+                        path,
+                        "resulting_state_id must be a legal transition target",
+                    )
+                )
         elif action.get("implementation_status") == "absent":
             if (
                 action.get("capability_status") not in {"gap", "proposed"}
@@ -893,6 +958,35 @@ def _validate_actions(
             for field in absent_fields:
                 if action.get(field) in (None, "", []):
                     issues.append(_issue("ABSENT_INTERVENTION_REQUIREMENT_MISSING", path, field))
+            completed_fields = (
+                "command_id",
+                "transition",
+                "actor",
+                "permission_requirements",
+                "preconditions",
+                "expected_source_version",
+                "required_input",
+                "validation",
+                "durable_effect",
+                "resulting_state_id",
+                "failure_modes",
+                "stale_state_behavior",
+                "idempotency",
+                "retry_behavior",
+                "reversibility",
+                "audit_evidence_ids",
+            )
+            present_completed = [
+                field for field in completed_fields if action.get(field) not in (None, "", [])
+            ]
+            if present_completed:
+                issues.append(
+                    _issue(
+                        "ABSENT_INTERVENTION_COMPLETED_SEMANTICS",
+                        path,
+                        ", ".join(present_completed),
+                    )
+                )
     return issues
 
 
