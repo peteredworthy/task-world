@@ -99,16 +99,88 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('.node-stat-head')).toHaveCSS('position', 'sticky');
   });
 
-  test('evidence workbench uses node rows and fixed statistic columns', async ({ page }) => {
+  test('evidence workbench uses canonical claim history, fixed node rows, and data-derived locator branches', async ({ page }) => {
     await openPresentation(page, '#evidence');
     await page.keyboard.press('3');
     const matrix = page.locator('.evidence-matrix');
-    await expect(matrix.getByRole('columnheader')).toHaveCount(5);
+    await expect(matrix.getByRole('columnheader')).toHaveText(['Node / attempt', 'Grade', 'Files', 'New evidence', 'Cost']);
     await expect(matrix.locator('[data-node-stat-row]')).toHaveCount(5);
     await expect(matrix).toContainText('Recovery resumes suspended work exactly once after executor restart');
+    await expect(matrix).toContainText('R2 · node lineage');
+    await expect(page.locator('.claim-index [data-claim-id="R2"]')).toContainText('R2 · required · C → C');
+    await expect(matrix.locator('.node-stat-table')).toHaveCSS('max-height', '295px');
+    await expect(matrix.locator('.node-stat-head')).toHaveCSS('position', 'sticky');
     await expect(page.locator('.packet-delta')).toContainText('Deterministic suspension replay');
     await expect(page.locator('.packet-delta')).toContainText('Incident record INC-042');
     await expect(page.locator('.graph-locator')).toHaveAttribute('aria-label', /3 blocked successors/);
+    await expect(page.locator('[data-locator-successor]')).toHaveCount(3);
+  });
+
+  test('evidence workbench changes emphasis for every operating state', async ({ page }) => {
+    await openPresentation(page, '#evidence');
+    const workspace = page.locator('.evidence-workbench');
+    const expected = [
+      ['1', 'fleet', '.claim-index', '2 active runs need attention'],
+      ['2', 'position', '.graph-locator', 'holds 3 successors'],
+      ['3', 'cause', '.packet-delta', '2 C grades have the same omission'],
+      ['4', 'action', '.evidence-records', 'Open the source records'],
+      ['5', 'outcome', '.node-stat-table', 'needed to establish grade A'],
+    ] as const;
+
+    for (const [key, state, focus, note] of expected) {
+      await page.keyboard.press(key);
+      await expect(workspace).toHaveAttribute('data-state', state);
+      await expect(workspace.locator('.evidence-state-note')).toContainText(note);
+      await expect(workspace.locator(focus)).toHaveCSS('box-shadow', /rgb/);
+    }
+  });
+
+  test('evidence records expose provenance before expansion and inspect real bodies in place', async ({ page }) => {
+    await openPresentation(page, '#evidence');
+    const records = [
+      ['prompt-r2-replay', 'Full prompt packet', 'N14 · builder · attempt 1', 'routine/recovery-replay.md', 'Requirement: Recovery resumes suspended work exactly once after executor restart.'],
+      ['transcript-n18-verdict', 'Verifier transcript', 'N18 · verifier · attempt 2', 'verifier/N18/transcript.jsonl', 'VERIFIER: Grade C — deterministic suspension replay is not demonstrated.'],
+      ['diff-recovery-replay', 'Implementation diff', 'N17 · builder · attempt 2', 'git:r314:N17', '@@ -42,6 +42,24 @@ async def resume_suspended_work'],
+    ] as const;
+
+    for (const [id, label, node, source, body] of records) {
+      const record = page.locator(`[data-evidence-record="${id}"]`);
+      await expect(record).toContainText(label);
+      await expect(record).toContainText(node);
+      await expect(record).toContainText(source);
+      const trigger = record.getByRole('button', { name: `Open ${label}` });
+      await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+      await expect(trigger).toHaveAttribute('aria-controls', `evidence-layer-${id}`);
+      await trigger.click();
+      const layer = page.locator(`#evidence-layer-${id}`);
+      await expect(layer).toBeFocused();
+      await expect(layer).toContainText(body);
+      await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+      await layer.getByRole('button', { name: `Close ${label}` }).click();
+      await expect(trigger).toBeFocused();
+      await expect(page.locator(`#evidence-layer-${id}`)).toHaveCount(0);
+    }
+  });
+
+  test('evidence workbench validates claim selection and drills a node into Cartography', async ({ page }) => {
+    await openPresentation(page, '#evidence');
+    await page.evaluate(() => window.taskWorldPresentation.selectObject('evidence', 'unknown-claim'));
+    await expect(page.locator('.claim-index [data-claim-id="R2"]')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('.evidence-selection-note')).toContainText('Selection unknown-claim is unavailable; showing canonical requirement R2.');
+
+    await page.locator('.evidence-matrix [data-node-stat-row] [data-node-id="N14"]').click();
+    await expect(page).toHaveURL(/#cartography$/);
+    await expect(page.locator('[data-selected-node-summary]')).toContainText('N14');
+  });
+
+  test('evidence detail closes with Escape and restores trigger focus', async ({ page }) => {
+    await openPresentation(page, '#evidence');
+    const trigger = page.getByRole('button', { name: 'Open Full prompt packet' });
+    await trigger.click();
+    await expect(page.locator('#evidence-layer-prompt-r2-replay')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#evidence-layer-prompt-r2-replay')).toHaveCount(0);
+    await expect(trigger).toBeFocused();
   });
 
   test('causal spine preserves parallel branches and opens evidence in place', async ({ page }) => {
