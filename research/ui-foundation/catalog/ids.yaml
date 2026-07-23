@@ -1,0 +1,19 @@
+schema_version: "1"
+phase_status: complete
+allocation_policy: Canonical IDs are allocated during normalization and are never minted by audit agents.
+next_suffixes:
+  ENT: 1
+  REL: 1
+  CAP: 1
+  DRV: 1
+  ACT: 1
+  INV: 1
+  Q: 1
+  DEC: 1
+  CON: 1
+  STA: 1
+  PER: 1
+  EVI: 1
+  EVD: 7
+  CMD: 1
+items: []
