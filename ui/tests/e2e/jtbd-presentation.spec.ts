@@ -183,6 +183,24 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(trigger).toBeFocused();
   });
 
+  test('evidence controller uses canonical successors, mixed-grade history, and bounded locator coordinates', async ({ page }) => {
+    await openPresentation(page, '#evidence');
+    const evidenceController = await page.evaluate(() => ({
+      scenario: window.taskWorldPresentation.getEvidenceScenario(),
+      repeated: window.taskWorldPresentation.describeEvidenceGradeHistory(['C', 'C']),
+      mixed: window.taskWorldPresentation.describeEvidenceGradeHistory(['C', 'B']),
+      oneSuccessor: window.taskWorldPresentation.getLocatorSuccessorYs(1),
+      manySuccessors: window.taskWorldPresentation.getLocatorSuccessorYs(12),
+    }));
+
+    expect(Object.hasOwn(evidenceController.scenario.run, 'blocked' + 'Successors')).toBe(false);
+    expect(evidenceController.scenario.run.successors).toHaveLength(3);
+    expect(evidenceController.repeated).toEqual({ history: 'C → C', summary: '2 C grades', repeated: true });
+    expect(evidenceController.mixed).toEqual({ history: 'C → B', summary: 'Grade history C → B', repeated: false });
+    expect(evidenceController.oneSuccessor).toEqual([75]);
+    expect(evidenceController.manySuccessors.every((y) => y >= 10 && y <= 140)).toBe(true);
+  });
+
   test('causal spine preserves parallel branches and opens evidence in place', async ({ page }) => {
     await openPresentation(page, '#causal');
     await page.keyboard.press('3');
