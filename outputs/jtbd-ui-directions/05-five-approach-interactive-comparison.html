@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Task World: Five JTBD UI Approaches</title>
+  <style>
+    :root {
+      --ink: #dce8f1; --muted: #7890a3; --ground: #06121a; --panel: #091923;
+      --line: #284354; --verified: #38bda8; --blocking: #fb7185;
+      --waiting: #eeb25a; --context: #416074; --focus: #8ee8d8;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; background: var(--ground); color: var(--ink); }
+    body { font-family: Inter, ui-sans-serif, system-ui, sans-serif; overflow-x: hidden; }
+    button { font: inherit; }
+    button:focus-visible, [tabindex]:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+    [hidden] { display: none !important; }
+    .presentation { min-height: 100vh; display: grid; grid-template-rows: 42px 1fr 38px; }
+    .slide { min-height: 0; overflow: auto; padding: 18px; }
+    .deck-nav, .deck-footer { display: flex; align-items: center; justify-content: space-between; padding: 0 14px; border-color: var(--line); background: #081721; }
+    .deck-nav { border-bottom: 1px solid var(--line); }
+    .deck-footer { border-top: 1px solid var(--line); }
+    .state-rail { display: flex; gap: 4px; }
+    .state-rail button[aria-pressed="true"] { color: var(--ink); border-color: var(--focus); }
+    @media (max-width: 720px) { .slide { padding: 8px; } .state-rail { overflow-x: auto; } }
+    @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; } }
+  </style>
+</head>
+<body>
+  <main class="presentation" data-presentation aria-label="Task World UI concept presentation">
+    <header class="deck-nav">
+      <strong>TASK WORLD / JTBD INTERFACE STUDY</strong>
+      <nav aria-label="Slide navigation">
+        <button type="button" data-action="previous-slide">Previous</button>
+        <button type="button" data-action="next-slide">Next</button>
+      </nav>
+    </header>
+    <div id="slides"></div>
+    <footer class="deck-footer"><span id="slide-position"></span><span>←/→ slides · 1–5 workspace state</span></footer>
+    <p class="sr-only" data-live-region aria-live="polite"></p>
+  </main>
+  <script>
+    'use strict';
+    const WORKSPACE_STATES = Object.freeze(['fleet', 'position', 'cause', 'action', 'outcome']);
+    const SLIDES = Object.freeze(['loop', 'cartography', 'causal', 'intervention', 'evidence', 'weave', 'comparison']);
+    const SCENARIO = Object.freeze({
+      fleet: Object.freeze({ active: 10, attention: 2, progressing: 7, waiting: 1, pricedCoverage: 94 }),
+      run: Object.freeze({ id: 'r314', name: 'Suspension replay recovery', health: 'degraded', cost: 4.82, retryCost: 1.05, attemptsLeft: 1, blockedSuccessors: 3 }),
+      requirement: Object.freeze({ id: 'R2', name: 'Recovery resumes suspended work exactly once after executor restart', required: true, grades: Object.freeze(['C', 'C']) }),
+      nodes: Object.freeze([
+        Object.freeze({ id: 'N14', name: 'Implement replay boundary', kind: 'builder', attempt: 1, grade: 'C', files: 8, newEvidence: 0, cost: 0.72 }),
+        Object.freeze({ id: 'N15', name: 'Verify suspension replay', kind: 'verifier', attempt: 1, grade: 'C', files: null, newEvidence: 0, cost: 0.19 }),
+        Object.freeze({ id: 'N17', name: 'Revise recovery path', kind: 'builder', attempt: 2, grade: 'C', files: 3, newEvidence: 0, cost: 1.05 }),
+        Object.freeze({ id: 'N18', name: 'Recheck replay proof', kind: 'verifier', attempt: 2, grade: 'C', files: null, newEvidence: 0, cost: 0.21 }),
+        Object.freeze({ id: 'N24', name: 'Add incident evidence', kind: 'builder', attempt: 3, grade: null, files: 0, newEvidence: 2, cost: 0.62, proposed: true }),
+      ]),
+      evidence: Object.freeze({ missing: Object.freeze(['Deterministic suspension replay', 'Incident record INC-042']), changedFiles: 3, additions: 84, deletions: 21 }),
+      outcome: Object.freeze({ finalGrade: 'A', merged: true, avoidedRetryCost: 1.05, learning: 'Promote restart replay fixture into the routine packet' }),
+    });
+    const state = { slide: 'loop', workspaceState: 'fleet', selectedByConcept: { cartography: 'N18', causal: 'verdict-a2', intervention: 'case-r314', evidence: 'R2', weave: 'recovery-verify-a2' }, modal: null };
+    const escapeHtml = (value) => String(value).replace(/[&<>"]/g, (character) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[character]);
+    const stateRail = () => `<nav class="state-rail" aria-label="Operating loop state">${WORKSPACE_STATES.map((id, index) => `<button type="button" data-workspace-state="${id}" aria-pressed="${state.workspaceState === id}">${index + 1} ${id === 'cause' ? 'Cause / Evidence' : id[0].toUpperCase() + id.slice(1)}</button>`).join('')}</nav>`;
+    const renderLoop = () => `<section class="slide" data-slide="loop"><h1>One operating loop, five interface models</h1><p>Notice → position → decide or explain → verify → act → learn → compare.</p></section>`;
+    const renderPlaceholderConcept = (id, title) => `<section class="slide" data-slide="${id}"><header><h1>${title}</h1>${state.slide === id ? stateRail() : ''}</header><div class="concept-workspace" data-concept="${id}"></div></section>`;
+    const renderComparison = () => `<section class="slide" data-slide="comparison"><h1>Compare architectural trade-offs</h1></section>`;
+    function announce(message) { document.querySelector('[data-live-region]').textContent = message; }
+    function goToSlide(id) { if (!SLIDES.includes(id)) return; state.slide = id; location.hash = id; render(); announce(`Slide: ${id}`); }
+    function setWorkspaceState(id) { if (!WORKSPACE_STATES.includes(id)) return; state.workspaceState = id; render(); announce(`Workspace state: ${id}`); }
+    function selectObject(concept, id) { state.selectedByConcept[concept] = id; render(); announce(`Selected ${id}`); }
+    function render() {
+      const markup = [renderLoop(), renderPlaceholderConcept('cartography', 'Operational Cartography'), renderPlaceholderConcept('causal', 'Causal Spine'), renderPlaceholderConcept('intervention', 'Intervention Desk'), renderPlaceholderConcept('evidence', 'Evidence Workbench'), renderPlaceholderConcept('weave', 'Mission Weave'), renderComparison()].join('');
+      document.querySelector('#slides').innerHTML = markup;
+      document.querySelectorAll('[data-slide]').forEach((slide) => { slide.hidden = slide.dataset.slide !== state.slide; });
+      document.querySelector('#slide-position').textContent = `${SLIDES.indexOf(state.slide) + 1} / ${SLIDES.length}`;
+      document.querySelectorAll('[data-workspace-state]').forEach((button) => button.addEventListener('click', () => setWorkspaceState(button.dataset.workspaceState)));
+    }
+    document.querySelector('[data-action="previous-slide"]').addEventListener('click', () => goToSlide(SLIDES[Math.max(0, SLIDES.indexOf(state.slide) - 1)]));
+    document.querySelector('[data-action="next-slide"]').addEventListener('click', () => goToSlide(SLIDES[Math.min(SLIDES.length - 1, SLIDES.indexOf(state.slide) + 1)]));
+    addEventListener('keydown', (event) => { if (event.key === 'ArrowLeft') goToSlide(SLIDES[Math.max(0, SLIDES.indexOf(state.slide) - 1)]); if (event.key === 'ArrowRight') goToSlide(SLIDES[Math.min(SLIDES.length - 1, SLIDES.indexOf(state.slide) + 1)]); if (/^[1-5]$/.test(event.key)) setWorkspaceState(WORKSPACE_STATES[Number(event.key) - 1]); });
+    state.slide = SLIDES.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'loop';
+    window.taskWorldPresentation = Object.freeze({ getState: () => structuredClone(state), goToSlide, setWorkspaceState, selectObject });
+    try { render(); } catch (error) { document.body.innerHTML = `<main role="alert"><h1>Presentation could not start</h1><pre>${escapeHtml(error instanceof Error ? error.message : error)}</pre></main>`; }
+  </script>
+</body>
+</html>
