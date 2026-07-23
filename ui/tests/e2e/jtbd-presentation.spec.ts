@@ -166,6 +166,16 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('[data-causal-run-record]')).toBeFocused();
   });
 
+  test('intervention desk ranks exceptions and keeps consequence beside action', async ({ page }) => {
+    await openPresentation(page, '#intervention');
+    await expect(page.locator('[data-case-id="case-r314"]')).toContainText('3 successors blocked');
+    await page.locator('[data-case-id="case-r314"]').click();
+    await expect(page.locator('.decision-packet')).toContainText('Another unchanged retry');
+    await expect(page.locator('.decision-packet')).toContainText('$1.05');
+    await expect(page.locator('.decision-packet')).toContainText('1 attempt remains');
+    await expect(page.getByRole('button', { name: 'Review proposed intervention' })).toBeVisible();
+  });
+
   test('causal spine stacks every visible event inside its mobile workspace', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openPresentation(page, '#causal');
