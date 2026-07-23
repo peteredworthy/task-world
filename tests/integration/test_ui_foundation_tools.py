@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from types import ModuleType
@@ -90,7 +91,52 @@ def write_valid_phase_zero(tmp_path: Path) -> Path:
     review = root / "reviews/index.html"
     review.parent.mkdir(parents=True, exist_ok=True)
     review.write_text("Semantic foundation, not a product mockup.", encoding="utf-8")
+    schemas = root / "schemas"
+    schemas.mkdir(parents=True)
+    for name in ("semantic-item.schema.json", "review-feedback.schema.json"):
+        shutil.copyfile(REPO_ROOT / "research/ui-foundation/schemas" / name, schemas / name)
     return root
+
+
+def semantic_item(identifier: str, **overrides: object) -> dict[str, object]:
+    return {
+        "id": identifier,
+        "title": identifier,
+        "definition": "Definition",
+        "implementation_status": "unknown",
+        "test_status": "unknown",
+        "documentation_status": "unknown",
+        "confidence": 1,
+        "confidence_basis": "Evidence",
+        "evidence_ids": [],
+        "conflict_ids": [],
+        "question_ids": [],
+        "limitations": [],
+        "prohibited_interpretations": [],
+    } | overrides
+
+
+def present_action(command_id: str, transition: dict[str, object]) -> dict[str, object]:
+    return {
+        "id": "ACT-01",
+        "implementation_status": "present",
+        "command_id": command_id,
+        "actor": "operator",
+        "permission_requirements": ["run.write"],
+        "preconditions": ["run active"],
+        "expected_source_version": "v1",
+        "required_input": {"reason": "text"},
+        "validation": ["reason nonempty"],
+        "durable_effect": "records command",
+        "resulting_state_id": "STA-02",
+        "failure_modes": ["stale"],
+        "stale_state_behavior": "reject",
+        "idempotency": "command id",
+        "retry_behavior": "safe with same id",
+        "reversibility": "irreversible",
+        "audit_evidence_ids": ["EVD-01"],
+        "transition": transition,
+    }
 
 
 def run_report_validator(path: Path) -> subprocess.CompletedProcess[str]:
@@ -104,8 +150,8 @@ def run_report_validator(path: Path) -> subprocess.CompletedProcess[str]:
 
 def test_validator_rejects_duplicate_ids(tmp_path: Path) -> None:
     root = write_minimal_foundation(tmp_path)
-    append_yaml_item(root / "catalog/claims.yaml", {"id": "CAP-01"})
-    append_yaml_item(root / "catalog/questions.yaml", {"id": "CAP-01"})
+    append_yaml_item(root / "catalog/claims.yaml", semantic_item("CAP-01"))
+    append_yaml_item(root / "capabilities/registry.yaml", semantic_item("CAP-01"))
     result = run_validator(root)
     assert result.returncode == 1
     assert "ID_DUPLICATE" in result.stderr
@@ -144,11 +190,14 @@ def test_validator_rejects_current_claim_without_implementation_evidence(
         {
             "schema_version": "1",
             "items": [
-                {
-                    "id": "CAP-01",
-                    "capability_status": "current",
-                    "evidence_ids": ["EVD-01"],
-                }
+                semantic_item(
+                    "CAP-01",
+                    implementation_status="present",
+                    test_status="exercised",
+                    documentation_status="documented",
+                    capability_status="current",
+                    evidence_ids=["EVD-01"],
+                )
             ],
         },
     )
@@ -156,7 +205,7 @@ def test_validator_rejects_current_claim_without_implementation_evidence(
         root / "catalog/evidence.yaml",
         {
             "schema_version": "1",
-            "snapshot": {"files": []},
+            "snapshot": {"id": "snapshot-test", "files": []},
             "items": [{"id": "EVD-01", "source_kind": "product-documentation"}],
         },
     )
@@ -221,7 +270,6 @@ def test_validator_rejects_invalid_status_and_schema_contract(tmp_path: Path) ->
     )
     schema["properties"]["implementation_status"]["enum"] = ["invented"]
     schemas = root / "schemas"
-    schemas.mkdir(parents=True)
     (schemas / "semantic-item.schema.json").write_text(json.dumps(schema), encoding="utf-8")
     result = run_validator(root, phase=0)
     assert {"SEMANTIC_ITEM_INVALID", "SCHEMA_CONTRACT_INVALID"} <= set(issue_codes(result))
@@ -333,7 +381,6 @@ def test_feedback_schema_contract_requires_export_and_history_fields(tmp_path: P
     schema["properties"]["response_history"]["items"]["required"].remove("note")
     schema["properties"]["response_history"]["items"]["properties"]["response"]["enum"] = ["maybe"]
     schemas = root / "schemas"
-    schemas.mkdir(parents=True)
     (schemas / "review-feedback.schema.json").write_text(json.dumps(schema), encoding="utf-8")
     result = run_validator(root, phase=0)
     assert issue_codes(result).count("SCHEMA_CONTRACT_INVALID") == 3
@@ -421,17 +468,20 @@ def test_implemented_action_accepts_resolved_command_and_singular_legal_transiti
         {
             "schema_version": "1",
             "snapshot": {"id": "snapshot-test", "files": []},
-            "items": [{"id": "EVD-01", "source_kind": "command", "reachable": True}],
+            "items": [
+                {
+                    "id": "CMD-01",
+                    "source_kind": "command",
+                    "implementation_status": "present",
+                    "reachable": True,
+                },
+                {"id": "EVD-01", "source_kind": "implementation", "reachable": True},
+            ],
         },
     )
     write_yaml(
         root / "reality/actions/ACT-01.yaml",
-        {
-            "id": "ACT-01",
-            "implementation_status": "present",
-            "command_id": "EVD-01",
-            "transition": {"from_state_id": "STA-01", "to_state_id": "STA-02"},
-        },
+        present_action("CMD-01", {"from_state_id": "STA-01", "to_state_id": "STA-02"}),
     )
     result = run_validator(root, phase=0)
     assert not {
@@ -486,3 +536,317 @@ def test_validate_foundation_rejects_invalid_direct_phase(tmp_path: Path) -> Non
     module = load_validator()
     issues = module.validate_foundation(write_valid_phase_zero(tmp_path), 4)
     assert [issue.code for issue in issues] == ["PHASE_INVALID"]
+
+
+def test_every_phase_requires_both_schema_files(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    (root / "schemas/semantic-item.schema.json").unlink()
+    (root / "schemas/review-feedback.schema.json").unlink()
+    for phase in range(4):
+        result = run_validator(root, phase=phase)
+        assert issue_codes(result).count("REQUIRED_SCHEMA_MISSING") == 2
+
+
+def test_semantic_schema_requires_the_complete_semantic_contract(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    path = root / "schemas/semantic-item.schema.json"
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    schema["required"].remove("confidence_basis")
+    path.write_text(json.dumps(schema), encoding="utf-8")
+    result = run_validator(root, phase=0)
+    assert "SCHEMA_CONTRACT_INVALID" in issue_codes(result)
+
+
+def test_malformed_typed_action_derivation_transition_and_snapshot_are_rejected(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "reality/actions/ACT-01.yaml",
+        {"id": "ACT-01", "implementation_status": "sometimes", "actor": ["operator"]},
+    )
+    write_yaml(
+        root / "capabilities/derivations/DRV-01.yaml",
+        {"id": "DRV-01", "status": "maybe", "inputs": "CAP-01"},
+    )
+    write_yaml(
+        root / "reality/state-model.yaml",
+        {
+            "schema_version": "1",
+            "items": [],
+            "transitions": [{"from_state_id": ["STA-01"], "to_state_id": "STA-02"}],
+        },
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": [{"path": 7, "sha256": False}]},
+            "items": [],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert {
+        "ACTION_CONTRACT_INVALID",
+        "DERIVATION_CONTRACT_INVALID",
+        "STATE_TRANSITION_INVALID",
+        "SOURCE_SNAPSHOT_INVALID",
+    } <= set(issue_codes(result))
+
+
+def test_current_capability_rejects_nonreachable_kinds_contradiction_and_unresolved_conflict(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    current = semantic_item(
+        "CAP-01",
+        implementation_status="present",
+        test_status="exercised",
+        documentation_status="documented",
+        capability_status="current",
+        evidence_ids=["EVD-01", "EVD-02", "EVD-03"],
+        conflict_ids=["CON-01"],
+    )
+    write_yaml(root / "capabilities/registry.yaml", {"schema_version": "1", "items": [current]})
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {"id": "EVD-01", "source_kind": "executable-schema", "reachable": True},
+                {"id": "EVD-02", "source_kind": "test", "test_status": "exercised"},
+                {"id": "EVD-03", "source_kind": "documentation", "test_status": "contradicted"},
+            ],
+        },
+    )
+    write_yaml(
+        root / "catalog/conflicts.yaml",
+        {"schema_version": "1", "items": [{"id": "CON-01", "status": "unresolved"}]},
+    )
+    result = run_validator(root, phase=0)
+    assert {
+        "CURRENT_IMPLEMENTATION_EVIDENCE_MISSING",
+        "CURRENT_EVIDENCE_CONTRADICTED",
+        "CURRENT_CONFLICT_UNRESOLVED",
+    } <= set(issue_codes(result))
+
+
+def test_derived_capability_inputs_must_resolve_to_current_capabilities(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    proposed = semantic_item("CAP-01", capability_status="proposed")
+    derived = semantic_item("CAP-02", capability_status="derived", derivation_id="DRV-01")
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {"schema_version": "1", "items": [proposed, derived]},
+    )
+    write_yaml(
+        root / "capabilities/derivations/DRV-01.yaml",
+        {
+            "id": "DRV-01",
+            "status": "admitted",
+            "inputs": ["CAP-01"],
+            "algorithm": "identity",
+            "output_type": "string",
+            "unknown_behavior": "unknown",
+            "failure_behavior": "unknown",
+            "freshness": "snapshot",
+            "recomputation_behavior": "recompute when inputs change",
+            "implementation_evidence_ids": ["EVD-01"],
+            "limitations": ["none"],
+            "prohibited_interpretations": ["causal"],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert "DERIVATION_INPUT_NOT_CURRENT" in issue_codes(result)
+
+
+def test_present_action_requires_typed_command_namespace_actor_permissions_and_fields(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "command",
+                    "implementation_status": "present",
+                    "reachable": True,
+                }
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/actions/ACT-01.yaml",
+        {
+            "id": "ACT-01",
+            "implementation_status": "present",
+            "command_id": "EVD-01",
+            "transition": {"from_state_id": "STA-01", "to_state_id": "STA-02"},
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert "ACTION_COMMAND_WRONG_NAMESPACE" in issue_codes(result)
+    assert "ACTION_CONTRACT_INVALID" in issue_codes(result)
+
+
+def test_command_must_be_implemented_and_reachable(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {
+                    "id": "CMD-01",
+                    "source_kind": "command",
+                    "implementation_status": "absent",
+                    "reachable": False,
+                }
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/actions/ACT-01.yaml",
+        {
+            "id": "ACT-01",
+            "implementation_status": "present",
+            "command_id": "CMD-01",
+            "transition": {"from_state_id": "STA-01", "to_state_id": "STA-02"},
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert "ACTION_COMMAND_UNAVAILABLE" in issue_codes(result)
+
+
+def test_present_action_resolves_result_state_and_audit_evidence(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    states = [
+        semantic_item("STA-01"),
+        semantic_item("STA-02"),
+    ]
+    write_yaml(
+        root / "reality/state-model.yaml",
+        {
+            "schema_version": "1",
+            "items": states,
+            "transitions": [{"from_state_id": "STA-01", "to_state_id": "STA-02"}],
+        },
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {
+                    "id": "CMD-01",
+                    "source_kind": "command",
+                    "implementation_status": "present",
+                    "reachable": True,
+                }
+            ],
+        },
+    )
+    action = present_action("CMD-01", {"from_state_id": "STA-01", "to_state_id": "STA-02"})
+    action["resulting_state_id"] = "STA-99"
+    action["audit_evidence_ids"] = ["EVD-99"]
+    write_yaml(root / "reality/actions/ACT-01.yaml", action)
+    result = run_validator(root, phase=0)
+    assert {
+        "STATE_UNKNOWN",
+        "ACTION_AUDIT_EVIDENCE_UNRESOLVED",
+    } <= set(issue_codes(result))
+
+
+def test_source_snapshot_rejects_symlink_escape(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    outside = tmp_path.parent / f"{tmp_path.name}-outside.txt"
+    outside.write_text("secret", encoding="utf-8")
+    repository_root = root.parents[1]
+    (repository_root / "escape.txt").symlink_to(outside)
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "snapshot-test",
+                "files": [
+                    {
+                        "path": "escape.txt",
+                        "sha256": "2bb80d537b1da3e38bd30361aa855686bde0ba0d5a73ccba1cac4843f89a253b",
+                        "audited_at": "2026-07-23T00:00:00Z",
+                    }
+                ],
+            },
+            "items": [],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert "SOURCE_PATH_UNSAFE" in issue_codes(result)
+
+
+def test_each_review_item_requires_its_own_nonempty_evidence_set(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/claims.yaml",
+        {
+            "schema_version": "1",
+            "items": [semantic_item("CAP-01"), semantic_item("CAP-02")],
+        },
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [{"id": "EVD-01", "source_kind": "documentation"}],
+        },
+    )
+    batch = root / "reviews/phase-3-reality-capability-01.html"
+    batch.write_text(
+        '<article data-item-id="CAP-01" data-evidence-ids=""></article>'
+        '<article data-item-id="CAP-02" data-evidence-ids="EVD-01"></article>',
+        encoding="utf-8",
+    )
+    result = run_validator(root, phase=3)
+    assert "REVIEW_EVIDENCE_MISSING" in issue_codes(result)
+
+
+def test_unresolved_or_weak_causality_cannot_retain_causal_label(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    relationship = semantic_item(
+        "REL-01",
+        relationship_type="causal",
+        epistemic_status="inferred",
+        evidence_ids=["EVD-01"],
+    )
+    write_yaml(
+        root / "reality/relationships.yaml",
+        {"schema_version": "1", "items": [relationship]},
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "implementation",
+                    "evidence_type": "temporal-observation",
+                }
+            ],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert {
+        "CAUSAL_EPISTEMIC_INSUFFICIENT",
+        "CAUSAL_MECHANISM_EVIDENCE_MISSING",
+        "CAUSAL_LABEL_UNRESOLVED",
+    } <= set(issue_codes(result))

@@ -3,13 +3,14 @@ from __future__ import annotations
 import argparse
 from dataclasses import dataclass
 import hashlib
+from html.parser import HTMLParser
 import json
 from pathlib import Path
 import re
 import sys
-from typing import Literal, cast
+from typing import ClassVar, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 import yaml
 
 
@@ -31,9 +32,7 @@ IMPLEMENTATION_SOURCE_KINDS = {
     "api",
     "command",
     "event",
-    "executable-schema",
     "implementation",
-    "invariant-check",
     "persisted-record",
 }
 PHASE_FILES = {
@@ -102,7 +101,21 @@ class ValidationIssue:
 class FoundationPackage:
     root: Path
     documents: dict[str, JsonValue]
+    existing_files: frozenset[str]
+    schemas: dict[str, JsonValue]
+    reviews: dict[str, str]
+    source_loads: tuple[SourceLoad, ...]
     issues: tuple[ValidationIssue, ...]
+
+
+@dataclass(frozen=True)
+class SourceLoad:
+    relative: str
+    expected_sha256: str
+    resolved: Path | None
+    content: bytes | None
+    error: str | None
+    unsafe: bool
 
 
 class CanonicalDocument(BaseModel):
@@ -110,6 +123,138 @@ class CanonicalDocument(BaseModel):
 
     schema_version: str
     items: list[dict[str, JsonValue]]
+
+
+class SemanticCatalog(CanonicalDocument):
+    expected_prefix: ClassVar[str]
+
+    @model_validator(mode="after")
+    def validate_semantic_items(self) -> SemanticCatalog:
+        for item in self.items:
+            semantic = SemanticItem.model_validate(item)
+            if not semantic.id.startswith(f"{self.expected_prefix}-"):
+                raise ValueError(f"expected {self.expected_prefix} namespace")
+        return self
+
+
+class NamespacedCatalog(CanonicalDocument):
+    expected_prefix: ClassVar[str]
+
+    @model_validator(mode="after")
+    def validate_item_namespaces(self) -> NamespacedCatalog:
+        for item in self.items:
+            identifier = item.get("id")
+            if not isinstance(identifier, str) or not identifier.startswith(
+                f"{self.expected_prefix}-"
+            ):
+                raise ValueError(f"expected {self.expected_prefix} namespace")
+        return self
+
+
+class ScopeCatalog(CanonicalDocument):
+    @model_validator(mode="after")
+    def validate_scope_items(self) -> ScopeCatalog:
+        required = {
+            "key",
+            "source",
+            "source_anchor",
+            "demand_type",
+            "label",
+            "audit_owner",
+            "downstream_jobs",
+            "blocking",
+        }
+        for item in self.items:
+            if not required <= item.keys():
+                raise ValueError("scope demand fields missing")
+        return self
+
+
+class IdCatalog(CanonicalDocument):
+    pass
+
+
+class ClaimCatalog(SemanticCatalog):
+    expected_prefix = "CAP"
+
+
+class InvariantCatalog(SemanticCatalog):
+    expected_prefix = "INV"
+
+
+class ConflictCatalog(NamespacedCatalog):
+    expected_prefix = "CON"
+
+
+class QuestionCatalog(NamespacedCatalog):
+    expected_prefix = "Q"
+
+
+class DecisionCatalog(NamespacedCatalog):
+    expected_prefix = "DEC"
+
+
+class EvidenceCatalog(CanonicalDocument):
+    snapshot: dict[str, JsonValue]
+
+    @model_validator(mode="after")
+    def validate_evidence_items(self) -> EvidenceCatalog:
+        SourceSnapshot.model_validate(self.snapshot)
+        for item in self.items:
+            if item.get("source_kind") == "command":
+                CommandDeclaration.model_validate(item)
+            else:
+                EvidenceRecord.model_validate(item)
+        return self
+
+
+class DomainCatalog(SemanticCatalog):
+    expected_prefix = "ENT"
+
+
+class RelationshipCatalog(SemanticCatalog):
+    expected_prefix = "REL"
+
+
+class StateCatalog(SemanticCatalog):
+    expected_prefix = "STA"
+    transitions: list[dict[str, JsonValue]] = []
+
+    @model_validator(mode="after")
+    def validate_transitions(self) -> StateCatalog:
+        for transition in self.transitions:
+            StateTransition.model_validate(transition)
+        return self
+
+
+class PermissionCatalog(SemanticCatalog):
+    expected_prefix = "PER"
+
+
+class EvidenceInventoryCatalog(SemanticCatalog):
+    expected_prefix = "EVI"
+
+
+class CapabilityCatalog(SemanticCatalog):
+    expected_prefix = "CAP"
+
+
+CATALOG_MODELS: dict[str, type[CanonicalDocument]] = {
+    "catalog/scope.yaml": ScopeCatalog,
+    "catalog/ids.yaml": IdCatalog,
+    "catalog/claims.yaml": ClaimCatalog,
+    "catalog/invariants.yaml": InvariantCatalog,
+    "catalog/conflicts.yaml": ConflictCatalog,
+    "catalog/questions.yaml": QuestionCatalog,
+    "catalog/decisions.yaml": DecisionCatalog,
+    "catalog/evidence.yaml": EvidenceCatalog,
+    "reality/domain-model.yaml": DomainCatalog,
+    "reality/relationships.yaml": RelationshipCatalog,
+    "reality/state-model.yaml": StateCatalog,
+    "reality/permissions.yaml": PermissionCatalog,
+    "reality/evidence/inventory.yaml": EvidenceInventoryCatalog,
+    "capabilities/registry.yaml": CapabilityCatalog,
+}
 
 
 class SemanticItem(BaseModel):
@@ -145,10 +290,135 @@ class SemanticItem(BaseModel):
 class EvidenceRecord(BaseModel):
     model_config = ConfigDict(extra="allow", strict=True)
 
-    id: str
+    id: str = Field(pattern=r"^EVD-[0-9]+$")
     source_kind: str
     reachable: bool = False
     test_status: Literal["exercised", "unexercised", "contradicted", "unknown"] | None = None
+    evidence_type: str | None = None
+
+
+class CommandDeclaration(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    id: str = Field(pattern=r"^CMD-[0-9]+$")
+    source_kind: Literal["command"]
+    implementation_status: Literal["present", "absent", "partial", "unknown"]
+    reachable: bool
+
+
+class StateTransition(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    from_state_id: str = Field(pattern=r"^STA-[0-9]+$")
+    to_state_id: str = Field(pattern=r"^STA-[0-9]+$")
+
+
+class ActionTransition(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    from_state_id: str | None = None
+    to_state_id: str | None = None
+    from_state_ids: list[str] | None = None
+    to_state_ids: list[str] | None = None
+
+    @model_validator(mode="after")
+    def require_nonempty_sides(self) -> ActionTransition:
+        starts = self.from_state_ids or ([self.from_state_id] if self.from_state_id else [])
+        ends = self.to_state_ids or ([self.to_state_id] if self.to_state_id else [])
+        if not starts or not ends:
+            raise ValueError("transition requires nonempty from and to states")
+        return self
+
+
+class DerivationContract(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    id: str = Field(pattern=r"^DRV-[0-9]+$")
+    status: Literal["admitted", "rejected"]
+    inputs: list[str] = Field(min_length=1)
+    algorithm: str = Field(min_length=1)
+    output_type: str = Field(min_length=1)
+    unknown_behavior: str = Field(min_length=1)
+    failure_behavior: str = Field(min_length=1)
+    freshness: str = Field(min_length=1)
+    recomputation_behavior: str = Field(min_length=1)
+    implementation_evidence_ids: list[str] = Field(min_length=1)
+    limitations: list[str]
+    prohibited_interpretations: list[str]
+
+
+class ActionContract(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    id: str = Field(pattern=r"^ACT-[0-9]+$")
+    implementation_status: Literal["present", "absent", "partial", "unknown"]
+    capability_status: Literal["current", "derived", "proposed", "gap", "unknown"] | None = None
+    executable: bool | None = None
+    command_id: str | None = None
+    actor: str | None = None
+    permission_requirements: list[str] | None = None
+    preconditions: list[str] | None = None
+    expected_source_version: str | None = None
+    required_input: JsonValue = None
+    validation: list[str] | None = None
+    durable_effect: str | None = None
+    resulting_state_id: str | None = None
+    failure_modes: list[str] | None = None
+    stale_state_behavior: str | None = None
+    idempotency: str | None = None
+    retry_behavior: str | None = None
+    reversibility: str | None = None
+    audit_evidence_ids: list[str] | None = None
+    transition: ActionTransition | None = None
+
+    @model_validator(mode="after")
+    def require_present_contract(self) -> ActionContract:
+        if self.implementation_status != "present":
+            return self
+        required = (
+            "command_id",
+            "actor",
+            "permission_requirements",
+            "preconditions",
+            "expected_source_version",
+            "required_input",
+            "validation",
+            "durable_effect",
+            "resulting_state_id",
+            "failure_modes",
+            "stale_state_behavior",
+            "idempotency",
+            "retry_behavior",
+            "reversibility",
+            "audit_evidence_ids",
+            "transition",
+        )
+        missing = [field for field in required if getattr(self, field) in (None, "", [])]
+        if missing:
+            raise ValueError(f"present action fields missing: {', '.join(missing)}")
+        return self
+
+
+class SourceSnapshotFile(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    path: str = Field(min_length=1)
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    audited_at: str = Field(min_length=1)
+
+
+class SourceSnapshot(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    id: str = Field(min_length=1)
+    files: list[SourceSnapshotFile]
+
+
+class ConflictRecord(BaseModel):
+    model_config = ConfigDict(extra="allow", strict=True)
+
+    id: str = Field(pattern=r"^CON-[0-9]+$")
+    status: Literal["unresolved", "resolved"]
 
 
 class SchemaBoundary(BaseModel):
@@ -167,14 +437,71 @@ def _issue(code: str, path: Path | str, message: object) -> ValidationIssue:
 def load_foundation(root: Path) -> FoundationPackage:
     """Load filesystem YAML at the boundary; semantic validation stays pure."""
     documents: dict[str, JsonValue] = {}
+    existing_files: set[str] = set()
+    schemas: dict[str, JsonValue] = {}
+    reviews: dict[str, str] = {}
     issues: list[ValidationIssue] = []
-    for path in sorted((*root.rglob("*.yaml"), *root.rglob("*.yml"))):
+    for path in sorted(path for path in root.rglob("*") if path.is_file()):
         relative = path.relative_to(root).as_posix()
+        existing_files.add(relative)
+        if relative.startswith("schemas/") and path.suffix == ".json":
+            try:
+                schemas[relative] = cast(JsonValue, json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, UnicodeError, json.JSONDecodeError) as error:
+                issues.append(_issue("SCHEMA_INVALID", path, error))
+            continue
+        if relative.startswith("reviews/phase-3-") and path.suffix == ".html":
+            try:
+                reviews[relative] = path.read_text(encoding="utf-8")
+            except (OSError, UnicodeError) as error:
+                issues.append(_issue("REVIEW_INVALID", path, error))
+            continue
+        if path.suffix not in {".yaml", ".yml"}:
+            continue
         try:
             documents[relative] = cast(JsonValue, yaml.safe_load(path.read_text(encoding="utf-8")))
         except (OSError, UnicodeError, yaml.YAMLError) as error:
             issues.append(_issue("YAML_INVALID", path, error))
-    return FoundationPackage(root, documents, tuple(issues))
+
+    source_loads: list[SourceLoad] = []
+    evidence = documents.get("catalog/evidence.yaml")
+    snapshot = evidence.get("snapshot") if isinstance(evidence, dict) else None
+    files = snapshot.get("files") if isinstance(snapshot, dict) else None
+    repository_root = root.parents[1].resolve()
+    for record in files if isinstance(files, list) else []:
+        if not isinstance(record, dict):
+            continue
+        relative, expected = record.get("path"), record.get("sha256")
+        if not isinstance(relative, str) or not isinstance(expected, str):
+            continue
+        candidate = Path(relative)
+        unsafe = candidate.is_absolute() or ".." in candidate.parts
+        resolved: Path | None = None
+        if not unsafe:
+            try:
+                resolved = (repository_root / candidate).resolve()
+                unsafe = not resolved.is_relative_to(repository_root)
+            except OSError as error:
+                source_loads.append(SourceLoad(relative, expected, None, None, str(error), True))
+                continue
+        if unsafe or resolved is None:
+            source_loads.append(SourceLoad(relative, expected, resolved, None, None, True))
+            continue
+        try:
+            source_loads.append(
+                SourceLoad(relative, expected, resolved, resolved.read_bytes(), None, False)
+            )
+        except OSError as error:
+            source_loads.append(SourceLoad(relative, expected, resolved, None, str(error), False))
+    return FoundationPackage(
+        root,
+        documents,
+        frozenset(existing_files),
+        schemas,
+        reviews,
+        tuple(source_loads),
+        tuple(issues),
+    )
 
 
 def _canonical_documents(
@@ -184,32 +511,31 @@ def _canonical_documents(
     issues: list[ValidationIssue] = []
     for relative in sorted(CANONICAL_COLLECTIONS & package.documents.keys()):
         try:
-            documents[relative] = CanonicalDocument.model_validate(package.documents[relative])
+            documents[relative] = CATALOG_MODELS[relative].model_validate(
+                package.documents[relative]
+            )
         except ValidationError as error:
             issues.append(_issue("CANONICAL_DOCUMENT_INVALID", package.root / relative, error))
     return documents, issues
 
 
-def _all_dicts(value: JsonValue) -> list[dict[str, JsonValue]]:
-    found: list[dict[str, JsonValue]] = []
-    if isinstance(value, dict):
-        found.append(value)
-        for child in value.values():
-            found.extend(_all_dicts(child))
-    elif isinstance(value, list):
-        for child in value:
-            found.extend(_all_dicts(child))
-    return found
-
-
-def _ids(package: FoundationPackage) -> dict[str, str]:
-    result: dict[str, str] = {}
-    for relative, value in package.documents.items():
-        for item in _all_dicts(value):
-            identifier = item.get("id")
-            if isinstance(identifier, str):
-                result.setdefault(identifier, relative)
-    return result
+def _declare(
+    declarations: dict[str, str],
+    identifier: str,
+    relative: str,
+    package: FoundationPackage,
+    issues: list[ValidationIssue],
+) -> None:
+    if identifier in declarations:
+        issues.append(
+            _issue(
+                "ID_DUPLICATE",
+                package.root / relative,
+                f"{identifier} already declared in {declarations[identifier]}",
+            )
+        )
+    else:
+        declarations[identifier] = relative
 
 
 def validate_semantics(package: FoundationPackage, phase: int) -> list[ValidationIssue]:
@@ -218,10 +544,23 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
     canonical, boundary_issues = _canonical_documents(package)
     issues.extend(boundary_issues)
 
-    for relative in sorted(SEMANTIC_COLLECTIONS & canonical.keys()):
-        for index, item in enumerate(canonical[relative].items):
+    semantic_items: dict[str, SemanticItem] = {}
+    for relative in sorted(SEMANTIC_COLLECTIONS & package.documents.keys()):
+        value = package.documents[relative]
+        raw_items = value.get("items") if isinstance(value, dict) else None
+        for index, item in enumerate(raw_items if isinstance(raw_items, list) else []):
+            if not isinstance(item, dict):
+                issues.append(
+                    _issue(
+                        "SEMANTIC_ITEM_INVALID",
+                        f"{package.root / relative}:items[{index}]",
+                        "item must be a mapping",
+                    )
+                )
+                continue
             try:
-                SemanticItem.model_validate(item)
+                semantic = SemanticItem.model_validate(item)
+                semantic_items[semantic.id] = semantic
             except ValidationError as error:
                 issues.append(
                     _issue(
@@ -229,54 +568,58 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     )
                 )
 
-    declared: dict[str, str] = {}
-    references: list[tuple[str, str]] = []
-    for relative, value in package.documents.items():
-        for item in _all_dicts(value):
+    declarations: dict[str, str] = {}
+    for relative, document in canonical.items():
+        for item in document.items:
             identifier = item.get("id")
             if isinstance(identifier, str):
-                if identifier in declared:
-                    issues.append(
-                        _issue(
-                            "ID_DUPLICATE",
-                            package.root / relative,
-                            f"{identifier} already declared in {declared[identifier]}",
-                        )
-                    )
-                else:
-                    declared[identifier] = relative
-            for field, candidate in item.items():
-                if field in {"repository_revision", "source_snapshot"}:
-                    continue
-                if field.endswith("_id") and field != "id" and isinstance(candidate, str):
-                    references.append((candidate, relative))
-                elif (field.endswith("_ids") or field in {"inputs", "evidence"}) and isinstance(
-                    candidate, list
-                ):
-                    references.extend(
-                        (reference, relative)
-                        for reference in candidate
-                        if isinstance(reference, str) and re.fullmatch(r"[A-Z]+-\d+", reference)
-                    )
-    for reference, relative in references:
-        if reference not in declared:
-            issues.append(_issue("REFERENCE_UNRESOLVED", package.root / relative, reference))
+                _declare(declarations, identifier, relative, package, issues)
 
     evidence_document = canonical.get("catalog/evidence.yaml")
     evidence: dict[str, EvidenceRecord] = {}
+    commands: dict[str, CommandDeclaration] = {}
     if evidence_document:
         for index, item in enumerate(evidence_document.items):
+            location = f"{package.root / 'catalog/evidence.yaml'}:items[{index}]"
+            if item.get("source_kind") == "command":
+                try:
+                    command = CommandDeclaration.model_validate(item)
+                    commands[command.id] = command
+                except ValidationError as error:
+                    issues.append(_issue("COMMAND_DECLARATION_INVALID", location, error))
+                continue
             try:
                 record = EvidenceRecord.model_validate(item)
                 evidence[record.id] = record
             except ValidationError as error:
-                issues.append(
-                    _issue(
-                        "EVIDENCE_RECORD_INVALID",
-                        f"{package.root / 'catalog/evidence.yaml'}:items[{index}]",
-                        error,
-                    )
+                issues.append(_issue("EVIDENCE_RECORD_INVALID", location, error))
+
+    conflicts: dict[str, ConflictRecord] = {}
+    conflict_document = canonical.get("catalog/conflicts.yaml")
+    for index, item in enumerate(conflict_document.items if conflict_document else []):
+        try:
+            conflict = ConflictRecord.model_validate(item)
+            conflicts[conflict.id] = conflict
+        except ValidationError as error:
+            issues.append(
+                _issue(
+                    "CONFLICT_RECORD_INVALID",
+                    f"{package.root / 'catalog/conflicts.yaml'}:items[{index}]",
+                    error,
                 )
+            )
+
+    for identifier, semantic in semantic_items.items():
+        relative = declarations.get(identifier, "unknown")
+        for reference in semantic.evidence_ids:
+            if reference not in evidence:
+                issues.append(_issue("REFERENCE_UNRESOLVED", package.root / relative, reference))
+        for reference in semantic.conflict_ids:
+            if reference not in conflicts:
+                issues.append(_issue("REFERENCE_UNRESOLVED", package.root / relative, reference))
+        for reference in semantic.question_ids:
+            if reference not in declarations:
+                issues.append(_issue("REFERENCE_UNRESOLVED", package.root / relative, reference))
 
     registry = canonical.get("capabilities/registry.yaml")
     for item in registry.items if registry else []:
@@ -300,6 +643,28 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                         item.get("id"),
                     )
                 )
+            if any(record.test_status == "contradicted" for record in records):
+                issues.append(
+                    _issue(
+                        "CURRENT_EVIDENCE_CONTRADICTED",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
+            conflict_ids = item.get("conflict_ids")
+            unresolved_conflict = isinstance(conflict_ids, list) and any(
+                reference not in conflicts or conflicts[reference].status != "resolved"
+                for reference in conflict_ids
+                if isinstance(reference, str)
+            )
+            if unresolved_conflict:
+                issues.append(
+                    _issue(
+                        "CURRENT_CONFLICT_UNRESOLVED",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
             if not any(
                 record.source_kind == "test" and record.test_status == "exercised"
                 for record in records
@@ -312,7 +677,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     )
                 )
             if (
-                item.get("conflict_ids")
+                unresolved_conflict
                 or item.get("test_status") == "contradicted"
                 or item.get("documentation_status") == "conflicting"
             ):
@@ -340,12 +705,15 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 )
             )
 
-    derivations: dict[str, tuple[str, dict[str, JsonValue]]] = {}
+    derivations: dict[str, tuple[str, DerivationContract]] = {}
     for relative, value in package.documents.items():
         if relative.startswith("capabilities/derivations/") and isinstance(value, dict):
-            identifier = value.get("id")
-            if isinstance(identifier, str):
-                derivations[identifier] = (relative, value)
+            try:
+                derivation = DerivationContract.model_validate(value)
+                derivations[derivation.id] = (relative, derivation)
+                _declare(declarations, derivation.id, relative, package, issues)
+            except ValidationError as error:
+                issues.append(_issue("DERIVATION_CONTRACT_INVALID", package.root / relative, error))
     required_derivation = {
         "inputs": "DERIVATION_INPUTS_MISSING",
         "algorithm": "DERIVATION_ALGORITHM_MISSING",
@@ -353,10 +721,17 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         "unknown_behavior": "DERIVATION_UNKNOWN_BEHAVIOR_MISSING",
         "failure_behavior": "DERIVATION_FAILURE_BEHAVIOR_MISSING",
         "freshness": "DERIVATION_FRESHNESS_MISSING",
+        "recomputation_behavior": "DERIVATION_RECOMPUTATION_BEHAVIOR_MISSING",
         "implementation_evidence_ids": "DERIVATION_IMPLEMENTATION_EVIDENCE_MISSING",
         "limitations": "DERIVATION_LIMITATIONS_MISSING",
         "prohibited_interpretations": "DERIVATION_PROHIBITED_INTERPRETATIONS_MISSING",
     }
+    for relative, value in package.documents.items():
+        if not relative.startswith("capabilities/derivations/") or not isinstance(value, dict):
+            continue
+        for field, code in required_derivation.items():
+            if value.get(field) in (None, "", []):
+                issues.append(_issue(code, package.root / relative, field))
     for item in registry.items if registry else []:
         if item.get("capability_status") != "derived":
             continue
@@ -371,34 +746,54 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
             )
             continue
         relative, derivation = derivations[derivation_id]
-        for field, code in required_derivation.items():
-            if derivation.get(field) in (None, "", []):
-                issues.append(_issue(code, package.root / relative, field))
+        for input_id in derivation.inputs:
+            capability = semantic_items.get(input_id)
+            if capability is None or capability.capability_status != "current":
+                issues.append(
+                    _issue("DERIVATION_INPUT_NOT_CURRENT", package.root / relative, input_id)
+                )
+        for evidence_id in derivation.implementation_evidence_ids:
+            if evidence_id not in evidence:
+                issues.append(_issue("REFERENCE_UNRESOLVED", package.root / relative, evidence_id))
 
-    issues.extend(_validate_actions(package, declared))
-    issues.extend(_validate_epistemics(package))
+    issues.extend(_validate_actions(package, declarations, commands, evidence))
+    issues.extend(_validate_epistemics(package, canonical, evidence))
     return issues
 
 
 def _validate_actions(
-    package: FoundationPackage, declared: dict[str, str]
+    package: FoundationPackage,
+    declarations: dict[str, str],
+    commands: dict[str, CommandDeclaration],
+    evidence: dict[str, EvidenceRecord],
 ) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     state_value = package.documents.get("reality/state-model.yaml")
-    states = {
-        identifier
-        for item in _all_dicts(state_value)
-        if isinstance((identifier := item.get("id")), str) and identifier.startswith("STA-")
-    }
+    state_items = state_value.get("items") if isinstance(state_value, dict) else None
+    states: set[str] = set()
+    if isinstance(state_items, list):
+        for item in state_items:
+            if not isinstance(item, dict):
+                continue
+            identifier = item.get("id")
+            if isinstance(identifier, str) and identifier.startswith("STA-"):
+                states.add(identifier)
     legal: set[tuple[str, str]] = set()
     if isinstance(state_value, dict):
         transitions = state_value.get("transitions")
         if isinstance(transitions, list):
-            for transition in transitions:
-                if isinstance(transition, dict):
-                    start, end = transition.get("from_state_id"), transition.get("to_state_id")
-                    if isinstance(start, str) and isinstance(end, str):
-                        legal.add((start, end))
+            for index, transition in enumerate(transitions):
+                try:
+                    typed_transition = StateTransition.model_validate(transition)
+                    legal.add((typed_transition.from_state_id, typed_transition.to_state_id))
+                except ValidationError as error:
+                    issues.append(
+                        _issue(
+                            "STATE_TRANSITION_INVALID",
+                            f"{package.root / 'reality/state-model.yaml'}:transitions[{index}]",
+                            error,
+                        )
+                    )
     absent_fields = (
         "required_outcome",
         "source_demand_ids",
@@ -410,6 +805,11 @@ def _validate_actions(
         if not relative.startswith("reality/actions/") or not isinstance(action, dict):
             continue
         path = package.root / relative
+        try:
+            typed_action = ActionContract.model_validate(action)
+            _declare(declarations, typed_action.id, relative, package, issues)
+        except ValidationError as error:
+            issues.append(_issue("ACTION_CONTRACT_INVALID", path, error))
         if action.get("implementation_status") == "present":
             if action.get("enforced_authorization") in {None, "absent", "unknown"} and action.get(
                 "proposed_role_policy"
@@ -422,8 +822,23 @@ def _validate_actions(
                     )
                 )
             command = action.get("command_id")
-            if not isinstance(command, str) or command not in declared:
+            if not isinstance(command, str) or not re.fullmatch(r"CMD-\d+", command):
+                issues.append(_issue("ACTION_COMMAND_WRONG_NAMESPACE", path, command))
+            elif command not in commands:
                 issues.append(_issue("ACTION_COMMAND_UNRESOLVED", path, command))
+            elif (
+                commands[command].implementation_status != "present"
+                or not commands[command].reachable
+            ):
+                issues.append(_issue("ACTION_COMMAND_UNAVAILABLE", path, command))
+            resulting_state = action.get("resulting_state_id")
+            if isinstance(resulting_state, str) and resulting_state not in states:
+                issues.append(_issue("STATE_UNKNOWN", path, resulting_state))
+            audit_evidence_ids = action.get("audit_evidence_ids")
+            if isinstance(audit_evidence_ids, list):
+                for evidence_id in audit_evidence_ids:
+                    if isinstance(evidence_id, str) and evidence_id not in evidence:
+                        issues.append(_issue("ACTION_AUDIT_EVIDENCE_UNRESOLVED", path, evidence_id))
             transition = action.get("transition")
             if not isinstance(transition, dict):
                 issues.append(_issue("ACTION_TRANSITION_MISSING", path, "transition"))
@@ -481,10 +896,14 @@ def _validate_actions(
     return issues
 
 
-def _validate_epistemics(package: FoundationPackage) -> list[ValidationIssue]:
+def _validate_epistemics(
+    package: FoundationPackage,
+    canonical: dict[str, CanonicalDocument],
+    evidence: dict[str, EvidenceRecord],
+) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
-    for relative, value in package.documents.items():
-        for item in _all_dicts(value):
+    for relative in sorted(SEMANTIC_COLLECTIONS & canonical.keys()):
+        for item in canonical[relative].items:
             causal = (
                 item.get("causal") is True
                 or item.get("relationship_type") == "causal"
@@ -498,6 +917,42 @@ def _validate_epistemics(package: FoundationPackage) -> list[ValidationIssue]:
                 issues.append(
                     _issue("CAUSAL_EVIDENCE_MISSING", package.root / relative, item.get("id"))
                 )
+            if causal:
+                epistemic = item.get("epistemic_status")
+                evidence_ids = item.get("evidence_ids")
+                referenced = (
+                    [evidence[value] for value in evidence_ids if value in evidence]
+                    if isinstance(evidence_ids, list)
+                    else []
+                )
+                insufficient = epistemic not in {"observed", "deterministically-derived"}
+                mechanism_missing = not any(
+                    record.evidence_type == "causal-mechanism" for record in referenced
+                )
+                if insufficient:
+                    issues.append(
+                        _issue(
+                            "CAUSAL_EPISTEMIC_INSUFFICIENT",
+                            package.root / relative,
+                            item.get("id"),
+                        )
+                    )
+                if mechanism_missing:
+                    issues.append(
+                        _issue(
+                            "CAUSAL_MECHANISM_EVIDENCE_MISSING",
+                            package.root / relative,
+                            item.get("id"),
+                        )
+                    )
+                if insufficient or mechanism_missing:
+                    issues.append(
+                        _issue(
+                            "CAUSAL_LABEL_UNRESOLVED",
+                            package.root / relative,
+                            item.get("id"),
+                        )
+                    )
             aliases = item.get("aliases")
             if isinstance(aliases, list) and any(
                 isinstance(alias, str) and "/" in alias for alias in aliases
@@ -510,9 +965,19 @@ def _validate_epistemics(package: FoundationPackage) -> list[ValidationIssue]:
 
 def validate_required_files(package: FoundationPackage, phase: int) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
+    for relative in (
+        "schemas/semantic-item.schema.json",
+        "schemas/review-feedback.schema.json",
+    ):
+        if relative not in package.existing_files:
+            issues.append(
+                _issue(
+                    "REQUIRED_SCHEMA_MISSING", package.root / relative, "required at every phase"
+                )
+            )
     for required_phase in range(phase + 1):
         for relative in PHASE_FILES[required_phase]:
-            if not (package.root / relative).is_file():
+            if relative not in package.existing_files:
                 issues.append(
                     _issue(
                         "REQUIRED_FILE_MISSING",
@@ -545,7 +1010,7 @@ def validate_required_files(package: FoundationPackage, phase: int) -> list[Vali
     return issues
 
 
-def validate_schema_contracts(root: Path) -> list[ValidationIssue]:
+def validate_schema_contracts(package: FoundationPackage) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     expected_enums = {
         "implementation_status": IMPLEMENTATION_STATUSES,
@@ -554,14 +1019,31 @@ def validate_schema_contracts(root: Path) -> list[ValidationIssue]:
         "capability_status": CAPABILITY_STATUSES,
         "epistemic_status": EPISTEMIC_STATUSES,
     }
-    for path in sorted((root / "schemas").glob("*.json")):
+    semantic_required = {
+        "id",
+        "title",
+        "definition",
+        "implementation_status",
+        "test_status",
+        "documentation_status",
+        "confidence",
+        "confidence_basis",
+        "evidence_ids",
+        "conflict_ids",
+        "question_ids",
+        "limitations",
+        "prohibited_interpretations",
+    }
+    for relative, value in sorted(package.schemas.items()):
+        path = package.root / relative
         try:
-            value = cast(JsonValue, json.loads(path.read_text(encoding="utf-8")))
             schema = SchemaBoundary.model_validate(value)
-        except (OSError, UnicodeError, json.JSONDecodeError, ValidationError) as error:
+        except ValidationError as error:
             issues.append(_issue("SCHEMA_INVALID", path, error))
             continue
         if path.name == "semantic-item.schema.json":
+            if not semantic_required <= set(schema.required):
+                issues.append(_issue("SCHEMA_CONTRACT_INVALID", path, "semantic required fields"))
             for field, expected in expected_enums.items():
                 actual = schema.properties.get(field, {}).get("enum")
                 if actual != list(expected):
@@ -611,83 +1093,101 @@ def validate_source_hashes(package: FoundationPackage) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     value = package.documents.get("catalog/evidence.yaml")
     snapshot = value.get("snapshot") if isinstance(value, dict) else None
-    files = snapshot.get("files") if isinstance(snapshot, dict) else None
-    if not isinstance(files, list):
-        return issues
-    repository_root = package.root.parents[1]
-    for record in files:
-        if not isinstance(record, dict):
-            issues.append(
-                _issue("SOURCE_RECORD_INVALID", package.root / "catalog/evidence.yaml", record)
-            )
-            continue
-        relative, expected = record.get("path"), record.get("sha256")
-        if not isinstance(relative, str) or not isinstance(expected, str):
-            issues.append(
-                _issue("SOURCE_HASH_MISSING", package.root / "catalog/evidence.yaml", record)
-            )
-            continue
-        candidate = Path(relative)
-        if candidate.is_absolute() or ".." in candidate.parts:
-            issues.append(
-                _issue("SOURCE_PATH_UNSAFE", package.root / "catalog/evidence.yaml", relative)
-            )
-            continue
-        source = repository_root / candidate
-        if not source.exists():
-            issues.append(_issue("SOURCE_FILE_MISSING", source, relative))
-            continue
+    if isinstance(snapshot, dict):
         try:
-            actual = hashlib.sha256(source.read_bytes()).hexdigest()
-        except OSError as error:
-            issues.append(_issue("SOURCE_READ_ERROR", source, error))
-            continue
-        if actual != expected:
-            issues.append(_issue("SOURCE_HASH_STALE", source, f"expected {expected}, got {actual}"))
+            SourceSnapshot.model_validate(snapshot)
+        except ValidationError as error:
+            issues.append(
+                _issue("SOURCE_SNAPSHOT_INVALID", package.root / "catalog/evidence.yaml", error)
+            )
+    elif snapshot is not None:
+        issues.append(
+            _issue("SOURCE_SNAPSHOT_INVALID", package.root / "catalog/evidence.yaml", "snapshot")
+        )
+    for loaded in package.source_loads:
+        if loaded.unsafe:
+            issues.append(
+                _issue(
+                    "SOURCE_PATH_UNSAFE",
+                    package.root / "catalog/evidence.yaml",
+                    loaded.relative,
+                )
+            )
+        elif loaded.error is not None:
+            code = "SOURCE_FILE_MISSING" if "No such file" in loaded.error else "SOURCE_READ_ERROR"
+            issues.append(_issue(code, loaded.resolved or loaded.relative, loaded.error))
+        elif loaded.content is not None:
+            actual = hashlib.sha256(loaded.content).hexdigest()
+            if actual != loaded.expected_sha256:
+                issues.append(
+                    _issue(
+                        "SOURCE_HASH_STALE",
+                        loaded.resolved or loaded.relative,
+                        f"expected {loaded.expected_sha256}, got {actual}",
+                    )
+                )
     return issues
+
+
+class ReviewItemParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.items: list[tuple[str, tuple[str, ...]]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attributes = dict(attrs)
+        identifier = attributes.get("data-item-id")
+        if identifier is None:
+            return
+        evidence = attributes.get("data-evidence-ids")
+        evidence_ids = tuple(evidence.split()) if evidence else ()
+        self.items.append((identifier, evidence_ids))
 
 
 def validate_review_references(package: FoundationPackage, phase: int) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     if phase < 3:
         return issues
-    batches = sorted((package.root / "reviews").glob("phase-3-reality-capability-*.html"))
+    batches = {
+        relative: text
+        for relative, text in package.reviews.items()
+        if relative.startswith("reviews/phase-3-reality-capability-")
+    }
     if not batches:
         return [
             _issue(
                 "REQUIRED_FILE_MISSING", package.root / "reviews", "Phase 3 review batch is missing"
             )
         ]
-    declared = _ids(package)
-    evidence_value = package.documents.get("catalog/evidence.yaml")
+    canonical, _ = _canonical_documents(package)
+    declared = {
+        identifier
+        for document in canonical.values()
+        for item in document.items
+        if isinstance((identifier := item.get("id")), str)
+    }
+    evidence_document = canonical.get("catalog/evidence.yaml")
     evidence_ids = {
         identifier
-        for item in _all_dicts(evidence_value)
+        for item in (evidence_document.items if evidence_document else [])
         if isinstance((identifier := item.get("id")), str) and identifier.startswith("EVD-")
     }
-    item_pattern = re.compile(r"<[^>]+data-item-id=[\"']([A-Z]+-\d+)[\"'][^>]*>")
-    evidence_pattern = re.compile(r"data-evidence-ids=[\"']([^\"']*)[\"']")
-    for path in batches:
-        try:
-            text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as error:
-            issues.append(_issue("REVIEW_INVALID", path, error))
-            continue
-        items = item_pattern.findall(text)
-        if not items:
+    for relative, text in sorted(batches.items()):
+        path = package.root / relative
+        parser = ReviewItemParser()
+        parser.feed(text)
+        if not parser.items:
             issues.append(_issue("REVIEW_ITEMS_MISSING", path, "no review items"))
-        for identifier in items:
+        for identifier, item_evidence_ids in parser.items:
             if identifier not in declared:
                 issues.append(_issue("REVIEW_REFERENCE_UNRESOLVED", path, identifier))
-        evidence_matches = evidence_pattern.findall(text)
-        if len(evidence_matches) < len(items):
-            issues.append(
-                _issue("REVIEW_EVIDENCE_MISSING", path, "each review item requires evidence")
-            )
-        for match in evidence_matches:
-            for identifier in match.split():
-                if identifier not in evidence_ids:
-                    issues.append(_issue("REVIEW_EVIDENCE_UNRESOLVED", path, identifier))
+            if not item_evidence_ids:
+                issues.append(
+                    _issue("REVIEW_EVIDENCE_MISSING", path, f"{identifier} requires evidence")
+                )
+            for evidence_id in item_evidence_ids:
+                if evidence_id not in evidence_ids:
+                    issues.append(_issue("REVIEW_EVIDENCE_UNRESOLVED", path, evidence_id))
     return issues
 
 
@@ -720,7 +1220,7 @@ def validate_foundation(root: Path, phase: int) -> list[ValidationIssue]:
         return [_issue("PHASE_INVALID", root, "phase must be one of 0, 1, 2, 3")]
     package = load_foundation(root)
     issues = validate_required_files(package, phase)
-    issues.extend(validate_schema_contracts(root))
+    issues.extend(validate_schema_contracts(package))
     issues.extend(validate_semantics(package, phase))
     issues.extend(validate_source_hashes(package))
     issues.extend(validate_review_references(package, phase))
