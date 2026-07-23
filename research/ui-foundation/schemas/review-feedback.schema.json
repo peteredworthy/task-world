@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "review-feedback.schema.json",
+  "title": "Grounded UI foundation review feedback export",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "review_version",
+    "batch_id",
+    "source_snapshot",
+    "exported_at",
+    "response_history"
+  ],
+  "properties": {
+    "schema_version": {"type": "string", "minLength": 1},
+    "review_version": {"type": "string", "minLength": 1},
+    "batch_id": {"type": "string", "minLength": 1},
+    "source_snapshot": {"type": "string", "minLength": 1},
+    "exported_at": {"type": "string", "format": "date-time"},
+    "reviewer_label": {"type": "string"},
+    "response_history": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["item_id", "response", "note", "recorded_at"],
+        "properties": {
+          "item_id": {"type": "string", "pattern": "^[A-Z]+-[0-9]+$"},
+          "response": {"enum": ["accept", "reject", "revise", "uncertain"]},
+          "note": {"type": "string"},
+          "recorded_at": {"type": "string", "format": "date-time"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
