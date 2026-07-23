@@ -62,7 +62,7 @@ aliases of workflow terms.
   (`graph/models.py::{GraphRecordKind,GraphRecord}`). It is not the typed
   output-record inventory.
 - **[implemented, tested] Typed graph-record inventory.** The concrete
-  `TypedRecordBase` output/evidence types are `OutputRecord` (generic
+  semantic `TypedRecordBase` output/evidence types are `OutputRecord` (generic
   `fan_out_inputs`), `RunContextRecord`, `RoutineSnapshotRecord`,
   `ArtifactReferenceRecord`, `VerificationReportRecord`,
   `CompletionDecisionRecord`, `JoinResultRecord`, `CheckResultRecord`,
@@ -70,10 +70,15 @@ aliases of workflow terms.
   `AuthorityDecisionRecord`, `AnalysisSummaryRecord`,
   `GraphPatchProposalRecord`, `RequirementRecord`, `DecisionRequestRecord`,
   `AuthorityRequestRecord`, `FailureRecord`, `RecoveryPlanRecord`, and
-  `FileStateRecord` (`graph/models.py`, classes named above). Accepted output
-  facts use `output_record_accepted`; accepted/rejected file-state facts use
-  their dedicated events. This inventory deliberately excludes payload-only
-  projections and event envelope models.
+  `FileStateRecord` (`graph/models.py`, classes named above). Concrete
+  file-state validation/canonical variants are `CanonicalFileStateRecord`
+  (forbids extra fields for accepted payload) and `FileStateRejectedPayload`
+  (canonical variant plus reason); `StrictFileStateRecord` in
+  `graph/command_models.py` is the strict command-input variant used by
+  `RecordCleanupAppliedCommand`. Accepted output facts use
+  `output_record_accepted`; accepted/rejected file-state facts use their
+  dedicated events. This is a semantic record-type inventory, not a claim that
+  every validation wrapper is a distinct durable record type.
 - **[implemented, tested] Relationship/cardinality facts.** Per run, the
   graph stream has `0..N` ordered `EventEnvelope`s and a disposable `0..1`
   current projection checkpoint. A run projection has `0..N` nodes, edges,
@@ -114,9 +119,12 @@ aliases of workflow terms.
   `GraphEventStore.append_events`/unique `(aggregate_id, version)` is final
   backstop. Dispatch retries stale/SQLite-lock controller races up to five
   times (`graph_runtime/dispatch.py::_handle_command_retry_stale`).
-  **Correction:** callback `observed_graph_position` is required and carried
-  from `SubmitCallbackCommand` into `CallbackRequest`/callback event payload,
-  but `graph/callbacks.py::validate_callback` does not read or compare it.
+  **Correction:** callback `observed_graph_position` is required by
+  `SubmitCallbackCommand` and copied into `CallbackRequest`, but
+  `graph/callbacks.py::validate_callback` does not read or compare it, and
+  `_apply_callback_command` does not put it in any callback outcome event
+  payload. It is therefore neither validated nor persisted as callback-outcome
+  evidence.
   Callback rejection is instead lease existence/state, execution ID, base
   snapshot ID, lease generation, run/node state, expired-lease replacement,
   and accepted-callback idempotency payload conflict. Thus it must not be
@@ -205,6 +213,40 @@ The table is a command/kernel mapping, not evidence that every command is a
 reachable public UI action. Exact event multiplicity remains data-dependent
 (for example, one callback can contain many output records and one scheduling
 tick can grant many leases).
+
+### Authoritative COMMAND_SPECS matrix (source correction)
+
+This matrix supersedes the compact table above where they differ. It was traced
+against every `_apply_*` applier in `graph/_commands.py`; `CR` is the common
+strict-payload/unknown-command/context rejection described above. Projection
+fields are the reducer targets for the named events.
+
+| Command | Concrete rejection / data-dependent emitted events | Typed record(s) | Exact primary projection effects | Runtime/outbox |
+|---|---|---|---|---|
+| `accept_run` | illegal lifecycle → CR; else `run_lifecycle_changed` | — | `run_state` | — |
+| `start` | illegal lifecycle → CR; else `run_lifecycle_changed` | — | `run_state` | scheduler becomes eligible only at active |
+| `pause` | illegal lifecycle → CR; else lifecycle event for `active→pausing` or `pausing→paused` | — | `run_state` | — |
+| `resume` | illegal lifecycle or failed-reopen non-human/operator → CR; else lifecycle event (`paused→resuming`, `resuming→active`, or allowed `failed→resuming`) | — | `run_state` | active permits scheduling |
+| `cancel` | illegal lifecycle → CR; else lifecycle event then, per active/suspended lease, `lease_revoked` and nonterminal-node `node_state_changed(cancelled)` | — | `run_state`,`leases`,`node_states` | no graph outbox |
+| `complete` | non-active/terminal or final blockers → CR; else if no passed decision `output_record_accepted`, then lifecycle event | `CompletionDecisionRecord` | output records,`completion_decision_passed`,`run_state` | — |
+| `fail` | terminal run → CR; else `run_lifecycle_changed(...failed)` | — | `run_state` | — |
+| `record_heartbeat` | unknown/inactive/nonmatching lease/node/generation or inactive run → CR; else `heartbeat_recorded`,`lease_renewed` | — | lease expiry/state | — |
+| `seed_compiled_events` | nonempty topology, wrong run, unsupported seed type, malformed node/edge/verification record → CR; else supplied validated `node_created`,`edge_created`,`input_bound`,`output_record_accepted` only | seeded `VerificationReportRecord` when applicable | topology,bindings,records | — |
+| `schedule_tick` | no command rejection for ordinary nonready nodes: expired active leases yield expiry/recovery events; each changed nonready node yields `node_deferred` (and `dead_input_detected` for upstream failure); each newly ready node `node_ready`,`node_state_changed(ready)`; selected nodes `node_ready` as needed,`lease_granted`, optional `session_state_changed`,`node_state_changed(leased)`; capacity/resource deferrals yield `node_deferred` | — | `leases`,`node_states`,`ready_nodes`,`last_deferred_reasons`,sessions/retry fields | controller adds `agent_dispatch_requested` after every grant; that alone creates `agent_dispatch` outbox |
+| `reconcile` | terminal run → CR; otherwise deduped repair families: failed check/failed verification with active run, no active lease/ready work, unsettled task and routine snapshot create gap-planner `node_created`, evidence/context `edge_created`, possible `input_bound`; passed verification may create final invariant check/edge/binding and retire unreachable failure branch (`node_retired`,`node_state_changed(retired)`); passed check retires unreachable check-failure branch; completed no-successor recovery with no live work and non-environment failure emits `run_lifecycle_changed(...failed)` | no new typed record directly | nodes,edges,bindings,verification/check indexes,`run_state` | — |
+| `submit_callback` | callback validator produces `callback_rejected_stale`,`callback_rejected_conflict`, or `callback_duplicate_returned`; accepted callback emits `callback_accepted`, optional `file_state_rejected`, accepted output events and their bindings, optional completion `node_state_changed`,`lease_released`, optional session state, then source-repair families | payload-selected output record models; `FileStateRecord`/`VerificationReportRecord` produce dedicated acceptance/outcome events as applicable | callback idempotency,records,bindings,node/lease/session,verification/check/file-state fields | no direct graph outbox |
+| `submit_patch` | nonactive → CR; malformed macro/patch → CR; validator/budget/request/extra-successor failure → `graph_patch_rejected` (budget also `node_created(gate)`,`node_state_changed(ready)`); accepted → `graph_patch_accepted`, each op’s node/edge/retire/revision/appeal/gate/authority events, optional carryover `input_bound`, source repair | no command-created typed record; references rationale/carryover | patches,nodes,edges,bindings,authority/sessions | — |
+| `acknowledge_start` | unknown/nonactive/incompatible lease/generation/execution → CR; else `node_state_changed(running)` with optional prompt summary | — | `node_states` and prompt summary readback | — |
+| `agent_died` | unknown/inactive/missing-or-mismatched execution → CR; accepted-patch planner → `agent_died`,`lease_revoked`,`node_state_changed(completed)`; rate-limit/nonretryable/max-attempts → those first two plus `output_record_accepted(FailureRecord)`,`node_state_changed(failed)`; retry → first two plus `runtime_retry_scheduled`,`output_record_accepted(RecoveryPlanRecord)`,`node_state_changed(ready|blocked)` | `FailureRecord` or `RecoveryPlanRecord` | leases,node state/retry timing,output records | — |
+| `raise_appeal` | strict payload only; else `appeal_opened`,`node_created(oversight)` | — | pending appeals,node topology | — |
+| `record_decision` | unknown/terminal target or run; wrong authority/approval target → CR. Accepted decision event is approval/authority/oversight. Rejected approval adds `node_state_changed(failed)` and release events; otherwise valid gate/authority record adds `output_record_accepted` + bindings then `node_state_changed(completed)` + release. A decision-record construction failure returns CR after decision event was already assembled. | `DecisionRecord` or `AuthorityDecisionRecord` (oversight has no output record) | decision maps/gates,records/bindings,node/lease state | — |
+| `record_gatekeeper_verdicts` | unknown file state, duplicate path, or path not unresolved residue → CR. Success always emits one `gatekeeper_verdict_recorded` containing the whole accepted list and always `gatekeeper_cost_recorded`; any accepted `secret` additionally emits `cleanup_requested`. | gatekeeper payload rows; no `TypedRecordBase` output | gatekeeper/file-state metadata; secret cleanup populates `cleanup_requested_events` | `cleanup_requested` maps to `snapshot_cleanup` outbox |
+| `record_node_usage` | strict nonempty usage; duplicates are skipped, not rejected; each new entry emits `node_usage_recorded` | immutable `NodeUsageRecordedPayload` facts | usage keys,tokens/latency/actions by node/kind | durable store also updates run usage read model |
+| `record_requirement_revision` | strict payload only; emits `requirement_revision_recorded` | revision payload, not `RequirementRecord` output | requirement revisions,active version/authority blockers | — |
+| `record_support_evidence` | no supplied/active requirement version → CR; else `support_evidence_recorded` | support payload, not output record | support evidence/freshness/final blockers | — |
+| `evaluate_join` | wrong node kind or no bound records → CR; else `output_record_accepted(JoinResultRecord)`,`node_state_changed(completed)`, optional scoped `lease_released` | `JoinResultRecord` | output records,node state,leases | executor invokes after dispatch |
+| `evaluate_final_gate` | wrong node kind → CR; else `output_record_accepted(CompletionDecisionRecord)` with passed/blocked blockers,`node_state_changed(completed)`, optional scoped release | `CompletionDecisionRecord` | output records,completion/node/lease fields | executor invokes after dispatch |
+| `record_cleanup_applied` | absent/already-applied cleanup, unknown/mismatched target snapshot, wrong supersession/cleanup IDs, same snapshot, or retained secret path → CR; else `cleanup_applied`,`output_record_accepted`,`file_state_accepted` | strict command `StrictFileStateRecord`, emitted canonical `FileStateRecord` | file-state lineage,`cleanup_applied_ids`,cleanup request state,records | completes previously dispatched `snapshot_cleanup`; this command itself adds no new outbox intent |
 
 ## Important uncertainties
 

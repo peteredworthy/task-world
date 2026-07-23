@@ -51,7 +51,7 @@ event, and projection path was inspected.
 | `WF-run-edges` | Legacy engine edges are `draft -> active`; `active -> stopping`; `active|stopping -> paused` (pause is idempotent once paused); `paused -> active`; `active|paused|stopping -> cancelled`; and active-only completion/failure. The service implements pause as visible `active -> stopping` followed by queued `stopping -> paused`. | implemented, tested: `engine.py::{start_run,stop_run,pause_run,resume_run,cancel_run}`; `service.py::{apply_start_run,apply_stop_run,pause_run,apply_pause_run,apply_complete_run,_apply_terminal_stop}`; `test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused`. |
 | `WF-task-status` | Legacy task statuses are `pending`, `building`, `pending_user_action`, `verifying`, `recovering`, `fan_out_running`, `completed`, and `failed`. `VALID_TRANSITIONS` documents ordinary adjacency, while helper transitions add qualified paths. | implemented: `enums.py::TaskStatus`; `transitions.py::VALID_TRANSITIONS`, `transition_*`. |
 | `WF-task-edges` | Builder start creates an attempt and permits pending/building/verifying/pending-user-action/recovering -> building. Checklist gate permits building -> verifying. Verification yields completed, failed at attempt limit, or a new building revision attempt. Clarification is building -> pending-user-action -> building; approval is verifying -> pending-user-action -> completed/building/failed; recovery starts only from verifying. Fan-out parent is pending -> fan-out-running, then verifying/completed/failed. | implemented, tested: `transitions.py::{transition_to_building,transition_to_verifying,transition_after_verification,transition_to_pending_clarification,transition_from_clarification,transition_to_pending_approval,transition_from_approval,transition_to_recovering}`; `test_workflow_engine.py`; `test_workflow_service.py` recovery cases. |
-| `WF-force-accept` | Qualified force-accept bypasses grades and moves **failed, building, or verifying -> completed**. It is not legal from pending, pending-user-action, recovering, fan-out-running, or completed. The completion cascade can reactivate a failed run in memory only to recalculate remaining work, then emits the resulting run status. | implemented, tested: `transitions.py::transition_force_accept`; `engine.py::force_accept`; `tests/integration/test_api_tasks.py` force-accept coverage. |
+| `WF-force-accept` | Qualified force-accept bypasses grades and moves **failed, building, or verifying -> completed**. It is not legal from pending, pending-user-action, recovering, fan-out-running, or completed. The completion cascade can reactivate a failed run in memory only to recalculate remaining work, then emits the resulting run status. | implemented, tested: `transitions.py::transition_force_accept`; `engine.py::force_accept`; `tests/unit/test_transitions_recovering_force_accept.py::TestTransitionForceAccept::{test_valid_from_failed,test_valid_from_building,test_valid_from_verifying,test_invalid_from_pending,test_invalid_from_completed,test_invalid_from_recovering}`. `tests/integration/test_api_tasks.py` remains graph-mode endpoint-rejection evidence only, not proof of these legacy pure-transition edges. |
 | `WF-step-run-cascade` | A step completes only when all top-level (not fan-out-child) tasks are terminal. Completion advances index, applies conditional forward/back edges or skips, then can make a run completed or failed. A failed step normally fail-stops unless configured transitions route it. | implemented, tested: `transitions.py::{is_step_complete,step_has_failure,check_step_progression}`; `engine.py::complete_verification`; `test_workflow_engine.py::{test_complete_verification_advances_step,test_run_auto_completes_when_all_steps_done,test_run_auto_fails_when_task_fails}`. |
 
 **implemented:** `pending_user_action`, `recovering`, and `fan_out_running` are
@@ -146,19 +146,22 @@ command evidence, not proof of the requested resulting state.
   revision. `check_submission`/`apply_submission` split the REST path: the
   former synchronously performs auto-verify/checklist validation and persists
   evidence, while the latter applies building -> verifying after the signal.
-- **implemented; test coverage of lock failure paths is unclear — locks:**
-  `InMemoryLockManager` is keyed only by task ID, has a five-minute default
-  passive-expiry check, lets the same agent refresh/acquire, and only the owner
-  may release. `WorkflowEngine.start_task` acquires **before** it validates run,
-  task, future-step, or transition eligibility. If that later validation or
-  transition raises, no exception-safe release occurs in this method; the lock
-  remains until an owner release, monitor cleanup for a detected default-agent
-  death, or another `acquire` observes expiry. `is_locked` itself does not remove
-  expired entries. Terminal `complete_verification` releases only completed/failed
-  locks and retains a revision lock. Evidence: `locks.py::InMemoryLockManager`;
-  `engine.py::{start_task,complete_verification}`;
-  `runners/runtime/monitor.py::on_agent_died`. This is process-local
-  coordination, not a durable DB lease.
+- **implemented; test coverage of lock failure paths is unclear — separate lock
+  boundaries:** production `WorkflowService.start_task` first gets the run
+  (thereby validates run existence) and rejects a non-`ACTIVE` run **before** it
+  builds/calls the engine. It does not validate task identity or future-step
+  eligibility itself. Inside the direct `WorkflowEngine.start_task` boundary,
+  `InMemoryLockManager.acquire` occurs before task lookup, future-step validation,
+  and `transition_to_building`; a direct engine caller can therefore retain a
+  lock when a later task/step/transition check raises because this method has no
+  exception-safe `finally` release. The manager is keyed only by task ID, has a
+  five-minute passive-expiry check, lets the same agent refresh/acquire, and only
+  the owner may release; `is_locked` does not delete expired entries. Terminal
+  `complete_verification` releases only completed/failed locks and retains a
+  revision lock. The monitor can release a default-agent lock after detected
+  death. Evidence: `service.py::start_task`; `engine.py::{start_task,complete_verification}`;
+  `locks.py::InMemoryLockManager`; `runners/runtime/monitor.py::on_agent_died`.
+  This is process-local coordination, not a durable DB lease.
 - **implemented, tested in paused stale-activity behavior; unclear for every
   mid-agent ordering — cancellation/pause race:** a pause request writes `stopping` before its
   PAUSE signal. The active executor may still be mid-agent work in that interval;
@@ -258,11 +261,13 @@ documentation contradiction.
    leave an applied projection without the marker. Redelivery relies on
    idempotency/stale-transition handling, not one atomic handler-plus-marker
    transaction.
-4. **CON-WF-04 — lock acquisition precedes eligibility validation.**
-   `WorkflowEngine.start_task` obtains the in-memory lock before checking run
-   status, step position, task eligibility, or transition success, and has no
-   `finally` release. The documented pessimistic-lock intent does not prove
-   exception-safe lock release.
+4. **CON-WF-04 — direct-engine lock acquisition precedes only its later
+   validations.** Production `WorkflowService.start_task` verifies run existence
+   and `ACTIVE` status before calling the engine. The direct
+   `WorkflowEngine.start_task` then obtains the in-memory lock before task
+   lookup, future-step validation, and transition success, without a `finally`
+   release. The documented pessimistic-lock intent therefore does not prove
+   exception-safe release for direct-engine task/step/transition failures.
 5. **CON-WF-05 — terminality differs by mode.** `TERMINAL_RUN_STATUSES` includes
    failed, while graph-mode service logic permits a qualified failed reopen.
    Failed must not be called absolutely terminal without its mode qualifier.
