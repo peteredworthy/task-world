@@ -63,8 +63,8 @@ test.describe('JTBD UI approaches presentation', () => {
     await openPresentation(page, '#cartography');
     await page.keyboard.press('3');
 
-    await expect(page.getByText('Recovery resumes suspended work exactly once after executor restart')).toBeVisible();
-    await expect(page.getByText('R2', { exact: true })).toBeVisible();
+    await expect(page.locator('[data-slide="cartography"]').getByText('Recovery resumes suspended work exactly once after executor restart')).toBeVisible();
+    await expect(page.locator('[data-slide="cartography"]').getByText('R2', { exact: true })).toBeVisible();
     await expect(page.locator('[data-node-stat-row]')).toHaveCount(5);
     await expect(page.locator('[data-node-stat-row]').first()).toContainText('Implement replay boundary');
     await expect(page.locator('[data-node-stat-row]').first()).toContainText('C');
@@ -168,12 +168,53 @@ test.describe('JTBD UI approaches presentation', () => {
 
   test('intervention desk ranks exceptions and keeps consequence beside action', async ({ page }) => {
     await openPresentation(page, '#intervention');
+    const queue = page.locator('.case-queue');
+    await expect(queue.locator('[data-case-id]')).toHaveCount(2);
+    await expect(queue.locator('[data-case-id]').nth(0)).toHaveAttribute('data-case-id', 'case-r314');
+    await expect(queue.locator('[data-case-id]').nth(1)).toHaveAttribute('data-case-id', 'case-auth-gate');
     await expect(page.locator('[data-case-id="case-r314"]')).toContainText('3 successors blocked');
+    await expect(page.locator('[data-case-id="case-r314"]')).toContainText('Age · 23 min · process age · two verifier cycles');
     await page.locator('[data-case-id="case-r314"]').click();
-    await expect(page.locator('.decision-packet')).toContainText('Another unchanged retry');
-    await expect(page.locator('.decision-packet')).toContainText('$1.05');
-    await expect(page.locator('.decision-packet')).toContainText('1 attempt remains');
+    const packet = page.locator('.decision-packet');
+    expect(await packet.locator('[data-packet-step]').evaluateAll((steps) => steps.map((step) => step.getAttribute('data-packet-step')))).toEqual(['trigger', 'evidence', 'consequence', 'options', 'authority', 'validation', 'action']);
+    await expect(packet).toContainText('Recovery resumes suspended work exactly once after executor restart');
+    await expect(packet).toContainText('R2');
+    await expect(packet).toContainText('Another unchanged retry');
+    await expect(packet).toContainText('$1.05');
+    await expect(packet).toContainText('1 attempt remains');
+    await expect(packet).toContainText('Proposed capability');
+    expect((await packet.innerText()).indexOf('Recovery resumes suspended work exactly once after executor restart')).toBeLessThan((await packet.innerText()).indexOf('R2'));
+    await expect(page.locator('.intervention-fleet-ribbon')).toHaveAttribute('aria-label', '2 need attention, 7 progressing, 1 waiting');
     await expect(page.getByRole('button', { name: 'Review proposed intervention' })).toBeVisible();
+    await expect(packet.getByRole('button', { name: /confirm|cancel/i })).toHaveCount(0);
+  });
+
+  test('intervention desk changes structural emphasis and selects the ranked case packet', async ({ page }) => {
+    await openPresentation(page, '#intervention');
+    const desk = page.locator('.intervention-desk');
+
+    for (const [key, expectedFocus] of [['1', 'fleet'], ['2', 'position'], ['3', 'cause'], ['4', 'action'], ['5', 'outcome']] as const) {
+      await page.keyboard.press(key);
+      await expect(desk).toHaveAttribute('data-state', expectedFocus);
+      await expect(desk.locator(`[data-intervention-focus="${expectedFocus}"]`).first()).toHaveClass(/is-emphasized/);
+    }
+
+    await page.locator('[data-case-id="case-auth-gate"]').click();
+    await expect(page.locator('.decision-packet')).toContainText('Release manager approval required');
+    await expect(page.locator('.decision-packet')).toContainText('Publish recovery audit');
+  });
+
+  test('intervention review action is guarded until the modal capability is available', async ({ page }) => {
+    await openPresentation(page, '#intervention');
+    const review = page.getByRole('button', { name: 'Review proposed intervention' });
+    await review.click();
+    await expect(page.locator('[data-live-region]')).toContainText('Confirmation becomes available in the final interaction task');
+
+    await page.evaluate(() => {
+      Object.assign(window, { openDecisionModal: (concept: string, selector: string) => Object.assign(window, { interventionReviewCall: [concept, selector] }) });
+    });
+    await review.click();
+    await expect.poll(() => page.evaluate(() => (window as Window & { interventionReviewCall?: string[] }).interventionReviewCall)).toEqual(['intervention', '[data-action="review-intervention"]']);
   });
 
   test('causal spine stacks every visible event inside its mobile workspace', async ({ page }) => {
