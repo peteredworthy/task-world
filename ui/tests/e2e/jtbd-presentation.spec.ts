@@ -99,6 +99,16 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(page.locator('.node-stat-head')).toHaveCSS('position', 'sticky');
   });
 
+  test('causal spine preserves parallel branches and opens evidence in place', async ({ page }) => {
+    await openPresentation(page, '#causal');
+    await page.keyboard.press('3');
+    await expect(page.locator('.causal-track')).toHaveCount(3);
+    await expect(page.getByText('Retry did not add evidence')).toBeVisible();
+    await page.locator('[data-event-id="verdict-a1"]').click();
+    await expect(page.locator('[data-causal-detail]')).toContainText('Attempt 1 verifier verdict');
+    await expect(page.locator('[data-causal-detail]')).toContainText('C');
+  });
+
   test('fits the presentation and all workspace states at mobile width', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await openPresentation(page, '#cartography');
