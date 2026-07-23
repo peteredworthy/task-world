@@ -12,7 +12,7 @@ manifest, source snapshot, and validator contracts.
 
 ## Key findings
 
-Every source demand in `catalog/scope.yaml` has one scalar `audit_owner`. The
+All 132 source demands in `catalog/scope.yaml` have one scalar `audit_owner`. The
 seven owners are `domain-persistence`, `graph-runtime`, `workflow-state`,
 `api-actions-authority`, `evidence-telemetry`, `ui-projections`, and
 `tests-documentation`. Each audit writes only its numbered report, uses scoped

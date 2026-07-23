@@ -24,7 +24,7 @@ items:
   - {key: jobs.J2.planner-horizon, source: docs/jtbd/jobs.md, source_anchor: J2 Must know, demand_type: claim, label: Planner horizon, audit_owner: graph-runtime, downstream_jobs: [J2], blocking: true}
   - {key: jobs.J2.blocked-reason, source: docs/jtbd/jobs.md, source_anchor: J2 Must know, demand_type: claim, label: Blocked reason, audit_owner: workflow-state, downstream_jobs: [J2], blocking: true}
   - {key: jobs.J2.attempts-left, source: docs/jtbd/jobs.md, source_anchor: J2 Must know, demand_type: claim, label: Attempts left, audit_owner: workflow-state, downstream_jobs: [J2, J6], blocking: true}
-  - {key: jobs.J2.final-gate-effect, source: docs/jtbd/jobs.md, source_anchor: J2 Must know, demand_type: claim, label: Final-gate effect and final-invariant progress, audit_owner: graph-runtime, downstream_jobs: [J2, J6], blocking: true}
+  - {key: jobs.J2.final-invariant-progress, source: docs/jtbd/jobs.md, source_anchor: J2 Must know, demand_type: claim, label: Final-invariant progress, audit_owner: graph-runtime, downstream_jobs: [J2], blocking: true}
   - {key: jobs.J3.exact-question, source: docs/jtbd/jobs.md, source_anchor: J3 Must know, demand_type: claim, label: Exact question, audit_owner: api-actions-authority, downstream_jobs: [J3], blocking: true}
   - {key: jobs.J3.why-now, source: docs/jtbd/jobs.md, source_anchor: J3 Must know, demand_type: claim, label: Why now, audit_owner: workflow-state, downstream_jobs: [J3], blocking: true}
   - {key: jobs.J3.proposer, source: docs/jtbd/jobs.md, source_anchor: J3 Must know, demand_type: claim, label: Proposer, audit_owner: domain-persistence, downstream_jobs: [J3], blocking: true}
@@ -59,7 +59,7 @@ items:
   - {key: jobs.J6.validation-path, source: docs/jtbd/jobs.md, source_anchor: J6 Must know, demand_type: claim, label: Validation path, audit_owner: graph-runtime, downstream_jobs: [J6], blocking: true}
   - {key: jobs.J7.spend-tokens-by-node-kind, source: docs/jtbd/jobs.md, source_anchor: J7 Must know, demand_type: claim, label: Spend and tokens by node kind, audit_owner: evidence-telemetry, downstream_jobs: [J7], blocking: true}
   - {key: jobs.J7.unpriced-share, source: docs/jtbd/jobs.md, source_anchor: J7 Must know, demand_type: claim, label: Unpriced share, audit_owner: evidence-telemetry, downstream_jobs: [J7], blocking: true}
-  - {key: jobs.J7.prompt-pressure, source: docs/jtbd/jobs.md, source_anchor: J7 Must know, demand_type: claim, label: Prompt pressure, audit_owner: evidence-telemetry, downstream_jobs: [J7], blocking: true}
+  - {key: jobs.J7.prompt-size, source: docs/jtbd/jobs.md, source_anchor: J7 Must know, demand_type: claim, label: Prompt size, audit_owner: evidence-telemetry, downstream_jobs: [J7], blocking: true}
   - {key: jobs.J7.retries-without-new-information, source: docs/jtbd/jobs.md, source_anchor: J7 Must know, demand_type: claim, label: Retries without new information, audit_owner: evidence-telemetry, downstream_jobs: [J7], blocking: true}
   - {key: jobs.J7.repeated-work, source: docs/jtbd/jobs.md, source_anchor: J7 Must know, demand_type: claim, label: Repeated tools and work, audit_owner: evidence-telemetry, downstream_jobs: [J7], blocking: true}
   - {key: jobs.J7.verifier-churn, source: docs/jtbd/jobs.md, source_anchor: J7 Must know, demand_type: claim, label: Verifier churn, audit_owner: evidence-telemetry, downstream_jobs: [J7], blocking: true}
@@ -74,6 +74,10 @@ items:
   - {key: jobs.J8.grade-churn, source: docs/jtbd/jobs.md, source_anchor: J8 Must know, demand_type: claim, label: Grade churn, audit_owner: evidence-telemetry, downstream_jobs: [J8], blocking: true}
   - {key: jobs.J8.interventions, source: docs/jtbd/jobs.md, source_anchor: J8 Must know, demand_type: claim, label: Interventions, audit_owner: api-actions-authority, downstream_jobs: [J8], blocking: true}
   - {key: jobs.J8.outcome, source: docs/jtbd/jobs.md, source_anchor: J8 Must know, demand_type: claim, label: Outcome, audit_owner: workflow-state, downstream_jobs: [J8], blocking: true}
+
+  # Named provisional claims outside the atomic Must know inventory
+  - {key: jobs.J7.prompt-pressure, source: docs/jtbd/jobs.md, source_anchor: J7 narrative, demand_type: claim, label: Prompt pressure, audit_owner: evidence-telemetry, downstream_jobs: [J7], blocking: true}
+  - {key: design.initial-claims.final-gate-effect, source: docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md, source_anchor: Capability And Derivation Contracts — Initial coverage, demand_type: claim, label: Final-gate effect, audit_owner: graph-runtime, downstream_jobs: [J2, J6], blocking: true}
 
   # journeys.md — semantic demands not already closed by the jobs inventory
   - {key: journeys.A.freshness-and-connection, source: docs/jtbd/journeys.md, source_anchor: Journey A Orient, demand_type: claim, label: Data freshness and connection state, audit_owner: ui-projections, downstream_jobs: [J1], blocking: true}

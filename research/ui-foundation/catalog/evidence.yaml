@@ -2,16 +2,16 @@ schema_version: "1"
 phase_status: complete
 snapshot:
   id: snapshot-2026-07-23-phase-0
-  audited_at: "2026-07-23T00:00:00Z"
-  repository_revision: d34fb47e3759124f7fc641118aad3947a511ecc2
+  audited_at: "2026-07-23T23:08:46Z"
+  repository_revision: d6eef837846f203a7a9c9a99d8d1ef45a5d6fc0d
   drift_authority: sha256-content
   files:
-    - {path: docs/jtbd/jobs.md, sha256: c4b55d721670e0b124bbd2743da5f3dc521001cdfb5037a1b94b6bc5ccccff54, audited_at: "2026-07-23T00:00:00Z"}
-    - {path: docs/jtbd/journeys.md, sha256: d0e90b58479433c006817c9abad8b6335ac865d32103a901b72f845609da696f, audited_at: "2026-07-23T00:00:00Z"}
-    - {path: docs/jtbd/decision-information.md, sha256: cacb3b12b9a4daab111f0afb408694b4e9e90762cc56858a99d787bf0a0bc56b, audited_at: "2026-07-23T00:00:00Z"}
-    - {path: docs/jtbd/information-architecture.md, sha256: 4191da5c30f86aad37c2f22d141cca9b9fbd88cf73c4b7b68b7bdb302140521e, audited_at: "2026-07-23T00:00:00Z"}
-    - {path: docs/jtbd/evaluation-rubric.md, sha256: 8866cc0f43d0740f8681e5a61809096cfa17a941b8a04408c291d289ba2adf83, audited_at: "2026-07-23T00:00:00Z"}
-    - {path: docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md, sha256: 3ded24752a04598fecef364af0356de8483737e8a6a23cc16abd22a3e710110a, audited_at: "2026-07-23T00:00:00Z"}
+    - {path: docs/jtbd/jobs.md, sha256: c4b55d721670e0b124bbd2743da5f3dc521001cdfb5037a1b94b6bc5ccccff54, audited_at: "2026-07-23T23:08:46Z"}
+    - {path: docs/jtbd/journeys.md, sha256: d0e90b58479433c006817c9abad8b6335ac865d32103a901b72f845609da696f, audited_at: "2026-07-23T23:08:46Z"}
+    - {path: docs/jtbd/decision-information.md, sha256: cacb3b12b9a4daab111f0afb408694b4e9e90762cc56858a99d787bf0a0bc56b, audited_at: "2026-07-23T23:08:46Z"}
+    - {path: docs/jtbd/information-architecture.md, sha256: 4191da5c30f86aad37c2f22d141cca9b9fbd88cf73c4b7b68b7bdb302140521e, audited_at: "2026-07-23T23:08:46Z"}
+    - {path: docs/jtbd/evaluation-rubric.md, sha256: 8866cc0f43d0740f8681e5a61809096cfa17a941b8a04408c291d289ba2adf83, audited_at: "2026-07-23T23:08:46Z"}
+    - {path: docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md, sha256: 3ded24752a04598fecef364af0356de8483737e8a6a23cc16abd22a3e710110a, audited_at: "2026-07-23T23:08:46Z"}
 items:
   - {id: EVD-01, source_kind: product-documentation, reachable: false, path: docs/jtbd/jobs.md, snapshot_id: snapshot-2026-07-23-phase-0}
   - {id: EVD-02, source_kind: product-documentation, reachable: false, path: docs/jtbd/journeys.md, snapshot_id: snapshot-2026-07-23-phase-0}

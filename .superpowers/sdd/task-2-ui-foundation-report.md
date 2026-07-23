@@ -82,6 +82,35 @@ the final handoff commit SHA is returned to the caller.
 
 ## Concerns
 
-No Task 2 defect is known. Downstream readiness remains intentionally blocked on
+No remaining Task 2 defect is known. Downstream readiness remains intentionally blocked on
 all seven Phase 1 audits; Phase 0 completion must not be read as evidence that any
 source capability claim is current or derived.
+
+## Review-finding fix
+
+The follow-up correction preserves the source distinctions that the first scope
+projection collapsed:
+
+- `jobs.J7.prompt-size` now represents the J7 `Must know` field.
+- `jobs.J7.prompt-pressure` remains a separate provisional claim anchored to the
+  J7 narrative, where that detector is actually named.
+- `jobs.J2.final-invariant-progress` now represents the J2 `Must know` field.
+- `design.initial-claims.final-gate-effect` remains a separate provisional claim
+  anchored to the approved design's initial-coverage list; no equivalence with
+  final-invariant progress is asserted.
+- Scope projections now report 132 demands: 131 from the five JTBD documents and
+  one separately named design claim.
+- The normalized midnight audit timestamp was replaced with the actual UTC
+  re-audit time `2026-07-23T23:08:46Z`. All six hashes were recomputed and remain
+  unchanged; repository revision metadata now records `d6eef837846f203a7a9c9a99d8d1ef45a5d6fc0d`.
+
+Fix verification:
+
+1. The pre-fix scope assertion failed because the J7 prompt-size key was absent.
+2. `uv run python research/ui-foundation/tools/validate.py --phase 0` exited 0.
+3. The delegation report validator exited 0.
+4. The corrected scope audit reported 132 unique demands, seven scalar owners,
+   all five JTBD sources plus the approved design, and exact source anchors for
+   the four corrected claims.
+5. Source-preservation and no-downstream-artifact checks passed.
+6. Commit hooks passed; the correction commit SHA is returned to the caller.

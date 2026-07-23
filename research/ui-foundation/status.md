@@ -2,10 +2,11 @@
 
 ## Phase 0 — complete
 
-The source-demand inventory is closed, each demand has one audit owner, and the
-six-source SHA-256 snapshot is recorded. This is artifact completion only. It is
-not downstream readiness: no repository reality, capability classification,
-derivation, action contract, or product interface has been admitted.
+The 132-demand source inventory is closed, each demand has one audit owner, and
+the six-source SHA-256 snapshot is recorded. This is artifact completion only.
+It is not downstream readiness: no repository reality, capability
+classification, derivation, action contract, or product interface has been
+admitted.
 
 ## Audit owners
 
