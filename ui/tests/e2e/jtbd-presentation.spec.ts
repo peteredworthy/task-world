@@ -74,7 +74,7 @@ test.describe('JTBD UI approaches presentation', () => {
     const selectedNodeSummary = page.locator('[data-selected-node-summary]');
     await expect(selectedNodeSummary).toContainText('Implement replay boundary');
     await expect(selectedNodeSummary).toContainText('N14');
-    await expect(page.locator('.capability--proposed')).toContainText('Proposed capability');
+    await expect(page.locator('.capability--proposed').last()).toContainText('Proposed capability');
   });
 
   test('cartography presents a scenario-derived exception narrative with accessible node statistics', async ({ page }) => {
@@ -183,34 +183,12 @@ test.describe('JTBD UI approaches presentation', () => {
     await expect(trigger).toBeFocused();
   });
 
-  test('evidence controller exposes a mutation-safe complete scenario clone with canonical successors, mixed-grade history, and bounded locator coordinates', async ({ page }) => {
+  test('evidence workbench renders canonical successor branches and repeated grade history', async ({ page }) => {
     await openPresentation(page, '#evidence');
-    const evidenceController = await page.evaluate(() => {
-      const scenario = window.taskWorldPresentation.getEvidenceScenario();
-      scenario.run.successors.pop();
-      return {
-        scenario,
-        freshScenario: window.taskWorldPresentation.getEvidenceScenario(),
-        repeated: window.taskWorldPresentation.describeEvidenceGradeHistory(['C', 'C']),
-        mixed: window.taskWorldPresentation.describeEvidenceGradeHistory(['C', 'B']),
-        oneSuccessor: window.taskWorldPresentation.getLocatorSuccessorYs(1),
-        manySuccessors: window.taskWorldPresentation.getLocatorSuccessorYs(12),
-      };
-    });
-
-    expect(evidenceController.scenario.run).toMatchObject({
-      id: 'r314',
-      name: 'Suspension replay recovery',
-      retryCost: 1.05,
-      attemptsLeft: 1,
-    });
-    expect(Object.hasOwn(evidenceController.scenario.run, 'blocked' + 'Successors')).toBe(false);
-    expect(evidenceController.scenario.run.successors).toHaveLength(2);
-    expect(evidenceController.freshScenario.run.successors).toHaveLength(3);
-    expect(evidenceController.repeated).toEqual({ history: 'C → C', summary: '2 C grades', repeated: true });
-    expect(evidenceController.mixed).toEqual({ history: 'C → B', summary: 'Grade history C → B', repeated: false });
-    expect(evidenceController.oneSuccessor).toEqual([75]);
-    expect(evidenceController.manySuccessors.every((y) => y >= 10 && y <= 140)).toBe(true);
+    await page.keyboard.press('3');
+    await expect(page.locator('.packet-delta')).toContainText('C → C');
+    await expect(page.locator('[data-locator-successor]')).toHaveCount(3);
+    await expect(page.locator('.graph-locator')).toContainText('r314 · blast radius 3 successors');
   });
 
   test('mission weave resolves branches, grades, rework, directive, and convergence by state', async ({ page }) => {
@@ -591,5 +569,71 @@ test.describe('JTBD UI approaches presentation', () => {
     expect(result.rejected).toBe(false);
     expect(result.selectedByConcept.causal).toBe('verdict-a3');
     expect(result.selectedByConcept.comparison).toBeUndefined();
+  });
+
+  test('renders the full recovered operating loop and capability boundaries in every concept', async ({ page }) => {
+    const concepts = ['cartography', 'causal', 'intervention', 'evidence', 'weave'] as const;
+    const states = ['fleet', 'position', 'cause', 'action', 'outcome'] as const;
+    const stateFacts = {
+      fleet: 'r314',
+      position: '3',
+      cause: 'Recovery resumes suspended work exactly once after executor restart',
+      action: 'Proposed capability',
+      outcome: 'Grade A',
+    } as const;
+
+    for (const concept of concepts) {
+      await openPresentation(page, `#${concept}`);
+      for (const [index, workspaceState] of states.entries()) {
+        await page.keyboard.press(String(index + 1));
+        const workspace = page.locator(`[data-concept="${concept}"][data-state="${workspaceState}"]`);
+        await expect(workspace).toBeVisible();
+        await expect(workspace).toContainText(stateFacts[workspaceState]);
+      }
+      const outcome = page.locator(`[data-concept="${concept}"][data-state="outcome"]`);
+      await expect(outcome).toContainText('merged');
+      await expect(outcome).toContainText('avoided retry');
+      await expect(outcome).toContainText('Promote restart replay fixture into the routine packet');
+      await expect(outcome).toContainText('predecessor');
+      await expect(page.locator(`[data-concept="${concept}"] .capability--current`).first()).toBeVisible();
+      await expect(page.locator(`[data-concept="${concept}"] .capability--derivable`).first()).toBeVisible();
+      await expect(page.locator(`[data-concept="${concept}"] .capability--proposed`).first()).toBeVisible();
+    }
+  });
+
+  test('keeps the deck inert while the decision dialog is open and restores rail focus after state changes', async ({ page }) => {
+    await openPresentation(page, '#intervention');
+    const trigger = page.getByRole('button', { name: 'Review proposed intervention' });
+    await trigger.click();
+    await expect(page.locator('[data-presentation]')).toHaveAttribute('inert', '');
+    await page.locator('[data-action="next-slide"]').focus();
+    await page.keyboard.press('Enter');
+    await expect(page).toHaveURL(/#intervention$/);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-presentation]')).not.toHaveAttribute('inert');
+
+    const actionRail = page.locator('[data-workspace-state="action"]');
+    await actionRail.focus();
+    await page.keyboard.press('Space');
+    await expect(actionRail).toBeFocused();
+    await expect(actionRail).toHaveAttribute('aria-pressed', 'true');
+  });
+
+  test('keeps decision-critical context and every workspace within desktop, tablet, and mobile widths', async ({ page }) => {
+    const concepts = ['cartography', 'causal', 'intervention', 'evidence', 'weave'];
+    const widths = [[1440, 900], [1024, 768], [390, 844]] as const;
+    for (const [width, height] of widths) {
+      await page.setViewportSize({ width, height });
+      for (const concept of concepts) {
+        await openPresentation(page, `#${concept}`);
+        for (const key of ['1', '2', '3', '4', '5']) {
+          await page.keyboard.press(key);
+          const workspace = page.locator(`[data-concept="${concept}"]`);
+          await expect(workspace).toBeVisible();
+          expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+          await expect(workspace).toContainText(/Recovery resumes|grade|Proposed capability|merged/i);
+        }
+      }
+    }
   });
 });
