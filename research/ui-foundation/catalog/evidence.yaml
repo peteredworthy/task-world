@@ -4362,7 +4362,10 @@ snapshots:
   audited_at: '2026-07-24T04:00:00Z'
   files:
   - path: research/ui-foundation/tools/validate.py
-    sha256: b8bfa439e3d18dbb6445cb7d55d48e8b9c387e8befeb481ae045e5190001834a
+    sha256: 294a3c5850221f3db1ead8b6a9176375da336a5b64f4dc864ed9bc885df90e0c
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: research/ui-foundation/tools/collect_status_test_nodes.py
+    sha256: 335a2f6336c32c610d282a81846fa1b5a970fde9f63d7ce5a5663b8f93c1bc7a
     audited_at: '2026-07-24T20:44:27Z'
   - path: src/orchestrator/api/presenters/cost_rollup.py
     sha256: b4b0a9add82f04db331d02b9c0577badf1438843046b1935d1580657b5caf9c9
@@ -4624,6 +4627,9 @@ snapshots:
     audited_at: '2026-07-24T20:44:27Z'
   - path: tests/integration/test_ui_foundation_tools.py
     sha256: ae9f593a306741718808f08089d692ea8f30931bda4035b259d86ebc2fa026f9
+    audited_at: '2026-07-24T20:44:27Z'
+  - path: tests/integration/test_status_test_nodes.py
+    sha256: a5353071df2b21e7fac902ccba8e2b713513102b50980a21c7c39abb0d021c76
     audited_at: '2026-07-24T20:44:27Z'
   - path: tests/integration/test_workflow_service.py
     sha256: fc5ea36bc97fcf2d7c1d3c687d64a0bca91e2a91d83b6acbcd16f6200ec6e8db

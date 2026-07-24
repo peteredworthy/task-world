@@ -3038,6 +3038,8 @@ def _validate_status_scope(
 
     repository_root = package.root.parents[1]
     family_records: dict[str, list[dict[str, JsonValue]]] = {}
+    exercised_locators: set[str] = set()
+    permitted_locators: set[str] = set()
     for identifier, path, record in declarations:
         if identifier not in expected_ids:
             if identifier == "STA-28":
@@ -3096,6 +3098,18 @@ def _validate_status_scope(
 
         test_status = record.get("test_status")
         test_locators = record.get("test_locators")
+        bounded_test_locators = record.get("bounded_test_locators")
+        for locators in (test_locators, bounded_test_locators):
+            if isinstance(locators, list):
+                permitted_locators.update(
+                    locator for locator in locators if isinstance(locator, str)
+                )
+        if test_status == "exercised":
+            for locators in (test_locators, bounded_test_locators):
+                if isinstance(locators, list):
+                    exercised_locators.update(
+                        locator for locator in locators if isinstance(locator, str)
+                    )
         if test_status in {"exercised", "contradicted"}:
             if not isinstance(test_locators, list) or not test_locators:
                 issues.append(_issue("EXERCISED_TEST_LOCATORS_EMPTY", location, identifier))
@@ -3133,6 +3147,93 @@ def _validate_status_scope(
                     family,
                 )
             )
+    evidence = package.documents.get("catalog/evidence.yaml")
+    active_snapshot = _active_snapshot(evidence) if isinstance(evidence, dict) else None
+    active_snapshot_id = active_snapshot.get("id") if isinstance(active_snapshot, dict) else None
+    if isinstance(active_snapshot_id, str):
+        issues.extend(
+            _validate_status_test_manifest(
+                package,
+                active_snapshot_id,
+                active_snapshot_hashes,
+                exercised_locators,
+                permitted_locators,
+            )
+        )
+    return issues
+
+
+def _validate_status_test_manifest(
+    package: FoundationPackage,
+    active_snapshot_id: str,
+    active_snapshot_hashes: dict[str, str],
+    exercised_locators: set[str],
+    permitted_locators: set[str] | None = None,
+) -> list[ValidationIssue]:
+    """Validate the pytest-collected manifest as the exercised-test authority."""
+    manifest_path = package.root / "catalog/status-test-nodes.yaml"
+    manifest = package.documents.get("catalog/status-test-nodes.yaml")
+    issues: list[ValidationIssue] = []
+    if not isinstance(manifest, dict):
+        return [_issue("STATUS_TEST_MANIFEST_MISSING", manifest_path, "required")]
+    if (
+        manifest.get("schema_version") != "1"
+        or manifest.get("tool_schema") != "status-test-nodes/v1"
+    ):
+        issues.append(_issue("STATUS_TEST_MANIFEST_SCHEMA_INVALID", manifest_path, "schema"))
+    if manifest.get("active_snapshot_id") != active_snapshot_id:
+        issues.append(_issue("STATUS_TEST_MANIFEST_SNAPSHOT_MISMATCH", manifest_path, "snapshot"))
+    entries = manifest.get("entries")
+    if not isinstance(entries, list):
+        return issues + [_issue("STATUS_TEST_MANIFEST_ENTRIES_INVALID", manifest_path, "entries")]
+    seen_bases: set[str] = set()
+    seen_nodes: set[str] = set()
+    manifest_bases: set[str] = set()
+    for index, entry in enumerate(entries):
+        location = f"{manifest_path}:entries[{index}]"
+        if not isinstance(entry, dict):
+            issues.append(_issue("STATUS_TEST_MANIFEST_ENTRY_INVALID", location, entry))
+            continue
+        base = entry.get("base_locator")
+        path = entry.get("source_path")
+        source_hash = entry.get("source_sha256")
+        nodes = entry.get("concrete_node_ids")
+        entry_snapshot = entry.get("active_snapshot_id")
+        if not isinstance(base, str) or not isinstance(path, str) or not isinstance(nodes, list):
+            issues.append(_issue("STATUS_TEST_MANIFEST_ENTRY_INVALID", location, entry))
+            continue
+        manifest_bases.add(base)
+        if base in seen_bases:
+            issues.append(_issue("STATUS_TEST_MANIFEST_DUPLICATE_LOCATOR", location, base))
+        seen_bases.add(base)
+        if base not in (
+            permitted_locators if permitted_locators is not None else exercised_locators
+        ):
+            issues.append(_issue("STATUS_TEST_MANIFEST_UNKNOWN_BASE", location, base))
+        if path != base.partition("::")[0]:
+            issues.append(_issue("STATUS_TEST_MANIFEST_WRONG_SOURCE_PATH", location, base))
+        expected_hash = active_snapshot_hashes.get(path)
+        if expected_hash is None:
+            issues.append(_issue("STATUS_TEST_MANIFEST_PATH_NOT_ACTIVE", location, path))
+        elif source_hash != expected_hash:
+            issues.append(_issue("STATUS_TEST_MANIFEST_STALE_HASH", location, path))
+        if entry_snapshot != active_snapshot_id:
+            issues.append(_issue("STATUS_TEST_MANIFEST_SNAPSHOT_MISMATCH", location, base))
+        if not nodes:
+            issues.append(_issue("STATUS_TEST_MANIFEST_NODES_EMPTY", location, base))
+        for node in nodes:
+            if (
+                not isinstance(node, str)
+                or not (node == base or node.startswith(f"{base}["))
+                or (isinstance(node, str) and not node.endswith("]") and node != base)
+            ):
+                issues.append(_issue("STATUS_TEST_MANIFEST_NODE_MALFORMED", location, node))
+                continue
+            if node in seen_nodes:
+                issues.append(_issue("STATUS_TEST_MANIFEST_DUPLICATE_NODE", location, node))
+            seen_nodes.add(node)
+    for base in sorted(exercised_locators - manifest_bases):
+        issues.append(_issue("STATUS_TEST_MANIFEST_LOCATOR_MISSING", manifest_path, base))
     return issues
 
 

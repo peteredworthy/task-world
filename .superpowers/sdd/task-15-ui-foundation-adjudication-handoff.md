@@ -116,3 +116,14 @@ Pyright, and hooks are part of its commit gate. The historical Task 15 status au
 noncanonical reviewed evidence only and is not parsed by shipped tools or used
 as a regeneration input. Independent re-review must assess this application
 without changing the immutable verifier report.
+
+## Bounded mechanical unit 2
+
+`catalog/status-test-nodes.yaml` is now the deterministic, pytest-collected
+authority for the 113 canonical status-test bases and 113 concrete nodes. Its
+collector executes one `pytest --collect-only` subprocess with xdist worker
+count zero, records the active Task 15 snapshot identity and source hashes, and
+does not parse audit Markdown. The validator retains the AST resolver only as
+defense in depth and fail-closes on missing, duplicate, malformed, stale,
+inactive, unknown, or uncollected manifest entries. No semantic status, Phase
+1 snapshot, or verifier-report content changed.
