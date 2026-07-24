@@ -1024,6 +1024,12 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 )
 
     registry = canonical.get("capabilities/registry.yaml")
+    if phase >= 2:
+        issues.extend(
+            _validate_phase_two_capability_coverage(
+                package, registry if isinstance(registry, CapabilityCatalog) else None
+            )
+        )
     for item in registry.items if registry else []:
         status = item.get("capability_status")
         implementation = item.get("implementation_status")
@@ -1224,6 +1230,80 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
 
     issues.extend(_validate_actions(package, declarations, commands, evidence))
     issues.extend(_validate_epistemics(package, canonical, evidence))
+    return issues
+
+
+def _validate_phase_two_capability_coverage(
+    package: FoundationPackage, registry: CapabilityCatalog | None
+) -> list[ValidationIssue]:
+    """Require one honest capability classification for every closed scope demand."""
+    issues: list[ValidationIssue] = []
+    scope_value = package.documents.get("catalog/scope.yaml")
+    scope_items = scope_value.get("items") if isinstance(scope_value, dict) else None
+    scope_keys: set[str] = set()
+    if isinstance(scope_items, list):
+        for item in scope_items:
+            if isinstance(item, dict) and isinstance((key := item.get("key")), str):
+                scope_keys.add(key)
+    registry_items = registry.items if registry else []
+    by_demand: dict[str, list[dict[str, JsonValue]]] = {}
+    for item in registry_items:
+        key = item.get("scope_demand_key")
+        if not isinstance(key, str):
+            issues.append(
+                _issue(
+                    "CAPABILITY_DEMAND_LINK_MISSING",
+                    package.root / "capabilities/registry.yaml",
+                    item.get("id"),
+                )
+            )
+            continue
+        by_demand.setdefault(key, []).append(item)
+        if key not in scope_keys:
+            issues.append(
+                _issue(
+                    "CAPABILITY_DEMAND_UNRESOLVED",
+                    package.root / "capabilities/registry.yaml",
+                    key,
+                )
+            )
+    for key in sorted(scope_keys - by_demand.keys()):
+        issues.append(
+            _issue(
+                "CAPABILITY_DEMAND_COVERAGE_MISSING",
+                package.root / "capabilities/registry.yaml",
+                key,
+            )
+        )
+    for key, items in by_demand.items():
+        if len(items) != 1:
+            issues.append(
+                _issue(
+                    "CAPABILITY_DEMAND_STATUS_DUPLICATE",
+                    package.root / "capabilities/registry.yaml",
+                    key,
+                )
+            )
+        for item in items:
+            if item.get("capability_status") not in CAPABILITY_STATUSES:
+                issues.append(
+                    _issue(
+                        "CAPABILITY_STATUS_MISSING",
+                        package.root / "capabilities/registry.yaml",
+                        item.get("id"),
+                    )
+                )
+            if item.get("capability_status") == "current" and key in {
+                "decisions.steer-context",
+                "decisions.apply-steering-patch",
+            }:
+                issues.append(
+                    _issue(
+                        "FORBIDDEN_CURRENT_MANIFEST",
+                        package.root / "capabilities/registry.yaml",
+                        key,
+                    )
+                )
     return issues
 
 

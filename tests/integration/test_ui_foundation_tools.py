@@ -1788,3 +1788,82 @@ def test_validator_rejects_synthesis_evidence_path_snapshot_mismatch(tmp_path: P
     result = run_validator(root, phase=0)
 
     assert "SYNTHESIS_EVIDENCE_SNAPSHOT_PATH_MISMATCH" in issue_codes(result)
+
+
+def test_phase_two_requires_exactly_one_registry_status_per_scope_demand(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/scope.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "key": "claim.one",
+                    "source": "docs/jtbd/jobs.md",
+                    "source_anchor": "J1",
+                    "demand_type": "claim",
+                    "label": "One",
+                    "audit_owner": "workflow-state",
+                    "downstream_jobs": ["J1"],
+                    "blocking": True,
+                },
+                {
+                    "key": "action.two",
+                    "source": "docs/jtbd/decision-information.md",
+                    "source_anchor": "Action",
+                    "demand_type": "implemented-action-candidate",
+                    "label": "Two",
+                    "audit_owner": "api-actions-authority",
+                    "downstream_jobs": ["J1"],
+                    "blocking": True,
+                },
+            ],
+        },
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item("CAP-01", scope_demand_key="claim.one", capability_status="gap")
+            ],
+        },
+    )
+
+    result = run_validator(root, phase=2)
+
+    assert "CAPABILITY_DEMAND_COVERAGE_MISSING" in issue_codes(result)
+
+
+def test_phase_two_rejects_duplicate_scope_status_and_forbidden_current_manifest(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    demand = {
+        "key": "decisions.steer-context",
+        "source": "docs/jtbd/decision-information.md",
+        "source_anchor": "Action",
+        "demand_type": "absent-intervention",
+        "label": "Steer with new context",
+        "audit_owner": "api-actions-authority",
+        "downstream_jobs": ["J6"],
+        "blocking": True,
+    }
+    write_yaml(root / "catalog/scope.yaml", {"schema_version": "1", "items": [demand]})
+    current = semantic_item(
+        "CAP-01",
+        scope_demand_key="decisions.steer-context",
+        implementation_status="present",
+        test_status="exercised",
+        documentation_status="documented",
+        capability_status="current",
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {"schema_version": "1", "items": [current, current | {"id": "CAP-02"}]},
+    )
+
+    result = run_validator(root, phase=2)
+
+    assert "CAPABILITY_DEMAND_STATUS_DUPLICATE" in issue_codes(result)
+    assert "FORBIDDEN_CURRENT_MANIFEST" in issue_codes(result)

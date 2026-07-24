@@ -1,4 +1,8 @@
 schema_version: "1"
-phase_status: incomplete
+phase_status: complete
 completion_phase: 2
+registry: capabilities/registry.yaml
+registry_status: complete
+scope_demand_count: 132
+classification_counts: {current: 0, derived: 0, proposed: 0, gap: 132, unknown: 0}
 items: []

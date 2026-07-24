@@ -1,4 +1,153 @@
-schema_version: "1"
-phase_status: incomplete
+schema_version: '1'
+phase_status: complete
 completion_phase: 2
-items: []
+classification_policy: Each closed scope demand receives one conservative product-capability classification. Raw implementation facts do not by themselves establish a current user-facing capability.
+items:
+- &gap
+  id: CAP-1
+  title: Unintegrated source-demand capability
+  definition: The source demand is not admitted as a current or deterministic derived product capability by the Phase 1 evidence package.
+  implementation_status: absent
+  test_status: unexercised
+  documentation_status: documented
+  capability_status: gap
+  epistemic_status: observed
+  confidence: medium
+  confidence_basis: Phase 1 audit reports establish relevant carriers but do not establish a complete user-facing capability contract.
+  evidence_ids: [EVD-56]
+  conflict_ids: []
+  question_ids: []
+  limitations: [Classification does not deny that individual implementation carriers may exist.]
+  prohibited_interpretations: [Do not treat a source label, response field, or isolated command as a completed product capability.]
+  scope_demand_key: jobs.J1.health-class
+- {<<: *gap, id: CAP-2, scope_demand_key: jobs.J1.current-constraint}
+- {<<: *gap, id: CAP-3, scope_demand_key: jobs.J1.human-wait-state}
+- {<<: *gap, id: CAP-4, scope_demand_key: jobs.J1.frontier-activity}
+- {<<: *gap, id: CAP-5, scope_demand_key: jobs.J1.last-event-age}
+- {<<: *gap, id: CAP-6, scope_demand_key: jobs.J1.budget-pace}
+- {<<: *gap, id: CAP-7, scope_demand_key: jobs.J1.blast-radius}
+- {<<: *gap, id: CAP-8, scope_demand_key: jobs.J2.active-nodes-steps}
+- {<<: *gap, id: CAP-9, scope_demand_key: jobs.J2.dependency-path}
+- {<<: *gap, id: CAP-10, scope_demand_key: jobs.J2.planner-horizon}
+- {<<: *gap, id: CAP-11, scope_demand_key: jobs.J2.blocked-reason}
+- {<<: *gap, id: CAP-12, scope_demand_key: jobs.J2.attempts-left}
+- {<<: *gap, id: CAP-13, scope_demand_key: jobs.J2.final-invariant-progress}
+- {<<: *gap, id: CAP-14, scope_demand_key: jobs.J3.exact-question}
+- {<<: *gap, id: CAP-15, scope_demand_key: jobs.J3.why-now}
+- {<<: *gap, id: CAP-16, scope_demand_key: jobs.J3.proposer}
+- {<<: *gap, id: CAP-17, scope_demand_key: jobs.J3.affected-scope}
+- {<<: *gap, id: CAP-18, scope_demand_key: jobs.J3.evidence}
+- {<<: *gap, id: CAP-19, scope_demand_key: jobs.J3.alternatives}
+- {<<: *gap, id: CAP-20, scope_demand_key: jobs.J3.downstream-effect}
+- {<<: *gap, id: CAP-21, scope_demand_key: jobs.J3.reversibility}
+- {<<: *gap, id: CAP-22, scope_demand_key: jobs.J4.ordered-events}
+- {<<: *gap, id: CAP-23, scope_demand_key: jobs.J4.attempt-lineage}
+- {<<: *gap, id: CAP-24, scope_demand_key: jobs.J4.requirement-grade-changes}
+- {<<: *gap, id: CAP-25, scope_demand_key: jobs.J4.patch-provenance}
+- {<<: *gap, id: CAP-26, scope_demand_key: jobs.J4.state-transitions}
+- {<<: *gap, id: CAP-27, scope_demand_key: jobs.J4.retries-rejections}
+- {<<: *gap, id: CAP-28, scope_demand_key: jobs.J5.bound-input-records}
+- {<<: *gap, id: CAP-29, scope_demand_key: jobs.J5.omitted-referenced-context}
+- {<<: *gap, id: CAP-30, scope_demand_key: jobs.J5.prompt-size}
+- {<<: *gap, id: CAP-31, scope_demand_key: jobs.J5.transcript}
+- {<<: *gap, id: CAP-32, scope_demand_key: jobs.J5.tools}
+- {<<: *gap, id: CAP-33, scope_demand_key: jobs.J5.artifacts}
+- {<<: *gap, id: CAP-34, scope_demand_key: jobs.J5.file-delta}
+- {<<: *gap, id: CAP-35, scope_demand_key: jobs.J5.output-records}
+- {<<: *gap, id: CAP-36, scope_demand_key: jobs.J5.usage}
+- {<<: *gap, id: CAP-37, scope_demand_key: jobs.J6.current-failure}
+- {<<: *gap, id: CAP-38, scope_demand_key: jobs.J6.retry-information-delta}
+- {<<: *gap, id: CAP-39, scope_demand_key: jobs.J6.alternatives}
+- {<<: *gap, id: CAP-40, scope_demand_key: jobs.J6.expected-effect}
+- {<<: *gap, id: CAP-41, scope_demand_key: jobs.J6.scope}
+- {<<: *gap, id: CAP-42, scope_demand_key: jobs.J6.authority}
+- {<<: *gap, id: CAP-43, scope_demand_key: jobs.J6.budget}
+- {<<: *gap, id: CAP-44, scope_demand_key: jobs.J6.reversibility}
+- {<<: *gap, id: CAP-45, scope_demand_key: jobs.J6.validation-path}
+- {<<: *gap, id: CAP-46, scope_demand_key: jobs.J7.spend-tokens-by-node-kind}
+- {<<: *gap, id: CAP-47, scope_demand_key: jobs.J7.unpriced-share}
+- {<<: *gap, id: CAP-48, scope_demand_key: jobs.J7.prompt-size}
+- {<<: *gap, id: CAP-49, scope_demand_key: jobs.J7.retries-without-new-information}
+- {<<: *gap, id: CAP-50, scope_demand_key: jobs.J7.repeated-work}
+- {<<: *gap, id: CAP-51, scope_demand_key: jobs.J7.verifier-churn}
+- {<<: *gap, id: CAP-52, scope_demand_key: jobs.J8.comparable-cohort}
+- {<<: *gap, id: CAP-53, scope_demand_key: jobs.J8.routine-sha}
+- {<<: *gap, id: CAP-54, scope_demand_key: jobs.J8.model-profile}
+- {<<: *gap, id: CAP-55, scope_demand_key: jobs.J8.duration}
+- {<<: *gap, id: CAP-56, scope_demand_key: jobs.J8.tokens}
+- {<<: *gap, id: CAP-57, scope_demand_key: jobs.J8.price-coverage}
+- {<<: *gap, id: CAP-58, scope_demand_key: jobs.J8.patch-count}
+- {<<: *gap, id: CAP-59, scope_demand_key: jobs.J8.retries}
+- {<<: *gap, id: CAP-60, scope_demand_key: jobs.J8.grade-churn}
+- {<<: *gap, id: CAP-61, scope_demand_key: jobs.J8.interventions}
+- {<<: *gap, id: CAP-62, scope_demand_key: jobs.J8.outcome}
+- {<<: *gap, id: CAP-63, scope_demand_key: jobs.J7.prompt-pressure}
+- {<<: *gap, id: CAP-64, scope_demand_key: design.initial-claims.final-gate-effect}
+- {<<: *gap, id: CAP-65, scope_demand_key: journeys.A.freshness-and-connection}
+- {<<: *gap, id: CAP-66, scope_demand_key: journeys.A.positive-empty-needs-you}
+- {<<: *gap, id: CAP-67, scope_demand_key: journeys.A.no-runaway-signal}
+- {<<: *gap, id: CAP-68, scope_demand_key: journeys.B.wait-age}
+- {<<: *gap, id: CAP-69, scope_demand_key: journeys.B.validator-result}
+- {<<: *gap, id: CAP-70, scope_demand_key: journeys.B.recorded-identity-timestamp}
+- {<<: *gap, id: CAP-71, scope_demand_key: journeys.C.cost-of-another-attempt}
+- {<<: *gap, id: CAP-72, scope_demand_key: journeys.C.candidate-delta}
+- {<<: *gap, id: CAP-73, scope_demand_key: journeys.C.causal-gap}
+- {<<: *gap, id: CAP-74, scope_demand_key: journeys.C.directive-binding}
+- {<<: *gap, id: CAP-75, scope_demand_key: journeys.D.execution-unit-identity}
+- {<<: *gap, id: CAP-76, scope_demand_key: journeys.D.file-state-boundary}
+- {<<: *gap, id: CAP-77, scope_demand_key: journeys.E.missing-node-attribution}
+- {<<: *gap, id: CAP-78, scope_demand_key: journeys.E.detector-evidence}
+- {<<: *gap, id: CAP-79, scope_demand_key: journeys.continuity.canonical-selection}
+- {<<: *gap, id: CAP-80, scope_demand_key: journeys.continuity.preserve-context}
+- {<<: *gap, id: CAP-81, scope_demand_key: journeys.continuity.restore-return-state}
+- {<<: *gap, id: CAP-82, scope_demand_key: journeys.continuity.derived-evidence-freshness}
+- {<<: *gap, id: CAP-83, scope_demand_key: journeys.continuity.action-safety-fields}
+- {<<: *gap, id: CAP-84, scope_demand_key: journeys.continuity.responsive-context}
+- {<<: *gap, id: CAP-85, scope_demand_key: decisions.ignore-watch}
+- {<<: *gap, id: CAP-86, scope_demand_key: decisions.approve-gate-patch}
+- {<<: *gap, id: CAP-87, scope_demand_key: decisions.answer-clarification}
+- {<<: *gap, id: CAP-88, scope_demand_key: decisions.retry}
+- {<<: *gap, id: CAP-89, scope_demand_key: decisions.lifecycle}
+- {<<: *gap, id: CAP-90, scope_demand_key: decisions.retire-supersede}
+- {<<: *gap, id: CAP-91, scope_demand_key: decisions.requeue}
+- {<<: *gap, id: CAP-92, scope_demand_key: decisions.steer-context}
+- {<<: *gap, id: CAP-93, scope_demand_key: decisions.apply-steering-patch}
+- {<<: *gap, id: CAP-94, scope_demand_key: decisions.change-source}
+- {<<: *gap, id: CAP-95, scope_demand_key: honesty.live-input-age}
+- {<<: *gap, id: CAP-96, scope_demand_key: honesty.derived-label-evidence}
+- {<<: *gap, id: CAP-97, scope_demand_key: honesty.unpriced-not-zero}
+- {<<: *gap, id: CAP-98, scope_demand_key: honesty.no-growing-plan-percent}
+- {<<: *gap, id: CAP-99, scope_demand_key: honesty.fact-versus-inference}
+- {<<: *gap, id: CAP-100, scope_demand_key: honesty.approximate-values}
+- {<<: *gap, id: CAP-101, scope_demand_key: honesty.directive-binding-proof}
+- {<<: *gap, id: CAP-102, scope_demand_key: feedback.command-accepted-rejected}
+- {<<: *gap, id: CAP-103, scope_demand_key: feedback.validation-result-reason}
+- {<<: *gap, id: CAP-104, scope_demand_key: feedback.durable-identity}
+- {<<: *gap, id: CAP-105, scope_demand_key: feedback.resulting-state}
+- {<<: *gap, id: CAP-106, scope_demand_key: feedback.next-activity}
+- {<<: *gap, id: CAP-107, scope_demand_key: feedback.failure-race-recovery}
+- {<<: *gap, id: CAP-108, scope_demand_key: ia.health.evidence-convergence}
+- {<<: *gap, id: CAP-109, scope_demand_key: ia.health.needs-decision}
+- {<<: *gap, id: CAP-110, scope_demand_key: ia.health.degraded}
+- {<<: *gap, id: CAP-111, scope_demand_key: ia.health.stalled}
+- {<<: *gap, id: CAP-112, scope_demand_key: ia.health.runaway}
+- {<<: *gap, id: CAP-113, scope_demand_key: ia.health.steered}
+- {<<: *gap, id: CAP-114, scope_demand_key: ia.health.settled}
+- {<<: *gap, id: CAP-115, scope_demand_key: ia.selection.identity-chain}
+- {<<: *gap, id: CAP-116, scope_demand_key: ia.selection.comparison-target}
+- {<<: *gap, id: CAP-117, scope_demand_key: ia.selection.freshness-annotations}
+- {<<: *gap, id: CAP-118, scope_demand_key: ia.vocabulary.distinct-entities}
+- {<<: *gap, id: CAP-119, scope_demand_key: rubric.attention-clarity}
+- {<<: *gap, id: CAP-120, scope_demand_key: rubric.position-blast-radius}
+- {<<: *gap, id: CAP-121, scope_demand_key: rubric.causal-comprehension}
+- {<<: *gap, id: CAP-122, scope_demand_key: rubric.decision-readiness}
+- {<<: *gap, id: CAP-123, scope_demand_key: rubric.evidence-access}
+- {<<: *gap, id: CAP-124, scope_demand_key: rubric.context-continuity}
+- {<<: *gap, id: CAP-125, scope_demand_key: rubric.complexity-control}
+- {<<: *gap, id: CAP-126, scope_demand_key: rubric.action-safety-feedback}
+- {<<: *gap, id: CAP-127, scope_demand_key: rubric.capability-honesty}
+- {<<: *gap, id: CAP-128, scope_demand_key: rubric.responsive-integrity}
+- {<<: *gap, id: CAP-129, scope_demand_key: rubric.no-selection-resets}
+- {<<: *gap, id: CAP-130, scope_demand_key: rubric.derived-evidence-access}
+- {<<: *gap, id: CAP-131, scope_demand_key: rubric.result-state-confirmation}
+- {<<: *gap, id: CAP-132, scope_demand_key: rubric.viability-floor}
