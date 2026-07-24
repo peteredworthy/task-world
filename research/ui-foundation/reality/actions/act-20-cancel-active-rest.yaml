@@ -71,7 +71,6 @@ status_basis:
   capability: One active path does not prove every cancellation race.
   epistemic: ACT-20 is observed by EVD-7/EVD-11/EVD-20/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-20-cancel-active-rest.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::cancel_run
 test_locators:
 - tests/integration/test_signal_queue.py::test_cancel_active_run_via_queue

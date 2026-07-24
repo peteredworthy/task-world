@@ -55,7 +55,6 @@ status_basis:
   capability: One child retry does not prove all fan-out recovery.
   epistemic: ACT-35 is observed by EVD-44.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-35-fanout-parent-preserved.yaml::durable_effect
 - src/orchestrator/workflow/service.py::WorkflowService.retry_fan_out_child
 test_locators:
 - tests/integration/test_fan_out.py::TestChildTaskStateManagement::test_retry_fan_out_child_records_retry_generation

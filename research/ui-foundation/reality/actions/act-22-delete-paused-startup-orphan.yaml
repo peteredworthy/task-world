@@ -68,7 +68,6 @@ status_basis:
   capability: One narrow cleanup action is not a general orphan-recovery capability.
   epistemic: ACT-22 is observed by EVD-43/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-22-delete-paused-startup-orphan.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::delete_run
 test_locators:
 - tests/integration/test_api_runs.py::test_delete_startup_orphan_run

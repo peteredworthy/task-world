@@ -64,7 +64,6 @@ status_basis:
   capability: One exercised route does not prove every cleanup side effect.
   epistemic: ACT-9 is observed by EVD-43/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-9-delete-run.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::delete_run
 test_locators:
 - tests/integration/test_api_runs.py::test_delete_run

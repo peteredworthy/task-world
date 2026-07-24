@@ -45,7 +45,6 @@ status_basis:
   capability: One managed file set does not prove arbitrary filesystem copy.
   epistemic: ACT-64 is observed by EVD-31.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-64-env-snapshot-copy-back.yaml::durable_effect
 - src/orchestrator/api/routers/envfiles.py::copy_back_env_files
 test_locators:
 - tests/integration/test_envfile_revert.py::test_copy_back_api

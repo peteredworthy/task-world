@@ -46,7 +46,6 @@ status_basis:
   capability: One exercised variant does not prove all merge policy.
   epistemic: ACT-5 is observed by EVD-29.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-5-review-back-merge-conflict.yaml::durable_effect
-- research/ui-foundation/catalog/evidence.yaml::EVD-29
+- src/orchestrator/api/routers/runs.py::back_merge_endpoint
 test_locators:
 - tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status

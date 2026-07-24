@@ -52,7 +52,6 @@ status_basis:
   capability: Configuration update does not prove runner execution.
   epistemic: ACT-69 is observed by EVD-33.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-69-agent-update.yaml::durable_effect
 - src/orchestrator/api/routers/agents.py::update_agent
 test_locators:
 - tests/integration/test_api_agent_configs.py::TestUpdateAgent::test_update_model_profile

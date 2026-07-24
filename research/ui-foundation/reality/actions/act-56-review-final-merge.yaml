@@ -49,6 +49,5 @@ status_basis:
   capability: Source inspection does not prove route availability.
   epistemic: ACT-56 is observed by EVD-29.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-56-review-final-merge.yaml::durable_effect
-- research/ui-foundation/catalog/evidence.yaml::EVD-29
+- src/orchestrator/api/routers/runs.py::merge_back_endpoint
 test_locators: []

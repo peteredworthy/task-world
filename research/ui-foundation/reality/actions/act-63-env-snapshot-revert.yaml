@@ -45,7 +45,6 @@ status_basis:
   capability: One managed file set does not prove arbitrary filesystem restore.
   epistemic: ACT-63 is observed by EVD-31.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-63-env-snapshot-revert.yaml::durable_effect
 - src/orchestrator/api/routers/envfiles.py::revert_env_files
 test_locators:
 - tests/integration/test_envfile_revert.py::test_revert_env_files_api

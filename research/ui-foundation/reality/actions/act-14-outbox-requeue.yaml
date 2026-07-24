@@ -57,7 +57,6 @@ status_basis:
   capability: Recording executor does not prove external side-effect idempotency.
   epistemic: ACT-14 is directly observed by EVD-23.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-14-outbox-requeue.yaml::durable_effect
 - src/orchestrator/api/routers/graph.py::requeue_failed_outbox_row
 test_locators:
 - tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event

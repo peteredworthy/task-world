@@ -77,7 +77,6 @@ status_basis:
   capability: One compensation path is not a complete recovery capability.
   epistemic: ACT-40 is observed by EVD-45.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-40-run-recover-downstream-pending.yaml::durable_effect
 - src/orchestrator/workflow/service.py::WorkflowService.recover_run
 test_locators:
 - tests/integration/test_api_runs_recover.py::test_recover_happy_path_sets_paused_and_rewinds

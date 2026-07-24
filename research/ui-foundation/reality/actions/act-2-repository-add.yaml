@@ -47,6 +47,5 @@ status_basis:
   capability: Availability remains unknown without an exercised success path.
   epistemic: ACT-2 implementation is observed by EVD-35.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-2-repository-add.yaml::durable_effect
 - src/orchestrator/api/routers/repos.py::add_repository
 test_locators: []

@@ -49,7 +49,6 @@ status_basis:
   capability: One local command run does not prove all configured test environments.
   epistemic: ACT-57 is observed by EVD-47.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-57-review-test-start.yaml::durable_effect
 - src/orchestrator/api/routers/review.py::start_test_run
 test_locators:
 - tests/integration/test_review_test_runner.py::TestGetTestRun::test_test_run_completes_with_results

@@ -51,7 +51,6 @@ status_basis:
   capability: One rejection path is not a complete decision-safety capability.
   epistemic: ACT-24 is observed by EVD-12.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-24-task-reject-revision.yaml::durable_effect
 - src/orchestrator/api/routers/tasks.py::reject_task
 test_locators:
 - tests/integration/test_approval_workflow.py::test_reject_task_transitions_to_building

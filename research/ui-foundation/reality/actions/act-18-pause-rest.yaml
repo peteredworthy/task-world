@@ -64,7 +64,6 @@ status_basis:
   capability: In-memory queue exercise does not prove cross-process delivery.
   epistemic: ACT-18 is observed by EVD-7/EVD-8/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-18-pause-rest.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::pause_run
 test_locators:
 - tests/integration/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused

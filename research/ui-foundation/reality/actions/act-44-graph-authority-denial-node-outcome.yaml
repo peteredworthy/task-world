@@ -74,7 +74,6 @@ status_basis:
   capability: Caller-supplied decider is not enforced authorization.
   epistemic: ACT-44 is directly observed by EVD-27.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-44-graph-authority-denial-node-outcome.yaml::durable_effect
 - src/orchestrator/graph/_commands.py::_apply_record_decision
 test_locators:
 - tests/integration/test_graph_fr08_acceptance.py::test_fr08_authority_denial_and_rejection_readbacks

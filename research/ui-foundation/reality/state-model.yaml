@@ -1152,7 +1152,6 @@ items:
     epistemic: STA-38 is observed by EVD-28.
   implementation_locators:
   - src/orchestrator/api/routers/review.py::start_test_run
-  - research/ui-foundation/catalog/evidence.yaml::EVD-28
   test_locators:
   - tests/integration/test_review_test_runner.py::TestStartTestRun::test_start_test_run_returns_id
 - id: STA-39
@@ -1179,7 +1178,6 @@ items:
     epistemic: STA-39 is observed by EVD-28.
   implementation_locators:
   - src/orchestrator/api/routers/review.py::start_test_run
-  - research/ui-foundation/catalog/evidence.yaml::EVD-28
   test_locators:
   - tests/integration/test_review_test_runner.py::TestGetTestRun::test_get_test_run_returns_running_status
 - id: STA-40
@@ -1208,7 +1206,6 @@ items:
     epistemic: STA-40 is observed by EVD-28.
   implementation_locators:
   - src/orchestrator/api/routers/review.py::start_test_run
-  - research/ui-foundation/catalog/evidence.yaml::EVD-28
   test_locators:
   - tests/integration/test_review_test_runner.py::TestGetTestRun::test_test_run_completes_with_results
 - id: STA-41
@@ -1236,7 +1233,6 @@ items:
     epistemic: STA-41 is observed by EVD-28.
   implementation_locators:
   - src/orchestrator/api/routers/review.py::start_test_run
-  - research/ui-foundation/catalog/evidence.yaml::EVD-28
   test_locators:
   - tests/integration/test_review_test_runner.py::TestGetTestRun::test_test_run_reports_failure
 - id: STA-42
@@ -1265,7 +1261,6 @@ items:
     epistemic: STA-42 is observed by EVD-29.
   implementation_locators:
   - src/orchestrator/git/ops/branch_ops.py::back_merge
-  - research/ui-foundation/catalog/evidence.yaml::EVD-29
   test_locators:
   - tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean
 - id: STA-43
@@ -1293,7 +1288,6 @@ items:
     epistemic: STA-43 is observed by EVD-30.
   implementation_locators:
   - src/orchestrator/git/errors.py::MergeConflictError
-  - research/ui-foundation/catalog/evidence.yaml::EVD-30
   test_locators:
   - tests/integration/test_conflict_api.py::TestBackMergeConflicts::test_conflict_merge_returns_conflicts_status
 - id: STA-44
@@ -1323,7 +1317,6 @@ items:
     epistemic: STA-44 is observed by EVD-30.
   implementation_locators:
   - src/orchestrator/api/routers/review.py::resolve_conflict_endpoint
-  - research/ui-foundation/catalog/evidence.yaml::EVD-30
   test_locators:
   - tests/integration/test_conflict_api.py::TestResolveConflict::test_resolve_ours_removes_markers
 - id: STA-45
@@ -1352,7 +1345,6 @@ items:
     epistemic: STA-45 is observed by EVD-31.
   implementation_locators:
   - src/orchestrator/api/routers/envfiles.py::revert_env_files
-  - research/ui-foundation/catalog/evidence.yaml::EVD-31
   test_locators:
   - tests/integration/test_envfile_revert.py::test_revert_env_files_api
 - id: STA-46
@@ -1381,7 +1373,6 @@ items:
     epistemic: STA-46 is observed by EVD-31.
   implementation_locators:
   - src/orchestrator/api/routers/envfiles.py::copy_back_env_files
-  - research/ui-foundation/catalog/evidence.yaml::EVD-31
   test_locators:
   - tests/integration/test_envfile_revert.py::test_copy_back_api
 - id: STA-47
@@ -1495,7 +1486,6 @@ items:
     capability: A registered repository carrier is not a broader product capability.
     epistemic: STA-50 is implementation-observed but test-unexercised.
   implementation_locators:
-  - research/ui-foundation/catalog/evidence.yaml::EVD-35
   - src/orchestrator/api/routers/repos.py::add_repository
   test_locators: []
 - id: STA-51
@@ -1523,7 +1513,6 @@ items:
     capability: A removed repository carrier is not a broader product capability.
     epistemic: STA-51 is implementation-observed but test-unexercised.
   implementation_locators:
-  - research/ui-foundation/catalog/evidence.yaml::EVD-35
   - src/orchestrator/api/routers/repos.py::remove_repository
   test_locators: []
 - id: STA-52
@@ -1760,7 +1749,6 @@ items:
     epistemic: STA-59 is observed by EVD-29.
   implementation_locators:
   - src/orchestrator/workflow/merge_readiness.py::evaluate_merge_readiness_gates
-  - research/ui-foundation/catalog/evidence.yaml::EVD-29
   test_locators:
   - tests/integration/test_merge_readiness.py::test_merge_readiness_all_pass
 - id: STA-60
@@ -1790,7 +1778,6 @@ items:
     epistemic: STA-60 is observed by EVD-31.
   implementation_locators:
   - src/orchestrator/api/routers/envfiles.py::revert_env_files
-  - research/ui-foundation/catalog/evidence.yaml::EVD-31
   test_locators: []
 - id: STA-61
   title: Routine YAML validation result
@@ -1819,7 +1806,6 @@ items:
     epistemic: STA-61 is observed by EVD-46.
   implementation_locators:
   - src/orchestrator/api/routers/routines.py::validate_routine
-  - research/ui-foundation/catalog/evidence.yaml::EVD-46
   test_locators:
   - tests/integration/test_api_routines.py::test_validate_routine_valid
   - tests/integration/test_api_routines.py::test_validate_routine_invalid_missing_field
@@ -1849,7 +1835,6 @@ items:
     epistemic: STA-62 is observed by EVD-35.
   implementation_locators:
   - src/orchestrator/api/routers/repos.py::list_repositories
-  - research/ui-foundation/catalog/evidence.yaml::EVD-35
   test_locators:
   - tests/integration/test_api_repos.py::TestListRepos::test_empty_repos_dir
 - id: STA-63
@@ -1879,7 +1864,6 @@ items:
     epistemic: STA-63 is observed by EVD-28.
   implementation_locators:
   - src/orchestrator/api/routers/review.py::prune_preview
-  - research/ui-foundation/catalog/evidence.yaml::EVD-28
   test_locators:
   - tests/integration/test_prune_api.py::TestPrunePreview::test_preview_file_mode_returns_stats
 - id: STA-64
@@ -1909,7 +1893,6 @@ items:
     epistemic: STA-64 is observed by EVD-37.
   implementation_locators:
   - src/orchestrator/graph/commands/patches.py::handle_submit_patch
-  - research/ui-foundation/catalog/evidence.yaml::EVD-37
   test_locators: []
 - id: STA-65
   title: Agent configuration absent

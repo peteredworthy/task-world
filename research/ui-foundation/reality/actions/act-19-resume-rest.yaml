@@ -67,7 +67,6 @@ status_basis:
   capability: In-memory queue exercise does not prove replacement runner success.
   epistemic: ACT-19 is observed by EVD-7/EVD-19/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-19-resume-rest.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::resume_run
 test_locators:
 - tests/integration/test_signal_queue.py::test_resume_signal_consumed_paused_to_active

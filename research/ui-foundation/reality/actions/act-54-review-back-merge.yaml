@@ -47,7 +47,6 @@ status_basis:
   capability: One clean merge does not prove every conflict policy.
   epistemic: ACT-54 is observed by EVD-29.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-54-review-back-merge.yaml::durable_effect
 - src/orchestrator/git/ops/branch_ops.py::back_merge
 test_locators:
 - tests/integration/test_conflict_api.py::TestBackMergeClean::test_clean_merge_returns_status_clean

@@ -48,7 +48,6 @@ status_basis:
   capability: Approval attribution is not product-role authorization.
   epistemic: ACT-23 is observed by EVD-12.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-23-task-approve.yaml::durable_effect
 - src/orchestrator/api/routers/tasks.py::approve_task
 test_locators:
 - tests/integration/test_approval_workflow.py::test_approve_task_transitions_to_completed

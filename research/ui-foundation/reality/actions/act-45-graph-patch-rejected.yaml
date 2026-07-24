@@ -63,7 +63,6 @@ status_basis:
   capability: Rejected raw patch is not typed steering.
   epistemic: ACT-45 is observed by EVD-37.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-45-graph-patch-rejected.yaml::durable_effect
 - src/orchestrator/graph/patch_validator.py::validate_patch
 test_locators:
 - tests/integration/test_graph_fr08_acceptance.py::test_fr08_invalid_patch_matrix_rejected_and_readable

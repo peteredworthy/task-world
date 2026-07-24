@@ -52,6 +52,5 @@ status_basis:
   capability: Source-inspected dispatch is not proven available.
   epistemic: ACT-59 is observed by EVD-48.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-59-agent-conflict-resolution-job.yaml::durable_effect
-- research/ui-foundation/catalog/evidence.yaml::EVD-48
+- src/orchestrator/api/routers/review.py::agent_resolve_conflicts
 test_locators: []

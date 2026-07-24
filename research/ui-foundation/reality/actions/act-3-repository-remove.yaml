@@ -44,6 +44,5 @@ status_basis:
   capability: Availability remains unknown without an exercised destructive path.
   epistemic: ACT-3 implementation is observed by EVD-35.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-3-repository-remove.yaml::durable_effect
 - src/orchestrator/api/routers/repos.py::remove_repository
 test_locators: []

@@ -51,7 +51,6 @@ status_basis:
   capability: One retry path does not define canonical retry count/delta.
   epistemic: ACT-31 is observed by EVD-14.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-31-recovery-retry.yaml::durable_effect
 - src/orchestrator/workflow/service.py::WorkflowService.complete_recovery_retry
 test_locators:
 - tests/integration/test_workflow_service.py::test_complete_recovery_retry_projects_attempts_and_resumes_without_save_run

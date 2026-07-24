@@ -48,7 +48,6 @@ status_basis:
   capability: Configuration deletion does not prove broader cleanup.
   epistemic: ACT-70 is observed by EVD-33.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-70-agent-delete.yaml::durable_effect
 - src/orchestrator/api/routers/agents.py::delete_agent
 test_locators:
 - tests/integration/test_api_agent_configs.py::TestDeleteAgent::test_delete_returns_204

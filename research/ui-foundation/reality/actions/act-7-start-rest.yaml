@@ -51,7 +51,6 @@ status_basis:
   capability: The in-memory drain does not prove production runner availability.
   epistemic: ACT-7 is observed by EVD-7/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-7-start-rest.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::start_run
 test_locators:
 - tests/integration/test_signal_queue.py::test_run_start_signal_consumed_draft_to_active

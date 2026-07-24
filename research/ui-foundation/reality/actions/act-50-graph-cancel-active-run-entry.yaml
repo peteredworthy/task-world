@@ -71,7 +71,6 @@ status_basis:
   capability: The pure command path does not prove REST/runner cancellation.
   epistemic: ACT-50 is observed by EVD-11/EVD-20/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-50-graph-cancel-active-run-entry.yaml::durable_effect
 - src/orchestrator/graph/_commands.py::RUN_LIFECYCLE_TRANSITIONS
 test_locators:
 - tests/unit/test_graph_commands.py::test_lifecycle_legal_transitions

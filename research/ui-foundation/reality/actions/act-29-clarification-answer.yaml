@@ -54,7 +54,6 @@ status_basis:
   capability: The carrier does not prove a complete decision packet/UI.
   epistemic: ACT-29 is observed by EVD-13.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-29-clarification-answer.yaml::durable_effect
 - src/orchestrator/workflow/service.py::WorkflowService.respond_to_clarification
 test_locators:
 - tests/integration/test_clarification_workflow.py::test_full_clarification_cycle

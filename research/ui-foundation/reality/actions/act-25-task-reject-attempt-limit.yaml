@@ -50,7 +50,6 @@ status_basis:
   capability: One rejection path is not a complete decision-safety capability.
   epistemic: ACT-25 is observed by EVD-12.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-25-task-reject-attempt-limit.yaml::durable_effect
 - src/orchestrator/api/routers/tasks.py::reject_task
 test_locators:
 - tests/integration/test_approval_workflow.py::test_reject_at_max_attempts_transitions_to_failed_and_replays

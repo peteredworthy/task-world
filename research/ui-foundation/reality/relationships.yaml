@@ -41,7 +41,6 @@ items:
     epistemic: REL-1 is observed by EVD-49.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::RunModel.routine_id
-  - research/ui-foundation/catalog/evidence.yaml::EVD-49
   test_locators: []
 - source: ENT-2
   target: ENT-3
@@ -205,7 +204,6 @@ items:
     epistemic: REL-5 is observed in the factory and EVD-55.
   implementation_locators:
   - src/orchestrator/state/factory.py::create_checklist_from_requirements
-  - research/ui-foundation/catalog/evidence.yaml::EVD-55
   test_locators:
   - tests/unit/test_run_factory.py::test_create_checklist_from_requirements
 - source: ENT-5
@@ -244,7 +242,6 @@ items:
     epistemic: REL-6 is observed in persistence and EVD-55.
   implementation_locators:
   - src/orchestrator/db/orm/models.py::AttemptModel.grade_snapshot
-  - research/ui-foundation/catalog/evidence.yaml::EVD-55
   test_locators:
   - tests/integration/test_full_persistence.py::test_full_lifecycle_survives_restart
 - source: ENT-9
@@ -557,7 +554,6 @@ items:
     epistemic: REL-14 is observed by EVD-58.
   implementation_locators:
   - src/orchestrator/graph/models.py::EdgeModel
-  - research/ui-foundation/catalog/evidence.yaml::EVD-58
   test_locators: []
 - source: ENT-14
   target: ENT-13
@@ -1218,7 +1214,6 @@ items:
     epistemic: REL-31 is observed by EVD-56/EVD-65.
   implementation_locators:
   - src/orchestrator/graph/models.py::ArtifactReferenceRecord
-  - research/ui-foundation/catalog/evidence.yaml::EVD-65
   test_locators: []
 - source: ENT-27
   target: ENT-28
@@ -1384,6 +1379,5 @@ items:
     epistemic: REL-35 is observed by EVD-67 with CON-8 qualification.
   implementation_locators:
   - src/orchestrator/db/bootstrap.py::bootstrap_from_jsonl
-  - research/ui-foundation/catalog/evidence.yaml::EVD-67
   test_locators:
   - tests/integration/test_jsonl_rotation_recovery.py::test_bootstrap_replays_archives_and_active_in_global_position_order

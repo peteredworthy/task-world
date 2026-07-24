@@ -46,7 +46,6 @@ status_basis:
   capability: One clean merge does not prove every git topology.
   epistemic: ACT-52 is observed by EVD-29.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-52-detail-pull-upstream.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::back_merge_endpoint
 test_locators:
 - tests/integration/test_api_branch_ops.py::test_back_merge

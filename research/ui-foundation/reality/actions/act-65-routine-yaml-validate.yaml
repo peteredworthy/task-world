@@ -46,7 +46,6 @@ status_basis:
   capability: Validation does not prove routine execution availability.
   epistemic: ACT-65 is observed by EVD-46.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-65-routine-yaml-validate.yaml::durable_effect
 - src/orchestrator/api/routers/routines.py::validate_routine
 test_locators:
 - tests/integration/test_api_routines.py::test_validate_routine_valid

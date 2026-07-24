@@ -85,6 +85,40 @@ def copy_foundation_with_source(tmp_path: Path) -> Path:
     return root
 
 
+def status_scope_items(root: Path) -> list[dict[str, str]]:
+    fixed_paths = {
+        "REL": "reality/relationships.yaml",
+        "STA": "reality/state-model.yaml",
+        "EVI": "reality/evidence/inventory.yaml",
+        "INV": "catalog/invariants.yaml",
+    }
+    family_ids = {
+        "REL": range(1, 36),
+        "STA": (*range(1, 28), *range(29, 74)),
+        "EVI": range(1, 10),
+        "INV": range(2, 8),
+    }
+    items = [
+        {"id": f"{family}-{number}", "path": path}
+        for family, numbers in family_ids.items()
+        for number in numbers
+        for path in (fixed_paths[family],)
+    ]
+    for path in sorted((root / "reality/actions").glob("act-*.yaml")):
+        action = yaml.safe_load(path.read_text(encoding="utf-8"))
+        items.append({"id": action["id"], "path": path.relative_to(root).as_posix()})
+    return items
+
+
+def write_status_scope(root: Path, items: list[dict[str, str]] | None = None) -> Path:
+    path = root / "catalog/status-scope.yaml"
+    write_yaml(
+        path,
+        {"schema_version": "1", "items": items if items is not None else status_scope_items(root)},
+    )
+    return path
+
+
 def write_valid_phase_zero(tmp_path: Path) -> Path:
     root = write_minimal_foundation(tmp_path)
     for relative in (
@@ -190,7 +224,7 @@ def test_status_adjudication_requires_dimension_specific_basis_and_direct_implem
             "schema_version": "1",
             "items": [
                 semantic_item(
-                    "REL-01",
+                    "REL-1",
                     implementation_status="present",
                     documentation_status="documented",
                     epistemic_status="observed",
@@ -205,7 +239,7 @@ def test_status_adjudication_requires_dimension_specific_basis_and_direct_implem
     assert "STATUS_BASIS_MISSING" in issue_codes(result)
 
 
-def test_present_status_requires_implementation_evidence(tmp_path: Path) -> None:
+def test_present_status_requires_resolving_implementation_locator(tmp_path: Path) -> None:
     root = write_valid_phase_zero(tmp_path)
     write_yaml(
         root / "reality/relationships.yaml",
@@ -213,7 +247,7 @@ def test_present_status_requires_implementation_evidence(tmp_path: Path) -> None
             "schema_version": "1",
             "items": [
                 semantic_item(
-                    "REL-01",
+                    "REL-1",
                     implementation_status="present",
                     documentation_status="documented",
                     epistemic_status="observed",
@@ -225,7 +259,7 @@ def test_present_status_requires_implementation_evidence(tmp_path: Path) -> None
 
     result = run_validator(root)
 
-    assert "PRESENT_IMPLEMENTATION_EVIDENCE_MISSING" in issue_codes(result)
+    assert "IMPLEMENTATION_LOCATOR_UNRESOLVED" in issue_codes(result)
 
 
 def test_status_adjudication_rejects_exercised_without_resolvable_test_locator(
@@ -329,6 +363,188 @@ def test_status_locator_rejects_stale_active_snapshot_hash(tmp_path: Path) -> No
         tmp_path,
         {"tests/test_locator.py": "stale"},
     )
+
+
+def test_status_scope_rejects_missing_record(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    items = status_scope_items(root)
+    write_status_scope(root, items[1:])
+
+    result = run_validator(root)
+
+    assert "STATUS_SCOPE_MISSING" in issue_codes(result)
+
+
+def test_status_scope_rejects_extra_record(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    write_status_scope(root)
+    relationships_path = root / "reality/relationships.yaml"
+    relationships = yaml.safe_load(relationships_path.read_text(encoding="utf-8"))
+    extra = dict(relationships["items"][0])
+    extra["id"] = "REL-999"
+    relationships["items"].append(extra)
+    write_yaml(relationships_path, relationships)
+
+    result = run_validator(root)
+
+    assert "STATUS_SCOPE_EXTRA" in issue_codes(result)
+
+
+def test_status_scope_rejects_duplicate_record(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    items = status_scope_items(root)
+    items.append(items[0])
+    write_status_scope(root, items)
+
+    result = run_validator(root)
+
+    assert "STATUS_SCOPE_DUPLICATE" in issue_codes(result)
+
+
+def test_status_scope_rejects_wrong_declaration_path(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    items = status_scope_items(root)
+    items[0]["path"] = "reality/state-model.yaml"
+    write_status_scope(root, items)
+
+    result = run_validator(root)
+
+    assert "STATUS_SCOPE_WRONG_PATH" in issue_codes(result)
+
+
+def test_status_scope_rejects_reactivated_sta_28(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    items = status_scope_items(root)
+    items.append({"id": "STA-28", "path": "reality/state-model.yaml"})
+    write_status_scope(root, items)
+
+    result = run_validator(root)
+
+    assert "STATUS_SCOPE_REACTIVATED" in issue_codes(result)
+
+
+def test_implementation_locator_grammar_resolves_python_and_yaml_ids(tmp_path: Path) -> None:
+    validator = load_validator()
+    python_path = tmp_path / "src/example.py"
+    python_path.parent.mkdir(parents=True)
+    python_path.write_text(
+        "from enum import Enum\n\n"
+        "def carrier():\n    return None\n\n"
+        "ALIAS = carrier\n\n"
+        "class Holder:\n    member: str\n\n"
+        "class Kind(Enum):\n    ACTIVE = 'active'\n",
+        encoding="utf-8",
+    )
+    yaml_path = tmp_path / "config/example.yaml"
+    yaml_path.parent.mkdir(parents=True)
+    yaml_path.write_text("items:\n- id: ITEM-1\n  kind: active\n", encoding="utf-8")
+    hashes = {
+        "src/example.py": hashlib.sha256(python_path.read_bytes()).hexdigest(),
+        "config/example.yaml": hashlib.sha256(yaml_path.read_bytes()).hexdigest(),
+    }
+
+    for locator in (
+        "src/example.py::carrier",
+        "src/example.py::ALIAS",
+        "src/example.py::Holder.member",
+        "src/example.py::Kind.ACTIVE",
+        "config/example.yaml::ITEM-1",
+    ):
+        assert validator._implementation_locator_is_snapshot_resolvable(locator, tmp_path, hashes)
+    for locator in (
+        "Exact source: src/example.py::carrier.",
+        "src/example.py::missing",
+        "config/example.yaml::kind",
+    ):
+        assert not validator._implementation_locator_is_snapshot_resolvable(
+            locator, tmp_path, hashes
+        )
+
+
+def test_implementation_locators_do_not_allow_one_good_to_rescue_bad(tmp_path: Path) -> None:
+    validator = load_validator()
+    source = tmp_path / "src/example.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def carrier():\n    return None\n", encoding="utf-8")
+    hashes = {"src/example.py": hashlib.sha256(source.read_bytes()).hexdigest()}
+
+    assert not validator._implementation_locators_are_snapshot_resolvable(
+        ["src/example.py::carrier", "src/example.py::missing"], tmp_path, hashes
+    )
+
+
+def test_yaml_implementation_locator_id_must_exist_in_named_file(tmp_path: Path) -> None:
+    validator = load_validator()
+    first = tmp_path / "config/first.yaml"
+    second = tmp_path / "config/second.yaml"
+    first.parent.mkdir(parents=True)
+    first.write_text("id: ITEM-1\n", encoding="utf-8")
+    second.write_text("id: ITEM-2\n", encoding="utf-8")
+    hashes = {
+        "config/first.yaml": hashlib.sha256(first.read_bytes()).hexdigest(),
+        "config/second.yaml": hashlib.sha256(second.read_bytes()).hexdigest(),
+    }
+
+    assert not validator._implementation_locator_is_snapshot_resolvable(
+        "config/second.yaml::ITEM-1", tmp_path, hashes
+    )
+
+
+def test_status_scope_rejects_missing_and_generic_status_basis(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    write_status_scope(root)
+    action_path = root / "reality/actions/act-1-runner-model-profile-defaults-save.yaml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    del action["status_basis"]["test"]
+    action["status_basis"]["implementation"] = "  Carrier   exists.  "
+    write_yaml(action_path, action)
+
+    result = run_validator(root)
+
+    assert "STATUS_BASIS_MISSING" in issue_codes(result)
+    assert "STATUS_BASIS_GENERIC" in issue_codes(result)
+
+
+def test_absent_action_rejects_locator_and_executable_flag(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    write_status_scope(root)
+    action_path = root / "reality/actions/act-1-runner-model-profile-defaults-save.yaml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    action["implementation_status"] = "absent"
+    write_yaml(action_path, action)
+
+    result = run_validator(root)
+
+    assert "ABSENT_IMPLEMENTATION_LOCATORS_NONEMPTY" in issue_codes(result)
+    assert "ABSENT_ACTION_EXECUTABLE" in issue_codes(result)
+
+
+def test_unexercised_action_rejects_test_locator(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    write_status_scope(root)
+    action_path = root / "reality/actions/act-1-runner-model-profile-defaults-save.yaml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    action["test_status"] = "unexercised"
+    write_yaml(action_path, action)
+
+    result = run_validator(root)
+
+    assert "NONEXERCISED_TEST_LOCATORS_NONEMPTY" in issue_codes(result)
+
+
+def test_conflicting_action_requires_reciprocal_unresolved_issue(tmp_path: Path) -> None:
+    root = copy_foundation_with_source(tmp_path)
+    write_status_scope(root)
+    action_path = root / "reality/actions/act-1-runner-model-profile-defaults-save.yaml"
+    action = yaml.safe_load(action_path.read_text(encoding="utf-8"))
+    action["documentation_status"] = "conflicting"
+    action["conflict_ids"] = []
+    action["question_ids"] = []
+    write_yaml(action_path, action)
+
+    result = run_validator(root)
+
+    assert "CONFLICTING_STATUS_RECIPROCAL_ISSUE_MISSING" in issue_codes(result)
 
 
 def test_committed_status_adjudication_matches_exact_evidence_outputs() -> None:

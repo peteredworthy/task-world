@@ -194,7 +194,6 @@ items:
     epistemic: INV-7 is observed in approved test evidence EVD-97.
   implementation_locators:
   - research/ui-foundation/tools/validate.py::validate_foundation
-  - research/ui-foundation/reality/permissions.yaml::PER-1
   test_locators:
   - tests/integration/test_ui_foundation_tools.py::test_current_action_cannot_substitute_proposed_role_for_enforced_authority
 - title: Graph patch stale and rejected outcomes remain explicit

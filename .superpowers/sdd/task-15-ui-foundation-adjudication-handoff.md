@@ -7,6 +7,8 @@ Record the canonical SV-008 adjudication correction while preserving Phase 1 imm
 ## Scope inspected
 
 The 35 REL, 72 active STA, 71 ACT, 9 EVI, and INV-2 through INV-7 records.
+`research/ui-foundation/catalog/status-scope.yaml` now enumerates all 193 records and their exact
+declaration paths; rejected `STA-28` is explicitly outside that closed set.
 
 ## Key findings
 
@@ -91,10 +93,26 @@ was not modified.
   this adjudication; the immutable Phase 1 digest remains
   `a5081f732fc02989b1e04ca5bca6f03d55ba11d5975542ab3c7816747944b8a0`.
 
+## Bounded mechanical unit 1
+
+All 193 SV-008 records now pass through one fail-closed status validator, including actions. Exact
+Python top-level/class-member/enum-member locators and exact YAML `id`/`canonical_id` locators must
+full-match and resolve against current active-snapshot bytes; prose, arbitrary YAML fields, canonical
+self IDs, evidence records, and partial-list rescue are not accepted. Test locators retain the Task 15
+AST/current-hash check; no pytest collection manifest was added.
+
+The migration removed non-implementation evidence/self-field locators from `REL-1`, `REL-5`,
+`REL-6`, `REL-14`, `REL-31`, `REL-35`, the affected review/repository/graph state records,
+`INV-7`, and present action records. `ACT-4`, `ACT-5`, and `ACT-56` now name their existing
+`back_merge_endpoint`/`merge_back_endpoint` source symbols, and `ACT-59` names
+`agent_resolve_conflicts`. No implementation status required downgrade. `ACT-27`'s existing
+conflicting status is now reciprocal with open authorization question `Q-5`; semantic status choices
+and the immutable verifier report were not changed.
+
 ## Verification handoff
 
-Phase 2 validation and focused foundation tests have passed. Run Ruff, Pyright,
-and hooks before closing the task. The historical Task 15 status audit is
+Phase 2 validation and focused foundation tests have passed for bounded mechanical unit 1. Ruff,
+Pyright, and hooks are part of its commit gate. The historical Task 15 status audit is
 noncanonical reviewed evidence only and is not parsed by shipped tools or used
 as a regeneration input. Independent re-review must assess this application
 without changing the immutable verifier report.

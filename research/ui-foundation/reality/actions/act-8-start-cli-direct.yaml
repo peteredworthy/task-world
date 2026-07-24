@@ -48,6 +48,5 @@ status_basis:
   capability: Source presence does not prove CLI availability.
   epistemic: ACT-8 is observed by EVD-7/EVD-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-8-start-cli-direct.yaml::durable_effect
 - src/orchestrator/cli/runs.py::start_run
 test_locators: []

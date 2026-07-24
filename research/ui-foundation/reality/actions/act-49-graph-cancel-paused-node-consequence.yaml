@@ -74,6 +74,5 @@ status_basis:
   capability: Source presence does not prove this node outcome path.
   epistemic: ACT-49 implementation is observed by EVD-20/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-49-graph-cancel-paused-node-consequence.yaml::durable_effect
 - src/orchestrator/graph/commands/lifecycle.py::handle_cancel
 test_locators: []

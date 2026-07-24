@@ -84,7 +84,6 @@ status_basis:
   capability: Caller-supplied decider is not enforced product authorization.
   epistemic: ACT-10 is directly observed by EVD-27.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-10-graph-approval.yaml::durable_effect
 - src/orchestrator/api/routers/graph.py::record_graph_decision
 test_locators:
 - tests/integration/test_graph_decisions_api.py::test_record_approval_decision_is_durable_and_releases_waiting_successor

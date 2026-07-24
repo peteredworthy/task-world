@@ -52,7 +52,6 @@ status_basis:
   capability: One skip path is not a complete workflow-control capability.
   epistemic: ACT-28 is observed by EVD-7/EVD-12.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-28-step-skip-resume.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::skip_step
 test_locators:
 - tests/integration/test_api_runs.py::test_skip_step_writes_step_skipped_to_events_v2_and_activity

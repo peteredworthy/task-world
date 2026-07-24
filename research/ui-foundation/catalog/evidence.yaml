@@ -4362,7 +4362,7 @@ snapshots:
   audited_at: '2026-07-24T04:00:00Z'
   files:
   - path: research/ui-foundation/tools/validate.py
-    sha256: f5accf8b8a008555de1560619117b84e7d87552b8abdc1304d54eaaeacd1035e
+    sha256: b8bfa439e3d18dbb6445cb7d55d48e8b9c387e8befeb481ae045e5190001834a
     audited_at: '2026-07-24T20:44:27Z'
   - path: src/orchestrator/api/presenters/cost_rollup.py
     sha256: b4b0a9add82f04db331d02b9c0577badf1438843046b1935d1580657b5caf9c9
@@ -4623,7 +4623,7 @@ snapshots:
     sha256: 53881d6785e6e30a63a5c477841ace16a20db50def2a32e14b1d01ff2bbc3cd8
     audited_at: '2026-07-24T20:44:27Z'
   - path: tests/integration/test_ui_foundation_tools.py
-    sha256: bedc0e12fbedc5a8eaf3bd745e138a40e260d109901bc34f258482d81c07166e
+    sha256: ae9f593a306741718808f08089d692ea8f30931bda4035b259d86ebc2fa026f9
     audited_at: '2026-07-24T20:44:27Z'
   - path: tests/integration/test_workflow_service.py
     sha256: fc5ea36bc97fcf2d7c1d3c687d64a0bca91e2a91d83b6acbcd16f6200ec6e8db

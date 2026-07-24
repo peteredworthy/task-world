@@ -46,7 +46,6 @@ status_basis:
   capability: One revert path does not prove universal reversibility.
   epistemic: ACT-55 is observed by EVD-29.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-55-review-undo-back-merge.yaml::durable_effect
 - src/orchestrator/git/ops/branch_ops.py::revert_back_merge
 test_locators:
 - tests/integration/test_conflict_api.py::TestRevertBackMerge::test_revert_clean_back_merge_succeeds

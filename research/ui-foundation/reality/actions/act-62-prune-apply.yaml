@@ -48,7 +48,6 @@ status_basis:
   capability: One apply mode does not prove all prune safety.
   epistemic: ACT-62 is observed by EVD-28.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-62-prune-apply.yaml::durable_effect
 - src/orchestrator/git/ops/prune_ops.py::apply_prune
 test_locators:
 - tests/integration/test_prune_api.py::TestPruneApply::test_apply_creates_commit

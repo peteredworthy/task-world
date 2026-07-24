@@ -48,7 +48,6 @@ status_basis:
   capability: The carrier does not establish model availability.
   epistemic: ACT-1 is observed by EVD-34.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-1-runner-model-profile-defaults-save.yaml::durable_effect
 - src/orchestrator/api/routers/runners.py::set_agent_runner_model_profile_defaults
 test_locators:
 - tests/integration/test_api_model_profiles.py::TestAgentRunnerModelDefaultEndpoints::test_put_replaces_all_existing_model_defaults

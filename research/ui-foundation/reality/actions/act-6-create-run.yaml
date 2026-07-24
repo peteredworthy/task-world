@@ -62,7 +62,6 @@ status_basis:
   capability: Creation does not prove subsequent runner availability.
   epistemic: ACT-6 is observed by EVD-43/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-6-create-run.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::create_run
 test_locators:
 - tests/integration/test_api_runs.py::test_create_run

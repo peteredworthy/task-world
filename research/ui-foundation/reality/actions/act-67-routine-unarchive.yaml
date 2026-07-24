@@ -45,7 +45,6 @@ status_basis:
   capability: Metadata mutation is not a broader product capability.
   epistemic: ACT-67 is observed by EVD-32.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-67-routine-unarchive.yaml::durable_effect
 - src/orchestrator/api/routers/routines.py::unarchive_routine
 test_locators:
 - tests/integration/test_api_routines.py::test_unarchive_routine

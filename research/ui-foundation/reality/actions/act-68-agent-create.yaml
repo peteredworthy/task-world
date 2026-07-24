@@ -49,7 +49,6 @@ status_basis:
   capability: Configuration creation does not prove runner execution.
   epistemic: ACT-68 is observed by EVD-33.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-68-agent-create.yaml::durable_effect
 - src/orchestrator/api/routers/agents.py::create_agent
 test_locators:
 - tests/integration/test_api_agent_configs.py::TestCreateAgent::test_create_returns_201

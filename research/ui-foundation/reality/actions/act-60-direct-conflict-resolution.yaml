@@ -48,7 +48,6 @@ status_basis:
   capability: One file resolution does not prove all merge completion.
   epistemic: ACT-60 is observed by EVD-30.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-60-direct-conflict-resolution.yaml::durable_effect
 - src/orchestrator/git/ops/conflict_ops.py::resolve_conflict
 test_locators:
 - tests/integration/test_conflict_api.py::TestResolveConflict::test_resolve_manual_writes_custom_content

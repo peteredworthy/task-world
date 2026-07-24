@@ -55,7 +55,6 @@ status_basis:
   capability: Legacy rewind is not typed graph steering.
   epistemic: ACT-36 is observed by EVD-45.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-36-transition-back-run-preserved.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::transition_back
 test_locators:
 - tests/integration/test_api_backward_transitions.py::test_transition_backward_basic

@@ -71,7 +71,6 @@ status_basis:
   capability: One paused path does not prove every cancellation race.
   epistemic: ACT-21 is observed by EVD-7/EVD-11/EVD-20/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-21-cancel-paused-rest.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::cancel_run
 test_locators:
 - tests/integration/test_api_runs.py::test_cancel_run_from_paused

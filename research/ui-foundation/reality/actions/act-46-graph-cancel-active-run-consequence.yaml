@@ -73,7 +73,6 @@ status_basis:
   capability: A pure command path does not prove external execution cancellation.
   epistemic: ACT-46 is observed by EVD-11/EVD-20/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-46-graph-cancel-active-run-consequence.yaml::durable_effect
 - src/orchestrator/graph/_commands.py::RUN_LIFECYCLE_TRANSITIONS
 test_locators:
 - tests/unit/test_graph_commands.py::test_lifecycle_legal_transitions

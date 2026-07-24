@@ -885,7 +885,7 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
     )
     active_snapshot_hashes = {
         path: sha256
-        for record in [*phase_one_files, *active_snapshot_files]
+        for record in active_snapshot_files
         if isinstance(record, dict)
         and isinstance((path := record.get("path")), str)
         and isinstance((sha256 := record.get("sha256")), str)
@@ -981,16 +981,15 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
             active_snapshot_hashes,
         )
     )
-    issues.extend(
-        _validate_status_adjudication(
-            package,
-            semantic_items,
-            declarations,
-            raw_evidence_by_id,
-            snapshot_paths,
-            active_snapshot_hashes,
+    if phase >= 2:
+        issues.extend(
+            _validate_status_scope(
+                package,
+                active_snapshot_hashes,
+                conflict_document.items if conflict_document else [],
+                question_document.items if question_document else [],
+            )
         )
-    )
     issues.extend(_validate_entity_allocations(package, semantic_items, raw_allocations))
 
     if phase >= 1:
@@ -1022,41 +1021,6 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
             if isinstance(evidence_ids, list)
             else []
         )
-        status_basis = action.get("status_basis")
-        if not isinstance(status_basis, dict) or any(
-            not isinstance(status_basis.get(dimension), str)
-            or len(str(status_basis[dimension]).strip()) < 12
-            for dimension in STATUS_BASIS_DIMENSIONS
-        ):
-            issues.append(_issue("STATUS_BASIS_MISSING", location, identifier))
-        test_locators = action.get("test_locators")
-        approved_test_locators = _exact_test_locators_are_snapshot_resolvable(
-            test_locators,
-            snapshot_paths,
-            repository_root,
-            active_snapshot_hashes,
-        )
-        if action.get("test_status") != "exercised":
-            pass
-        elif not isinstance(test_locators, list) or not test_locators:
-            issues.append(_issue("EXERCISED_TEST_LOCATORS_EMPTY", location, identifier))
-        elif not (
-            approved_test_locators
-            or any(
-                _is_direct_evidence(record)
-                and record.get("source_kind") in DIRECT_TEST_SOURCE_KINDS
-                and record.get("test_status") == "exercised"
-                and _has_valid_direct_locator(record, snapshot_paths)
-                for record in records
-            )
-        ):
-            issues.append(
-                _issue(
-                    "EXERCISED_DIRECT_TEST_EVIDENCE_MISSING",
-                    location,
-                    identifier,
-                )
-            )
         if action.get("capability_status") == "current" and not any(
             _is_direct_evidence(record)
             and record.get("source_kind") in DIRECT_IMPLEMENTATION_SOURCE_KINDS
@@ -1071,26 +1035,6 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     identifier,
                 )
             )
-    if (
-        action_records
-        and all(action.get("test_status") == "unexercised" for action in action_records.values())
-        and any(
-            _exact_test_locators_are_snapshot_resolvable(
-                action.get("test_locators"),
-                snapshot_paths,
-                repository_root,
-                active_snapshot_hashes,
-            )
-            for action in action_records.values()
-        )
-    ):
-        issues.append(
-            _issue(
-                "STATUS_FAMILY_MECHANICAL_UNEXERCISED",
-                package.root / "reality/actions",
-                "ACT",
-            )
-        )
     for item in conflict_document.items if conflict_document else []:
         if item.get("status") != "unresolved":
             continue
@@ -2785,7 +2729,23 @@ STATUS_BASIS_DIMENSIONS = (
     "epistemic",
 )
 STATUS_ADJUDICATION_PREFIXES = ("REL-", "STA-", "ACT-", "EVI-", "INV-")
-GENERIC_STATUS_BASES = {"evidence", "carrier exists", "unknown", "n/a", "not assessed"}
+GENERIC_STATUS_BASES = {
+    "carrier exists",
+    "evidence",
+    "n a",
+    "no evidence",
+    "none",
+    "not applicable",
+    "not assessed",
+    "same as above",
+    "tbd",
+    "unknown",
+    "unspecified",
+}
+
+
+def _normalized_status_basis(value: str) -> str:
+    return " ".join(re.findall(r"[a-z0-9]+", value.casefold()))
 
 
 def _basis_test_locator_is_snapshot_resolvable(
@@ -2860,173 +2820,316 @@ def _exact_test_locators_are_snapshot_resolvable(
     )
 
 
-def _basis_implementation_locator_is_snapshot_resolvable(
-    basis: str, repository_root: Path, active_snapshot_hashes: dict[str, str]
+def _yaml_ids(value: object) -> set[str]:
+    identifiers: set[str] = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key in {"id", "canonical_id"} and isinstance(child, str):
+                identifiers.add(child)
+            identifiers.update(_yaml_ids(child))
+    elif isinstance(value, list):
+        for child in value:
+            identifiers.update(_yaml_ids(child))
+    return identifiers
+
+
+def _implementation_locator_is_snapshot_resolvable(
+    locator: str, repository_root: Path, active_snapshot_hashes: dict[str, str]
 ) -> bool:
-    """Reject invented implementation locators while allowing fields carried by classes."""
-    locators = re.findall(
-        r"((?:src|research)/[\w/.-]+\.py)::([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?)", basis
+    """Resolve one exact Python symbol or YAML id against current snapshot bytes."""
+    match = re.fullmatch(
+        r"(?P<path>[A-Za-z0-9_./-]+\.(?P<suffix>py|ya?ml))::"
+        r"(?P<symbol>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)?|[A-Z][A-Z0-9]*-\d+)",
+        locator,
     )
-    if not locators:
+    if match is None:
         return False
-    for path, symbol in locators:
-        expected_hash = active_snapshot_hashes.get(path)
-        candidate = repository_root / path
+    path = match.group("path")
+    symbol = match.group("symbol")
+    expected_hash = active_snapshot_hashes.get(path)
+    candidate = repository_root / path
+    try:
+        content = candidate.read_bytes()
+    except OSError:
+        return False
+    if expected_hash != hashlib.sha256(content).hexdigest():
+        return False
+    if match.group("suffix") in {"yaml", "yml"}:
         try:
-            content = candidate.read_bytes()
-            tree = ast.parse(content, filename=path)
-        except (OSError, SyntaxError):
-            continue
-        if expected_hash != hashlib.sha256(content).hexdigest():
-            continue
-        parent, _, member = symbol.partition(".")
-        top_level = next(
-            (
-                node
-                for node in tree.body
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+            value = yaml.safe_load(content)
+        except yaml.YAMLError:
+            return False
+        return symbol in _yaml_ids(value)
+    try:
+        tree = ast.parse(content, filename=path)
+    except SyntaxError:
+        return False
+    parent, _, member = symbol.partition(".")
+    top_level = next(
+        (
+            node
+            for node in tree.body
+            if (
+                isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
                 and node.name == parent
-            ),
-            None,
-        )
-        if top_level is None:
-            continue
-        if not member:
-            return True
-        if isinstance(top_level, ast.ClassDef) and any(
-            (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == member)
+            )
             or (
                 isinstance(node, ast.AnnAssign)
                 and isinstance(node.target, ast.Name)
-                and node.target.id == member
+                and node.target.id == parent
             )
             or (
                 isinstance(node, ast.Assign)
                 and any(
-                    isinstance(target, ast.Name) and target.id == member for target in node.targets
+                    isinstance(target, ast.Name) and target.id == parent for target in node.targets
                 )
             )
-            for node in top_level.body
-        ):
-            return True
-    return False
+        ),
+        None,
+    )
+    if top_level is None:
+        return False
+    if not member:
+        return True
+    return isinstance(top_level, ast.ClassDef) and any(
+        (isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == member)
+        or (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == member
+        )
+        or (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == member for target in node.targets)
+        )
+        for node in top_level.body
+    )
 
 
-def _validate_status_adjudication(
+def _implementation_locators_are_snapshot_resolvable(
+    locators: object, repository_root: Path, active_snapshot_hashes: dict[str, str]
+) -> bool:
+    return (
+        isinstance(locators, list)
+        and bool(locators)
+        and all(
+            isinstance(locator, str)
+            and _implementation_locator_is_snapshot_resolvable(
+                locator, repository_root, active_snapshot_hashes
+            )
+            for locator in locators
+        )
+    )
+
+
+def _expected_status_scope_ids() -> set[str]:
+    return (
+        {f"REL-{number}" for number in range(1, 36)}
+        | ({f"STA-{number}" for number in range(1, 74)} - {"STA-28"})
+        | {f"ACT-{number}" for number in range(1, 72)}
+        | {f"EVI-{number}" for number in range(1, 10)}
+        | {f"INV-{number}" for number in range(2, 8)}
+    )
+
+
+def _reciprocal_unresolved_issue(
+    identifier: str,
+    record: dict[str, JsonValue],
+    conflicts: list[dict[str, JsonValue]],
+    questions: list[dict[str, JsonValue]],
+    *,
+    conflict_only: bool = False,
+) -> bool:
+    conflict_ids = set(_string_list(record.get("conflict_ids")))
+    if any(
+        item.get("id") in conflict_ids
+        and item.get("status") == "unresolved"
+        and identifier in _string_list(item.get("affected_ids"))
+        for item in conflicts
+    ):
+        return True
+    if conflict_only:
+        return False
+    question_ids = set(_string_list(record.get("question_ids")))
+    return any(
+        item.get("id") in question_ids
+        and item.get("status") != "resolved"
+        and identifier in _string_list(item.get("affected_ids"))
+        for item in questions
+    )
+
+
+def _validate_status_scope(
     package: FoundationPackage,
-    semantic_items: dict[str, SemanticItem],
-    declarations: dict[str, str],
-    evidence: dict[str, dict[str, JsonValue]],
-    snapshot_paths: dict[str, set[str]],
     active_snapshot_hashes: dict[str, str],
+    conflicts: list[dict[str, JsonValue]],
+    questions: list[dict[str, JsonValue]],
 ) -> list[ValidationIssue]:
-    """Require record-level, snapshot-resolvable reasons for adjudicated statuses."""
+    """Validate every active SV-008 record through one mechanical path."""
     issues: list[ValidationIssue] = []
-    family_items: dict[str, list[SemanticItem]] = {}
-    for identifier, semantic in semantic_items.items():
-        if not identifier.startswith(STATUS_ADJUDICATION_PREFIXES) or identifier in {
-            "INV-1",
-            "INV-8",
-            "INV-9",
-            "INV-10",
-            "INV-11",
-        }:
+    expected_ids = _expected_status_scope_ids()
+    scope_path = package.root / "catalog/status-scope.yaml"
+    scope = package.documents.get("catalog/status-scope.yaml")
+    raw_scope_items = scope.get("items") if isinstance(scope, dict) else None
+    scope_items = raw_scope_items if isinstance(raw_scope_items, list) else []
+    manifest: dict[str, str] = {}
+    manifest_counts: dict[str, int] = {}
+    for item in scope_items:
+        if not isinstance(item, dict):
             continue
-        family = identifier.split("-", 1)[0]
-        family_items.setdefault(family, []).append(semantic)
-        location = package.root / declarations.get(identifier, "unknown")
-        basis = semantic.model_extra.get("status_basis") if semantic.model_extra else None
-        if not isinstance(basis, dict) or any(
-            not isinstance(basis.get(dimension), str)
-            or len(str(basis[dimension]).strip()) < 12
-            or str(basis[dimension]).strip().casefold() in GENERIC_STATUS_BASES
-            for dimension in STATUS_BASIS_DIMENSIONS
+        identifier, path = item.get("id"), item.get("path")
+        if not isinstance(identifier, str) or not isinstance(path, str):
+            issues.append(_issue("STATUS_SCOPE_ITEM_INVALID", scope_path, item))
+            continue
+        manifest_counts[identifier] = manifest_counts.get(identifier, 0) + 1
+        manifest.setdefault(identifier, path)
+    for identifier, count in manifest_counts.items():
+        if count != 1:
+            issues.append(_issue("STATUS_SCOPE_DUPLICATE", scope_path, identifier))
+    manifest_ids = set(manifest)
+    if "STA-28" in manifest_ids:
+        issues.append(_issue("STATUS_SCOPE_REACTIVATED", scope_path, "STA-28"))
+    for identifier in sorted(expected_ids - manifest_ids):
+        issues.append(_issue("STATUS_SCOPE_MISSING", scope_path, identifier))
+    for identifier in sorted(manifest_ids - expected_ids - {"STA-28"}):
+        issues.append(_issue("STATUS_SCOPE_EXTRA", scope_path, identifier))
+
+    declarations: list[tuple[str, str, dict[str, JsonValue]]] = []
+    fixed = {
+        "reality/relationships.yaml": "REL-",
+        "reality/state-model.yaml": "STA-",
+        "reality/evidence/inventory.yaml": "EVI-",
+        "catalog/invariants.yaml": "INV-",
+    }
+    for path, prefix in fixed.items():
+        document = package.documents.get(path)
+        items = document.get("items") if isinstance(document, dict) else None
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                continue
+            identifier = cast(str, item["id"])
+            excluded_invariants = {"INV-1", "INV-8", "INV-9", "INV-10", "INV-11"}
+            if identifier.startswith(STATUS_ADJUDICATION_PREFIXES) and (
+                not identifier.startswith("INV-") or identifier not in excluded_invariants
+            ):
+                declarations.append((identifier, path, cast(dict[str, JsonValue], item)))
+                if not identifier.startswith(prefix):
+                    issues.append(
+                        _issue("STATUS_SCOPE_WRONG_FAMILY", package.root / path, identifier)
+                    )
+    for path, value in package.documents.items():
+        if not path.startswith("reality/actions/") or not isinstance(value, dict):
+            continue
+        identifier = value.get("id")
+        if isinstance(identifier, str):
+            declarations.append((identifier, path, value))
+            if not identifier.startswith("ACT-"):
+                issues.append(_issue("STATUS_SCOPE_WRONG_FAMILY", package.root / path, identifier))
+
+    actual_counts: dict[str, int] = {}
+    for identifier, _, _ in declarations:
+        actual_counts[identifier] = actual_counts.get(identifier, 0) + 1
+    for identifier in sorted(expected_ids):
+        count = actual_counts.get(identifier, 0)
+        if count == 0:
+            issues.append(_issue("STATUS_SCOPE_DECLARATION_MISSING", scope_path, identifier))
+        elif count > 1:
+            issues.append(_issue("STATUS_SCOPE_DECLARATION_DUPLICATE", scope_path, identifier))
+
+    repository_root = package.root.parents[1]
+    family_records: dict[str, list[dict[str, JsonValue]]] = {}
+    for identifier, path, record in declarations:
+        if identifier not in expected_ids:
+            if identifier == "STA-28":
+                issues.append(_issue("STATUS_SCOPE_REACTIVATED", package.root / path, identifier))
+            elif identifier.startswith(STATUS_ADJUDICATION_PREFIXES):
+                issues.append(_issue("STATUS_SCOPE_EXTRA", package.root / path, identifier))
+            continue
+        location = package.root / path
+        if manifest.get(identifier) != path:
+            issues.append(_issue("STATUS_SCOPE_WRONG_PATH", location, identifier))
+        family_records.setdefault(identifier.split("-", 1)[0], []).append(record)
+
+        basis = record.get("status_basis")
+        if (
+            not isinstance(basis, dict)
+            or set(basis) != set(STATUS_BASIS_DIMENSIONS)
+            or any(
+                not isinstance(basis.get(dimension), str) or not str(basis[dimension]).strip()
+                for dimension in STATUS_BASIS_DIMENSIONS
+            )
         ):
             issues.append(_issue("STATUS_BASIS_MISSING", location, identifier))
-            continue
-        records = [
-            evidence[evidence_id]
-            for evidence_id in semantic.evidence_ids
-            if evidence_id in evidence
-        ]
-        if semantic.implementation_status in {"present", "partial"} and not any(
-            isinstance(record.get("path"), str)
-            and isinstance(record.get("symbol"), str)
-            and isinstance(record.get("snapshot_id"), str)
-            and isinstance(record.get("snapshot_path"), str)
-            for record in records
+        if isinstance(basis, dict) and any(
+            isinstance(value, str) and _normalized_status_basis(value) in GENERIC_STATUS_BASES
+            for value in basis.values()
         ):
-            issues.append(_issue("PRESENT_IMPLEMENTATION_EVIDENCE_MISSING", location, identifier))
-        implementation_locators = (
-            semantic.model_extra.get("implementation_locators") if semantic.model_extra else None
+            issues.append(_issue("STATUS_BASIS_GENERIC", location, identifier))
+
+        implementation_status = record.get("implementation_status")
+        implementation_locators = record.get("implementation_locators")
+        has_implementation_locators = isinstance(implementation_locators, list) and bool(
+            implementation_locators
         )
-        if semantic.implementation_status in {
-            "present",
-            "partial",
-        } and not _basis_implementation_locator_is_snapshot_resolvable(
-            " ".join(implementation_locators)
-            if isinstance(implementation_locators, list)
-            else str(basis["implementation"]),
-            package.root.parents[1],
-            active_snapshot_hashes,
+        if implementation_status in {"present", "partial"}:
+            if not _implementation_locators_are_snapshot_resolvable(
+                implementation_locators, repository_root, active_snapshot_hashes
+            ) or any(
+                isinstance(locator, str) and locator.partition("::")[0] == path
+                for locator in implementation_locators
+                if isinstance(implementation_locators, list)
+            ):
+                issues.append(_issue("IMPLEMENTATION_LOCATOR_UNRESOLVED", location, identifier))
+        elif has_implementation_locators:
+            code = (
+                "ABSENT_IMPLEMENTATION_LOCATORS_NONEMPTY"
+                if implementation_status == "absent"
+                else "NONPRESENT_IMPLEMENTATION_LOCATORS_NONEMPTY"
+            )
+            issues.append(_issue(code, location, identifier))
+        if (
+            implementation_status == "absent"
+            and identifier.startswith("ACT-")
+            and record.get("executable") is not False
         ):
-            issues.append(_issue("IMPLEMENTATION_BASIS_UNRESOLVED", location, identifier))
-        test_locators = semantic.model_extra.get("test_locators") if semantic.model_extra else None
-        if semantic.test_status == "exercised":
+            issues.append(_issue("ABSENT_ACTION_EXECUTABLE", location, identifier))
+
+        test_status = record.get("test_status")
+        test_locators = record.get("test_locators")
+        if test_status in {"exercised", "contradicted"}:
             if not isinstance(test_locators, list) or not test_locators:
                 issues.append(_issue("EXERCISED_TEST_LOCATORS_EMPTY", location, identifier))
             elif not _exact_test_locators_are_snapshot_resolvable(
-                test_locators, snapshot_paths, package.root.parents[1], active_snapshot_hashes
+                test_locators,
+                {"active": set(active_snapshot_hashes)},
+                package.root.parents[1],
+                active_snapshot_hashes,
             ):
                 issues.append(_issue("EXERCISED_TEST_BASIS_UNRESOLVED", location, identifier))
-    for family, items in family_items.items():
-        vectors = {
-            (
-                item.implementation_status,
-                item.test_status,
-                item.documentation_status,
-                item.capability_status,
-                item.epistemic_status,
-            )
-            for item in items
-        }
-        evidence_sets = {tuple(item.evidence_ids) for item in items}
-        if len(items) > 1 and len(vectors) == 1 and len(evidence_sets) > 1:
+            if test_status == "contradicted" and not _reciprocal_unresolved_issue(
+                identifier, record, conflicts, questions, conflict_only=True
+            ):
+                issues.append(_issue("CONTRADICTED_TEST_CONFLICT_MISSING", location, identifier))
+        elif isinstance(test_locators, list) and test_locators:
+            issues.append(_issue("NONEXERCISED_TEST_LOCATORS_NONEMPTY", location, identifier))
+
+        if record.get("documentation_status") == "conflicting" and not (
+            _reciprocal_unresolved_issue(identifier, record, conflicts, questions)
+        ):
             issues.append(
-                _issue(
-                    "STATUS_FAMILY_MECHANICAL_VECTOR",
-                    package.root / declarations.get(items[0].id, "unknown"),
-                    family,
-                )
+                _issue("CONFLICTING_STATUS_RECIPROCAL_ISSUE_MISSING", location, identifier)
             )
+
+    for family, records in family_records.items():
         if (
-            items
-            and all(item.test_status == "unexercised" for item in items)
-            and any(
-                (
-                    _exact_test_locators_are_snapshot_resolvable(
-                        item.model_extra.get("test_locators") if item.model_extra else None,
-                        snapshot_paths,
-                        package.root.parents[1],
-                        active_snapshot_hashes,
-                    )
-                    or (
-                        isinstance(item.model_extra.get("status_basis"), dict)
-                        and _basis_test_locator_is_snapshot_resolvable(
-                            str(item.model_extra["status_basis"].get("test", "")),
-                            snapshot_paths,
-                            package.root.parents[1],
-                            active_snapshot_hashes,
-                        )
-                    )
-                )
-                for item in items
-            )
+            records
+            and all(record.get("test_status") == "unexercised" for record in records)
+            and any(record.get("test_locators") for record in records)
         ):
             issues.append(
                 _issue(
                     "STATUS_FAMILY_MECHANICAL_UNEXERCISED",
-                    package.root / declarations.get(items[0].id, "unknown"),
+                    scope_path,
                     family,
                 )
             )

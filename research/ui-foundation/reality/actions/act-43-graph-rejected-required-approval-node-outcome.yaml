@@ -69,7 +69,6 @@ status_basis:
   capability: Node failure is not enforced authorization.
   epistemic: ACT-43 is observed by EVD-26/EVD-27.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-43-graph-rejected-required-approval-node-outcome.yaml::durable_effect
 - src/orchestrator/graph/_commands.py::_apply_record_decision
 test_locators:
 - tests/integration/test_graph_decisions_api.py::test_record_rejected_approval_is_durable_and_dead_inputs_successor

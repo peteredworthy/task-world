@@ -49,7 +49,6 @@ status_basis:
   capability: One strategy path does not prove every merge policy.
   epistemic: ACT-53 is observed by EVD-29.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-53-run-detail-final-merge-back.yaml::durable_effect
 - src/orchestrator/api/routers/runs.py::merge_back_endpoint
 test_locators:
 - tests/integration/test_merge_readiness.py::test_merge_back_with_strategy_merge

@@ -73,7 +73,6 @@ status_basis:
   capability: The pure command test does not prove runner-process termination.
   epistemic: ACT-47 is observed by EVD-20/EVD-38-40.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-47-graph-cancel-active-node-consequence.yaml::durable_effect
 - src/orchestrator/graph/commands/lifecycle.py::handle_cancel
 test_locators:
 - tests/unit/test_graph_commands.py::test_cancel_revokes_active_lease_and_cancels_running_node

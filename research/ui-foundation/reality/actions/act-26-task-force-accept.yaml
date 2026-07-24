@@ -52,6 +52,5 @@ status_basis:
   capability: Availability remains unknown at the full action boundary.
   epistemic: ACT-26 implementation is observed by EVD-16.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-26-task-force-accept.yaml::durable_effect
 - src/orchestrator/workflow/engine/transitions.py::transition_force_accept
 test_locators: []

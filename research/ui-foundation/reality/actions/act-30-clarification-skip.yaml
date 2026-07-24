@@ -55,7 +55,6 @@ status_basis:
   capability: The carrier does not prove a complete decision packet/UI.
   epistemic: ACT-30 is observed by EVD-13.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-30-clarification-skip.yaml::durable_effect
 - src/orchestrator/api/routers/clarifications.py::respond_to_clarification
 test_locators:
 - tests/integration/test_api_clarifications.py::test_respond_with_skipped_true

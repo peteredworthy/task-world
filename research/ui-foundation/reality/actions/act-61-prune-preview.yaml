@@ -46,7 +46,6 @@ status_basis:
   capability: One preview mode does not prove all prune selection modes.
   epistemic: ACT-61 is observed by EVD-28.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-61-prune-preview.yaml::durable_effect
 - src/orchestrator/git/ops/prune_ops.py::preview_prune
 test_locators:
 - tests/integration/test_prune_api.py::TestPrunePreview::test_preview_does_not_modify_worktree

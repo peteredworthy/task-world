@@ -67,7 +67,6 @@ status_basis:
   capability: Node outcome is not enforced authorization.
   epistemic: ACT-41 is observed by EVD-27.
 implementation_locators:
-- research/ui-foundation/reality/actions/act-41-graph-approved-approval-node-outcome.yaml::durable_effect
 - src/orchestrator/graph/_commands.py::_apply_record_decision
 test_locators:
 - tests/integration/test_graph_decisions_api.py::test_record_approval_decision_is_durable_and_releases_waiting_successor
