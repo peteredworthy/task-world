@@ -2,7 +2,7 @@ id: ACT-8
 title: Start run through CLI direct path
 definition: Apply legacy start synchronously through the divergent CLI path.
 implementation_status: present
-capability_status: current
+capability_status: unknown
 executable: true
 command_id: CMD-3
 actor: local CLI operator

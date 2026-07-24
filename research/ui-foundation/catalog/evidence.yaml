@@ -1483,7 +1483,7 @@ snapshot: &id001
     sha256: 881f069c22f2f0dad0cd985e0126ce9c5d22b126c8e620f7b4c50f888d39f7b6
     audited_at: '2026-07-24T01:00:00Z'
   - path: tests/integration/test_ui_foundation_tools.py
-    sha256: bad10233c1c6fbffce1d6c5448023709dc1018c6bbba92330a8e21d5f7c6d052
+    sha256: f56e1ec14b62d3af73d8718f36f41f5645e741ae7d4c016f48a625a8d0f004c3
     audited_at: '2026-07-24T01:00:00Z'
   - path: tests/integration/test_verifier_model_pinning.py
     sha256: b745091b4bf7450fdb1e901e4b231913be33dec9b70e0a3340e11ac690676236
@@ -3912,6 +3912,24 @@ items:
   snapshot_id: snapshot-2026-07-24-phase-1
   snapshot_path: tests/integration/test_graph_fr08_acceptance.py
   provenance_role: direct
+- id: EVD-154
+  source_kind: snapshot-coverage-attestation
+  coverage_exception: true
+  snapshot_id: snapshot-2026-07-24-phase-1
+  include_patterns:
+  - src/orchestrator/**/*.py
+  - tests/**/*.py
+  - ui/src/**/*.ts
+  - ui/src/**/*.tsx
+  - docs/jtbd/*.md
+  - docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md
+  - research/ui-foundation/agent-reports/*.md
+  expected_count: 901
+  covered_count: 901
+  path: research/ui-foundation/tools/validate.py
+  symbol: validate_source_snapshot_coverage
+  snapshot_path: tests/integration/test_ui_foundation_tools.py
+  test_status: exercised
 snapshots:
 - id: snapshot-2026-07-23-phase-0
   immutable: true

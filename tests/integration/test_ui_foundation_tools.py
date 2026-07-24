@@ -1243,3 +1243,34 @@ def test_validator_rejects_unlinked_conflicts_questions_snapshots_and_weak_direc
         "EVIDENCE_SNAPSHOT_PATH_UNRESOLVED",
         "COMMAND_TEST_EVIDENCE_INVALID",
     } <= set(issue_codes(result))
+
+
+def test_unresolved_conflict_blocks_affected_current_action(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/conflicts.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "id": "CON-01",
+                    "status": "unresolved",
+                    "claims": [{"proposition": "a"}, {"proposition": "b"}],
+                    "claim_evidence": [{"evidence_ids": []}, {"evidence_ids": []}],
+                    "affected_ids": ["ACT-01"],
+                    "settlement_method": "settle",
+                }
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/actions/ACT-01.yaml",
+        {
+            "id": "ACT-01",
+            "implementation_status": "present",
+            "capability_status": "current",
+            "conflict_ids": ["CON-01"],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert "UNRESOLVED_ACTION_ADMISSION_BLOCKED" in issue_codes(result)

@@ -66,7 +66,6 @@ items:
   settlement_method: 'Resolved: the Phase 1 snapshot hashes every current src/orchestrator Python file, repository Python
     test, and UI source TS/TSX file; direct evidence records name a snapshot path.'
   decisive_evidence_ids:
-  - EVD-105
-  - EVD-106
+  - EVD-154
   affected_ids:
   - EVI-1

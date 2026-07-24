@@ -822,6 +822,14 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                         f"{conflict_id}:{affected_id}",
                     )
                 )
+            if target_raw and target_raw.get("capability_status") in {"current", "derived"}:
+                issues.append(
+                    _issue(
+                        "UNRESOLVED_ACTION_ADMISSION_BLOCKED",
+                        package.root / "catalog/conflicts.yaml",
+                        f"{conflict_id}:{affected_id}",
+                    )
+                )
     for item in question_document.items if question_document else []:
         if not (item.get("blocking") is True and item.get("status") != "resolved"):
             continue
@@ -856,6 +864,14 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                 issues.append(
                     _issue(
                         "UNRESOLVED_ADMISSION_BLOCKED",
+                        package.root / "catalog/questions.yaml",
+                        f"{question_id}:{affected_id}",
+                    )
+                )
+            if target_raw and target_raw.get("capability_status") in {"current", "derived"}:
+                issues.append(
+                    _issue(
+                        "UNRESOLVED_ACTION_ADMISSION_BLOCKED",
                         package.root / "catalog/questions.yaml",
                         f"{question_id}:{affected_id}",
                     )
@@ -1120,7 +1136,8 @@ def _validate_actions(
         status_incompatible = (
             action.get("implementation_status") == "present"
             and (
-                action.get("capability_status") != "current" or action.get("executable") is not True
+                action.get("capability_status") not in {"current", "unknown"}
+                or action.get("executable") is not True
             )
         ) or (
             action.get("capability_status") == "current"

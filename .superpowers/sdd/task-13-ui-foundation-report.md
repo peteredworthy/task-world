@@ -140,3 +140,12 @@ and evidence snapshot-path membership are checked. Command test evidence is
 limited to direct exercised test records; commands without one are explicitly
 unexercised, and invariants without direct test records were downgraded. The
 validator regression suite is GREEN at 41 focused tests.
+
+## Final coverage/admission remediation
+
+Actions affected by unresolved lifecycle/graph conflicts or questions are now
+classified `unknown` while retaining independently observed implementation and
+reachability. The validator rejects current/derived affected action contracts.
+The Phase 1 snapshot has an explicit include-pattern coverage attestation
+(`EVD-154`) linked to Q7, and direct evidence uses snapshot IDs/path linkage.
+Focused validator regression coverage is GREEN at 42 tests.
