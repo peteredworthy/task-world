@@ -149,3 +149,12 @@ reachability. The validator rejects current/derived affected action contracts.
 The Phase 1 snapshot has an explicit include-pattern coverage attestation
 (`EVD-154`) linked to Q7, and direct evidence uses snapshot IDs/path linkage.
 Focused validator regression coverage is GREEN at 42 tests.
+
+## Technical snapshot-coverage correction
+
+Replaced the fabricated `EVD-154` attestation with allocated `EVD-113`; the next
+EVD suffix is 114. `validate_source_snapshot_coverage` now expands canonical
+include patterns, derives expected current paths, checks coverage/counts, and is
+called during source-hash validation. The Phase 1 derived coverage count is
+recorded in the canonical snapshot and attestation. Focused coverage regression
+tests are GREEN at 43 tests.

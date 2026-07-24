@@ -1274,3 +1274,26 @@ def test_unresolved_conflict_blocks_affected_current_action(tmp_path: Path) -> N
     )
     result = run_validator(root, phase=0)
     assert "UNRESOLVED_ACTION_ADMISSION_BLOCKED" in issue_codes(result)
+
+
+def test_snapshot_coverage_rejects_hash_valid_but_incomplete_patterns(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    repository = root.parents[1]
+    (repository / "src").mkdir()
+    (repository / "src/required.py").write_text("x = 1\n", encoding="utf-8")
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "phase1",
+                "include_patterns": ["src/**/*.py"],
+                "expected_count": 1,
+                "covered_count": 1,
+                "files": [],
+            },
+            "items": [],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert "SOURCE_SNAPSHOT_COVERAGE_MISSING" in issue_codes(result)

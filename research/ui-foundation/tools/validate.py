@@ -1479,6 +1479,7 @@ def validate_source_hashes(package: FoundationPackage) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     value = package.documents.get("catalog/evidence.yaml")
     snapshot = value.get("snapshot") if isinstance(value, dict) else None
+    issues.extend(validate_source_snapshot_coverage(package, snapshot))
     if isinstance(snapshot, dict):
         try:
             SourceSnapshot.model_validate(snapshot)
@@ -1512,6 +1513,42 @@ def validate_source_hashes(package: FoundationPackage) -> list[ValidationIssue]:
                         f"expected {loaded.expected_sha256}, got {actual}",
                     )
                 )
+    return issues
+
+
+def validate_source_snapshot_coverage(
+    package: FoundationPackage, snapshot: JsonValue
+) -> list[ValidationIssue]:
+    """Purely prove that declared Phase 1 include patterns cover current files."""
+    if not isinstance(snapshot, dict):
+        return []
+    patterns = snapshot.get("include_patterns")
+    files = snapshot.get("files")
+    if not isinstance(patterns, list) or not isinstance(files, list):
+        return []
+    text_patterns = [value for value in patterns if isinstance(value, str)]
+    repository = package.root.parents[1]
+    expected = {
+        path.relative_to(repository).as_posix()
+        for pattern in text_patterns
+        for path in repository.glob(pattern)
+        if path.is_file()
+    }
+    covered = {
+        path
+        for item in files
+        if isinstance(item, dict) and isinstance((path := item.get("path")), str)
+    }
+    issues: list[ValidationIssue] = []
+    location = package.root / "catalog/evidence.yaml"
+    if not expected <= covered:
+        issues.append(
+            _issue("SOURCE_SNAPSHOT_COVERAGE_MISSING", location, sorted(expected - covered))
+        )
+    if snapshot.get("expected_count") != len(expected) or snapshot.get("covered_count") != len(
+        covered
+    ):
+        issues.append(_issue("SOURCE_SNAPSHOT_COUNT_MISMATCH", location, snapshot.get("id")))
     return issues
 
 

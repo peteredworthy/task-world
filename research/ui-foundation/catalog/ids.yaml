@@ -12,7 +12,7 @@ next_suffixes:
   INV: 12
   Q: 8
   CON: 10
-  EVD: 113
+  EVD: 114
 items:
 - namespace: ENT
   provisional_key: DS-ENT-routine-config
@@ -2016,4 +2016,19 @@ items:
   canonical_id: EVD-112
   provisional_key: EVD-112
   title: test_fr08_authority_denial_and_rejection_readbacks
+  status: active
+- namespace: EVD
+  canonical_id: EVD-113
+  provisional_key: EVD-113
+  title: Phase 1 snapshot coverage attestation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-113
+  provisional_key: EVD-113
+  title: Phase 1 snapshot coverage attestation
+  status: active
+- namespace: EVD
+  canonical_id: EVD-113
+  provisional_key: EVD-113
+  title: Phase 1 snapshot coverage attestation
   status: active
