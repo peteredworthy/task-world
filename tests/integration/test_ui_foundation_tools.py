@@ -1297,3 +1297,16 @@ def test_snapshot_coverage_rejects_hash_valid_but_incomplete_patterns(tmp_path: 
     )
     result = run_validator(root, phase=0)
     assert "SOURCE_SNAPSHOT_COVERAGE_MISSING" in issue_codes(result)
+
+
+def test_validator_rejects_duplicate_id_allocation_ledger_entries(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/ids.yaml",
+        {
+            "schema_version": "1",
+            "items": [{"canonical_id": "EVD-113"}, {"canonical_id": "EVD-113"}],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert "ID_ALLOCATION_DUPLICATE" in issue_codes(result)

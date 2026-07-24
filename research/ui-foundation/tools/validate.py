@@ -543,6 +543,26 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
     issues = list(package.issues)
     canonical, boundary_issues = _canonical_documents(package)
     issues.extend(boundary_issues)
+    allocation_document = package.documents.get("catalog/ids.yaml")
+    allocated: set[str] = set()
+    allocated_suffixes: set[tuple[str, str]] = set()
+    if isinstance(allocation_document, dict) and isinstance(allocation_document.get("items"), list):
+        for index, allocation in enumerate(allocation_document["items"]):
+            if not isinstance(allocation, dict):
+                continue
+            identifier = allocation.get("canonical_id")
+            if not isinstance(identifier, str):
+                continue
+            location = f"{package.root / 'catalog/ids.yaml'}:items[{index}]"
+            match = re.fullmatch(r"([A-Z]+)-(\d+)", identifier)
+            if identifier in allocated:
+                issues.append(_issue("ID_ALLOCATION_DUPLICATE", location, identifier))
+            allocated.add(identifier)
+            if match:
+                suffix = (match.group(1), match.group(2))
+                if suffix in allocated_suffixes:
+                    issues.append(_issue("ID_ALLOCATION_SUFFIX_DUPLICATE", location, identifier))
+                allocated_suffixes.add(suffix)
 
     semantic_items: dict[str, SemanticItem] = {}
     for relative in sorted(SEMANTIC_COLLECTIONS & package.documents.keys()):

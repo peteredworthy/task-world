@@ -158,3 +158,10 @@ include patterns, derives expected current paths, checks coverage/counts, and is
 called during source-hash validation. The Phase 1 derived coverage count is
 recorded in the canonical snapshot and attestation. Focused coverage regression
 tests are GREEN at 43 tests.
+
+## Allocation-ledger correction
+
+Added a RED/GREEN validator regression for duplicate allocation ledger IDs and
+suffixes. The ledger now retains one `EVD-113` allocation and next EVD suffix
+114; duplicate historical allocation entries were removed. Focused tests are
+GREEN at 44.
