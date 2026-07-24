@@ -40,7 +40,7 @@ CommandDefinitionProjection: TypeAlias = dict[str, Any]
 
 
 class TypedRecordBase(GraphBaseModel):
-    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+    model_config = ConfigDict(frozen=True, extra="forbid", populate_by_name=True)
 
     record_type: str | None = None
     schema_version: int | None = None
@@ -128,6 +128,7 @@ class NodeState(str, Enum):
 
 
 class ResourceClaimProjection(StrictNestedModel):
+    model_config = ConfigDict(frozen=True)
     mode: str
     scope: str
     paths: list[str] | None = None
@@ -430,6 +431,7 @@ class _AttributeProjection(GraphBaseModel):
 
 
 class EdgeProjection(_AttributeProjection):
+    model_config = ConfigDict(frozen=True)
     edge_id: str
     from_node_id: str
     from_port: str
@@ -450,6 +452,7 @@ class EdgeProjection(_AttributeProjection):
 
 
 class InputBindingProjection(_AttributeProjection):
+    model_config = ConfigDict(frozen=True)
     edge_id: str | None = None
     to_node_id: str
     to_port: str
@@ -628,6 +631,7 @@ class VerificationReportRecord(TypedRecordBase):
 
 
 class VerificationResultProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     node_id: str
     record_id: str
     candidate_id: str | None = None
@@ -635,6 +639,7 @@ class VerificationResultProjection(GraphBaseModel):
 
 
 class CandidateProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     candidate_id: str
     attempt_number: int = Field(ge=0)
     position: int
@@ -643,6 +648,7 @@ class CandidateProjection(GraphBaseModel):
 
 
 class VerifierVerdictProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     candidate_id: str
     verdict: Literal["passed", "failed"]
     position: int
@@ -823,6 +829,7 @@ class DeadInputDetectedPayload(StrictEventPayload):
 
 
 class LeaseProjection(_AttributeProjection):
+    model_config = ConfigDict(frozen=True)
     lease_id: str
     state: LeaseProjectionState
     node_id: str | None = None
@@ -839,6 +846,7 @@ class LeaseProjection(_AttributeProjection):
 
 
 class InvalidTestBlockProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     position: int
     accepted: bool | None = None
     appeal_open: bool | None = None
@@ -846,6 +854,7 @@ class InvalidTestBlockProjection(GraphBaseModel):
 
 
 class PendingGateDecisionProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     node_id: str | None = None
     gate_type: str | None = None
     prompt: str | None = None
@@ -1233,7 +1242,7 @@ class NodeSuspectPayload(GraphEventPayloadBase):
 
 
 class CleanupRequestedProjection(GraphBaseModel):
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    model_config = ConfigDict(frozen=True, extra="ignore", populate_by_name=True)
 
     cleanup_id: str
     position: int
@@ -1247,6 +1256,7 @@ class CleanupRequestedProjection(GraphBaseModel):
 
 
 class RequirementRevisionProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     requirement_id: str
     version_id: str
     change_classification: str
@@ -1259,6 +1269,7 @@ class RequirementRevisionProjection(GraphBaseModel):
 
 
 class SupportEvidenceProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     support_id: str
     evidence_id: str
     requirement_id: str
@@ -1270,6 +1281,7 @@ class SupportEvidenceProjection(GraphBaseModel):
 
 
 class OversightDecisionProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     node_id: str
     decision: Literal["accepted", "rejected", "invalid_test_accepted"]
     position: int
@@ -1436,6 +1448,7 @@ def _empty_check_result_record_ids() -> list[str]:
 
 
 class CheckResultProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     node_id: str
     status: str
     position: int
@@ -1452,6 +1465,7 @@ class CheckResultProjection(GraphBaseModel):
 
 
 class EnvironmentFailureProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     position: int
     node_id: str | None = None
     classification: str | None = None
@@ -1468,6 +1482,7 @@ def _empty_node_resource_claims() -> list[ResourceClaimProjection]:
 
 
 class NodeCreationProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     node_id: str
     position: int
     kind: str | None = None
@@ -1602,6 +1617,7 @@ class DecisionActor(StrictNestedModel):
 
 
 class ApprovalDecisionProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     node_id: str
     decision: Literal["approved", "rejected", "deferred"]
     task_region_id: str | None = None
@@ -1678,6 +1694,7 @@ class AuthorityDecisionRecord(TypedRecordBase):
 
 
 class AuthorityDecisionProjection(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     node_id: str
     decision: Literal["granted", "denied", "deferred"]
     task_region_id: str | None = None
@@ -2028,6 +2045,7 @@ def _empty_external_file_entries() -> list[ExternalFileEntry]:
 
 
 class FileStateRecord(TypedRecordBase):
+    model_config = ConfigDict(frozen=True)
     record_id: str
     record_kind: Literal["file_state"] = "file_state"
     snapshot_id: str | None = None
@@ -2290,6 +2308,7 @@ class EventEnvelope(GraphBaseModel):
 
 
 class CallbackIdempotencyEvent(GraphBaseModel):
+    model_config = ConfigDict(frozen=True)
     event_type: Literal[
         "callback_accepted",
         "callback_rejected_stale",

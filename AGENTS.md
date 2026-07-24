@@ -246,6 +246,8 @@ All three levels (`RoutineConfig`, `StepConfig`, `TaskConfig`) support `builder_
 
 **Event sourcing for recovery.** Log transitions to JSONL first, then update state. Reconstruct from history on startup.
 
+**Graph projection models are frozen.** Every Pydantic model stored inside a `GraphProjection` (`EdgeProjection`, `LeaseProjection`, `NodeCreationProjection`, all `TypedRecordBase` records, …) sets `frozen=True`. `_clone_projection` therefore shares model instances between successive projection states instead of deep-copying them, which is what keeps `reduce_event` linear rather than quadratic. Reducers must never mutate a model in place — build a replacement with `model_copy(update={...})` and assign it back into the projection dict. Do not remove `frozen=True` to make an in-place assignment work; the deep copies it would force back cost ~27x on replay.
+
 **Import from module top-level only.** Never reach into a module's sub-packages from outside that module. Import from the public API the module exposes via its `__init__.py`:
 - CORRECT: `from orchestrator.config import discover_routines`
 - WRONG:   `from orchestrator.config.routines.discovery import discover_routines`
@@ -266,7 +268,7 @@ The most common reason an issue appears "pre-existing" is that it was introduced
 
 ## Testing
 
-**Run tests with the foreground `Bash` tool directly — never as background Tasks.** The full test suite completes in under 60 seconds and can be awaited synchronously. Using background Tasks for test commands forces the agent to schedule cascading `sleep N && cat output_file` pollers to retrieve results, which wastes time and produces stale notifications long after the tests have finished. Reserve background Tasks for operations that genuinely take multiple minutes.
+**Run tests with the foreground `Bash` tool directly — never as background Tasks.** The full test suite (`make test`, ~4,930 tests) completes in about 80 seconds and can be awaited synchronously. Using background Tasks for test commands forces the agent to schedule cascading `sleep N && cat output_file` pollers to retrieve results, which wastes time and produces stale notifications long after the tests have finished. Reserve background Tasks for operations that genuinely take multiple minutes.
 
 Three strict levels:
 
@@ -277,6 +279,12 @@ Three strict levels:
 | E2E | Full running system | <60s per test |
 
 Integration tests requiring credentials use `@pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="No OPENAI_API_KEY")`. OpenHands tests also require a running server.
+
+### Impact-selected runs during the edit loop
+
+`make test-changed [ARGS=tests/unit]` runs only the tests whose covered code changed since the previous run, via pytest-testmon's per-test coverage map (`.testmondata`, gitignored). The first run builds the map (~90s for `tests/unit`); a no-change run afterwards takes under a second, and a typical single-module edit selects a few hundred tests instead of several thousand.
+
+It is a dev-loop accelerator, not a merge gate — `make test` stays the gate, and pre-commit still runs the full suite. Two constraints are baked into the target: testmon cannot run under `pytest-xdist`, and it silently disables selection when `-m` is passed, so the target clears the default `addopts` and raises the timeout to 180s to absorb coverage-tracing overhead. Run `make test-changed-reset` after dependency upgrades or if selection looks wrong.
 
 Key test fixtures: `tmp_dir` (temp directory), `fixed_time` (deterministic datetime), `in_memory_db` (SQLite `:memory:`), `routine_repo` (git repo with test routines).
 

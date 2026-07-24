@@ -142,7 +142,7 @@ class AcceptedOutputRecord(TypedDict):
 
 
 class RecoveryNodeIndexEntry(GraphBaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     node_id: str
     recovery_reason: str
@@ -157,7 +157,7 @@ class RecoveryNodeIndexEntry(GraphBaseModel):
 
 
 class LatestRoutineSnapshotRecord(GraphBaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(frozen=True, extra="ignore")
 
     record_id: str
     producer_node_id: str
@@ -1736,7 +1736,7 @@ def _checkpoint_output_record_payload(raw_payload: Any) -> AcceptedOutputRecordP
 
 def _copy_lease_projection(value: Any) -> LeaseProjection | None:
     if isinstance(value, LeaseProjection):
-        return value.model_copy(deep=True)
+        return value
     if isinstance(value, dict):
         return _lease_from_payload(cast(dict[str, Any], value))
     return None
@@ -1744,7 +1744,7 @@ def _copy_lease_projection(value: Any) -> LeaseProjection | None:
 
 def _copy_edge_projection(value: Any) -> EdgeProjection | None:
     if isinstance(value, EdgeProjection):
-        return value.model_copy(deep=True)
+        return value
     if isinstance(value, dict):
         return _edge_from_payload(cast(dict[str, Any], value))
     return None
@@ -1752,7 +1752,7 @@ def _copy_edge_projection(value: Any) -> EdgeProjection | None:
 
 def _copy_input_binding_projection(value: Any) -> InputBindingProjection | None:
     if isinstance(value, InputBindingProjection):
-        return value.model_copy(deep=True)
+        return value
     if isinstance(value, dict):
         return _input_binding_from_payload(cast(dict[str, Any], value))
     return None
@@ -1760,7 +1760,7 @@ def _copy_input_binding_projection(value: Any) -> InputBindingProjection | None:
 
 def _copy_invalid_test_block_projection(value: Any) -> InvalidTestBlockProjection | None:
     if isinstance(value, InvalidTestBlockProjection):
-        return value.model_copy(deep=True)
+        return value
     if isinstance(value, dict):
         return _invalid_test_block_from_payload(cast(dict[str, Any], value))
     return None
@@ -1768,7 +1768,7 @@ def _copy_invalid_test_block_projection(value: Any) -> InvalidTestBlockProjectio
 
 def _copy_pending_gate_decision_projection(value: Any) -> PendingGateDecisionProjection | None:
     if isinstance(value, PendingGateDecisionProjection):
-        return value.model_copy(deep=True)
+        return value
     if isinstance(value, dict):
         return _pending_gate_decision_from_payload(cast(dict[str, Any], value))
     return None
@@ -1776,7 +1776,7 @@ def _copy_pending_gate_decision_projection(value: Any) -> PendingGateDecisionPro
 
 def _copy_cleanup_requested_projection(value: Any) -> CleanupRequestedProjection | None:
     if isinstance(value, CleanupRequestedProjection):
-        return value.model_copy(deep=True)
+        return value
     if isinstance(value, dict):
         return _cleanup_requested_from_payload(cast(dict[str, Any], value))
     return None
@@ -1821,8 +1821,7 @@ def _clone_projection(state: GraphProjection) -> GraphProjection:
         "node_candidates": dict(state["node_candidates"]),
         "node_failed_candidates": dict(state["node_failed_candidates"]),
         "node_resource_claims": {
-            node_id: [claim.model_copy(deep=True) for claim in claims]
-            for node_id, claims in state["node_resource_claims"].items()
+            node_id: list(claims) for node_id, claims in state["node_resource_claims"].items()
         },
         "node_allowed_actions": {
             node_id: list(actions) for node_id, actions in state["node_allowed_actions"].items()
@@ -1837,16 +1836,7 @@ def _clone_projection(state: GraphProjection) -> GraphProjection:
             for node_id, ports in state.get("node_output_ports", {}).items()
         },
         "accepted_output_records_by_node_port": {
-            node_id: {
-                port: [
-                    {
-                        "record_id": record["record_id"],
-                        "payload": _copy_output_record_payload(record["payload"]),
-                    }
-                    for record in records
-                ]
-                for port, records in ports.items()
-            }
+            node_id: {port: list(records) for port, records in ports.items()}
             for node_id, ports in state.get("accepted_output_records_by_node_port", {}).items()
         },
         "accepted_record_summaries_by_id": {
@@ -1854,10 +1844,7 @@ def _clone_projection(state: GraphProjection) -> GraphProjection:
             for record_id, summary in state.get("accepted_record_summaries_by_id", {}).items()
         },
         "output_records_by_node_port": {
-            node_id: {
-                port: [_copy_output_record_payload(record) for record in records]
-                for port, records in ports.items()
-            }
+            node_id: {port: list(records) for port, records in ports.items()}
             for node_id, ports in state.get("output_records_by_node_port", {}).items()
         },
         "edges": {
@@ -1876,27 +1863,17 @@ def _clone_projection(state: GraphProjection) -> GraphProjection:
         "node_pending_appeals": dict(state["node_pending_appeals"]),
         "node_gate_decisions": dict(state["node_gate_decisions"]),
         "task_candidates": {
-            task_region_id: [candidate.model_copy(deep=True) for candidate in candidates]
+            task_region_id: list(candidates)
             for task_region_id, candidates in state["task_candidates"].items()
         },
-        "verifier_verdicts": {
-            candidate_id: verdict.model_copy(deep=True)
-            for candidate_id, verdict in state["verifier_verdicts"].items()
-        },
+        "verifier_verdicts": dict(state["verifier_verdicts"]),
         "completion_decision_passed": state.get("completion_decision_passed", False),
-        "passed_verification_results_by_record_id": {
-            record_id: result.model_copy(deep=True)
-            for record_id, result in state.get(
-                "passed_verification_results_by_record_id",
-                {},
-            ).items()
-        },
-        "failed_verification_results_by_record_id": {
-            record_id: result.model_copy(deep=True)
-            for record_id, result in state.get(
-                "failed_verification_results_by_record_id", {}
-            ).items()
-        },
+        "passed_verification_results_by_record_id": dict(
+            state.get("passed_verification_results_by_record_id", {})
+        ),
+        "failed_verification_results_by_record_id": dict(
+            state.get("failed_verification_results_by_record_id", {})
+        ),
         "failed_verification_candidate_ids": dict(
             state.get("failed_verification_candidate_ids", {})
         ),
@@ -1904,13 +1881,10 @@ def _clone_projection(state: GraphProjection) -> GraphProjection:
             state.get("passed_verification_candidate_ids", [])
         ),
         "recovery_nodes_by_record_id": {
-            record_id: [recovery.model_copy(deep=True) for recovery in recoveries]
+            record_id: list(recoveries)
             for record_id, recoveries in state.get("recovery_nodes_by_record_id", {}).items()
         },
-        "check_results": {
-            node_id: result.model_copy(deep=True)
-            for node_id, result in state.get("check_results", {}).items()
-        },
+        "check_results": dict(state.get("check_results", {})),
         "invalid_test_blocks": {
             task_region_id: block_copy
             for task_region_id, block in state["invalid_test_blocks"].items()
@@ -1924,14 +1898,8 @@ def _clone_projection(state: GraphProjection) -> GraphProjection:
             task_region_id: dict(decisions)
             for task_region_id, decisions in state["gate_decisions"].items()
         },
-        "environment_failures": {
-            task_region_id: failure.model_copy(deep=True)
-            for task_region_id, failure in state["environment_failures"].items()
-        },
-        "file_state_records": {
-            record_id: record.model_copy(deep=True)
-            for record_id, record in state.get("file_state_records", {}).items()
-        },
+        "environment_failures": dict(state["environment_failures"]),
+        "file_state_records": dict(state.get("file_state_records", {})),
         "planner_generation_budget": state.get("planner_generation_budget", 8),
         "planner_successors": dict(state.get("planner_successors", {})),
         "accepted_graph_patches_by_node": {
@@ -1952,46 +1920,22 @@ def _clone_projection(state: GraphProjection) -> GraphProjection:
         "planner_session_current_nodes": dict(state.get("planner_session_current_nodes", {})),
         "planner_session_carryovers": dict(state.get("planner_session_carryovers", {})),
         "planner_region_labels": dict(state.get("planner_region_labels", {})),
-        "requirement_revisions": {
-            version_id: revision.model_copy(deep=True)
-            for version_id, revision in state.get("requirement_revisions", {}).items()
-        },
+        "requirement_revisions": dict(state.get("requirement_revisions", {})),
         "active_requirement_versions": dict(state.get("active_requirement_versions", {})),
-        "support_evidence": {
-            support_id: support.model_copy(deep=True)
-            for support_id, support in state.get("support_evidence", {}).items()
-        },
+        "support_evidence": dict(state.get("support_evidence", {})),
         "last_deferred_reasons": dict(state.get("last_deferred_reasons", {})),
         "retry_not_before_by_node": dict(state.get("retry_not_before_by_node", {})),
-        "node_creation_payloads": {
-            node_id: payload.model_copy(deep=True)
-            for node_id, payload in state.get("node_creation_payloads", {}).items()
-        },
-        "output_record_payloads": {
-            record_id: _copy_output_record_payload(payload)
-            for record_id, payload in state.get("output_record_payloads", {}).items()
-        },
-        "approval_decisions": {
-            node_id: payload.model_copy(deep=True)
-            for node_id, payload in state.get("approval_decisions", {}).items()
-        },
-        "authority_decisions": {
-            node_id: payload.model_copy(deep=True)
-            for node_id, payload in state.get("authority_decisions", {}).items()
-        },
-        "oversight_decisions": {
-            node_id: payload.model_copy(deep=True)
-            for node_id, payload in state.get("oversight_decisions", {}).items()
-        },
+        "node_creation_payloads": dict(state.get("node_creation_payloads", {})),
+        "output_record_payloads": dict(state.get("output_record_payloads", {})),
+        "approval_decisions": dict(state.get("approval_decisions", {})),
+        "authority_decisions": dict(state.get("authority_decisions", {})),
+        "oversight_decisions": dict(state.get("oversight_decisions", {})),
         "decision_request_details": {
             node_id: details_copy
             for node_id, details in state.get("decision_request_details", {}).items()
             if (details_copy := _copy_pending_gate_decision_projection(details)) is not None
         },
-        "callback_idempotency_events": {
-            key: event.model_copy(deep=True)
-            for key, event in state.get("callback_idempotency_events", {}).items()
-        },
+        "callback_idempotency_events": dict(state.get("callback_idempotency_events", {})),
         "open_proposal_blockers": {
             proposal_id: cast(FinalInvariantBlocker, dict(blocker))
             for proposal_id, blocker in state.get("open_proposal_blockers", {}).items()
@@ -4685,12 +4629,6 @@ def _record_check_result(
     state["check_results"][node_id] = result
 
 
-def _copy_output_record_payload(
-    payload: AcceptedOutputRecordPayload,
-) -> AcceptedOutputRecordPayload:
-    return payload.model_copy(deep=True)
-
-
 def _output_record_payload_dict(payload: AcceptedOutputRecordPayload) -> dict[str, Any]:
     return payload.model_dump(mode="json")
 
@@ -5382,11 +5320,14 @@ def _record_gatekeeper_verdicts(
     if record is None:
         return
     by_path = {verdict.path: verdict.model_dump(mode="json") for verdict in payload.verdicts}
+    resolved: dict[str, Any] = {}
     for key in ("classifications", "residue", "untracked", "ignored", "external"):
         entries = getattr(record, key)
         if not entries:
             continue
-        setattr(record, key, [_resolved_file_entry(entry, by_path) for entry in entries])
+        resolved[key] = [_resolved_file_entry(entry, by_path) for entry in entries]
+    if resolved:
+        state["file_state_records"][record_id] = record.model_copy(update=resolved)
 
 
 def _record_cleanup_requested(state: GraphProjection, event: EventEnvelope) -> None:
@@ -5405,11 +5346,15 @@ def _record_cleanup_requested(state: GraphProjection, event: EventEnvelope) -> N
     record = state["file_state_records"].get(record_id)
     if record is None:
         return
-    record.compromised = True
-    record.superseded_pending = True
-    record.cleanup_id = cleanup_id
-    record.cleanup_reason = payload.reason
-    record.compromised_paths = list(payload.paths)
+    state["file_state_records"][record_id] = record.model_copy(
+        update={
+            "compromised": True,
+            "superseded_pending": True,
+            "cleanup_id": cleanup_id,
+            "cleanup_reason": payload.reason,
+            "compromised_paths": list(payload.paths),
+        }
+    )
 
 
 def _record_cleanup_applied(state: GraphProjection, event: EventEnvelope) -> None:
@@ -5426,11 +5371,15 @@ def _record_cleanup_applied(state: GraphProjection, event: EventEnvelope) -> Non
     record = state["file_state_records"].get(record_id)
     if record is None:
         return
-    record.compromised = True
-    record.superseded_pending = False
-    record.superseded_by_record_id = payload.superseding_record_id
-    record.cleanup_applied_event_id = event.event_id
-    record.compromised_snapshot_deleted = payload.deleted_snapshot_ref is True
+    state["file_state_records"][record_id] = record.model_copy(
+        update={
+            "compromised": True,
+            "superseded_pending": False,
+            "superseded_by_record_id": payload.superseding_record_id,
+            "cleanup_applied_event_id": event.event_id,
+            "compromised_snapshot_deleted": payload.deleted_snapshot_ref is True,
+        }
+    )
 
 
 def _record_runtime_retry_scheduled(state: GraphProjection, event: EventEnvelope) -> None:

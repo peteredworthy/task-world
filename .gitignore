@@ -44,6 +44,10 @@ htmlcov/
 .coverage
 .coverage.*
 
+# testmon (per-machine test-impact DB)
+.testmondata
+.testmondata-journal
+
 # Pyright
 .pyright/
 
