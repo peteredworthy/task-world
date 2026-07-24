@@ -1310,3 +1310,179 @@ def test_validator_rejects_duplicate_id_allocation_ledger_entries(tmp_path: Path
     )
     result = run_validator(root, phase=0)
     assert "ID_ALLOCATION_DUPLICATE" in issue_codes(result)
+
+
+def test_validator_rejects_direct_evidence_missing_each_required_locator(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "snapshot-test",
+                "files": [{"path": "direct.py", "sha256": "0" * 64, "audited_at": "now"}],
+            },
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "audit-report",
+                    "provenance_role": "direct",
+                    "snapshot_id": "snapshot-test",
+                    "snapshot_path": "direct.py",
+                    "symbol": "subject",
+                },
+                {
+                    "id": "EVD-02",
+                    "source_kind": "implementation",
+                    "path": "direct.py",
+                    "snapshot_id": "snapshot-test",
+                    "snapshot_path": "direct.py",
+                },
+                {
+                    "id": "EVD-03",
+                    "source_kind": "implementation",
+                    "path": "direct.py",
+                    "symbol": "subject",
+                    "snapshot_path": "direct.py",
+                },
+                {
+                    "id": "EVD-04",
+                    "source_kind": "implementation",
+                    "path": "direct.py",
+                    "symbol": "subject",
+                    "snapshot_id": "snapshot-test",
+                },
+            ],
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert issue_codes(result).count("DIRECT_EVIDENCE_FIELD_MISSING") == 4
+    assert "path" in result.stderr
+    assert "symbol" in result.stderr
+    assert "snapshot_id" in result.stderr
+    assert "snapshot_path" in result.stderr
+
+
+def test_validator_rejects_direct_evidence_path_mismatch_and_undeclared_snapshot_path(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "snapshot-test",
+                "files": [{"path": "declared.py", "sha256": "0" * 64, "audited_at": "now"}],
+            },
+            "items": [
+                {
+                    "id": "EVD-01",
+                    "source_kind": "test",
+                    "path": "actual.py",
+                    "symbol": "test_subject",
+                    "snapshot_id": "snapshot-test",
+                    "snapshot_path": "undeclared.py",
+                },
+            ],
+        },
+    )
+
+    result = run_validator(root, phase=0)
+
+    assert "DIRECT_EVIDENCE_PATH_MISMATCH" in issue_codes(result)
+    assert "EVIDENCE_SNAPSHOT_PATH_UNRESOLVED" in issue_codes(result)
+
+
+def test_phase_one_snapshot_requires_coverage_counts_and_files(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    required_source = root.parents[1] / "src/orchestrator"
+    required_source.mkdir(parents=True)
+    (required_source / "required.py").write_text("x = 1\n", encoding="utf-8")
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "phase1",
+                "include_patterns": [
+                    "src/orchestrator/**/*.py",
+                    "tests/**/*.py",
+                    "ui/src/**/*.ts",
+                    "ui/src/**/*.tsx",
+                    "docs/jtbd/jobs.md",
+                    "docs/jtbd/journeys.md",
+                    "docs/jtbd/decision-information.md",
+                    "docs/jtbd/information-architecture.md",
+                    "docs/jtbd/evaluation-rubric.md",
+                    "docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md",
+                    "research/ui-foundation/agent-reports/*.md",
+                    "research/ui-foundation/tools/validate.py",
+                    "tests/integration/test_ui_foundation_tools.py",
+                ],
+                "expected_count": 0,
+                "covered_count": 0,
+                "files": [],
+            },
+            "items": [],
+        },
+    )
+
+    result = run_validator(root, phase=1)
+
+    assert "SOURCE_SNAPSHOT_COUNT_MISMATCH" in issue_codes(result)
+    assert "SOURCE_SNAPSHOT_COVERAGE_MISSING" in issue_codes(result)
+
+
+def test_phase_one_snapshot_requires_every_coverage_pattern(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {
+                "id": "phase1",
+                "include_patterns": [],
+                "expected_count": 0,
+                "covered_count": 0,
+                "files": [],
+            },
+            "items": [],
+        },
+    )
+
+    result = run_validator(root, phase=1)
+
+    assert "SOURCE_SNAPSHOT_PATTERN_MISSING" in issue_codes(result)
+
+
+def test_phase_one_rejects_invalid_q7_coverage_attestation(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "catalog/questions.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                {
+                    "id": "Q-7",
+                    "status": "resolved",
+                    "blocking": False,
+                    "decisive_evidence_ids": ["EVD-113"],
+                },
+            ],
+        },
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [{"id": "EVD-113", "source_kind": "audit-report"}],
+        },
+    )
+
+    result = run_validator(root, phase=1)
+
+    assert "Q7_COVERAGE_ATTESTATION_INVALID" in issue_codes(result)

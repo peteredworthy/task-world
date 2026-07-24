@@ -35,6 +35,29 @@ IMPLEMENTATION_SOURCE_KINDS = {
     "implementation",
     "persisted-record",
 }
+DIRECT_EVIDENCE_SOURCE_KINDS = {
+    "api",
+    "command",
+    "executable-schema",
+    "implementation",
+    "invariant-check",
+    "test",
+}
+PHASE_ONE_SNAPSHOT_INCLUDE_PATTERNS = (
+    "src/orchestrator/**/*.py",
+    "tests/**/*.py",
+    "ui/src/**/*.ts",
+    "ui/src/**/*.tsx",
+    "docs/jtbd/jobs.md",
+    "docs/jtbd/journeys.md",
+    "docs/jtbd/decision-information.md",
+    "docs/jtbd/information-architecture.md",
+    "docs/jtbd/evaluation-rubric.md",
+    "docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md",
+    "research/ui-foundation/agent-reports/*.md",
+    "research/ui-foundation/tools/validate.py",
+    "tests/integration/test_ui_foundation_tools.py",
+)
 PHASE_FILES = {
     0: (
         "index.md",
@@ -546,10 +569,14 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
     allocation_document = package.documents.get("catalog/ids.yaml")
     allocated: set[str] = set()
     allocated_suffixes: set[tuple[str, str]] = set()
-    if isinstance(allocation_document, dict) and isinstance(allocation_document.get("items"), list):
-        for index, allocation in enumerate(allocation_document["items"]):
-            if not isinstance(allocation, dict):
+    raw_allocations = (
+        allocation_document.get("items") if isinstance(allocation_document, dict) else None
+    )
+    if isinstance(raw_allocations, list):
+        for index, raw_allocation in enumerate(raw_allocations):
+            if not isinstance(raw_allocation, dict):
                 continue
+            allocation = cast(dict[str, JsonValue], raw_allocation)
             identifier = allocation.get("canonical_id")
             if not isinstance(identifier, str):
                 continue
@@ -763,6 +790,18 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         location = f"{package.root / 'catalog/evidence.yaml'}:items[{index}]"
         snapshot_id = item.get("snapshot_id")
         snapshot_path = item.get("snapshot_path")
+        source_kind = item.get("source_kind")
+        is_direct = (
+            item.get("provenance_role") == "direct" or source_kind in DIRECT_EVIDENCE_SOURCE_KINDS
+        )
+        if is_direct:
+            for field in ("path", "symbol", "snapshot_id", "snapshot_path"):
+                field_value = item.get(field)
+                if not isinstance(field_value, str) or not field_value.strip():
+                    issues.append(_issue("DIRECT_EVIDENCE_FIELD_MISSING", location, field))
+            path = item.get("path")
+            if isinstance(path, str) and isinstance(snapshot_path, str) and path != snapshot_path:
+                issues.append(_issue("DIRECT_EVIDENCE_PATH_MISMATCH", location, identifier))
         if identifier.startswith("EVD-") and snapshot_id not in snapshot_paths:
             issues.append(_issue("EVIDENCE_SNAPSHOT_UNRESOLVED", location, identifier))
         elif (
@@ -795,6 +834,15 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
                     or not isinstance(raw_record.get("symbol"), str)
                 ):
                     issues.append(_issue("COMMAND_TEST_EVIDENCE_INVALID", location, test_id))
+
+    if phase >= 1:
+        _validate_q7_coverage_attestation(
+            package,
+            question_document if isinstance(question_document, QuestionCatalog) else None,
+            raw_evidence_items,
+            snapshot_values,
+            issues,
+        )
 
     affected_semantic = {identifier: item for identifier, item in semantic_items.items()}
     action_records = {
@@ -1495,11 +1543,11 @@ def validate_schema_contracts(package: FoundationPackage) -> list[ValidationIssu
     return issues
 
 
-def validate_source_hashes(package: FoundationPackage) -> list[ValidationIssue]:
+def validate_source_hashes(package: FoundationPackage, phase: int) -> list[ValidationIssue]:
     issues: list[ValidationIssue] = []
     value = package.documents.get("catalog/evidence.yaml")
     snapshot = value.get("snapshot") if isinstance(value, dict) else None
-    issues.extend(validate_source_snapshot_coverage(package, snapshot))
+    issues.extend(validate_source_snapshot_coverage(package, snapshot, phase))
     if isinstance(snapshot, dict):
         try:
             SourceSnapshot.model_validate(snapshot)
@@ -1537,7 +1585,7 @@ def validate_source_hashes(package: FoundationPackage) -> list[ValidationIssue]:
 
 
 def validate_source_snapshot_coverage(
-    package: FoundationPackage, snapshot: JsonValue
+    package: FoundationPackage, snapshot: JsonValue, phase: int = 0
 ) -> list[ValidationIssue]:
     """Purely prove that declared Phase 1 include patterns cover current files."""
     if not isinstance(snapshot, dict):
@@ -1561,6 +1609,8 @@ def validate_source_snapshot_coverage(
     }
     issues: list[ValidationIssue] = []
     location = package.root / "catalog/evidence.yaml"
+    if phase >= 1 and not set(PHASE_ONE_SNAPSHOT_INCLUDE_PATTERNS) <= set(text_patterns):
+        issues.append(_issue("SOURCE_SNAPSHOT_PATTERN_MISSING", location, snapshot.get("id")))
     if not expected <= covered:
         issues.append(
             _issue("SOURCE_SNAPSHOT_COVERAGE_MISSING", location, sorted(expected - covered))
@@ -1570,6 +1620,37 @@ def validate_source_snapshot_coverage(
     ):
         issues.append(_issue("SOURCE_SNAPSHOT_COUNT_MISMATCH", location, snapshot.get("id")))
     return issues
+
+
+def _validate_q7_coverage_attestation(
+    package: FoundationPackage,
+    questions: QuestionCatalog | None,
+    evidence_items: list[dict[str, JsonValue]],
+    snapshots: list[dict[str, JsonValue]],
+    issues: list[ValidationIssue],
+) -> None:
+    q7 = next(
+        (item for item in (questions.items if questions else []) if item.get("id") == "Q-7"), None
+    )
+    if q7 is None or q7.get("status") != "resolved":
+        return
+    location = package.root / "catalog/questions.yaml"
+    attestation = next((item for item in evidence_items if item.get("id") == "EVD-113"), None)
+    decisive = q7.get("decisive_evidence_ids")
+    primary_snapshot = snapshots[0] if snapshots else None
+    valid = (
+        isinstance(attestation, dict)
+        and isinstance(decisive, list)
+        and decisive == ["EVD-113"]
+        and attestation.get("source_kind") == "snapshot-coverage-attestation"
+        and isinstance(primary_snapshot, dict)
+        and attestation.get("snapshot_id") == primary_snapshot.get("id")
+        and attestation.get("include_patterns") == primary_snapshot.get("include_patterns")
+        and attestation.get("expected_count") == primary_snapshot.get("expected_count")
+        and attestation.get("covered_count") == primary_snapshot.get("covered_count")
+    )
+    if not valid:
+        issues.append(_issue("Q7_COVERAGE_ATTESTATION_INVALID", location, "Q-7"))
 
 
 class ReviewItemParser(HTMLParser):
@@ -1665,7 +1746,7 @@ def validate_foundation(root: Path, phase: int) -> list[ValidationIssue]:
     issues = validate_required_files(package, phase)
     issues.extend(validate_schema_contracts(package))
     issues.extend(validate_semantics(package, phase))
-    issues.extend(validate_source_hashes(package))
+    issues.extend(validate_source_hashes(package, phase))
     issues.extend(validate_review_references(package, phase))
     return issues
 

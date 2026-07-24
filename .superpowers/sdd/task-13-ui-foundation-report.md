@@ -165,3 +165,33 @@ Added a RED/GREEN validator regression for duplicate allocation ledger IDs and
 suffixes. The ledger now retains one `EVD-113` allocation and next EVD suffix
 114; duplicate historical allocation entries were removed. Focused tests are
 GREEN at 44.
+
+## Fresh-fixer direct-evidence and validation correction (2026-07-24)
+
+The earlier references to a **890-file** Phase 1 snapshot are superseded. The
+current canonical snapshot and `EVD-113` attestation both declare **902**
+covered entries and identical required include patterns.
+
+- `validate.py` now type-checks the allocation ledger with explicit JSON
+  mapping guards and validates both duplicate canonical IDs and duplicate
+  namespace/numeric suffixes without suppressions.
+- Direct evidence is now a general rule: records marked `provenance_role:
+  direct`, and records with direct implementation/test/API/command/executable-
+  schema/invariant-check source kinds, must provide nonempty `path`, `symbol`,
+  `snapshot_id`, and `snapshot_path`; the paths must match and the snapshot
+  path must be declared by that snapshot.
+- Historic `EVD-7` through `EVD-48` entries were correctly reclassified as
+  audit-report synthesis evidence with unreachable/unknown test status. Their
+  labels are audit summaries rather than direct inspected source locations;
+  direct current records and command declarations retain exact locations.
+- Phase 1 validation now rejects missing required coverage patterns, count or
+  file coverage mismatches, and an invalid resolved `Q-7`/`EVD-113` coverage
+  attestation. Focused negative tests cover each direct locator field, path
+  mismatch, snapshot membership mismatch, coverage pattern, count, file, and
+  Q7-attestation failure.
+
+Final pre-commit evidence: `uv run python research/ui-foundation/tools/validate.py
+--phase 1` exited 0 with no diagnostics; `uv run pytest
+tests/integration/test_ui_foundation_tools.py -q` passed **49 tests**; `uv run
+ruff check .` reported **All checks passed!**; and `uv run pyright
+research/ui-foundation/tools/validate.py` reported **0 errors, 0 warnings**.

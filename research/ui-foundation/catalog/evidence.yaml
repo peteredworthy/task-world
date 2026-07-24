@@ -55,7 +55,7 @@ snapshot: &id001
     sha256: 7ad4caa93e1afd4e728f2b7c2fac4b3c54ca441e100ac51e912ff85196d2f2e7
     audited_at: '2026-07-24T03:00:00Z'
   - path: research/ui-foundation/tools/validate.py
-    sha256: addebc4bac001a9a74f1f3a02f983989cf693539fb7b967bbd78f6d3d5c33890
+    sha256: 50f4f1d6e40b28786cc2d65aa5cd4c6cc3918f3b1d790ab0069d4351db59f89e
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/__init__.py
     sha256: b1f14eb507ed5cae44a23dc96212731b2560b970310ef4037e303d90c5271bf4
@@ -1486,7 +1486,7 @@ snapshot: &id001
     sha256: 881f069c22f2f0dad0cd985e0126ce9c5d22b126c8e620f7b4c50f888d39f7b6
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_ui_foundation_tools.py
-    sha256: f2b0393bf8974b03f6e6ac8891d91c42d0d918e1db3a7cd5c04b47fda3a2357c
+    sha256: e4621d6cd8c2704af76738f3f3e5dca0d18aa2912f2e87edfd79e23334452f62
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_verifier_model_pinning.py
     sha256: b745091b4bf7450fdb1e901e4b231913be33dec9b70e0a3340e11ac690676236
@@ -3216,254 +3216,254 @@ items:
   test_evidence_ids: []
   test_status: unexercised
 - id: EVD-7
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row transitions
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-8
-  source_kind: test
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: tests/unit/test_signal_queue.py::test_pause_active_run_enters_stopping_then_paused
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-9
-  source_kind: test
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: tests/unit/test_workflow_engine.py completion and failure progression anchors
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-10
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 03-workflow-state.md#CON-WF-05 mode-qualified terminality
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-11
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 03-workflow-state.md#Cancel graph cancellation before row cancellation
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-12
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 03-workflow-state.md#WF-task-edges legacy TaskStatus transitions
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-13
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 04-api-actions-authority.md#action-clarification-respond response/artifact/resume boundary
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-14
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 04-api-actions-authority.md#action-recovery-outcome retry skip abandon outcomes
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-15
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 03-workflow-state.md#WF-task-edges fan-out parent behavior
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-16
-  source_kind: test
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: tests/unit/test_transitions_recovering_force_accept.py::TestTransitionForceAccept
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-17
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table graph lifecycle commands
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-18
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 02-graph-runtime.md#scheduler-and-lease behavior
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-19
-  source_kind: implementation
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: 03-workflow-state.md#states-only-in-mode graph resuming qualification
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-20
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 02-graph-runtime.md#cancel lifecycle and node cancellation effects
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-21
-  source_kind: test
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 02-graph-runtime.md#evaluate_final_gate completion test anchors
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-22
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 02-graph-runtime.md#reconcile terminal-failure behavior
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-23
-  source_kind: test
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: tests/integration/test_graph_api.py::test_operator_requeues_failed_outbox_row_with_audit_event
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-24
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 02-graph-runtime.md#node-state projection and readiness fields
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-25
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 02-graph-runtime.md#submit_callback accepted completion effects
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-26
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 02-graph-runtime.md#record_decision rejected approval and schedule_tick expiry failure
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-27
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 04-api-actions-authority.md#action-graph-decision decision record effects
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-28
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: 04-api-actions-authority.md#action-review-prune-and-conflict-resolution async review timing
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-29
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: 04-api-actions-authority.md#action-branch-sync merge effects and conflicts
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-30
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: 04-api-actions-authority.md#action-conflict-resolution staged conflict effects
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-31
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: 04-api-actions-authority.md#action-env-files filesystem route boundary
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-32
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: 04-api-actions-authority.md#action-routine-archive routine visibility only
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-33
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: 04-api-actions-authority.md#action-agent-policy configuration-row effects
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-34
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: 04-api-actions-authority.md#action-agent-policy runner default replacement
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-35
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: 04-api-actions-authority.md#action-repository-admin add/remove boundary
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-36
-  source_kind: test
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: tests/integration/test_api_human_approval.py::test_approve_step_multiple_times
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-37
-  source_kind: test
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: tests/unit/test_patch_validator.py and 04-api-actions-authority.md#action-graph-patch
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-38
-  source_kind: test
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: tests/integration/test_api_auth.py global optional bearer-authentication anchors
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-39
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 04-api-actions-authority.md#api-authz-roles absent subject/role/scope enforcement
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-40
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 03-workflow-state.md and 04-api-actions-authority.md legacy route state/input eligibility
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-41
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: '02-graph-runtime.md#record_decision and #submit_patch domain validation'
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-42
-  source_kind: test
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py closure scope
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-43
-  source_kind: api
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: src/orchestrator/api/routers/runs.py::create_run and ::delete_run synchronous row creation/deletion routes
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-44
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: 04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges fan-out carrier behavior
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-45
-  source_kind: implementation
-  reachable: true
-  test_status: exercised
+  source_kind: audit-report
+  reachable: false
+  test_status: unknown
   label: '04-api-actions-authority.md#action-transition-back and #action-run-recover; tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run'
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-46
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: src/orchestrator/api/routers/routines.py::validate_routine YAML parse and RoutineConfig validation response
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-47
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: src/orchestrator/api/routers/review.py::start_test_run 202 test-job start and completion callback
   snapshot_id: snapshot-2026-07-24-phase-1
 - id: EVD-48
-  source_kind: api
-  reachable: true
+  source_kind: audit-report
+  reachable: false
   test_status: unexercised
   label: src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch and AgentFixStarted
   snapshot_id: snapshot-2026-07-24-phase-1
@@ -3940,9 +3940,15 @@ items:
   - tests/**/*.py
   - ui/src/**/*.ts
   - ui/src/**/*.tsx
-  - docs/jtbd/*.md
+  - docs/jtbd/jobs.md
+  - docs/jtbd/journeys.md
+  - docs/jtbd/decision-information.md
+  - docs/jtbd/information-architecture.md
+  - docs/jtbd/evaluation-rubric.md
   - docs/superpowers/specs/2026-07-23-ui-foundation-phase-0-3-design.md
   - research/ui-foundation/agent-reports/*.md
+  - research/ui-foundation/tools/validate.py
+  - tests/integration/test_ui_foundation_tools.py
   expected_count: 902
   covered_count: 902
   path: research/ui-foundation/tools/validate.py
