@@ -1,45 +1,12 @@
 schema_version: "1"
 phase_status: synthesized-provisional
 completion_phase: 1
-key_namespace: provisional
+key_namespace: "provisional Task-11 PER namespace; not catalog allocation"
 items:
-  - key: permission-authentication-global
-    title: Optional global bearer authentication
-    implementation_status: present
-    enforced_authentication: "When enabled, API and MCP middleware require a valid bearer JWT; authentication is disabled by default."
-    enforced_authorization: absent
-    domain_eligibility: "Not an action eligibility rule."
-    proposed_product_role_policy: null
-    evidence: ["agent-reports/04-api-actions-authority.md#authority-model"]
-  - key: permission-authorization-per-action
-    title: Product-role authorization for mutations
-    implementation_status: absent
-    enforced_authentication: "Optional valid-token gate only."
-    enforced_authorization: "No endpoint verifies JWT subject, role, scope, ownership, membership, or action permission."
-    domain_eligibility: "Commands separately reject invalid state, graph role, target, and input conditions."
-    proposed_product_role_policy: "Unspecified; no role policy is admitted by this synthesis."
-    evidence: ["agent-reports/04-api-actions-authority.md#authority-model"]
-  - key: permission-legacy-operator-assumption
-    title: Legacy endpoint operator attribution assumption
-    implementation_status: present
-    enforced_authentication: "Optional global gate; not bound to recorded actor."
-    enforced_authorization: absent
-    domain_eligibility: "Endpoint/service lifecycle and task-state checks."
-    proposed_product_role_policy: null
-    limitation: "Fixed human-operator/user or caller-supplied identity is audit attribution, not a verified product role."
-  - key: permission-graph-command-eligibility
-    title: Graph command actor and domain eligibility
-    implementation_status: present
-    enforced_authentication: "Outer JWT gate remains optional."
-    enforced_authorization: "Graph command role/context validation is enforced, but it is not authenticated human-role authorization."
-    domain_eligibility: "Target kind/state, decision type/value, graph position, lease, topology, resource, and validator rules are command-specific prerequisites."
-    proposed_product_role_policy: null
-    evidence: ["agent-reports/02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table", "agent-reports/04-api-actions-authority.md#graph-decision-patch-retire-supersede-and-requeue-capability"]
-  - key: permission-scoped-mcp-capability
-    title: Scoped MCP tool exposure
-    implementation_status: present
-    enforced_authentication: "Optional global gate."
-    enforced_authorization: "Tool allowlisting constrains exposed names, not actor authorization."
-    domain_eligibility: "Execution-bound graph closures and command validators still apply."
-    proposed_product_role_policy: null
-    prohibited_interpretation: "Do not represent tool scope as a human permission grant."
+  - {id: PER-900, title: "Optional global bearer authentication", definition: "When enabled, API and MCP middleware require a valid bearer JWT; authentication is disabled by default.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "04-api-actions-authority.md#api-authn-jwt and integration auth tests", evidence_ids: [EVI-931], conflict_ids: [], question_ids: [], limitations: ["Claims are not bound to a routed action actor"], prohibited_interpretations: ["A valid token proves product-role authorization"], enforced_authentication: "Optional global valid-bearer gate", enforced_authorization: absent, domain_eligibility: "Not an action eligibility rule.", proposed_product_role_policy: null}
+  - {id: PER-901, title: "Routed endpoint authorization boundary", definition: "Routed mutations have no verified per-action subject, role, scope, ownership, membership, or permission check.", implementation_status: absent, test_status: exercised, documentation_status: documented, capability_status: gap, epistemic_status: observed, confidence: high, confidence_basis: "04-api-actions-authority.md#api-authz-roles", evidence_ids: [EVI-932], conflict_ids: [], question_ids: [], limitations: ["Optional authentication can still gate transport"], prohibited_interpretations: ["Caller strings or audit attribution are authorization"], enforced_authentication: "Optional global valid-bearer gate", enforced_authorization: absent, domain_eligibility: "Endpoint-specific schema, target, and state checks remain separate.", proposed_product_role_policy: "Unspecified; no role policy is admitted by this synthesis."}
+  - {id: PER-902, title: "Legacy workflow domain eligibility", definition: "Legacy lifecycle, task, clarification, approval, recovery, fan-out, and review routes apply carrier-specific state and input prerequisites.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "03-workflow-state.md and 04-api-actions-authority.md action tables", evidence_ids: [EVI-933], conflict_ids: [], question_ids: [], limitations: ["Fixed or caller-supplied actor values are attribution only"], prohibited_interpretations: ["Domain transition eligibility is human-role authorization"], enforced_authentication: "Optional global valid-bearer gate", enforced_authorization: absent, domain_eligibility: "Run/task state, gate, request, target, validation, and operation-specific prerequisites.", proposed_product_role_policy: null}
+  - {id: PER-903, title: "Graph command domain eligibility", definition: "Graph commands validate target kind/state, decision type/value, graph position, actor/context shape, lease, topology, resource, and patch constraints.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "02-graph-runtime.md command table and 04-api-actions-authority.md graph actions", evidence_ids: [EVI-934], conflict_ids: [], question_ids: [], limitations: ["Caller-supplied decider and operator context are not authenticated-subject policy"], prohibited_interpretations: ["Graph role/context validation is enforced product authorization"], enforced_authentication: "Optional global valid-bearer gate", enforced_authorization: absent, domain_eligibility: "Command-specific graph role/context and target/state/topology/resource validation.", proposed_product_role_policy: null}
+  - {id: PER-904, title: "Scoped MCP tool exposure", definition: "Scoped MCP and execution-bound graph MCP restrict registered tool names and execution closures.", implementation_status: present, test_status: exercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: high, confidence_basis: "04-api-actions-authority.md#mcp-tool-scope and graph-mcp-execution-scope tests", evidence_ids: [EVI-935], conflict_ids: [], question_ids: [], limitations: ["Possession of a scope/token is not a product role grant"], prohibited_interpretations: ["Tool allowlisting authorizes a human subject"], enforced_authentication: "Optional global valid-bearer gate", enforced_authorization: absent, domain_eligibility: "Execution-bound closure and command validators still apply after tool exposure.", proposed_product_role_policy: null}
+  - {id: PER-905, title: "Routine YAML validation domain eligibility", definition: "The routine validation route accepts YAML content, parses it, unwraps an optional routine key, and validates RoutineConfig without saving it.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "routines.py::validate_routine route inspection", evidence_ids: [EVI-939], conflict_ids: [], question_ids: [], limitations: ["Validation response is not a saved routine or metadata effect"], prohibited_interpretations: ["YAML validation authorizes routine publication"], enforced_authentication: "Optional global valid-bearer gate", enforced_authorization: absent, domain_eligibility: "YAML parseability and RoutineConfig schema validation only.", proposed_product_role_policy: null}
+  - {id: PER-906, title: "Review and administration domain eligibility", definition: "Review, git, environment, routine metadata, agent, runner-default, and repository mutations apply their route-specific worktree, readiness, schema, identity, or filesystem prerequisites.", implementation_status: present, test_status: unexercised, documentation_status: documented, capability_status: current, epistemic_status: observed, confidence: medium, confidence_basis: "review/admin action-route inspection", evidence_ids: [EVI-922, EVI-924, EVI-926, EVI-927, EVI-928, EVI-940, EVI-941], conflict_ids: [], question_ids: [], limitations: ["Route eligibility does not establish ownership, containment, or role authorization beyond what the specific route checks"], prohibited_interpretations: ["Git, filesystem, or configuration eligibility is product-role authorization"], enforced_authentication: "Optional global valid-bearer gate", enforced_authorization: absent, domain_eligibility: "Concrete endpoint-specific prerequisites; no shared administrative permission is inferred.", proposed_product_role_policy: null}

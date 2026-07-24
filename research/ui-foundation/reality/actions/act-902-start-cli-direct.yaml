@@ -4,9 +4,9 @@ definition: Apply legacy start synchronously through the divergent CLI path.
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-900
+command_id: CMD-902
 actor: local CLI operator
-permission_requirements: [PER-901]
+permission_requirements: [PER-902]
 preconditions: ["legacy run is draft"]
 expected_source_version: "None"
 required_input: {run_id: required}
@@ -18,9 +18,9 @@ stale_state_behavior: "Not REST signal acceptance; timing is intentionally disti
 idempotency: "State-validated; no request key."
 retry_behavior: "Read resulting row before retry."
 reversibility: "Pause or cancel are separate actions."
-audit_evidence_ids: [EVI-900]
+audit_evidence_ids: [EVI-900, EVI-933]
 transition: {from_state_id: STA-900, to_state_id: STA-901}
-enforced_authentication: "Bypasses REST auth"
+enforced_authentication: "No REST bearer gate; local CLI process directly applies the workflow transition."
 enforced_authorization: absent
-domain_eligibility: "draft only"
+domain_eligibility: "Legacy row must be draft."
 proposed_role_policy: null

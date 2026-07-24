@@ -1,1 +1,28 @@
-{id: ACT-913, implementation_status: present, capability_status: current, executable: true, command_id: CMD-902, actor: "assumed human-operator", permission_requirements: [PER-902], preconditions: ["graph run guard", "authorized graph patch role and valid topology"], expected_source_version: "optional base_graph_position", required_input: {operations: required, base_graph_position: optional, rationale: optional}, validation: ["strict patch schema", "topology/resource/cycle/staleness validator"], durable_effect: "Appends accepted patch and topology/binding events.", resulting_state_id: STA-917, failure_modes: ["404 no graph", "409 stale or rejected", "422 malformed"], stale_state_behavior: "Stale base rejects only invalidating read-set conflicts; future-base treatment unclear.", idempotency: "Patch ID is not proven universal idempotency", retry_behavior: "Refresh projection and submit corrective patch.", reversibility: "Only later validated corrective patch", audit_evidence_ids: [EVI-901, EVI-902], transition: {from_state_id: STA-917, to_state_id: STA-917}, enforced_authentication: "optional JWT", enforced_authorization: absent, domain_eligibility: "graph validator", proposed_role_policy: null}
+id: ACT-913
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-915
+actor: "REST endpoint-stamped human-operator; this is endpoint attribution, not enforced product-role authorization."
+permission_requirements: [PER-900, PER-901, PER-903]
+preconditions:
+  - "A graph exists and its run passes the SubmitGraphPatchCommand run guard."
+  - "The submitted operations are authorized for the graph actor role and preserve typed topology, resource, and dependency invariants."
+expected_source_version: "Optional base_graph_position is the patch stale-read-set base; the controller current position is a separate optimistic-concurrency guard."
+required_input: {operations: required, patch_id: optional, base_graph_position: optional, rationale_record_id: optional}
+validation:
+  - "Strict patch request and SubmitGraphPatchCommand schema validation."
+  - "PER-903 role, topology, port/selector, cycle, resource, active-node, dynamic-region, and stale read-set validation."
+durable_effect: "Appends graph_patch_accepted and its operation-specific graph topology, binding, or repair events. The patch-attempt carrier records acceptance; no universal node or run result is implied."
+resulting_state_id: STA-951
+failure_modes: ["404 when no graph exists", "409 for controller race or rejected patch", "422 for malformed patch input"]
+stale_state_behavior: "A stale base is rejected only when invalidating events touch the operation read set; controller races also return 409. A future base is not described as rejected because the audited validator accepts it unless another check rejects it."
+idempotency: "Patch ID is not established as universal idempotency. Retry behavior depends on the current projection, read set, and operation identities."
+retry_behavior: "Read diagnostics, current graph position, and topology, then submit a new valid corrective patch rather than replaying an assumed-safe request."
+reversibility: "No patch rollback command exists; a later validated corrective patch is a new graph effect, not undo."
+audit_evidence_ids: [EVI-930]
+transition: {from_state_id: STA-951, to_state_id: STA-951}
+enforced_authentication: "PER-900 optional global valid-bearer gate."
+enforced_authorization: absent
+domain_eligibility: "PER-903 SubmitGraphPatchCommand and patch-validator role, run, topology, resource, and stale-read-set rules."
+proposed_role_policy: null

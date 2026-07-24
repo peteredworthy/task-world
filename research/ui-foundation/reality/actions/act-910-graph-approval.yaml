@@ -1,1 +1,29 @@
-{id: ACT-910, implementation_status: present, capability_status: current, executable: true, command_id: CMD-902, actor: "caller-supplied decider", permission_requirements: [PER-902], preconditions: ["eligible approval gate and graph state"], expected_source_version: "No client graph position", required_input: {decision_type: approval, value: "approved|rejected", target: required}, validation: ["strict RecordDecisionCommand and graph target/value checks"], durable_effect: "Records approval; approved may bind/release/complete, rejected required input can fail node.", resulting_state_id: STA-927, failure_modes: ["404 graph", "409 stale/rejected", "422 schema"], stale_state_behavior: "Controller optimistic concurrency; rejection returns reason without universal recovery object.", idempotency: "No REST key", retry_behavior: "Refresh decision view.", reversibility: "No decision reversal", audit_evidence_ids: [EVI-901, EVI-902], transition: {from_state_id: STA-927, to_state_id: STA-927}, enforced_authentication: "optional JWT", enforced_authorization: absent, domain_eligibility: "graph actor/target rules", proposed_role_policy: null}
+id: ACT-910
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-912
+actor: "Caller-supplied decider; the decision record preserves that attribution without binding it to an authenticated subject."
+permission_requirements: [PER-900, PER-901, PER-903]
+preconditions:
+  - "A graph exists and its run is not cancelled or failed."
+  - "The target is an eligible nonterminal approval gate."
+  - "The request value is approved."
+expected_source_version: "The REST request has no client graph position; the controller reads the current position and its transaction/append checks detect a concurrent advance."
+required_input: {decision_type: approval, value: approved, target_node_id: required, decider: required, scope: optional, expiry: optional, reason: optional, record_id: optional}
+validation:
+  - "RecordDecisionCommand strictly validates decision type/value and the approval target kind."
+  - "PER-903 graph command domain eligibility validates graph state, target terminality, and actor/context shape."
+durable_effect: "Appends approval_decision_recorded and projects a DecisionRecord; accepted approval then binds the decision input, releases the scoped lease when present, and completes the target node."
+resulting_state_id: STA-933
+failure_modes: ["404 when no graph exists", "409 for stale append or command rejection", "422 for an invalid decision payload, target, or value"]
+stale_state_behavior: "The client cannot supply a graph position. A race detected by the controller transaction or append returns 409 with a rejection reason; it does not create a generic rejection state."
+idempotency: "No REST idempotency key is established. A caller retries only after reading the decision/node projection; duplicate semantics are command-state dependent."
+retry_behavior: "Refresh the graph decision and node projections, then submit only a still-eligible decision; do not assume an accepted response is a reusable receipt."
+reversibility: "No decision-reversal command exists. A later valid graph command may create a new effect but is not an undo of this decision."
+audit_evidence_ids: [EVI-920]
+transition: {from_state_id: STA-932, to_state_id: STA-933}
+enforced_authentication: "PER-900 optional global valid-bearer gate."
+enforced_authorization: absent
+domain_eligibility: "PER-903 graph decision target, state, actor/context, and value validation."
+proposed_role_policy: null

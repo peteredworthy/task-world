@@ -1,0 +1,26 @@
+id: ACT-941
+title: Reject legacy task with revision attempts remaining
+definition: Rejects one approval-pending legacy task when another revision attempt is available.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-907
+actor: "fixed or injected user"
+permission_requirements: [PER-902]
+preconditions: ["legacy task is pending user action for approval", "current attempt is below the attempt limit"]
+expected_source_version: "No client task version"
+required_input: {run_id: required, task_id: required, reason: optional}
+validation: ["legacy execution mode", "task rejection transition validation", "attempt limit evaluation"]
+durable_effect: "Records a rejected ApprovalDecision, creates the revision attempt, and returns the task to building."
+resulting_state_id: STA-908
+failure_modes: ["404 run or task identity", "409 task is not awaiting approval"]
+stale_state_behavior: "An advanced task is rejected by the task transition check."
+idempotency: "No idempotency key; a successful rejection changes state and creates a revision attempt."
+retry_behavior: "Refresh task state; retry is valid only while the task remains approval-pending."
+reversibility: "No direct reversal of the recorded rejection."
+audit_evidence_ids: [EVI-905]
+transition: {from_state_id: STA-910, to_state_id: STA-908}
+enforced_authentication: "Optional global valid-bearer gate"
+enforced_authorization: absent
+domain_eligibility: "Legacy task approval state with an attempt remaining."
+proposed_role_policy: null

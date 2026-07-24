@@ -1,0 +1,27 @@
+id: ACT-955
+title: Park recovered legacy run row as paused
+definition: Run recovery moves a failed row to paused and preserves an already paused row as paused.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-911
+actor: caller
+permission_requirements: [PER-902]
+preconditions: ["legacy run is failed or paused", "target task exists"]
+expected_source_version: "No client run or task version"
+required_input: {run_id: required, target_task_id: required, additional_attempts: optional, guidance: optional, reset_branch: optional}
+validation: ["legacy execution mode", "failed-or-paused run validation", "target task validation", "additional attempt and reset strategy validation"]
+durable_effect: "Sets the recovered run row to paused with pause_reason recovered; target and downstream task effects are separate contracts."
+resulting_state_id: STA-903
+failure_modes: ["404 run or target task identity", "409 run is neither failed nor paused", "409 worktree reset failure"]
+stale_state_behavior: "No expected version; concurrent run progression can invalidate recovery eligibility."
+idempotency: "No idempotency key; recovery rewrites target/downstream state and appends an attempt."
+retry_behavior: "Refresh run, target task, and worktree state before retrying."
+reversibility: "Recovery rewind does not restore files or external effects."
+audit_evidence_ids: [EVI-938]
+transition: {from_state_id: STA-905, to_state_id: STA-903}
+carrier_relationship: {command_group: run_recover, source_preserving_state_ids: [STA-903], paired_effect_action_ids: [ACT-957, ACT-958], affected_carrier: "legacy run row"}
+enforced_authentication: "Optional global valid-bearer gate"
+enforced_authorization: absent
+domain_eligibility: "Failed or paused legacy run with an existing target task."
+proposed_role_policy: null

@@ -1,0 +1,27 @@
+id: ACT-933
+title: Cancel paused run through REST
+definition: Accept cancellation from a paused legacy row while preserving that row until later consumer application.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-905
+actor: caller
+permission_requirements: [PER-900, PER-901, PER-902]
+preconditions: ["legacy run is paused"]
+expected_source_version: "No client run version."
+required_input: {run_id: required}
+validation: ["legacy lifecycle state validation", "executor cancellation and signal enqueue"]
+durable_effect: "Appends cancellation signal acceptance evidence while the row remains paused; the consumer later applies paused to cancelled. Graph mode separately performs graph-local cancellation before row cancellation."
+resulting_state_id: STA-903
+failure_modes: ["404 missing run", "409 stopping or illegal transition", "executor cancellation failure"]
+stale_state_behavior: "Accepted CANCEL preserves paused until consumer application; redelivery can encounter an already-applied or stale transition and is acknowledged or discarded without a typed result receipt."
+idempotency: "State-validated; no idempotency key. A repeat after row cancellation is ineligible."
+retry_behavior: "Refresh row status and activity before retrying; do not treat 202 acceptance as cancellation completion."
+reversibility: "Cancellation has no direct uncancel; recovery is a separate compensating capability and does not reverse cancellation."
+audit_evidence_ids: [EVI-900, EVI-904, EVI-913, EVI-931, EVI-932, EVI-933]
+transition: {from_state_id: STA-903, to_state_id: STA-903}
+eventual_applied_transition: {from_state_id: STA-903, to_state_id: STA-906, evidence_ids: [EVI-900, EVI-904]}
+enforced_authentication: "Optional global valid-bearer gate; disabled by default."
+enforced_authorization: absent
+domain_eligibility: "Legacy row must be paused; graph cancellation ordering is a separate mode-specific effect."
+proposed_role_policy: null

@@ -4,9 +4,9 @@ definition: Accept a legacy start signal without claiming it has applied.
 implementation_status: present
 capability_status: current
 executable: true
-command_id: CMD-900
+command_id: CMD-901
 actor: caller
-permission_requirements: [PER-900]
+permission_requirements: [PER-900, PER-901, PER-902]
 preconditions: ["legacy run is draft"]
 expected_source_version: "None"
 required_input: {run_id: required}
@@ -18,9 +18,9 @@ stale_state_behavior: "202 may leave run draft; stale redelivery is discarded or
 idempotency: "State-validated; no request key."
 retry_behavior: "Poll signal/activity before retry."
 reversibility: "Pause or cancel are separate actions."
-audit_evidence_ids: [EVI-900]
+audit_evidence_ids: [EVI-900, EVI-931, EVI-932, EVI-933]
 transition: {from_state_id: STA-900, to_state_id: STA-900}
-enforced_authentication: "Optional global JWT"
+enforced_authentication: "Optional global valid-bearer gate; disabled by default."
 enforced_authorization: absent
-domain_eligibility: "draft only"
+domain_eligibility: "Legacy row must be draft."
 proposed_role_policy: null

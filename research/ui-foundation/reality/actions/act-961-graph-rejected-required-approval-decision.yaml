@@ -1,0 +1,24 @@
+id: ACT-961
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-912
+actor: "Caller-supplied decider; persisted attribution is not authorization."
+permission_requirements: [PER-900, PER-901, PER-903]
+preconditions: ["A graph exists and is not cancelled or failed.", "The target is an eligible nonterminal required approval gate.", "The request value is rejected."]
+expected_source_version: "No client graph position; current-position controller/append checks expose races as 409."
+required_input: {decision_type: approval, value: rejected, target_node_id: required, decider: required, scope: optional, expiry: optional, reason: optional, record_id: optional}
+validation: ["Strict RecordDecisionCommand approval type/value/target validation", "PER-903 graph state, terminality, and actor/context validation"]
+durable_effect: "Appends approval_decision_recorded and projects the rejected required approval as a DecisionRecord before its separate node-failure consequence."
+resulting_state_id: STA-933
+failure_modes: ["404 when no graph exists", "409 for stale append or command rejection", "422 for invalid approval input"]
+stale_state_behavior: "A race returns 409 without manufacturing a generic rejection carrier."
+idempotency: "No REST idempotency key; duplicate behavior is command/state dependent."
+retry_behavior: "Refresh the decision and node projections before any retry."
+reversibility: "No decision-reversal command exists."
+audit_evidence_ids: [EVI-919, EVI-920]
+transition: {from_state_id: STA-932, to_state_id: STA-933}
+enforced_authentication: "PER-900 optional global valid-bearer gate."
+enforced_authorization: absent
+domain_eligibility: "PER-903 required approval target, value, graph-state, and actor/context validation."
+proposed_role_policy: null

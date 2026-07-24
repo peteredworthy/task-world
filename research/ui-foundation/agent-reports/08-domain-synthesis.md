@@ -21,6 +21,8 @@ canonical IDs, slash equivalences, or unsupported causal claims.
 3. Graph node, edge, record, binding, lease, projection, and outbox are distinct
    graph carriers. The outbox identity is `outbox_id`; `event_id` is a unique
    association. Cardinality is structurally separated from temporal/context data.
+   The graph uses endpoint convention: source multiplicity is source entities per
+   target endpoint; target multiplicity is target entities per source endpoint.
 4. Artifact carriers are split into verified CAS blob, generic graph declared
    path reference, configured expected path, and interaction-log row. The retained
    artifact taxonomy explicitly has no identity.

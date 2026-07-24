@@ -1,0 +1,27 @@
+id: ACT-954
+title: Reset affected transition-back task to pending
+definition: Transition-back resets each affected non-completed legacy task to pending.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-911
+actor: caller
+permission_requirements: [PER-902]
+preconditions: ["task belongs to a step from the earlier target through the former current step", "task is non-completed"]
+expected_source_version: "No client run, step, or task version"
+required_input: {run_id: required, target_step_index: required, reason: optional}
+validation: ["legacy execution mode", "target step index bounds validation", "earlier-step validation"]
+durable_effect: "Resets the affected non-completed task to pending while the paired run carrier records the step-index rewind."
+resulting_state_id: STA-907
+failure_modes: ["404 run identity", "409 target is current, forward, or out of bounds"]
+stale_state_behavior: "No expected version; concurrent progression can alter the affected task set before application."
+idempotency: "No idempotency key; repeating the same target is rejected after the run has moved back."
+retry_behavior: "Refresh current_step_index and affected task states before retrying."
+reversibility: "No exact inverse restores attempts, file state, or external effects."
+audit_evidence_ids: [EVI-938]
+transition: {from_state_ids: [STA-908, STA-909, STA-910, STA-911, STA-912, STA-914], to_state_id: STA-907}
+carrier_relationship: {command_group: transition_back, paired_effect_action_ids: [ACT-953], affected_carrier: "affected legacy task"}
+enforced_authentication: "Optional global valid-bearer gate"
+enforced_authorization: absent
+domain_eligibility: "Non-completed task in the legacy run's rewound step range."
+proposed_role_policy: null

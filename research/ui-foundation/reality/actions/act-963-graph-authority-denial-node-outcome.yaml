@@ -1,0 +1,24 @@
+id: ACT-963
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-913
+actor: "Caller-supplied decider recorded by ACT-911; no authenticated-subject authorization is enforced."
+permission_requirements: [PER-900, PER-901, PER-903]
+preconditions: ["ACT-911's eligible authority denial has been recorded.", "The authority_request target remains eligible for the command's accepted completion effect."]
+expected_source_version: "This is a node-projection consequence of the current-position authority decision command; no client graph position exists."
+required_input: {decision_type: authority, value: denied, target_node_id: required}
+validation: ["The preceding RecordDecisionCommand authority target/value validation succeeds.", "PER-903 applies authority-request target and state eligibility."]
+durable_effect: "The accepted AuthorityDecisionRecord is bound where applicable, its scoped lease is released where present, and the authority_request graph node is projected completed."
+resulting_state_id: STA-929
+failure_modes: ["409 when authority decision append is rejected or races", "422 for invalid authority input"]
+stale_state_behavior: "A conflict prevents the node completion consequence and does not alter a legacy row or task."
+idempotency: "No separate idempotency key exists for this data-dependent command consequence."
+retry_behavior: "Refresh authority decision and node projections before retrying the decision command."
+reversibility: "No authority-decision or node-completion reversal command exists."
+audit_evidence_ids: [EVI-920]
+transition: {from_state_id: STA-933, to_state_id: STA-929}
+enforced_authentication: "PER-900 optional global valid-bearer gate."
+enforced_authorization: absent
+domain_eligibility: "PER-903 accepted authority-request decision eligibility."
+proposed_role_policy: null

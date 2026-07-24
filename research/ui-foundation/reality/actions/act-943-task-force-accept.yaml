@@ -1,0 +1,26 @@
+id: ACT-943
+title: Force accept legacy task
+definition: Bypasses grade evaluation and completes one legacy task from its qualified source-state set.
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-907
+actor: "fixed or injected user"
+permission_requirements: [PER-902]
+preconditions: ["legacy task is failed, building, or verifying"]
+expected_source_version: "No client task version"
+required_input: {run_id: required, task_id: required, comment: optional}
+validation: ["legacy execution mode", "qualified force-accept source-state validation"]
+durable_effect: "Completes the task without grade evaluation, records an override ApprovalDecision, and runs the normal step/run completion cascade."
+resulting_state_id: STA-913
+failure_modes: ["404 run or task identity", "409 source task is not failed, building, or verifying"]
+stale_state_behavior: "An advanced or ineligible task is rejected by the force-accept transition check."
+idempotency: "No idempotency key; a completed task is not a legal force-accept source."
+retry_behavior: "Refresh task and run state before retrying an uncertain response."
+reversibility: "No force-accept undo; transition-back is not an exact inverse."
+audit_evidence_ids: [EVI-909]
+transition: {from_state_ids: [STA-914, STA-908, STA-909], to_state_id: STA-913}
+enforced_authentication: "Optional global valid-bearer gate"
+enforced_authorization: absent
+domain_eligibility: "Legacy force-accept transition from failed, building, or verifying only."
+proposed_role_policy: null

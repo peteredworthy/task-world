@@ -1,1 +1,29 @@
-{id: ACT-911, implementation_status: present, capability_status: current, executable: true, command_id: CMD-902, actor: "caller-supplied decider", permission_requirements: [PER-902], preconditions: ["eligible authority request"], expected_source_version: "No client graph position", required_input: {decision_type: authority, value: denied, target: required}, validation: ["strict authority target/value rules"], durable_effect: "Records authority denial, binds decision evidence, releases lease and defers downstream work where command rules apply.", resulting_state_id: STA-927, failure_modes: ["409 stale or rejected", "422 invalid target/value"], stale_state_behavior: "Current graph position is read server-side.", idempotency: "No request key", retry_behavior: "Refresh graph decision view.", reversibility: "No reversal command", audit_evidence_ids: [EVI-901, EVI-902], transition: {from_state_id: STA-927, to_state_id: STA-927}, enforced_authentication: "optional JWT", enforced_authorization: absent, domain_eligibility: "authority decision rules", proposed_role_policy: null}
+id: ACT-911
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-913
+actor: "Caller-supplied decider; its persisted identity is attribution, not authenticated-subject authorization."
+permission_requirements: [PER-900, PER-901, PER-903]
+preconditions:
+  - "A graph exists and its run is not cancelled or failed."
+  - "The target is an eligible nonterminal authority_request node."
+  - "The request value is denied."
+expected_source_version: "The REST request has no client graph position; the controller reads the current position and guards its transaction and append against races."
+required_input: {decision_type: authority, value: denied, target_node_id: required, decider: required, scope: optional, expiry: optional, reason: optional, record_id: optional}
+validation:
+  - "RecordDecisionCommand strictly validates authority decision type/value and authority_request target kind."
+  - "PER-903 validates graph state, target terminality, and graph actor/context shape."
+durable_effect: "Appends authority_decision_recorded and projects an AuthorityDecisionRecord; the accepted denial is bound to the authority request, completes that graph node, and leaves a downstream node that requires the denied input graph-node pending with a separately projected deferred reason. No row carrier or invented deferred state is used."
+resulting_state_id: STA-933
+failure_modes: ["404 when no graph exists", "409 for stale append or command rejection", "422 for malformed or ineligible authority decision input"]
+stale_state_behavior: "No client position is accepted. Controller/append races return 409 and leave no invented rejected-decision carrier."
+idempotency: "No REST idempotency key is established; decision-record identity and duplicate handling remain command/state dependent."
+retry_behavior: "Read the authority decision and node projections before retrying; retry only if the authority request remains eligible."
+reversibility: "No authority-decision reversal command exists; a later permitted graph action is not an undo."
+audit_evidence_ids: [EVI-920]
+transition: {from_state_id: STA-932, to_state_id: STA-933}
+enforced_authentication: "PER-900 optional global valid-bearer gate."
+enforced_authorization: absent
+domain_eligibility: "PER-903 authority target, decision value, graph-state, and actor/context validation."
+proposed_role_policy: null

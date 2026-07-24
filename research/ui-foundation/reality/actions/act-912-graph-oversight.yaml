@@ -1,1 +1,28 @@
-{id: ACT-912, implementation_status: present, capability_status: current, executable: true, command_id: CMD-902, actor: "caller-supplied decider", permission_requirements: [PER-902], preconditions: ["eligible oversight target"], expected_source_version: "No client graph position", required_input: {decision_type: oversight, value: required, target: required}, validation: ["strict oversight decision rules"], durable_effect: "Appends oversight decision event and updates decision projection.", resulting_state_id: STA-927, failure_modes: ["409 command rejected", "422 invalid payload"], stale_state_behavior: "Optimistic append conflicts are surfaced.", idempotency: "No key", retry_behavior: "Refresh decision view.", reversibility: "No decision reversal", audit_evidence_ids: [EVI-901], transition: {from_state_id: STA-927, to_state_id: STA-927}, enforced_authentication: "optional JWT", enforced_authorization: absent, domain_eligibility: "oversight target rules", proposed_role_policy: null}
+id: ACT-912
+implementation_status: present
+capability_status: current
+executable: true
+command_id: CMD-914
+actor: "Caller-supplied decider; the value is persisted as attribution and is not authenticated-subject authorization."
+permission_requirements: [PER-900, PER-901, PER-903]
+preconditions:
+  - "A graph exists and its run is not cancelled or failed."
+  - "The target is an eligible nonterminal oversight decision target."
+expected_source_version: "The REST request has no client graph position; the controller supplies the current position and rejects a concurrent append conflict."
+required_input: {decision_type: oversight, value: required, target_node_id: required, decider: required, scope: optional, expiry: optional, reason: optional, record_id: optional}
+validation:
+  - "RecordDecisionCommand strictly validates the oversight decision payload and target eligibility."
+  - "PER-903 validates graph state, target terminality, and actor/context shape."
+durable_effect: "Appends oversight_decision_recorded and updates the oversight decision projection. Oversight creates no DecisionRecord or AuthorityDecisionRecord output record."
+resulting_state_id: STA-933
+failure_modes: ["404 when no graph exists", "409 for stale append or command rejection", "422 for malformed or ineligible oversight input"]
+stale_state_behavior: "A controller/append race returns 409. No source-version field exists on the request and no generic rejected state is projected."
+idempotency: "No REST idempotency key is established; callers must use the returned decision projection rather than infer exactly-once behavior."
+retry_behavior: "Refresh the oversight decision projection and retry only while the target remains eligible."
+reversibility: "No oversight-decision reversal command exists."
+audit_evidence_ids: [EVI-920]
+transition: {from_state_id: STA-932, to_state_id: STA-933}
+enforced_authentication: "PER-900 optional global valid-bearer gate."
+enforced_authorization: absent
+domain_eligibility: "PER-903 oversight target, graph-state, and actor/context validation."
+proposed_role_policy: null
