@@ -55,7 +55,7 @@ snapshot: &id001
     sha256: 7ad4caa93e1afd4e728f2b7c2fac4b3c54ca441e100ac51e912ff85196d2f2e7
     audited_at: '2026-07-24T03:00:00Z'
   - path: research/ui-foundation/tools/validate.py
-    sha256: 3edb5f8fb5014aff8cda41989bbd35659628f47b41abc7652c0701eb7094e081
+    sha256: 85f6ecf677c03ac2d061bde72ba977bd23daff9a220d6e884c9b1f5c981a33f6
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/__init__.py
     sha256: b1f14eb507ed5cae44a23dc96212731b2560b970310ef4037e303d90c5271bf4
@@ -1486,7 +1486,7 @@ snapshot: &id001
     sha256: 881f069c22f2f0dad0cd985e0126ce9c5d22b126c8e620f7b4c50f888d39f7b6
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_ui_foundation_tools.py
-    sha256: bd7d2e43b6ece185ebb17f973fa6cfe32974d95c36c12fc81a3c9513a2c219ef
+    sha256: 74d47268242579a3d5a60ae5c7272b462bd9acfc32d22f4a442405cbd0be50a4
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_verifier_model_pinning.py
     sha256: b745091b4bf7450fdb1e901e4b231913be33dec9b70e0a3340e11ac690676236
@@ -2777,7 +2777,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /api/runs/{id}/start; start_run; 202 signal accepted before consumer application
+  label: REST POST /api/runs/{id}/start; start_run; 202 signal accepted before consumer
+    application
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/runs.py
   symbol: start_run
@@ -2810,7 +2811,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /api/runs/{id}/resume; resume_run; 202 signal accepted before consumer application
+  label: REST POST /api/runs/{id}/resume; resume_run; 202 signal accepted before consumer
+    application
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/runs.py
   symbol: resume_run
@@ -2821,7 +2823,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /api/runs/{id}/cancel; cancel_run; 202 signal accepted before row application
+  label: REST POST /api/runs/{id}/cancel; cancel_run; 202 signal accepted before row
+    application
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/runs.py
   symbol: cancel_run
@@ -2843,7 +2846,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST clarification response; respond_to_clarification; synchronous response plus eligible resumption
+  label: REST clarification response; respond_to_clarification; synchronous response
+    plus eligible resumption
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/clarifications.py
   symbol: respond_to_clarification
@@ -2876,11 +2880,12 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /graph/decisions; RecordDecisionCommand with discriminated approval, authority, or oversight type/value;
-    synchronous graph append/projection
+  label: REST POST /graph/decisions; RecordDecisionCommand with discriminated approval,
+    authority, or oversight type/value; synchronous graph append/projection
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/graph.py
-  symbol: RecordDecisionCommand with discriminated approval, authority, or oversight type/value
+  symbol: RecordDecisionCommand with discriminated approval, authority, or oversight
+    type/value
   snapshot_path: src/orchestrator/api/routers/graph.py
   test_evidence_ids: []
   test_status: unexercised
@@ -2888,7 +2893,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /graph/patch; SubmitGraphPatchCommand; synchronous accepted/rejected patch attempt
+  label: REST POST /graph/patch; SubmitGraphPatchCommand; synchronous accepted/rejected
+    patch attempt
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/graph.py
   symbol: SubmitGraphPatchCommand
@@ -2899,7 +2905,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: Graph MCP submit_graph_patch and macros; execution-bound SubmitGraphPatchCommand; synchronous graph append/projection
+  label: Graph MCP submit_graph_patch and macros; execution-bound SubmitGraphPatchCommand;
+    synchronous graph append/projection
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/graph.py
   symbol: execution-bound SubmitGraphPatchCommand
@@ -2910,7 +2917,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /graph/outbox/requeue/{event_id}; requeue_outbox; transactional pending reset plus event
+  label: REST POST /graph/outbox/requeue/{event_id}; requeue_outbox; transactional
+    pending reset plus event
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/graph.py
   symbol: requeue_outbox
@@ -2943,7 +2951,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST review revert-back-merge; revert_back_merge; synchronous git mutation or conflict
+  label: REST review revert-back-merge; revert_back_merge; synchronous git mutation
+    or conflict
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/review.py
   symbol: revert_back_merge
@@ -2954,7 +2963,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST review conflict resolution; resolve_conflict; synchronous staged conflict effect
+  label: REST review conflict resolution; resolve_conflict; synchronous staged conflict
+    effect
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/review.py
   symbol: resolve_conflict
@@ -2998,7 +3008,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST environment snapshot copy; copy_env_snapshot; synchronous filesystem write
+  label: REST environment snapshot copy; copy_env_snapshot; synchronous filesystem
+    write
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/envfiles.py
   symbol: copy_env_snapshot
@@ -3009,7 +3020,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST runner model-profile defaults PUT; runner defaults service; synchronous configuration-row replacement
+  label: REST runner model-profile defaults PUT; runner defaults service; synchronous
+    configuration-row replacement
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/model_profiles.py
   symbol: runner defaults service
@@ -3020,7 +3032,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST repository add; repository service; synchronous clone/symlink/metadata mutation
+  label: REST repository add; repository service; synchronous clone/symlink/metadata
+    mutation
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/repos.py
   symbol: repository service
@@ -3031,7 +3044,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST repository remove; repository service; synchronous destructive filesystem/metadata mutation
+  label: REST repository remove; repository service; synchronous destructive filesystem/metadata
+    mutation
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/repos.py
   symbol: repository service
@@ -3042,7 +3056,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /api/routines/validate; validate_routine; synchronous non-mutating YAML/schema response
+  label: REST POST /api/routines/validate; validate_routine; synchronous non-mutating
+    YAML/schema response
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/routines.py
   symbol: validate_routine
@@ -3053,7 +3068,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /api/runs/{run_id}/review/test; start_test_run; 202 asynchronous test-job start before result
+  label: REST POST /api/runs/{run_id}/review/test; start_test_run; 202 asynchronous
+    test-job start before result
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/review.py
   symbol: start_test_run
@@ -3064,8 +3080,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /api/runs/{run_id}/review/conflicts/agent-resolve; agent_resolve_conflicts; synchronous dispatch acceptance
-    before agent result
+  label: REST POST /api/runs/{run_id}/review/conflicts/agent-resolve; agent_resolve_conflicts;
+    synchronous dispatch acceptance before agent result
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/review.py
   symbol: agent_resolve_conflicts
@@ -3087,7 +3103,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST task reject endpoint; reject_task; synchronous building-or-failed legacy task outcome
+  label: REST task reject endpoint; reject_task; synchronous building-or-failed legacy
+    task outcome
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/tasks.py
   symbol: reject_task
@@ -3098,7 +3115,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST task force-accept endpoint; force_accept_task; synchronous qualified task completion
+  label: REST task force-accept endpoint; force_accept_task; synchronous qualified
+    task completion
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/tasks.py
   symbol: force_accept_task
@@ -3131,7 +3149,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST backward-transition endpoint; backward_transition; synchronous legacy step/task rewind
+  label: REST backward-transition endpoint; backward_transition; synchronous legacy
+    step/task rewind
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/runs.py
   symbol: backward_transition
@@ -3142,7 +3161,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /api/runs/{run_id}/recover; recover_run; synchronous compensating recovery to paused
+  label: REST POST /api/runs/{run_id}/recover; recover_run; synchronous compensating
+    recovery to paused
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/runs.py
   symbol: recover_run
@@ -3153,7 +3173,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /api/routines/{routine_id}/archive; archive_routine; synchronous routine metadata update
+  label: REST POST /api/routines/{routine_id}/archive; archive_routine; synchronous
+    routine metadata update
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/routines.py
   symbol: archive_routine
@@ -3164,7 +3185,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /api/routines/{routine_id}/unarchive; unarchive_routine; synchronous routine metadata update
+  label: REST POST /api/routines/{routine_id}/unarchive; unarchive_routine; synchronous
+    routine metadata update
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/routines.py
   symbol: unarchive_routine
@@ -3186,7 +3208,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST PUT /api/agents/{agent_id}; update_agent; synchronous configuration-row update
+  label: REST PUT /api/agents/{agent_id}; update_agent; synchronous configuration-row
+    update
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/agents.py
   symbol: update_agent
@@ -3197,7 +3220,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST DELETE /api/agents/{agent_id}; delete_agent; synchronous configuration-row deletion
+  label: REST DELETE /api/agents/{agent_id}; delete_agent; synchronous configuration-row
+    deletion
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/agents.py
   symbol: delete_agent
@@ -3208,7 +3232,8 @@ items:
   source_kind: command
   implementation_status: present
   reachable: true
-  label: REST POST /api/agents/{agent_id}/reset-prompt; reset_prompt; synchronous default-prompt restoration
+  label: REST POST /api/agents/{agent_id}/reset-prompt; reset_prompt; synchronous
+    default-prompt restoration
   snapshot_id: snapshot-2026-07-24-phase-1
   path: src/orchestrator/api/routers/agents.py
   symbol: reset_prompt
@@ -3219,7 +3244,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus and row transitions
+  source_label: 03-workflow-state.md#state-carriers-and-legal-transitions RunStatus
+    and row transitions
   path: research/ui-foundation/agent-reports/03-workflow-state.md#state-carriers-and-legal-transitions
   symbol: WF-run-status
   provenance_role: synthesis
@@ -3239,7 +3265,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: tests/unit/test_workflow_engine.py completion and failure progression anchors
+  source_label: tests/unit/test_workflow_engine.py completion and failure progression
+    anchors
   path: research/ui-foundation/agent-reports/03-workflow-state.md#state-carriers-and-legal-transitions
   symbol: test_workflow_engine completion and failure progression
   provenance_role: synthesis
@@ -3279,7 +3306,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: 04-api-actions-authority.md#action-clarification-respond response/artifact/resume boundary
+  source_label: 04-api-actions-authority.md#action-clarification-respond response/artifact/resume
+    boundary
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#legacy-task-approval-clarification-and-retry-capability
   symbol: action-clarification-respond
   provenance_role: synthesis
@@ -3289,7 +3317,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: 04-api-actions-authority.md#action-recovery-outcome retry skip abandon outcomes
+  source_label: 04-api-actions-authority.md#action-recovery-outcome retry skip abandon
+    outcomes
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#legacy-task-approval-clarification-and-retry-capability
   symbol: action-recovery-outcome
   provenance_role: synthesis
@@ -3319,7 +3348,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: 02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table graph lifecycle commands
+  source_label: 02-graph-runtime.md#COMMAND_SPECS-exhaustive-command-to-effect-table
+    graph lifecycle commands
   path: research/ui-foundation/agent-reports/02-graph-runtime.md#command_specs-exhaustive-command-to-effect-table
   symbol: start
   provenance_role: synthesis
@@ -3409,7 +3439,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: 02-graph-runtime.md#record_decision rejected approval and schedule_tick expiry failure
+  source_label: 02-graph-runtime.md#record_decision rejected approval and schedule_tick
+    expiry failure
   path: research/ui-foundation/agent-reports/02-graph-runtime.md#command_specs-exhaustive-command-to-effect-table
   symbol: record_decision
   provenance_role: synthesis
@@ -3419,7 +3450,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: 04-api-actions-authority.md#action-graph-decision decision record effects
+  source_label: 04-api-actions-authority.md#action-graph-decision decision record
+    effects
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#graph-decision-patch-retiresupersede-and-requeue-capability
   symbol: action-graph-decision
   provenance_role: synthesis
@@ -3429,7 +3461,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  source_label: 04-api-actions-authority.md#action-review-prune-and-conflict-resolution async review timing
+  source_label: 04-api-actions-authority.md#action-review-prune-and-conflict-resolution
+    async review timing
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects
   symbol: action-review-prune
   provenance_role: synthesis
@@ -3449,7 +3482,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  source_label: 04-api-actions-authority.md#action-conflict-resolution staged conflict effects
+  source_label: 04-api-actions-authority.md#action-conflict-resolution staged conflict
+    effects
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects
   symbol: action-conflict-resolution
   provenance_role: synthesis
@@ -3469,7 +3503,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  source_label: 04-api-actions-authority.md#action-routine-archive routine visibility only
+  source_label: 04-api-actions-authority.md#action-routine-archive routine visibility
+    only
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects
   symbol: action-routine-archive
   provenance_role: synthesis
@@ -3479,7 +3514,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  source_label: 04-api-actions-authority.md#action-agent-policy configuration-row effects
+  source_label: 04-api-actions-authority.md#action-agent-policy configuration-row
+    effects
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects
   symbol: action-agent-policy
   provenance_role: synthesis
@@ -3529,7 +3565,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: tests/integration/test_api_auth.py global optional bearer-authentication anchors
+  source_label: tests/integration/test_api_auth.py global optional bearer-authentication
+    anchors
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#authority-model
   symbol: api-authn-jwt
   provenance_role: synthesis
@@ -3539,7 +3576,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: 04-api-actions-authority.md#api-authz-roles absent subject/role/scope enforcement
+  source_label: 04-api-actions-authority.md#api-authz-roles absent subject/role/scope
+    enforcement
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#authority-model
   symbol: api-authz-roles
   provenance_role: synthesis
@@ -3549,7 +3587,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: 03-workflow-state.md and 04-api-actions-authority.md legacy route state/input eligibility
+  source_label: 03-workflow-state.md and 04-api-actions-authority.md legacy route
+    state/input eligibility
   path: research/ui-foundation/agent-reports/03-workflow-state.md#legacy-versus-graph-mode
   symbol: Task state model
   provenance_role: synthesis
@@ -3569,7 +3608,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py closure scope
+  source_label: tests/integration/test_mcp_sse.py scoped MCP routing and tests/unit/test_graph_mcp_tools.py
+    closure scope
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#authority-model
   symbol: mcp-tool-scope
   provenance_role: synthesis
@@ -3579,7 +3619,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: src/orchestrator/api/routers/runs.py::create_run and ::delete_run synchronous row creation/deletion routes
+  source_label: src/orchestrator/api/routers/runs.py::create_run and ::delete_run
+    synchronous row creation/deletion routes
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#run-and-lifecycle-capability
   symbol: action-run-create and action-run-delete
   provenance_role: synthesis
@@ -3589,7 +3630,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: 04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges fan-out carrier behavior
+  source_label: 04-api-actions-authority.md#action-fanout-retry and 03-workflow-state.md#WF-task-edges
+    fan-out carrier behavior
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#legacy-task-approval-clarification-and-retry-capability
   symbol: action-fanout-retry
   provenance_role: synthesis
@@ -3599,7 +3641,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unknown
-  source_label: '04-api-actions-authority.md#action-transition-back and #action-run-recover; tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run'
+  source_label: '04-api-actions-authority.md#action-transition-back and #action-run-recover;
+    tests/unit/test_workflow_service.py::test_trigger_recovery_projects_pause_and_attempt_snapshot_without_save_run'
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#run-and-lifecycle-capability
   symbol: action-transition-back
   provenance_role: synthesis
@@ -3609,7 +3652,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  source_label: src/orchestrator/api/routers/routines.py::validate_routine YAML parse and RoutineConfig validation response
+  source_label: src/orchestrator/api/routers/routines.py::validate_routine YAML parse
+    and RoutineConfig validation response
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#remaining-cli-surface-inventory
   symbol: routines validate
   provenance_role: synthesis
@@ -3619,7 +3663,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  source_label: src/orchestrator/api/routers/review.py::start_test_run 202 test-job start and completion callback
+  source_label: src/orchestrator/api/routers/review.py::start_test_run 202 test-job
+    start and completion callback
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects
   symbol: action-test-run
   provenance_role: synthesis
@@ -3629,7 +3674,8 @@ items:
   source_kind: audit-report
   reachable: false
   test_status: unexercised
-  source_label: src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch and AgentFixStarted
+  source_label: src/orchestrator/api/routers/review.py::agent_resolve_conflicts dispatch
+    and AgentFixStarted
   path: research/ui-foundation/agent-reports/04-api-actions-authority.md#repository-review-sourceconfiguration-and-file-effects
   symbol: action-conflict-resolution
   provenance_role: synthesis

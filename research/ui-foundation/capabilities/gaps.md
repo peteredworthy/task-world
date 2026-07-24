@@ -7,20 +7,9 @@ Generated from `capabilities/registry.yaml`; do not edit by hand.
 - `CAP-69` **Command validator result** — The command validator result demand is current only for reachable graph patch and decision validation paths that return accepted or rejected diagnostics.
 - `CAP-86` **Approve deny or defer a gate or patch** — The approve, deny, or defer a gate or patch demand is current only as split graph approval or denial and patch-validation paths; no unified defer command exists.
 
-## Derived (12)
+## Derived (0)
 
-- `CAP-5` **Last-event age** — Last-event age is a deterministic, carrier-qualified projection for the source demand jobs.J1.last-event-age; it is not a direct product fact.
-- `CAP-12` **Attempts left** — Attempts left is a deterministic, carrier-qualified projection for the source demand jobs.J2.attempts-left; it is not a direct product fact.
-- `CAP-22` **Ordered events** — Ordered events is a deterministic, carrier-qualified projection for the source demand jobs.J4.ordered-events; it is not a direct product fact.
-- `CAP-24` **Requirement-grade changes** — Requirement-grade changes is a deterministic, carrier-qualified projection for the source demand jobs.J4.requirement-grade-changes; it is not a direct product fact.
-- `CAP-30` **Prompt size** — Prompt size is a deterministic, carrier-qualified projection for the source demand jobs.J5.prompt-size; it is not a direct product fact.
-- `CAP-46` **Spend and tokens by node kind** — Spend and tokens by node kind is a deterministic, carrier-qualified projection for the source demand jobs.J7.spend-tokens-by-node-kind; it is not a direct product fact.
-- `CAP-47` **Unpriced share** — Unpriced share is a deterministic, carrier-qualified projection for the source demand jobs.J7.unpriced-share; it is not a direct product fact.
-- `CAP-48` **Prompt size** — Prompt size is a deterministic, carrier-qualified projection for the source demand jobs.J7.prompt-size; it is not a direct product fact.
-- `CAP-57` **Price coverage** — Price coverage is a deterministic, carrier-qualified projection for the source demand jobs.J8.price-coverage; it is not a direct product fact.
-- `CAP-58` **Patch count** — Patch count is a deterministic, carrier-qualified projection for the source demand jobs.J8.patch-count; it is not a direct product fact.
-- `CAP-59` **Retry count** — Retry count is a deterministic, carrier-qualified projection for the source demand jobs.J8.retries; it is not a direct product fact.
-- `CAP-68` **Decision wait age** — Decision wait age is a deterministic, carrier-qualified projection for the source demand journeys.B.wait-age; it is not a direct product fact.
+- None
 
 ## Proposed (25)
 
@@ -50,29 +39,39 @@ Generated from `capabilities/registry.yaml`; do not edit by hand.
 - `CAP-131` **Every action visibly confirms resulting state** — Every action visibly confirms resulting state is a future product or evaluation-policy demand from rubric.result-state-confirmation, not an observed current capability.
 - `CAP-132` **Viability floor for decision evidence action safety and honesty** — Viability floor for decision evidence action safety and honesty is a future product or evaluation-policy demand from rubric.viability-floor, not an observed current capability.
 
-## Gap (39)
+## Gap (49)
 
 - `CAP-1` **Health class** — Health class is a source demand from jobs.J1.health-class; the audited implementation does not provide the demanded capability contract.
+- `CAP-5` **Last-event age** — Last-event age is a deterministic, carrier-qualified projection for the source demand jobs.J1.last-event-age; it is not a direct product fact.
 - `CAP-6` **Budget pace** — Budget pace is a source demand from jobs.J1.budget-pace; the audited implementation does not provide the demanded capability contract.
 - `CAP-7` **Blast radius** — Blast radius is a source demand from jobs.J1.blast-radius; the audited implementation does not provide the demanded capability contract.
 - `CAP-10` **Planner horizon** — Planner horizon is a source demand from jobs.J2.planner-horizon; the audited implementation does not provide the demanded capability contract.
+- `CAP-12` **Attempts left** — Attempts left is a deterministic, carrier-qualified projection for the source demand jobs.J2.attempts-left; it is not a direct product fact.
 - `CAP-13` **Final-invariant progress** — Final-invariant progress is a source demand from jobs.J2.final-invariant-progress; the audited implementation does not provide the demanded capability contract.
 - `CAP-17` **Affected scope** — Affected scope is a source demand from jobs.J3.affected-scope; the audited implementation does not provide the demanded capability contract.
 - `CAP-20` **Downstream effect** — Downstream effect is a source demand from jobs.J3.downstream-effect; the audited implementation does not provide the demanded capability contract.
 - `CAP-21` **Reversibility** — Reversibility is a source demand from jobs.J3.reversibility; the audited implementation does not provide the demanded capability contract.
+- `CAP-24` **Requirement-grade changes** — Requirement-grade changes is a deterministic, carrier-qualified projection for the source demand jobs.J4.requirement-grade-changes; it is not a direct product fact.
+- `CAP-30` **Prompt size** — Prompt size is a deterministic, carrier-qualified projection for the source demand jobs.J5.prompt-size; it is not a direct product fact.
 - `CAP-38` **Retry information delta** — Retry information delta is a source demand from jobs.J6.retry-information-delta; the audited implementation does not provide the demanded capability contract.
 - `CAP-42` **Authority** — Authority is a source demand from jobs.J6.authority; the audited implementation does not provide the demanded capability contract.
 - `CAP-43` **Intervention budget** — Intervention budget is a source demand from jobs.J6.budget; the audited implementation does not provide the demanded capability contract.
 - `CAP-44` **Intervention reversibility** — Intervention reversibility is a source demand from jobs.J6.reversibility; the audited implementation does not provide the demanded capability contract.
+- `CAP-47` **Unpriced share** — Unpriced share is a deterministic, carrier-qualified projection for the source demand jobs.J7.unpriced-share; it is not a direct product fact.
+- `CAP-48` **Prompt size** — Prompt size is a deterministic, carrier-qualified projection for the source demand jobs.J7.prompt-size; it is not a direct product fact.
 - `CAP-49` **Retries without new information** — Retries without new information is a source demand from jobs.J7.retries-without-new-information; the audited implementation does not provide the demanded capability contract.
 - `CAP-50` **Repeated tools and work** — Repeated tools and work is a source demand from jobs.J7.repeated-work; the audited implementation does not provide the demanded capability contract.
 - `CAP-51` **Verifier churn** — Verifier churn is a source demand from jobs.J7.verifier-churn; the audited implementation does not provide the demanded capability contract.
 - `CAP-52` **Comparable cohort** — Comparable cohort is a source demand from jobs.J8.comparable-cohort; the audited implementation does not provide the demanded capability contract.
+- `CAP-57` **Price coverage** — Price coverage is a deterministic, carrier-qualified projection for the source demand jobs.J8.price-coverage; it is not a direct product fact.
+- `CAP-58` **Patch count** — Patch count is a deterministic, carrier-qualified projection for the source demand jobs.J8.patch-count; it is not a direct product fact.
+- `CAP-59` **Retry count** — Retry count is a deterministic, carrier-qualified projection for the source demand jobs.J8.retries; it is not a direct product fact.
 - `CAP-60` **Grade churn** — Grade churn is a source demand from jobs.J8.grade-churn; the audited implementation does not provide the demanded capability contract.
 - `CAP-63` **Prompt pressure** — Prompt pressure is a source demand from jobs.J7.prompt-pressure; the audited implementation does not provide the demanded capability contract.
 - `CAP-64` **Final-gate effect** — Final-gate effect is a source demand from design.initial-claims.final-gate-effect; the audited implementation does not provide the demanded capability contract.
 - `CAP-66` **Explicit empty needs-you state** — Explicit empty needs-you state is a source demand from journeys.A.positive-empty-needs-you; the audited implementation does not provide the demanded capability contract.
 - `CAP-67` **No runaway signal** — No runaway signal is a source demand from journeys.A.no-runaway-signal; the audited implementation does not provide the demanded capability contract.
+- `CAP-68` **Decision wait age** — Decision wait age is a deterministic, carrier-qualified projection for the source demand journeys.B.wait-age; it is not a direct product fact.
 - `CAP-71` **Cost of another attempt** — Cost of another attempt is a source demand from journeys.C.cost-of-another-attempt; the audited implementation does not provide the demanded capability contract.
 - `CAP-72` **Candidate delta** — Candidate delta is a source demand from journeys.C.candidate-delta; the audited implementation does not provide the demanded capability contract.
 - `CAP-73` **Causal gap** — Causal gap is a source demand from journeys.C.causal-gap; the audited implementation does not provide the demanded capability contract.
@@ -92,7 +91,7 @@ Generated from `capabilities/registry.yaml`; do not edit by hand.
 - `CAP-116` **Active comparison target** — Active comparison target is a source demand from ia.selection.comparison-target; the audited implementation does not provide the demanded capability contract.
 - `CAP-117` **Freshness and capability annotations persist with selection** — Freshness and capability annotations persist with selection is a source demand from ia.selection.freshness-annotations; the audited implementation does not provide the demanded capability contract.
 
-## Unknown (54)
+## Unknown (56)
 
 - `CAP-2` **Current constraint** — Current constraint is demanded by jobs.J1.current-constraint, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
 - `CAP-3` **Human wait state** — Human wait state is demanded by jobs.J1.human-wait-state, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
@@ -105,6 +104,7 @@ Generated from `capabilities/registry.yaml`; do not edit by hand.
 - `CAP-16` **Proposer** — Proposer is demanded by jobs.J3.proposer, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
 - `CAP-18` **Decision evidence** — Decision evidence is demanded by jobs.J3.evidence, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
 - `CAP-19` **Alternatives** — Alternatives is demanded by jobs.J3.alternatives, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
+- `CAP-22` **Ordered events** — Ordered events is a deterministic, carrier-qualified projection for the source demand jobs.J4.ordered-events; it is not a direct product fact.
 - `CAP-23` **Attempt lineage** — Attempt lineage is demanded by jobs.J4.attempt-lineage, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
 - `CAP-25` **Patch provenance** — Patch provenance is demanded by jobs.J4.patch-provenance, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
 - `CAP-26` **State transitions** — State transitions is demanded by jobs.J4.state-transitions, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
@@ -122,6 +122,7 @@ Generated from `capabilities/registry.yaml`; do not edit by hand.
 - `CAP-40` **Expected effect** — Expected effect is demanded by jobs.J6.expected-effect, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
 - `CAP-41` **Intervention scope** — Intervention scope is demanded by jobs.J6.scope, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
 - `CAP-45` **Validation path** — Validation path is demanded by jobs.J6.validation-path, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
+- `CAP-46` **Spend and tokens by node kind** — Spend and tokens by node kind is a deterministic, carrier-qualified projection for the source demand jobs.J7.spend-tokens-by-node-kind; it is not a direct product fact.
 - `CAP-53` **Routine SHA** — Routine SHA is demanded by jobs.J8.routine-sha, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
 - `CAP-54` **Model and profile** — Model and profile is demanded by jobs.J8.model-profile, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
 - `CAP-55` **Duration** — Duration is demanded by jobs.J8.duration, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.

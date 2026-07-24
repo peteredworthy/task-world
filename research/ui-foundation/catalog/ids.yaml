@@ -2742,57 +2742,80 @@ items:
   title: Phase 1 snapshot coverage attestation
   status: active
 - namespace: DRV
-  provisional_key: derivation-01
-  title: Admitted derivation 1
-  status: active
+  provisional_key: last-event-age
+  title: Last-event age
+  status: superseded
   canonical_id: DRV-1
+  output_capability_ids:
+  - CAP-5
 - namespace: DRV
-  provisional_key: derivation-02
-  title: Admitted derivation 2
-  status: active
+  provisional_key: attempts-remaining
+  title: Attempts remaining
+  status: superseded
   canonical_id: DRV-2
+  output_capability_ids:
+  - CAP-12
 - namespace: DRV
-  provisional_key: derivation-03
-  title: Admitted derivation 3
-  status: active
+  provisional_key: ordered-events
+  title: Ordered events
+  status: superseded
   canonical_id: DRV-3
+  output_capability_ids:
+  - CAP-22
 - namespace: DRV
-  provisional_key: derivation-04
-  title: Admitted derivation 4
-  status: active
+  provisional_key: requirement-grade-changes
+  title: Requirement grade changes
+  status: superseded
   canonical_id: DRV-4
+  output_capability_ids:
+  - CAP-24
 - namespace: DRV
-  provisional_key: derivation-05
-  title: Admitted derivation 5
-  status: active
+  provisional_key: exact-prompt-size
+  title: Exact prompt size
+  status: superseded
   canonical_id: DRV-5
+  output_capability_ids:
+  - CAP-30
+  - CAP-48
 - namespace: DRV
-  provisional_key: derivation-06
-  title: Admitted derivation 6
-  status: active
+  provisional_key: usage-by-node-kind
+  title: Usage by node kind
+  status: superseded
   canonical_id: DRV-6
+  output_capability_ids:
+  - CAP-46
 - namespace: DRV
-  provisional_key: derivation-07
-  title: Admitted derivation 7
-  status: active
+  provisional_key: unpriced-share
+  title: Unpriced share
+  status: superseded
   canonical_id: DRV-7
+  output_capability_ids:
+  - CAP-47
 - namespace: DRV
-  provisional_key: derivation-08
-  title: Admitted derivation 8
-  status: active
+  provisional_key: price-coverage
+  title: Price coverage
+  status: superseded
   canonical_id: DRV-8
+  output_capability_ids:
+  - CAP-57
 - namespace: DRV
-  provisional_key: derivation-09
-  title: Admitted derivation 9
-  status: active
+  provisional_key: patch-count
+  title: Patch count
+  status: superseded
   canonical_id: DRV-9
+  output_capability_ids:
+  - CAP-58
 - namespace: DRV
-  provisional_key: derivation-10
-  title: Admitted derivation 10
-  status: active
+  provisional_key: retry-count
+  title: Retry count
+  status: superseded
   canonical_id: DRV-10
+  output_capability_ids:
+  - CAP-59
 - namespace: DRV
-  provisional_key: derivation-11
-  title: Admitted derivation 11
-  status: active
+  provisional_key: decision-wait-age
+  title: Decision wait age
+  status: superseded
   canonical_id: DRV-11
+  output_capability_ids:
+  - CAP-68

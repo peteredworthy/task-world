@@ -1311,6 +1311,97 @@ def validate_semantics(package: FoundationPackage, phase: int) -> list[Validatio
         and isinstance(value, dict)
         and isinstance((identifier := value.get("id")), str)
     }
+    derived_output_ids: set[str] = set()
+    for item in registry.items if registry else []:
+        identifier = item.get("id")
+        if item.get("capability_status") == "derived" and isinstance(identifier, str):
+            derived_output_ids.add(identifier)
+    for derivation_id, capability_ids in raw_derivation_capability_ids.items():
+        if not isinstance(capability_ids, list) or not any(
+            capability_id in derived_output_ids for capability_id in capability_ids
+        ):
+            issues.append(
+                _issue(
+                    "DERIVATION_OUTPUTS_MISSING",
+                    package.root / "capabilities/derivations",
+                    derivation_id,
+                )
+            )
+    raw_capabilities = {
+        item.get("id"): item
+        for item in (registry.items if registry else [])
+        if isinstance(item.get("id"), str)
+    }
+    for relative, value in package.documents.items():
+        if not relative.startswith("capabilities/derivations/") or not isinstance(value, dict):
+            continue
+        typed_inputs = value.get("typed_inputs")
+        inputs = value.get("inputs")
+        implementation_evidence_ids = value.get("implementation_evidence_ids")
+        if not isinstance(typed_inputs, dict) or not isinstance(inputs, list):
+            continue
+        contract_valid = True
+        for input_id in inputs:
+            binding = typed_inputs.get(input_id) if isinstance(input_id, str) else None
+            capability = raw_capabilities.get(input_id) if isinstance(input_id, str) else None
+            output_contract = capability.get("output_contract") if capability else None
+            if not isinstance(binding, dict) or not isinstance(output_contract, dict):
+                contract_valid = False
+                continue
+            expected = (
+                output_contract.get("semantic_type"),
+                output_contract.get("fields"),
+                output_contract.get("role"),
+            )
+            actual = (
+                binding.get("semantic_type"),
+                binding.get("consumed_fields"),
+                binding.get("role"),
+            )
+            if expected != actual:
+                contract_valid = False
+        if not contract_valid:
+            issues.append(
+                _issue(
+                    "DERIVATION_TYPED_INPUT_CONTRACT_MISMATCH",
+                    package.root / relative,
+                    value.get("id"),
+                )
+            )
+        if not isinstance(implementation_evidence_ids, list):
+            continue
+        input_evidence_ids: set[str] = set()
+        output_evidence_ids: set[str] = set()
+        for capability_ids, target in (
+            (inputs, input_evidence_ids),
+            (value.get("capability_ids"), output_evidence_ids),
+        ):
+            if not isinstance(capability_ids, list):
+                continue
+            for capability_id in capability_ids:
+                if not isinstance(capability_id, str):
+                    continue
+                evidence_ids = raw_capabilities.get(capability_id, {}).get("evidence_ids")
+                if isinstance(evidence_ids, list):
+                    target.update(
+                        evidence_id for evidence_id in evidence_ids if isinstance(evidence_id, str)
+                    )
+        chain_ids = input_evidence_ids | output_evidence_ids
+        invalid_chain = not contract_valid or any(
+            not isinstance(evidence_id, str)
+            or evidence_id not in chain_ids
+            or evidence.get(evidence_id) is None
+            or not evidence[evidence_id].reachable
+            for evidence_id in implementation_evidence_ids
+        )
+        if invalid_chain:
+            issues.append(
+                _issue(
+                    "DERIVATION_IMPLEMENTATION_EVIDENCE_CHAIN_INVALID",
+                    package.root / relative,
+                    value.get("id"),
+                )
+            )
     for item in registry.items if registry else []:
         if item.get("capability_status") != "derived":
             continue
@@ -1387,6 +1478,15 @@ def _validate_phase_two_capability_coverage(
                     )
                 scope_keys.add(key)
     registry_items = registry.items if registry else []
+    carrier_catalog_ids: set[str] = set()
+    for value in package.documents.values():
+        if not isinstance(value, dict):
+            continue
+        raw_items = value.get("items")
+        candidates = raw_items if isinstance(raw_items, list) else [value]
+        for candidate in candidates:
+            if isinstance(candidate, dict) and isinstance((identifier := candidate.get("id")), str):
+                carrier_catalog_ids.add(identifier)
     by_demand: dict[str, list[dict[str, JsonValue]]] = {}
     for item in registry_items:
         key = item.get("scope_demand_key")
@@ -1493,6 +1593,47 @@ def _validate_phase_two_capability_coverage(
                 if isinstance(value, str)
             )
             if status in {"gap", "unknown"}:
+                carrier_ids = item.get("implementation_carrier_ids")
+                absence_basis = item.get("absence_basis")
+                if status == "gap" and implementation_status == "partial":
+                    if (
+                        not isinstance(carrier_ids, list)
+                        or not carrier_ids
+                        or absence_basis not in (None, "")
+                    ):
+                        issues.append(
+                            _issue(
+                                "GAP_PARTIAL_CARRIERS_INVALID",
+                                package.root / "capabilities/registry.yaml",
+                                identifier,
+                            )
+                        )
+                    elif any(
+                        not isinstance(carrier_id, str)
+                        or carrier_id not in carrier_catalog_ids
+                        or not carrier_id.startswith(("ENT-", "STA-", "EVI-", "ACT-", "PER-"))
+                        for carrier_id in carrier_ids
+                    ):
+                        issues.append(
+                            _issue(
+                                "GAP_PARTIAL_CARRIER_UNRESOLVED",
+                                package.root / "capabilities/registry.yaml",
+                                identifier,
+                            )
+                        )
+                if status == "gap" and implementation_status == "absent":
+                    if (
+                        carrier_ids not in (None, [])
+                        or not isinstance(absence_basis, str)
+                        or not absence_basis.strip()
+                    ):
+                        issues.append(
+                            _issue(
+                                "GAP_ABSENCE_BASIS_INVALID",
+                                package.root / "capabilities/registry.yaml",
+                                identifier,
+                            )
+                        )
                 if implementation_status == "absent" and (
                     "partial" in basis_text
                     or any(
@@ -1565,6 +1706,58 @@ def _validate_phase_two_capability_coverage(
                     "CAPABILITY_ALLOCATION_BINDING_INVALID",
                     package.root / "catalog/ids.yaml",
                     identifier,
+                )
+            )
+    derivation_allocations: dict[str, dict[str, JsonValue]] = {}
+    for allocation in allocation_items if isinstance(allocation_items, list) else []:
+        if not isinstance(allocation, dict) or allocation.get("namespace") != "DRV":
+            continue
+        identifier = allocation.get("canonical_id")
+        if isinstance(identifier, str):
+            derivation_allocations[identifier] = allocation
+    active_derivations: dict[str, dict[str, JsonValue]] = {}
+    for relative, value in package.documents.items():
+        if not relative.startswith("capabilities/derivations/") or not isinstance(value, dict):
+            continue
+        identifier = value.get("id")
+        if isinstance(identifier, str):
+            active_derivations[identifier] = value
+    active_derivation_ids = set(active_derivations)
+    for derivation_id, derivation in active_derivations.items():
+        allocation = derivation_allocations.get(derivation_id)
+        if not isinstance(allocation, dict) or allocation.get("status") != "active":
+            issues.append(
+                _issue(
+                    "DERIVATION_LEDGER_ALLOCATION_MISSING",
+                    package.root / "catalog/ids.yaml",
+                    derivation_id,
+                )
+            )
+            continue
+        key = allocation.get("provisional_key")
+        title = allocation.get("title")
+        outputs = allocation.get("output_capability_ids")
+        if (
+            not isinstance(key, str)
+            or not isinstance(title, str)
+            or bool(re.fullmatch(r"derivation-\d+", key))
+            or bool(re.fullmatch(r"Admitted derivation \d+", title))
+            or outputs != derivation.get("capability_ids")
+        ):
+            issues.append(
+                _issue(
+                    "DERIVATION_LEDGER_BINDING_INVALID",
+                    package.root / "catalog/ids.yaml",
+                    derivation_id,
+                )
+            )
+    for derivation_id, allocation in derivation_allocations.items():
+        if allocation.get("status") == "active" and derivation_id not in active_derivation_ids:
+            issues.append(
+                _issue(
+                    "DERIVATION_LEDGER_ACTIVE_ORPHAN",
+                    package.root / "catalog/ids.yaml",
+                    derivation_id,
                 )
             )
     issues.extend(_validate_phase_two_projections(package, registry_items))

@@ -1084,6 +1084,70 @@ def test_derived_classification_rejects_all_conflicting_semantic_evidence(
     } <= set(issue_codes(result))
 
 
+def test_derivation_rejects_unrelated_current_contract_and_evidence_chain(tmp_path: Path) -> None:
+    """A command validator cannot stand in for prompt size evidence or input."""
+    root = write_valid_phase_zero(tmp_path)
+    current = semantic_item(
+        "CAP-69",
+        capability_status="current",
+        implementation_status="present",
+        output_contract={
+            "semantic_type": "CommandValidation",
+            "fields": ["valid"],
+            "role": "validator",
+        },
+        evidence_ids=["EVD-105"],
+    )
+    derived = semantic_item(
+        "CAP-30",
+        capability_status="derived",
+        derivation_id="DRV-30",
+        evidence_ids=["EVD-105"],
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml", {"schema_version": "1", "items": [current, derived]}
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [{"id": "EVD-105", "source_kind": "implementation", "reachable": True}],
+        },
+    )
+    write_yaml(
+        root / "capabilities/derivations/DRV-30.yaml",
+        {
+            "id": "DRV-30",
+            "status": "admitted",
+            "capability_ids": ["CAP-30"],
+            "inputs": ["CAP-69"],
+            "typed_inputs": {
+                "CAP-69": {
+                    "semantic_type": "PromptSize",
+                    "consumed_fields": ["tokens"],
+                    "role": "prompt",
+                }
+            },
+            "algorithm": "deterministically select, tie break, and round",
+            "output_type": "PromptSize",
+            "unknown_behavior": "unknown",
+            "failure_behavior": "fail",
+            "freshness": "snapshot",
+            "recomputation_behavior": "recompute",
+            "implementation_evidence_ids": ["EVD-105"],
+            "evidence_ids": ["EVD-105"],
+            "limitations": ["bounded"],
+            "prohibited_interpretations": ["complete"],
+        },
+    )
+    result = run_validator(root, phase=0)
+    assert {
+        "DERIVATION_TYPED_INPUT_CONTRACT_MISMATCH",
+        "DERIVATION_IMPLEMENTATION_EVIDENCE_CHAIN_INVALID",
+    } <= set(issue_codes(result))
+
+
 def test_unresolved_conflict_requires_distinct_claims_evidence_and_affected_ids(
     tmp_path: Path,
 ) -> None:
@@ -1878,12 +1942,12 @@ def test_committed_phase_two_registry_preserves_adjudicated_capability_boundarie
     )
     assert claims["classification_counts"] == {
         "current": 2,
-        "derived": 12,
+        "derived": 0,
         "proposed": 25,
-        "gap": 39,
-        "unknown": 54,
+        "gap": 49,
+        "unknown": 56,
     }
-    assert claims["derivation_count"] == 11
+    assert claims["derivation_count"] == 0
 
 
 def phase_two_demand(key: str, label: str = "Demand-specific label") -> dict[str, object]:

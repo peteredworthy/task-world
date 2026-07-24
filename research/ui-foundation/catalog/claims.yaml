@@ -6,17 +6,17 @@ registry_status: complete
 scope_demand_count: 132
 classification_counts:
   current: 2
-  derived: 12
+  derived: 0
   proposed: 25
-  gap: 39
-  unknown: 54
-derivation_count: 11
+  gap: 49
+  unknown: 56
+derivation_count: 0
 items:
 - id: CAP-1
   title: Health class
   definition: Health class is a source demand from jobs.J1.health-class; the audited
     implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -29,9 +29,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Health class.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Health class.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J1.health-class
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-2
   title: Current constraint
   definition: Current constraint is demanded by jobs.J1.current-constraint, but available
@@ -105,7 +119,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: gap
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J1.last-event-age.
@@ -115,15 +129,28 @@ items:
   question_ids: []
   limitations:
   - Only the typed carriers admitted for Last-event age participate in this derivation.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not interpret the Last-event age derivation as complete cross-mode coverage.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J1.last-event-age
-  derivation_id: DRV-1
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-6
   title: Budget pace
   definition: Budget pace is a source demand from jobs.J1.budget-pace; the audited
     implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -136,14 +163,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Budget pace.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Budget pace.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J1.budget-pace
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-7
   title: Blast radius
   definition: Blast radius is a source demand from jobs.J1.blast-radius; the audited
     implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -156,9 +197,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Blast radius.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Blast radius.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J1.blast-radius
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-8
   title: Active nodes and steps
   definition: Active nodes and steps is demanded by jobs.J2.active-nodes-steps, but
@@ -207,7 +262,7 @@ items:
   title: Planner horizon
   definition: Planner horizon is a source demand from jobs.J2.planner-horizon; the
     audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -220,9 +275,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Planner horizon.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Planner horizon.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J2.planner-horizon
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-11
   title: Blocked reason
   definition: Blocked reason is demanded by jobs.J2.blocked-reason, but available
@@ -252,7 +321,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: gap
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J2.attempts-left.
@@ -262,15 +331,28 @@ items:
   question_ids: []
   limitations:
   - Only the typed carriers admitted for Attempts left participate in this derivation.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not interpret the Attempts left derivation as complete cross-mode coverage.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J2.attempts-left
-  derivation_id: DRV-2
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-13
   title: Final-invariant progress
   definition: Final-invariant progress is a source demand from jobs.J2.final-invariant-progress;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -283,9 +365,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Final-invariant progress.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Final-invariant progress.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J2.final-invariant-progress
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-14
   title: Exact question
   definition: Exact question is demanded by jobs.J3.exact-question, but available
@@ -352,7 +448,7 @@ items:
   title: Affected scope
   definition: Affected scope is a source demand from jobs.J3.affected-scope; the audited
     implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -365,9 +461,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Affected scope.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Affected scope.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J3.affected-scope
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-18
   title: Decision evidence
   definition: Decision evidence is demanded by jobs.J3.evidence, but available carriers
@@ -413,7 +523,7 @@ items:
   title: Downstream effect
   definition: Downstream effect is a source demand from jobs.J3.downstream-effect;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -426,14 +536,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Downstream effect.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Downstream effect.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J3.downstream-effect
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-21
   title: Reversibility
   definition: Reversibility is a source demand from jobs.J3.reversibility; the audited
     implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -446,9 +570,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Reversibility.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Reversibility.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J3.reversibility
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-22
   title: Ordered events
   definition: Ordered events is a deterministic, carrier-qualified projection for
@@ -456,7 +594,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: unknown
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.ordered-events.
@@ -469,7 +607,6 @@ items:
   prohibited_interpretations:
   - Do not interpret the Ordered events derivation as complete cross-mode coverage.
   scope_demand_key: jobs.J4.ordered-events
-  derivation_id: DRV-3
 - id: CAP-23
   title: Attempt lineage
   definition: Attempt lineage is demanded by jobs.J4.attempt-lineage, but available
@@ -500,7 +637,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: gap
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J4.requirement-grade-changes.
@@ -511,11 +648,24 @@ items:
   limitations:
   - Only the typed carriers admitted for Requirement-grade changes participate in
     this derivation.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not interpret the Requirement-grade changes derivation as complete cross-mode
     coverage.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J4.requirement-grade-changes
-  derivation_id: DRV-4
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-25
   title: Patch provenance
   definition: Patch provenance is demanded by jobs.J4.patch-provenance, but available
@@ -634,7 +784,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: gap
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J5.prompt-size.
@@ -644,10 +794,23 @@ items:
   question_ids: []
   limitations:
   - Only the typed carriers admitted for Prompt size participate in this derivation.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not interpret the Prompt size derivation as complete cross-mode coverage.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J5.prompt-size
-  derivation_id: DRV-5
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-31
   title: Transcript
   definition: Transcript is demanded by jobs.J5.transcript, but available carriers
@@ -797,7 +960,7 @@ items:
   title: Retry information delta
   definition: Retry information delta is a source demand from jobs.J6.retry-information-delta;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -810,9 +973,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Retry information delta.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Retry information delta.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J6.retry-information-delta
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-39
   title: Intervention alternatives
   definition: Intervention alternatives is demanded by jobs.J6.alternatives, but available
@@ -882,7 +1059,7 @@ items:
   title: Authority
   definition: Authority is a source demand from jobs.J6.authority; the audited implementation
     does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -895,9 +1072,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Authority.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Authority.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J6.authority
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-43
   title: Intervention budget
   definition: Intervention budget is a source demand from jobs.J6.budget; the audited
@@ -918,11 +1109,14 @@ items:
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Intervention budget.
   scope_demand_key: jobs.J6.budget
+  implementation_carrier_ids: []
+  absence_basis: The Phase 1 catalog contains no carrier implementing this demand-specific
+    integrated capability.
 - id: CAP-44
   title: Intervention reversibility
   definition: Intervention reversibility is a source demand from jobs.J6.reversibility;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -935,9 +1129,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Intervention reversibility.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Intervention reversibility.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J6.reversibility
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-45
   title: Validation path
   definition: Validation path is demanded by jobs.J6.validation-path, but available
@@ -968,7 +1176,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: unknown
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.spend-tokens-by-node-kind.
@@ -983,7 +1191,6 @@ items:
   - Do not interpret the Spend and tokens by node kind derivation as complete cross-mode
     coverage.
   scope_demand_key: jobs.J7.spend-tokens-by-node-kind
-  derivation_id: DRV-6
 - id: CAP-47
   title: Unpriced share
   definition: Unpriced share is a deterministic, carrier-qualified projection for
@@ -991,7 +1198,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: gap
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.unpriced-share.
@@ -1001,10 +1208,23 @@ items:
   question_ids: []
   limitations:
   - Only the typed carriers admitted for Unpriced share participate in this derivation.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not interpret the Unpriced share derivation as complete cross-mode coverage.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J7.unpriced-share
-  derivation_id: DRV-7
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-48
   title: Prompt size
   definition: Prompt size is a deterministic, carrier-qualified projection for the
@@ -1012,7 +1232,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: gap
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J7.prompt-size.
@@ -1022,15 +1242,28 @@ items:
   question_ids: []
   limitations:
   - Only the typed carriers admitted for Prompt size participate in this derivation.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not interpret the Prompt size derivation as complete cross-mode coverage.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J7.prompt-size
-  derivation_id: DRV-5
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-49
   title: Retries without new information
   definition: Retries without new information is a source demand from jobs.J7.retries-without-new-information;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1043,14 +1276,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Retries without new information.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Retries without new information.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J7.retries-without-new-information
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-50
   title: Repeated tools and work
   definition: Repeated tools and work is a source demand from jobs.J7.repeated-work;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1063,14 +1310,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Repeated tools and work.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Repeated tools and work.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J7.repeated-work
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-51
   title: Verifier churn
   definition: Verifier churn is a source demand from jobs.J7.verifier-churn; the audited
     implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1083,14 +1344,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Verifier churn.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Verifier churn.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J7.verifier-churn
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-52
   title: Comparable cohort
   definition: Comparable cohort is a source demand from jobs.J8.comparable-cohort;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1103,9 +1378,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Comparable cohort.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Comparable cohort.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J8.comparable-cohort
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-53
   title: Routine SHA
   definition: Routine SHA is demanded by jobs.J8.routine-sha, but available carriers
@@ -1195,7 +1484,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: gap
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.price-coverage.
@@ -1205,10 +1494,23 @@ items:
   question_ids: []
   limitations:
   - Only the typed carriers admitted for Price coverage participate in this derivation.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not interpret the Price coverage derivation as complete cross-mode coverage.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J8.price-coverage
-  derivation_id: DRV-8
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-58
   title: Patch count
   definition: Patch count is a deterministic, carrier-qualified projection for the
@@ -1216,7 +1518,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: gap
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.patch-count.
@@ -1226,10 +1528,23 @@ items:
   question_ids: []
   limitations:
   - Only the typed carriers admitted for Patch count participate in this derivation.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not interpret the Patch count derivation as complete cross-mode coverage.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J8.patch-count
-  derivation_id: DRV-9
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-59
   title: Retry count
   definition: Retry count is a deterministic, carrier-qualified projection for the
@@ -1237,7 +1552,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: gap
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand jobs.J8.retries.
@@ -1247,15 +1562,28 @@ items:
   question_ids: []
   limitations:
   - Only the typed carriers admitted for Retry count participate in this derivation.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not interpret the Retry count derivation as complete cross-mode coverage.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J8.retries
-  derivation_id: DRV-10
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-60
   title: Grade churn
   definition: Grade churn is a source demand from jobs.J8.grade-churn; the audited
     implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1268,9 +1596,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Grade churn.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Grade churn.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J8.grade-churn
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-61
   title: Interventions
   definition: Interventions is demanded by jobs.J8.interventions, but available carriers
@@ -1316,7 +1658,7 @@ items:
   title: Prompt pressure
   definition: Prompt pressure is a source demand from jobs.J7.prompt-pressure; the
     audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1329,14 +1671,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Prompt pressure.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Prompt pressure.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: jobs.J7.prompt-pressure
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-64
   title: Final-gate effect
   definition: Final-gate effect is a source demand from design.initial-claims.final-gate-effect;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1349,9 +1705,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Final-gate effect.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Final-gate effect.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: design.initial-claims.final-gate-effect
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-65
   title: Data freshness and connection state
   definition: Data freshness and connection state is demanded by journeys.A.freshness-and-connection,
@@ -1379,7 +1749,7 @@ items:
   title: Explicit empty needs-you state
   definition: Explicit empty needs-you state is a source demand from journeys.A.positive-empty-needs-you;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1392,14 +1762,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Explicit empty needs-you state.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Explicit empty needs-you state.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: journeys.A.positive-empty-needs-you
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-67
   title: No runaway signal
   definition: No runaway signal is a source demand from journeys.A.no-runaway-signal;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1412,9 +1796,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes No runaway signal.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as No runaway signal.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: journeys.A.no-runaway-signal
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-68
   title: Decision wait age
   definition: Decision wait age is a deterministic, carrier-qualified projection for
@@ -1422,7 +1820,7 @@ items:
   implementation_status: partial
   test_status: unexercised
   documentation_status: documented
-  capability_status: derived
+  capability_status: gap
   epistemic_status: deterministically-derived
   confidence: medium
   confidence_basis: Adjudication of evidence for the specific source demand journeys.B.wait-age.
@@ -1432,10 +1830,23 @@ items:
   question_ids: []
   limitations:
   - Only the typed carriers admitted for Decision wait age participate in this derivation.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not interpret the Decision wait age derivation as complete cross-mode coverage.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: journeys.B.wait-age
-  derivation_id: DRV-11
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-69
   title: Command validator result
   definition: The command validator result demand is current only for reachable graph
@@ -1490,7 +1901,7 @@ items:
   title: Cost of another attempt
   definition: Cost of another attempt is a source demand from journeys.C.cost-of-another-attempt;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1503,14 +1914,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Cost of another attempt.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Cost of another attempt.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: journeys.C.cost-of-another-attempt
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-72
   title: Candidate delta
   definition: Candidate delta is a source demand from journeys.C.candidate-delta;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1523,14 +1948,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Candidate delta.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Candidate delta.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: journeys.C.candidate-delta
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-73
   title: Causal gap
   definition: Causal gap is a source demand from journeys.C.causal-gap; the audited
     implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1543,9 +1982,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Causal gap.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Causal gap.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: journeys.C.causal-gap
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-74
   title: Directive binding
   definition: Directive binding is a source demand from journeys.C.directive-binding;
@@ -1566,6 +2019,9 @@ items:
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Directive binding.
   scope_demand_key: journeys.C.directive-binding
+  implementation_carrier_ids: []
+  absence_basis: The Phase 1 catalog contains no carrier implementing this demand-specific
+    integrated capability.
 - id: CAP-75
   title: Exact execution-unit identity
   definition: Exact execution-unit identity is demanded by journeys.D.execution-unit-identity,
@@ -1616,7 +2072,7 @@ items:
   title: Missing node attribution
   definition: Missing node attribution is a source demand from journeys.E.missing-node-attribution;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1629,14 +2085,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Missing node attribution.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Missing node attribution.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: journeys.E.missing-node-attribution
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-78
   title: Detector drill-through evidence
   definition: Detector drill-through evidence is a source demand from journeys.E.detector-evidence;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1649,9 +2119,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Detector drill-through evidence.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Detector drill-through evidence.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: journeys.E.detector-evidence
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-79
   title: Canonical selection identity across projections
   definition: Canonical selection identity across projections is demanded by journeys.continuity.canonical-selection,
@@ -1721,6 +2205,9 @@ items:
   - Do not treat isolated fields, events, or UI text as Restore prior ranking filter
     and scroll position.
   scope_demand_key: journeys.continuity.restore-return-state
+  implementation_carrier_ids: []
+  absence_basis: The Phase 1 catalog contains no carrier implementing this demand-specific
+    integrated capability.
 - id: CAP-82
   title: Derived claims expose evidence and freshness
   definition: Derived claims expose evidence and freshness is a future product or
@@ -1810,6 +2297,9 @@ items:
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Ignore or keep watching.
   scope_demand_key: decisions.ignore-watch
+  implementation_carrier_ids: []
+  absence_basis: The Phase 1 catalog contains no carrier implementing this demand-specific
+    integrated capability.
 - id: CAP-86
   title: Approve deny or defer a gate or patch
   definition: The approve, deny, or defer a gate or patch demand is current only as
@@ -1970,11 +2460,14 @@ items:
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Steer with new context.
   scope_demand_key: decisions.steer-context
+  implementation_carrier_ids: []
+  absence_basis: The Phase 1 catalog contains no carrier implementing this demand-specific
+    integrated capability.
 - id: CAP-93
   title: Apply a steering patch
   definition: Apply a steering patch is a source demand from decisions.apply-steering-patch;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -1987,9 +2480,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Apply a steering patch.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Apply a steering patch.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: decisions.apply-steering-patch
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-94
   title: Change a routine prompt or policy
   definition: Change a routine prompt or policy is demanded by decisions.change-source,
@@ -2266,7 +2773,7 @@ items:
   title: Next expected system activity
   definition: Next expected system activity is a source demand from feedback.next-activity;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -2279,9 +2786,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Next expected system activity.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Next expected system activity.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: feedback.next-activity
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-107
   title: Recovery path for failure or stale-state race
   definition: Recovery path for failure or stale-state race is demanded by feedback.failure-race-recovery,
@@ -2309,7 +2830,7 @@ items:
   title: Evidence convergence
   definition: Evidence convergence is a source demand from ia.health.evidence-convergence;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -2322,9 +2843,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Evidence convergence.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Evidence convergence.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: ia.health.evidence-convergence
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-109
   title: Needs-decision classification
   definition: Needs-decision classification is demanded by ia.health.needs-decision,
@@ -2352,7 +2887,7 @@ items:
   title: Degraded classification
   definition: Degraded classification is a source demand from ia.health.degraded;
     the audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -2365,14 +2900,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Degraded classification.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Degraded classification.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: ia.health.degraded
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-111
   title: Stalled classification
   definition: Stalled classification is a source demand from ia.health.stalled; the
     audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -2385,14 +2934,28 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Stalled classification.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Stalled classification.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: ia.health.stalled
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-112
   title: Runaway classification
   definition: Runaway classification is a source demand from ia.health.runaway; the
     audited implementation does not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -2405,9 +2968,23 @@ items:
   question_ids: []
   limitations:
   - No complete implementation contract establishes Runaway classification.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Runaway classification.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: ia.health.runaway
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-113
   title: Steered classification
   definition: Steered classification is a source demand from ia.health.steered; the
@@ -2428,6 +3005,9 @@ items:
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Steered classification.
   scope_demand_key: ia.health.steered
+  implementation_carrier_ids: []
+  absence_basis: The Phase 1 catalog contains no carrier implementing this demand-specific
+    integrated capability.
 - id: CAP-114
   title: Settled classification
   definition: Settled classification is demanded by ia.health.settled, but available
@@ -2497,12 +3077,15 @@ items:
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Active comparison target.
   scope_demand_key: ia.selection.comparison-target
+  implementation_carrier_ids: []
+  absence_basis: The Phase 1 catalog contains no carrier implementing this demand-specific
+    integrated capability.
 - id: CAP-117
   title: Freshness and capability annotations persist with selection
   definition: Freshness and capability annotations persist with selection is a source
     demand from ia.selection.freshness-annotations; the audited implementation does
     not provide the demanded capability contract.
-  implementation_status: absent
+  implementation_status: partial
   test_status: unexercised
   documentation_status: documented
   capability_status: gap
@@ -2516,10 +3099,24 @@ items:
   limitations:
   - No complete implementation contract establishes Freshness and capability annotations
     persist with selection.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
+  - The listed Phase 1 carrier is incomplete for the integrated demand.
   prohibited_interpretations:
   - Do not treat isolated fields, events, or UI text as Freshness and capability annotations
     persist with selection.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
+  - Do not treat the partial carrier as the complete integrated capability.
   scope_demand_key: ia.selection.freshness-annotations
+  implementation_carrier_ids:
+  - EVI-1
 - id: CAP-118
   title: Distinct semantic vocabulary remains stable across projections
   definition: Distinct semantic vocabulary remains stable across projections is a
