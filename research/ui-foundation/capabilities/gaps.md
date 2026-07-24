@@ -41,111 +41,111 @@ Generated from `capabilities/registry.yaml`; do not edit by hand.
 
 ## Gap (49)
 
-- `CAP-1` **Health class** — Health class is a source demand from jobs.J1.health-class; the audited implementation does not provide the demanded capability contract.
-- `CAP-5` **Last-event age** — Last-event age is a deterministic, carrier-qualified projection for the source demand jobs.J1.last-event-age; it is not a direct product fact.
-- `CAP-6` **Budget pace** — Budget pace is a source demand from jobs.J1.budget-pace; the audited implementation does not provide the demanded capability contract.
-- `CAP-7` **Blast radius** — Blast radius is a source demand from jobs.J1.blast-radius; the audited implementation does not provide the demanded capability contract.
-- `CAP-10` **Planner horizon** — Planner horizon is a source demand from jobs.J2.planner-horizon; the audited implementation does not provide the demanded capability contract.
-- `CAP-12` **Attempts left** — Attempts left is a deterministic, carrier-qualified projection for the source demand jobs.J2.attempts-left; it is not a direct product fact.
-- `CAP-13` **Final-invariant progress** — Final-invariant progress is a source demand from jobs.J2.final-invariant-progress; the audited implementation does not provide the demanded capability contract.
-- `CAP-17` **Affected scope** — Affected scope is a source demand from jobs.J3.affected-scope; the audited implementation does not provide the demanded capability contract.
-- `CAP-20` **Downstream effect** — Downstream effect is a source demand from jobs.J3.downstream-effect; the audited implementation does not provide the demanded capability contract.
-- `CAP-21` **Reversibility** — Reversibility is a source demand from jobs.J3.reversibility; the audited implementation does not provide the demanded capability contract.
-- `CAP-24` **Requirement-grade changes** — Requirement-grade changes is a deterministic, carrier-qualified projection for the source demand jobs.J4.requirement-grade-changes; it is not a direct product fact.
-- `CAP-30` **Prompt size** — Prompt size is a deterministic, carrier-qualified projection for the source demand jobs.J5.prompt-size; it is not a direct product fact.
-- `CAP-38` **Retry information delta** — Retry information delta is a source demand from jobs.J6.retry-information-delta; the audited implementation does not provide the demanded capability contract.
-- `CAP-42` **Authority** — Authority is a source demand from jobs.J6.authority; the audited implementation does not provide the demanded capability contract.
-- `CAP-43` **Intervention budget** — Intervention budget is a source demand from jobs.J6.budget; the audited implementation does not provide the demanded capability contract.
-- `CAP-44` **Intervention reversibility** — Intervention reversibility is a source demand from jobs.J6.reversibility; the audited implementation does not provide the demanded capability contract.
-- `CAP-47` **Unpriced share** — Unpriced share is a deterministic, carrier-qualified projection for the source demand jobs.J7.unpriced-share; it is not a direct product fact.
-- `CAP-48` **Prompt size** — Prompt size is a deterministic, carrier-qualified projection for the source demand jobs.J7.prompt-size; it is not a direct product fact.
-- `CAP-49` **Retries without new information** — Retries without new information is a source demand from jobs.J7.retries-without-new-information; the audited implementation does not provide the demanded capability contract.
-- `CAP-50` **Repeated tools and work** — Repeated tools and work is a source demand from jobs.J7.repeated-work; the audited implementation does not provide the demanded capability contract.
-- `CAP-51` **Verifier churn** — Verifier churn is a source demand from jobs.J7.verifier-churn; the audited implementation does not provide the demanded capability contract.
-- `CAP-52` **Comparable cohort** — Comparable cohort is a source demand from jobs.J8.comparable-cohort; the audited implementation does not provide the demanded capability contract.
-- `CAP-57` **Price coverage** — Price coverage is a deterministic, carrier-qualified projection for the source demand jobs.J8.price-coverage; it is not a direct product fact.
-- `CAP-58` **Patch count** — Patch count is a deterministic, carrier-qualified projection for the source demand jobs.J8.patch-count; it is not a direct product fact.
-- `CAP-59` **Retry count** — Retry count is a deterministic, carrier-qualified projection for the source demand jobs.J8.retries; it is not a direct product fact.
-- `CAP-60` **Grade churn** — Grade churn is a source demand from jobs.J8.grade-churn; the audited implementation does not provide the demanded capability contract.
-- `CAP-63` **Prompt pressure** — Prompt pressure is a source demand from jobs.J7.prompt-pressure; the audited implementation does not provide the demanded capability contract.
-- `CAP-64` **Final-gate effect** — Final-gate effect is a source demand from design.initial-claims.final-gate-effect; the audited implementation does not provide the demanded capability contract.
-- `CAP-66` **Explicit empty needs-you state** — Explicit empty needs-you state is a source demand from journeys.A.positive-empty-needs-you; the audited implementation does not provide the demanded capability contract.
-- `CAP-67` **No runaway signal** — No runaway signal is a source demand from journeys.A.no-runaway-signal; the audited implementation does not provide the demanded capability contract.
-- `CAP-68` **Decision wait age** — Decision wait age is a deterministic, carrier-qualified projection for the source demand journeys.B.wait-age; it is not a direct product fact.
-- `CAP-71` **Cost of another attempt** — Cost of another attempt is a source demand from journeys.C.cost-of-another-attempt; the audited implementation does not provide the demanded capability contract.
-- `CAP-72` **Candidate delta** — Candidate delta is a source demand from journeys.C.candidate-delta; the audited implementation does not provide the demanded capability contract.
-- `CAP-73` **Causal gap** — Causal gap is a source demand from journeys.C.causal-gap; the audited implementation does not provide the demanded capability contract.
-- `CAP-74` **Directive binding** — Directive binding is a source demand from journeys.C.directive-binding; the audited implementation does not provide the demanded capability contract.
-- `CAP-77` **Missing node attribution** — Missing node attribution is a source demand from journeys.E.missing-node-attribution; the audited implementation does not provide the demanded capability contract.
-- `CAP-78` **Detector drill-through evidence** — Detector drill-through evidence is a source demand from journeys.E.detector-evidence; the audited implementation does not provide the demanded capability contract.
-- `CAP-81` **Restore prior ranking filter and scroll position** — Restore prior ranking filter and scroll position is a source demand from journeys.continuity.restore-return-state; the audited implementation does not provide the demanded capability contract.
-- `CAP-85` **Ignore or keep watching** — Ignore or keep watching is a source demand from decisions.ignore-watch; the audited implementation does not provide the demanded capability contract.
-- `CAP-92` **Steer with new context** — Steer with new context is a source demand from decisions.steer-context; the audited implementation does not provide the demanded capability contract.
-- `CAP-93` **Apply a steering patch** — Apply a steering patch is a source demand from decisions.apply-steering-patch; the audited implementation does not provide the demanded capability contract.
-- `CAP-106` **Next expected system activity** — Next expected system activity is a source demand from feedback.next-activity; the audited implementation does not provide the demanded capability contract.
-- `CAP-108` **Evidence convergence** — Evidence convergence is a source demand from ia.health.evidence-convergence; the audited implementation does not provide the demanded capability contract.
-- `CAP-110` **Degraded classification** — Degraded classification is a source demand from ia.health.degraded; the audited implementation does not provide the demanded capability contract.
-- `CAP-111` **Stalled classification** — Stalled classification is a source demand from ia.health.stalled; the audited implementation does not provide the demanded capability contract.
-- `CAP-112` **Runaway classification** — Runaway classification is a source demand from ia.health.runaway; the audited implementation does not provide the demanded capability contract.
-- `CAP-113` **Steered classification** — Steered classification is a source demand from ia.health.steered; the audited implementation does not provide the demanded capability contract.
-- `CAP-116` **Active comparison target** — Active comparison target is a source demand from ia.selection.comparison-target; the audited implementation does not provide the demanded capability contract.
-- `CAP-117` **Freshness and capability annotations persist with selection** — Freshness and capability annotations persist with selection is a source demand from ia.selection.freshness-annotations; the audited implementation does not provide the demanded capability contract.
+- `CAP-1` **Health class** — Health class is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-5` **Last-event age** — Last-event age is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-6` **Budget pace** — Budget pace is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-7` **Blast radius** — Blast radius is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-10` **Planner horizon** — Planner horizon is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-12` **Attempts left** — Attempts left is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-13` **Final-invariant progress** — Final-invariant progress is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-17` **Affected scope** — Affected scope is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-20` **Downstream effect** — Downstream effect is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-21` **Reversibility** — Reversibility is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-24` **Requirement-grade changes** — Requirement-grade changes is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-30` **Prompt size** — Prompt size is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-38` **Retry information delta** — Retry information delta is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-42` **Authority** — Authority is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-43` **Intervention budget** — Intervention budget is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-44` **Intervention reversibility** — Intervention reversibility is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-47` **Unpriced share** — Unpriced share is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-48` **Prompt size** — Prompt size is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-49` **Retries without new information** — Retries without new information is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-50` **Repeated tools and work** — Repeated tools and work is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-51` **Verifier churn** — Verifier churn is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-52` **Comparable cohort** — Comparable cohort is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-57` **Price coverage** — Price coverage is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-58` **Patch count** — Patch count is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-59` **Retry count** — Retry count is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-60` **Grade churn** — Grade churn is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-63` **Prompt pressure** — Prompt pressure is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-64` **Final-gate effect** — Final-gate effect is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-66` **Explicit empty needs-you state** — Explicit empty needs-you state is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-67` **No runaway signal** — No runaway signal is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-68` **Decision wait age** — Decision wait age is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-71` **Cost of another attempt** — Cost of another attempt is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-72` **Candidate delta** — Candidate delta is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-73` **Causal gap** — Causal gap is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-74` **Directive binding** — Directive binding is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-77` **Missing node attribution** — Missing node attribution is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-78` **Detector drill-through evidence** — Detector drill-through evidence is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-81` **Restore prior ranking filter and scroll position** — Restore prior ranking filter and scroll position is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-85` **Ignore or keep watching** — Ignore or keep watching is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-92` **Steer with new context** — Steer with new context is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-93` **Apply a steering patch** — Apply a steering patch is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-106` **Next expected system activity** — Next expected system activity is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-108` **Evidence convergence** — Evidence convergence is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-110` **Degraded classification** — Degraded classification is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-111` **Stalled classification** — Stalled classification is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-112` **Runaway classification** — Runaway classification is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-113` **Steered classification** — Steered classification is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-116` **Active comparison target** — Active comparison target is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
+- `CAP-117` **Freshness and capability annotations persist with selection** — Freshness and capability annotations persist with selection is a source demand with audited partial or absent Phase 1 evidence; it is not an implemented aggregate or projection.
 
 ## Unknown (56)
 
-- `CAP-2` **Current constraint** — Current constraint is demanded by jobs.J1.current-constraint, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-3` **Human wait state** — Human wait state is demanded by jobs.J1.human-wait-state, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-4` **Frontier activity** — Frontier activity is demanded by jobs.J1.frontier-activity, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-8` **Active nodes and steps** — Active nodes and steps is demanded by jobs.J2.active-nodes-steps, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-9` **Dependency path** — Dependency path is demanded by jobs.J2.dependency-path, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-11` **Blocked reason** — Blocked reason is demanded by jobs.J2.blocked-reason, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-14` **Exact question** — Exact question is demanded by jobs.J3.exact-question, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-15` **Why now** — Why now is demanded by jobs.J3.why-now, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-16` **Proposer** — Proposer is demanded by jobs.J3.proposer, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-18` **Decision evidence** — Decision evidence is demanded by jobs.J3.evidence, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-19` **Alternatives** — Alternatives is demanded by jobs.J3.alternatives, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-22` **Ordered events** — Ordered events is a deterministic, carrier-qualified projection for the source demand jobs.J4.ordered-events; it is not a direct product fact.
-- `CAP-23` **Attempt lineage** — Attempt lineage is demanded by jobs.J4.attempt-lineage, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-25` **Patch provenance** — Patch provenance is demanded by jobs.J4.patch-provenance, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-26` **State transitions** — State transitions is demanded by jobs.J4.state-transitions, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-27` **Retries and rejections** — Retries and rejections is demanded by jobs.J4.retries-rejections, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-28` **Bound input records** — Bound input records is demanded by jobs.J5.bound-input-records, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-29` **Omitted and referenced context** — Omitted and referenced context is demanded by jobs.J5.omitted-referenced-context, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-31` **Transcript** — Transcript is demanded by jobs.J5.transcript, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-32` **Tool activity** — Tool activity is demanded by jobs.J5.tools, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-33` **Artifacts** — Artifacts is demanded by jobs.J5.artifacts, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-34` **File delta** — File delta is demanded by jobs.J5.file-delta, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-35` **Output records** — Output records is demanded by jobs.J5.output-records, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-36` **Usage** — Usage is demanded by jobs.J5.usage, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-37` **Current failure** — Current failure is demanded by jobs.J6.current-failure, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-39` **Intervention alternatives** — Intervention alternatives is demanded by jobs.J6.alternatives, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-40` **Expected effect** — Expected effect is demanded by jobs.J6.expected-effect, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-41` **Intervention scope** — Intervention scope is demanded by jobs.J6.scope, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-45` **Validation path** — Validation path is demanded by jobs.J6.validation-path, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-46` **Spend and tokens by node kind** — Spend and tokens by node kind is a deterministic, carrier-qualified projection for the source demand jobs.J7.spend-tokens-by-node-kind; it is not a direct product fact.
-- `CAP-53` **Routine SHA** — Routine SHA is demanded by jobs.J8.routine-sha, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-54` **Model and profile** — Model and profile is demanded by jobs.J8.model-profile, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-55` **Duration** — Duration is demanded by jobs.J8.duration, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-56` **Tokens** — Tokens is demanded by jobs.J8.tokens, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-61` **Interventions** — Interventions is demanded by jobs.J8.interventions, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-62` **Outcome** — Outcome is demanded by jobs.J8.outcome, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-65` **Data freshness and connection state** — Data freshness and connection state is demanded by journeys.A.freshness-and-connection, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-70` **Recorded decision identity and timestamp** — Recorded decision identity and timestamp is demanded by journeys.B.recorded-identity-timestamp, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-75` **Exact execution-unit identity** — Exact execution-unit identity is demanded by journeys.D.execution-unit-identity, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-76` **Repository file-state boundary** — Repository file-state boundary is demanded by journeys.D.file-state-boundary, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-79` **Canonical selection identity across projections** — Canonical selection identity across projections is demanded by journeys.continuity.canonical-selection, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-80` **Preserve run selection time attempt and decision context** — Preserve run selection time attempt and decision context is demanded by journeys.continuity.preserve-context, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-87` **Answer a clarification** — Answer a clarification is demanded by decisions.answer-clarification, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-88` **Retry** — Retry is demanded by decisions.retry, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-89` **Pause resume or cancel** — Pause resume or cancel is demanded by decisions.lifecycle, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-90` **Retire or supersede a strand** — Retire or supersede a strand is demanded by decisions.retire-supersede, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-91` **Requeue failed outbox or work** — Requeue failed outbox or work is demanded by decisions.requeue, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-94` **Change a routine prompt or policy** — Change a routine prompt or policy is demanded by decisions.change-source, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-102` **Command accepted or rejected** — Command accepted or rejected is demanded by feedback.command-accepted-rejected, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-103` **Validation result and reason** — Validation result and reason is demanded by feedback.validation-result-reason, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-104` **Durable event or record identity** — Durable event or record identity is demanded by feedback.durable-identity, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-105` **Resulting lifecycle topology or decision state** — Resulting lifecycle topology or decision state is demanded by feedback.resulting-state, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-107` **Recovery path for failure or stale-state race** — Recovery path for failure or stale-state race is demanded by feedback.failure-race-recovery, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-109` **Needs-decision classification** — Needs-decision classification is demanded by ia.health.needs-decision, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-114` **Settled classification** — Settled classification is demanded by ia.health.settled, but available carriers are partial, carrier-specific, or disputed and do not establish the demanded semantics.
-- `CAP-115` **Run region step node task attempt record event requirement identity chain** — The demanded complete selection identity chain is unknown: only run to step to task to attempt is enforced, while region and graph or core joins remain untyped.
+- `CAP-2` **Current constraint** — Current constraint cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-3` **Human wait state** — Human wait state cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-4` **Frontier activity** — Frontier activity cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-8` **Active nodes and steps** — Active nodes and steps cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-9` **Dependency path** — Dependency path cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-11` **Blocked reason** — Blocked reason cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-14` **Exact question** — Exact question cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-15` **Why now** — Why now cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-16` **Proposer** — Proposer cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-18` **Decision evidence** — Decision evidence cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-19` **Alternatives** — Alternatives cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-22` **Ordered events** — Ordered events cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-23` **Attempt lineage** — Attempt lineage cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-25` **Patch provenance** — Patch provenance cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-26` **State transitions** — State transitions cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-27` **Retries and rejections** — Retries and rejections cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-28` **Bound input records** — Bound input records cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-29` **Omitted and referenced context** — Omitted and referenced context cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-31` **Transcript** — Transcript cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-32` **Tool activity** — Tool activity cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-33` **Artifacts** — Artifacts cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-34` **File delta** — File delta cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-35` **Output records** — Output records cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-36` **Usage** — Usage cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-37` **Current failure** — Current failure cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-39` **Intervention alternatives** — Intervention alternatives cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-40` **Expected effect** — Expected effect cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-41` **Intervention scope** — Intervention scope cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-45` **Validation path** — Validation path cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-46` **Spend and tokens by node kind** — Spend and tokens by node kind cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-53` **Routine SHA** — Routine SHA cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-54` **Model and profile** — Model and profile cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-55` **Duration** — Duration cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-56` **Tokens** — Tokens cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-61` **Interventions** — Interventions cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-62` **Outcome** — Outcome cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-65` **Data freshness and connection state** — Data freshness and connection state cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-70` **Recorded decision identity and timestamp** — Recorded decision identity and timestamp cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-75` **Exact execution-unit identity** — Exact execution-unit identity cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-76` **Repository file-state boundary** — Repository file-state boundary cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-79` **Canonical selection identity across projections** — Canonical selection identity across projections cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-80` **Preserve run selection time attempt and decision context** — Preserve run selection time attempt and decision context cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-87` **Answer a clarification** — Answer a clarification cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-88` **Retry** — Retry cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-89` **Pause resume or cancel** — Pause resume or cancel cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-90` **Retire or supersede a strand** — Retire or supersede a strand cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-91` **Requeue failed outbox or work** — Requeue failed outbox or work cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-94` **Change a routine prompt or policy** — Change a routine prompt or policy cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-102` **Command accepted or rejected** — Command accepted or rejected cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-103` **Validation result and reason** — Validation result and reason cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-104` **Durable event or record identity** — Durable event or record identity cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-105` **Resulting lifecycle topology or decision state** — Resulting lifecycle topology or decision state cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-107` **Recovery path for failure or stale-state race** — Recovery path for failure or stale-state race cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-109` **Needs-decision classification** — Needs-decision classification cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-114` **Settled classification** — Settled classification cannot be established across the audited Phase 1 carrier boundaries.
+- `CAP-115` **Run region step node task attempt record event requirement identity chain** — Run region step node task attempt record event requirement identity chain cannot be established across the audited Phase 1 carrier boundaries.

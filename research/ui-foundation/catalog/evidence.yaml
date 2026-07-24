@@ -55,7 +55,7 @@ snapshot: &id001
     sha256: 7ad4caa93e1afd4e728f2b7c2fac4b3c54ca441e100ac51e912ff85196d2f2e7
     audited_at: '2026-07-24T03:00:00Z'
   - path: research/ui-foundation/tools/validate.py
-    sha256: 85f6ecf677c03ac2d061bde72ba977bd23daff9a220d6e884c9b1f5c981a33f6
+    sha256: 50b5f5fb4dde1fceabadbff05c32c4a13f8a2705ec4bfce9dc66202fdb600a41
     audited_at: '2026-07-24T03:00:00Z'
   - path: src/orchestrator/__init__.py
     sha256: b1f14eb507ed5cae44a23dc96212731b2560b970310ef4037e303d90c5271bf4
@@ -1486,7 +1486,7 @@ snapshot: &id001
     sha256: 881f069c22f2f0dad0cd985e0126ce9c5d22b126c8e620f7b4c50f888d39f7b6
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_ui_foundation_tools.py
-    sha256: 74d47268242579a3d5a60ae5c7272b462bd9acfc32d22f4a442405cbd0be50a4
+    sha256: 013ed67cbccde4a9d31203926b685ea492f91d3d991ac6b0b053e6031a1355e8
     audited_at: '2026-07-24T03:00:00Z'
   - path: tests/integration/test_verifier_model_pinning.py
     sha256: b745091b4bf7450fdb1e901e4b231913be33dec9b70e0a3340e11ac690676236

@@ -25,6 +25,13 @@ claims/status/gaps projections, and focused integration tests.
   limitation boundaries. Both have direct reachable implementation evidence,
   direct exercised test evidence, present implementation, and exercised tests.
 - Typed steering (`CAP-92`) and steering patch (`CAP-93`) are not current.
+- The persisted `task-14-gap-carrier-audit.md` is retained as the binding
+  record-by-record source for all 49 gap and 56 unknown adjudications. The 49
+  gaps are **42 partial** and **7 absent**; all unknown records are partial.
+- Partial carriers are now typed demand bindings with an explicit role,
+  semantic type, and cited evidence support. This prevents activity evidence
+  from standing in for action reversibility, permission authority, or usage
+  telemetry.
 
 ## Important uncertainties
 
@@ -57,9 +64,10 @@ gap, or unknown demands only with new qualifying evidence and contract review.
 ## Evidence pointers
 
 `EVD-105`, `EVD-106`, `EVD-111`, and `EVD-112` remain direct current/test
-anchors only within their actual chains. They no longer support unrelated
-derived claims. The Phase 1 snapshot includes refreshed exact hashes for the
-validator and focused test.
+anchors only within their actual chains. `EVD-105` has narrow relevance only to
+raw graph patch validation under `CAP-93`; it supports none of the twelve
+former-derived records. The Phase 1 snapshot includes refreshed exact hashes
+for the validator and focused test.
 
 ## Recommended next delegation
 
@@ -80,7 +88,8 @@ compares all Phase 2 metadata/projections exactly with the canonical registry.
 - `uv run python research/ui-foundation/tools/validate.py --phase 2` — exited 0
   with no diagnostics.
 - `uv run pytest tests/integration/test_ui_foundation_tools.py -q` — focused
-  validation coverage passed.
+  validation coverage passed, including independent negative carrier-role and
+  derivation-binding cases.
 - `uv run ruff check .` — **All checks passed!**
 - `uv run pyright research/ui-foundation/tools/validate.py` — **0 errors, 0
   warnings, 0 informations** (plus Pyright's non-failing update notice).

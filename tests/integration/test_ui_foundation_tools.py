@@ -1148,6 +1148,300 @@ def test_derivation_rejects_unrelated_current_contract_and_evidence_chain(tmp_pa
     } <= set(issue_codes(result))
 
 
+def test_partial_gap_rejects_duplicate_normalized_limitations_and_prohibitions(
+    tmp_path: Path,
+) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    duplicate = "Carrier evidence is incomplete."
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-21",
+                    capability_status="gap",
+                    implementation_status="partial",
+                    limitations=[duplicate, " carrier evidence is incomplete. "],
+                    prohibited_interpretations=[duplicate, "CARRIER EVIDENCE IS INCOMPLETE."],
+                    implementation_carrier_bindings=[],
+                )
+            ],
+        },
+    )
+    result = run_validator(root)
+    assert {
+        "CAPABILITY_LIMITATIONS_DUPLICATE",
+        "CAPABILITY_PROHIBITED_INTERPRETATIONS_DUPLICATE",
+    } <= set(issue_codes(result))
+
+
+def test_partial_gap_rejects_non_action_reversibility_binding(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-21",
+                    capability_status="gap",
+                    implementation_status="partial",
+                    evidence_ids=["EVD-01"],
+                    implementation_carrier_bindings=[
+                        {
+                            "id": "EVI-1",
+                            "role": "reversibility-action",
+                            "semantic_type": "ActionContract",
+                        }
+                    ],
+                )
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/evidence/inventory.yaml",
+        {"schema_version": "1", "items": [semantic_item("EVI-1", evidence_ids=["EVD-01"])]},
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [{"id": "EVD-01", "source_kind": "audit-report"}],
+        },
+    )
+    result = run_validator(root)
+    assert "GAP_PARTIAL_CARRIER_ROLE_TYPE_INVALID" in issue_codes(result)
+
+
+def test_partial_gap_rejects_non_permission_authority_binding(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-42",
+                    capability_status="gap",
+                    implementation_status="partial",
+                    evidence_ids=["EVD-01"],
+                    implementation_carrier_bindings=[
+                        {
+                            "id": "EVI-1",
+                            "role": "authority-policy",
+                            "semantic_type": "PermissionContract",
+                        }
+                    ],
+                )
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/evidence/inventory.yaml",
+        {"schema_version": "1", "items": [semantic_item("EVI-1", evidence_ids=["EVD-01"])]},
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [{"id": "EVD-01", "source_kind": "audit-report"}],
+        },
+    )
+    result = run_validator(root)
+    assert "GAP_PARTIAL_CARRIER_ROLE_TYPE_INVALID" in issue_codes(result)
+
+
+def test_partial_gap_rejects_non_usage_telemetry_cost_binding(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-6",
+                    capability_status="gap",
+                    implementation_status="partial",
+                    evidence_ids=["EVD-01"],
+                    implementation_carrier_bindings=[
+                        {
+                            "id": "EVI-1",
+                            "role": "usage-telemetry",
+                            "semantic_type": "UsageTelemetry",
+                        }
+                    ],
+                )
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/evidence/inventory.yaml",
+        {"schema_version": "1", "items": [semantic_item("EVI-1", evidence_ids=["EVD-01"])]},
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [{"id": "EVD-01", "source_kind": "audit-report"}],
+        },
+    )
+    result = run_validator(root)
+    assert "GAP_PARTIAL_CARRIER_ROLE_TYPE_INVALID" in issue_codes(result)
+
+
+def test_partial_gap_rejects_binding_semantic_type_mismatch(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    write_yaml(
+        root / "capabilities/registry.yaml",
+        {
+            "schema_version": "1",
+            "items": [
+                semantic_item(
+                    "CAP-21",
+                    capability_status="gap",
+                    implementation_status="partial",
+                    evidence_ids=["EVD-01"],
+                    implementation_carrier_bindings=[
+                        {
+                            "id": "ACT-01",
+                            "role": "reversibility-action",
+                            "semantic_type": "UsageTelemetry",
+                        }
+                    ],
+                )
+            ],
+        },
+    )
+    write_yaml(
+        root / "reality/actions/ACT-01.yaml", {"id": "ACT-01", "audit_evidence_ids": ["EVD-01"]}
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [{"id": "EVD-01", "source_kind": "audit-report"}],
+        },
+    )
+    result = run_validator(root)
+    assert "GAP_PARTIAL_CARRIER_ROLE_TYPE_INVALID" in issue_codes(result)
+
+
+def _admitted_derivation_fixture(
+    root: Path, *, output_contract: dict[str, object], bindings: list[dict[str, object]]
+) -> None:
+    current = semantic_item(
+        "CAP-01",
+        capability_status="current",
+        implementation_status="present",
+        test_status="exercised",
+        documentation_status="documented",
+        output_contract={"semantic_type": "Input", "fields": ["value"]},
+        evidence_ids=["EVD-01", "EVD-02"],
+    )
+    derived = semantic_item(
+        "CAP-02",
+        capability_status="derived",
+        derivation_id="DRV-01",
+        output_contract=output_contract,
+        evidence_ids=["EVD-03"],
+    )
+    write_yaml(
+        root / "capabilities/registry.yaml", {"schema_version": "1", "items": [current, derived]}
+    )
+    write_yaml(
+        root / "catalog/evidence.yaml",
+        {
+            "schema_version": "1",
+            "snapshot": {"id": "snapshot-test", "files": []},
+            "items": [
+                {"id": "EVD-01", "source_kind": "implementation", "reachable": True},
+                {
+                    "id": "EVD-02",
+                    "source_kind": "test",
+                    "reachable": True,
+                    "test_status": "exercised",
+                },
+                {"id": "EVD-03", "source_kind": "implementation", "reachable": True},
+            ],
+        },
+    )
+    write_yaml(
+        root / "capabilities/derivations/DRV-01.yaml",
+        {
+            "id": "DRV-01",
+            "status": "admitted",
+            "capability_ids": ["CAP-02"],
+            "inputs": ["CAP-01"],
+            "typed_inputs": {
+                "CAP-01": {"semantic_type": "Input", "consumed_fields": ["value"], "role": "input"}
+            },
+            "algorithm": "deterministically select, tie break, and round",
+            "output_type": "Output",
+            "produced_fields": ["result"],
+            "unknown_behavior": "unknown",
+            "failure_behavior": "fail",
+            "freshness": "snapshot",
+            "recomputation_behavior": "recompute",
+            "implementation_evidence_ids": ["EVD-03"],
+            "evidence_bindings": bindings,
+            "limitations": ["bounded"],
+            "prohibited_interpretations": ["complete"],
+        },
+    )
+
+
+def test_derivation_rejects_unrelated_implementation_locator(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    _admitted_derivation_fixture(
+        root,
+        output_contract={"semantic_type": "Output", "fields": ["result"]},
+        bindings=[
+            {
+                "id": "EVD-03",
+                "role": "pure-projection-implementation",
+                "path": "other.py",
+                "symbol": "other",
+                "semantic_type": "Output",
+            }
+        ],
+    )
+    result = run_validator(root)
+    assert "DERIVATION_EVIDENCE_BINDING_LOCATOR_INVALID" in issue_codes(result)
+
+
+def test_derivation_rejects_incompatible_output_contract(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    _admitted_derivation_fixture(
+        root,
+        output_contract={"semantic_type": "Different", "fields": ["other"]},
+        bindings=[
+            {
+                "id": "EVD-03",
+                "role": "pure-projection-implementation",
+                "path": "implementation.py",
+                "symbol": "project",
+                "semantic_type": "Output",
+            }
+        ],
+    )
+    result = run_validator(root)
+    assert "DERIVATION_OUTPUT_CONTRACT_MISMATCH" in issue_codes(result)
+
+
+def test_derivation_rejects_output_evidence_without_derivation_binding(tmp_path: Path) -> None:
+    root = write_valid_phase_zero(tmp_path)
+    _admitted_derivation_fixture(
+        root, output_contract={"semantic_type": "Output", "fields": ["result"]}, bindings=[]
+    )
+    result = run_validator(root)
+    assert "DERIVATION_EVIDENCE_BINDING_MISSING" in issue_codes(result)
+
+
 def test_unresolved_conflict_requires_distinct_claims_evidence_and_affected_ids(
     tmp_path: Path,
 ) -> None:
